@@ -9,10 +9,10 @@
      <project>/.vis/extensions/   (project-local — this project only)
 
    and it loads at startup (and on `/reload`) in BOTH the JVM and the
-   GraalVM native-image build — Python redefinition is pure Truffle
-   dynamism, no runtime class definition involved.
+   native image — the extension is Python all the way down, so nothing here
+   defines a class at runtime.
 
-   Each file is evaluated in its own TRUSTED GraalPy context. This is NOT
+   Each file is evaluated in its own TRUSTED interpreter session. This is NOT
    the model's sandbox: the model's context is untrusted, per-session and
    deny-by-default; extension contexts are user-trusted (same trust level
    as a Clojure extension on the classpath), process-wide, and get real
@@ -20,16 +20,14 @@
    model can call an extension TOOL (through the host wrapper, envelope-
    checked like any tool) but can never evaluate code in the extension's
    context. Host capabilities are reachable ONLY through the bound `vis`
-   API (no arbitrary Java interop: `allowAllAccess` stays false and no
-   host classes are exposed).
+   API: what crosses is JSON text, so no host object is ever reachable from
+   Python.
 
-   Every context gets its OWN Engine (`env-python/new-engine!`) and closes
-   it with the context: an Engine retains every Context ever built on it, so
-   a shared one would keep every reloaded extension's Python alive for the
-   life of the process. Calls into an
-   extension (tool, activation, prompt, slash, op hook) are serialized
-   with `locking` on its context, the same proven pattern as the printer
-   context.
+   A session is a NAMESPACE in the one embedded interpreter, not a second
+   interpreter: opening one costs a dict, and closing one drops the extension's
+   Python with it. Calls into an extension (tool, activation, prompt, slash, op
+   hook) are serialized with `locking` on its session name, the same proven
+   pattern as the printer context.
 
    The file's top-level `vis.extension(...)` call registers through the
    ordinary `register-extension!` — from the registry's perspective a
@@ -44,37 +42,33 @@
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.config-spec :as config-spec]
             [com.blockether.vis.internal.egress-proxy :as egress]
-            [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.extension-aggregate :as aggregate]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.notifications :as notifications]
             [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.sandbox-resources :as res]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
-            [com.blockether.vis.internal.python-process-handler :as process-handler]
+            [com.blockether.vis.internal.python-host :as python-host]
             [com.blockether.vis.contract.python-host :as contract]
             [com.blockether.vis.internal.security-policy :as security-policy]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.python-extension-host :as pyext]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
-           [org.graalvm.polyglot Context Engine EnvironmentAccess PolyglotAccess Source Value]
-           [org.graalvm.polyglot.io IOAccess]
-           [org.graalvm.polyglot.proxy ProxyExecutable]))
+           [java.util.concurrent.atomic AtomicLong]))
 
 (set! *warn-on-reflection* true)
 
 ;; The `vis` Python module (bootstrap source)
 ;;
-;; Evaluated in each extension context BEFORE the extension file. Builds a
+;; Executed in each extension session BEFORE the extension file. Builds a
 ;; real `vis` module (registered in `sys.modules`, so `import vis` works)
 ;; whose functions live in the module's own namespace — the extension
-;; file's globals stay clean. Host callbacks (`__vis_host_*`, bound as
-;; polyglot members before this runs) are handed in through the module
-;; dict.
+;; file's globals stay clean. Host callbacks (`__vis_host_*`, installed as
+;; session globals before this runs) are handed in through the module dict.
 
 (defn- python-string-literal
   "Encode source as a Python string literal. JSON string syntax is almost the same,
@@ -83,57 +77,165 @@
   [source]
   (str/replace (json/write-json-str source) "\\/" "/"))
 
+(defn ^:no-doc classpath-src
+  "The text of one Python source shipped on the classpath, by resource path.
+
+   Both files this namespace executes travel inside the jar and inside the
+   native image, so the ONLY way to reach them is the classpath — never a path
+   on disk, which exists in a checkout and nowhere a user runs."
+  [path]
+  (if-let [url (io/resource path)]
+    (slurp url)
+    (throw (ex-info (str "python source missing from the classpath: " path)
+                    {:type ::missing-python-source :path path}))))
+
 (def ^:no-doc bootstrap-python
-  "The `vis` module bootstrap. Evaluated in each extension context BEFORE the
+  "The `vis` module bootstrap. Executed in each extension session BEFORE the
    extension file: it builds a real `vis` module (registered in `sys.modules`, so
    `import vis` works) whose functions live in the module's own namespace, while
-   the extension file's globals stay clean. Host callbacks (`__vis_host_*`, bound
-   as polyglot members before this runs) are handed in through the module dict.
+   the extension file's globals stay clean. Host callbacks (`__vis_host_*`,
+   installed as session globals before this runs) are handed in through the
+   module dict.
 
    TWO real `.py` files, assembled here and nowhere else. The BODY is the
    distributable package `packages/vis-agent/src/vis/__init__.py` — the very file
    PyPI ships as `vis-agent`, so an author reads, lints and unit-tests the code
    the sandbox runs — handed to the injector as the `_vis_body` literal, because
    `exec` into a module dict is the one thing that keeps the API off the
-   extension's globals. The INJECTOR is `vis-python/extension_bootstrap.py`.
-   Both are embedded in the native image by build.clj's
-   `-H:IncludeResources` patterns (see `env-python/runtime-python-src`)."
-  (str "_vis_body = " (python-string-literal (env/runtime-python-src "vis/__init__.py"))
-       "\n" (env/runtime-python-src "vis-python/extension_bootstrap.py")))
-
-(def ^:no-doc redirect-repair-python
-  "The guest half of process containment, evaluated into every extension
-   context by `build-context`. GraalPy DISCARDS a `stdout=`/`stderr=`/`stdin=`
-   file or descriptor: the host receives a plain INHERIT, so an extension that
-   carefully redirected a CLI's output to a log file still sprays it on the
-   operator's terminal, and a `stdin=` file leaves the child blocked on the
-   JVM's own stdin. The choice is gone before `internal.python-process-handler`
-   can see it, so the repair has to happen while it is still a Python object -
-   `vis-python/process_redirect.py` turns it into a pipe pumped to the
-   descriptor the extension actually named — and, in the same pass, puts the
-   child's real OS pid on the `Popen` handle in place of GraalPy's per-context
-   child-slot index."
-  (env/runtime-python-src "vis-python/process_redirect.py"))
+   extension's globals. The INJECTOR is `vis-python/extension_bootstrap.py`,
+   which also seals this session's Python callables so the host can hold them."
+  (str "_vis_body = " (python-string-literal (classpath-src "vis/__init__.py"))
+       "\n" (classpath-src "vis-python/extension_bootstrap.py")))
 
 ;; Marshalling helpers
 
-(defn- ->executable
-  "Wrap a Clojure fn as a Python callable: positional Python args marshal
-   to Clojure via `->clj`, the return value marshals back via `->py`."
-  ^ProxyExecutable [f]
-  (reify
-    ProxyExecutable
-      (execute [_ args] (env/->py (apply f (map env/->clj args))))))
+(def ^:private callable-key
+  "The one key `extension_bootstrap.py` seals a Python callable under.
+
+   A callable cannot cross into Clojure — JSON text crosses — so the injector
+   keeps it in the session under an id and sends `{callable-key id}` in its
+   place. [[unseal]] turns that marker back into something callable HERE."
+  "__vis_callable__")
+
+(defn- raised-message
+  "What Python actually raised, without the frames of the machinery that carried
+   it here.
+
+   The interpreter wraps every failure in its own `vis-python: ` frame, and a
+   failing HOST tool arrives as `VisToolError: <the host's own sentence>` — the
+   engine put that sentence there, so handing it back doubled the label. An
+   ordinary Python error keeps its class name, which is what classifies it."
+  [^Throwable t]
+  (-> (str (ex-message t))
+      str/trim
+      (str/replace #"^vis-python:\s+" "")
+      (str/replace #"^VisToolError:\s+" "")))
+
+(defn- run-in
+  "Evaluate `expr` in extension session `sess`, answering its value as data.
+
+   The interpreter renders the value as JSON text, so what comes back is exactly
+   what a host tool result is: plain data with string keys, and nothing live."
+  [sess expr]
+  (let [text (try (pyext/run sess expr)
+                  (catch Throwable t
+                    (throw (ex-info (raised-message t) {:type ::python-raised :session sess} t))))]
+    (when (and text (not= "null" text)) (json/read-json text :key-fn identity))))
+
+(defn- python-call-expr
+  "The Python expression that invokes sealed callable `cid` on `args`.
+
+   Args cross as ONE JSON string rather than as spliced literals: an argument is
+   arbitrary data, and only the JSON encoder is allowed to decide how it spells."
+  [cid args]
+  (str "__vis_call__("
+       (python-string-literal (str cid))
+       ", "
+       (python-string-literal (json/write-json-str (vec args)))
+       ")"))
+
+(def ^:private host-callable-key
+  "The one key a Clojure fn handed INTO Python crosses under, the mirror of
+   [[callable-key]]."
+  "__vis_callback__")
+
+(defonce ^:private callback-seq (AtomicLong. 0))
+
+(defn- sealed-args
+  "Answer `[args names->fns]`: `args` with every Clojure fn replaced by a marker
+   naming a host tool, and the tools that marker needs bound.
+
+   An adapter may hand Python a CALLBACK — a provider's `auth(printer)` is the
+   one the CLI depends on — but only JSON crosses this boundary, so the fn
+   itself cannot. It is installed as an ordinary host tool under a fresh name
+   instead, and the marker is how the injector finds it. The name is unique per
+   call and forgotten after it, because a callback outliving its call would be a
+   capability the extension kept."
+  [args]
+  (let [bound
+        (volatile! {})
+
+        seal
+        (fn seal [v]
+          (cond (fn? v)
+                (let [nm (str "__vis_host_cb_" (.incrementAndGet ^AtomicLong callback-seq) "__")]
+                  (vswap! bound assoc nm v)
+                  {host-callable-key nm})
+                (map? v) (into {}
+                               (map (fn [[k x]]
+                                      [k (seal x)]))
+                               v)
+                (sequential? v) (mapv seal v)
+                :else v))]
+
+    [(mapv seal args) @bound]))
+
+(defn- release-callbacks!
+  "Take back the callbacks `sealed-args` bound: the registry forgets the names,
+   and the guest loses the globals they were bound to."
+  [sess names]
+  (python-host/forget-tools! sess names)
+  (try (pyext/exec! sess
+                    (str/join (map (fn [nm]
+                                     (str "del " nm "\n"))
+                                   names)))
+       (catch Throwable _ nil)))
+
+(defn- unseal
+  "Answer `x` with every sealed callable marker replaced by a Clojure fn.
+
+   The fn takes the ARG VECTOR (the shape [[call-py]] hands it), evaluates the
+   call in the same session, and unseals the answer in turn — a Python callable
+   may hand back another one, and a registration nests them inside dicts and
+   lists."
+  [sess x]
+  (cond (and (map? x) (= 1 (count x)) (contains? x callable-key))
+        (let [cid (str (get x callable-key))]
+          (fn [args]
+            (let [[sealed callbacks] (sealed-args args)]
+              (when (seq callbacks)
+                (python-host/install-sync-tools! sess callbacks pyext/install-sync-tool!))
+              (try (unseal sess (run-in sess (python-call-expr cid sealed)))
+                   (finally (when (seq callbacks) (release-callbacks! sess (keys callbacks))))))))
+        (map? x) (into {}
+                       (map (fn [[k v]]
+                              [k (unseal sess v)]))
+                       x)
+        (sequential? x) (mapv (fn [v]
+                                (unseal sess v))
+                              x)
+        :else x))
 
 (defn- call-py
-  "Call a Python callable in an extension's context with marshalled args.
-   Returns the `->clj` view of the result. Deliberately NO host-side lock:
-   GraalPy's own GIL already serializes guest execution inside the context,
-   and a Truffle-managed wait (unlike a JVM monitor) stays cancellable via
-   `Context.interrupt`/`.close(true)` — so a wedged extension can be killed
-   instead of queueing every later caller behind an uninterruptible monitor."
-  [^Context _ctx ^Value f args]
-  (env/->clj (.execute f (object-array (mapv env/->py args)))))
+  "Call a Python callable of an extension with marshalled args, answering the
+   data view of its result.
+
+   `f` is what [[unseal]] made of the sealed callable: it already carries the
+   session it belongs to, so this is only the arity the adapters call through —
+   kept as one place because every adapter's defensiveness is written against
+   it."
+  [_sess f args]
+  (f (vec args)))
 
 (defn- plainify
   "Deep-convert the `->clj` view of a Python value into plain EDN-printable
@@ -295,235 +397,211 @@
                     [n v])))
           names)))
 
+(defonce
+  ^:private
+  ^{:doc
+    "Monotonic counter behind extension session names: a session is
+                 named once and never reused, so a stale binding that still holds
+                 an old name can be TOLD it is stale instead of reaching a
+                 successor that happens to share the name."}
+  context-seq
+  (AtomicLong. 0))
+
+(defonce
+  ^:private
+  ^{:doc
+    "The extension sessions this namespace has open. A session is a
+                 NAME in the one embedded interpreter, so `dead?` is a question
+                 only the opener can answer - the interpreter itself would just
+                 make a fresh namespace for a name nobody knows."}
+  live-contexts
+  (atom #{}))
+
 (defn ^:no-doc build-context
-  "Build one trusted extension context on the shared Engine. Extensions have
-   real filesystem, network, environment, thread, and subprocess access; only
-   arbitrary host interop remains unavailable. Use `vis.jailed_shell` when a
-   command should instead run under the current session's jail policy.
+  "Open one trusted extension session in the embedded interpreter and answer its
+   name.
 
-   Nothing the context produces reaches a descriptor uncaptured: guest stdout
-   and stderr are bound to the log tagged with `label`, and every process the
-   extension spawns runs under `internal.python-process-handler`, which pipes
-   and drains whatever the guest itself does not read. Both are required —
-   the JVM stream swap in `internal.config/init-cli!` replaces PrintStreams
-   and a child process writes to the file DESCRIPTOR, which under a
-   foreground gateway is the operator's terminal.
+   A session is a Python namespace, not a second interpreter: `label` only makes
+   the name readable in a log, and the counter makes it unique. Extensions are
+   TRUSTED code - real filesystem, network, environment, thread and subprocess
+   access - and the interpreter that serves them is the one the host runs
+   unconfined, so nothing here narrows what Python may do.
 
-   `redirect-repair-python` is evaluated into the finished context because
-   the host handler cannot see a redirect GraalPy already discarded - the two
-   halves together are what makes an extension's process output land where
-   the extension asked for it. The same pair repairs `Popen.pid`: the handler
-   hands every child's real OS pid to the guest through `pid-handoff`, because
-   emulated posix would otherwise leave the extension holding a per-context
-   child-slot index that names no process."
-  ^Context [label]
-  (let [emit
-        (process-handler/log-emit label)
+   Every name the extension calls back through is installed by [[bind-host!]]
+   before the bootstrap runs, because the injector reads them at module level."
+  [label]
+  (let [sess (str "vis_ext_" (.incrementAndGet ^AtomicLong context-seq)
+                  "_" (str/replace (str label) #"[^A-Za-z0-9_]" "_"))]
+    ;; The extension interpreter is the CHILD process: it starts on the first
+    ;; call, and the runtime - which MAKES the namespace, and carries the upcall
+    ;; stub every host name is bound through - goes in before anything else.
+    (pyext/install-runtime! sess)
+    (swap! live-contexts conj sess)
+    sess))
 
-        handoff
-        (process-handler/pid-handoff)
-
-        ^Context ctx
-        (-> (Context/newBuilder (into-array String ["python"]))
-            (.engine ^Engine (env/new-engine!))
-            (.allowAllAccess false)
-            (.allowIO IOAccess/ALL)
-            (.allowCreateThread true)
-            (.allowCreateProcess true)
-            (.allowNativeAccess false)
-            (.allowPolyglotAccess PolyglotAccess/NONE)
-            (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
-            (.out (process-handler/line-sink-stream (fn [line]
-                                                      (emit "stdout" line))))
-            (.err (process-handler/line-sink-stream (fn [line]
-                                                      (emit "stderr" line))))
-            (.processHandler (process-handler/contained-handler emit handoff))
-            (.build))]
-
-    ;; Bound BEFORE the repair evaluates, because the repair captures it: it is
-    ;; how the guest's `Popen` learns the OS pid of the child it just started.
-    (.putMember (.getBindings ctx "python")
-                "__vis_host_claim_child_pid__"
-                (->executable (fn []
-                                (process-handler/claim-pid! handoff))))
-    (.eval ctx "python" ^String redirect-repair-python)
-    ctx))
-
-;; Python hands LEVEL as a string; the boundary is strings-only, so the
-;; lookup maps string -> the INTERNAL telemere/notification level keyword.
-;; No `(keyword …)` minting of Python-supplied data.
 (def ^:private log-levels {"trace" :trace "debug" :debug "info" :info "warn" :warn "error" :error})
 
 (def ^:private notify-levels {"info" :info "success" :success "warn" :warn "error" :error})
+
+(defn- put!
+  "Record host callable `f` under the guest name `n`.
+
+   The names are collected before any of them is installed because the injector
+   reads EVERY one at module level: a member installed after the bootstrap ran
+   is a `NameError` the extension author cannot explain."
+  [g n f]
+  (vswap! g assoc n f))
 
 (defn ^:no-doc bind-host!
   "Bind the `__vis_host_*` callbacks the bootstrap hands into the `vis`
    module. `label` is the file's name — used only for log context; durable
    state lives in the `extension_aggregate` table, owned by the running
    extension's identity (see `*state-env*`)."
-  [^Context ctx label]
-  (let [g (.getBindings ctx "python")]
-    (.putMember g
-                "__vis_host_state_get__"
-                (->executable (fn [k]
-                                (state-get* k))))
-    (.putMember g
-                "__vis_host_state_put__"
-                (->executable (fn [k v]
-                                (state-put!* k v))))
-    (.putMember g
-                "__vis_host_state_del__"
-                (->executable (fn [k]
-                                (state-del!* k))))
-    (.putMember g
-                "__vis_host_state_keys__"
-                (->executable (fn []
-                                (state-keys*))))
-    (.putMember g
-                "__vis_host_log__"
-                (->executable
-                  (fn [level msg]
-                    (let [lvl (get log-levels (str level) :info)]
-                      (tel/log!
-                        {:level lvl :id ::extension-log :data {:extension label} :msg (str msg)}))
-                    nil)))
-    (.putMember g
-                "__vis_host_notify__"
-                (->executable
-                  (fn [text level]
-                    (notifications/notify! (str text) :level (get notify-levels (str level) :info))
-                    nil)))
-    (.putMember g
-                "__vis_host_shell__"
-                ;; `vis.shell` follows the extension's trusted process boundary,
-                ;; even when its caller has an enabled session jail. It keeps the
-                ;; native shell tool's one-options-map result grammar.
-                (->executable
-                  (fn [opts]
-                    (host-tool-result
-                      ((requiring-resolve
-                         'com.blockether.vis.internal.foundation.shell/trusted-extension-shell)
-                        extension/*current-environment*
-                        opts)))))
-    (.putMember g
-                "__vis_host_jailed_shell__"
-                ;; Latest-config jail: the shell implementation reloads, validates,
-                ;; and freezes the merged disk policy at each process spawn. It is
-                ;; deliberately independent of the invoking session snapshot.
-                (->executable (fn [opts]
-                                (host-tool-result
-                                  ((requiring-resolve
-                                     'com.blockether.vis.internal.foundation.shell/jailed-shell)
-                                    extension/*current-environment*
-                                    opts)))))
-    (.putMember g
-                "__vis_host_jailed_shell_session__"
-                ;; Session-snapshot jail: stable for the session and unavailable
-                ;; when a process-level callback has no invoking session.
-                (->executable
-                  (fn [opts]
-                    (host-tool-result
-                      ((requiring-resolve
-                         'com.blockether.vis.internal.foundation.shell/session-jailed-shell)
-                        extension/*current-environment*
-                        opts)))))
-    (.putMember
-      g
-      "__vis_host_request_input__"
-      ;; Typed input View pause: one JSON request object in, one JSON
-      ;; answer object out. BLOCKS this extension call until the human
-      ;; answers, cancels, or the request times out.
-      ;;
-      ;; A validator is a FUNCTION, so it cannot be part of that JSON:
-      ;; `ask()` also hands over `{field name -> how many validators}`
-      ;; and one Python callable, kept here as the raw polyglot `Value`
-      ;; (never marshalled to Clojure data) and re-entered on the
-      ;; SUBMITTING thread when the human confirms. GraalPy releases the
-      ;; GIL while a host call blocks, which is what makes that legal.
-      ;; Only a field name, an index and the value being judged cross,
-      ;; as JSON, so the verdict path has no marshalling surprises.
-      (reify
-        ProxyExecutable
-          (execute [_ args]
-            (let [request-json (env/->clj (aget args 0))
-                  validators-json (when (> (alength args) 1) (env/->clj (aget args 1)))
-                  ^Value runner (when (> (alength args) 2) (aget args 2))
-                  run (when (some-> runner
-                                    .canExecute)
+  [sess label]
+  (let [g (volatile! {})]
+    (put! g
+          "__vis_host_state_get__"
+          (fn [k]
+            (state-get* k)))
+    (put! g
+          "__vis_host_state_put__"
+          (fn [k v]
+            (state-put!* k v)))
+    (put! g
+          "__vis_host_state_del__"
+          (fn [k]
+            (state-del!* k)))
+    (put! g
+          "__vis_host_state_keys__"
+          (fn []
+            (state-keys*)))
+    (put! g
+          "__vis_host_log__"
+          (fn [level msg]
+            (let [lvl (get log-levels (str level) :info)]
+              (tel/log! {:level lvl :id ::extension-log :data {:extension label} :msg (str msg)}))
+            nil))
+    (put! g
+          "__vis_host_notify__"
+          (fn [text level]
+            (notifications/notify! (str text) :level (get notify-levels (str level) :info))
+            nil))
+    (put! g
+          "__vis_host_shell__"
+          ;; `vis.shell` follows the extension's trusted process boundary,
+          ;; even when its caller has an enabled session jail. It keeps the
+          ;; native shell tool's one-options-map result grammar.
+          (fn [opts]
+            (host-tool-result
+              ((requiring-resolve
+                 'com.blockether.vis.internal.foundation.shell/trusted-extension-shell)
+                extension/*current-environment*
+                opts))))
+    (put! g
+          "__vis_host_jailed_shell__"
+          ;; Latest-config jail: the shell implementation reloads, validates,
+          ;; and freezes the merged disk policy at each process spawn. It is
+          ;; deliberately independent of the invoking session snapshot.
+          (fn [opts]
+            (host-tool-result ((requiring-resolve
+                                 'com.blockether.vis.internal.foundation.shell/jailed-shell)
+                                extension/*current-environment*
+                                opts))))
+    (put! g
+          "__vis_host_jailed_shell_session__"
+          ;; Session-snapshot jail: stable for the session and unavailable
+          ;; when a process-level callback has no invoking session.
+          (fn [opts]
+            (host-tool-result ((requiring-resolve
+                                 'com.blockether.vis.internal.foundation.shell/session-jailed-shell)
+                                extension/*current-environment*
+                                opts))))
+    (put! g
+          "__vis_host_request_input__"
+          ;; Typed input View pause: one JSON request object in, one JSON
+          ;; answer object out. BLOCKS this extension call until the human
+          ;; answers, cancels, or the request times out.
+          ;;
+          ;; A validator is a FUNCTION, so it cannot be part of that JSON:
+          ;; `ask()` also hands over `{field name -> how many validators}`
+          ;; and one Python callable, which the injector SEALS - what arrives
+          ;; here is its marker, and `unseal` makes it callable again - and
+          ;; which is re-entered on the SUBMITTING thread when the human
+          ;; confirms. Only a field name, an index and the value being judged
+          ;; cross, as JSON, so the verdict path has no marshalling surprises.
+          (fn [request-json validators-json runner]
+            (let [validator (unseal sess runner)
+                  run (when (fn? validator)
                         (fn [field-name index value values]
-                          (let [verdict (env/->clj (.execute runner
-                                                             (object-array
-                                                               [(str field-name) (long index)
-                                                                (json/write-json-str value)
-                                                                (json/write-json-str values)])))]
+                          (let [verdict (validator [(str field-name) (long index)
+                                                    (json/write-json-str value)
+                                                    (json/write-json-str values)])]
                             (when (some? verdict)
                               (json/read-json (str verdict) :key-fn identity)))))]
 
-              (env/->py ((requiring-resolve 'com.blockether.vis.internal.view/request-json!)
-                          request-json
-                          validators-json
-                          run))))))
-    (.putMember g
-                "__vis_host_live__"
-                ;; Live view: one JSON envelope in, one JSON answer out, and
-                ;; NOTHING blocks. A view is work reporting on itself, so the
-                ;; extension keeps running while the human watches it move —
-                ;; the opposite of `request_input`, which parks until a human
-                ;; answers.
-                (->executable (fn [envelope]
-                                ((requiring-resolve 'com.blockether.vis.internal.view/live-json!)
-                                  envelope))))
-    (.putMember g
-                "__vis_host_reveal_secret__"
-                (->executable (fn [handle]
-                                ((requiring-resolve 'com.blockether.vis.internal.view/reveal-secret)
-                                  (str handle)))))
-    (.putMember g
-                "__vis_host_forget_secret__"
-                (->executable (fn [handle]
-                                (boolean ((requiring-resolve
-                                            'com.blockether.vis.internal.view/forget-secret!)
-                                           (str handle))))))
+              ((requiring-resolve 'com.blockether.vis.internal.view/request-json!)
+                request-json
+                validators-json
+                run))))
+    (put! g
+          "__vis_host_live__"
+          ;; Live view: one JSON envelope in, one JSON answer out, and
+          ;; NOTHING blocks. A view is work reporting on itself, so the
+          ;; extension keeps running while the human watches it move —
+          ;; the opposite of `request_input`, which parks until a human
+          ;; answers.
+          (fn [envelope]
+            ((requiring-resolve 'com.blockether.vis.internal.view/live-json!) envelope)))
+    (put! g
+          "__vis_host_reveal_secret__"
+          (fn [handle]
+            ((requiring-resolve 'com.blockether.vis.internal.view/reveal-secret) (str handle))))
+    (put! g
+          "__vis_host_forget_secret__"
+          (fn [handle]
+            (boolean ((requiring-resolve 'com.blockether.vis.internal.view/forget-secret!)
+                       (str handle)))))
     ;; DECLARED ENV: one JSON list of names in, one JSON object of the values
     ;; the host could resolve out. Backed by `resolve-declared-env`, so an
     ;; undeclared name is unreachable no matter what the extension asks for.
-    (.putMember g
-                "__vis_host_declare_env__"
-                (->executable
-                  (fn [names-json]
-                    (let [names (try (json/read-json (str names-json) :key-fn identity)
-                                     (catch Throwable _ nil))
-                          resolved (resolve-declared-env names)]
+    (put! g
+          "__vis_host_declare_env__"
+          (fn [names-json]
+            (let [names (try (json/read-json (str names-json) :key-fn identity)
+                             (catch Throwable _ nil))
+                  resolved (resolve-declared-env names)]
 
-                      ;; Log NAMES only -- env values are secrets and never appear in logs.
-                      (tel/log! {:level :debug
-                                 :id ::declared-env
-                                 :data {:ext label
-                                        :declared (vec (map str (or names [])))
-                                        :resolved (vec (sort (keys resolved)))}
-                                 :msg (str "extension '"
-                                           label
-                                           "' declared env: "
-                                           (str/join ", " (sort (keys resolved)))
-                                           " resolved")})
-                      (json/write-json-str resolved)))))))
+              ;; Log NAMES only -- env values are secrets and never appear in logs.
+              (tel/log! {:level :debug
+                         :id ::declared-env
+                         :data {:ext label
+                                :declared (vec (map str (or names [])))
+                                :resolved (vec (sort (keys resolved)))}
+                         :msg (str "extension '"
+                                   label
+                                   "' declared env: "
+                                   (str/join ", " (sort (keys resolved)))
+                                   " resolved")})
+              (json/write-json-str resolved))))
+    (python-host/install-sync-tools! sess @g pyext/install-sync-tool!)
+    sess))
 
 (defn ^:no-doc bind-test-host!
-  "Bind the ordinary trusted-extension host, except that a test may not mount a
+  "Install the ordinary trusted-extension host, except that a test may not mount a
    live view into the session running `run_tests`. Unit tests supply an in-memory
    host when they need to exercise live envelopes; accidentally reaching this
    callback fails the test at the boundary instead of publishing test work to a
    human channel and filing its record as a conversation artifact."
-  [^Context ctx label]
-  (bind-host! ctx label)
-  (.putMember
-    (.getBindings ctx "python")
-    "__vis_host_live__"
-    (->executable
-      (fn [& _]
-        (throw (ex-info "vis.live is not available while running tests; use an in-memory test host"
-                        {:type :vis/test-live-refused})))))
-  ctx)
+  [sess label]
+  (bind-host! sess label)
+  (python-host/install-sync-tools!
+    sess
+    {"__vis_host_live__"
+     (fn [& _]
+       (throw (ex-info "vis.live is not available while running tests; use an in-memory test host"
+                       {:type :vis/test-live-refused})))}
+    pyext/install-sync-tool!)
+  sess)
 
 (def ^:no-doc host-member-names
   "Every `__vis_host_*` global the bootstrap reads out of a context's bindings, in
@@ -537,7 +615,7 @@
   (contract/host-globals))
 
 (defn ^:no-doc bind-inert-host!
-  "Bind every host member as a REFUSAL, so the `vis` module can be BUILT without
+  "Install every host member as a REFUSAL, so the `vis` module can be BUILT without
    any of it being usable.
 
    `vis-agent extension check` needs the real module -- it reads the builders and
@@ -551,18 +629,21 @@
    settles it `undeliverable`, and `__vis_host_live__` to one that normalizes a
    view and mounts nothing, so a form is judged by asking for it and a view by
    opening it while nobody is asked and nothing is shown."
-  ([^Context ctx] (bind-inert-host! ctx nil))
-  ([^Context ctx overrides]
-   (let [g (.getBindings ctx "python")]
-     (doseq [member host-member-names]
-       (.putMember g
-                   ^String member
-                   (->executable
-                     (or (get overrides member)
-                         (fn [& _]
-                           (throw (ex-info
-                                    (str "host call " member " is not available while checking")
-                                    {:type :vis/extension-check-inert :member member}))))))))))
+  ([sess] (bind-inert-host! sess nil))
+  ([sess overrides]
+   (python-host/install-sync-tools!
+     sess
+     (into {}
+           (map (fn [member]
+                  [member
+                   (or (get overrides member)
+                       (fn [& _]
+                         (throw (ex-info
+                                  (str "host call " member " is not available while checking")
+                                  {:type :vis/extension-check-inert :member member}))))]))
+           host-member-names)
+     pyext/install-sync-tool!)
+   sess))
 
 ;; Adapters — Python callables wrapped as the Clojure fns the extension
 ;; registry expects. Every adapter is defensive: a closed context (after
@@ -594,9 +675,13 @@
    session. `vis.jailed_shell` does not depend on this context: it reads disk at
    each spawn.
    Returns the `->clj` view of the result."
-  [ext-name env ^Context ctx ^Value f args]
+  [ext-name env ctx f args]
   (extension/with-context {:ext (or extension/*current-extension* {:ext/name ext-name}) :env env}
-                          (call-py ctx f args)))
+                          ;; Both host doors run on threads that were never in Clojure — the one
+                          ;; the interpreter pins every call to, and a `par` worker — so the context
+                          ;; bound above travels to them explicitly, or `vis.state` reaches its door
+                          ;; with no extension bound and refuses the call.
+                          (python-host/conveying ctx (call-py ctx f args))))
 
 (defn- sctx->env
   "Minimal state env for a slash callback: the persistence handle and session
@@ -629,22 +714,17 @@
   false)
 
 (defn- context-dead?
-  "True when `ctx` can no longer run guest code - it was cancelled or closed
+  "True when `ctx` can no longer run guest code - its session was closed
    underneath callables that were captured over it.
 
-   ASKED, never parsed. A torn-down context refuses at EVERY entry point, so the
-   cheapest possible handshake answers the question: `Context.asValue` of a host
-   long enters the context and executes nothing. It returns on a live context,
-   throws `PolyglotException` (`.isCancelled`) on a cancelled one and
-   `IllegalStateException` (\"The Context is already closed.\") on a closed one -
-   no error-message matching anywhere. Two consequences worth keeping: an
-   ordinary Python error leaves the context ALIVE, so it never triggers healing,
-   and an `interrupt` (issue #102) leaves it alive too, so an interrupted call
-   still surfaces as an interrupt. The probe runs under the same `locking ctx`
-   every call uses (reentrant), so a live context that is merely busy on another
-   thread is never mistaken for a dead one."
-  [^Context ctx]
-  (or (nil? ctx) (locking ctx (try (.asValue ctx (long 1)) false (catch Throwable _ true)))))
+   ASKED of the loader, not of the interpreter. A session is a NAME in the one
+   embedded interpreter, and a name nobody knows is not an error there - it is a
+   fresh empty namespace, which would answer every later call with `NameError`
+   instead of saying the extension is gone. So the opener keeps the set: a name
+   this namespace has closed is dead, and an ordinary Python error leaves the
+   session alive, so it never triggers healing."
+  [ctx]
+  (or (nil? ctx) (not (contains? @live-contexts ctx))))
 
 (declare live-symbol-fn)
 
@@ -662,7 +742,7 @@
    `[ext-name sym]` - rebuilding the file's context when the registry itself is
    stale - and retry the call ONCE. A live context means a genuine Python error,
    which stays a plain failure envelope."
-  [ext-name sym ^Context ctx ^Value pyfn]
+  [ext-name sym ctx pyfn]
   (fn [& args]
     (let [argv (vec args)]
       (try (extension/success {:result (call-py-ext ext-name nil ctx pyfn argv)})
@@ -676,7 +756,7 @@
                  {:result nil :throwable t :metadata {:extension ext-name :tool (str sym)}})))))))
 
 (defn- activation-adapter
-  [ext-name ^Context ctx ^Value pyfn]
+  [ext-name ctx pyfn]
   (fn [env]
     (try (boolean (call-py-ext ext-name env ctx pyfn [(slim-env env)]))
          (catch Throwable t
@@ -686,7 +766,7 @@
            false))))
 
 (defn- prompt-adapter
-  [ext-name ^Context ctx ^Value pyfn]
+  [ext-name ctx pyfn]
   (fn [env]
     (try (let [r (call-py-ext ext-name env ctx pyfn [(slim-env env)])]
            (when (string? r) r))
@@ -703,7 +783,7 @@
    down — the same contract as a Clojure `:ext/ctx-fn` (Python dict keys are
    strings, so this holds naturally). Non-map / error => empty contribution;
    bad optional context never blocks a turn."
-  [ext-name ^Context ctx ^Value pyfn]
+  [ext-name ctx pyfn]
   (fn [env]
     (try (let [r (call-py-ext ext-name env ctx pyfn [(slim-env env)])]
            (if (map? r) (plainify r) {}))
@@ -716,7 +796,7 @@
   "`:slash/run-fn` for one `vis.slash(...)` entry. The Python callable
    receives `{'channel', 'args', 'raw', 'session_id'}` and returns
    `vis.ok(...)` / `vis.err(...)` (or a plain string / None)."
-  [ext-name ^Context ctx ^Value pyfn]
+  [ext-name ctx pyfn]
   (fn [sctx]
     ;; The payload crosses INTO Python (string keys); the response crossed
     ;; BACK via `->clj` (string keys as well).
@@ -750,7 +830,7 @@
    op with a failure envelope the model reads, returning None allows it.
    A hook error fails OPEN (op runs) — a broken guard must not brick the
    loop."
-  [ext-name ^Context ctx ^Value pyfn]
+  [ext-name ctx pyfn]
   (fn [env op-kw args next-fn]
     (let [res (try (call-py-ext ext-name env ctx pyfn [(op-hook-payload op-kw args)])
                    (catch Throwable t
@@ -776,7 +856,7 @@
    A hook error fails CLOSED — the opposite of `guard-adapter` — because a
    boundary that opens when its guard breaks is not a boundary. That asymmetry is
    the whole reason a gate is its own shape."
-  [ext-name ^Context ctx ^Value pyfn]
+  [ext-name ctx pyfn]
   (fn [env op-kw gate-ctx]
     (try (let [payload
                (reduce-kv (fn [m k v]
@@ -802,7 +882,7 @@
   "Python `phase='after'` hook -> a host :after op hook. Observe-only:
    the callable receives `{'op', 'args', 'result'}`; its return value is
    ignored and the original result always flows on."
-  [ext-name ^Context ctx ^Value pyfn]
+  [ext-name ctx pyfn]
   (fn [env op-kw args result]
     (try (call-py-ext ext-name env ctx pyfn [(op-hook-payload op-kw args (:result result))])
          (catch Throwable t
@@ -819,7 +899,7 @@
    (`'phase'` distinguishes them). Returning `vis.block(reason)` DENIES (a denied
    response yields a 403 instead of the body), returning None allows it.
    FAIL-CLOSED: a hook error DENIES (a security filter must never fail open)."
-  [ext-name ^Context ctx ^Value pyfn]
+  [ext-name ctx pyfn]
   (fn [c]
     (let [pyctx
           (cond-> {"phase" (some-> (:phase c)
@@ -873,7 +953,7 @@
   "`spec` is a Python registration dict — STRING keys (strings-only boundary).
    A Python-declared symbol is a plain sandbox function: its `doc` is what
    `doc(name)` answers, and it is never advertised as a provider tool."
-  [ext-name alias-sym ^Context ctx spec]
+  [ext-name alias-sym ctx spec]
   (let [sym
         (clojure.core/symbol (symbol-base-name alias-sym (str (get spec "name"))))
 
@@ -898,7 +978,7 @@
                             opts)))
 
 (defn- ->slash-spec
-  [ext-name ^Context ctx spec]
+  [ext-name ctx spec]
   (let [doc
         (get spec "doc")
 
@@ -914,7 +994,7 @@
       (assoc :slash/usage usage))))
 
 (defn- ->op-hook-entries
-  [ext-name ^Context ctx spec]
+  [ext-name ctx spec]
   (let [before?
         (= "before" (str (get spec "phase")))
 
@@ -966,13 +1046,12 @@
 (defn- as-bool [v] (when (some? v) (boolean v)))
 
 (defn- as-flag
-  "A DECLARED Python boolean: true only when the author actually wrote `True`. A
-   polyglot value is asked for its boolean rather than coerced by truthiness — a
-   `Value` wrapping `False` is still an object, so `(boolean v)` would say yes."
+  "A DECLARED Python boolean: true only when the author actually wrote `True`.
+
+   Never truthiness. The value arrives as JSON, so anything that is not a real
+   boolean - a string, a dict, a sealed callable - declared nothing."
   [v]
-  (cond (boolean? v) v
-        (instance? Value v) (and (.isBoolean ^Value v) (.asBoolean ^Value v))
-        :else false))
+  (boolean (and (boolean? v) v)))
 
 (defn- as-long [v] (when (number? v) (long v)))
 
@@ -1104,7 +1183,7 @@
    rejected token), so both a 0-param `def refresh_token():` and a 1-param
    `def refresh_token(rejected):` work. A genuine 0-arg failure re-throws (the
    caller logs it and yields nil)."
-  [ext-name ^Context ctx ^Value pyfn args]
+  [ext-name ctx pyfn args]
   (loop [args (vec args)]
     (let [r (try {:ok (call-py-ext ext-name nil ctx pyfn args)}
                  (catch Throwable t (if (seq args) {:retry (vec (butlast args))} (throw t))))]
@@ -1115,7 +1194,7 @@
    result is plainified and DECODED against `fields`, the shape that slot's host
    schema declares. A raised Python error is logged and surfaces as nil so a
    broken provider fn never bricks router build / auth."
-  [ext-name ^Context ctx ^Value pyfn fields]
+  [ext-name ctx pyfn fields]
   (fn [& args]
     (try (decoded-result fields (plainify (call-provider-fn ext-name ctx pyfn args)))
          (catch Throwable t
@@ -1138,12 +1217,12 @@
    success-signal string to its keyword (so the silent-success path matches),
    passes `True`/`None` through, and leaves anything else as-is. A raised Python
    error propagates — the caller (TUI/CLI) frames it as an auth failure."
-  [ext-name ^Context ctx ^Value pyfn]
+  [ext-name ctx pyfn]
   (fn [print!]
     (let [printer
-          (->executable (fn [line]
-                          (print! (str line))
-                          nil))
+          (fn [line]
+            (print! (str line))
+            nil)
 
           r
           (call-py-ext ext-name nil ctx pyfn [printer])]
@@ -1155,7 +1234,7 @@
    `() -> guidance lines` shown in the API-key dialog body. Result coerces to a
    vector of strings (a bare string becomes a one-line vector); anything else,
    or an error, yields nil so a broken prompt never blocks the dialog."
-  [ext-name ^Context ctx ^Value pyfn]
+  [ext-name ctx pyfn]
   (fn []
     (try (let [r (call-py-ext ext-name nil ctx pyfn [])]
            (cond (sequential? r) (mapv str r)
@@ -1188,7 +1267,7 @@
    each returned model goes through `->svar-model`. A non-sequential return or
    any error yields nil, which the loop's `enrich-provider-models` treats as 'no
    enrichment' — the router still builds on svar's conservative defaults."
-  [ext-name ^Context ctx ^Value pyfn]
+  [ext-name ctx pyfn]
   (fn [svar-provider router-opts]
     (try (let [r (call-py-ext ext-name
                               nil
@@ -1209,7 +1288,7 @@
    INTO Python as a plain string-keyed dict (`stringify-deep`); the return is
    ignored (the contract is nil). Errors are logged and swallowed so a broken
    hook never blocks provider selection."
-  [ext-name ^Context ctx ^Value pyfn]
+  [ext-name ctx pyfn]
   (fn [event]
     (try (call-py-ext ext-name nil ctx pyfn [(stringify-deep event)])
          (catch Throwable t
@@ -1221,11 +1300,11 @@
 (defn- ->provider-entry
   "`spec` is a Python `vis.provider(...)` dict — STRING keys. Each callable slot
    is adapted with the field table its own host schema declares."
-  [ext-name ^Context ctx spec]
+  [ext-name ctx spec]
   (let [adapt
         (fn [pk fields]
           (let [v (get spec pk)]
-            (when (instance? Value v) (provider-fn-adapter ext-name ctx v fields))))
+            (when (fn? v) (provider-fn-adapter ext-name ctx v fields))))
 
         preset
         (decode preset-fields (get spec "preset"))]
@@ -1258,24 +1337,24 @@
       (adapt "refresh_token_fn" token-fields)
       (assoc :provider/refresh-token-fn (adapt "refresh_token_fn" token-fields))
 
-      (instance? Value (get spec "auth_fn"))
+      (fn? (get spec "auth_fn"))
       (assoc :provider/auth-fn (auth-fn-adapter ext-name ctx (get spec "auth_fn")))
 
-      (instance? Value (get spec "auth_prompt_fn"))
+      (fn? (get spec "auth_prompt_fn"))
       (assoc :provider/auth-prompt-fn
         (auth-prompt-fn-adapter ext-name ctx (get spec "auth_prompt_fn")))
 
-      (instance? Value (get spec "enrich_models_fn"))
+      (fn? (get spec "enrich_models_fn"))
       (assoc :provider/enrich-models-fn
         (enrich-models-fn-adapter ext-name ctx (get spec "enrich_models_fn")))
 
-      (instance? Value (get spec "on_selected_fn"))
+      (fn? (get spec "on_selected_fn"))
       (assoc :provider/on-selected-fn
         (on-selected-fn-adapter ext-name ctx (get spec "on_selected_fn"))))))
 
 (defn- registration->spec
   "`reg` is the dict handed to Python `vis.register(...)` — STRING keys."
-  [^Context ctx reg]
+  [ctx reg]
   (let [ext-name
         (str (get reg "name"))
 
@@ -1334,13 +1413,13 @@
       (string? prompt)
       (assoc :ext/prompt-fn prompt)
 
-      (instance? Value prompt)
+      (fn? prompt)
       (assoc :ext/prompt-fn (prompt-adapter ext-name ctx prompt))
 
       (some? activation)
       (assoc :ext/activation-fn (activation-adapter ext-name ctx activation))
 
-      (instance? Value ctx-fn)
+      (fn? ctx-fn)
       (assoc :ext/ctx-fn (ctx-adapter ext-name ctx ctx-fn))
 
       (seq providers)
@@ -1544,15 +1623,19 @@
     {:dir dest :code-sha (code-sha dest)}))
 
 (defn ^:no-doc close-context!
-  "Tear down a context this namespace owns. Thin wrapper over
-   `sandbox-resources/dispose!`, which is where the ORDER lives — scope, then
-   Context, then Engine — so no teardown site has to remember it.
+  "Tear down an extension session this namespace owns: its host bindings go, then
+   its namespace in the interpreter, and its name is marked dead so a captured
+   callable is refused instead of quietly reaching an empty namespace.
 
-   Every close here tears down a context that is already superseded, dead or
+   Every close here tears down a session that is already superseded, dead or
    being replaced, so a failing close must never take the load, or the failure
    being reported, down with it."
   [ctx]
-  (res/dispose! ctx))
+  (when ctx
+    (swap! live-contexts disj ctx)
+    (try (python-host/forget-session! ctx) (catch Throwable _ nil))
+    (try (pyext/close-session! ctx) (catch Throwable _ nil)))
+  nil)
 
 (defn- load-file!
   "Evaluate one extension file in a fresh trusted context and register the
@@ -1592,34 +1675,46 @@
 
      (try (bind-host! ctx (.getName f))
           (locking ctx
-            (.eval ctx "python" ^String bootstrap-python)
+            (pyext/exec! ctx bootstrap-python)
             ;; Prepend the FROZEN copy of the extension file's own dir to
             ;; sys.path so sibling packages/modules import cleanly, and import
             ;; the admitted bytes rather than whatever disk holds by the time the
-            ;; import runs. Path crosses as a bound member (no string-escaping
-            ;; into a Python snippet).
-            (let [g (.getBindings ctx "python")]
-              (.putMember g "__vis_ext_dir__" ^String (.getCanonicalPath snap))
-              (.eval ctx
-                     "python"
-                     (str "import sys as __vis_pathsys__\n"
-                          "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
-                          "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n")))
-            (.eval ctx (.build (Source/newBuilder "python" ^String source (.getName f)))))
-          (let [g
-                (.getBindings ctx "python")
-
-                reg
-                (call-py ctx (.getMember g "__vis_registration__") [])]
-
+            ;; import runs. The path crosses as a Python string LITERAL, encoded
+            ;; by the JSON writer, never spliced raw into a snippet.
+            ;;
+            ;; `sys.modules` is ONE table for the whole interpreter, so a sidecar
+            ;; module imported before a `/reload` would answer every later import
+            ;; of that name with the bytes of the tree it came from - the very
+            ;; staleness freezing exists to prevent. A module that came out of
+            ;; SOME frozen tree other than this load's own is therefore evicted
+            ;; here, and dead trees drop off `sys.path` with it.
+            (pyext/exec!
+              ctx
+              (str "import sys as __vis_pathsys__\n"
+                   "import os as __vis_pathos__\n"
+                   "__vis_ext_dir__ = "
+                   (python-string-literal (.getCanonicalPath snap))
+                   "\n"
+                   "__vis_frozen_home__ = "
+                   (python-string-literal (.getCanonicalPath ^File @snapshot-home))
+                   "\n"
+                   "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
+                   "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
+                   "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
+                   "                          if not __vis_p__.startswith(__vis_frozen_home__)\n"
+                   "                          or __vis_pathos__.path.isdir(__vis_p__)]\n"
+                   "for __vis_name__, __vis_mod__ in list(__vis_pathsys__.modules.items()):\n"
+                   "    __vis_file__ = getattr(__vis_mod__, '__file__', None) or ''\n"
+                   "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
+                   "            and not __vis_file__.startswith(__vis_ext_dir__)):\n"
+                   "        del __vis_pathsys__.modules[__vis_name__]\n"))
+            (pyext/exec! ctx source))
+          (let [reg (unseal ctx (run-in ctx "__vis_registration__()"))]
             (when (nil? reg)
               (throw (ex-info (str (.getName f) " never called vis.extension(...)")
                               {:type ::no-registration :file path})))
-            (let [spec
-                  (registration->spec ctx reg)
-
-                  validated
-                  (extension/register-extension! spec)]
+            (let [spec (registration->spec ctx reg)
+                  validated (extension/register-extension! spec)]
 
               (tel/log! {:level :info
                          :id ::loaded
@@ -1652,7 +1747,7 @@
 
    Returns nil when the extension is gone, its file changed, or the rebuild
    fails; the caller then reports the original failure."
-  [ext-name sym ^Context dead-ctx]
+  [ext-name sym dead-ctx]
   (try
     (when-let [[path entry] (first (filter (fn [[_ e]]
                                              (= ext-name (:ext-name e)))
@@ -1762,7 +1857,7 @@
          ;; file that FAILS keeps its last-good entry — still registered, context
          ;; still open — untouched. So a failed reload never leaves the stale
          ;; old+dead mix issue #44 reported (old symbols bound to a CLOSED
-         ;; context → "Context execution was cancelled", new symbols missing):
+         ;; namespace → every door gone, new symbols missing):
          ;; the live surface holds the working last-good module wholesale.
          ;; `vis-agent doctor` (a fresh process, no last-good) and a live `/reload`
          ;; run the SAME loader and diverge only in the fallback for a failed
@@ -1777,7 +1872,7 @@
                     ;; name supersedes an earlier one at a DIFFERENT path — the
                     ;; registry already swapped the registration; close the
                     ;; superseded context so its adapters can't linger.
-                    (doseq [[opath {oname :ext-name ^Context octx :context}] @loaded
+                    (doseq [[opath {oname :ext-name octx :context}] @loaded
                             :when (and (= oname ext-name) (not= opath path))]
 
                       (close-context! octx)
@@ -1846,7 +1941,7 @@
   ([] (ensure-python-extensions-loaded! nil))
   ([opts]
    ;; The slash catalog and the first environment can arrive on separate gateway
-   ;; request threads. Only one of them may construct GraalPy contexts.
+   ;; request threads. Only one of them may open extension sessions.
    (locking ensure-load-lock
      (if (nil? @last-fingerprint)
        (load-python-extensions! opts)
@@ -2142,7 +2237,7 @@
            :slash/run-fn reload-slash}
           {:slash/name "test"
            :slash/doc
-           "Run every Python extension test (test_*.py / *_test.py) in a trusted GraalPy context."
+           "Run every Python extension test (test_*.py / *_test.py) in a trusted extension session."
            :slash/usage "/test"
            :slash/run-fn test-slash}
           {:slash/name "net-probe"
@@ -2154,7 +2249,7 @@
          [{:cmd/name "test"
            :cmd/internal? true
            :cmd/doc
-           "Run every Python extension test (test_*.py / *_test.py) in a trusted GraalPy context."
+           "Run every Python extension test (test_*.py / *_test.py) in a trusted extension session."
            :cmd/usage "vis-agent extension test"
            :cmd/examples ["vis-agent extension test"]
            :cmd/run-fn test-cli!}]

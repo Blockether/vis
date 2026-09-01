@@ -312,23 +312,22 @@
           (expect (not (str/includes? text "apropos")))
           (expect (not (str/includes? text "doc(name)")))
           (expect (str/includes? text "Auto-imported by `python_execution`"))
-          (expect (str/includes? text "Preinstalled shim modules"))
-          (expect (str/includes? text "import numpy as np"))
-          (expect (str/includes? text "never auto-created"))
+          (expect (str/includes? text "REAL CPython with pip"))
+          (expect (str/includes? text "`numpy` IS numpy"))
+          (expect (str/includes? text "Modules Vis publishes ITSELF"))
           (doseq [module ["PIL" "brotli" "fontTools" "numpy" "zoneinfo"]]
             (expect (str/includes? text (str "`" module "`"))))
-          (expect (str/includes? text "Prebound shim globals"))
+          (expect (str/includes? text "Prebound globals"))
           (doseq [global ["attach" "list_attachments" "get_attachment" "read_attachment"
                           "show_attachment"]]
             (expect (str/includes? text (str "`" global "`"))))
           (expect (not (str/includes? text "`attachments`")))
-          ;; NAMES ALONE WOULD BE A TRAP — every shim is a REIMPLEMENTATION — so the
-          ;; block still says so, but it POINTS at the page instead of pushing one
-          ;; hand-written bullet per shim (5.7 KB) into every request. `doc("numpy")`
-          ;; answers from the module's own Python `__doc__` plus the members it lends.
-          (expect (str/includes? text "REIMPLEMENTATION"))
-          (expect (str/includes? text "doc(\"numpy\")"))
-          (expect (str/includes? text "doc(\"numpy.linalg.solve\")"))
+          ;; NAMES ARE A TRAP IN BOTH DIRECTIONS — the sandbox is real CPython, so
+          ;; `numpy` is numpy, while a name Vis publishes itself reaches the HOST and
+          ;; never PyPI — so the block says which is which and POINTS at the page
+          ;; instead of pushing one hand-written bullet per door into every request.
+          (expect (str/includes? text "never PyPI"))
+          (expect (str/includes? text "doc(\"<name>\")"))
           (expect (not (str/includes? text "- `numpy`")))
           (expect (not (str/includes? text "- `brotli`")))
           ;; With no shell layer active the block must SAY the process surface is

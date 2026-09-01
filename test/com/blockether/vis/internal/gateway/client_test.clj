@@ -113,7 +113,7 @@
                @request))))))
 
 ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: the TUI
-;; had no gateway-owned catalog and initialized a second GraalPy runtime locally.
+;; had no gateway-owned catalog and initialized a second CPython runtime locally.
 (deftest session-slashes-uses-the-gateway-catalog-with-a-cold-load-timeout
   (let [calls (atom [])]
     (with-redefs-fn {(rv 'ensure-gateway!) (constantly fake-entry)

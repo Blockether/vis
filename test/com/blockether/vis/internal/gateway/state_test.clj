@@ -3920,7 +3920,7 @@
   ;; Regression: DELETE /v1/sessions/:id ran the ENTIRE live-session teardown on
   ;; the request thread — `resources/stop-all!` (background shells, managed
   ;; REPLs, each stop-fn free to block) and then `lp/close!` (up to 5s waiting on
-  ;; the turn lock before disposing the polyglot Context). Deleting a session the
+  ;; the turn lock before disposing the Python session). Deleting a session the
   ;; user had just worked in held the HTTP response for seconds, and the
   ;; companion's non-dismissable "Deleting..." modal froze the whole sessions
   ;; screen behind it. The delete must cost the DB removal, nothing more.

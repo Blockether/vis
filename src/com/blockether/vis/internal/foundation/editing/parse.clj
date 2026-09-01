@@ -110,9 +110,8 @@
    capping the WALK would make `(count errors)` lie, and that count is what says
    whether one line broke or the file did.
 
-   Must equal `sandbox-fs/max-reported-syntax-errors`, which is how many a
-   refusal names. Below it, shown rows arrive undescribed; above it, we describe
-   rows nobody sees."
+   Below it, shown rows arrive undescribed; above it, we describe rows nobody
+   sees."
   5)
 
 (defn- fault-delimiter

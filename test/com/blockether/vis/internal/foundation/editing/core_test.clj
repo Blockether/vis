@@ -4481,8 +4481,8 @@
             (write-temp! "cat/sandbox.txt" "alpha\nbeta\ngamma\n")
 
             ctx
-            (:python-context (ep/create-python-context (extension/builtin-sandbox-bindings
-                                                         (constantly nil))))
+            (:python-context (tpc/new-context (extension/builtin-sandbox-bindings (constantly
+                                                                                    nil))))
 
             result
             (ep/run-python-block

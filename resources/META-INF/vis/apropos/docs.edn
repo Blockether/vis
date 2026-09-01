@@ -4,7 +4,7 @@
 [
  {:name "index", :kind "doc", :resource "vis-docs/index.md"}
  {:name "token-optimization", :kind "doc", :resource "vis-docs/token-optimization.md"}
- {:name "graalpython", :kind "doc", :resource "vis-docs/graalpython.md"}
+ {:name "python-sandbox", :kind "doc", :resource "vis-docs/python-sandbox.md"}
  {:name "jail", :kind "doc", :resource "vis-docs/jail.md"}
  {:name "content-blocks", :kind "doc", :resource "vis-docs/content-blocks.md"}
  {:name "jvm-native-image", :kind "doc", :resource "vis-docs/jvm-native-image.md"}

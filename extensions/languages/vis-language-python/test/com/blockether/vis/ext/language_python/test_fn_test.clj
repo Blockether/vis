@@ -1,24 +1,30 @@
 (ns com.blockether.vis.ext.language-python.test-fn-test
-  "run_tests with {\"language\": \"python\"}: path resolution + the default hermetic GraalPy
-   backend that discovers a `tests/` tree and runs it through the built-in
-   pytest shim. Requiring `shim-pytest` registers the shim so the runner can
-   pull its preamble; the GraalPy engine is exercised end to end."
+  "run_tests with {\"language\": \"python\"}: path resolution + the default hermetic
+   backend that discovers a `tests/` tree and runs it through the embedded
+   interpreter's own `pytest`, end to end."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.ext.language-python.core :as core]
             [com.blockether.vis.ext.language-python.interpreter :as interp]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.python-project :as pyproj]
-            ;; side-effecting require: registers the built-in pytest shim so
-            ;; `extension/sandbox-shims` can hand the runner its preamble.
-            [com.blockether.vis.internal.foundation.shim-pytest]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
 (defn- tmp-dir
+  "A throwaway project INSIDE the working directory, which is what the sandbox
+   confines the interpreter to.
+
+   The embedded interpreter's filesystem policy is PROCESS state, not session
+   state: once any session is confined, `os.scandir` of the system temp folder is
+   refused for every session after it — so a fixture in /tmp is a directory the
+   guest genuinely may not read. The confinement is the product, not the obstacle."
   ^java.io.File []
-  (.toFile (Files/createTempDirectory "vis-py-test-fn-" (into-array FileAttribute []))))
+  (let [target (doto (java.io.File. "target") .mkdirs)]
+    (.toFile (Files/createTempDirectory (.toPath target)
+                                        "vis-py-test-fn-"
+                                        (into-array FileAttribute [])))))
 
 (defn- cleanup
   [^java.io.File root]
@@ -93,14 +99,14 @@
 ;; id it cannot honor is refused instead of running the file and reporting that
 ;; as the selection the caller asked for.
 (defdescribe
-  graalpy-node-id-refusal-test
+  vispython-node-id-refusal-test
   (it "refuses a node id in the sandbox and names the runner that reads it"
       (let [root (tmp-dir)]
         (try (.mkdirs (io/file root "tests"))
              (spit (io/file root "tests/test_math.py") "def test_adds():\n    assert True\n")
              (let [e (try (core/py-test-fn {:workspace/root (.getPath root) :session-id "sid"}
                                            {"paths" ["tests/test_math.py::test_adds"]
-                                            "runner" "graalpy"})
+                                            "runner" "vispython"})
                           nil
                           (catch clojure.lang.ExceptionInfo e e))]
                (expect (= :py/bad-args (:type (ex-data e))))
@@ -108,7 +114,7 @@
              (finally (cleanup root))))))
 
 (defdescribe
-  graalpy-backend-test
+  vispython-backend-test
   "The default hermetic backend discovers a tests/ tree and reports per-test
    counts derived from the shim's records."
   (it "runs a discovered tests/ tree and reports passed + failed counts"
@@ -117,11 +123,11 @@
              (spit (io/file root "tests" "test_sample.py")
                    (str "def test_ok():\n" "    assert 1 + 1 == 2\n\n"
                         "def test_bad():\n" "    assert 1 == 2\n"))
-             (let [r (core/py-test-fn {:workspace/root (.getPath root)} {"runner" "graalpy"})
+             (let [r (core/py-test-fn {:workspace/root (.getPath root)} {"runner" "vispython"})
                    res (:result r)]
 
                (expect (:success? r))
-               (expect (= "graalpy" (get res "runner")))
+               (expect (= "vispython" (get res "runner")))
                (expect (= 1 (get res "files")))
                (expect (= 1 (get res "pass")))
                (expect (= 1 (get res "fail")))
@@ -283,13 +289,13 @@
    `environment`, CONFIG says `runner`, and neither is read in the other's place."
   (it "defaults to the hermetic sandbox"
       (with-redefs [interp/configured-runner (constantly nil)]
-        (expect (= "graalpy" (select-runner {})))))
+        (expect (= "vispython" (select-runner {})))))
   (it "honors python.runner from merged config"
       (with-redefs [interp/configured-runner (constantly "project")]
         (expect (= "project" (select-runner {})))))
   (it "lets an explicit runner beat the configured default"
       (with-redefs [interp/configured-runner (constantly "project")]
-        (expect (= "graalpy" (select-runner {"runner" "graalpy"})))))
+        (expect (= "vispython" (select-runner {"runner" "vispython"})))))
   (it "routes runner/project to the project interpreter"
       (expect (= "project" (select-runner {"runner" "project"}))))
   (it "reads no compatibility alias in place of runner"
@@ -299,16 +305,16 @@
       ;; docs, the config and the result key saying `runner` while the call
       ;; read only `environment`. One spelling now; aliases select nothing.
       (with-redefs [interp/configured-runner (constantly nil)]
-        (expect (= "graalpy" (select-runner {"environment" "project"})))
-        (expect (= "graalpy" (select-runner {"interpreter" "python3"}))))))
+        (expect (= "vispython" (select-runner {"environment" "project"})))
+        (expect (= "vispython" (select-runner {"interpreter" "python3"}))))))
 
 (defdescribe docs-teach-the-key-the-code-reads-test
-             ;; graalpython.md taught `{"runner": "project"}` while the call read only
-             ;; `environment`: a model following the page silently stayed in the hermetic
-             ;; sandbox. The pages and the code must keep naming the same key.
-             (it "graalpython.md and configuration.md teach `runner`, no dead spelling"
+             ;; The sandbox page taught `{"runner": "project"}` while the call read only
+             ;; `environment`: a model following the page silently stayed in the sandbox.
+             ;; The pages and the code must keep naming the same key.
+             (it "python-sandbox.md and configuration.md teach `runner`, no dead spelling"
                  (let [page
-                       (slurp (io/resource "vis-docs/graalpython.md"))
+                       (slurp (io/resource "vis-docs/python-sandbox.md"))
 
                        conf
                        (slurp (io/resource "vis-docs/configuration.md"))]
@@ -331,7 +337,7 @@
                                                               :warning
                                                               "project layout not read: boom"})]
                (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                                   {"runner" "graalpy"}))]
+                                                   {"runner" "vispython"}))]
                  (expect (= "project layout not read: boom" (get res "warning")))
                  (expect (= 1 (get res "pass")))))
              (finally (cleanup root)))))
@@ -340,7 +346,7 @@
         (try (.mkdirs (io/file root "tests"))
              (spit (io/file root "tests" "test_sample.py") "def test_ok():\n    assert True\n")
              (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                                 {"runner" "graalpy"}))]
+                                                 {"runner" "vispython"}))]
                (expect (nil? (get res "warning"))))
              (finally (cleanup root))))))
 
@@ -458,7 +464,7 @@
                    (str "def test_ok():\n" "    assert True\n\n"
                         "def test_bad():\n" "    assert 1 == 2\n"))
              (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                                 {"runner" "graalpy"}))
+                                                 {"runner" "vispython"}))
                    f (first (get res "failures"))]
 
                (expect (= 1 (count (get res "failures"))))

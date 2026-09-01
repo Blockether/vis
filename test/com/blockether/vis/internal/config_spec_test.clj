@@ -107,10 +107,8 @@
    "db_spec" {"backend" "sqlite" "path" "/tmp/vis.db"}
    "grep" {"include_gitignored_paths" ["repositories/"] "always_exclude" ["target/"]}
    "toggles" {"reasoning_level" "deep"}
-   "python" {"resource_cache" "~/.vis/cache/graal-resources"
-             "source_paths" ["src" "lib/vendor"]
-             "interpreter" [".venv/bin/python"]
-             "runner" "project"}
+   "python"
+   {"source_paths" ["src" "lib/vendor"] "interpreter" [".venv/bin/python"] "runner" "project"}
    "tui_settings" {"theme_name" "dark" "contributors_disabled" ["voice"]}
    "mcp" {"servers" {"local" {"transport" "stdio"
                               "command" "npx"
@@ -222,9 +220,8 @@
                    (assoc-in full-config ["jail" "network" "rules" 0 "ports"] [70000]))))
     (expect (not (config-spec/valid?
                    (assoc-in full-config ["jail" "network" "rules" 0 "ports"] ["443"]))))
-    ;; GraalPy resource cache: closed block, non-blank path only.
+    ;; Python block: closed, so an unknown key is refused.
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "cache"] "/x"))))
-    (expect (not (config-spec/valid? (assoc-in full-config ["python" "resource_cache"] ""))))
     ;; Extra import roots: a list of strings, never a bare string or a number.
     (expect (config-spec/valid? (assoc-in full-config ["python" "source_paths"] [])))
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "source_paths"] "src"))))
@@ -235,7 +232,7 @@
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "interpreter"] [1]))))
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "interpreter"] ""))))
     ;; Runner: a closed enum of the two execution backends.
-    (expect (config-spec/valid? (assoc-in full-config ["python" "runner"] "graalpy")))
+    (expect (config-spec/valid? (assoc-in full-config ["python" "runner"] "vispython")))
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "runner"] "uv"))))
     ;; Titling: a closed block with one enum (Blockether/vis#71). There is no
     ;; `scheduling` key any more — the LLM upgrade is ALWAYS after the turn.

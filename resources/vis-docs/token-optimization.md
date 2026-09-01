@@ -167,6 +167,6 @@ Vis spends context on decisions and proof, not repeated catalogs, whole files, i
 
 ## See also
 
-- [GraalPython sandbox](graalpython.md) — the runtime the model's one tool executes in.
+- [Python sandbox](python-sandbox.md) — the runtime the model's one tool executes in.
 - [Extending Vis](extending.md) — adding your own tools, so a step costs one call instead of five.
 - [Skills](skills.md) — instructions pulled on demand instead of pushed into every request.

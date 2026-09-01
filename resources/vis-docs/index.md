@@ -40,7 +40,7 @@ Vis hands the model exactly ONE tool — `python_execution` — and everything e
 a function inside it:
 
 - **The sandbox** — every capability (`grep`, `cat`, `patch`, `shell`, `attach`, an
-  MCP tool) is a bare Python name in an embedded GraalPython runtime. The
+  MCP tool) is a bare Python name in an embedded CPythonthon runtime. The
   agent writes Python that runs many of them, filters and chains their output, and
   `print()`s only the slice worth keeping. Ten file reads, one search, and a
   transform happen in a single step — and the context only ever sees what the agent
@@ -168,7 +168,7 @@ because its native-image analysis does not converge within memory.
 
 - **Context as an environment.** The model writes code to query its world and keeps state in named vars and a SQLite database, not in the token budget. It sees exactly what it needs; everything else is one call away.
 - **Token-efficient by construction.** Structure is read before bytes, edits happen by name rather than by diff, and large intermediate values live in vars instead of the prompt.
-- **A real runtime.** An embedded GraalPython sandbox executes the agent's actions, a JVM core can compile to a native runtime, and tree-sitter gives language-aware reading and editing across 30+ languages.
+- **A real runtime.** An embedded Python sandbox executes the agent's actions, a JVM core can compile to a native runtime, and tree-sitter gives language-aware reading and editing across 30+ languages.
 - **One stable command.** Every installation exposes the Bash `vis-agent` wrapper; native bundles include a private per-platform sidecar and require no JVM.
 - **Model-agnostic.** Works with any text-based model. Nothing here depends on a specific provider's tools.
 
@@ -179,7 +179,7 @@ Every page of this manual, in the order the sidebar lists them.
 ### How it works
 
 - [Token optimization](token-optimization.md) — the context-as-environment model, and the working habits that make it cheap.
-- [GraalPython sandbox](graalpython.md) — the in-process interpreter that executes the agent's actions.
+- [Python sandbox](python-sandbox.md) — the in-process interpreter that executes the agent's actions.
 - [Process jail & egress](jail.md) — Seatbelt/bubblewrap confinement, filesystem and network policy, managed processes, and how to verify them.
 - [Content-block protocol](content-blocks.md) — the canonical role-labelled message, typed block, persistence and streaming contract.
 

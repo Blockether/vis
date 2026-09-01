@@ -18,7 +18,7 @@
   {:section "How it works"
    :pages
    [{:page "token-optimization", :title "Token optimization", :blurb "How Vis keeps the context window small by holding state in a live runtime instead of the transcript."}
-    {:page "graalpython", :title "GraalPython sandbox", :blurb "The GraalPython sandbox that executes the model's Python tool code."}
+    {:page "python-sandbox", :title "Python sandbox", :blurb "The embedded CPython sandbox that executes the model's Python tool code."}
     {:page "jail", :title "Process jail & egress", :blurb "The OS jail and gateway egress proxy: filesystem admission, network policy, managed processes, and how to verify them."}
     {:page "content-blocks", :title "Content-block protocol", :blurb "The canonical role-labelled message, typed block, persistence, and streaming contract."}]}
   {:section "Runtime"

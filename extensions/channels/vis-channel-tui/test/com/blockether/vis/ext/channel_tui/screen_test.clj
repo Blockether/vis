@@ -483,7 +483,7 @@
         (let [ids (mapv :id (registry-slash-commands))]
           (expect (= #{:workspace.apply :voice} (set ids))))))
   ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: the TUI
-  ;; constructed a second GraalPy runtime just to discover Python slash commands.
+  ;; constructed a second CPython runtime just to discover Python slash commands.
   (it
     "fetches the gateway slash catalog without loading Python in the TUI"
     (let [previous

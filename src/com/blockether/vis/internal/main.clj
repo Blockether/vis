@@ -40,6 +40,7 @@
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.doctor :as doctor]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
+            [com.blockether.vis-python-runtime :as pyrt]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.error :as error]
             [com.blockether.vis.internal.extension :as extension]
@@ -3281,20 +3282,19 @@
 
 
 
-;;; ── `vis-agent python` — standalone GraalPy interpreter ────────────────────────
+;;; ── `vis-agent python` — standalone CPython interpreter ────────────────────────
 ;;
-;; Expose JUST the embedded GraalPy sandbox -- every foundation shim
-;; (requests/pandas/numpy/yaml/sqlite3/...), the POSIX-compat shim, and
-;; the auto-imports -- with NO agent tool bindings. Handy for reproducing
-;; sandbox behaviour and exercising shims straight from the shell. Behaves
-;; identically under the JVM and the native image: both drive the same
-;; `env/*` machinery.
+;; Expose JUST the embedded Python sandbox -- the real CPython, the packages
+;; `pip` put in `~/.vis/python/packages`, the host-call doors and the
+;; auto-imports -- with NO agent tool bindings. Handy for reproducing sandbox
+;; behaviour straight from the shell. Behaves identically under the JVM and the
+;; native image: both drive the same `env/*` machinery.
 
 (defn- python-cli-context
-  "Build a fresh standalone GraalPy sandbox for `vis-agent python`: all shims
-   installed, filesystem rooted at the current working directory, network
-   enabled unless `network?` is false. No tool bindings -- just the
-   interpreter with its shims.
+"Build a fresh standalone Python sandbox for `vis-agent python`: the same
+   interpreter the agent runs, filesystem rooted at the current working
+   directory, network enabled unless `network?` is false. No tool bindings --
+   just the interpreter and its host-call doors.
 
    Unlike the agent sandbox this is a HUMAN-run interpreter, so it gets
    real-`python` niceties: `argv` is bound to `sys.argv`; `env` is merged
@@ -3312,14 +3312,15 @@
                                      [cwd])
                                    {:enabled? (boolean network?)}
                                    System/in
-                                   config/original-stderr)]
+                                   config/original-stderr
+                                   nil)]
 
     ;; Bind an empty standing `ctx` dict so the async runtime has it available.
     (env/bind-ctx! python-context {})
     ;; Forward script argv + (by default) the caller's env — real-python CLI
     ;; semantics, distinct from the scrubbed agent sandbox.
     (env/seed-cli-runtime! python-context {:argv argv :env env})
-    ;; GraalPy receives the environment after interpreter startup, so PYTHONPATH
+    ;; The interpreter receives the environment after startup, so PYTHONPATH
     ;; needs the same explicit sys.path setup a process launch would perform.
     ;; Explicit entries come first; configured and inferred project roots are
     ;; merged in after them, never replacing what the caller asked for.
@@ -3335,20 +3336,8 @@
           (distinct (concat explicit (pyproj/import-roots python-context cwd)))]
 
       (when (seq roots)
-        (let [^org.graalvm.polyglot.Value bindings
-              (.getBindings ^org.graalvm.polyglot.Context python-context "python")
-
-              binding-name
-              "__vis_cli_pythonpath__"]
-
-          (.putMember bindings binding-name (str/join separator roots))
-          (try (.eval ^org.graalvm.polyglot.Context python-context
-                      "python"
-                      (str "import os, sys\n"
-                           "sys.path[:0] = [p for p in globals()["
-                           (pr-str binding-name)
-                           "].split(os.pathsep) if p]\n"))
-               (finally (.removeMember bindings binding-name))))))
+        (pyrt/exec! python-context
+                    (str "import sys\n" "sys.path[:0] = " (env/py-json-literal (vec roots)) "\n"))))
     python-context))
 
 (defn- run-python-source!
@@ -3369,7 +3358,7 @@
    Reads a whole block (terminated by a blank line, so multi-line defs work),
    evaluates it, and prints captured stdout. Ctrl-D / EOF quits."
   [ctx]
-  (stdout! (str "vis-agent python -- embedded GraalPy sandbox (all shims, no tools). "
+  (stdout! (str "vis-agent python -- embedded Python sandbox (no tools). "
                 "Blank line runs the block; use print(...) to see output; Ctrl-D quits."))
   (let [reader (java.io.BufferedReader. (java.io.InputStreamReader. System/in))]
     (loop []
@@ -3460,13 +3449,21 @@
 (def ^:private python-module-runner-src
   "Python helper installed for `vis-agent python -m MODULE`.
 
-   Real CPython drives `-m` through `runpy`, which needs a loader that can hand
-   back module CODE. Sandbox shims are synthesised `types.ModuleType` objects
-   (no file, no loader), so `runpy` can never run them -- for those the console
-   entry point (`console_main`/`main`, called with `sys.argv[1:]`) IS the module's
-   `__main__`. Everything else (real stdlib modules and packages on disk) falls
-   through to `runpy` with CPython semantics."
-  (env/runtime-python-src "vis-python/module_runner.py"))
+   `-m` is `runpy` and nothing else now: every module the sandbox can import is a
+   real module with a real loader, so the helper only has to turn the module's
+   `SystemExit` into the exit code this process should answer with."
+  (slurp (io/resource "vis-python/module_runner.py")))
+
+(defn- module-exit-code
+  "The exit code `__vis_run_module__` recorded, or 0 when it recorded none.
+
+   A block answers with what it PRINTED and nothing else, so the code the
+   process owes is left in the session and read back here."
+  [ctx]
+  (try
+    (let [v (json/read-json (pyrt/run ctx "globals().get('__vis_module_exit__')") :key-fn identity)]
+      (if (integer? v) (int v) 0))
+    (catch Throwable _ 0)))
 
 (defn- run-python-module!
   "Run `MODULE` as `__main__` in `ctx` (`vis-agent python -m MODULE`), rendering its
@@ -3474,33 +3471,15 @@
   [ctx module]
   (if (str/blank? module)
     (do (stderr! "vis-agent python -m requires a MODULE argument.") 2)
-    (let [exit-name
-          "__vis_cli_exit_code__"
-
-          {:keys [stdout result error]}
-          (env/run-python-block ctx
-                                (str python-module-runner-src
-                                     "\nglobals()["
-                                     (pr-str exit-name)
-                                     "] = __vis_run_module__("
-                                     (pr-str module)
-                                     ")\n"))
-
-          ^org.graalvm.polyglot.Value bindings
-          (.getBindings ^org.graalvm.polyglot.Context ctx "python")
-
-          exit-code
-          (try (env/->clj (.getMember bindings exit-name))
-               (finally (.removeMember bindings exit-name)))]
-
+    (let [{:keys [stdout error]}
+          (env/run-python-block
+            ctx
+            (str python-module-runner-src "\n__vis_run_module__(" (pr-str module) ")\n"))]
       (when (seq stdout) (write-stdout! stdout))
-      (cond error (do (stdout! (or (:message error) (pr-str error))) 1)
-            (integer? exit-code) (int exit-code)
-            (integer? result) (int result)
-            :else 0))))
+      (if error (do (stdout! (or (:message error) (pr-str error))) 1) (module-exit-code ctx)))))
 
 (defn- cli-python!
-  "`vis-agent python` -- run code in the embedded GraalPy sandbox (all shims, no tool
+  "`vis-agent python` -- run code in the embedded Python sandbox (no tool
    bindings). Modes: `-c CODE` (run a string), `FILE.py` (run a file), `-` or
    piped stdin (run stdin), or an interactive REPL on a bare TTY. Trailing args
    after the program selector become `sys.argv`. `--no-network` disables sandbox
@@ -3603,7 +3582,7 @@
      "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] gateway <start|status|stop|pair> [--db PATH]"
      :cmd/subcommands #(registry/registered-under ["gateway"])}
     {:cmd/name "python"
-     :cmd/doc "Run code in the embedded GraalPy sandbox (all shims, no tool bindings)."
+     :cmd/doc "Run code in the embedded Python sandbox (no tool bindings)."
      :cmd/usage "vis-agent python [OPTS] [-c CODE | -m MODULE | FILE.py | -] [ARG...]"
      :cmd/examples
      ["vis-agent python -c \"import requests; print(requests.__version__)\""
@@ -4251,7 +4230,7 @@
 (defn- version-request?
   "True when args ask only for the version. Like help, this short-circuits
    BEFORE distribution initialization / agent boot — `vis-agent --version` must be instant
-   and must NOT create the GraalPy sandbox or contact a provider."
+   and must NOT create the Python sandbox or contact a provider."
   [args]
   (contains? #{["--version"] ["-V"] ["version"]} (vec args)))
 
@@ -4662,7 +4641,7 @@
                                   (System/exit 2)
 
                                   ;; Success path: force a deterministic process exit.
-                                  ;; Python extension loading can spin up GraalPy and extension
+                                  ;; Python extension loading can spin up CPython and extension
                                   ;; executors, some of which leave NON-daemon threads alive; a
                                   ;; bare `nil` return let `-main` finish while those threads
                                   ;; kept the JVM (and the native isolate) running, so a

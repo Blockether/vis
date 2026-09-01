@@ -2,7 +2,7 @@
   "What a Python project DECLARES about its own layout: import roots (the `src`
    layout every packaging backend spells differently) and pytest's `testpaths`.
 
-   The metadata is parsed by PYTHON'S OWN parsers inside a GraalPy context --
+   The metadata is parsed by PYTHON'S OWN parsers inside a Python session --
    `tomllib` for `pyproject.toml`, `configparser` for `setup.cfg` / `pytest.ini`
    / `tox.ini` -- never a regex over the file text. The Python side
    (`resources/vis-python/project_config.py`) returns RAW declared strings;
@@ -12,14 +12,14 @@
    Inference is purely declarative: a project without such metadata gets
    nothing inferred, and `python.source_paths` is how a user says it outright.
    Every failure degrades to nothing rather than breaking the caller."
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python-extensions :as pyx]
-            [com.blockether.vis.internal.sandbox-resources :as res])
-  (:import [java.io File]
-           [org.graalvm.polyglot Context Value]))
+            [com.blockether.vis.internal.python-extension-host :as pyext])
+  (:import [java.io File]))
 
 (set! *warn-on-reflection* true)
 
@@ -88,28 +88,16 @@
    FAILED (as opposed to one that found nothing) also carries `:error` with why,
    so a caller can say so instead of reporting a project with no layout. The
    caller's globals are left exactly as they were found."
-  [^Context ctx ^String dir]
-  (let [^Value bindings
-        (.getBindings ctx "python")
-
-        entry
-        "__vis_project_config__"
-
-        arg
-        "__vis_project_dir__"
-
-        strings
-        (fn [^Value v]
-          (mapv #(.asString (.getArrayElement v (long %))) (range (.getArraySize v))))]
-
-    (try (.eval ctx "python" ^String @project-config-src)
-         (.putMember bindings arg dir)
-         (let [^Value res (.eval ctx "python" (str entry "(globals()[" (pr-str arg) "])"))]
-           {:import-roots (strings (.getArrayElement res 0))
-            :testpaths (strings (.getArrayElement res 1))})
+  [^String session ^String dir]
+  (let [entry "__vis_project_config__"]
+    (try (pyext/exec! session @project-config-src)
+         (let [res (json/read-json (pyext/run session (str entry "(" (pr-str dir) ")"))
+                                   :key-fn
+                                   identity)]
+           {:import-roots (mapv str (nth res 0 [])) :testpaths (mapv str (nth res 1 []))})
          (catch Throwable t {:import-roots [] :testpaths [] :error (throwable-msg t)})
          ;; The CLI interpreter is the human's own scope -- leave nothing behind.
-         (finally (.removeMember bindings arg) (.removeMember bindings entry)))))
+         (finally (try (pyext/exec! session (str "del " entry)) (catch Throwable _ nil))))))
 
 (defn- configured-import-roots
   "Import roots the user declared in merged config as `python.source_paths` --
@@ -135,26 +123,26 @@
    metadata declares. Canonical paths of directories that actually exist, in
    declaration order, so `vis-agent python -m pytest tests/` imports the project
    the same way an explicit `PYTHONPATH=src` invocation would."
-  [^Context ctx ^String dir]
+  [^String session ^String dir]
   (vec (distinct (concat (configured-import-roots dir)
-                         (existing-dirs dir (:import-roots (declared-config ctx dir)))))))
+                         (existing-dirs dir (:import-roots (declared-config session dir)))))))
 
 (defn- read-layout
-  "ONE attempt at `project-layout`, in a throwaway trusted GraalPy context.
+  "ONE attempt at `project-layout`, in a throwaway trusted session.
    `:warning` (present only on failure) says why the read degraded to nothing."
   [^String dir]
   (let [built
-        (try {:ctx (pyx/build-context "python-project-layout")}
+        (try {:session (pyx/build-context "python-project-layout")}
              (catch Throwable t
-               {:warning (str "GraalPy context unavailable, project layout not read: "
+               {:warning (str "Python interpreter unavailable, project layout not read: "
                               (throwable-msg t))}))
 
-        ^Context ctx
-        (:ctx built)]
+        session
+        (:session built)]
 
-    (if (nil? ctx)
+    (if (nil? session)
       {:import-roots [] :testpaths [] :warning (:warning built)}
-      (try (let [declared (declared-config ctx dir)]
+      (try (let [declared (declared-config session dir)]
              (cond-> {:import-roots (vec (distinct (concat
                                                      (configured-import-roots dir)
                                                      (existing-dirs dir (:import-roots declared)))))
@@ -167,11 +155,11 @@
              {:import-roots []
               :testpaths []
               :warning (str "project layout not read: " (throwable-msg t))})
-           (finally (res/dispose! ctx))))))
+           (finally (pyx/close-context! session))))))
 
 (defn project-layout
   "`{:import-roots [abs…] :testpaths [abs…]}` for `dir`, read in a THROWAWAY
-   trusted GraalPy context (~130ms) -- for callers that have no context of
+   trusted Python session (~130ms) -- for callers that have no context of
    their own, such as the `run_tests` handler. Both are canonical paths of
    entries that exist; either may be empty.
 

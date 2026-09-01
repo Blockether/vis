@@ -90,9 +90,9 @@
       (let [stage (runtime-stage)]
         (expect (str/includes? stage "vis-agent runtime | grep -Eq '^Runtime: +native'") stage)
         (expect (str/includes? stage "test -x /opt/vis/agent/vis-agent-native") stage)
-        ;; The GraalPy/Truffle resources ship BESIDE the binary; without them
-        ;; every Python tool dies with "No module named 'ast'".
-        (expect (str/includes? stage "test -d /opt/vis/agent/vis-agent-resources") stage)
+        ;; The embedded CPython ships BESIDE the binary; without it every Python
+        ;; tool dies with a library-not-found.
+        (expect (str/includes? stage "test -d /opt/vis/agent/vis-agent-python") stage)
         (expect (str/includes? stage "vis-agent python -c") stage)))
   (it "gives the agent the vis user's home, and proves the runtime uses it"
       (let [stage (runtime-stage)]

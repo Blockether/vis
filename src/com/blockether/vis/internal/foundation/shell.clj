@@ -213,7 +213,7 @@
            " (`--jq`, `--limit`, `head -c`) or redirect it to a file and read that."))))
 
 (defn- ->whole-long
-  "Coerce a GraalPy-crossed numeric option to a WHOLE long, or throw a typed
+  "Coerce a CPython-crossed numeric option to a WHOLE long, or throw a typed
    error. nil passes through (caller supplies the default).
 
    Rounding a fraction is a silent MODE CHANGE, not a convenience: an
@@ -2120,10 +2120,8 @@
    a log read answers with, and `timed_out` says which of the two ended it: the
    deadline (true, the process runs on under its id) or the process (false).
 
-   Every iteration polls [[rt/guest-safepoint!]], so a cancelled turn unwinds
-   THIS loop instead of waiting the deadline out: an eval whose block sits in a
-   long `sh.wait` is the one host wait a turn is most likely to be cancelled
-   inside of."
+   A cancel lands when this wait's own bound expires: the interpreter raises it
+   at the guest's next bytecode boundary, and a host call is not one."
   [env id {:keys [seconds offset]}]
   (let [t0
         (util/now-ms)
@@ -2196,9 +2194,6 @@
             seen
             (or seen (not= "" text))]
 
-        ;; Cancellable in HOST code: an interrupt lands HERE, at guest-code
-        ;; speed, instead of at this wait's own deadline.
-        (rt/guest-safepoint!)
         ((:append! acc) text)
         (cond (>= (util/now-ms) deadline) (finish res nxt)
               (not (get res "is_eof")) (recur nxt 0 0 seen)

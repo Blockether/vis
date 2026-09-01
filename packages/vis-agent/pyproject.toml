@@ -17,7 +17,7 @@
 # closed human-input vocabulary — pinned to the exact version this wheel was cut
 # at, so the pair can never disagree about what a host answers.
 #
-# `requires-python` is the CPython level vis' own GraalPy implements: the module in
+# `requires-python` is the CPython level vis' own CPython implements: the module in
 # `src/vis` is the file the engine execs, so a Python the engine could not run is a
 # Python this package must not be written in. CI verifies on exactly that floor.
 

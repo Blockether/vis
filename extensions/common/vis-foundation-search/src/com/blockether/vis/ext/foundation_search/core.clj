@@ -795,7 +795,7 @@
 ;; MCP tool-argument object. `:numResults` / `:contextMaxCharacters` / `:tokensNum`
 ;; are Exa's OWN camelCase HTTP API field names (charred serializes this to the
 ;; JSON-RPC `arguments` payload) — a third-party wire contract, NOT vis aliases.
-;; They never cross the GraalPy boundary; renaming them to snake_case would make
+;; They never cross the CPython boundary; renaming them to snake_case would make
 ;; Exa silently ignore the option.
 (defn- web-args
   [query opts]

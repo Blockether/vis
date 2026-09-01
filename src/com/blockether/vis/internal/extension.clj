@@ -31,7 +31,6 @@
             [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.sandbox-resources :as sandbox-resources]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.util :as util]
@@ -304,7 +303,7 @@
 
    Throwables reaching here are transport / spec / wrapping failures —
    Python eval errors are mapped to op-error shape inside the engine via
-   `env-python/map-polyglot-error`, so the block `:phase` is `:preflight`.
+   `env-python/map-python-error`, so the block `:phase` is `:preflight`.
 
    Optional opts:
      :form-source  the verbatim source the form was built from;
@@ -432,11 +431,11 @@
 ;; `(fn [env & model-args])`). Orthogonal to gating — env-injection is mechanical.
 (s/def :ext.symbol/inject-env? boolean?)
 ;; How a Python call's ALL-KEYWORD arguments fold back onto this symbol's
-;; POSITIONAL parameters. GraalPy collapses `tool(a=1, b=2)` into ONE trailing
+;; POSITIONAL parameters. CPython collapses `tool(a=1, b=2)` into ONE trailing
 ;; dict positional, so a fixed-arity impl `[env a b]` would otherwise receive the
 ;; whole map in its first slot; the shape re-expands it — see
 ;; `folded-kwargs->positional`. Either a shape map or a `(fn [input] -> source)`
-;; escape hatch; ABSENT ⇒ the arguments bind as GraalPy handed them over. Keys:
+;; escape hatch; ABSENT ⇒ the arguments bind as CPython handed them over. Keys:
 ;;   :lead-opt  one optional leading positional key
 ;;   :pos       required positional keys, in order
 ;;   :opt-pos   trailing optional positional keys
@@ -842,26 +841,11 @@
   (s/or :map (s/map-of string? ifn?)
         :fn ifn?))
 
-;; What a shim LENDS the guest: host objects it hands out as integer handles.
-;; Declaring them is how a shim says who frees them and when — the engine wires
-;; it at install, so there is no per-shim bookkeeping to forget. See
-;; `internal.sandbox-resources`.
-(s/def :resource/label util/non-blank-string?)
-
-(s/def :resource/release ifn?) ; (fn [handle value]) — frees ONE entry
-
-(s/def :resource/max pos-int?) ; backstop cap for a runaway guest in ONE session
-
-(s/def ::shim-resource (s/keys :req [:resource/label :resource/release] :opt [:resource/max]))
-
-;; Keys are namespaced to the shim that owns them, so two shims cannot collide.
-(s/def :shim/resources (s/map-of qualified-keyword? ::shim-resource))
-
 (s/def :shim/source util/non-blank-string?)
 
 (s/def ::sandbox-shim
   (s/keys :req [:shim/name :shim/source]
-          :opt [:shim/imports :shim/globals :shim/docs :shim/bindings :shim/resources]))
+          :opt [:shim/imports :shim/globals :shim/docs :shim/bindings]))
 
 (s/def :ext/sandbox-shims (s/coll-of ::sandbox-shim :kind vector?))
 ;; Python sandbox contribution.
@@ -1827,8 +1811,7 @@
   "Gate ops, keyed by op keyword and valued by the spelling a hook author writes
    (`vis.op_hook([\"fs_access\"], guard)` in Python, `{:op :fs/access}` in Clojure).
 
-   `:fs/access` is asked for EVERY path the Python sandbox's filesystem touches
-   (`internal/sandbox-fs`) and for every path the model-driven editors touch
+   `:fs/access` is asked for every path the model-driven editors touch
    (`foundation/editing/core`), with `{:operation :path}` — so ONE rule covers
    `open(p, \"w\")`, `shutil.move`, `Path.unlink` and `patch`
    alike, and \"protected\" can never mean \"protected from Python only\"."
@@ -2049,7 +2032,7 @@
 (defn- folded-kwargs->positional
   "Re-expand a folded kwargs dict for the DIRECT-python surface. When the agent
    calls a symbol in a `python_execution` block with ALL-KEYWORD args
-   (`tool(id=…, n=…)`), GraalPy folds those kwargs into ONE trailing
+   (`tool(id=…, n=…)`), CPython folds those kwargs into ONE trailing
    dict positional (see `__vis_exec_call__` in `env-python`). A fixed-arity impl
    `[env id n]` would then receive the whole `{id n}` map in its `id` slot.
    Re-expand that lone map
@@ -2692,12 +2675,6 @@
         ns-sym
         (:ext/name ext)]
 
-    ;; What this extension's shims LEND the guest is wired HERE, at registration,
-    ;; rather than when a Context installs them: declaring is the shim's whole
-    ;; obligation, and it must hold from the moment the shim exists — not from
-    ;; the first time somebody happens to build a sandbox.
-    (doseq [shim (:ext/sandbox-shims ext)]
-      (sandbox-resources/declare-kinds! (:shim/resources shim)))
     ;; Slash paths must be unique across the union of `:ext/slash-commands` from every active
     ;; extension. Reject registration when this extension declares a `[parent name]`
     ;; that any OTHER currently-registered extension already owns
@@ -3133,7 +3110,7 @@
   "Python parameter list from the implementation's `:ext.symbol/arglists`, for an
    entry that declares no `:call` shape. The longest fixed arity names the
    parameters, everything past the SHORTEST arity is optional, a `&` tail is
-   `*args`, and `**kwargs` is always accepted because GraalPy folds keywords
+   `*args`, and `**kwargs` is always accepted because CPython folds keywords
    into exactly the trailing dict positional such a tool receives as its options
    map. `env` leads the arglist of an env-injected impl and is dropped: the host
    passes it, never the model. A tool that takes NOTHING answers the EMPTY

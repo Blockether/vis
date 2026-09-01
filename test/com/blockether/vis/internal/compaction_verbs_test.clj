@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.compaction-verbs-test
   "Compaction/`fold_session` coverage at three layers:
-     1. Raw-Python integration — drive `fold_session` THROUGH the GraalPy sandbox
+     1. Raw-Python integration — drive `fold_session` THROUGH the Python sandbox
         so the real argument marshalling (Python list/dict → `->clj`) and the
         visible return string are exercised end to end, not just reasoned about.
      2. Selector resolution — `expand-through` against a live iteration universe:
@@ -16,9 +16,9 @@
         via `ctx-engine/folds-view` → `ctx-renderer/render-ctx-delta`."
   (:require [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.ctx-renderer :as cr]
-            [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.loop :as lp]
             [clojure.string :as str]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private compaction-verbs (var-get #'lp/compaction-verbs))
@@ -33,18 +33,18 @@
 (def ^:private irm (var-get #'lp/iteration-results-message))
 
 (defn- with-verbs
-  "Fresh ctx-atom + a GraalPy context with fold_session bound.
+  "Fresh ctx-atom + a Python session with fold_session bound.
    Returns [ctx-atom eval-fn]; eval-fn runs Python and returns the result string."
   []
   (let [ca
         (atom {"session_turn" 99})
 
         ctx
-        (:python-context (ep/create-python-context (compaction-verbs ca)))]
+        (:python-context (tpc/new-context (compaction-verbs ca)))]
 
     [ca
      (fn [^String code]
-       (.asString (.eval ^org.graalvm.polyglot.Context ctx "python" code)))]))
+       (tpc/ev ctx code))]))
 
 (defn- trailer
   "Build an apply-summaries trailer from `tN/iN` iteration ids: each becomes one

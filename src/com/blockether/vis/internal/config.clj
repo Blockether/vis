@@ -168,7 +168,7 @@
 
 (def ^java.io.PrintStream original-stderr
   "The process's REAL stderr, captured at load — before `init!` / `init-cli!` point
-   `System/err` at the log file. `vis-agent python` wires this into the GraalPy
+   `System/err` at the log file. `vis-agent python` wires this into the CPython
    Context so guest `sys.stderr` reaches the terminal instead of vis.log."
   System/err)
 
@@ -832,7 +832,7 @@
                  :denied-domains :exclude-domains :allow-private :rules :host :methods :allow
                  :method :text :is-replace :include-gitignored-paths :always-exclude :backend
                  :theme-name :contributors-disabled :servers :transport :command :args :cwd :env
-                 :url :headers :python :resource-cache :source-paths :titling :mode :provider})
+                 :url :headers :python :source-paths :titling :mode :provider})
          svar-wire->runtime))
 
 (defn runtime-config

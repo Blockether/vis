@@ -11,12 +11,36 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [org.graalvm.polyglot Context Value]
-           [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]
-           [java.util.concurrent Callable Executors Future]))
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]))
 
+(def ^:private picture-doubles
+  "Python defining the two SHAPES `attach` duck-types, with no pip: a FIGURE
+   (anything carrying `savefig`) and a Pillow IMAGE (`save` + `mode` + `size` and
+   no `savefig`). Both emit a REAL PNG, so the host sniffs the media type and
+   reads the dimensions off actual pixels. matplotlib and Pillow themselves are
+   ordinary wheels a session pip-installs; a unit test pins the shape `attach`
+   accepts, never the download."
+  (str "import struct, zlib\n"
+       "def _png(w, h):\n"
+       "    raw = b''.join(b'\\x00' + b'\\xff\\x00\\x00\\xff' * w for _ in range(h))\n"
+       "    def chunk(tag, body):\n" "        c = tag + body\n"
+       "        return (struct.pack('>I', len(body)) + c\n"
+       "                + struct.pack('>I', zlib.crc32(c) & 0xffffffff))\n"
+       "    return (b'\\x89PNG\\r\\n\\x1a\\n'\n"
+       "            + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0))\n"
+       "            + chunk(b'IDAT', zlib.compress(raw))\n" "            + chunk(b'IEND', b''))\n"
+       "class Figure:\n" "    def __init__(self, w, h):\n"
+       "        self.size = (w, h)\n" "    def savefig(self, target, format='png'):\n"
+       "        target.write(_png(*self.size))\n" "class Picture:\n"
+       "    def __init__(self, w, h):\n" "        self.mode = 'RGBA'\n"
+       "        self.size = (w, h)\n" "    def convert(self, mode):\n"
+       "        return self\n" "    def save(self, target, format='PNG'):\n"
+       "        if str(format).upper() in ('JPEG', 'JPG'):\n"
+       "            target.write(b'\\xff\\xd8\\xff\\xe0' + b'\\x00' * 32)\n"
+       "        else:\n" "            target.write(_png(*self.size))\n"))
 (defn- temp-root
   ^String []
   (str (.toAbsolutePath (Files/createTempDirectory "vis-attach-test"
@@ -25,17 +49,17 @@
 (defn- ctx-with-root
   "A sandbox context whose filesystem is confined to a fresh temp root."
   [root]
-  (:python-context (ep/create-python-context {}
-                                             (fn []
-                                               [root]))))
+  (:python-context (tpc/new-context {}
+                                    (fn []
+                                      [root]))))
 
 (defn- block
   "Run `code` as ONE driven block and return the flat outcome (so the per-block
    image sink is bound and drained into `:attachments`)."
-  [^Context pctx code]
+  [pctx code]
   (ep/run-python-block pctx code))
 
-(defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
+(defn- ev [c code] (tpc/ev c code))
 
 (defdescribe
   attach-in-memory-capture-test
@@ -152,16 +176,12 @@
             (block pctx (str "attach(b'1', 'a.txt')\n" "attach(b'2', 'b.json')\n"))]
 
         (expect (= ["a.txt" "b.json"] (mapv :filename (:attachments out))))))
-  (it "renders and captures a matplotlib Figure with a positional filename"
+  (it "renders and captures a figure-shaped source with a positional filename"
       (let [pctx
             (ctx-with-root (temp-root))
 
             out
-            (block pctx
-                   (str "import matplotlib.pyplot as plt\n"
-                        "fig, ax = plt.subplots(figsize=(7, 4))\n"
-                        "ax.plot([0, 1], [0, 1])\n" "ax.set(title='plot', xlabel='x', ylabel='y')\n"
-                        "attach(fig, 'plot.png')\n" "plt.close(fig)\n"))
+            (block pctx (str picture-doubles "attach(Figure(7, 4), 'plot.png')\n"))
 
             [att]
             (:attachments out)]
@@ -173,15 +193,12 @@
   ;; Regression: attach(pil_image, 'crop.png') fell through to the PATH branch
   ;; and died with "attach: no such file: <PIL.Image.Image ...>", so a picture
   ;; cropped in the sandbox could not be attached without writing it out first.
-  (it "encodes and captures a PIL image handed straight to attach"
+  (it "encodes and captures a Pillow-shaped image handed straight to attach"
       (let [pctx
             (ctx-with-root (temp-root))
 
             out
-            (block pctx
-                   (str "from PIL import Image\n"
-                        "img = Image.new('RGBA', (12, 9), (255, 0, 0, 255))\n"
-                        "attach(img, 'crop.png')\n"))
+            (block pctx (str picture-doubles "attach(Picture(12, 9), 'crop.png')\n"))
 
             [att]
             (:attachments out)]
@@ -192,15 +209,16 @@
         (expect (= "image" (:kind att)))
         ;; the pixels really rode along: the fence carries the image's own dims
         (expect (re-find #"12x9" (str (:stdout out))))))
-  (it "lets the filename choose the encoder for a PIL image, defaulting to PNG"
+  (it "lets the filename choose the encoder for an image, defaulting to PNG"
       (let [pctx
             (ctx-with-root (temp-root))
 
             out
             (block pctx
-                   (str "from PIL import Image\n"
-                        "img = Image.new('RGBA', (6, 6), (0, 128, 255, 255))\n"
-                        "attach(img, 'shot.jpg')\n" "attach(img)\n"))
+                   (str picture-doubles
+                        "img = Picture(6, 6)\n"
+                        "attach(img, 'shot.jpg')\n"
+                        "attach(img)\n"))
 
             [jpg png]
             (:attachments out)]
@@ -443,74 +461,30 @@
                    (expect (= 1 (count (:attachments out))))
                    (expect (= "kept.csv" (:filename (first (:attachments out))))))))
 
-(defn- conveying-gather
-  "Faithful replica of loop.clj's `gather-fn`: submit each thunk to a
-   virtual-thread executor wrapped in `bound-fn*` (which snapshots the caller's
-   thread-local binding frame — INCLUDING `*attachment-sink*` — and replays it
-   on the worker), then `.get` in submission order. This IS the conveyance
-   under test: an artifact produced inside `await gather(...)` runs on a virtual
-   thread yet must still reach the block's `:attachments`."
-  [^java.util.concurrent.ExecutorService executor]
-  (fn [& thunks]
-    (let [thunks
-          (if (and (= 1 (count thunks)) (sequential? (first thunks)))
-            (vec (first thunks))
-            (vec thunks))
-
-          call
-          (fn [t]
-            (cond (instance? Value t) (.execute ^Value t (object-array 0))
-                  (ifn? t) (t)
-                  :else t))
-
-          futs
-          (mapv (fn [t]
-                  (.submit executor
-                           ^Callable
-                           (bound-fn* (fn []
-                                        (call t)))))
-                thunks)]
-
-      (mapv (fn [^Future f]
-              (.get f))
-            futs))))
-
-(defn- ctx-with-gather
-  "A confined sandbox context with `__vis_par__` wired to a faithful
-   virtual-thread `gather`, so `await gather(...)` runs its awaitables on
-   virtual threads exactly like the real loop."
-  [root executor]
-  (:python-context (ep/create-python-context {(symbol "__vis_par__") (conveying-gather executor)}
-                                             (fn []
-                                               [root]))))
-
 (defdescribe
   gather-conveys-attachment-sink-test
   "Regression (turn 28/29): an artifact produced by a tool running INSIDE
-   `await gather(...)` executes on a gather-executor virtual thread, not the
-   block thread. `bound-fn*` must convey the per-block `*attachment-sink*` to
-   that thread so `attach` still lands in the block's `:attachments`
-   — no silent drop, no nil sink."
+   `await gather(...)` is made on a POOL thread, not the block's, and every host
+   door answers on the interpreter's own thread besides. The per-block
+   `*attachment-sink*` must travel to whichever thread the door runs on
+   (`python-host/conveying`) so `attach` still lands in the block's
+   `:attachments` — no silent drop, no nil sink."
   (it "captures every gather-produced artifact into the block's :attachments"
-      (let [ex
-            (Executors/newVirtualThreadPerTaskExecutor)
-
-            pctx
-            (ctx-with-gather (temp-root) ex)
+      (let [pctx
+            (ctx-with-root (temp-root))
 
             out
-            (try (block pctx
-                        (str "async def mk(name):\n" "    return attach(b'payload', name)\n"
-                             "r = await gather(mk('a.txt'), mk('b.txt'), mk('c.txt'))\n"
-                             "print(len(r))\n"))
-                 (finally (.shutdownNow ex)))
+            (block pctx
+                   (str "async def mk(name):\n" "    return attach(b'payload', name)\n"
+                        "r = await gather(mk('a.txt'), mk('b.txt'), mk('c.txt'))\n"
+                        "print(len(r))\n"))
 
             atts
             (:attachments out)]
 
         (expect (nil? (:error out)))
         (expect (re-find #"^3" (str (:stdout out))))
-        ;; all three, produced on virtual threads, reached the block's sink
+        ;; all three, produced on pool threads, reached the block's sink
         (expect (= 3 (count atts)))
         (expect (= #{"a.txt" "b.txt" "c.txt"} (set (map :filename atts)))))))
 

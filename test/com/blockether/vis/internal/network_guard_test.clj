@@ -1,12 +1,18 @@
 (ns com.blockether.vis.internal.network-guard-test
   "Security regression guard for the Python sandbox's network capability.
 
-   Two layers, both asserted here:
+   Two layers, both asserted here, and they are not the same KIND of thing:
 
-   HOST FLOOR (cooperative socket guard — catches RAW sockets / DNS). The guard is
-   part of the JAIL: it installs only when the session is jailed (`:jail-enabled?`).
-   With the jail OFF the sandbox network is unconfined — same as the OS process jail:
+   CAPABILITY (C). Whether this session has egress at all is a flag the runtime's
+   audit hook reads, so `socket.__new__`, `connect`, `bind` and every name lookup
+   are refused before any Python of ours runs. Nothing seeded in the guest can
+   rebind its way back to a socket:
      - OFF (default)        ⇒ no sockets at all (DNS resolution refused).
+
+   LEGIBILITY (Python). Inside a session that HAS egress, the cooperative domain
+   guard turns a policy refusal into a `PermissionError` naming the host instead
+   of a timeout. It installs only when the session is jailed (`:jail-enabled?`)
+   and there is something to enforce:
      - ON, `*` allowlist    ⇒ unrestricted EXCEPT the always-on denylist.
      - ON, with allowlist   ⇒ hosts outside the allowlist raise PermissionError
                               before any connection (`getaddrinfo`/`gethostbyname`).
@@ -19,92 +25,95 @@
    AND `network_filter`s enforce host + verb + path at the ONE gateway policy engine
    (the in-interpreter urllib method-guard is retired). Loopback stays reachable so
    urllib can reach the proxy even under a restrictive allowlist."
-  (:require [com.blockether.vis.internal.env-python :as env]
-            [lazytest.core :refer [defdescribe expect it]])
-  (:import [org.graalvm.polyglot Context Engine]))
+  (:require [com.blockether.vis-python-runtime :as runtime]
+            [com.blockether.vis.internal.env-python :as env]
+            [com.blockether.vis.test-python-context :as tpc]
+            [lazytest.core :refer [defdescribe expect it]]))
 
-(defn- pctx ^Context [ctx] (get ctx :python-context))
+(def ^:private probes
+  "The two guest probes every test reads, defined once per session.
+
+   Both classify instead of throwing, because the interesting distinction is WHICH
+   layer refused: a `PermissionError` naming the host came from the domain guard,
+   any other one came from the capability flag in C."
+  (str "def __vis_probe_dns__(host):\n" "    import socket\n"
+       "    try:\n" "        socket.gethostbyname(host)\n"
+       "        return 'ok'\n" "    except PermissionError as e:\n"
+       "        return 'blocked' if 'is blocked' in str(e) else 'no-socket'\n"
+       "    except Exception:\n"
+       "        return 'unresolved'\n" "\n"
+       "def __vis_probe_connect__(host):\n" "    import socket\n"
+       "    try:\n" "        s = socket.socket()\n"
+       "    except PermissionError:\n" "        return 'no-socket'\n"
+       "    s.settimeout(0.2)\n" "    try:\n"
+       "        s.connect((host, 9))\n" "        return 'reached'\n"
+       "    except PermissionError:\n" "        return 'blocked'\n"
+       "    except Exception:\n" "        return 'reached'\n"
+       "    finally:\n" "        s.close()\n"))
+
+(defn- sandbox
+  "A sandbox with `network-opts`, its probes already defined."
+  [network-opts]
+  (let [env (tpc/new-context {} nil network-opts)]
+    (tpc/ev (:python-context env) probes)
+    env))
 
 (defn- dispose!
-  "Close a sandbox AND the Engine it owns.
-
-   This file already tore its sandboxes down per test — it just did half of it.
-   Every Context now carries its own Engine (`env-python/new-engine!`), and an
-   Engine retains everything ever built on it, so closing only the Context left
-   seven Python heaps pinned for the rest of the run."
+  "Drop the sandbox and give the process its egress back — the capability flag is
+   process state, so a test that left it off would blind every test after it."
   [env]
-  (try (.close ^Context (:python-context env) true) (catch Throwable _ nil))
-  (when-let [engine (:python-engine env)]
-    (try (.close ^Engine engine true) (catch Throwable _ nil))))
+  (env/dispose-python-context! (:python-context env))
+  (try (runtime/network! true) (catch Throwable _ nil)))
 
 (defn- outcome
-  "Eval a DNS resolution for `host` in `ctx` and classify: `:ok`, `:blocked`
-   (guard refused), or `:no-socket` (capability denied / unresolvable)."
-  [ctx host]
-  (try (.eval (pctx ctx) "python" (str "import socket; socket.gethostbyname(" (pr-str host) ")"))
-       :ok
-       (catch Throwable e (if (re-find #"is blocked" (str (.getMessage e))) :blocked :no-socket))))
+  "Resolve `host` in `env` and classify: `:ok`, `:blocked` (domain guard refused),
+   `:no-socket` (capability denied) or `:unresolved`."
+  [env host]
+  (keyword (tpc/ev (:python-context env) (str "__vis_probe_dns__(" (pr-str host) ")"))))
 
 (defn- raw-connect-outcome
-  "Attempt a RAW socket connect to `host` (no DNS) and classify: `:blocked` when
-   the guard refuses, else `:reached-socket-layer` (connection refused/timeout —
-   i.e. the guard did NOT stop it). Proves enforcement at `connect`, not just DNS."
-  [ctx host]
-  (let [code (str "def _p():\n" "    import socket\n"
-                  "    s = socket.socket(); s.settimeout(0.2)\n" "    try:\n"
-                  "        s.connect((" (pr-str host)
-                  ", 9)); return 'connected'\n" "    except PermissionError: return 'blocked'\n"
-                  "    except Exception: return 'reached'\n" "_p()")]
-    (case (.asString (.eval (pctx ctx) "python" code))
-      "blocked"
-      :blocked
-
-      :reached-socket-layer)))
+  "Connect a RAW socket to `host` (no DNS) and classify: `:blocked` when the guard
+   refuses, else `:reached` — the guard did NOT stop it. Proves enforcement at
+   `connect`, not just at DNS."
+  [env host]
+  (keyword (tpc/ev (:python-context env) (str "__vis_probe_connect__(" (pr-str host) ")"))))
 
 (defn- env-value
-  "Read `os.environ.get(k, '')` in `ctx`."
-  [ctx k]
-  (.asString (.eval (pctx ctx) "python" (str "import os; os.environ.get(" (pr-str k) ", '')"))))
+  "Read `os.environ.get(k, '')` in `env`."
+  [env k]
+  (tpc/ev (:python-context env) (str "__import__('os').environ.get(" (pr-str k) ", '')")))
 
 (defdescribe
   network-guard-test
   (it "OFF ⇒ no sockets at all (DNS denied)"
-      (let [off (env/create-python-context {} nil nil)]
-        (try (expect (= :no-socket (outcome off "localhost"))) (finally (dispose! off)))))
+      (let [off (sandbox nil)]
+        (try (expect (= :no-socket (outcome off "localhost")))
+             (expect (= :no-socket (raw-connect-outcome off "127.0.0.1")))
+             (finally (dispose! off)))))
   (it "`*` allowlist ⇒ unrestricted EXCEPT the always-on metadata denylist"
-      (let [star (env/create-python-context
-                   {}
-                   nil
-                   {:enabled? true :jail-enabled? true :allowed-domains ["*"]})]
+      (let [star (sandbox {:enabled? true :jail-enabled? true :allowed-domains ["*"]})]
         (try (expect (= :ok (outcome star "localhost")))
              ;; cloud-metadata SSRF endpoint is denied by default even under `*`
              (expect (= :blocked (outcome star "169.254.169.254")))
              (finally (dispose! star)))))
   (it "allowlist ⇒ confines to listed hosts (subdomain ok, others blocked)"
-      (let [conf (env/create-python-context
-                   {}
-                   nil
-                   {:enabled? true :jail-enabled? true :allowed-domains ["example.com"]})]
+      (let [conf (sandbox {:enabled? true :jail-enabled? true :allowed-domains ["example.com"]})]
         (try (expect (= :ok (outcome conf "www.example.com")))
              (expect (= :blocked (outcome conf "evil.com")))
              (finally (dispose! conf)))))
   (it "denied `*` + allow some ⇒ deny everything EXCEPT the allowlist"
-      (let [d (env/create-python-context {}
-                                         nil
-                                         {:enabled? true
-                                          :jail-enabled? true
-                                          :denied-domains ["*"]
-                                          :allowed-domains ["example.com"]})]
+      (let [d (sandbox {:enabled? true
+                        :jail-enabled? true
+                        :denied-domains ["*"]
+                        :allowed-domains ["example.com"]})]
         (try (expect (= :ok (outcome d "www.example.com"))) ; specific allow beats deny `*`
              (expect (= :blocked (outcome d "evil.com"))) ; deny `*` blocks the rest
              (finally (dispose! d)))))
   (it "allow `*` + deny some ⇒ allow everything EXCEPT the denylist"
-      (let [a (env/create-python-context {}
-                                         nil
-                                         {:enabled? true
-                                          :jail-enabled? true
-                                          :allowed-domains ["*"]
-                                          :denied-domains ["example.com"]})]
+      (let [a (sandbox {:enabled? true
+                        :jail-enabled? true
+                        :allowed-domains ["*"]
+                        :denied-domains ["example.com"]})]
         (try (expect (= :blocked (outcome a "example.com"))) ; specific deny beats allow `*`
              (expect (= :ok (outcome a "localhost")))
              (finally (dispose! a)))))
@@ -112,12 +121,10 @@
       ;; The default denylist's headline target (the metadata IP 169.254.169.254) is
       ;; an IP literal; a raw `socket.connect((ip, port))` never hits DNS, so guarding
       ;; only getaddrinfo would leave it reachable. connect-level enforcement closes it.
-      (let [c (env/create-python-context {}
-                                         nil
-                                         {:enabled? true
-                                          :jail-enabled? true
-                                          :allowed-domains ["*"]
-                                          :denied-domains ["127.0.0.1"]})]
+      (let [c (sandbox {:enabled? true
+                        :jail-enabled? true
+                        :allowed-domains ["*"]
+                        :denied-domains ["127.0.0.1"]})]
         (try (expect (= :blocked (raw-connect-outcome c "127.0.0.1")))
              (expect (= :blocked (raw-connect-outcome c "169.254.169.254"))) ; default SSRF denylist
              (finally (dispose! c)))))
@@ -125,13 +132,11 @@
       ;; With :proxy-port + :ca-file the interpreter's HTTP stack is pointed at the
       ;; gateway proxy (verb/path enforced there, not by an in-interpreter method
       ;; guard). Loopback must stay reachable so urllib can reach the proxy.
-      (let [p (env/create-python-context {}
-                                         nil
-                                         {:enabled? true
-                                          :jail-enabled? true
-                                          :allowed-domains ["example.com"]
-                                          :proxy-port 65500
-                                          :ca-file "/tmp/vis-fake-ca.pem"})]
+      (let [p (sandbox {:enabled? true
+                        :jail-enabled? true
+                        :allowed-domains ["example.com"]
+                        :proxy-port 65500
+                        :ca-file "/tmp/vis-fake-ca.pem"})]
         (try (expect (= "http://127.0.0.1:65500" (env-value p "http_proxy")))
              (expect (= "http://127.0.0.1:65500" (env-value p "https_proxy")))
              (expect (= "/tmp/vis-fake-ca.pem" (env-value p "REQUESTS_CA_BUNDLE")))

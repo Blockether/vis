@@ -47,10 +47,10 @@
 (defdescribe
   doctor-sandbox-deps-test
   (it "reports one info line when every sandbox shim's dependencies resolve"
-      (with-redefs [extension/sandbox-shims (constantly [{:shim/name "yaml"
-                                                          :shim/source "vis-shims/yaml.py"}
-                                                         {:shim/name "numpy"
-                                                          :shim/source "vis-shims/numpy.py"
+      (with-redefs [extension/sandbox-shims (constantly [{:shim/name "ls"
+                                                          :shim/source "vis-shims/ls.py"}
+                                                         {:shim/name "ruff"
+                                                          :shim/source "vis-shims/ruff.py"
                                                           :shim/bindings {"probe" (fn []
                                                                                     :ok)}}])]
         (let [msgs (#'doctor/sandbox-shim-messages {})]

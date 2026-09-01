@@ -1,33 +1,36 @@
 (ns com.blockether.vis.test-python-context
-  "Long-lived GraalPy sandboxes for the test JVM, keyed instead of per-test.
+  "Long-lived sandbox SESSIONS for the test JVM, keyed instead of per-test.
 
-   Building a `Context` costs ~8s the first time (Truffle engine bootstrap) and
-   ~150-300ms every time after that, so a suite that opened one per test — or
-   even one per namespace — spent whole seconds doing nothing but re-entering
-   the same interpreter.
+   A sandbox is a namespace inside the ONE interpreter the process starts, so what
+   it costs is the seeding — the runtime, the tools, their contracts, the policy —
+   not an engine. That is milliseconds rather than seconds, but a suite that built
+   one per test still paid it hundreds of times, and the sharing below is what
+   keeps the suite's Python cheap.
 
-   `shared` is THE sandbox for tests that merely USE Python: the shim suites,
+   `shared` is THE sandbox for tests that merely USE Python: the door suites,
    which import a module and assert on what it renders. `shared-with!` is that
-   same context with extra host callables installed on it (exactly what
+   same session with extra host callables installed on it (exactly what
    `create-python-context`'s `custom-bindings` does, only later), so a test that
-   needs a stub tool does not need its own interpreter. Give stubs distinct
-   names: the sandbox is shared, and so are its globals.
+   needs a stub tool does not need its own. Give stubs distinct names: the session
+   is shared, and so are its globals.
 
    A namespace that ABUSES the sandbox on purpose — the engine contract suites
    run `from math import *`, shadow tool names and delete engine internals —
    takes its own with `(context ::ctx)`, keyed by a namespaced keyword, so its
    debris stays inside it. `from json import *` in one namespace is exactly what
-   redefined `_format` under the tabulate shim in another.
+   redefined `_format` under the tabulate door in another.
 
    A test that needs real ISOLATION — its own filesystem roots, its own network
    policy, its own stdin, a genuinely empty global namespace, or one that WIPES
    or monkeypatches the sandbox (`globals().clear()`, `requests.request = fake`)
    — must use neither: that damage outlives even the test that follows it in the
-   same namespace. Call `env-python/create-python-context` directly and own the
-   lifecycle.
+   same namespace. Use [[with-own]], which disposes the session on the way out.
 
-   Nothing here closes a context: they live as long as the JVM does, and a
-   `Context.close` on a sandbox with live guest threads is itself slow.
+   Two things a session cannot own, because the runtime holds them for the whole
+   PROCESS: the filesystem roots and the network capability. `with-own` with a
+   `roots-fn` re-confines the interpreter and does not put the previous roots
+   back, so a namespace that mixes rooted and unrooted sandboxes states the roots
+   it needs in each one.
 
    ONE NAMESPACE, ONE REGISTRATION. `shared-with!` installs a stub that CLOSES
    OVER test state (the `(atom [])` a test asserts on) into a process-global
@@ -38,81 +41,104 @@
    a live tool, gets a real result back, and asserts on an atom nobody wrote to:
    the test fails while the code it covers is provably fine. Run a single
    namespace as `-M:test --namespace <ns>`, with no `--dir`."
-  (:require [com.blockether.vis.internal.env-python :as env-python])
-  (:import [org.graalvm.polyglot Context Engine]))
+  (:require [charred.api :as json]
+            [clojure.string :as str]
+            [com.blockether.vis-python-runtime :as runtime]
+            [com.blockether.vis.internal.env-python :as env-python]))
+
+(defn new-context
+  "A fresh sandbox result map, with `create-python-context`'s arguments in its own
+   order: bindings, then roots, then network. The tail the tests never vary —
+   stdin, stderr and the block gate — is filled in here so a call site states only
+   what it cares about."
+  ([] (new-context {} nil nil))
+  ([bindings] (new-context bindings nil nil))
+  ([bindings roots-fn] (new-context bindings roots-fn nil))
+  ([bindings roots-fn network-opts] (new-context bindings roots-fn network-opts nil nil nil))
+  ([bindings roots-fn network-opts stdin]
+   (new-context bindings roots-fn network-opts stdin nil nil))
+  ([bindings roots-fn network-opts stdin stderr]
+   (new-context bindings roots-fn network-opts stdin stderr nil))
+  ([bindings roots-fn network-opts stdin stderr gate-fn]
+   (env-python/create-python-context bindings roots-fn network-opts stdin stderr gate-fn)))
 
 (defonce ^:private contexts (atom {}))
 
 (defn context
-  "The long-lived sandbox `Context` for `k`, built on first use. Key it with a
+  "The long-lived sandbox session for `k`, built on first use. Key it with a
    namespaced keyword (`::ctx`) so two suites cannot collide by accident."
-  ^Context [k]
+  ^String [k]
   (or (get @contexts k)
       (get (swap! contexts (fn [m]
                              (cond-> m
                                (not (contains? m k))
-                               (assoc k (:python-context (env-python/create-python-context {}))))))
+                               (assoc k (:python-context (new-context))))))
            k)))
 
 (defn context-with!
   "`context` for `k` with `bindings` (symbol -> host value) installed on it."
-  ^Context [k bindings]
+  ^String [k bindings]
   (let [ctx (context k)]
     (doseq [[sym v] bindings]
       (env-python/set-python-binding! ctx sym v))
     ctx))
 
+(defn ev
+  "The value of guest `code` in `session`, as Clojure data.
+
+   Statements run and a trailing expression's value comes back — the same shape
+   a block has — and it crosses as JSON, so what a test asserts on is strings,
+   numbers, vectors and maps keyed by KEYWORD: the guest's snake_case dict keys
+   arrive verbatim as `:snake_case`, which is what the suites were written
+   against. A guest exception is NOT swallowed:
+   it arrives as the exception the runtime raises, because a test that silently
+   read `nil` for a crash would pass for the wrong reason."
+  [^String session ^String code]
+  (let [text (runtime/run session code)]
+    (when-not (str/blank? text) (json/read-json text :key-fn keyword))))
+
 (defmacro with-own
-  "Bind `sym` to a sandbox built for THIS test alone, and dispose it — Context
-   first, then its Engine — when the body returns.
+  "Bind `sym` to a sandbox built for THIS test alone, and dispose it when the body
+   returns.
 
    For a test that cannot share: one that wipes the sandbox
-   (`globals().clear()`, `del __vis_run_async__`), asserts on a COLD context, or
+   (`globals().clear()`, `del __vis_run_async__`), asserts on a COLD session, or
    needs its own roots / network policy / stdin. Those reasons are real; this
    does not take them away. It bounds how LONG the sandbox lives.
 
-   That is the number that matters. A sandbox built in a `let` at suite level
-   exists from namespace load until the JVM exits, so a file with fifteen of
-   them holds fifteen at once — and peak memory tracks how many are alive
-   TOGETHER, not how many were made. Since every Context now carries its own
-   Engine (`env-python/new-engine!`), and an Engine retains everything built on
-   it, one unclosed sandbox pins a whole Python heap for the rest of the run.
+   That is the number that matters. A session built in a `let` at suite level
+   exists from namespace load until the JVM exits, and every one of them holds
+   its own globals plus every host closure its tools captured.
 
-   `args` are `create-python-context`'s, verbatim."
+   `args` are [[new-context]]'s: bindings, roots-fn, network-opts."
   [[sym & args] & body]
   `(let [r#
-         (env-python/create-python-context ~@args)
+         (new-context ~@args)
 
          ~sym
          (:python-context r#)]
 
-     (try ~@body
-          (finally (try (.close ^Context (:python-context r#) true) (catch Throwable _# nil))
-                   (when-let [e# (:python-engine r#)]
-                     (try (.close ^Engine e# true) (catch Throwable _# nil)))))))
+     (try ~@body (finally (env-python/dispose-python-context! (:python-context r#))))))
 
 (defmacro with-own-env
   "[[with-own]] for a test that needs the whole `create-python-context` RESULT —
-   `:initial-ns-keys`, `:sandbox-ns` — and not just the Context. `binding` is
+   `:initial-ns-keys`, `:sandbox-ns` — and not just the session. `binding` is
    destructured against that map; the sandbox is disposed the same way."
   [[binding & args] & body]
   `(let [r#
-         (env-python/create-python-context ~@args)
+         (new-context ~@args)
 
          ~binding
          r#]
 
-     (try ~@body
-          (finally (try (.close ^Context (:python-context r#) true) (catch Throwable _# nil))
-                   (when-let [e# (:python-engine r#)]
-                     (try (.close ^Engine e# true) (catch Throwable _# nil)))))))
+     (try ~@body (finally (env-python/dispose-python-context! (:python-context r#))))))
 
 (defn shared
   "The sandbox shared by every suite that only USES Python."
-  ^Context []
+  ^String []
   (context ::shared))
 
 (defn shared-with!
   "`shared` with `bindings` (symbol -> host value) installed on it."
-  ^Context [bindings]
+  ^String [bindings]
   (context-with! ::shared bindings))

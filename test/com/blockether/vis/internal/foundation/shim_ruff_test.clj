@@ -6,14 +6,12 @@
    Files are written on the Clojure side into a system temp dir and the Context
    is built with a `roots-fn`, so Python `open()`/`os.walk` see them."
   (:require [com.blockether.vis.test-python-context :as tpc]
-            [com.blockether.vis.internal.env-python :as ep]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [org.graalvm.polyglot Context]
-           [java.nio.file Files]
+  (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
-(defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
+(defn- ev [c code] (tpc/ev c code))
 
 (defn- tmp-dir
   ^String []
@@ -22,17 +20,20 @@
 (defmacro with-fs-context
   "A sandbox Context whose Python filesystem is confined to `dir`."
   [dir & body]
-  `(tpc/with-own [~(with-meta 'python-context {:tag `Context}) {} (constantly [~dir])] ~@body))
+  `(tpc/with-own [~(with-meta 'python-context {:tag `String}) {} (constantly [~dir])] ~@body))
 
 (defdescribe
   ruff-shim-availability-test
-  (it "is absent at context creation and present after import"
+  (it "is importable the moment the session exists, and imports to the module the door installed"
       (let [d (tmp-dir)]
         (with-fs-context
           d
-          (expect (= false (ev python-context "'ruff' in __import__('sys').modules")))
-          (expect (= true
-                     (ev python-context "import ruff\n'ruff' in __import__('sys').modules"))))))
+          ;; The door staples `ruff` into `sys.modules` when the session is
+          ;; equipped, so `import ruff` binds THAT module instead of searching a
+          ;; path holding no such package. Ruff's own library still loads on the
+          ;; first CALL, never at context creation.
+          (expect (= true (ev python-context "import ruff\n'ruff' in __import__('sys').modules")))
+          (expect (= true (ev python-context "import ruff, sys\nruff is sys.modules['ruff']"))))))
   (it "reports ruff's own version first"
       (let [d (tmp-dir)]
         (with-fs-context d

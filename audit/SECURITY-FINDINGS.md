@@ -16,15 +16,17 @@ vis executes model-authored code, so "security" here is about **containment
 boundaries**. There are four:
 
 - **Model Python sandbox** — filesystem confinement is enforced *below* Python,
-  at the Truffle `FileSystem` layer (`src/com/blockether/vis/internal/sandbox_fs.clj`),
-  so it is a **hard** boundary. Network is a **soft** guardrail (labelled as such
-  in the code); the only hard network control is the `:network/enabled` capability.
-- **Python *extensions*** — trusted by design: `allowIO ALL` and full host
-  filesystem reach; native process creation is off (`allowCreateProcess false`) and
-  `subprocess` / `os.system` route through `vis.shell` under the session `wrap-argv`
-  policy (`src/com/blockether/vis/internal/python_extensions.clj:172-187`). A dropped
-  `.py` extension still has no meaningful confinement — the real blast radius if a
-  hostile extension is installed.
+  in the embedded interpreter's audit hook (`com.blockether/vis-python-runtime`,
+  driven by `env-python/install-*`), so it is a **hard** boundary — and the same
+  hook makes the network a hard on/off capability. Domain policy above that (the
+  in-guest connect guard and the egress proxy) is a **soft** guardrail, labelled
+  as such in the code.
+- **Python *extensions*** — trusted by design: they run in a HOST-owned
+  interpreter process with confinement lifted and full filesystem reach;
+  `subprocess` / `os.system` route through `vis.shell` under the session
+  `wrap-argv` policy (`src/com/blockether/vis/internal/python_extensions.clj`).
+  A dropped `.py` extension still has no meaningful confinement — the real blast
+  radius if a hostile extension is installed.
 - **Shell layer** — arbitrary `bash -lc`, **default ON** behind the user-owned `shell`
   toggle and the OS process jail
   (`src/com/blockether/vis/internal/foundation/shell.clj:2066-2091`).

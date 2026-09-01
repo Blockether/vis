@@ -302,11 +302,6 @@
 
 ;; Spawn argv + detached launch
 
-(defn native-image?
-  "True when running as the compiled GraalVM binary rather than on the JVM."
-  []
-  (some? (System/getProperty "org.graalvm.nativeimage.imagecode")))
-
 (defn- java-bin
   ^String []
   (str (System/getProperty "java.home") java.io.File/separator "bin" java.io.File/separator "java"))
@@ -325,7 +320,7 @@
    or `java -cp … clojure.main -m com.blockether.vis.core` on the JVM (mirrors the
    self-restart trick)."
   []
-  (if (native-image?)
+  (if (util/native-image?)
     [(self-executable)]
     (vec (concat [(java-bin)]
                  (.getInputArguments (ManagementFactory/getRuntimeMXBean))

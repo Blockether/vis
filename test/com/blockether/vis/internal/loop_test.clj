@@ -10,9 +10,8 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.sandbox-resources :as res]
             [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.python-extensions :as python-extensions]
+            [com.blockether.vis.internal.python-host :as python-host]
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.titling :as titling]
@@ -1274,7 +1273,7 @@
 
 (defdescribe
   environment-lifecycle-test
-  (it "closes the GraalPy context when disposing an environment"
+  (it "refuses the python session of an environment it disposed"
       (let [environment
             (lp/create-environment ::router {:db :memory})
 
@@ -1685,11 +1684,11 @@
 (defdescribe
   guest-interrupt-on-eval-timeout-test
   ;; REGRESSION: an eval timeout (and Esc cancel) only did `Future.cancel(true)`.
-  ;; GraalPy does NOT observe `Thread.interrupt` inside guest code, so a model
-  ;; block that spins (`while True: ...`) kept burning a whole core FOREVER —
-  ;; measured at 1.01 busy cores with BOTH worker futures already cancelled —
-  ;; and pinned its virtual thread's carrier. Only a Truffle safepoint
-  ;; interrupt unwinds the guest frame, and it must leave the context REUSABLE.
+  ;; The interpreter does NOT observe `Thread.interrupt` inside guest code, so a
+  ;; model block that spins (`while True: ...`) kept burning a whole core FOREVER
+  ;; — measured at 1.01 busy cores with BOTH worker futures already cancelled —
+  ;; and pinned its virtual thread's carrier. Only the interpreter's own
+  ;; interrupt unwinds the guest frame, and it must leave the session REUSABLE.
   (it
     "unwinds a runaway guest loop and keeps the context usable"
     (tpc/with-own
@@ -1739,141 +1738,78 @@
                                                                "print(40 + 2)"
                                                                :env
                                                                environment)))))))
-             (finally (try (.close ^org.graalvm.polyglot.Context pc true)
-                           (catch Throwable _ nil))))))))
+             (finally (try (env/dispose-python-context! pc) (catch Throwable _ nil))))))))
 
-;; Regression, issue #161: a failed Context.interrupt fell back to a Java thread
-;; interrupt but left the session context eligible for reuse. The returning host
-;; thread could then die while reacquiring GraalPy's GIL and wedge the next turn.
-(defdescribe
-  hard-cancelled-host-wait-retires-context-test
-  (it
-    "rejects the context before hard-interrupting non-interruptible host work"
-    (let [environment
-          (lp/create-environment ::router {:db :memory})
-
-          python-context
-          (:python-context environment)
-
-          token
-          (cancellation/cancellation-token)
-
-          entered
-          (promise)
-
-          release
-          (promise)
-
-          exited
-          (promise)
-
-          block
-          (fn []
-            (deliver entered true)
-            (try (loop []
-
-                   (when-not (realized? release)
-                     (try (Thread/sleep 10) (catch InterruptedException _ nil))
-                     (recur)))
-                 "released"
-                 (finally
-                   ;; Do not carry Future.cancel's Java interrupt back across
-                   ;; the host boundary during test cleanup.
-                   (Thread/interrupted)
-                   (deliver exited true))))]
-
-      (env/set-python-binding! python-context 'vis_test_block block)
-      (try (with-redefs-fn {#'lp/GUEST_INTERRUPT_GRACE_MS 150}
-             (fn []
-               (let [run (future ((deref #'lp/run-python-code)
-                                   python-context
-                                   "await gather(vis_test_block())"
-                                   :env
-                                   (assoc environment :cancel-token token)))]
-                 (try
-                   (expect (= true (deref entered 10000 ::host-not-entered)))
-                   (cancellation/cancel! token :client-cancel-turn)
-                   (let [result (deref run 5000 ::run-did-not-return)]
-                     (expect (not= ::run-did-not-return result))
-                     (expect (= :vis/interrupted (get-in result [:error :type]))))
-                   ;; The host call still owns a context thread while its GIL is
-                   ;; released. A probe can answer now, but reuse is no longer safe.
-                   (expect (false? (env/context-enterable? environment)))
-                   (finally (deliver release true) (deref exited 5000 nil) (deref run 5000 nil))))))
-           (finally (deliver release true)
-                    (deref exited 5000 nil)
-                    (try (lp/dispose-environment! environment) (catch Throwable _ nil)))))))
 (defdescribe eval-timeout-keeps-partial-stdout-test
              ;; The wall-clock backstop used to return only a timeout error. The
              ;; guest never reaches its final stdout outcome, so every line printed
              ;; before the timeout disappeared and the model reran the block blind.
              (it "surfaces what the block printed before the wall fired"
-                 (tpc/with-own [pc {}]
-                               (try (let [result (binding [rt/*eval-timeout-ms* 500]
-                                                   ((deref #'lp/run-python-code)
-                                                     pc
-                                                     "print('fetched 1')\nwhile True:\n    pass"))]
-                                      (expect (true? (:timeout? result)))
-                                      (expect (some? (re-find #"fetched 1"
-                                                              (str (:stdout result))))))
-                                    (finally (try (.close ^org.graalvm.polyglot.Context pc true)
-                                                  (catch Throwable _ nil)))))))
+                 (tpc/with-own
+                   [pc {}]
+                   (try (let [result (binding [rt/*eval-timeout-ms* 500]
+                                       ((deref #'lp/run-python-code)
+                                         pc
+                                         "print('fetched 1')\nwhile True:\n    pass"))]
+                          (expect (true? (:timeout? result)))
+                          (expect (some? (re-find #"fetched 1" (str (:stdout result))))))
+                        (finally (try (env/dispose-python-context! pc) (catch Throwable _ nil)))))))
 
-(defdescribe
-  python-block-runs-in-the-session-context-test
-  ;; REGRESSION: the eval worker thread bound only the per-block sinks, so the
-  ;; block itself ran with NO session context. A sandbox SHIM bridge reads the
-  ;; AMBIENT context (an extension SYMBOL installs its own around every call),
-  ;; so `ls` saw an EMPTY `workspace/*filesystem-roots*` and refused every bound
-  ;; extra filesystem root — "escapes the allowed workspace roots" — while
-  ;; `cat`/`grep` on the very same path answered normally.
-  (it
-    "gives a shim bridge the filesystem roots the session actually bound"
-    (tpc/with-own
-      [pc {}]
-      (let [;; Outside the primary cwd and outside every always-on root
-            ;; (temp dirs, `~/.vis`) - reachable ONLY as a bound root. An empty
-            ;; directory of its own, never the whole home: the guest `ls` COUNTS
-            ;; what it lists, so a home-sized walk outlives the block's eval wall,
-            ;; and the abandoned guest thread is still inside that host call when
-            ;; the teardown below closes the context - a close that then waits for
-            ;; it forever.
-            outside
-            (let [dir (java.io.File. (System/getProperty "user.home")
-                                     (str "vis-loop-outside-" (System/nanoTime)))]
-              (.mkdirs dir)
-              (spit (java.io.File. dir "marker.txt") "marker\n")
-              (.getAbsolutePath dir))
+(defdescribe python-block-runs-in-the-session-context-test
+             ;; REGRESSION: the eval worker thread bound only the per-block sinks, so the
+             ;; block itself ran with NO session context. A sandbox SHIM bridge reads the
+             ;; AMBIENT context (an extension SYMBOL installs its own around every call),
+             ;; so `ls` saw an EMPTY `workspace/*filesystem-roots*` and refused every bound
+             ;; extra filesystem root — "escapes the allowed workspace roots" — while
+             ;; `cat`/`grep` on the very same path answered normally.
+             (it
+               "gives a shim bridge the filesystem roots the session actually bound"
+               (tpc/with-own
+                 [pc {}]
+                 (let [;; Outside the primary cwd and outside every always-on root
+                       ;; (temp dirs, `~/.vis`) - reachable ONLY as a bound root. An empty
+                       ;; directory of its own, never the whole home: the guest `ls` COUNTS
+                       ;; what it lists, so a home-sized walk outlives the block's eval wall,
+                       ;; and the abandoned guest thread is still inside that host call when
+                       ;; the teardown below closes the context - a close that then waits for
+                       ;; it forever.
+                       outside
+                       (let [dir (java.io.File. (System/getProperty "user.home")
+                                                (str "vis-loop-outside-" (System/nanoTime)))]
+                         (.mkdirs dir)
+                         (spit (java.io.File. dir "marker.txt") "marker\n")
+                         (.getAbsolutePath dir))
 
-            code
-            (str "try:\n"
-                 "    rows = ls(" (pr-str outside)
-                 ")\n" "    print('listed', isinstance(rows, str) and len(rows) > 0)\n"
-                 "except Exception as e:\n" "    print('refused', e)\n")
+                       code
+                       (str "try:\n"
+                            "    rows = ls(" (pr-str outside)
+                            ")\n" "    print('listed', isinstance(rows, str) and len(rows) > 0)\n"
+                            "except Exception as e:\n" "    print('refused', e)\n")
 
-            env-with
-            (fn [roots]
-              {:workspace/root (System/getProperty "user.dir")
-               :workspace {:repo-root (System/getProperty "user.dir")
-                           :root (System/getProperty "user.dir")}
-               :security-policy {:jail-enabled true}
-               :security/filesystem-roots roots
-               :security/no-search-roots []})
+                       env-with
+                       (fn [roots]
+                         {:workspace/root (System/getProperty "user.dir")
+                          :workspace {:repo-root (System/getProperty "user.dir")
+                                      :root (System/getProperty "user.dir")}
+                          :security-policy {:jail-enabled true}
+                          :security/filesystem-roots roots
+                          :security/no-search-roots []})
 
-            listing
-            (fn [roots]
-              (str (:stdout ((deref #'lp/run-python-code) pc code :env (env-with roots)))))]
+                       listing
+                       (fn [roots]
+                         (str (:stdout
+                                ((deref #'lp/run-python-code) pc code :env (env-with roots)))))]
 
-        (try
-          ;; The path is genuinely outside what confinement grants by itself...
-          (expect (str/starts-with? (listing []) "refused"))
-          ;; ...and the moment the session binds it, the block's own `ls` reaches it.
-          (expect (str/starts-with? (listing [outside]) "listed True"))
-          (finally
-            (try (doseq [^java.io.File f (reverse (file-seq (java.io.File. ^String outside)))]
-                   (.delete f))
-                 (catch Throwable _ nil))
-            (try (.close ^org.graalvm.polyglot.Context pc true) (catch Throwable _ nil))))))))
+                   (try
+                     ;; The path is genuinely outside what confinement grants by itself...
+                     (expect (str/starts-with? (listing []) "refused"))
+                     ;; ...and the moment the session binds it, the block's own `ls` reaches it.
+                     (expect (str/starts-with? (listing [outside]) "listed True"))
+                     (finally (try (doseq [^java.io.File f (reverse (file-seq (java.io.File.
+                                                                                ^String outside)))]
+                                     (.delete f))
+                                   (catch Throwable _ nil))
+                              (try (env/dispose-python-context! pc) (catch Throwable _ nil))))))))
 
 (defdescribe
   python-tool-activity-lifecycle-test
@@ -4100,7 +4036,7 @@
       ;; Prose that merely mentions a client must not widen anything.
       (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('requests are bounded')"))))
   (it "splits + evals multi-form blocks whose statements contain astral chars (emoji)"
-      ;; Regression: GraalPy's ast.get_source_segment truncates
+      ;; Regression: CPython's ast.get_source_segment truncates
       ;; the per-form source when a statement carries a non-BMP char (emoji 👆),
       ;; dropping the closing quotes -> the lone re-eval raised a spurious
       ;; "unterminated triple-quoted string" SyntaxError, the (done ...) answer
@@ -4108,7 +4044,7 @@
       ;; done(). Our pure-Python codepoint slice must keep every segment intact —
       ;; including a MULTILINE triple-quoted string with emoji mid- and last-line.
       (let [{:keys [python-context]}
-            (env/create-python-context {})
+            (tpc/new-context {})
 
             ;; emoji on the first AND a later line; the second form re-reads the var.
             code
@@ -4155,8 +4091,8 @@
   "maki-style in-program concurrency: `await gather(*awaitables)` runs each
    awaitable on a virtual thread and returns results IN ORDER. Guards the async
    runtime end-to-end through a real sandbox: the await path AST-wraps + drives
-   the coroutine, gather dispatches awaitables to __vis_par__ (the host
-   bounded platform pool). Concurrency itself is proven by GraalPy lock-release."
+   coroutine, gather dispatches awaitables to __vis_par__ (the host
+   bounded platform pool). Concurrency itself is proven by real thread overlap."
   (it
     "awaits gathered coroutines and returns their results in order"
     (let [environment (lp/create-environment ::router {:db :memory})]
@@ -4993,11 +4929,11 @@
 ;; The model-facing disclosure: a trimmed iteration tells the model what dropped.
 (defdescribe
   literal-code-block-error-test
-  ;; The guard's comment-only branch parses inside the SESSION's own GraalPy
+  ;; The guard's comment-only branch parses inside the SESSION's own CPython
   ;; context (post one-context consolidation), so the test threads a real
   ;; context through — built lazily ONCE for the block.
   (let [ctx
-        (delay (:python-context (env/create-python-context {})))
+        (delay (:python-context (tpc/new-context {})))
 
         err
         (fn [expr]
@@ -5065,160 +5001,14 @@
                ;; The sleep/poll prohibition lives HERE and nowhere else: the core
                ;; prompt deliberately dropped its duplicate copy.
                "`sh.logs()`" "no tool waits for you"
-               ;; Sandbox Python does NOT close a dropped file handle, so an
-               ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
-               ;; enough of them and no `shell` child can be spawned at
-               ;; all. The sandbox reclaims and caps them
-               ;; (`env-python-fd-test`); the description says so, because the
-               ;; cheapest fix is the block never leaking in the first place.
+               ;; A descriptor the block HOLDS is capped, not reclaimed: hold
+               ;; enough of them and no `shell` child can be spawned at all. The
+               ;; ceiling and its message belong to the runtime repo
+               ;; (`fd_test`); the description says so, because the cheapest fix
+               ;; is the block never holding them in the first place.
                "Close what you open" "with open(...)" "leaked descriptors" "VIS_PY_MAX_OPEN_FILES"]]
         (expect (str/includes? (:description tool) fact))))))
 
-(def ^:private settle-gather-futures! (deref #'lp/settle-gather-futures!))
-
-(def ^:private gather-executor @@#'lp/gather-executor)
-
-(def ^:private gather-max-threads @@#'lp/gather-max-threads)
-
-(defdescribe
-  gather-executor-resource-safety-test
-  "GraalPy pins a carrier across Value.execute, so gather must never use an
-   unbounded virtual-thread-per-task executor. The production pool has a hard
-   platform-thread ceiling, no backlog, reclaimable idle workers, and the
-   cancellation tests below prove children do not outlive their coordinator."
-  (it "is a bounded, self-reclaiming platform pool with no queued-task retention"
-      (let [^java.util.concurrent.ThreadPoolExecutor exec
-            gather-executor
-
-            worker-virtual?
-            (.get (.submit exec
-                           ^java.util.concurrent.Callable
-                           (fn []
-                             (.isVirtual (Thread/currentThread)))))]
-
-        (expect (instance? java.util.concurrent.ThreadPoolExecutor exec))
-        (expect (= 0 (.getCorePoolSize exec)))
-        (expect (= (int gather-max-threads) (.getMaximumPoolSize exec)))
-        (expect (instance? java.util.concurrent.SynchronousQueue (.getQueue exec)))
-        (expect (.allowsCoreThreadTimeOut exec))
-        (expect (= 30 (.getKeepAliveTime exec java.util.concurrent.TimeUnit/SECONDS)))
-        (expect (false? worker-virtual?))
-        (expect (<= (.getPoolSize exec) (int gather-max-threads)))))
-  (it
-    "backpressures a saturated virtual submitter instead of pinning it with guest work"
-    (let [^java.util.concurrent.ThreadPoolExecutor exec
-          gather-executor
-
-          release
-          (java.util.concurrent.CountDownLatch. 1)
-
-          started
-          (java.util.concurrent.CountDownLatch. (int gather-max-threads))
-
-          blockers
-          (mapv (fn [_]
-                  (.submit exec
-                           ^java.util.concurrent.Callable
-                           (fn []
-                             (.countDown started)
-                             (.await release)
-                             nil)))
-                (range gather-max-threads))]
-
-      (try (expect (.await started 5 java.util.concurrent.TimeUnit/SECONDS))
-           (let [result
-                 (promise)
-
-                 submitter
-                 (Thread/startVirtualThread
-                   ^Runnable
-                   (fn []
-                     (try (deliver result
-                                   (.get (.submit exec
-                                                  ^java.util.concurrent.Callable
-                                                  (fn []
-                                                    (.isVirtual (Thread/currentThread))))))
-                          (catch Throwable e (deliver result e)))))]
-
-             (Thread/sleep 25)
-             (expect (not (realized? result)))
-             (.countDown release)
-             (.join submitter 5000)
-             (expect (false? (deref result 5000 ::timeout))))
-           (finally (.countDown release)
-                    (doseq [^java.util.concurrent.Future blocker blockers]
-                      (try (.get blocker 5 java.util.concurrent.TimeUnit/SECONDS)
-                           (catch Throwable _))))))))
-
-(defdescribe
-  settle-gather-futures-test
-  ;; The gather settle loop `(.get f)`-ed each child in order and swallowed
-  ;; InterruptedException as that slot's `:err` — so an eval-timeout/cancel
-  ;; `.cancel(true)` on the worker never reached the CHILD futures: cancelled
-  ;; `gather(rg(...), rg(...))` calls left orphaned virtual threads grinding
-  ;; at 100% CPU each until process exit. Now an interrupt during settle
-  ;; hard-cancels every child and propagates.
-  (it "settles every slot in order — value OR error, a failing slot never aborts siblings"
-      (let [exec (java.util.concurrent.Executors/newVirtualThreadPerTaskExecutor)]
-        (try (let [futs [(.submit exec
-                                  ^java.util.concurrent.Callable
-                                  (fn []
-                                    1))
-                         (.submit exec
-                                  ^java.util.concurrent.Callable
-                                  (fn []
-                                    (throw (ex-info "boom" {}))))
-                         (.submit exec
-                                  ^java.util.concurrent.Callable
-                                  (fn []
-                                    3))]
-                   outcomes (settle-gather-futures! futs)]
-
-               (expect (= {:ok 1} (nth outcomes 0)))
-               (expect (= "boom" (ex-message (:err (nth outcomes 1)))))
-               (expect (= {:ok 3} (nth outcomes 2))))
-             (finally (.shutdownNow exec)))))
-  (it
-    "hard-cancels still-running children and rethrows when the settling thread is interrupted"
-    (let [exec
-          (java.util.concurrent.Executors/newVirtualThreadPerTaskExecutor)
-
-          child-started
-          (promise)
-
-          child-interrupted
-          (promise)]
-
-      (try (let [futs
-                 [(.submit exec
-                           ^java.util.concurrent.Callable
-                           (fn []
-                             (deliver child-started true)
-                             (try (Thread/sleep 60000)
-                                  :never
-                                  (catch InterruptedException _
-                                    (deliver child-interrupted true)
-                                    :interrupted))))]
-
-                 _
-                 (when (= ::timeout (deref child-started 5000 ::timeout))
-                   (throw (ex-info "child did not start" {})))
-
-                 _
-                 (.interrupt (Thread/currentThread))
-
-                 thrown
-                 (try (settle-gather-futures! futs)
-                      nil
-                      (catch InterruptedException e e)
-                      (finally
-                        ;; clear the flag before any further test plumbing
-                        (Thread/interrupted)))]
-
-             (expect (some? thrown))
-             (expect (.isCancelled ^java.util.concurrent.Future (first futs)))
-             (expect (= true (deref child-interrupted 2000 ::timeout))))
-           (finally (Thread/interrupted) (.shutdownNow exec))))))
 
 ;; ── post-refresh propagation backoff (gateway-wide OAuth-401 storm guard) ──
 (def ^:private auth-last-refreshed (deref #'lp/auth-last-refreshed))
@@ -6291,7 +6081,7 @@
 
 (defdescribe env-reaper-test
              ;; The idle-env reaper is the authoritative backstop against unbounded
-             ;; GraalPy Context growth. An empty {} env is safe to dispose:
+             ;; Python session growth. An empty {} env is safe to dispose:
              ;; dispose-environment! no-ops with no :python-context / :db-info.
              (describe "evict-if-idle!"
                        (it "disposes + evicts an idle, unlocked entry"
@@ -6358,83 +6148,67 @@
 
 (def ^:private reap-idle-envs! (deref #'lp/reap-idle-envs!))
 
-(def ^:private heap-pressure? (deref #'lp/heap-pressure?))
+(def ^:private memory-pressure? (deref #'lp/memory-pressure?))
 
-(defdescribe
-  env-heap-watermark-test
-  ;; Layer 3: under JVM heap pressure the reaper force-evicts EVERY
-  ;; idle (unlocked) env this sweep, ignoring the idle TTL, to shed
-  ;; GraalPy Contexts fast. A running turn (lock held off-thread) is
-  ;; still skipped; the transcript reloads from the DB.
-  (describe
-    "reap-idle-envs! under heap pressure"
-    (it "force-evicts fresh, unlocked entries when pressured"
-        (let [k "watermark-test/fresh"]
-          (swap! env-cache assoc k (new-cache-entry {}))
-          (try
-            ;; not idle (just touched) + default 15m TTL: a
-            ;; normal sweep keeps it ...
-            (with-redefs [lp/heap-pressure? (constantly false)]
-              (reap-idle-envs!)
-              (expect (contains? @env-cache k)))
-            ;; ... but under pressure it is evicted now.
-            (with-redefs [lp/heap-pressure? (constantly true)]
-              (expect (pos? (reap-idle-envs!)))
-              (expect (not (contains? @env-cache k))))
-            (finally (swap! env-cache dissoc k)))))
-    (it "still skips a locked entry (a running turn) under pressure"
-        (let [k
-              "watermark-test/busy"
+(defdescribe env-memory-pressure-test
+             ;; Layer 3: under process memory pressure the reaper force-evicts EVERY
+             ;; idle (unlocked) env this sweep, ignoring the idle TTL, to shed
+             ;; Python sessions fast. A running turn (lock held off-thread) is
+             ;; still skipped; the transcript reloads from the DB.
+             (describe "reap-idle-envs! under memory pressure"
+                       (it "force-evicts fresh, unlocked entries when pressured"
+                           (let [k "watermark-test/fresh"]
+                             (swap! env-cache assoc k (new-cache-entry {}))
+                             (try
+                               ;; not idle (just touched) + default 15m TTL: a
+                               ;; normal sweep keeps it ...
+                               (with-redefs [lp/memory-pressure? (constantly false)]
+                                 (reap-idle-envs!)
+                                 (expect (contains? @env-cache k)))
+                               ;; ... but under pressure it is evicted now.
+                               (with-redefs [lp/memory-pressure? (constantly true)]
+                                 (expect (pos? (reap-idle-envs!)))
+                                 (expect (not (contains? @env-cache k))))
+                               (finally (swap! env-cache dissoc k)))))
+                       (it "still skips a locked entry (a running turn) under pressure"
+                           (let [k
+                                 "watermark-test/busy"
 
-              entry
-              (new-cache-entry {})
+                                 entry
+                                 (new-cache-entry {})
 
-              ^java.util.concurrent.locks.ReentrantLock lock
-              (:lock entry)]
+                                 ^java.util.concurrent.locks.ReentrantLock lock
+                                 (:lock entry)]
 
-          (swap! env-cache assoc k entry)
-          (let [held
-                (promise)
+                             (swap! env-cache assoc k entry)
+                             (let [held
+                                   (promise)
 
-                release
-                (promise)
+                                   release
+                                   (promise)
 
-                holder
-                (Thread. ^Runnable
-                         (fn []
-                           (.lock lock)
-                           (deliver held true)
-                           @release
-                           (.unlock lock)))]
+                                   holder
+                                   (Thread. ^Runnable
+                                            (fn []
+                                              (.lock lock)
+                                              (deliver held true)
+                                              @release
+                                              (.unlock lock)))]
 
-            (try (.start holder)
-                 @held
-                 (with-redefs [lp/heap-pressure? (constantly true)]
-                   (reap-idle-envs!)
-                   (expect (contains? @env-cache k)))
-                 (finally (deliver release true) (.join holder 1000) (swap! env-cache dissoc k))))))
-    (it "heap-pressure? is disabled when BOTH gates are off"
-        (expect (false? (with-redefs [lp/env-heap-watermark-pct
-                                      (delay 0)
-
-                                      lp/env-heap-budget-mb
-                                      (delay 0)
-
-                                      lp/env-rss-budget-mb
-                                      (delay 0)]
-
-                          (heap-pressure?)))))
-    (it "heap-pressure? fires on the absolute MB budget when the percent watermark can't reach"
-        (expect (true? (with-redefs [lp/env-heap-watermark-pct
-                                     (delay 0)
-
-                                     lp/env-heap-budget-mb
-                                     (delay 1)
-
-                                     lp/env-rss-budget-mb
-                                     (delay 0)]
-
-                         (heap-pressure?)))))))
+                               (try (.start holder)
+                                    @held
+                                    (with-redefs [lp/memory-pressure? (constantly true)]
+                                      (reap-idle-envs!)
+                                      (expect (contains? @env-cache k)))
+                                    (finally (deliver release true)
+                                             (.join holder 1000)
+                                             (swap! env-cache dissoc k))))))
+                       (it "memory-pressure? is disabled when the RSS gate is off"
+                           (expect (false? (with-redefs [lp/env-rss-budget-mb (delay 0)]
+                                             (memory-pressure?)))))
+                       (it "memory-pressure? fires on the RSS budget"
+                           (expect (true? (with-redefs [lp/env-rss-budget-mb (delay 1)]
+                                            (memory-pressure?)))))))
 
 (def ^:private bump-turns! (deref #'lp/bump-turns!))
 
@@ -6565,21 +6339,17 @@
                         (toggles/set-enabled! "loop_test_fanout_busy" false)))))))
 
 (defdescribe env-reaper-enablement-test
-             (it "starts for the absolute heap budget even when every older policy is off"
+             (it "starts for the RSS budget even when every older policy is off"
                  (let [enabled? (deref #'lp/env-reaper-enabled?)]
                    (expect (true? (with-redefs [lp/env-reaper-interval-ms (delay 1000)
                                                 lp/env-idle-ttl-ms (delay 0)
                                                 lp/env-cache-max (delay 0)
-                                                lp/env-heap-watermark-pct (delay 0)
-                                                lp/env-heap-budget-mb (delay 1)
-                                                lp/env-rss-budget-mb (delay 0)]
+                                                lp/env-rss-budget-mb (delay 1)]
 
                                     (enabled?))))
                    (expect (false? (with-redefs [lp/env-reaper-interval-ms (delay 1000)
                                                  lp/env-idle-ttl-ms (delay 0)
                                                  lp/env-cache-max (delay 0)
-                                                 lp/env-heap-watermark-pct (delay 0)
-                                                 lp/env-heap-budget-mb (delay 0)
                                                  lp/env-rss-budget-mb (delay 0)]
 
                                      (enabled?))))))
@@ -6597,11 +6367,9 @@
                    (expect (pos? (:jvm-thread-count snapshot))))))
 
 (defdescribe env-rss-pressure-test
-             (it "detects native/process memory when JVM heap gates are disabled"
-                 (let [pressure? (deref #'lp/heap-pressure?)]
-                   (with-redefs-fn {#'lp/env-heap-watermark-pct (delay 0)
-                                    #'lp/env-heap-budget-mb (delay 0)
-                                    #'lp/env-rss-budget-mb (delay 1)
+             (it "detects the native memory an embedded interpreter holds outside the JVM heap"
+                 (let [pressure? (deref #'lp/memory-pressure?)]
+                   (with-redefs-fn {#'lp/env-rss-budget-mb (delay 1)
                                     #'lp/process-rss-bytes (constantly (* 2 1024 1024))}
                      (fn []
                        (expect (true? (pressure?))))))))
@@ -7290,6 +7058,16 @@
    here writes anywhere near the developer's own `~/.vis`."
   (requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir))
 
+(defn- bind-live-door!
+  "The ONE host door these tests need, installed in a SANDBOX session.
+
+   `python-extensions/bind-host!` binds the whole extension surface in the
+   unconfined CHILD process, which is not where a sandbox block runs."
+  [pc]
+  (python-host/install-sync-tools! pc
+                                   {"__vis_host_live__" (fn [envelope]
+                                                          (hi/live-json! envelope))}))
+
 (defn- open-a-view
   "Guest code opening a live view through the host bridge an extension crosses,
    printing the id the engine minted for it."
@@ -7312,7 +7090,7 @@
       (tpc/with-own [pc {}]
                     (let [;; The bridge an extension crosses for a view, on a context of its own.
                           _
-                          (python-extensions/bind-host! pc "loop-test")
+                          (bind-live-door! pc)
 
                           before
                           (hi/open-live-ids)
@@ -7324,7 +7102,7 @@
                               ((deref #'lp/run-python-code) pc code)) (vec (left))]
                            (finally (doseq [view-id (left)]
                                       (hi/close-live! view-id))
-                                    (try (.close ^org.graalvm.polyglot.Context pc true)
+                                    (try (env/dispose-python-context! pc)
                                          (catch Throwable _ nil)))))))))
 
 (defn- cancelled-watching-block
@@ -7338,7 +7116,7 @@
       (tpc/with-own
         [pc {}]
         (let [_
-              (python-extensions/bind-host! pc "loop-test")
+              (bind-live-door! pc)
 
               before
               (hi/open-live-ids)
@@ -7361,8 +7139,7 @@
                (finally (deref stopper 5000 nil)
                         (doseq [view-id (left)]
                           (hi/close-live! view-id))
-                        (try (.close ^org.graalvm.polyglot.Context pc true)
-                             (catch Throwable _ nil)))))))))
+                        (try (env/dispose-python-context! pc) (catch Throwable _ nil)))))))))
 
 (defdescribe live-view-owns-the-eval-wall-test
              ;; Regression, reported from the app: watching a CI run died at `Timeout (300s)` with the
@@ -7751,7 +7528,7 @@
     {:release release :thread ghost}))
 
 ;; Regression, session e8c9dbc9-388d-43a4-8264-9dd5adec4449: a turn wedged inside
-;; the engine (parked on GraalPy's GIL, where `Thread.interrupt` never reaches it)
+;; the engine (parked on CPython's GIL, where `Thread.interrupt` never reaches it)
 ;; never released its session's `ReentrantLock`. The daemon's cancel backstop
 ;; synthesized `turn.cancelled` and reported the session idle — but `send!` took
 ;; that lock with a bare `.lock`, so the NEXT turn parked in `Unsafe.park`
@@ -7848,7 +7625,7 @@
                       (swap! env-cache dissoc k)))))
     ;; Regression, session 6e214dfd-6653-42a6-b45a-710864b0ccbd: the user pressed stop
     ;; on a live view. The cancelled turn unwound and released the engine lock, but the
-    ;; guest thread it abandoned died OWNING GraalPy's GIL, so the context could never
+    ;; guest thread it abandoned died OWNING CPython's GIL, so the context could never
     ;; be entered again. The NEXT turn took the free lock, walked into the engine and
     ;; parked in `PythonContext.acquireGil` before its first iteration — `turn.started`,
     ;; zero iterations, buried by the stall watchdog two minutes later, and the same for
@@ -8140,9 +7917,10 @@
   ;; A sandbox is built ~130 lines before `create-environment` returns, and
   ;; workspace resolution, extension registration and the defs restore all run after
   ;; it. A throw in that stretch used to abandon it — and an abandoned sandbox is
-  ;; never reclaimed, because its GraalPy action thread is a GC root pinning the
-  ;; Context, its Engine and the whole Python heap. So the FAILURE path leaked
-  ;; worse than success ever could, on exactly the runs a caller retries.
+  ;; never reclaimed: its Python namespace is a reference cycle through every
+  ;; function defined in it, and the host half holds one closure per tool. So the
+  ;; FAILURE path leaked worse than success ever could, on exactly the runs a
+  ;; caller retries.
   (it "closes the sandbox it built when a later step throws"
       (let [disposed
             (atom [])
@@ -8150,9 +7928,9 @@
             boom
             (RuntimeException. "workspace exploded")]
 
-        (with-redefs-fn {#'res/dispose! (fn [sandbox]
-                                          (swap! disposed conj sandbox)
-                                          nil)
+        (with-redefs-fn {#'env/dispose-python-context! (fn [session]
+                                                         (swap! disposed conj session)
+                                                         nil)
                          ;; A step that runs AFTER the sandbox exists, and fails.
                          #'env/restore-session-defs! (fn [& _]
                                                        (throw boom))}
@@ -8162,11 +7940,11 @@
               (expect (identical? boom thrown) "the original failure must reach the caller")
               (expect (= 1 (count @disposed))
                       (str "create-environment abandoned its sandbox on the failure path"
-                           " (dispose! calls: "
+                           " (dispose calls: "
                            (count @disposed)
                            ")"))
-              (expect (some? (:python-context (first @disposed)))
-                      "the disposed value must be the sandbox it built")))))))
+              (expect (some? (first @disposed))
+                      "the disposed value must be the session it built")))))))
 
 (defdescribe
   filesystem-activity-rows-test

@@ -1,22 +1,19 @@
 (ns com.blockether.vis.internal.env-python-test
-  "GraalPy sandbox behaviour that needs a REAL context: the proxy→dict boundary
-   fix and the print-capture of tool results. Boots ONE context for the ns."
+  "Sandbox behaviour that needs a REAL interpreter: the host-value boundary
+   and the print-capture of tool results. Boots ONE session for the ns."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.doc-corpus :as doc-corpus]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as ext]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.test-python-context :as tpc]
-            [lazytest.core :refer [defdescribe expect it]])
-  (:import [org.graalvm.polyglot Context]
-           [org.graalvm.polyglot.proxy ProxyExecutable]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
   canonical-python-literal-test
   (it
-    "renders boundary data without a GraalPy printer context"
+    "renders boundary data without a CPython printer context"
     (let [data
           (array-map "none" nil "flags" [true false] "text" "a\n\"\\\t" "nested" (array-map "x" 1))]
       (expect
@@ -53,7 +50,7 @@
                    (expect (= "[]\n" (:stdout result))))))
 
 (defdescribe cold-context-local-time-test
-             ;; GraalPy leaves the time module state (`currentZoneId`) null until `time`
+             ;; CPython leaves the time module state (`currentZoneId`) null until `time`
              ;; is imported, so the FIRST local-time call in a cold context used to die
              ;; with `NPE: Cannot read field "currentZoneId"`. The eager `time` import in
              ;; `auto-imports-python` initializes it - this guards that.
@@ -73,11 +70,10 @@
 (defdescribe
   block-error-fidelity-test
   "The model must ALWAYS see its own Python error. The caret/position walk
-   (`__vis_error_pos__`) reads Truffle traceback frames, and on a warm
-   JIT-compiled context that walk can die with an internal
-   `NullPointerException: Null receiver values are not supported by libraries`
-   that guest code cannot catch. It used to run INSIDE the guest `except`, so
-   the internal fault REPLACED the real exception and every failing block
+   (`__vis_error_pos__`) reads the raised exception's traceback frames, and a
+   fault inside that walk must never replace the error it was describing. It
+   used to run INSIDE the guest `except`, so an internal fault REPLACED the real
+   exception and every failing block
    surfaced as `INTERNAL engine/tool fault - a host call returned null`. The
    walk now runs on the HOST side, where it is catchable: a broken position
    walk may only cost the caret span, never the message."
@@ -97,7 +93,7 @@
             _
             (ep/run-python-block ctx
                                  (str "def __vis_err_pos_now__():\n"
-                                      "    raise RuntimeError('simulated truffle fault')\n"
+                                      "    raise RuntimeError('simulated fault')\n"
                                       "globals()['__vis_err_pos_now__'] = __vis_err_pos_now__\n"))
 
             err
@@ -130,30 +126,28 @@
 (defdescribe
   proxy-and-capture-test
   (let [env
-        (ep/create-python-context {})
+        (tpc/new-context {})
 
         ctx
         (:python-context env)]
 
-    (it "a raw tool-result proxy is NOT json-serializable; after settle it's a REAL mutable dict"
-        ;; `test_proxy` is bound via ->py → a ProxyHashMap (ForeignDict). It passes
-        ;; isinstance(dict) but json.dumps() raises and it is read-only — the silent
-        ;; friction. Assigning it auto-settles → __vis_pyify__ → a REAL python dict:
-        ;; json.dumps works, it's mutable, and nested maps are converted too.
-        ;; `eof nil` reproduces cat's `:next-offset nil` — ->py stores Java null which
-        ;; GraalPy surfaces as ForeignNone (`x is None` is False); pyify must normalize
-        ;; it or json.dumps chokes.
-        (ep/bind-and-bump! env 'test_proxy {"op" "cat" "a" {"b" 1} "eof" nil})
+    (it "a settled tool result is a REAL mutable dict: json, mutation and nested maps"
+        ;; CPython handed the block a ProxyHashMap: it passed `isinstance(dict)` but
+        ;; `json.dumps()` refused it and it was read-only — silent friction on every
+        ;; tool result. The embedded CPython hands back a value the host already
+        ;; decoded and types it at the tool seam, so a result behaves like the dict
+        ;; it looks like. `eof None` reproduces cat's `:next-offset nil`, which the
+        ;; old boundary surfaced as a ForeignNone that `json.dumps` choked on.
         (let [r (ep/run-python-block
-                  ctx
-                  (str "import json\n" "try:\n"
-                       "    json.dumps(test_proxy); raw_json = True\n" "except Exception:\n"
-                       "    raw_json = False\n" "x = test_proxy\n" ;; auto-settle → pyify → real dict
-                       "x['added'] = 7\n"                          ;; mutation works on a real dict
-                       "post = (isinstance(x, dict) and (json.dumps(x) is not None)\n"
-                       "        and x['added'] == 7 and isinstance(x['a'], dict))\n"
-                       "print(['raw_json', raw_json, 'post', post])"))]
-          (expect (re-find #"\['raw_json', False, 'post', True\]" (str (:stdout r))))))
+                  (tpc/context-with! ::proxy
+                                     {'test_result (fn []
+                                                     {"op" "cat" "a" {"b" 1} "eof" nil})})
+                  (str "import json\n"
+                       "x = test_result()\n" "x['added'] = 7\n"
+                       "ok = (isinstance(x, dict) and json.dumps(x) is not None\n"
+                       "      and x['added'] == 7 and isinstance(x['a'], dict)\n"
+                       "      and x['eof'] is None)\n" "print(['settled', ok])"))]
+          (expect (re-find #"\['settled', True\]" (str (:stdout r))))))
     (it
       "MEASURE: pyify cost across sizes (session-scale ~30/100 vs a large 5000-entry result)"
       (ep/bind-and-bump! env
@@ -205,15 +199,18 @@
     (it "a missing key on a tool result names the tool, the near miss and EVERY key it did return"
         ;; Result shapes are per-tool by design (shell -> stdout/stderr/exit,
         ;; run_tests -> output). A bare `KeyError: 'output'` reads as "the tool broke",
-        ;; so the model guesses a second name and spins. Every host-rebuilt map -- the
-        ;; result AND each nested map -- answers a miss with its own shape instead;
-        ;; `.get` stays silent, and the value is still a plain dict.
-        (ep/bind-and-bump! env 'tp {"op" "shell" "stdout" "hi" "exit" 0 "nested" {"a" 1}})
+        ;; so the model guesses a second name and spins. Every map that crosses the
+        ;; tool seam -- the result AND each nested map inside it -- answers a miss
+        ;; with its own shape instead; `.get` stays silent, and the value is still a
+        ;; plain dict.
         (let [out (:stdout
                     (ep/run-python-block
-                      ctx
+                      (tpc/context-with!
+                        ::miss
+                        {'tool_result (fn []
+                                        {"op" "shell" "stdout" "hi" "exit" 0 "nested" {"a" 1}})})
                       (str
-                        "r = tp\n"
+                        "r = tool_result()\n"
                         "try:\n    r['output']\nexcept KeyError as e:\n    print('MISS', e)\n"
                         "try:\n    r['stdou']\nexcept KeyError as e:\n    print('NEAR', e)\n"
                         "try:\n    r['nested']['b']\nexcept KeyError as e:\n    print('NEST', e)\n"
@@ -292,8 +289,8 @@
    output, so there is nothing to index: every old accessor name must be absent
    from the sandbox, and no docstring may promise a coordinate for re-reading it."
   (let [ctx
-        (:python-context (ep/create-python-context (ext/builtin-sandbox-bindings (fn []
-                                                                                   nil))))
+        (:python-context (tpc/new-context (ext/builtin-sandbox-bindings (fn []
+                                                                          nil))))
 
         run
         (fn [code]
@@ -326,7 +323,7 @@
                                         nil))
 
         ctx
-        (:python-context (ep/create-python-context bind))
+        (:python-context (tpc/new-context bind))
 
         run
         (fn [code]
@@ -424,11 +421,11 @@
           (expect (str/includes? out "body=True"))
           (expect (str/includes? out "local=False"))))
     (it "answers a shim member as its own symbol under its dotted name"
-        (let [out (run (str "hits = apropos(r'^pandas\\.read_csv$')\n"
+        (let [out (run (str "hits = apropos(r'^nippy\\.encode$')\n"
                             "print('first=' + hits[0].name)\n" "print('type=' + hits[0].type)\n"
                             "print('item=' + str(len(doc(hits[0])) > 0))\n"
-                            "print('colon=' + str('read_csv' in doc('pandas::read_csv')))"))]
-          (expect (str/includes? out "first=pandas.read_csv"))
+                            "print('colon=' + str('encode' in doc('nippy::encode')))"))]
+          (expect (str/includes? out "first=nippy.encode"))
           (expect (str/includes? out "type=function"))
           (expect (str/includes? out "item=True"))
           (expect (str/includes? out "colon=True"))))
@@ -523,7 +520,7 @@
   boundary-date-test
   ;; Regression (session 9c829d10): `java.util.Date` — what nippy hands back
   ;; for every persisted `#inst` (session/turn `:created-at`s) — fell through
-  ;; `->py`'s `:else` branch as a raw host object. GraalPy materialising it as
+  ;; `->py`'s `:else` branch as a raw host object. CPython materialising it as
   ;; a Python datetime needs the context's datetime module data, which is null
   ;; unless `import datetime` already ran in the sandbox:
   ;; `NullPointerException: Cannot read field "utc" because "moduleData" is
@@ -539,7 +536,7 @@
   boundary-pathlike-test
   "A path the model spelled as a `pathlib.Path` is still a path: every tool that
    takes a path string takes the OBJECT too, at any depth."
-  ;; Regression: a `pathlib.Path` argument reached the host as an opaque polyglot
+  ;; Regression: a `pathlib.Path` argument reached the host as an opaque object
   ;; value whose `toString` is the Python REPR, so `cat(root / 'q.clj')` refused
   ;; with `File not found: ~/vis/PosixPath('/…/q.clj')` and `grep` called the
   ;; same argument a non-string path.
@@ -568,13 +565,17 @@
                   "        return '/tmp/vis/duck.clj'\n" "pathlike_probe(VisTestPathLike())"))
         (expect (= [["/tmp/vis/duck.clj"]] @seen)))
     (it "a refusing __fspath__ leaves the value alone instead of failing the call"
+        ;; A path-like whose `__fspath__` raises is not a path: the call must not
+        ;; fail over it, and the argument must not be turned into one. It crosses
+        ;; as its `str` — the honest limit of a text boundary — never as the
+        ;; filesystem string it refused to answer.
         (let [out (run (str "class VisTestBadPathLike:\n"
                             "    def __fspath__(self):\n"
                             "        raise ValueError('no path here')\n"
                             "pathlike_probe(VisTestBadPathLike())\n" "print('survived')"))]
           (expect (str/includes? (:stdout out) "survived"))
           (expect (= 1 (count @seen)))
-          (expect (not (string? (ffirst @seen))))))))
+          (expect (str/includes? (str (ffirst @seen)) "VisTestBadPathLike"))))))
 
 (defdescribe
   boundary-key-shape-test
@@ -635,37 +636,6 @@
             (try (ep/boundary-view {"sym" 'git-fetch!}) nil (catch clojure.lang.ExceptionInfo e e))]
         (expect (some? e))
         (expect (= :symbol-value (:vis/boundary-violation (ex-data e)))))))
-
-(defdescribe
-  py-gc-option-guard-test
-  "Layer 1 GC-option guard: a misconfigured env var must NEVER produce a value that can
-   break Context construction. `clamp-gc-value` parses + clamps into the option's range."
-  (let [clamp #'ep/clamp-gc-value]
-    (it "an in-range value passes through unchanged"
-        (expect (= "1000" (clamp "1000" 1 Integer/MAX_VALUE)))
-        (expect (= "30" (clamp "30" 1 100))))
-    (it "the real bug: a byte-scale threshold clamps into [1,100] instead of throwing"
-        ;; the old docstring wrongly said Threshold was "bytes"; 1048576 would throw
-        ;; "must be an integer in range [1, 100]" at Context build. Now it clamps to 100.
-        (expect (= "100" (clamp "1048576" 1 100))))
-    (it "a below-floor value clamps up to the low bound"
-        (expect (= "1" (clamp "0" 1 100)))
-        (expect (= "1" (clamp "-5" 1 100))))
-    (it "whitespace is trimmed before parsing" (expect (= "50" (clamp "  50  " 1 100))))
-    (it "a blank / nil / non-numeric input contributes nothing (nil)"
-        (expect (nil? (clamp nil 1 100)))
-        (expect (nil? (clamp "" 1 100)))
-        (expect (nil? (clamp "   " 1 100)))
-        (expect (nil? (clamp "abc" 1 100)))
-        (expect (nil? (clamp "12.5" 1 100))))
-    (it "resolves the 2 GB BackgroundGCTaskMinimum floor by default (box shouldn't balloon)"
-        ;; No VIS_PY_GC_* env vars set in the test process, yet the minimum floor
-        ;; is baked in so the background collector engages from 2 GB up.
-        (let [opts (#'ep/resolve-py-gc-options)]
-          (expect (= "2048" (get opts "python.BackgroundGCTaskMinimum")))
-          ;; interval/threshold stay on GraalPy's own defaults (nil default)
-          (expect (nil? (get opts "python.BackgroundGCTaskInterval")))
-          (expect (nil? (get opts "python.BackgroundGCTaskThreshold")))))))
 
 (defdescribe
   deferred-call-inline-settle-test
@@ -740,7 +710,7 @@
    and so does a statement inside an `async def`, where holding an awaitable is
    the idiom — except a `return`, whose value has LEFT the scope that could await
    it and settles at every helper kind. Every settle path raises the same
-   catchable `__vis_ToolError__`."
+   catchable `VisToolError`."
   (let [calls
         (atom [])
 
@@ -780,13 +750,15 @@
     ;; Regression: a host refusal reached the guest as a foreign ExceptionInfo — a
     ;; BaseException that is NOT an Exception — so `except Exception:` could not catch
     ;; it, and the refusal escaped the very handler written for it and killed the block.
+    ;; The embedded CPython raises the runtime's own `VisToolError`, an ordinary
+    ;; `RuntimeError`, so the ordinary handler is the whole contract.
     (it "a refusal inside `try:` is caught by `except Exception:`, message intact"
         (let [out (run (str "try:\n" "    ns_r = nested_boom(1)\n"
                             "    ns_out = 'LEAKED ' + type(ns_r).__name__\n"
                             "except Exception as e:\n"
                             "    ns_out = 'caught ' + type(e).__name__ + ' :: ' + str(e)\n"
                             "print(ns_out)"))]
-          (expect (re-find #"caught __vis_ToolError__ :: nested_boom refused" out))))
+          (expect (re-find #"caught VisToolError :: nested_boom refused" out))))
     (it "a call in EXPRESSION position still defers, so `gather` keeps its batch"
         (let [out (run (str "ns_box = [nested_ok(9)]\n" "ns_kind = type(ns_box[0]).__name__\n"
                             "ns_val = await ns_box[0]\n" "print([ns_kind, ns_val['op']])"))]
@@ -829,62 +801,14 @@
           (expect (re-find #"\[True, 'nested_ok'\]" out))
           (expect (= 1 (count @calls)))))))
 
-(defdescribe collect-garbage-gil-budget-test
-             ;; Regression: `collect-garbage!` runs in `loop/send!`'s `finally`, i.e. between
-             ;; the engine unwinding and `gateway.state/run-turn!` appending the terminal
-             ;; event. Its `.eval` first takes the Python GIL, which a SIBLING session holds
-             ;; for the whole of its in-flight Python (a `shell` subprocess can hold it for
-             ;; hours) and which no cancel token can unpark. Waiting for it without a budget
-             ;; wedged an already-finished turn forever: no `turn.completed`/`turn.cancelled`
-             ;; reached the wire, the session stayed pinned to a turn nobody was running, the
-             ;; queued backlog never drained and Esc could not close the live panel.
-             (it
-               "returns within its budget while another thread holds the GIL"
-               (let [env
-                     {:python-context (tpc/shared)}
-
-                     entered
-                     (promise)
-
-                     hog
-                     (doto (Thread. ^Runnable
-                                    (fn []
-                                      (try (deliver entered true)
-                                           (ep/run-python-block (:python-context env)
-                                                                "import time\ntime.sleep(30)")
-                                           (catch Throwable _ nil)))
-                                    "gil-hog")
-                       (.setDaemon true)
-                       (.start))
-
-                     _
-                     (deref entered 10000 nil)
-
-                     ;; give the hog time to actually be inside the sleep, holding the GIL
-                     _
-                     (Thread/sleep 1000)
-
-                     started
-                     (System/currentTimeMillis)
-
-                     _
-                     (ep/collect-garbage! env)
-
-                     elapsed
-                     (- (System/currentTimeMillis) started)]
-
-                 (.interrupt hog)
-                 (expect (< elapsed 15000)
-                         (str "collect-garbage! blocked on the GIL for " elapsed "ms")))))
-
 (defdescribe persist-session-defs-budget-test
              ;; Regression: `persist-session-defs!` runs on the turn thread right after EVERY
              ;; block and one line BEFORE the turn's outcome is persisted, and "best effort"
-             ;; covered only a THROW. A context whose guest snapshot never comes back - in
-             ;; production a GIL leaked by a block cancelled at a GIL boundary, where the eval
-             ;; parks in `PythonContext.acquireGil` - held the turn worker forever: no terminal
-             ;; ever reached the durable turn row, the turn stayed `:running` in every listing,
-             ;; and the next cancel was refused as `:not-running`, so pressing stop did nothing.
+             ;; covered only a THROW. A session whose guest snapshot never comes back - one
+             ;; interpreter, one GIL, so the snapshot waits on whatever the guest is still
+             ;; running - held the turn worker forever: no terminal ever reached the durable
+             ;; turn row, the turn stayed `:running` in every listing, and the next cancel was
+             ;; refused as `:not-running`, so pressing stop did nothing.
              (it "returns within its budget when the guest snapshot never returns"
                  (tpc/with-own
                    [ctx {}]
@@ -912,13 +836,11 @@
                           (finally (.delete (io/file (paths/sandbox-defs-file sid)))))))))
 (defdescribe
   sandbox-open-flush-test
-  ;; GraalPy does NOT refcount, so the CPython idiom
-  ;; `open(p, "w").write(text)` - a handle dropped without close() - was
-  ;; never finalized at the end of the statement: the bytes stayed in the
-  ;; buffer and the file on disk was EMPTY until an arbitrary later GC.
-  ;; A block wrote a commit message and `git commit -F` read nothing.
-  ;; The sandbox `open` tracks writable handles weakly and the runner
-  ;; flushes them before every tool call and at the end of the block.
+  ;; Bytes a block wrote must be on disk before the tool that reads them runs.
+  ;; The dropped-handle case the interpreter closes by refcount; a handle the
+  ;; block still HOLDS nothing closes, so the runner flushes tracked writable
+  ;; handles before every host call and at the end of the block. Regression:
+  ;; a block wrote a commit message and `git commit -F` read an empty file.
   (it
     "puts a block's unclosed write on disk, before a tool call and at block end"
     (let [dir
@@ -932,15 +854,15 @@
           mid-file
           (java.io.File. dir "before-tool.txt")
 
-          raw-file
-          (java.io.File. dir "unwrapped.txt")
+          held-file
+          (java.io.File. dir "held-open.txt")
 
           ctx
-          (:python-context (ep/create-python-context {'read_back
-                                                      (fn [& args]
-                                                        (let [f (java.io.File. (str (first args)))]
-                                                          (if (.exists f) (slurp f) "")))}
-                                                     (constantly [dir])))
+          (:python-context (tpc/new-context {'read_back (fn [& args]
+                                                          (let [f (java.io.File. (str (first
+                                                                                        args)))]
+                                                            (if (.exists f) (slurp f) "")))}
+                                            (constantly [dir])))
 
           at-end
           (ep/run-python-block ctx
@@ -956,10 +878,15 @@
                                     (pr-str (.getAbsolutePath mid-file))
                                     "))"))
 
-          unwrapped
+          held
           (ep/run-python-block ctx
-                               (str "__vis_real_open__(" (pr-str (.getAbsolutePath raw-file))
-                                    ", 'w').write('lost')\n" "print('raw-done')"))]
+                               (str "fh = open("
+                                    (pr-str (.getAbsolutePath held-file))
+                                    ", 'w')\n"
+                                    "fh.write('held-bytes')\n"
+                                    "print(read_back("
+                                    (pr-str (.getAbsolutePath held-file))
+                                    "))"))]
 
       (try (expect (nil? (:error at-end)))
            (expect (= "block-done\n" (:stdout at-end)))
@@ -967,11 +894,12 @@
            ;; A tool that reads a just-written file sees the bytes.
            (expect (nil? (:error before-tool)))
            (expect (= "mid-bytes\n" (:stdout before-tool)))
-           ;; Counterfactual: the untracked handle is the old behaviour -
-           ;; the write is still sitting in an unflushed buffer.
-           (expect (= "raw-done\n" (:stdout unwrapped)))
-           (expect (zero? (.length raw-file)))
-           (finally (run! #(.delete ^java.io.File %) [end-file mid-file raw-file dir]))))))
+           ;; A handle the block still HOLDS is the case refcounting does not
+           ;; cover: nothing dropped it, so its buffer is unflushed until the
+           ;; runner flushes — and the tool that reads the file runs first.
+           (expect (nil? (:error held)))
+           (expect (= "held-bytes\n" (:stdout held)))
+           (finally (run! #(.delete ^java.io.File %) [end-file mid-file held-file dir]))))))
 
 
 ;; A BARE sandbox verb (`_shell_logs`) is called from Python with no schema in
@@ -985,7 +913,7 @@
                                         nil))
 
         ctx
-        (:python-context (ep/create-python-context bind))
+        (:python-context (tpc/new-context bind))
 
         run
         (fn [code]
@@ -1017,17 +945,17 @@
                                         nil))
 
         ctx
-        (:python-context (ep/create-python-context bind))
+        (:python-context (tpc/new-context bind))
 
         run
         (fn [code]
           (str (:stdout (ep/run-python-block ctx code))))]
 
     (it "matches document names rather than page bodies"
-        (let [out (run (str "body = apropos('truffle')\n" "exact = apropos(r'^graalpython$')\n"
+        (let [out (run (str "body = apropos('lingua')\n" "exact = apropos(r'^python-sandbox$')\n"
                             "print('body='+str(len(body)))\n" "print('exact='+exact[0].name)"))]
           (expect (str/includes? out "body=0"))
-          (expect (str/includes? out "exact=graalpython"))))
+          (expect (str/includes? out "exact=python-sandbox"))))
     (it "doc retrieves a documentation page by slug, forgiving case and `.md`"
         (let [out (run (str "a = doc('gateway')\n"
                             "b = doc('Gateway.MD')\n" "print('same='+str(a == b))\n"
@@ -1302,131 +1230,6 @@ Follow every fixture step without truncation."}]))
 
                    (expect (= "called:1 called:1\n" (:stdout result))))))
 
-(defn- spinning-binding!
-  "Install `vis_test_spin()` on `ctx`: a HOST callable that burns wall clock in a
-   loop containing no blocking call at all — the shape of `sh.wait`'s branch that
-   re-reads a chatty log — polling the guest safepoint only when `poll?`."
-  [^Context ctx poll?]
-  (ep/set-python-binding!
-    ctx
-    'vis_test_spin
-    (reify
-      ProxyExecutable
-        (execute [_ _args]
-          (let [end (+ (System/currentTimeMillis) 4000)]
-            (loop []
-
-              (when (< (System/currentTimeMillis) end) (when poll? (rt/guest-safepoint!)) (recur))))
-          nil))))
-
-(defn- park-ending
-  "Park a guest thread in a HOST wait for a promise nothing ever delivers — the
-   shape of a dialog nobody answers, or any wait whose end is not this thread's to
-   decide — then soft-cancel the context the documented way.
-
-   Answers `[landed? outcome ending]`: whether `Context.interrupt` landed inside
-   its grace, what the eval did, and HOW the park itself ended."
-  [k]
-  (let [ctx
-        (tpc/context k)
-
-        never
-        (promise)
-
-        ending
-        (atom :still-parked)
-
-        _
-        (ep/set-python-binding! ctx
-                                'vis_test_park
-                                (reify
-                                  ProxyExecutable
-                                    (execute [_ _args]
-                                      (reset! ending
-                                        ;; The deadline is 30s only so a REGRESSION fails instead of
-                                        ;; hanging CI: the cancel arrives at ~2s, so nothing but the
-                                        ;; cancel can be what ends this park.
-                                        (try (deref never 30000 :expired)
-                                             (catch InterruptedException _ :thread-interrupt)
-                                             (catch Throwable _ :polyglot-unwind)))
-                                      nil)))
-
-        done
-        (promise)]
-
-    (doto (Thread. ^Runnable
-                   (fn []
-                     (deliver done
-                              (try (.eval ctx "python" "vis_test_park()")
-                                   :returned
-                                   (catch Throwable _ :unwound))))
-                   "host-park-cancel-test")
-      (.setDaemon true)
-      (.start))
-    (Thread/sleep 400)
-    (let [landed (try (.interrupt ctx (java.time.Duration/ofMillis 1500))
-                      true
-                      (catch java.util.concurrent.TimeoutException _ false))]
-      [landed (deref done 5000 :still-parked) @ending])))
-
-(defn- interrupt-lands?
-  "Park a guest thread inside a HOST wait `install!` binds, then soft-cancel it the
-   documented way. True when `Context.interrupt` landed inside its grace, false on
-   the `TimeoutException` the javadoc raises when it could not."
-  [k install! code]
-  (let [ctx
-        (tpc/context k)
-
-        _
-        (install! ctx)
-
-        done
-        (promise)]
-
-    (doto (Thread.
-            ^Runnable
-            (fn []
-              (deliver done (try (.eval ctx "python" code) :returned (catch Throwable _ :unwound))))
-            "guest-safepoint-test")
-      (.setDaemon true)
-      (.start))
-    (Thread/sleep 400)
-    (try (.interrupt ctx (java.time.Duration/ofMillis 1500))
-         true
-         (catch java.util.concurrent.TimeoutException _ false))))
-
-(defdescribe
-  guest-safepoint-test
-  ;; Regression (session 7df808ff): a turn cancelled while its block sat in a host
-  ;; wait unwound only the WAITER. Host code that polls no safepoint is exactly what
-  ;; the polyglot javadoc calls "non-interruptible host code": the interrupt timed
-  ;; out on it, and the guest thread was left inside GraalPy to be abandoned, where
-  ;; it dies OWNING the GIL (`PythonContext.ensureGilAfterFailure` takes it
-  ;; uninterruptibly, and a ReentrantLock whose owner is dead is never released).
-  ;; Every later turn of that session then parked in `PythonContext.acquireGil`
-  ;; forever, at `:engine-start`.
-  (it "unwinds a non-blocking host loop that polls, and keeps the context USABLE"
-      (expect (true? (interrupt-lands? ::polling #(spinning-binding! % true) "vis_test_spin()")))
-      ;; Non-destructive by contract: no rebuilt interpreter, no lost globals.
-      (expect (= 2 (ep/->clj (.eval (tpc/context ::polling) "python" "1 + 1")))))
-  (it "cannot reach that same loop when it polls nothing"
-      (expect (false?
-                (interrupt-lands? ::not-polling #(spinning-binding! % false) "vis_test_spin()")))))
-
-(defdescribe host-park-cancel-test
-             "How a wait waits decides whether a cancel reaches it. Its LENGTH never does."
-             ;; Regression (session 7df808ff): a turn cancelled while its block sat in host
-             ;; code left the guest thread inside GraalPy, where an abandoned thread dies
-             ;; owning the GIL and every later turn of that session parks in
-             ;; `PythonContext.acquireGil` forever. This pins the other half of
-             ;; `guest-safepoint-test`: a park that BLOCKS needs no poll of its own — the
-             ;; polyglot interrupt reaches it through the JDK wait it is blocked in, so a
-             ;; park with no deadline anywhere near it is still cancelled in milliseconds.
-             (it "reaches a park nothing else could ever end, and keeps the context USABLE"
-                 (expect (= [true :unwound :thread-interrupt] (park-ending ::indefinite-park)))
-                 ;; Non-destructive by contract: no rebuilt interpreter, no lost globals.
-                 (expect (= 2
-                            (ep/->clj (.eval (tpc/context ::indefinite-park) "python" "1 + 1"))))))
 
 
 ;; Helper definitions that outlive the PROCESS
@@ -1443,10 +1246,10 @@ Follow every fixture step without truncation."}]))
                    (let [f (io/file (paths/sandbox-defs-file sid))]
                      (io/make-parents f)
                      (spit f planted)))
-               first-ctx (when-not planted (:python-context (ep/create-python-context {})))
+               first-ctx (when-not planted (:python-context (tpc/new-context {})))
                _ (when first-ctx (ep/run-python-block first-ctx setup))
                file (when first-ctx (ep/persist-session-defs! first-ctx sid))
-               fresh (:python-context (ep/create-python-context {}))
+               fresh (:python-context (tpc/new-context {}))
                restored (ep/restore-session-defs! fresh sid)]
 
            {:file file
@@ -1566,7 +1369,7 @@ Follow every fixture step without truncation."}]))
             (io/file (paths/sandbox-defs-file sid))
 
             ctx
-            (:python-context (ep/create-python-context {}))]
+            (:python-context (tpc/new-context {}))]
 
         (try (io/make-parents f)
              (spit f "def gone():\n    return 1\n")

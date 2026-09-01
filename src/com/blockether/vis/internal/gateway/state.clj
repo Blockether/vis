@@ -258,7 +258,7 @@
 
 (def ^:private MAX_CONCURRENT_TURNS
   "Process-wide cap for simultaneously executing gateway turns. Each turn can
-   own a GraalPy context and substantial transient heap, so per-session
+   own a Python session and substantial transient heap, so per-session
    serialization alone is insufficient. Override with
    `VIS_GATEWAY_MAX_CONCURRENT_TURNS`; values <= 0 use the default of 50.
 
@@ -4343,7 +4343,7 @@
 
 (def ^:private PREWARM_POOL_DEPTH
   "Empty, fully-built sessions retained per channel. Building one costs a full
-   GraalPy context startup (~15 s on a small host), so a single spare hides only
+   Python session startup (~15 s on a small host), so a single spare hides only
    the FIRST create: the next one races the still-running refill and pays the
    cold price again. Two covers back-to-back creates for one extra idle context
    per channel."
@@ -5392,8 +5392,8 @@
 (defonce ^:private teardown-executor
   ;; Single daemon thread: runs live-session teardown OFF the request thread.
   ;; Stopping background shells and managed REPLs waits on real processes, and
-  ;; `lp/close!` waits up to 5s on the turn lock before disposing the polyglot
-  ;; Context — seconds of work that a DELETE must never charge to the caller.
+  ;; `lp/close!` waits up to 5s on the turn lock before disposing the Python
+  ;; session — seconds of work that a DELETE must never charge to the caller.
   (delay (java.util.concurrent.Executors/newSingleThreadExecutor
            (reify
              java.util.concurrent.ThreadFactory
@@ -5421,7 +5421,7 @@
    from this process. Idempotent. Returns the teardown Future.
 
    THE RESPONSE COSTS THE DB REMOVAL, NOTHING MORE. Disposing the live runtime
-   (background shells, managed REPLs, the polyglot Context) used to run right
+   (background shells, managed REPLs, the Python session) used to run right
    here on the request thread, so deleting a session the user had just worked in
    held DELETE open for seconds — long enough for the companion's confirm modal
    to read as a frozen screen. Teardown now runs on `teardown-session-async!`,

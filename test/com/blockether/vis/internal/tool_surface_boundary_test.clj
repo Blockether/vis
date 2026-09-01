@@ -13,7 +13,7 @@
    Payloads travel the REAL funnel Python calls, `extension/invoke-symbol-wrapper`
    (before-fn -> fn -> after-fn, envelope unwrapped to `:result`), and are then
    judged by `env-python/boundary-view` — the no-context mirror of `->py`, which
-   throws on a keyword/symbol key or value at any depth exactly like GraalPy's
+   throws on a keyword/symbol key or value at any depth exactly like CPython's
    boundary does. A tool that legitimately FAILS here (no MCP server, no session
    DB) is not a boundary bug and is reported as such; only a boundary violation
    fails the test."

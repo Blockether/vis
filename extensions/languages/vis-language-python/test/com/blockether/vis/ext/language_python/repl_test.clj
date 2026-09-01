@@ -104,7 +104,7 @@
                    (interp/resolve-command (System/getProperty "java.io.tmpdir"))))))
   (it "reads python.runner, ignoring anything that is not a backend"
       (expect (= "project" (interp/pinned-runner {"python" {"runner" "Project"}})))
-      (expect (= "graalpy" (interp/pinned-runner {"python" {"runner" "graalpy"}})))
+      (expect (= "vispython" (interp/pinned-runner {"python" {"runner" "vispython"}})))
       (expect (nil? (interp/pinned-runner {"python" {"runner" "pytest"}})))
       (expect (nil? (interp/pinned-runner {})))))
 

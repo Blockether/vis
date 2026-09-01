@@ -125,12 +125,11 @@ build_macos_arm64() {
     die "the gateway daemon failed to boot — not shipping this binary"
   fi
   target/release-bundle/vis-agent gateway stop >/dev/null 2>&1 || true
-  # The sidecar is the whole point of this bundle: prove the runtime imports the
-  # Python stdlib THROUGH the staged directory, not through a build leftover.
-  say "smoke: GraalPy stdlib from the staged language resources"
-  VIS_NATIVE_RESOURCES="$repo_root/target/release-bundle/vis-agent-resources" \
-    target/release-bundle/vis-agent python -c "import ast, json, os; print('py-ok')" \
-    | grep -qx 'py-ok' || die "the staged language resources do not load: no Python stdlib"
+  # The sidecar is the whole point of this bundle: prove the wrapper finds the
+  # staged interpreter beside itself, not a build leftover on this machine.
+  say "smoke: CPython stdlib from the staged interpreter"
+  target/release-bundle/vis-agent python -c "import ast, json, os; print('py-ok')" \
+    | grep -qx 'py-ok' || die "the staged interpreter does not load: no Python stdlib"
   built_asset="$asset"
 }
 
@@ -308,7 +307,7 @@ podman_export() {
   ctr="$(eng create --platform "$platform" "$image" /vis-agent)" || \
     die "podman could not create a container from $image"
   for entry in vis-agent vis-agent-native vis-agent-native.build install-vis-agent \
-               vis-agent-resources; do
+               vis-agent-python; do
     eng cp "$ctr:/$entry" "$out/$entry" || {
       eng rm -f "$ctr" >/dev/null 2>&1 || true
       die "podman cp failed for /$entry out of $image"
@@ -352,7 +351,7 @@ build_linux() {
   eng run --rm --platform "$platform" \
     -v "$repo_root/target/release-bundle:/bundle:ro" \
     "$probe_image" /bundle/vis-agent help >/dev/null
-  say "smoke: GraalPy stdlib inside that container"
+  say "smoke: CPython stdlib inside that container"
   eng run --rm --platform "$platform" \
     -v "$repo_root/target/release-bundle:/bundle:ro" \
     "$probe_image" /bundle/vis-agent python -c "import ast; print('py-ok')" \

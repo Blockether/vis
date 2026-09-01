@@ -12,8 +12,8 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.extension-check :as check]
             [com.blockether.vis.internal.python-extensions :as pyx]
-            [lazytest.core :refer [defdescribe describe expect it]])
-  (:import (org.graalvm.polyglot Context)))
+            [com.blockether.vis.internal.python-extension-host :as pyext]
+            [lazytest.core :refer [defdescribe describe expect it]]))
 
 (def ^:private valid-py
   (str
@@ -266,18 +266,18 @@
 ;; dict at module level: a callback nobody bound is a `NameError` before the
 ;; module exists, so a new host call silently breaks `extension check` unless it
 ;; is listed. That list is the contract, and this is the test that holds it.
-(defdescribe
-  inert-host-test
-  (describe "every host callback the bootstrap reads"
-            (it "is bound as a refusal by the checker's binder"
-                (expect (= (set (re-seq #"__vis_host_\w+__" pyx/bootstrap-python))
-                           (set pyx/host-member-names))))
-            (it "cannot run, so a checked form is judged by the engine and nobody else"
-                (let [^Context ctx (pyx/build-context "inert-host-test")]
-                  (try (pyx/bind-inert-host! ctx nil)
-                       (.eval ctx "python" ^String pyx/bootstrap-python)
-                       (expect (str/includes?
-                                 (str (try (.eval ctx "python" "import vis\nvis.notify(\"nope\")")
-                                           (catch Exception e (ex-message e))))
-                                 "not available while checking"))
-                       (finally (.close ctx)))))))
+(defdescribe inert-host-test
+             (describe "every host callback the bootstrap reads"
+                       (it "is bound as a refusal by the checker's binder"
+                           (expect (= (set (re-seq #"__vis_host_\w+__" pyx/bootstrap-python))
+                                      (set pyx/host-member-names))))
+                       (it "cannot run, so a checked form is judged by the engine and nobody else"
+                           (let [ctx (pyx/build-context "inert-host-test")]
+                             (try (pyx/bind-inert-host! ctx nil)
+                                  (pyext/exec! ctx pyx/bootstrap-python)
+                                  (expect (str/includes?
+                                            (str (try (pyext/run ctx
+                                                                 "import vis\nvis.notify(\"nope\")")
+                                                      (catch Exception e (ex-message e))))
+                                            "not available while checking"))
+                                  (finally (pyx/close-context! ctx)))))))

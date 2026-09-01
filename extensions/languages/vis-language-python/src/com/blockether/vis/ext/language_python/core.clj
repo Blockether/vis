@@ -335,7 +335,7 @@
          ;; A malformed or half-written report is not a reason to lose the run.
          (catch Exception _ nil))))
 
-(defn- graalpy-faults
+(defn- vispython-faults
   "The hermetic backend's per-test records as surface contract faults — one map
    per test whose `:outcome` is in `outcomes`, carrying the node id, its file,
    the assertion headline and its `\"type\"` (`:errored` -> `\"error\"`, anything
@@ -397,10 +397,11 @@
                    (.isDirectory (io/file dir "tests")) [(resolve-dir dir "tests")]
                    :else [(resolve-dir dir nil)])})))
 
-(defn- graalpy-test
+(defn- vispython-test
   "Hermetic backend: discover test_*.py / *_test.py under `paths` and run each in
-   a trusted GraalPy context via the built-in stdlib-only pytest shim.
-   `sys-path` carries the project's own declared import roots (a `src` layout),
+   a trusted embedded CPython session under REAL `pytest`, which the sandbox
+   installs on first use. `sys-path` carries the project's own declared import
+   roots (a `src` layout),
    so a test importing the package under test sees it. Adds a `hint` to switch
    to the project interpreter when a failure smells like a missing third-party
    module the sandbox can't see."
@@ -415,11 +416,11 @@
                                        (str (:message t)))))
                        (:tests res)))]
 
-    (cond-> {"runner" "graalpy"
+    (cond-> {"runner" "vispython"
              ;; In-process contexts, no shell — the surface contract's "repl" mode.
              "mode" "repl"
              "framework" "pytest"
-             "tool" "graalpy"
+             "tool" "vispython"
              "files" (:files res)
              "is_pass" (boolean (:ok? res))
              "pass" (or (:passed res) 0)
@@ -428,7 +429,7 @@
              "fail" (+ (long (or (:failed res) 0)) (long (or (:errored res) 0)))
              "errored" (or (:errored res) 0)
              "skipped" (or (:skipped res) 0)
-             "failures" (graalpy-faults (:tests res) #{:failed :errored})
+             "failures" (vispython-faults (:tests res) #{:failed :errored})
              "output" (ptr/render-test-report res)}
       (:error res)
       (assoc "error" (:error res))
@@ -446,8 +447,8 @@
 
       dep-smell?
       (assoc "hint"
-        (str "Some tests failed to import modules under the stdlib-only GraalPy "
-             "sandbox. Re-run with {\"runner\": \"project\"} to use the project's "
+        (str "Some tests failed to import modules the sandbox interpreter does "
+             "not have. Re-run with {\"runner\": \"project\"} to use the project's "
              "interpreter and installed dependencies.")))))
 
 (defn- pytest-counts
@@ -563,28 +564,28 @@
 (defn- select-runner
   "Which backend a `run_tests` call uses, in precedence order: an explicit
    `runner` (`project`, else the sandbox), then `python.runner` from merged
-   config, else the hermetic GraalPy sandbox. ONE spelling on every surface:
+   config, else the hermetic CPython sandbox. ONE spelling on every surface:
    the call, the config, the result key and the doc pages all say `runner`."
   [opts]
   (let [runner
         (str/lower-case (str (or (get opts "runner") "")))
 
         configured
-        (str/lower-case (str (or (interpreter/configured-runner) "graalpy")))]
+        (str/lower-case (str (or (interpreter/configured-runner) "vispython")))]
 
     (cond (= "project" runner) "project"
           ;; An explicit runner that is not `project` is the sandbox,
           ;; whatever config says.
-          (seq runner) "graalpy"
+          (seq runner) "vispython"
           (= "project" configured) "project"
-          :else "graalpy")))
+          :else "vispython")))
 
 (defn py-test-fn
   "run_tests handler for Python. Two execution environments:
-     - the DEFAULT is hermetic, stdlib-only GraalPy. It discovers `test_*.py` /
+     - the DEFAULT is the hermetic embedded CPython. It discovers `test_*.py` /
        `*_test.py` under `{paths}` (default: the project's declared pytest
        `testpaths`, else `tests/` if present, else the run's `cwd`) and runs
-       each in a TRUSTED GraalPy context via the built-in pytest shim.
+       each in a TRUSTED embedded CPython session under real `pytest`.
        `{paths}` entries may be FILES or dirs, resolve against `cwd`, must
        exist, and discovering nothing is NOT a pass. It runs whole FILES and
        has no test-name filter, so a `<path>::<test-name>` node id is REFUSED
@@ -621,14 +622,14 @@
         ;; The project interpreter reads the project's own config itself; only the
         ;; hermetic backend has to be taught the layout (one throwaway context).
         layout
-        (when (= "graalpy" runner) (pyproj/project-layout dir))
+        (when (= "vispython" runner) (pyproj/project-layout dir))
 
         ;; The hermetic backend discovers and runs whole files; it has no
         ;; test-name filter, so a node id it CANNOT honor is refused by name
         ;; instead of running every test in the file and reporting that as the
         ;; selection the caller asked for.
         _
-        (when (= "graalpy" runner)
+        (when (= "vispython" runner)
           (when-let [named (seq (filter :var
                                         (map contract/split-node-id (map str (get opts "paths")))))]
             (throw (ex-info (str "run_tests(python) cannot select a single test in the hermetic"
@@ -644,7 +645,7 @@
 
     (extension/success {:result (cond-> (assoc (if (= "project" runner)
                                                  (project-test (:session-id env) dir paths names)
-                                                 (graalpy-test paths (:import-roots layout)))
+                                                 (vispython-test paths (:import-roots layout)))
                                           "language" "python")
                                   (:warning layout)
                                   (assoc "warning" (:warning layout)))})))

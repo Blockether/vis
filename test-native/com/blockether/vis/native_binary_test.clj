@@ -510,3 +510,78 @@
            (expect (str/includes? output "piper") output)
            (expect (str/includes? output "pocket-tts") output)
            (finally (delete-tree! dir))))))
+
+
+;; ── the embedded CPython, inside the linked image ────────────────────────────
+
+(defn- python-library
+  "The cdylib `clojure -T:build native` stages BESIDE the binary, resolved the way
+   the shipped `bin/vis-agent` wrapper resolves it. The interpreter is tens of
+   megabytes and deliberately outside the executable, so a binary with no such
+   directory answers every Python call with a library-not-found — which is what
+   this returns nil for, and what the assertion then names."
+  ^File [^File bin]
+  (let [home (.getParentFile (.getAbsoluteFile bin))]
+    (->> ["vis-agent-python" "python"]
+         (map #(io/file home %))
+         (filter #(.isDirectory ^File %))
+         (mapcat #(.listFiles ^File %))
+         (filter (fn [^File f]
+                   (and (.isFile f) (re-matches #"libvispython\.(dylib|so)" (.getName f)))))
+         first)))
+
+(defn- run-python
+  "`vis-agent python -c CODE` against the binary, with the interpreter pointed at
+   the staged sidecar. `env(1)` because that is the only thing `run-binary` cannot
+   do for us, and the wrapper exports exactly this variable."
+  [^File dir ^File bin code]
+  (let [library (python-library bin)]
+    (expect library
+            (str "No CPython sidecar beside " (.getAbsolutePath bin)
+                 " — `clojure -T:build native` stages vis-agent-python/ there. " build-it))
+    (run-binary dir
+                ["/usr/bin/env" (str "VIS_PYTHON_NATIVE_PATH=" (.getAbsolutePath ^File library))
+                 (.getAbsolutePath bin) "python" "-c" code]
+                300)))
+
+;; Regression, this branch: the interpreter reaches CPython through the JDK Foreign
+;; Function & Memory API, and an image links no downcall stub it was not told about.
+;; With the registrations missing the JVM suite stayed green while the binary died on
+;; the first Python call with MissingForeignRegistrationError; with the runtime's
+;; SOURCES manifest missing from the image it died with ModuleNotFoundError:
+;; vis_runtime. Both are invisible everywhere except here.
+(defdescribe
+  native-binary-runs-python-in-the-embedded-interpreter-test
+  (it "executes a block and prints what the block printed"
+      (let [dir
+            (temp-dir "vis-native-python")
+
+            {:keys [exit output]}
+            (run-python dir
+                        (require-binary)
+                        "import json, sys; print(json.dumps({'v': sys.version_info[:2], 'n': sum(range(11))}))")]
+
+        (try (expect (= 0 exit) output)
+             (expect (str/includes? output "\"n\": 55")
+                     (str "the embedded interpreter did not run the block:\n" output))
+             (expect (re-find #"\"v\": \[3, \d+\]" output)
+                     (str "no CPython 3 in the binary:\n" output))
+             (finally (delete-tree! dir)))))
+  (it "reads a file through the guarded filesystem door"
+      ;; Reading is the audit hook's happy path: the block's own directory is a
+      ;; session root, and an interpreter whose confinement policy failed to install
+      ;; refuses this — the failure that only appears once the image is linked.
+      (let [dir
+            (temp-dir "vis-native-python-read")
+
+            note
+            (doto (io/file dir "note.txt") (spit "seventy seven"))
+
+            {:keys [exit output]}
+            (run-python dir
+                        (require-binary)
+                        (str "print(open(" (pr-str (.getAbsolutePath note)) ").read())"))]
+
+        (try (expect (= 0 exit) output)
+             (expect (str/includes? output "seventy seven") output)
+             (finally (delete-tree! dir))))))

@@ -27,9 +27,9 @@
    soft hyphens, line-wrapped phrases), parses a real query language, ranks with
    BM25 and cuts snippets — all over data the host already handed it, with no
    host call of its own. The walk that FINDS a corpus stays in Python too, on
-   purpose: `internal/sandbox-fs` confines the sandbox's filesystem to the
-   configured roots, so enumerating a directory host-side (through the pooled
-   fff index, say) would hand the sandbox names it is not allowed to see.
+   purpose: the interpreter confines the sandbox's filesystem to the configured
+   roots, so enumerating a directory host-side (through the pooled fff index,
+   say) would hand the sandbox names it is not allowed to see.
 
    What this namespace does own is the CACHE. Converting a PDF costs orders of
    magnitude more than searching it, and a corpus gets asked more than one

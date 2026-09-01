@@ -7,9 +7,8 @@
    like an anchored patch is. One renderer, so a hand-written file and a patched
    one reach Activity — and every surface reading it — in the SAME vocabulary.
 
-   A leaf on purpose: `internal.sandbox-fs` is loaded while the GraalPy context
-   is being built, long before the tool namespaces exist, so this requires
-   nothing of vis."
+   A leaf on purpose: it is loaded long before the tool namespaces exist, so
+   this requires nothing of vis."
   (:require [clojure.string :as str])
   (:import (com.github.difflib DiffUtils UnifiedDiffUtils)
            (com.github.difflib.patch AbstractDelta Chunk Patch)))

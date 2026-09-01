@@ -253,3 +253,44 @@
                      "belongs in deps.edn :paths, which is also what the image copies"))
         (expect (some? (io/resource "vis/__init__.py"))
                 "vis/__init__.py must resolve as a classpath resource"))))
+
+
+;; Regression, this branch: once GraalPy was dropped, every command that initializes
+;; the manifest died in the BINARY with "Required initializer failed:
+;; com.blockether.vis.internal.foundation.core/register!" over "Could not locate
+;; com/blockether/vis/internal/foundation/core__init.class on classpath" — while the
+;; JVM suite and the native BUILD both stayed green. The engine resolves an
+;; entrypoint with `requiring-resolve`, and an image contains only the namespaces the
+;; BUILDER loaded; those were loaded by ACCIDENT, through a build-time preload chain
+;; inside jars that left with GraalPy. `internal.native-preload` loads them on
+;; purpose, and only build.clj's build-time initialization of its `__init` class runs it.
+(defdescribe
+  dynamically-resolved-namespaces-reach-the-native-image-test
+  (it "initializes the preload namespace in the builder, which is the whole mechanism"
+      (expect (str/includes?
+                (slurp (io/file "build.clj"))
+                "--initialize-at-build-time=com.blockether.vis.internal.native_preload__init")
+              (str "build.clj must initialize com.blockether.vis.internal.native-preload at "
+                   "BUILD time; nothing else loads it, and without it the binary cannot "
+                   "resolve a single manifest entrypoint")))
+  (it "keeps the preload namespace outside every other namespace's load"
+      ;; It requires the manifest and loads every entrypoint, and an entrypoint
+      ;; requires the engine back: required from inside that graph it is a cyclic load.
+      (let [requiring
+            (->> (concat (file-seq (io/file "src")) (file-seq (io/file "extensions")))
+                 (filter (fn [^java.io.File file]
+                           (and (.isFile file)
+                                (str/ends-with? (.getName file) ".clj")
+                                (not= "native_preload.clj" (.getName file)))))
+                 (filter #(str/includes? (slurp %) "internal.native-preload"))
+                 (mapv str))]
+        (expect (empty? requiring)
+                (str "nothing may require the preload namespace: " (pr-str requiring)))))
+  (it "derives what it loads instead of carrying a list"
+      ;; A written-down list is the failure mode this replaced: it goes stale on the
+      ;; next entrypoint and the binary loses a whole extension in silence.
+      (let [src (slurp (io/file "src" "com" "blockether" "vis" "internal" "native_preload.clj"))]
+        (expect (str/includes? src "(manifest/initializers)")
+                "the manifest's own entrypoints must be one source of the preload list")
+        (expect (str/includes? src "__init.class")
+                "the compiled namespace tree must be the other"))))

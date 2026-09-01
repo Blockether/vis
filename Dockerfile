@@ -81,10 +81,9 @@ ARG BASE_IMAGE=debian:bookworm-slim
 #   * CE is GPLv2 + Classpath Exception — the Classpath Exception frees the
 #     binary we ship, so redistribution stays FOSS (audit/README.md §4.1 states
 #     CE only). Oracle GraalVM is GFTC-licensed and was deliberately removed.
-#   * CE's version IS the Graal/Truffle train (25.1.x), so it matches the
-#     org.graalvm.* jars pinned in deps.edn as-is. Oracle's version is its JDK
-#     version (25.0.x), which is why this file used to rewrite deps.edn on the
-#     way past — that hack is gone with it.
+#   * CE's version IS the Graal train (25.1.x), matching `.graalvm-version`
+#     as-is. Oracle's version is its JDK version (25.0.x), which is why this
+#     file used to rewrite deps.edn on the way past — that hack is gone with it.
 # The versioned graalvm-ce-builds asset is used deliberately over any moving
 # URL: a moving URL cannot carry a checksum, and the checksum is in the pin.
 FROM ${BASE_IMAGE} AS jdk
@@ -145,29 +144,6 @@ WORKDIR /build
 COPY deps.edn build.clj VIS_VERSION ./
 COPY extensions/ ./extensions/
 
-# The org.graalvm.* Maven artifacts must match the Graal compiler in the JDK
-# running the build; mismatched, Truffle throws NullPointerException inside
-# HotSpotTruffleRuntimeAccess.getCompilerVersion, minutes into the image build.
-# With GraalVM CE the two agree by construction (CE's version IS the Graal
-# train), so this is a CHECK, not the deps.edn rewrite it used to be — and it
-# fails here, in seconds, instead of inside TruffleAPIFeature much later.
-# Quoted heredoc: the body is literal, so the variables are expanded by the
-# script at RUN time (from /etc/graalvm-version), not by the builder.
-COPY --chmod=0755 <<'EOF' /usr/local/bin/check-graal-pins
-#!/bin/sh
-set -eu
-. /etc/graalvm-version
-grep -n 'org\.graalvm\.' deps.edn
-# every org.graalvm pin must name the JDK this image builds with
-all=$(grep -c 'org\.graalvm\.' deps.edn)
-ok=$(grep -c "org\.graalvm\..*\"${GRAAL_VERSION}\"" deps.edn)
-if [ "$all" != "$ok" ]; then
-  echo "deps.edn org.graalvm.* pins must all be ${GRAAL_VERSION} (.graalvm-version)" >&2
-  exit 1
-fi
-EOF
-
-RUN check-graal-pins
 
 RUN clojure -P -T:build || true
 
@@ -194,7 +170,7 @@ RUN check-graal-pins
 RUN VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
     clojure -T:build native \
     && test -x target/vis \
-    && test -d target/resources \
+    && test -d target/vis-agent-python \
     && ./target/vis --version \
     && { [ "$(./target/vis --version | tr -d '[:space:]')" = "vis-agent$(tr -d '[:space:]' < VIS_VERSION)" ] \
          || { echo "native image does not report exactly VIS_VERSION=$(tr -d '[:space:]' < VIS_VERSION)" >&2; exit 1; }; }
@@ -213,7 +189,7 @@ RUN VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
 FROM scratch AS native-export
 COPY --from=builder /build/target/vis /vis-agent-native
 COPY --from=builder /build/target/vis.build /vis-agent-native.build
-COPY --from=builder /build/target/resources /vis-agent-resources
+COPY --from=builder /build/target/vis-agent-python /vis-agent-python
 COPY --from=builder /build/bin/vis-agent /vis-agent
 COPY --from=builder /build/bin/install-vis-agent /install-vis-agent
 
@@ -262,7 +238,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8
 
 # Three groups, and the reason each is here:
-#  1. the native binary + embedded GraalPy dlopen these at startup
+#  1. the native binary + embedded CPython dlopen these at startup
 #     (zlib1g, libstdc++6); onnxruntime/sherpa additionally need libgomp1.
 #  2. the agent's own toolbelt — git, ssh, curl, ripgrep, jq, unzip, less, procps.
 #     openssh-client is listed EXPLICITLY: it is only a *Recommends* of git and
@@ -355,7 +331,7 @@ ENV VIS_PARAKEET_MODEL_DIR=/opt/vis/models/${PARAKEET_MODEL}
 # ── Unprivileged user ──
 # The gateway never runs as root, and neither does anything the agent spawns.
 # /work is the default workspace mount point. Created BEFORE the agent bundle
-# below, so the wrapper, the native runtime and its language resources all
+# below, so the wrapper, the native runtime and its interpreter all
 # belong to the user that runs them.
 # Absolute path on purpose: the PATH set above deliberately omits /usr/sbin
 # (the vis user has no business there), so a bare `useradd` is "not found".
@@ -375,9 +351,9 @@ RUN /usr/sbin/useradd --create-home --shell /bin/bash --uid 10001 vis \
 #
 #   /opt/vis/agent/vis-agent             the public Bash wrapper
 #   /opt/vis/agent/vis-agent-native      the runtime it execs
-#   /opt/vis/agent/vis-agent-resources/  GraalPy/Truffle language resources
+#   /opt/vis/agent/vis-agent-python/     the embedded CPython interpreter
 #
-# The wrapper finds the runtime and the resources beside itself, which is why
+# The wrapper finds the runtime and the interpreter beside itself, which is why
 # the whole bundle is copied as one directory and only the wrapper is linked
 # onto PATH.
 #
@@ -408,7 +384,7 @@ ENV HOME=/home/vis \
 
 # Prove, at build time, that the assembled image is what it claims to be: the
 # toolchain resolves, the runtime that will serve is the native one, its Python
-# stdlib loads THROUGH the staged language resources (without them every Python
+# stdlib loads THROUGH the staged interpreter (without it every Python
 # tool dies with "No module named 'ast'"), and the voice extension can actually
 # SEE the model.
 RUN set -eux; \
@@ -418,7 +394,7 @@ RUN set -eux; \
     vis-agent --version; \
     vis-agent runtime | grep -Eq '^Runtime: +native'; \
     test -x /opt/vis/agent/vis-agent-native; \
-    test -d /opt/vis/agent/vis-agent-resources; \
+    test -d /opt/vis/agent/vis-agent-python; \
     vis-agent python -c "import ast, json, os; print('py-ok')" | grep -qx 'py-ok'; \
     vis-agent extension voice models status; \
     test ! -e /root/.vis; \

@@ -93,9 +93,6 @@ channels-*.csv
 # local git worktrees (CI native-build probes, etc.)
 .gitworktrees/
 
-# GraalPy internal-resource cache fallback (confined processes)
-.graal-resources/
-
 # local talk deck — source pptx + generated HTML presentation (never committed)
 own_your_harness.pptx
 /presentation/

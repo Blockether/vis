@@ -12,7 +12,7 @@
    overlay), an order of magnitude faster than a guest `os.scandir` recursion that
    would honour none of those rules. The bridge is one callable answering the
    `[ok result kind]` envelope every shim uses, because errors must cross the
-   boundary as DATA — GraalPy does not route a host exception through Python
+   boundary as DATA — CPython does not route a host exception through Python
    `except`. The rows themselves cross as a JSON string rather than as the
    boundary's own `ForeignDict`s: a listing is data the caller SERIALIZES, and
    `json.dumps` is the one dict operation a foreign map refuses. Measured over a

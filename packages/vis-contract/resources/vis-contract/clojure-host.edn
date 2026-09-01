@@ -54,7 +54,6 @@
                                       com.blockether.vis.internal.foundation.editing.parse 1
                                       com.blockether.vis.internal.foundation.gif 1
                                       com.blockether.vis.internal.foundation.shell 1
-                                      com.blockether.vis.internal.foundation.shim-pytest 1
                                       com.blockether.vis.internal.gateway.state 1
                                       com.blockether.vis.internal.gateway.view 1
                                       com.blockether.vis.internal.header 1

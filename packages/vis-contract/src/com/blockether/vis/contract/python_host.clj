@@ -2,7 +2,7 @@
   "The Python host contract as DATA: `resources/vis-contract/python-host.edn`.
 
    Everything the `vis` Python module can ask its host to do is one entry in that
-   document — the polyglot global the engine binds, how many positional arguments
+   document — the host global the engine binds, how many positional arguments
    the callable takes, and what the op does when there is no Vis host at all. The
    engine derives the names it binds from here, the injected host is built from
    here, and the package's outside-the-sandbox host derives its behavior from
@@ -119,7 +119,7 @@
   (mapv :op/name (ops)))
 
 (defn host-globals
-  "The `__vis_host_*` polyglot globals the engine binds, in document order."
+  "The `__vis_host_*` globals the engine binds, in document order."
   []
   (mapv :op/global (ops)))
 

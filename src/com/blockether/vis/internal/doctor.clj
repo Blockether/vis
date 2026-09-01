@@ -80,7 +80,7 @@
     (if (fn? b) (b) b)))
 
 (defn- inspect-shim
-  "Resolve ONE sandbox shim's dependencies WITHOUT building a GraalPy context:
+  "Resolve ONE sandbox shim's dependencies WITHOUT starting a Python interpreter:
    its `:shim/source` classpath resource (the Python file build.clj embeds via
    `-H:IncludeResources=vis-shims/.*`) and its host bindings. Never throws."
   [shim]
@@ -114,7 +114,7 @@
    never made it onto the classpath / into the native image, and a host binding
    whose JVM library is absent — and both are what this check surfaces.
 
-   Static on purpose: no GraalPy Context is created, so the check costs
+   Static on purpose: no Python session is created, so the check costs
    milliseconds and cannot itself wedge `vis-agent doctor`."
   [_environment]
   (let

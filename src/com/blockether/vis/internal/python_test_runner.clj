@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.python-test-runner
   "Runs an extension author's Python tests (`test_*.py` / `*_test.py`) through
-   the built-in `pytest`-compat shim, each in its own TRUSTED GraalPy context
+   the built-in `pytest`-compat shim, each in its own TRUSTED Python session
    (same trust level as the extension it covers). Tests import the extension's
    own package through the SAME `sys.path` sugar the loader gives `extension.py`,
    so an author ships real Python tests next to the code and runs them with the
@@ -16,13 +16,14 @@
    (nodeid, outcome, message). Counts and pass/fail are DERIVED from those
    records on the host side — never a separate tally that could drift, and
    never scraped from stdout."
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.python-extensions :as pyx]
-            [com.blockether.vis.internal.sandbox-resources :as res])
-  (:import [java.io File]
-           [org.graalvm.polyglot Context]))
+            [com.blockether.vis.internal.python-extension-host :as pyext]
+            [com.blockether.vis-python-runtime :as runtime])
+  (:import [java.io File]))
 
 (set! *warn-on-reflection* true)
 
@@ -34,15 +35,19 @@
 
 (def ^:private field-sep "\u001f")
 
-(defn- pytest-shim-src
-  "The `pytest`-compat shim's Python source, pulled from the live extension
-   registry (`extension/sandbox-shims`, keyed by `:shim/name` \"pytest\") so we
-   avoid a compile-time dependency on `shim-pytest` — which would cycle back
-   through `vis.core`. nil when the shim extension isn't registered."
-  []
-  (some (fn [shim]
-          (when (= "pytest" (:shim/name shim)) (extension/shim-src shim)))
-        (extension/sandbox-shims)))
+(defn- ensure-pytest!
+  "Make the REAL `pytest` importable in `session`, installing it ONCE into the
+   sandbox's own packages directory when the machine has never had it. Answers
+   nil on success and the reason on failure — a missing test runner is a result,
+   never a crash."
+  [^String session]
+  (try (pyext/exec! session "import pytest")
+       nil
+       (catch Throwable _
+         (let [{:keys [exit out]} (runtime/pip-install! ["pytest"])]
+           (if (zero? (long (or exit 1)))
+             (try (pyext/exec! session "import pytest") nil (catch Throwable t (ex-message t)))
+             (str "pytest could not be installed: " out))))))
 
 (defn- walk-py
   "Every `*.py` under `d`, recursively, name-sorted."
@@ -87,14 +92,12 @@
        second))
 
 (defn- test-sys-path
-  "sys.path entries for a test file, NUL-joined into one string (a NUL can't
-   occur in a path, and a plain string crosses the polyglot boundary cleanly —
-   a host array is not iterable under `PolyglotAccess/NONE`): `extra` (the
-   project's own declared import roots, e.g. a `src` layout) first, then the
-   test file's own dir and every ancestor up to and INCLUDING the extension
-   scan dir — so `from mypkg.core import x` (package root), `from core import x`
-   (same dir) and `import mypkg` (declared `src` root) all resolve regardless of
-   how deep the test sits.
+  "sys.path entries for a test file, in order: `extra` (the project's own
+   declared import roots, e.g. a `src` layout) first, then the test file's own
+   dir and every ancestor up to and INCLUDING the extension scan dir — so
+   `from mypkg.core import x` (package root), `from core import x` (same dir)
+   and `import mypkg` (declared `src` root) all resolve regardless of how deep
+   the test sits.
 
    The driver inserts these at `sys.path[0]` in order, so entries listed FIRST
    end up with the LOWEST precedence: the project roots never shadow a module
@@ -102,43 +105,68 @@
   ([^File scan-dir ^File test-file] (test-sys-path scan-dir test-file nil))
   ([^File scan-dir ^File test-file extra]
    (let [scan (.getCanonicalPath scan-dir)]
-     (str/join "\u0000"
-               (distinct (concat (remove str/blank? (map str extra))
-                                 (loop [^File d (.getParentFile (.getCanonicalFile test-file))
-                                        acc []]
+     (vec (distinct (concat (remove str/blank? (map str extra))
+                            (loop [^File d (.getParentFile (.getCanonicalFile test-file))
+                                   acc []]
 
-                                   (if (nil? d)
-                                     acc
-                                     (let [p (.getCanonicalPath d)
-                                           acc (conj acc p)]
+                              (if (nil? d)
+                                acc
+                                (let [p (.getCanonicalPath d)
+                                      acc (conj acc p)]
 
-                                       (if (= p scan) acc (recur (.getParentFile d) acc)))))))))))
+                                  (if (= p scan) acc (recur (.getParentFile d) acc)))))))))))
 
 (def ^:private run-test-src
-  "Python driver: prepend the bound `sys.path` roots (a NUL-joined string), exec
-   the test source under the `<prog>` co_filename (so the shim's linecache-based
-   assert introspection lights up) with `__file__` bound to the test file's real
-   path (so `Path(__file__).parent` fixtures work), then run `pytest.main` over
-   that module's own globals with stdout captured into `__vis_test_output__`,
-   the exit code in `__vis_test_rc__`, and — the source of truth — the shim's
-   PER-TEST record list serialized into `__vis_test_report__` (records RS-joined,
-   fields US-joined: nodeid, outcome, message)."
-  (str "import sys as __vis_ts__, io as __vis_tio__\n"
-       "for __vis_tp__ in __vis_test_paths__.split(chr(0)):\n"
+  "Python driver: prepend the bound `sys.path` roots, then
+   run REAL `pytest` over the one test file with a collector plugin attached.
+   Pytest's own output lands in `__vis_test_output__`, its exit code in
+   `__vis_test_rc__`, and — the source of truth — the collector's PER-TEST record
+   list in `__vis_test_report__` (records RS-joined, fields US-joined: nodeid,
+   outcome, message).
+
+   `sys.path` and `sys.modules` are PROCESS state, not session state: one
+   embedded CPython serves every session, so a test module left behind makes
+   pytest refuse the NEXT file of the same basename (`import file mismatch`).
+   The driver restores both, which is what a separate interpreter per file used
+   to do for free."
+  (str "import sys as __vis_ts__, io as __vis_tio__\n" "__vis_path0__ = list(__vis_ts__.path)\n"
+       "__vis_mods0__ = set(__vis_ts__.modules)\n" "for __vis_tp__ in __vis_test_paths__:\n"
        "    if __vis_tp__ and __vis_tp__ not in __vis_ts__.path:\n"
        "        __vis_ts__.path.insert(0, __vis_tp__)\n"
-       "__vis_test_ns__ = {'__vis_src__': __vis_src__, '__name__': '__vis_pytest__',"
-       " '__file__': __vis_test_file__}\n"
-       "exec(compile(__vis_src__, '<prog>', 'exec'), __vis_test_ns__)\n"
-       "import pytest as __vis_pt__\n"
+       "import pytest as __vis_pt__\n" "class __VisReports__:\n"
+       "    def __init__(self):\n" "        self.records = []\n"
+       "    def pytest_runtest_logreport(self, report):\n"
+       ;; One record per test: the CALL phase is the verdict, and a setup or
+       ;; teardown that fails is an error the call phase never reports.
+       "        if report.when == 'call':\n"
+       "            outcome = report.outcome\n" "        elif report.outcome != 'passed':\n"
+       "            outcome = 'error'\n" "        else:\n"
+       "            return\n" "        self.records.append((report.nodeid, outcome,"
+       " str(report.longrepr) if report.longrepr else ''))\n" "__vis_col__ = __VisReports__()\n"
        "__vis_tbuf__ = __vis_tio__.StringIO()\n" "__vis_told__ = __vis_ts__.stdout\n"
-       "__vis_ts__.stdout = __vis_tbuf__\n" "try:\n"
-       "    __vis_test_rc__ = int(__vis_pt__.main(ns=__vis_test_ns__))\n" "finally:\n"
-       "    __vis_ts__.stdout = __vis_told__\n" "__vis_test_output__ = __vis_tbuf__.getvalue()\n"
-       "__vis_trep__ = getattr(__vis_pt__, '_vis_last_report', []) or []\n"
-       "__vis_test_report__ = chr(30).join("
+       "__vis_terr__ = __vis_ts__.stderr\n" "__vis_ts__.stdout = __vis_tbuf__\n"
+       "__vis_ts__.stderr = __vis_tbuf__\n" "try:\n"
+       "    __vis_test_rc__ = int(__vis_pt__.main("
+       "['-q', '-p', 'no:cacheprovider', __vis_test_file__],"
+       " plugins=[__vis_col__]))\n" "finally:\n"
+       "    __vis_ts__.stdout = __vis_told__\n" "    __vis_ts__.stderr = __vis_terr__\n"
+       "    for __vis_m__ in [__vis_k__ for __vis_k__ in list(__vis_ts__.modules)"
+       " if __vis_k__ not in __vis_mods0__]:\n"
+       "        __vis_ts__.modules.pop(__vis_m__, None)\n"
+       "    __vis_ts__.path[:] = __vis_path0__\n"
+       "__vis_test_output__ = __vis_tbuf__.getvalue()\n" "__vis_test_report__ = chr(30).join("
        "str(__vis_nid__) + chr(31) + str(__vis_oc__) + chr(31) + str(__vis_msg__)"
-       " for (__vis_nid__, __vis_oc__, __vis_msg__) in __vis_trep__)\n"))
+       " for (__vis_nid__, __vis_oc__, __vis_msg__) in __vis_col__.records)\n"))
+
+(defn- short-nodeid
+  "pytest's nodeid is a path relative to whatever it picked as its rootdir, so
+   the same test reads `foo_test.py::test_x` here and
+   `../../../tmp/x/foo_test.py::test_x` from another working directory. Every
+   record already carries its absolute `:file`, so keep the file's NAME and the
+   test path after it."
+  [nodeid]
+  (let [[path & inner] (str/split (or nodeid "") #"::")]
+    (str/join "::" (cons (last (str/split path #"/")) inner))))
 
 (defn- parse-report
   "Parse the shim's serialized per-test record list into
@@ -150,7 +178,7 @@
         (comp (remove str/blank?)
               (map (fn [rec]
                      (let [[nodeid outcome message] (str/split rec (re-pattern field-sep) 3)]
-                       {:nodeid nodeid
+                       {:nodeid (short-nodeid nodeid)
                         :outcome (if (= outcome "error") :errored (keyword outcome))
                         :message (or message "")}))))
         (str/split (or s "") (re-pattern record-sep))))
@@ -158,40 +186,53 @@
 (defn- failing? [tests] (boolean (some (comp #{:failed :errored} :outcome) tests)))
 
 (defn- run-test-file!
-  "Run ONE test file in a fresh trusted context: bootstrap the `vis` module,
-   install the pytest shim, then drive `run-test-src`. `sys-path` is the extra
+  "Run ONE test file in a fresh trusted session: bootstrap the `vis` module, make
+   sure `pytest` is there, then drive `run-test-src`. `sys-path` is the extra
    import roots the project declares (a `src` layout), added below the test's
    own dirs. Returns `{:file :rc :ok? :output :tests}` where `:tests` is the
    per-test record list. Never throws — a broken test file is one `:errored`
    result, never a host crash."
-  [^String shim-src sys-path ^File scan-dir ^File test-file]
+  [sys-path ^File scan-dir ^File test-file]
   (let [path
         (.getCanonicalPath test-file)
-
-        source
-        (slurp test-file)
 
         paths
         (test-sys-path scan-dir test-file sys-path)
 
-        ^Context ctx
+        session
         (pyx/build-context (.getName test-file))]
 
-    (try (pyx/bind-test-host! ctx (.getName test-file))
-         (locking ctx
-           (.eval ctx "python" ^String pyx/bootstrap-python)
-           (.eval ctx "python" shim-src)
-           (let [g (.getBindings ctx "python")]
-             (.putMember g "__vis_test_paths__" paths)
-             (.putMember g "__vis_test_file__" ^String path)
-             (.putMember g "__vis_src__" ^String source)
-             (.eval ctx "python" ^String run-test-src)
-             (let [tests (parse-report (.asString (.getMember g "__vis_test_report__")))]
-               {:file path
-                :rc (int (.asInt (.getMember g "__vis_test_rc__")))
-                :ok? (not (failing? tests))
-                :output (.asString (.getMember g "__vis_test_output__"))
-                :tests tests})))
+    (try (pyx/bind-test-host! session (.getName test-file))
+         (pyext/exec! session pyx/bootstrap-python)
+         (when-let [missing (ensure-pytest! session)]
+           (throw (ex-info missing {:file path})))
+         ;; The two inputs cross as JSON the guest PARSES: pasting JSON straight
+         ;; into Python source would keep its `\\/` escapes verbatim and break
+         ;; every path in it.
+         (pyext/exec! session
+                      (str "__vis_test_paths__ = "
+                           (env/py-json-literal (vec paths))
+                           "\n"
+                           "__vis_test_file__ = "
+                           (env/py-json-literal path)
+                           "\n"))
+         (pyext/exec! session run-test-src)
+         (let [outcome
+               (json/read-json (pyext/run session
+                                          (str "{'report': __vis_test_report__,"
+                                               " 'rc': __vis_test_rc__,"
+                                               " 'output': __vis_test_output__}"))
+                               :key-fn
+                               identity)
+
+               tests
+               (parse-report (str (get outcome "report")))]
+
+           {:file path
+            :rc (int (get outcome "rc" -1))
+            :ok? (not (failing? tests))
+            :output (str (get outcome "output"))
+            :tests tests})
          (catch Throwable t
            {:file path
             :rc -1
@@ -199,13 +240,14 @@
             :output ""
             :tests [{:nodeid (.getName test-file) :outcome :errored :message (ex-message t)}]
             :error (ex-message t)})
-         (finally (res/dispose! ctx)))))
+         (finally (pyx/close-context! session)))))
 
 (defn test-python-extensions!
   "Discover and run every Python test (`test_*.py` / `*_test.py`) across the
    extension dirs (default: `~/.vis/extensions` and `<cwd>/.vis/extensions`),
-   each in its own TRUSTED GraalPy context via the built-in `pytest`-compat
-   shim. Tests import the extension's own package through the `sys.path` sugar,
+   each in its own TRUSTED session driving real `pytest`, which the sandbox
+   installs on first use. Tests import the extension's own package through the
+   `sys.path` sugar,
    exactly like `extension.py` does.
 
    Returns `{:files n :ok? bool :passed n :failed n :errored n :skipped n
@@ -222,33 +264,28 @@
    (let [dirs
          (or dirs (pyx/default-extension-dirs))
 
-         shim-src
-         (pytest-shim-src)
-
          pairs
-         (discover-tests dirs)]
+         (discover-tests dirs)
 
-     (if (nil? shim-src)
-       {:files 0 :ok? false :error "pytest shim not registered" :results [] :tests []}
-       (let [results
-             (mapv (fn [[d f]]
-                     (run-test-file! shim-src sys-path d f))
-                   pairs)
+         results
+         (mapv (fn [[d f]]
+                 (run-test-file! sys-path d f))
+               pairs)
 
-             tests
-             (vec (for [r
-                        results
+         tests
+         (vec (for [r
+                    results
 
-                        t
-                        (:tests r)]
+                    t
+                    (:tests r)]
 
-                    (assoc t :file (:file r))))
+                (assoc t :file (:file r))))
 
-             counts
-             (frequencies (map :outcome tests))]
+         counts
+         (frequencies (map :outcome tests))]
 
-         (merge {:files (count results) :ok? (every? :ok? results) :tests tests :results results}
-                (select-keys counts [:passed :failed :errored :skipped :xfailed :xpassed])))))))
+     (merge {:files (count results) :ok? (every? :ok? results) :tests tests :results results}
+            (select-keys counts [:passed :failed :errored :skipped :xfailed :xpassed])))))
 
 (defn- rel-name
   "Short display name for a test file: the last two path segments (package +

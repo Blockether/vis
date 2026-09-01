@@ -204,15 +204,13 @@
                        (expect (str/includes? output "connection reset by peer") output)
                        (expect (not (str/includes? output "not an advertised branch")) output))))))
 
-(defdescribe
-  native-image-language-resources-test
-  (it "keeps the language resources beside the image instead of inside it"
-      (let [props (slurp
-                    "resources/META-INF/native-image/com.blockether/vis/native-image.properties")]
-        ;; Embedding GraalPy's stdlib pushed the builder's live set past what a
-        ;; 16 GB runner survives; the sidecar is what makes the release build finish.
-        (expect (str/includes? props "-H:-IncludeLanguageResources") props)
-        (expect (str/includes? props "-H:+CopyLanguageResources") props))))
+(defdescribe native-image-python-sidecar-test
+             (it "stages the embedded interpreter beside the image instead of inside it"
+                 (let [build (slurp "build.clj")]
+                   ;; Embedding a whole interpreter tree pushed the builder's live set past what
+                   ;; a 16 GB runner survives; the sidecar is what makes the release build finish.
+                   (expect (str/includes? build "target/vis-agent-python") build)
+                   (expect (str/includes? build "(stage-python-sidecar! basis)") build))))
 
 (defdescribe
   stage-release-bundle-test
@@ -242,14 +240,14 @@
 
       (try (doseq [entry ["vis-agent" "vis-agent-native" "install-vis-agent"]]
              (write-executable! (io/file from-dir entry) "#!/usr/bin/env bash\nexit 0\n"))
-           ;; A binary without its resources is a runtime whose first Python call
-           ;; dies with "No module named 'ast'": hard error, never a warning.
+           ;; A binary without its interpreter is a runtime whose first Python call
+           ;; dies with a library-not-found: hard error, never a warning.
            (let [{:keys [exit output]} (stage!)]
              (expect (not= 0 exit) output)
-             (expect (str/includes? output "vis-agent-resources") output)
+             (expect (str/includes? output "vis-agent-python") output)
              (expect (not (.isFile asset)) "no asset may survive a rejected bundle"))
-           (.mkdirs (io/file from-dir "vis-agent-resources/python"))
-           (spit (io/file from-dir "vis-agent-resources/python/marker") "stdlib\n")
+           (.mkdirs (io/file from-dir "vis-agent-python/python"))
+           (spit (io/file from-dir "vis-agent-python/python/marker") "stdlib\n")
            ;; Regression, issue #148: a bundle carried no record of the commit its
            ;; runtime was built from, so a months-old binary beside fresh source
            ;; passed for current and its long-fixed crash was reported again.
@@ -261,8 +259,7 @@
            (let [{:keys [exit output]} (stage!)]
              (expect (= 0 exit) output)
              (expect (.isFile asset) output)
-             (expect (= "stdlib\n"
-                        (slurp (io/file bundle-dir "vis-agent-resources/python/marker"))))
+             (expect (= "stdlib\n" (slurp (io/file bundle-dir "vis-agent-python/python/marker"))))
              (expect (= stamp (slurp (io/file bundle-dir "vis-agent-native.build"))))
              (doseq [entry ["vis-agent" "vis-agent-native" "install-vis-agent"]]
                (expect (.canExecute (io/file bundle-dir entry)) entry)))
@@ -497,8 +494,7 @@
              (expect (not (str/includes? logged "type=local")) logged)
              (expect (str/includes? logged "--build-arg VIS_NATIVE_EXTRA_ARGS=-J-Xmx7g") logged)
              (expect (str/includes? logged "create --platform linux/arm64") logged)
-             (doseq [entry ["vis-agent" "vis-agent-native" "install-vis-agent"
-                            "vis-agent-resources"]]
+             (doseq [entry ["vis-agent" "vis-agent-native" "install-vis-agent" "vis-agent-python"]]
                (expect (str/includes? logged (str "cp ctr123:/" entry " ")) logged)))
            (finally (delete-tree! mac))))))
 

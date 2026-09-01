@@ -27,17 +27,16 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.view :as view]
-            [com.blockether.vis.internal.python-extensions :as px])
-  (:import (java.io File)
-           (org.graalvm.polyglot Context Value)))
+            [com.blockether.vis.internal.python-extensions :as px]
+            [com.blockether.vis.internal.python-extension-host :as pyext])
+  (:import (java.io File)))
 
 (def ^:private checker-python
   "The checker's Python body, slurped from its classpath resource through the ONE
    shared reader so a resource missing from the native image fails loudly."
-  (env/runtime-python-src "vis-python/extension_check.py"))
+  (px/classpath-src "vis-python/extension_check.py"))
 
 (def ^:private unasked-answer
   "What [[judge-request]] hands a checked `vis.ask` back: nobody was asked, so the
@@ -77,17 +76,17 @@
 
     (wire/json-str {:view-id (:id view) :is-open true :view view})))
 
-(defn- checker-context
-  "A context holding the real `vis` module with an inert host, plus the checker."
-  ^Context []
-  (let [^Context ctx (px/build-context "extension-check")]
-    (px/bind-inert-host! ctx
+(defn- checker-session
+  "A trusted extension session holding the real `vis` module with an inert host,
+   plus the checker."
+  ^String []
+  (let [sess (px/build-context "extension-check")]
+    (px/bind-inert-host! sess
                          {"__vis_host_request_input__" judge-request
                           "__vis_host_live__" judge-view})
-    (locking ctx
-      (.eval ctx "python" ^String px/bootstrap-python)
-      (.eval ctx "python" ^String checker-python))
-    ctx))
+    (pyext/exec! sess px/bootstrap-python)
+    (pyext/exec! sess checker-python)
+    sess))
 
 (defn- problem [kind line column message] {:kind kind :line line :column column :message message})
 
@@ -107,11 +106,12 @@
                      (get m "problems"))}))
 
 (defn- check-in
-  "Check one `source` inside an already-built checker context."
-  [^Context ctx source path]
-  (locking ctx
-    (let [f ^Value (.getMember (.getBindings ctx "python") "vis_check_source")]
-      (->report path (.asString ^Value (.execute f (object-array [(str source) (str path)])))))))
+  "Check one `source` inside an already-equipped checker session."
+  [^String session source path]
+  (->report path
+            (pyext/eval-str
+              session
+              (str "vis_check_source(" (pr-str (str source)) ", " (pr-str (str path)) ")"))))
 
 (defn- unreadable
   [path message]
@@ -125,11 +125,11 @@
   [pairs]
   (if-not (seq pairs)
     []
-    (let [ctx (checker-context)]
+    (let [session (checker-session)]
       (try (mapv (fn [[path source]]
-                   (check-in ctx source path))
+                   (check-in session source path))
                  pairs)
-           (finally (.close ctx))))))
+           (finally (px/close-context! session))))))
 
 (defn check-source
   "Check one extension `source`, labelled `path`."

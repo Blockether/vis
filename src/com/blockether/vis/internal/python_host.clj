@@ -5,7 +5,7 @@
    everything a block can ask the host for arrives here as two strings: the name
    of a tool and a JSON envelope of its arguments. What crosses is DATA - a tool
    takes plain values and answers plain values, because the boundary carries
-   text and nothing else. A live object (a Context, a stream, a handle) never
+   text and nothing else. A live object (an interpreter handle, a stream, a file)
    crossed it and never will; a handle the model holds is a PYTHON object built
    over calls that come back through here.
 
@@ -31,6 +31,13 @@
    key is what keeps two sandboxes from reaching each other's bindings."}
   registry
   (atom {}))
+
+(def ^:private door-session
+  "The registry key every session shares, for the SHIM DOORS.
+
+   No session is named this, so nothing but [[install-doors!]] writes it and
+   `forget-session!` never takes it away."
+  "__vis_doors__")
 
 (defn- host-null-fault
   "The error text for a host tool that hit a Java `NullPointerException`.
@@ -63,13 +70,75 @@
                                             "` answered a value this boundary "
                                             "cannot carry: only JSON data crosses it")}))))
 
+(defn- failure-data
+  "The `ex-info` data of `t` as EDN TEXT the guest carries back untouched, or nil.
+
+   A tool's failure is typed — `:type :vis/tool-failure`, the symbol that failed
+   — and that type is what the trailer reads; a message alone would force the
+   engine to parse its own prose. Only scalars travel: a value the reader could
+   not answer identically is dropped rather than stringified into a lie."
+  [t]
+  (when (instance? clojure.lang.IExceptionInfo t)
+    (let [scalar?
+          (fn [v]
+            (or (keyword? v) (string? v) (number? v) (boolean? v) (symbol? v)))
+
+          data
+          (into {}
+                (filter (fn [[k v]]
+                          (and (keyword? k) (scalar? v))))
+                (ex-data t))]
+
+      (when (seq data) (pr-str data)))))
+
 (defn- answer
   "Run `f` on `args` and answer the reply map the guest reads."
   [tool f args]
   (try {"value" (apply f args)}
        (catch NullPointerException e {"error" (host-null-fault tool e)})
-       (catch Throwable t {"error" (or (ex-message t) (str t))})))
+       (catch Throwable t
+         (cond-> {"error" (or (ex-message t) (str t))}
+           (failure-data t)
+           (assoc "error_data" (failure-data t))))))
 
+(defonce
+  ^:private
+  ^{:doc
+    "session id -> the dynamic binding frame of whoever is driving that session.
+
+   A block's driver binds Vars around the call it makes - the attachment sink is
+   the loud one - and then the interpreter serves the block on ONE pinned thread
+   of its own, while a `par` worker upcalls from a CPython thread that was never
+   in Clojure at all. Neither sees the driver's `binding`, so a tool reading a
+   dynamic Var would find it unbound and refuse work it was asked for.
+
+   The driver publishes its frame here for the length of the call and
+   [[dispatch]] installs it around the tool it serves: the bindings that reach a
+   door are the ones of the block that asked, whichever thread the door runs on."}
+  frames
+  (atom {}))
+
+(defn conveying*
+  "Call `f`, conveying THIS thread's dynamic bindings to `session`'s host calls."
+  [session f]
+  (swap! frames assoc session (clojure.lang.Var/getThreadBindingFrame))
+  (try (f) (finally (swap! frames dissoc session))))
+
+(defmacro conveying
+  "Evaluate `body`, conveying the current dynamic bindings to `session`'s host calls."
+  [session & body]
+  `(conveying* ~session
+               (fn []
+                 ~@body)))
+
+(defn- answer-in-frame
+  "[[answer]], under the binding frame the driver of `session` published."
+  [session tool f args]
+  (if-let [frame (get @frames session)]
+    (let [held (clojure.lang.Var/getThreadBindingFrame)]
+      (clojure.lang.Var/resetThreadBindingFrame frame)
+      (try (answer tool f args) (finally (clojure.lang.Var/resetThreadBindingFrame held))))
+    (answer tool f args)))
 (defn dispatch
   "Serve one call from the sandbox: `payload` in, reply JSON out.
 
@@ -88,11 +157,12 @@
         (vec (get request "args"))
 
         f
-        (get-in @registry [session tool])]
+        (or (get-in @registry [session tool]) (get-in @registry [door-session tool]))]
 
-    (envelope
-      tool
-      (if f (answer tool f args) {"error" (str "no vis tool named `" tool "` in this session")}))))
+    (envelope tool
+              (if f
+                (answer-in-frame session tool f args)
+                {"error" (str "no vis tool named `" tool "` in this session")}))))
 
 (defonce ^:private
          ^{:doc "Whether THIS process has already handed the interpreter its host function."} bound
@@ -107,6 +177,15 @@
   (when (compare-and-set! bound false true) (runtime/bind-host! dispatch))
   nil)
 
+(defn- install!
+  "Register `tools` for `session` and bind each name in the guest with `bind-one`."
+  [session tools bind-one]
+  (bind!)
+  (swap! registry update session merge tools)
+  (mapv (fn [[nm _]]
+          (bind-one session nm))
+        tools))
+
 (defn install-tools!
   "Bind `tools` - `{python-name fn}` - as `session`'s host tools and answer the
    names bound.
@@ -114,11 +193,42 @@
    Registration and installation are ONE step on purpose: a name the guest can
    call but the registry does not know is a refusal the model cannot act on."
   [session tools]
-  (bind!)
-  (swap! registry update session merge tools)
-  (mapv (fn [[nm _]]
-          (runtime/install-tool! session nm))
-        tools))
+  (install! session tools runtime/install-tool!))
+
+(defn install-sync-tools!
+  "Bind `tools` as `session`'s host tools that answer DIRECTLY, and answer the
+   names bound.
+
+   For Python the host runs, not the model: a sandbox tool hands back a thunk
+   the block runner settles, and trusted code - an extension calling
+   `vis.shell(...)` in the middle of a line - has no runner and no `await`.
+   The installer is a PARAMETER because trusted Python does not run where the
+   sandbox does: an extension session binds its names in the unconfined child
+   process, a sandbox session in this one, and the registry that answers them is
+   the same either way."
+  ([session tools] (install-sync-tools! session tools runtime/install-sync-tool!))
+  ([session tools install-one] (install! session tools install-one)))
+
+(defn install-doors!
+  "Install `tools` into `session` AND register them for every session.
+
+   A shim door is ONE host capability, not a per-session closure, and Python is
+   PROCESS state: `nippy`, `ruff` and `anydoc` staple themselves onto
+   `builtins` and `sys.modules`, so a second session's `import nippy` finds the
+   module the FIRST session built - holding proxies that still name it. The
+   shared key is what keeps those doors answering after that session is gone."
+  [session tools]
+  (swap! registry update door-session merge tools)
+  (install-sync-tools! session tools))
+(defn forget-tools!
+  "Drop `names` from `session`'s registry, answering nothing.
+
+   For a tool that exists only for the length of ONE call — a host callback an
+   adapter hands INTO Python — the registry is what makes the name callable, so
+   forgetting it is what takes the capability back."
+  [session names]
+  (swap! registry update session #(apply dissoc % names))
+  nil)
 
 (defn forget-session!
   "Drop `session`'s bindings, answering how many names went.

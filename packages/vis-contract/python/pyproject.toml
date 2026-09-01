@@ -10,7 +10,7 @@
 # declaration it was cut against always install as a pair.
 #
 # No dependencies, and none are welcome — a declaration everyone reads must be
-# cheap to install. `requires-python` is the CPython level vis' own GraalPy
+# cheap to install. `requires-python` is the CPython level vis' own CPython
 # implements, because the module this contract describes is a file that engine execs.
 
 [build-system]

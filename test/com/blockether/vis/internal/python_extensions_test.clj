@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.python-extensions-test
-  "Python extension host — load fixture `.py` files into trusted GraalPy
+  "Python extension host — load fixture `.py` files into trusted CPython
    contexts and assert on the registry + adapter contracts. Boots real
-   GraalPy contexts (on the shared engine), no model in the loop."
+   Python sessions (on the shared engine), no model in the loop."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as channel-events]
@@ -26,8 +26,7 @@
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.lang ProcessHandle]
            [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]
-           [org.graalvm.polyglot Context]))
+           [java.nio.file.attribute FileAttribute]))
 
 ;; Harness
 
@@ -38,8 +37,18 @@
                  (expect (not (str/includes? pyx/bootstrap-python "\\/")))))
 
 (defn- temp-dir
+  "A throwaway extension directory INSIDE the working directory, which is what
+   the sandbox confines the interpreter to.
+
+   The embedded interpreter's filesystem policy is PROCESS state, not session
+   state: once any session is confined, the system temp folder is outside every
+   later session's roots too, so an extension written there is one the loader
+   genuinely may not read."
   ^java.io.File []
-  (.toFile (Files/createTempDirectory "vis-pyext-test" (make-array FileAttribute 0))))
+  (let [target (doto (java.io.File. "target") .mkdirs)]
+    (.getAbsoluteFile (.toFile (Files/createTempDirectory (.toPath target)
+                                                          "vis-pyext-test"
+                                                          (make-array FileAttribute 0))))))
 
 (defn- write-ext!
   [^java.io.File dir fname source]
@@ -69,7 +78,7 @@
    `vis.state` confined to a throwaway in-memory DB, and run `f` with the load
    result.
 
-   An extension is its own GraalPy sandbox and re-executing the 28 KB
+   An extension is its own Python sandbox and re-executing the 28 KB
    `extension_bootstrap.py` into a fresh one costs ~100ms, so the SAME sources
    are not loaded twice in a row: the load survives between tests and only the
    store is thrown away. That is all the isolation these tests need, because
@@ -1126,8 +1135,10 @@ vis.extension(
                      by-id (into {} (map (juxt :nodeid :outcome)) (:tests res))]
 
                  (expect (= 2 (count (:tests res))))
-                 (expect (= :passed (get by-id "test_alpha")))
-                 (expect (= :failed (get by-id "test_beta")))
+                 ;; pytest's own nodeid: the file it was collected from, then
+                 ;; the test - never a bare function name.
+                 (expect (= :passed (get by-id "foo_test.py::test_alpha")))
+                 (expect (= :failed (get by-id "foo_test.py::test_beta")))
                  ;; every record carries the file it came from
                  (expect (every? :file (:tests res)))
                  (let [report (#'runner/render-test-report res)]
@@ -1453,7 +1464,7 @@ vis.extension(
 (def ^:private popen-probe-py
   "Issue #142's own reproduction as an extension: start a child, hand the pid
    the handle carries straight back to the host."
-  "import subprocess\nimport vis\ndef probe():\n    '''await probe() -> {'pid'} — start a child and report the handle it got.'''\n    child = subprocess.Popen(['/bin/sleep', '39'])\n    return {'pid': child.pid, 'slot': getattr(child, '__vis_virtual_pid__', child.pid), 'poll': child.poll()}\nvis.extension(name='popen-probe', description='popen probe', alias='popen', symbols=[vis.symbol(probe, tag='observation')])")
+  "import subprocess\nimport vis\ndef probe():\n    '''await probe() -> {'pid'} — start a child and report the handle it got.'''\n    child = subprocess.Popen(['/bin/sleep', '39'])\n    return {'pid': child.pid, 'poll': child.poll()}\nvis.extension(name='popen-probe', description='popen probe', alias='popen', symbols=[vis.symbol(probe, tag='observation')])")
 
 (defdescribe
   python-extension-process-boundary-test
@@ -1466,9 +1477,9 @@ vis.extension(
         (expect (= {:token "extension-native" :source :subprocess}
                    ((:provider/detect-fn (registry/provider-by-id :process-provider))))))))
   ;; Regression, issue #142: through this same loader, `Popen(...)` started a real
-  ;; child and handed the extension a handle whose pid was `1` — GraalPy's first
-  ;; child slot, and 1 is init — so nothing could ps, lsof or supervise the child
-  ;; the extension had just started.
+  ;; child and handed the extension a handle whose pid was `1` — the interpreter's
+  ;; own first child SLOT, and 1 is init — so nothing could ps, lsof or supervise
+  ;; the child the extension had just started.
   (it "hands a tool the real OS pid of the child its Popen started"
       (with-loaded
         {"popen_probe.py" popen-probe-py}
@@ -1479,15 +1490,10 @@ vis.extension(
                 pid
                 (long (get-in result [:result "pid"]))
 
-                slot
-                (long (get-in result [:result "slot"]))
-
                 found
                 (ProcessHandle/of pid)]
 
             (try (expect (extension/envelope-success? result))
-                 (expect (= 1 slot) "the child still lands in the context's first slot")
-                 (expect (not= slot pid) "and the handle carries a pid, not that slot")
                  (expect (nil? (get-in result [:result "poll"]))
                          "the child was running when the tool returned")
                  (expect (.isPresent found) "the pid names a process the host can see")
@@ -1929,7 +1935,7 @@ vis.extension(name='asker', description='asker', alias='a',
 
           ;; The validator is a Python callable, invoked by the engine from the
           ;; submitting thread while `vis.ask` parks the extension's own thread
-          ;; inside the host call — GraalPy releases the GIL for it.
+          ;; inside the host call — CPython releases the GIL for it.
           (expect (= {:is-accepted false :errors {"email" "must be an email address"}} @refused))
           ;; A refusal keeps the request open, so the next confirmation answers it.
           (expect (= {:is-accepted true} @answered))
@@ -2082,10 +2088,10 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
                      (let [captured
                            (symbol-fn (registered "rebuilder") 'ping)
 
-                           ^Context dead
+                           dead
                            (:context (first (vals @@#'pyx/loaded)))]
 
-                       (.close dead true)
+                       (pyx/close-context! dead)
                        (expect (= "pong" (:result (captured))))
                        ;; the heal re-registered a LIVE context, so the freshly resolved
                        ;; symbol goes straight through
@@ -2099,11 +2105,11 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
                  (with-fresh-loaded
                    {"rebuilder.py" rebuilder-py}
                    (fn [_ _]
-                     (let [^Context live (:context (first (vals @@#'pyx/loaded)))]
+                     (let [live (:context (first (vals @@#'pyx/loaded)))]
                        (expect (false? (#'pyx/context-dead? live)))
                        (expect (false? (:success? ((symbol-fn (registered "rebuilder") 'boom)))))
                        (expect (false? (#'pyx/context-dead? live)))
-                       (.close live true)
+                       (pyx/close-context! live)
                        (expect (true? (#'pyx/context-dead? live)))
                        (expect (true? (#'pyx/context-dead? nil)))))))
              (it "an ordinary Python error stays a failure and never rebuilds the context"
@@ -2355,7 +2361,7 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
                      (pyx/reload-python-extensions! {:dirs []})
                      (ps/db-dispose-connection! store))))))
   ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: the slash
-  ;; request and first agent environment could construct GraalPy concurrently.
+  ;; request and first agent environment could construct CPython concurrently.
   (it
     "serializes concurrent first-load requests"
     (let [fingerprint
@@ -2401,11 +2407,11 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
           (let [captured
                 (symbol-fn (registered "rebuilder") 'ping)
 
-                ^Context dead
+                dead
                 (:context (first (vals @@#'pyx/loaded)))]
 
             (write-ext! ext-dir "rebuilder.py" (str/replace rebuilder-py "'pong'" "'edited'"))
-            (.close dead true)
+            (pyx/close-context! dead)
             (let [res (captured)]
               (expect (not= "edited" (:result res)))
               (expect (not= "pong" (:result res))))
@@ -2436,11 +2442,11 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
           (let [captured
                 (symbol-fn (registered "sidecar") 'peek)
 
-                ^Context dead
+                dead
                 (:context (first (vals @@#'pyx/loaded)))]
 
             (write-ext! ext-dir "sidecar/sidecar_impl.py" (str/replace sidecar-impl-py "v1" "v2"))
-            (.close dead true)
+            (pyx/close-context! dead)
             (expect (not= "v2" (:result (captured))))
             (expect (identical? dead (:context (first (vals @@#'pyx/loaded)))))))))
   (it "a torn-down context heals from the frozen tree when nothing changed"
@@ -2450,10 +2456,10 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
           (let [captured
                 (symbol-fn (registered "sidecar") 'peek)
 
-                ^Context dead
+                dead
                 (:context (first (vals @@#'pyx/loaded)))]
 
-            (.close dead true)
+            (pyx/close-context! dead)
             (expect (= "v1" (:result (captured))))
             (expect (not (identical? dead (:context (first (vals @@#'pyx/loaded)))))))))))
 

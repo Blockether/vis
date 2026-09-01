@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Full test suite on Linux + macOS only. vis embeds GraalPy (Truffle) + rift
+  # Full test suite on Linux + macOS only. vis embeds CPython (FFM) + rift
   # FFM, so tests run on the pinned GraalVM CE 25.1.3 (.graalvm-version, LOCKED —
   # not upgradable) via ./.github/actions/setup-graalvm-25, i.e. the exact JDK the
   # native binary is built with. Never Oracle GraalVM (GFTC) and never a stock JDK.
@@ -69,8 +69,8 @@ jobs:
       # Oracle GraalVM's 25.1 feature train is GDS-token gated (not on the free
       # download channel) and setup-graalvm's CE resolver predates the 25.1
       # innovation naming, so we install the pinned graalvm-ce-builds asset
-      # directly. Bump the version inside the action with deps.edn's
-      # org.graalvm.* pins — Truffle/SVM refuse mismatches.
+      # directly. Bump the version inside the action together with
+      # `.graalvm-version` — native-image and its metadata are version-bound.
       - uses: ./.github/actions/setup-graalvm-25
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
@@ -262,11 +262,10 @@ jobs:
 
   # The `vis` module, its outside-the-sandbox host and the declaration both of them
   # read are what PyPI installs as `vis-agent` and `vis-contract`, and the harness
-  # cannot run their tests: vis' own embedded GraalPy resolves `vis` as a namespace
-  # package, so this is the one suite that needs a stock CPython. It depends on
-  # nothing the Clojure jobs build, so it runs beside them.
-  # them. The interpreter is the FLOOR `pyproject.toml` advertises, and that floor is
-  # the CPython level vis' own GraalPy implements: a module the engine execs cannot
+  # cannot run their tests: this is the one suite that needs a stock CPython on
+  # PATH. It depends on nothing the Clojure jobs build, so it runs beside them.
+  # The interpreter is the FLOOR `pyproject.toml` advertises, and that floor is
+  # the CPython level the engine embeds: a module the engine execs cannot
   # be written in a Python the engine could not run.
   python-package:
     name: tests / vis-agent + vis-contract (PyPI packages)

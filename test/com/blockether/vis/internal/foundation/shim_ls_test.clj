@@ -10,18 +10,18 @@
             [com.blockether.vis.internal.extension :as extension]
             ;; Registers the shim, exactly as the built-in loader does in production.
             [com.blockether.vis.internal.foundation.shim-ls]
-            [lazytest.core :refer [defdescribe expect it]])
-  (:import [org.graalvm.polyglot Context]))
+            [com.blockether.vis.test-python-context :as tpc]
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- sandbox
   "A sandbox context with the built-in shims installed and no filesystem
    confinement, so the repo's own tree is the fixture."
-  ^Context []
-  (:python-context (ep/create-python-context {})))
+  []
+  (:python-context (tpc/new-context {})))
 
 (defn- out
   "Stdout of `code` run as ONE driven block."
-  [^Context ctx code]
+  [ctx code]
   (let [r (ep/run-python-block ctx code "t1/i1")]
     (expect (nil? (:error r)))
     (:stdout r)))

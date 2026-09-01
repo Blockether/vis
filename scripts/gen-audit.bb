@@ -40,9 +40,7 @@
 ;; Licenses that POMs express oddly / not at all — pin them explicitly so the
 ;; audit never regresses to UNKNOWN on the ones we've already vetted by hand.
 (def license-overrides
-  {"org.graalvm.python/python-language" "UPL-1.0 + MIT + PSF"
-   "org.graalvm.python/python-resources" "UPL-1.0 + MIT + PSF"
-   ;; k2-fsa publishes sherpa-onnx through JitPack, which serves an
+  {;; k2-fsa publishes sherpa-onnx through JitPack, which serves an
    ;; install:install-file POM with no <licenses> block. Apache-2.0 is the
    ;; license of the k2-fsa/sherpa-onnx repository these artifacts are built
    ;; from, vetted by hand at v1.13.5. The five native-lib coordinates are no
@@ -410,7 +408,7 @@
         today
         ".
 
-Vis is a coding agent that writes Python into a sandboxed GraalPy runtime,
+Vis is a coding agent that writes Python into a sandboxed CPython runtime,
 keeps durable state outside the model context window, and inspects and changes
 the host project through tools. It ships as one Clojure package
 (`com.blockether.vis.core`, Apache-2.0) plus optional classpath extensions
@@ -433,7 +431,7 @@ vulnerable, and what does it do with data.*
 
 - **What it is.** Vis is an LLM coding agent that acts by writing code. It
   drives tasks end-to-end — locate → edit → verify — against the host
-  repository, executing its own Python inside a **sandboxed GraalPy runtime**
+  repository, executing its own Python inside a **sandboxed CPython runtime**
   embedded in either the JVM process or native-image runtime rather than on the
   host interpreter.
 - **Durable, out-of-context state.** Session state (plans, prior results,
@@ -459,7 +457,7 @@ vulnerable, and what does it do with data.*
         " `deps.edn` modules (root + extensions).
 - **Declared jar footprint (direct coords):** ~"
         (format "%.0f" (/ total-b 1024.0 1024.0))
-        " MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
+        " MB; concentrated in the embedded CPython runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — "
         (if (seq copyleft) "**copyleft exception(s) flagged in §6.**" "no copyleft exceptions.")
         "
@@ -509,16 +507,16 @@ property of their respective owners; their use here is descriptive and does
 
 The native distribution ships the public **`vis-agent` Bash wrapper** beside a
 private **GraalVM native-image runtime**. The source distribution ships that
-same wrapper and runs the JVM checkout directly. The two GraalVM layers, the
-embedded language runtime and models, and the one copyleft UI dependency are
+same wrapper and runs the JVM checkout directly. The build toolchain, the
+embedded Python interpreter and models, and the one copyleft UI dependency are
 each **FOSS and cleared for commercial redistribution**. There is **no Oracle
 license on the distributed native runtime**.
 
-### 4.1 The two GraalVM layers
+### 4.1 The build tool and the embedded interpreter
 
 | Layer | What it is | Coordinates / tool | License | Redistribution *for a fee* |
 |---|---|---|---|---|
-| **Embedded runtime** | GraalPy + Truffle/Polyglot, baked into the binary as the agent's sandboxed Python substrate | `org.graalvm.python/*`, `org.graalvm.polyglot/polyglot`, `org.graalvm.truffle/truffle-runtime` `25.1.3` (Maven Central) | **UPL-1.0** (+ MIT + PSF for the bundled CPython stdlib) | **Permitted** — UPL is a permissive, BSD-style license |
+| **Embedded interpreter** | CPython 3.14, built from source and shipped beside the binary as the agent's sandboxed Python substrate | `com.blockether/vis-python-runtime` + its per-platform `…-native-<platform>` jar (Clojars) | **MIT** for the bridge, **PSF-2.0** for CPython and its standard library | **Permitted** — both are permissive |
 | **Build tool** | The `native-image` compiler that AOT-compiles vis into the standalone binary (`clojure -T:build native`) | **GraalVM Community Edition (CE) for JDK 25.1.3**, installed from the pinned `graalvm-ce-builds` asset via `.github/actions/setup-graalvm-25` (every CI + native-release workflow) | **GPL-2.0 with Classpath Exception** | **Permitted** — the Classpath Exception frees the output binary |
 
 **Which GraalVM we support.** The release build uses **GraalVM CE 25.1.3**
@@ -534,13 +532,13 @@ any terms with no copyleft reaching first-party code.
 > was moved to **GraalVM CE** to remove that restriction — and Oracle from the
 > risk register — entirely.
 
-### 4.2 Embedded runtime & bundled models
+### 4.2 Embedded interpreter & bundled models
 
-The binary embeds the **GraalPy** runtime (`python-language` +
-`python-resources`, ~105 MB — see §8) as the agent's sandboxed Python
-substrate; it is mandatory for the core binary. GraalPy and Truffle/Polyglot
-are **UPL-1.0**; the bundled CPython standard library adds **MIT + PSF**. All
-are permissive and cleared for commercial redistribution.
+The distribution ships **CPython 3.14** (`com.blockether/vis-python-runtime`
+plus its per-platform native jar, ~69 MB unpacked beside the binary) as the
+agent's sandboxed Python substrate; it is mandatory for the core binary. The
+bridge is **MIT**, CPython and its standard library are **PSF-2.0**. Both are
+permissive and cleared for commercial redistribution.
 
 The optional **`vis-foundation-voice`** extension runs local speech through
 upstream **`sherpa-onnx`** (Apache-2.0). Only its 187 KB API jar is a declared
@@ -720,8 +718,9 @@ Heaviest direct artifacts (>= 1 MB):
         "
 
 Notes:
-- The **GraalPy** runtime (`python-language` + `python-resources`, ~105 MB) is
-  the agent's sandboxed Python substrate — mandatory for the core binary (§4.2).
+- The **CPython** interpreter (`com.blockether/vis-python-runtime`, ~69 MB
+  unpacked) is the agent's sandboxed Python substrate — mandatory for the core
+  binary (§4.2).
 - The **voice** stack (`sherpa-onnx`) ships only with the optional
   `vis-foundation-voice` extension. Its per-platform native jar — the JNI plus
   the ONNX Runtime inside it — is not a declared dependency at all, so it is
@@ -729,8 +728,8 @@ Notes:
   embedded for the build host (§4.2).
 - `sqlite-jdbc` is bundled by the optional `vis-persistance-sqlite` extension.
 - The final GraalVM **native binary** is larger than any single jar because it
-  statically links the JDK + Truffle/GraalPy; track its size in the
-  `native-release` workflow output.
+  statically links the JDK; the Python interpreter travels beside it as the
+  python sidecar. Track both in the `native-release` workflow output.
 
 ---
 

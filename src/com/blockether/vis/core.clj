@@ -70,6 +70,7 @@
     [com.blockether.vis.internal.progress :as progress]
     [com.blockether.vis.internal.prompt :as prompt]
     [com.blockether.vis.internal.pyfmt :as pyfmt]
+    [com.blockether.vis.internal.python-extension-host :as python-extension-host]
     [com.blockether.vis.internal.python-extensions :as python-extensions]
     [com.blockether.vis.internal.python-test-runner :as python-test-runner]
     [com.blockether.vis.internal.provider-key-store :as provider-key-store]
@@ -618,7 +619,7 @@
              [channel-contributions-for extension/channel-contributions-for])
 
 ;; Project-local Python extensions (`~/.vis/extensions` + `.vis/extensions`,
-;; trusted GraalPy contexts — see `internal.python-extensions`).
+;; trusted Python sessions — see `internal.python-extensions`).
 (import-vars [load-python-extensions! python-extensions/load-python-extensions!]
              [reload-python-extensions! python-extensions/reload-python-extensions!]
              [python-extension-load-failures python-extensions/load-failures]
@@ -831,4 +832,13 @@
 ;; so the binary entry has the same on-disk address as the public
 ;; library API.
 
-(defn -main [& args] (apply binary/-main args))
+(defn -main
+  "The binary entry, with ONE detour: a process started with
+   `VIS_PYTHON_EXTENSION_SOCKET` set is not a CLI run at all — it is the
+   unconfined interpreter the parent spawned for extension Python, and the
+   socket is its whole instruction. It is read before argv because that process
+   HAS no argv."
+  [& args]
+  (if-let [socket (System/getenv python-extension-host/socket-env)]
+    (python-extension-host/serve! socket)
+    (apply binary/-main args)))

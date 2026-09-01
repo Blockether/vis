@@ -78,7 +78,7 @@
         (expect (.contains help "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN tui")))))
 
 ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: the TUI client
-;; synchronously initialized GraalPy before dispatch, then its gateway did it again.
+;; synchronously initialized CPython before dispatch, then its gateway did it again.
 (defdescribe
   dispatch-extension-initialization-test
   (it "defers Python initialization for clients and the gateway daemon"

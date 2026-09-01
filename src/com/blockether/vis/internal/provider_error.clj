@@ -301,11 +301,10 @@
 
 (defn fd-exhaustion-error?
   "True when the REAL cause is THIS process running out of file descriptors
-   (EMFILE) — `Too many open files` / `error=24`. Under GraalPy a file opened
-   without `with open(...)` is not closed by refcounting the way CPython does
-   (the JVM GC closes it later), so a sandbox tool that reads many files can
-   exhaust the JVM's SHARED descriptor table and starve the provider auth
-   sockets, git, and cancel — surfacing here as a misleading provider failure
+   (EMFILE) — `Too many open files` / `error=24`. Descriptors are process-wide:
+   a sandbox block holding hundreds of files or sockets, or a burst of `shell`
+   children, exhausts the SHARED table and starves the provider auth sockets,
+   git, and cancel — surfacing here as a misleading provider failure
    (vis session 7d3f9026). Scans the message + body + any nested cause text so
    an FD-exhaustion that tunnelled through the auth/transport path is named for
    what it is instead of blamed on the provider. Dispatches on TEXT because the
@@ -545,7 +544,7 @@
            "open-file limit), so it could no longer open sockets or files — the "
            "provider auth token could not be refreshed and the call surfaced as a "
            "provider failure. This is NOT a provider outage. Usual cause: a sandbox "
-           "tool that opened many files WITHOUT closing them — under GraalPy a file "
+           "tool that opened many files WITHOUT closing them — under CPython a file "
            "dropped without `with open(...) as f:` is not closed until GC, so "
            "walking a large tree reading files exhausts the shared descriptor table.")
       (context-overflow-error? err)
@@ -774,7 +773,7 @@
       :file-descriptors-exhausted
       (str "NEXT STEP: free the leaked descriptors and retry — stop chatty background "
            "shells (`sh.stop()`), and in sandbox Python always `with open(...) as f:` "
-           "(a dropped file object is NOT closed under GraalPy). A fresh turn also "
+           "(a dropped file object is NOT closed under CPython). A fresh turn also "
            "reclaims them once GC runs. If it recurs, raise the process open-file "
            "limit (Vis raises it at launch, but a very large tree walk can still " "exhaust it).")
 

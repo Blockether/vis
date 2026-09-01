@@ -9,7 +9,7 @@ The Vis **contract** as one declaration with language-native inputs:
 | JavaScript generator | root `contract.json` | byte-identical to the Python copy |
 
 `resources/vis-contract/python-host.edn` declares every call the `vis` Python
-module may make on its host — the polyglot global, arity and outside-host policy.
+module may make on its host — the host global, arity and outside-host policy.
 `resources/vis-contract/clojure-host.edn` is the executable dependency boundary: it
 names current source inputs and freezes every forbidden Clojure edge and hand-written
 JavaScript/Python wire value by source-file count while consumers move to the SDKs.

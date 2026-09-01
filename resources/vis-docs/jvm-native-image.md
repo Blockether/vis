@@ -4,15 +4,15 @@ Vis's core is Clojure on the JVM. `clojure -T:build native` compiles that core i
 
 ## Config travels inside the image
 
-Each jar on the classpath carries its own `META-INF/native-image/<group>/<artifact>/` directory, auto-discovered at build time. Vis's own args + reachability metadata live there; library jars (GraalPy, sqlite, jetty, …) contribute their own. No giant command line.
+Each jar on the classpath carries its own `META-INF/native-image/<group>/<artifact>/` directory, auto-discovered at build time. Vis's own args + reachability metadata live there; library jars (CPython, sqlite, jetty, …) contribute their own. No giant command line.
 
 - **Unified `reachability-metadata.json`** — reflection, resources, and FFM downcalls in one file (the legacy `reflect-config.json` split is gone).
 - **`InitClojureClasses`** — graal-build-time initializes every Clojure-generated class at build time, so there are no per-namespace `--initialize-at-build-time` flags, and runtime-reflection entries for `*__init` / `$fn__NNNN` classes are pure noise (a filter strips them after agent regeneration).
-- **Don't duplicate a library's config** — GraalPy ships its heavy args (build-time init, a large build heap); Vis adds only app-level reflection and its own flags.
-- **Language resources travel *beside* the binary** — the image is built with `-H:-IncludeLanguageResources -H:+CopyLanguageResources` (pinned in Vis's `native-image.properties`), so GraalPy's Python stdlib and every Truffle internal resource are written to a `resources/` directory next to the executable instead of into the image heap.
-  - **Why** — embedding them was the default since Graal Languages 24.2 and cost ~90 MiB of image heap, enough to push the builder's live set past what a 16 GB CI runner survives. That is why release builds were dying in GC.
-  - **In a release bundle** — the directory ships as `vis-agent-resources/`, `bin/stage-release-bundle` refuses a bundle without it, and `bin/vis-agent` starts the runtime with `-Dpolyglot.engine.resourcePath=<that directory>` (override with `VIS_NATIVE_RESOURCES`). `PythonHome` is still never used.
-  - **On the JVM** — the same resources ship inside the language jar and are unpacked into a per-user cache: `~/.cache/org.graalvm.polyglot` by default, configurable with `python.resource_cache` in `vis.yml` or `-Dpolyglot.engine.userResourceCache`. See [Configuration](configuration.md#graalpy-internal-resource-cache).
+- **Don't duplicate a library's config** — each library ships its own args; Vis adds only app-level reflection and its own flags.
+- **The Python interpreter travels *beside* the binary** — the embedded CPython is a cdylib plus a vendored interpreter tree, staged by `clojure -T:build native` (`stage-python-sidecar!`) into `target/vis-agent-python/` instead of being embedded as image resources.
+  - **Why** — the tree is tens of megabytes; embedding it would push the builder's live set past what a 16 GB CI runner survives, and none of it is read through `io/resource` anyway — CPython opens its own files.
+  - **In a release bundle** — the directory ships as `vis-agent-python/`, `bin/stage-release-bundle` refuses a bundle without it, and `bin/vis-agent` exports `VIS_PYTHON_NATIVE_PATH` pointing at the cdylib inside it (the interpreter home is the `python/` tree beside that file).
+  - **On the JVM** — the same tree ships inside `com.blockether/vis-python-runtime-native-<platform>` and is resolved from the classpath, so a source checkout needs no extra step.
 
 ## FFM, not JNI
 
@@ -43,7 +43,7 @@ clojure -T:build native
 
 Already have a keystore? Use it verbatim with `VIS_TRUSTSTORE=/path/store.p12`, plus `VIS_TRUSTSTORE_PASSWORD` and `VIS_TRUSTSTORE_TYPE` (defaults: `changeit`, `PKCS12`).
 
-The distribution is not selectable: vis builds on GraalVM **Community Edition** at the exact version in `.graalvm-version`. Oracle GraalVM would relicense the shipped binary under GFTC, and a different version is hard-rejected by the pinned Truffle/SVM jars.
+The distribution is not selectable: vis builds on GraalVM **Community Edition** at the exact version in `.graalvm-version`. Oracle GraalVM would relicense the shipped binary under GFTC, and a different version is rejected by the repository's own JDK gate before `native-image` starts.
 
 ## See also
 

@@ -2,12 +2,13 @@
   "The GraalVM pin is LOCKED at 25.1.3 and every consumer must agree with it.
 
    `.graalvm-version` is the single source of truth, but nothing in a unit test
-   run touches `native-image`, so a half-finished bump (deps.edn moved, the file
-   not — or the file moved past the lock) would otherwise only surface minutes
-   into a release build, as an opaque Truffle mismatch or an OutOfMemoryError.
-   This is the cheap gate: it reads the same file the shell script, the CI
-   action and build.clj read, and asserts the lock plus every mirror of it."
-  (:require [clojure.edn :as edn]
+   run touches `native-image`, so a half-finished bump (`.sdkmanrc` moved, the
+   file not — or the file moved past the lock) would otherwise only surface
+   minutes into a release build, as an opaque native-image failure or an
+   OutOfMemoryError. This is the cheap gate: it reads the same file the shell
+   script, the CI action and build.clj read, and asserts the lock plus every
+   mirror of it."
+  (:require 
             [clojure.java.io :as io]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -23,15 +24,6 @@
         (str/split-lines (slurp file))))
 
 (def ^:private pin-file (io/file ".graalvm-version"))
-
-(defn- graalvm-dep-versions
-  "Every `org.graalvm.*` :mvn/version in the root deps.edn. Truffle refuses a
-   JDK whose built-in version differs from these jars."
-  []
-  (into []
-        (keep (fn [[sym coord]]
-                (when (str/includes? (str sym) "org.graalvm.") [sym (:mvn/version coord)])))
-        (:deps (edn/read-string (slurp (io/file "deps.edn"))))))
 
 (defdescribe
   graalvm-pin-test
@@ -54,23 +46,18 @@
         (expect (str/starts-with? GRAAL_VENDOR_VERSION (str "GraalVM CE " GRAAL_VERSION)))
         (doseq [v [GRAAL_TAG GRAAL_ASSET_VERSION GRAAL_SDKMAN_CANDIDATE GRAAL_VENDOR_VERSION]]
           (expect (not (str/includes? v "25.2"))))))
-  (it "agrees with deps.edn's org.graalvm.* jars and .sdkmanrc"
-      (let [{:strs [GRAAL_VERSION GRAAL_SDKMAN_CANDIDATE]}
+  (it "agrees with .sdkmanrc"
+      (let [{:strs [GRAAL_SDKMAN_CANDIDATE]}
             (parse-pin pin-file)
 
-            deps
-            (graalvm-dep-versions)]
+            sdkmanrc
+            (io/file ".sdkmanrc")]
 
-        (expect (seq deps))
-        (doseq [[sym v] deps]
-          (expect (= GRAAL_VERSION v)
-                  (str sym " pins " v ", .graalvm-version says " GRAAL_VERSION)))
-        (let [sdkmanrc (io/file ".sdkmanrc")]
-          (when (.isFile sdkmanrc)
-            (let [java-line (some->> (str/split-lines (slurp sdkmanrc))
-                                     (some #(second (re-matches #"\s*java=(.*)" %)))
-                                     str/trim)]
-              (expect (= GRAAL_SDKMAN_CANDIDATE java-line)))))))
+        (when (.isFile sdkmanrc)
+          (let [java-line (some->> (str/split-lines (slurp sdkmanrc))
+                                   (some #(second (re-matches #"\s*java=(.*)" %)))
+                                   str/trim)]
+            (expect (= GRAAL_SDKMAN_CANDIDATE java-line))))))
   (it
     "keeps every GitHub build job on the locked pin"
     (let [{:strs [GRAAL_VERSION]}

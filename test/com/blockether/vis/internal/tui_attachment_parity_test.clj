@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.gateway.server :as gateway-server]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]
            [java.io InputStream]))
@@ -205,14 +206,11 @@
           (temp-dir)
 
           out
-          (with-open [pctx (:python-context (env-python/create-python-context {}
-                                                                              (fn []
-                                                                                [(.getAbsolutePath
-                                                                                   dir)])))]
-            (env-python/run-python-block
-              pctx
-              "attach(b'<html><body>Decision</body></html>', 'decision.html')
-"))
+          (env-python/run-python-block
+            (:python-context (tpc/new-context {}
+                                              (fn []
+                                                [(.getAbsolutePath dir)])))
+            "attach(b'<html><body>Decision</body></html>', 'decision.html')\n")
 
           attachment
           (assoc (first (:attachments out)) :tool-call-id "call_attach")

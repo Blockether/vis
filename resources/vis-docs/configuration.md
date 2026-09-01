@@ -616,40 +616,21 @@ Vis client/gateway before retrying the command. An actual egress-policy
 failure instead reports the rejected host (for example, `host not permitted`);
 add that hostname to `jail.network.allowed_domains` when appropriate.
 
-### GraalPy internal-resource cache
+### Embedded interpreter directories
 
-GraalPy extracts its Python standard library ("internal resources") on first
-use into `$XDG_CACHE_HOME/org.graalvm.polyglot` (default
-`~/.cache/org.graalvm.polyglot`). This happens at **runtime** on both the JVM
-and the compiled native-image binary — the stdlib is not baked into the
-executable. If that directory is unwritable (a confined process, a read-only
-home, minimal CI), the very first Python block fails with
-`ModuleNotFoundError: No module named 'ast'`.
+The embedded CPython writes only inside `~/.vis/python`, and nothing else on the
+machine:
 
-Resolution order for the cache root:
+| directory | what it holds | override |
+|---|---|---|
+| `~/.vis/python/packages` | the wheels the host installed for the sandbox | `VIS_PYTHON_PACKAGES` |
+| `~/.vis/python/pycache` | the bytecode the interpreter compiles | `VIS_PYTHON_PYCACHE_PREFIX` |
 
-1. The GraalVM system property always wins:
-   `vis-agent -J-Dpolyglot.engine.userResourceCache=/path` on the JVM launcher, or
-   `JAVA_TOOL_OPTIONS`-style `-D` flags where applicable.
-2. `python.resource_cache` in config (`~` expands to your home directory):
-
-   ```yaml
-   # vis.yml
-   python:
-     resource_cache: ~/.vis/cache/graal-resources
-   ```
-
-3. `~/.vis/cache/graal-resources` — always preferred when writable. vis redirects
-   here unconditionally rather than reusing the default
-   `~/.cache/org.graalvm.polyglot` root, so behavior is identical whether or not a
-   jail happens to admit that root. This directory is git-ignored.
-4. Final fallback: `./.graal-resources` under the working directory (also
-   git-ignored) when even `~/.vis` is unwritable.
-
-The property is read **once per process** when the polyglot engine
-initializes, so changing it requires restarting the client and the gateway
-daemon — `/reload` is not enough. An unusable configured path silently degrades
-to steps 3–4 rather than failing startup.
+The interpreter tree itself travels with the distribution and is never written
+to; `VIS_PYTHON_HOME` points a run at a different tree and
+`VIS_PYTHON_NATIVE_PATH` at a different library. Each is read **once per
+process**, so a change needs a restart of the client and the gateway daemon —
+`/reload` is not enough.
 
 ## Python import roots
 
@@ -657,7 +638,7 @@ to steps 3–4 rather than failing startup.
 `vis-agent python -m pytest tests/` imports a `src/` layout the same way an explicit
 `PYTHONPATH=src` invocation would.
 
-The sandbox those roots serve is the [GraalPython sandbox](graalpython.md).
+The sandbox those roots serve is the [Python sandbox](python-sandbox.md).
 The roots are read from the project's packaging metadata with Python's own
 parsers — `tomllib` for `pyproject.toml`, `configparser` for `setup.cfg`,
 `pytest.ini` and `tox.ini` — never by pattern-matching the file text. Inference
@@ -719,8 +700,8 @@ path, and by the venv's own executable — never canonicalized into the base
 installation, which would leave `pyvenv.cfg` unread and the venv's packages
 (`pytest` among them) missing.
 
-`runner` chooses the default `run_tests({"language": "python"})` backend: `graalpy`, the
-hermetic stdlib-only sandbox, or `project`, the interpreter's own pytest, where
+`runner` chooses the default `run_tests({"language": "python"})` backend: `vispython`, the
+embedded sandbox interpreter, or `project`, the interpreter's own pytest, where
 installed dependencies are visible. An explicit `runner` argument on the call
 still wins — the same spelling the result's `runner` key reports.
 

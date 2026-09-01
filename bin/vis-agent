@@ -33,10 +33,9 @@ set -euo pipefail
 
 # Raise the open-file (descriptor) soft limit for Vis and every child it spawns
 # (the client, the detached gateway daemon, sandbox subprocesses). Vis runs
-# Python on GraalPy, where a file object dropped WITHOUT `with open(...)` is not
-# closed by refcounting the way CPython does — the JVM GC closes it later — so a
-# tool that walks a large tree reading files can pile up thousands of live
-# descriptors before GC catches up. The JVM's descriptor table is SHARED across
+# Python inside the process, and a sandbox block that walks a large tree can hold
+# many files at once. The process descriptor table is SHARED across
+# everything (classpath jars, the HTTP server, SQLite, git spawns, the provider
 # everything (classpath jars, the HTTP server, SQLite, git spawns, the provider
 # auth sockets), so one leak starves the control plane and wedges the session
 # (vis session 7d3f9026: a sandbox os.walk without `with` hit EMFILE, which then
@@ -947,13 +946,13 @@ update_native() {
   rm -f "$native_dir/vis-agent-native.build"
   [[ ! -f "$unpack/vis-agent-native.build" ]] || \
     mv -f "$unpack/vis-agent-native.build" "$native_dir/vis-agent-native.build"
-  # The language-resources sidecar travels WITH the runtime it was built for.
-  # Always clear the old one first: a bundle that predates -H:+CopyLanguageResources
-  # carries no directory, and its binary has the resources embedded, so a stale
-  # directory from a newer build must not survive a downgrade.
-  rm -rf "$native_dir/vis-agent-resources"
-  [[ ! -d "$unpack/vis-agent-resources" ]] || \
-    mv -f "$unpack/vis-agent-resources" "$native_dir/vis-agent-resources"
+  # The embedded-CPython sidecar travels WITH the runtime it was built for: the
+  # interpreter is a cdylib plus a vendored tree, never part of the binary.
+  # Always clear the old one first, so a stale directory cannot outlive a
+  # downgrade and hand the runtime an interpreter it was not built against.
+  rm -rf "$native_dir/vis-agent-python"
+  [[ ! -d "$unpack/vis-agent-python" ]] || \
+    mv -f "$unpack/vis-agent-python" "$native_dir/vis-agent-python"
   if (( launcher_is_git_owned )); then
     # Never overwrite a tracked development launcher: the released one lives in
     # Vis state; source stays the checkout's responsibility.
@@ -1122,24 +1121,26 @@ case "$runtime" in
     cd "$invocation_cwd"
     # Native-image does not derive Java's user.home from HOME. Pass it through
     # the wrapper so release and container builds never retain the builder's home.
-    # GraalPy/Truffle language resources are NOT inside the binary: the image is
-    # built with -H:+CopyLanguageResources, so they ship as a directory beside the
-    # runtime (see resources/META-INF/native-image/com.blockether/vis/
-    # native-image.properties). native-image finds `resources/` next to the
-    # executable by itself; the RELEASE bundle names the directory
-    # `vis-agent-resources` (the runtime is `vis-agent-native`, not `vis`), so
-    # point the engine at it explicitly. Without it every Python tool dies with
-    # "No module named 'ast'".
+    # The Python interpreter is NOT inside the binary: the image carries the FFM
+    # bridge, while the interpreter itself ships as a cdylib plus a vendored
+    # CPython tree in `vis-agent-python/` beside the runtime. Point the runtime
+    # at that cdylib; it takes the interpreter home from the `python/` directory
+    # beside it. Without this every Python tool dies with "no runtime library".
     native_home="$(cd -P "$(dirname "$native_runtime")" && pwd)"
-    resource_args=()
-    for candidate in "${VIS_NATIVE_RESOURCES:-}" "$native_home/vis-agent-resources" "$native_home/resources"; do
-      [[ -n "$candidate" && -d "$candidate" ]] || continue
-      resource_args=("-Dpolyglot.engine.resourcePath=$candidate")
-      break
-    done
+    if [[ -z "${VIS_PYTHON_NATIVE_PATH:-}" ]]; then
+      for candidate in "$native_home/vis-agent-python" "$native_home/python"; do
+        [[ -d "$candidate" ]] || continue
+        for library in "$candidate"/libvispython.*; do
+          [[ -f "$library" ]] || continue
+          export VIS_PYTHON_NATIVE_PATH="$library"
+          break
+        done
+        [[ -z "${VIS_PYTHON_NATIVE_PATH:-}" ]] || break
+      done
+    fi
     stream_trace_args=()
     if stream_trace_on; then stream_trace_args=("-Dsvar.stream.trace=true"); fi
-    run_measured_or_exec "process native runtime" "$native_runtime" "-Duser.home=${HOME:-$vis_home}" ${trust_native_args[@]+"${trust_native_args[@]}"} ${resource_args[@]+"${resource_args[@]}"} ${stream_trace_args[@]+"${stream_trace_args[@]}"} "$@"
+    run_measured_or_exec "process native runtime" "$native_runtime" "-Duser.home=${HOME:-$vis_home}" ${trust_native_args[@]+"${trust_native_args[@]}"} ${stream_trace_args[@]+"${stream_trace_args[@]}"} "$@"
     ;;
   jvm)
     source_root="$(find_jvm_source 2>/dev/null || true)"
@@ -1164,11 +1165,11 @@ esac
 # JAVA_CMD / the `java` on PATH over JAVA_HOME, so merely running `sdk env` in a
 # newer shell does not repair an already-started runner.
 #
-# Stock JDKs are deliberately accepted: the Maven-pinned Truffle runtime runs
-# unchained there. When the selected JVM IS GraalVM, however, its built-in
-# Truffle must be the exact CE release pinned by this source. Resolve an
-# already-installed pin through the repository's single JDK gate and export all
-# three selectors that the Clojure CLI may consult.
+# Stock JDKs are deliberately accepted: the embedded interpreter is a cdylib the
+# JVM loads through the FFM API, so a source launch runs anywhere. When the
+# selected JVM IS GraalVM, however, it must be the exact CE release pinned by
+# this source. Resolve an already-installed pin through the repository's single
+# JDK gate and export all three selectors that the Clojure CLI may consult.
 ensure_compatible_jvm_runtime() {
   local java_cmd vendor pinned_home
 
@@ -1198,7 +1199,7 @@ ensure_compatible_jvm_runtime() {
   fi
 
   warn "incompatible JVM runtime: $vendor"
-  warn "this source embeds GraalPy/Truffle $GRAAL_VERSION and requires $GRAAL_VENDOR_VERSION."
+  warn "this source embeds CPython $GRAAL_VERSION and requires $GRAAL_VENDOR_VERSION."
   warn "install it with '$source_root/bin/require-graalvm --install', or run on a stock JDK 25."
   return 1
 }

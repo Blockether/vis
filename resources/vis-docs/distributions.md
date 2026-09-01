@@ -167,17 +167,16 @@ archive per platform:
 vis-agent-<os>-<arch>-community.tar.gz
 ├── vis-agent             # public Bash wrapper
 ├── vis-agent-native      # private GraalVM native-image runtime
-├── vis-agent-resources/  # GraalPy/Truffle language resources
+├── vis-agent-python/     # embedded CPython: cdylib + vendored interpreter
 └── install-vis-agent     # installer for the source runtime
 ```
 
 All of it travels together — `vis-agent update` replaces the wrapper, the
-runtime and the resources directory in one step — so the launcher, the runtime and
-the Python stdlib can never drift across versions. The resources directory is not
-optional: the image keeps those resources beside itself instead of inside itself
-(see [JVM & native-image](jvm-native-image.md)), and the wrapper starts the runtime
-with `-Dpolyglot.engine.resourcePath` pointing at it. `VIS_NATIVE_RESOURCES`
-points at a different copy when several installs share one.
+runtime and the interpreter directory in one step — so the launcher, the runtime and
+the Python stdlib can never drift across versions. The interpreter directory is not
+optional: it is tens of megabytes the build deliberately stages beside the image
+instead of embedding (see [JVM & native-image](jvm-native-image.md)), and the
+wrapper points `VIS_PYTHON_NATIVE_PATH` at it.
 
 `bin/stage-release-bundle` is the single definition of that layout, used by both
 release CI and local builds, so a hand-built asset and a CI asset are identical.

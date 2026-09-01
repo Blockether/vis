@@ -40,6 +40,16 @@
   ^String [^String k]
   (non-blank (System/getenv k)))
 
+(defn native-image?
+  "True when this is the compiled binary rather than a JVM run.
+
+   The two runtimes differ in what they may ASSUME - a spawn argv, a memory
+   floor, a timeout - so the question is asked in several unrelated places and
+   answered here once. `imagecode` is set at build time as well, so a caller
+   that must tell BUILD from RUNTIME reads the property itself."
+  []
+  (some? (System/getProperty "org.graalvm.nativeimage.imagecode")))
+
 (defn utf8
   "`s` as UTF-8 bytes — the one charset every vis wire format names."
   ^bytes [^String s]

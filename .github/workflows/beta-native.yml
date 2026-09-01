@@ -198,7 +198,7 @@ jobs:
         run: |
           set -euo pipefail
           out="$(target/release-bundle/vis-agent python -c "import ast; print('py-ok')")"
-          [ "$out" = "py-ok" ] || { echo '::error::the staged language resources do not load'; exit 1; }
+          [ "$out" = "py-ok" ] || { echo '::error::the staged interpreter does not load'; exit 1; }
       - name: Smoke-test the gateway
         shell: bash
         run: |

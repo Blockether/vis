@@ -16,9 +16,9 @@ description: >-
       `distribution: graalvm-community` cannot resolve it either.
 
   Community, not Oracle: CE is GPLv2 + Classpath Exception, which is what keeps
-  the redistributed binary FOSS (audit/README.md §4.1). Exact version: the
-  embedded GraalPy (Truffle) refuses a JDK whose built-in Truffle differs from
-  the maven python-language jar.
+  the redistributed binary FOSS (audit/README.md §4.1). Exact version: the pin
+  locks the builder, and the checked-in native-image reachability metadata is
+  written against exactly that release.
 runs:
   using: composite
   steps:

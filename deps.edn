@@ -61,9 +61,11 @@
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
-  ;; The embedded CPython the sandbox runs, replacing GraalPy. LOCAL PIN while the
-  ;; migration lands — it becomes a released coordinate before this reaches main.
-  com.blockether/vis-python-runtime {:local/root "/Users/fierycod/vis-python-runtime"}
+  ;; The embedded CPython the sandbox runs, replacing GraalPy. The per-platform
+  ;; interpreter (com.blockether/vis-python-runtime-native-<platform>, tens of MB)
+  ;; is deliberately NOT pinned here: the image build resolves the host's own and
+  ;; stages it beside the binary.
+  com.blockether/vis-python-runtime {:mvn/version "0.1.0"}
   com.cnuernber/charred {:mvn/version "1.041"}
   com.google.zxing/core {:mvn/version "3.5.4"}
   ;; JVM codecs backing the lazy sandbox nippy_encode/nippy_decode helpers.
@@ -117,12 +119,6 @@
   org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
   org.flatland/ordered {:mvn/version "1.15.12"}
-  ;; GraalPy/Truffle/SVM refuse mismatched versions — bump these four together with
-  ;; the setup-graalvm-25 action's pinned version.
-  org.graalvm.polyglot/polyglot {:mvn/version "25.1.3"}
-  org.graalvm.python/python-language {:mvn/version "25.1.3"}
-  org.graalvm.python/python-resources {:mvn/version "25.1.3"}
-  org.graalvm.truffle/truffle-runtime {:mvn/version "25.1.3"}
   org.yamlstar/yamlstar {:mvn/version "0.1.17"}
   ring/ring-core {:mvn/version "1.15.5"}}
  :aliases
@@ -214,7 +210,7 @@
   ;;     ratios above and put the engine's own pressure gates (VIS_ENV_HEAP_BUDGET_MB
   ;;     2048, VIS_ENV_RSS_BUDGET_MB 3072, VIS_ENV_HEAP_WATERMARK_PCT 85 in
   ;;     internal.loop) out of reach — 85% of 27 GiB is never hit. 5g is the same
-  ;;     number on every machine size, above GraalPy/Truffle warmup plus a long
+  ;;     number on every machine size, above JVM warmup plus a long
   ;;     transcript and below anything that should be called a leak.
   ;;   string dedup — a concurrent G1 pass folding byte-identical LONG-LIVED strings
   ;;     (the retained transcript text) onto ONE backing array. It targets survivors,

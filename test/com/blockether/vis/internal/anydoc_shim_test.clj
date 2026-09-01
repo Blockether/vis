@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.anydoc-compat-shim-test
+(ns com.blockether.vis.internal.anydoc-shim-test
   "The `anydoc` shim installed into every sandbox context via the generic
    sandbox-shim mechanism: an `anydoc` module published into `sys.modules` that
    converts real Word / spreadsheet / CSV bytes to GitHub-Flavored Markdown
@@ -8,25 +8,23 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.imaging :as im]
-            [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.shim-anydoc :as shim-anydoc]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
-           [java.util Base64]
-           [org.graalvm.polyglot Context]))
+           [java.util Base64]))
 
-(defn- ev [^Context context code] (ep/->clj (.eval context "python" code)))
+(defn- ev [context code] (tpc/ev context code))
 
 (defmacro ^:private with-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (tpc/shared)]
+  `(let [~(with-meta 'python-context {:tag `String}) (tpc/shared)]
      ~@body))
 
 (defmacro ^:private with-fresh-python-context
   [& body]
-  `(tpc/with-own [~(with-meta 'python-context {:tag `Context}) {}] ~@body))
+  `(tpc/with-own [~(with-meta 'python-context {:tag `String}) {}] ~@body))
 
 (defn- b64 [^bytes raw] (.encodeToString (Base64/getEncoder) raw))
 
@@ -60,7 +58,7 @@
 
 (defmacro ^:private with-fs-context
   [dir & body]
-  `(tpc/with-own [~(with-meta 'python-context {:tag `Context}) {} (constantly [~dir])] ~@body))
+  `(tpc/with-own [~(with-meta 'python-context {:tag `String}) {} (constantly [~dir])] ~@body))
 
 (defn- py-bytes
   "Python expression rebuilding `encoded` as real `bytes` inside the sandbox."
@@ -69,13 +67,14 @@
 
 (defdescribe
   anydoc-module-test
-  (it "stays lazy and imports as a module"
+  (it "is the module `import anydoc` finds, with both doors on it"
+      ;; Seeded WITH the session, not imported on first use: there is one
+      ;; interpreter and one `anydoc` module in it.
       (with-fresh-python-context
         (expect
           (true? (ev python-context
-                     (str "import sys\n"
-                          "before = 'anydoc' not in sys.modules\n" "import anydoc\n"
-                          "before and anydoc is sys.modules['anydoc'] "
+                     (str "import sys\n" "import anydoc\n"
+                          "anydoc is sys.modules['anydoc'] "
                           "and callable(anydoc.to_markdown) and callable(anydoc.to_document)")))))))
 
 ;; The doors are CLOSED, and small on purpose. `read`, `to_markdown_bytes` and the
@@ -716,7 +715,7 @@
    `:shim/docs` page `doc(\"anydoc\")` prints, the module docstring the sandbox hands
    the model (harvested into the manifest's apropos resource), and the docs page. All three are
    prose nobody runs."
-  [^Context python-context]
+  [python-context]
   (let [shim (-> shim-anydoc/vis-extension
                  :ext/sandbox-shims
                  first)]
@@ -734,7 +733,7 @@
 (defn- unknown-members
   "The claimed names that are NEITHER a member of one of anydoc's own objects NOR
    a file extension anydoc really reads."
-  [^Context python-context dir claimed]
+  [python-context dir claimed]
   (into []
         (remove extension-format)
         (ev python-context
@@ -755,7 +754,7 @@
   "Every query vis SHOWS somebody: the first cell of each row of the docs table,
    and each line of the module docstring's own query block. An example that is
    printed has to parse and to run."
-  [^Context python-context]
+  [python-context]
   (let [doc-string
         (ev python-context (py "import anydoc" "anydoc.__doc__"))
 
@@ -777,7 +776,7 @@
 (defn- query-report
   "Per documented query: how the results SAY the query parsed, and whether a real
    search over `dir` ran instead of refusing."
-  [^Context python-context dir queries]
+  [python-context dir queries]
   (ev python-context
       (py "import anydoc" (str "queries = " (py-list queries))
           "out = []" "for query in queries:"

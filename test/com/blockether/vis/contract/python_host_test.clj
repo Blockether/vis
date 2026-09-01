@@ -16,13 +16,13 @@
             [com.blockether.vis.contract.toggle :as contract-toggle]
             [com.blockether.vis.contract.view :as contract-view]
             [com.blockether.vis.internal.python-extensions :as pyx]
-            [lazytest.core :refer [defdescribe describe expect it]])
-  (:import (org.graalvm.polyglot Context)))
+            [com.blockether.vis.internal.python-extension-host :as pyext]
+            [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- bootstrap-host-keys
   "The op names the bootstrap hangs on its `_host` object, read out of its source."
   []
-  (set (map second (re-seq #"([a-z_]+)=__vis_host_" pyx/bootstrap-python))))
+  (set (map second (re-seq #"([a-z_]+)=__vis_member__\(__vis_host_" pyx/bootstrap-python))))
 
 (defn- document-parts
   "Every map key and every scalar in a rendered document, tagged, so one pass can
@@ -136,38 +136,38 @@
         ;; `bind-inert-host!` binds the document's own list, so only the REAL
         ;; binder can prove the engine grew a host call the document never heard
         ;; of -- or lost one an extension still calls.
-        (let [^Context ctx (pyx/build-context "python-contract-bind-test")]
-          (try (pyx/bind-host! ctx "python-contract-bind-test")
-               (let [bindings (.getBindings ctx "python")]
-                 (expect (every? #(.hasMember bindings ^String %) (contract/host-globals))))
-               (finally (.close ctx))))))
+        (let [sess (pyx/build-context "python-contract-bind-test")]
+          (try (pyx/bind-host! sess "python-contract-bind-test")
+               (expect (= ""
+                          (pyext/eval-str sess
+                                          (str "','.join(n for n in ["
+                                               (str/join ", " (map pr-str (contract/host-globals)))
+                                               "] if n not in globals())"))))
+               (finally (pyx/close-context! sess))))))
   (describe
     "a live extension context"
     (it
       "binds exactly the ops the document declares"
-      (let [^Context ctx (pyx/build-context "python-contract-test")]
+      (let [ctx (pyx/build-context "python-contract-test")]
         (try
           (pyx/bind-inert-host! ctx nil)
-          (.eval ctx "python" ^String pyx/bootstrap-python)
+          (pyext/exec! ctx pyx/bootstrap-python)
           (expect
             (=
               (sort (contract/op-names))
               (->
-                (.eval
+                (pyext/eval-str
                   ctx
-                  "python"
-                  "import vis\n','.join(sorted(n for n in vars(vis._host) if not n.startswith('_')))")
-                (.asString)
+                  "','.join(sorted(n for n in vars(__import__('vis')._host) if not n.startswith('_')))")
                 (str/split #","))))
-          (finally (.close ctx)))))
+          (finally (pyx/close-context! ctx)))))
     (it "batches on the window the document declares"
         ;; The flush window is a CONTRACT number, not the module's own taste: the
         ;; engine's durable publish parks the thread that pushed, so a module
         ;; batching on a guess of its own would cost a host call per line.
-        (let [^Context ctx (pyx/build-context "python-contract-flush-test")]
+        (let [ctx (pyx/build-context "python-contract-flush-test")]
           (try (pyx/bind-inert-host! ctx nil)
-               (.eval ctx "python" ^String pyx/bootstrap-python)
+               (pyext/exec! ctx pyx/bootstrap-python)
                (expect (= (str (:live/flush-ms (contract/live-vocabulary)))
-                          (-> (.eval ctx "python" "import vis\nstr(vis._FLUSH_MS)")
-                              (.asString))))
-               (finally (.close ctx)))))))
+                          (pyext/eval-str ctx "str(__import__('vis')._FLUSH_MS)")))
+               (finally (pyx/close-context! ctx)))))))

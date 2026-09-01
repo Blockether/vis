@@ -2,7 +2,7 @@
 
 The process jail confines code started for a session. It limits filesystem access,
 scrubs the child environment, and routes outbound connections through the gateway's
-policy. The boundary covers managed child processes; the in-process GraalPy sandbox
+policy. The boundary covers managed child processes; the in-process Python sandbox
 uses its own filesystem and socket guards.
 
 ## Enable the boundary
@@ -28,7 +28,7 @@ not change the policy for other managed processes.
 |---|---|
 | `shell(...)`, nested shells, and Python `subprocess` reached through the sandbox | OS process jail plus gateway egress policy |
 | REPLs started by `repl_start` and project test runners | same session policy as `shell(...)` |
-| `python_execution` | GraalPy filesystem and socket guards; HTTP uses the gateway policy while the jail is enabled |
+| `python_execution` | CPython filesystem and socket guards; HTTP uses the gateway policy while the jail is enabled |
 | `repl_connect` | not confined; it attaches to a process Vis did not start |
 | Python extension code and its ordinary `subprocess` calls | trusted host code, outside the session jail |
 
@@ -256,5 +256,5 @@ cannot widen an existing environment until `/reload` invalidates it.
 ## See also
 
 - [Configuration](configuration.md): complete `workspace`, `jail`, `environment`, and toggle key reference.
-- [GraalPython sandbox](graalpython.md): the in-process Python boundary.
+- [Python sandbox](python-sandbox.md): the in-process Python boundary.
 - [Gateway, pairing & remote access](gateway.md): the daemon that owns the egress proxy.

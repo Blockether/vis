@@ -404,7 +404,7 @@
 (def mcp-server-keys
   #{"transport" "command" "args" "cwd" "env" "url" "headers" "enabled" "timeout_ms" "listen"
     "auth"})
-(def python-keys #{"resource_cache" "source_paths" "interpreter" "runner"})
+(def python-keys #{"source_paths" "interpreter" "runner"})
 (def titling-keys #{"mode" "provider" "model"})
 (def vision-fact-keys #{"learned_at" "providers"})
 (def vision-eye-keys #{"provider" "model" "learned_at"})
@@ -438,10 +438,6 @@
         :program util/non-blank-string?))
 
 (def python-schema
-  ;; `resource_cache`: GraalPy internal-resource cache root (where the Python
-  ;; stdlib extracts at runtime). Read ONCE per process at polyglot-engine boot;
-  ;; the explicit `-Dpolyglot.engine.userResourceCache` system property wins over
-  ;; this key.
   ;; `source_paths`: extra import roots prepended to `sys.path` for `vis-agent python`,
   ;; on top of what the project's own packaging metadata declares -- the escape
   ;; hatch for a layout vis cannot infer. Relative to the working directory; `~`
@@ -450,13 +446,12 @@
   ;; `repl_start` / `repl_eval` and the `project` test runner, pinned instead of
   ;; detected (uv / poetry / .venv / python3). A path-like entry resolves against
   ;; the project dir; `~` expands; a bare name is looked up on PATH.
-  ;; `runner`: default `run_tests({"language": "python"})` backend -- the hermetic `graalpy`
-  ;; sandbox or the `project` interpreter's own pytest. Explicit call arguments
-  ;; still win.
-  {"resource_cache" util/non-blank-string?
-   "source_paths" string-list?
+  ;; `runner`: default `run_tests({"language": "python"})` backend -- the embedded
+  ;; `vispython` sandbox or the `project` interpreter's own pytest. Explicit call
+  ;; arguments still win.
+  {"source_paths" string-list?
    "interpreter" (spec-pred ::python-interpreter)
-   "runner" (one-of #{"graalpy" "project"})})
+   "runner" (one-of #{"vispython" "project"})})
 (s/def ::python #(closed-map? python-schema %))
 
 

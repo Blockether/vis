@@ -31,7 +31,7 @@
 
 (def ^:private health-probe-timeout-ms 1500)
 
-;; A cold GraalPy initialization exceeded 40 seconds on the reported WSL host. The
+;; A cold CPython initialization exceeded 40 seconds on the reported WSL host. The
 ;; catalog request runs off the UI thread, but its transport must survive that first load.
 (def ^:private slash-catalog-timeout-ms 120000)
 
@@ -494,12 +494,12 @@
     (discovery/discover-or-start! {:db db :port target-port :host target-host}
                                   :probe probe-entry?
                                   :on-event (progress-reporter)
-                                  :timeout-ms (if (discovery/native-image?) 15000 60000))
+                                  :timeout-ms (if (util/native-image?) 15000 60000))
     (if (port-free? target-host target-port)
       (discovery/discover-or-start! {:db db :port target-port :host target-host}
                                     :probe probe-entry?
                                     :on-event (progress-reporter)
-                                    :timeout-ms (if (discovery/native-image?) 15000 60000))
+                                    :timeout-ms (if (util/native-image?) 15000 60000))
       (if-let [entry (discovery/await-registry! db
                                                 probe-entry?
                                                 {:timeout-ms occupied-port-registry-wait-ms

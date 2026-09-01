@@ -16,8 +16,8 @@
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.manifest :as manifest]
-            [lazytest.core :refer [defdescribe expect it]])
-  (:import [org.graalvm.polyglot Context]))
+            [com.blockether.vis.test-python-context :as tpc]
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- resource-file [path] (str "resources/" path))
 
@@ -167,8 +167,8 @@ def __vis_harvest__(modules, names):
         globals
         (vec (distinct (filter string? (mapcat :shim/globals shims))))
 
-        ^Context ctx
-        (:python-context (ep/create-python-context {}))
+        ctx
+        (:python-context (tpc/new-context {}))
 
         code
         (str harvest-python
@@ -179,7 +179,7 @@ def __vis_harvest__(modules, names):
              "))")
 
         out
-        (try (:stdout (ep/run-python-block ctx code)) (finally (.close ctx)))]
+        (try (:stdout (ep/run-python-block ctx code)) (finally (ep/dispose-python-context! ctx)))]
 
     (into (sorted-map) (json/read-json (str/trim (str out)) :key-fn identity))))
 
@@ -291,11 +291,11 @@ def __vis_harvest__(modules, names):
                                         (str/replace stem "_" "-"))))))
                  set)]
 
-        (expect (< 10 (count expected)))
+        (expect (= 5 (count expected)))
         (expect (= expected listed))))
   (it "makes every pack that lends a shim name its own document resource"
       (let [entries (shim-entries)]
-        (expect (< 20 (count entries)))
+        (expect (= 5 (count entries)))
         (doseq [{:keys [register apropos]} entries]
           (expect (string? apropos) register)
           (expect (some? (io/resource apropos)) apropos)
@@ -308,8 +308,8 @@ def __vis_harvest__(modules, names):
             names
             (map :name entries)]
 
-        (expect (< 20 (count (registered-shims))))
-        (expect (< 500 (count entries)))
+        (expect (= 5 (count (registered-shims))))
+        (expect (< 30 (count entries)))
         ;; Unique ACROSS packs, not merely within one: `apropos` answers the first
         ;; record to claim a name, so two packs claiming one name would hide a symbol.
         (expect (= (count names) (count (distinct names))))
@@ -319,18 +319,18 @@ def __vis_harvest__(modules, names):
                               (not (str/blank? (:text %))))
                         entries))))
   (it "keeps a pack's roots and dotted members in that pack's own resource"
-      (let [pandas
+      (let [ruff
             (->> (shim-entries)
-                 (some #(when (some #{"pandas"} (shim-names (:shims %))) %))
+                 (some #(when (some #{"ruff"} (shim-names (:shims %))) %))
                  :apropos
                  stored-entries)
 
             by-name
-            (into {} (map (juxt :name identity)) pandas)]
+            (into {} (map (juxt :name identity)) ruff)]
 
-        (expect (contains? by-name "pandas"))
-        (expect (contains? by-name "pandas.read_csv"))
-        (expect (= "class" (:kind (get by-name "pandas.DataFrame"))))
+        (expect (contains? by-name "ruff"))
+        (expect (contains? by-name "ruff.check_str"))
+        (expect (= "class" (:kind (get by-name "ruff.RuffError"))))
         (expect (every? #(contains? #{#{:name :kind :text} #{:name :kind :text :call}}
                                     (set (keys %)))
                         (vals by-name)))))

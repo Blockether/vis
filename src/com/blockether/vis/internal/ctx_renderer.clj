@@ -17,7 +17,7 @@
 ;; The single value printer
 ;;
 ;; `env/ctx->python-str` is a pure JVM serializer for the bounded data boundary:
-;; deterministic Python literals, insertion order, and no GraalPy Context/GIL.
+;; deterministic Python literals, insertion order, and no Python session/GIL.
 ;; `env/bind-ctx!` converts the SAME projected map into the live session dict, so
 ;; rendering cannot stall an eval and never allocates a process-global printer.
 

@@ -656,16 +656,19 @@
     (when (seq fragments) (prompt-block "extensions" (str/join "\n\n" fragments)))))
 
 (defn- sandbox-shims-prompt-block
-  "Advertise Python's execution boundary and exact model-facing shim capabilities.
-   `:shim/name` is internal identity only; imports and direct globals come from
-   their explicit metadata so an id such as `attach` is never presented as a module.
+  "Advertise Python's execution boundary and the exact model-facing modules Vis
+   itself publishes. `:shim/name` is internal identity only; imports and direct
+   globals come from their explicit metadata so an id such as `attach` is never
+   presented as a module.
 
-   NAMES alone are a trap: every shim is a REIMPLEMENTATION, so a model that only
-   reads `numpy` writes against the real numpy and hits `NotImplementedError` at
-   runtime. So one line per shim, keyed by the very names advertised above it,
-   carrying the surface and the refusals — and nothing else. The rest of a shim's
-   contract is PULLED: `:shim/docs` answers `doc(name)`, costs no request that
-   never calls that shim, and is where a query language or a fixture list belongs.
+   NAMES are a trap in BOTH directions. The sandbox is a real CPython with pip,
+   so `numpy` is numpy and the model should write against the upstream library —
+   but a name Vis publishes ITSELF (`ruff`, `anydoc`, the attachment globals)
+   reaches the host, not PyPI, and a model that assumes the package from the
+   index writes against an API that was never there. So one line per door, keyed
+   by the very names advertised above it, carrying the surface and the refusals —
+   and nothing else. The rest of a door's contract is PULLED: `:shim/docs`
+   answers `doc(name)`, and costs no request that never calls it.
 
    The process surface is stated either way, and it is NOT worded here: the
    sentences are `env-python/PROCESS_SURFACE`, the same ones `subprocess` raises
@@ -706,19 +709,20 @@
       (str "Auto-imported by `python_execution` (no `import`): `"
            auto-imports
            "`."
+           "\nThe sandbox is a REAL CPython with pip and `~/.vis/python/packages`: "
+           "`numpy` IS numpy, so write against the upstream library. A top-level "
+           "import of a package that is not installed yet is fetched once, "
+           "automatically, whenever the network is on."
            (when (seq shim-imports)
-             (str "\nPreinstalled shim modules (no pip; import before use and alias in "
-                  "the same block, e.g. `import numpy as np`; `np`/`pd` are never "
-                  "auto-created): `"
+             (str "\nModules Vis publishes ITSELF — they reach the host, never PyPI "
+                  "(import before use): `"
                   (str/join "`, `" shim-imports)
-                  "`."))
+                  "`. `doc(\"<name>\")` is their contract; trust it over your memory "
+                  "of any package with the same name."))
            (when (seq shim-globals)
-             (str "\nPrebound shim globals (use directly; never import them): `"
+             (str "\nPrebound globals (use directly; never import them): `"
                   (str/join "`, `" shim-globals)
                   "`."))
-           "\nEach is a Vis REIMPLEMENTATION, not the upstream package: `doc(\"numpy\")` "
-           "names what it really lends and what it refuses, and `doc(\"numpy.linalg.solve\")` "
-           "reads one member — trust those over your memory of the library."
            "\n" (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
 (defn- turn-system-context-block

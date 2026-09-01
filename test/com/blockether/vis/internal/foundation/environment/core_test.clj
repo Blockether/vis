@@ -52,7 +52,7 @@
                          envelope ((:ext.symbol/fn sym-map))
                          ;; `boundary-view` is the no-context mirror of the real
                          ;; Clojure->Python boundary: it THROWS on a keyword key or
-                         ;; value at any depth, exactly like `->py` does in GraalPy.
+                         ;; value at any depth, exactly like `->py` does in CPython.
                          view (env-python/boundary-view (:result envelope))]
 
                      (expect (:success? envelope) (str sym " envelope must succeed"))

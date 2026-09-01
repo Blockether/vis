@@ -24,7 +24,7 @@
 
 (set! *warn-on-reflection* true)
 
-;; The anchor token — the ONE string that crosses Clojure -> GraalPy -> the model
+;; The anchor token — the ONE string that crosses Clojure -> CPython -> the model
 
 (def hash-width
   "Hex chars in a line's content hash. The line number locates; this hash

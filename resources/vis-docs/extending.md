@@ -1037,7 +1037,7 @@ with `default_models` (what the picker offers). A managed provider missing eithe
 still loads — it just has nothing to route to.
 ### Execution model and trust
 
-Extension files run in **trusted GraalPy contexts** — one per file, separate
+Extension files run in **trusted Python sessions** — one per file, separate
 from the model's sandbox:
 
 |  | Model sandbox | Extension context |
@@ -1051,9 +1051,8 @@ from the model's sandbox:
 This is an intentional trust decision, not a missing sandbox feature. Extension
 contexts allow full IO, process creation, threads and sockets because they are
 user-installed plugins; their environment stays the declared one
-([Environment](#environment)). They still deny
-arbitrary host-class, native, and polyglot interop; host access is limited to the
-bound `vis` API. The model can call an exported tool but cannot evaluate code in
+([Environment](#environment)). They still cannot reach into the JVM: the only
+host surface is the
 the extension context. See [Process jail and gateway egress](jail.md).
 
 **Output is captured, never inherited.** Unrestricted means the process runs with
@@ -1070,7 +1069,7 @@ running Vis. Five consequences worth knowing before you write one:
   it arrives.
 - A file or descriptor redirect (`stdout=open(...)`, `stderr=open(...)`,
   `stdout=os.open(...)`, `stdin=open(...)`) reaches the file you named, and the
-  file is complete once the call returns. GraalPy itself discards such a
+  file is complete once the call returns. CPython itself discards such a
   redirect, so Vis translates it into a pumped pipe on your behalf; a sink with
   no descriptor (a `BytesIO`) raises `io.UnsupportedOperation`, exactly as on
   CPython. `stdout=sys.stdout` goes to the extension's log rather than to
@@ -1082,7 +1081,7 @@ running Vis. Five consequences worth knowing before you write one:
   without end still needs you to read it or close the stream.
 - `Popen.pid` is the child's real OS pid, so `ps`, `lsof`, a pidfile or your own
   supervisor all find it, and `poll()`, `wait()`, `terminate()` and
-  `os.kill(p.pid, sig)` work on it. GraalPy's emulated posix would otherwise
+  `os.kill(p.pid, sig)` work on it. CPython's emulated posix would otherwise
   hand you a per-context child-slot index (`1`, `2`, ..., reused after a reap);
   Vis replaces it and keeps the index on `__vis_virtual_pid__` for its own use.
   A pid held past `wait()` names a dead process rather than another child.
@@ -1211,7 +1210,7 @@ Ship real Python tests next to the code and run them with Vis's built-in
 
 - Test files are `test_*.py` or `*_test.py`, at any depth under an extension
   directory. They are **never loaded as extensions** (excluded from the scan).
-- Each test file runs in its own trusted GraalPy context and imports the
+- Each test file runs in its own trusted Python session and imports the
   extension's package through the same `sys.path` sugar the entry file gets.
 
 ```python
@@ -1258,31 +1257,25 @@ per-test outcomes — never a separate tally, never scraped from output. `vis-ag
 test` exits non-zero when anything fails (it signals failure to the CLI, it
 does not kill the process), so it drops straight into CI.
 
-The runner supports the pytest surface the shim implements: plain `assert` with
-real introspection, `pytest.raises` / `warns` / `approx`, `@pytest.fixture`
-(including `params=`, `ids=`, `request`, `getfixturevalue` and indirect
-parametrize), `@pytest.mark` parametrize / skip / xfail / usefixtures, the
-built-in `monkeypatch` / `capsys` / `tmp_path` / `tmp_path_factory` / `caplog` /
-`recwarn` / `pytester` fixtures, `conftest.py` in disk mode, and the `-k` / `-x`
-/ `--maxfail` selection flags. It is a stdlib reimplementation of a subset — not
-upstream pytest (no plugins, no assertion-rewriting import hook).
+The runner uses REAL pytest: the sandbox is a real CPython, so a missing `pytest`
+is installed with `pip` on first use and your tests run against upstream — plugins,
+assertion rewriting and all. Selection flags (`-k`, `-x`, `--maxfail`) are pytest's
+own.
 
 ### Batteries in the model's sandbox
 
-The model's sandbox ships module shims so common imports work without pip —
-most are pure-Python reimplementation subsets; a few (PIL, sqlite3, the time
-shims) reach the JVM or a native backend. Each one is a real `.py` file under
-`resources/vis-shims/`, published into the sandbox context and loaded lazily on
-first import:
+The model's sandbox is a real, embedded CPython with `pip`. `import numpy` is
+numpy, `import requests` is requests, and a top-level import of a package that is
+not installed yet is fetched from PyPI once — automatically, wheels only, and only
+while the session's network is on. Packages land in `~/.vis/python/packages`, so a
+second session pays nothing for the same import.
 
-- Data / formats — `numpy`, `pandas`, `yaml`, `toml`, `tabulate`, `sqlite3`,
-  `brotli`, `nippy` (Vis' own Nippy codec).
-- HTTP / web — `requests`, `httpx`, `urllib3`, `bs4`, `soupsieve` (bs4's bundled selector engine).
-- Documents / media — `anydoc` (any document as Markdown, and any question about
-  it as citations — see below), `PIL`, `matplotlib`, `mpl_toolkits`, `pptx`,
-  `xlsxwriter`, `fontTools`.
-- Time — `zoneinfo` (604+ zones from `java.time`), `dateutil`, `pytz`, `tzdata` (the same JVM zone store).
-- Ops / testing — `pytest` (the same shim the test runner installs), `ruff` (in-process lint and format).
+What Vis publishes ITSELF is small on purpose — the doors that reach the HOST and
+could not come from an index:
+
+- `anydoc` — any document as Markdown, and any question about it as citations (see below).
+- `ruff` — in-process lint and format, the same `com.blockether/ruff` cdylib the Python language pack uses.
+- `ls` — the workspace file lister, answering the host's own index.
 - Globals, no import needed — `attach`, `list_attachments`, `get_attachment`, `read_attachment`, `show_attachment`, plus `nippy_encode` / `nippy_decode`.
   - `attach(...)` hands back the descriptor of what it just stored, and `list_attachments()` / `get_attachment(...)` answer the same shape: id, filename, version, media type, kind, size, audience, and the `turn_id` it belongs to — a tool artifact adds `iteration_id` / `tool_call_id`. `read_attachment(...)` returns the raw bytes and nothing else.
   - What the RUNNING block attached is addressable inside that block: pass the returned descriptor — or its filename — straight to `show_attachment`, `read_attachment` or `get_attachment`, where it carries `is_pending` until the iteration is stored.
@@ -1293,19 +1286,12 @@ first import:
   argument: a filename resolves to the latest cut unless you pass a `version`
   (negative counts back from the latest), an id resolves to that one cut.
 
-`matplotlib` renders through a native `imaging` PNG backend: `plt.show()` paints the figure inline in a graphics-capable terminal (Kitty/iTerm2, e.g. Ghostty) and falls back to an ASCII plot on text-only terminals; `savefig` writes a PNG (or `*.txt`/`*.asc`/`format='txt'` ASCII, honoring `width`/`height`/`color`).
+`subprocess`, `os.system` and `os.popen` never spawn in the agent sandbox: they raise and name the sandbox's `shell(...)` call, which is the one door to a process. (Trusted extension code, outside the sandbox, keeps the real `subprocess`.) The filesystem is confined to the session's roots by an audit hook inside the interpreter — not by anything Python can rebind.
 
-`mpl_toolkits.mplot3d` / `projection='3d'` is real: `plot_surface`, `plot_wireframe`, `contour(offset=…)`, 3-D `scatter`/`plot`/`text`, `bar3d` and `view_init` go through a painter's-algorithm camera with shading and colormaps, and the ASCII backend projects the same scene into braille.
-
-`subprocess`, `os.system` and `os.popen` never spawn in the agent sandbox: they raise and name the sandbox's `shell(...)` call, which is the one door to a process. (Trusted extension code, outside the sandbox, keeps the real `subprocess`.)
-
-These are compatibility subsets, not the full PyPI packages — enough for
-scripting and tests, not a substitute for the real library's every corner. Each
-shim's own Python says what it does NOT support: `doc("numpy")` prints the module's
-docstring with every public name it lends, and `doc("numpy.linalg.solve")` reads one
-of them. The authoring contract lives in
+`doc("anydoc")` and `doc("ruff")` are those doors' contracts, harvested from their
+own Python docstrings. The authoring contract for a door lives in
 [Sandbox shims and autoloads](#sandbox-shims-and-autoloads) below — a
-Clojure-extension capability, since a shim needs host callables.
+Clojure-extension capability, since a door needs host callables.
 
 ### Asking a document a question — `anydoc`
 
@@ -1635,42 +1621,42 @@ print(doc("weather_lookup"))
 
 ### Sandbox shims and autoloads
 
-The agent writes **Python**, but its sandbox ships only the pure-stdlib — no
-pip, no native wheels. A **shim** lets your extension publish a *host-backed*
-Python module into the session sandbox:
-the familiar Python API is a thin façade whose real work is DELEGATED across the
-boundary to Clojure/JVM callables you supply. This is exactly how `import yaml`
-(backed by the pure-Clojure YAMLStar loader) and `import matplotlib.pyplot`
-(backed by a native imaging PNG renderer) work — both ship as built-in shim extensions
-(`foundation.shim-yaml`, `foundation.shim-matplotlib`), and the engine installs
-them through the SAME generic path any extension uses.
+The agent writes **Python** in a real, embedded CPython with `pip`, so a package
+from an index needs nothing from you. A **shim** is for what an index cannot
+carry: a *host-backed* Python module whose familiar API is a thin façade, its real
+work DELEGATED across the boundary to Clojure/JVM callables you supply. This is
+exactly how `import ruff` (backed by the `com.blockether/ruff` cdylib the language
+pack lints with) and `import anydoc` (backed by the native imaging document
+reader) work — both ship as built-in shim extensions (`foundation.shim-ruff`,
+`foundation.shim-anydoc`), and the engine installs them through the SAME generic
+path any extension uses.
 
 List one or more shim specs under `:ext/sandbox-shims`:
 
 ```clojure
-{:shim/name        "yaml"
+{:shim/name        "ruff"
  ;; RUNTIME NAMES, never inferred from :shim/name: exact top-level modules a
  ;; caller may import and exact names callable with no import. The build harvests
  ;; their Python docstrings into a manifest-listed apropos resource.
- :shim/imports     ["yaml"]
+ :shim/imports     ["ruff"]
  :shim/globals     []
  ;; Extra doctrine no single public name owns. Prose about a name belongs on that
  ;; module, function, or class in the shim's Python source.
- :shim/docs        "PyYAML-compatible `yaml` ... every option, in full."
+ :shim/docs        "In-process Ruff, no pip/PATH: `python -m ruff check|format ...`"
  ;; Host callables the shim's Python delegates to — a `{py-name -> fn}` map (or a
  ;; 0-arg fn returning one). Each is wired onto the sandbox globals as a Python
  ;; callable (args marshalled Python->Clojure, result back) BEFORE the `.py` source
  ;; evals. Return a 2-vec envelope `[true payload]` / `[false message]` so a
  ;; failure crosses the boundary as a catchable Python exception.
- :shim/bindings    (fn [] {"__vis_yaml_load__" (fn [s] (try [true (yamlstar/load s)]
-                                                        (catch Throwable t [false (str t)])))})
+ :shim/bindings    (fn [] {"__vis_ruff_check__" (fn [src] (try [true (ruff/check src)]
+                                                       (catch Throwable t [false (str t)])))})
  ;; CLASSPATH RESOURCE path of the shim's Python source — a real `.py` file, never
  ;; a Clojure string. It is eval'd into the sandbox: publish your module into
- ;; `sys.modules` (so `import yaml` finds it) and optionally staple it onto
- ;; `builtins` (autoload — `yaml.safe_load(...)` with no import). Built-in shims
+ ;; `sys.modules` (so `import ruff` finds it) and optionally staple it onto
+ ;; `builtins` (autoload — a call with no import). Built-in shims
  ;; live in `resources/vis-shims/`; ship yours on your own classpath and, for a
  ;; native image, embed it with `-H:IncludeResources=<your-prefix>/.*`.
- :shim/source      "vis-shims/yaml.py"}
+ :shim/source      "vis-shims/ruff.py"}
 ```
 
 The distribution's build harvests every contributed module's Python `__doc__` and
@@ -1898,5 +1884,5 @@ Before shipping, run `format_code`, `clojure -M:lint` (add `extensions build.clj
 - [Skills](skills.md) — instructions, when the answer is not code.
 - [Configuration](configuration.md) — the keys an extension's providers, toggles and env end up in.
 - [Runtime distributions](distributions.md) — shipping a Clojure extension to other people.
-- [GraalPython sandbox](graalpython.md) — the runtime your Python tools execute in.
+- [Python sandbox](python-sandbox.md) — the runtime your Python tools execute in.
 - [Content-block protocol](content-blocks.md) — the blocks a tool's output becomes.

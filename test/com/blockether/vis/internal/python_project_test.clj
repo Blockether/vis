@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.python-project-test
-  "Layout reads degrade LOUDLY. A GraalPy read that FAILS is retried once and then
+  "Layout reads degrade LOUDLY. A CPython read that FAILS is retried once and then
    reported as a `:warning`, instead of pretending the project declares no import
    roots — silent degradation surfaces as bogus `No module named <pkg>` errors in
    the user's own tests (Blockether/vis#98)."
@@ -10,7 +10,7 @@
 (def ^:private tmp (System/getProperty "java.io.tmpdir"))
 
 (defdescribe project-layout-warning-test
-             (it "retries once and warns when the GraalPy context cannot be built"
+             (it "retries once and warns when the Python session cannot be built"
                  (let [calls (atom 0)]
                    (with-redefs [pyx/build-context (fn [_label]
                                                      (swap! calls inc)

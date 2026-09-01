@@ -131,7 +131,7 @@
           (update 0 #(pin->program root %))))
 
 (defn pinned-runner
-  "The `run_tests` backend `raw-config` pins as `python.runner` (`graalpy` or
+  "The `run_tests` backend `raw-config` pins as `python.runner` (`vispython` or
    `project`), or nil for anything else. Explicit call arguments still win."
   [raw-config]
   (let [r (some-> (get raw-config "python")
@@ -140,7 +140,7 @@
                   str/trim
                   str/lower-case
                   not-empty)]
-    (when (contains? #{"graalpy" "project"} r) r)))
+    (when (contains? #{"vispython" "project"} r) r)))
 
 (defn configured-runner
   "`python.runner` from merged config, or nil. Config failures degrade to nil

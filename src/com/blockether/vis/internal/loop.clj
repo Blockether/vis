@@ -37,7 +37,6 @@
     [com.blockether.vis.internal.python-extensions :as python-extensions]
     [com.blockether.vis.internal.render :as render]
     [com.blockether.vis.internal.persistance :as persistance]
-    [com.blockether.vis.internal.sandbox-resources :as res]
     [com.blockether.vis.internal.session-model :as session-model]
     [com.blockether.vis.internal.prompt :as prompt]
     [com.blockether.vis.internal.prompt-templates :as prompt-templates]
@@ -54,104 +53,7 @@
     [com.blockether.vis.internal.vision-describe :as vision-describe]
     [com.blockether.vis.internal.workspace :as workspace]
     [taoensso.telemere :as tel])
-  (:import [java.util.concurrent ExecutionException ExecutorService Future SynchronousQueue
-            ThreadFactory ThreadPoolExecutor TimeUnit]
-           [java.util.concurrent.atomic AtomicLong]
-           [org.graalvm.polyglot Value]))
-
-(def ^:private gather-max-threads
-  "Hard ceiling on concurrent `gather` worker threads. A GraalPy `Value.execute`
-   (the deferred tool-call a `gather` thunk runs) PINS its carrier thread for the
-   whole blocking call — GraalPy does NOT unmount a virtual thread across the
-   polyglot boundary — so an unbounded virtual-thread pool let heavy concurrent
-   overlap ratchet the JDK virtual-thread ForkJoinPool toward its 256-carrier
-   ceiling, which never fully reclaimed under sustained turns (the observed
-   process-thread growth). A BOUNDED platform pool caps that deterministically
-   while still overlapping up to this many real tool calls. Override with
-   `VIS_GATHER_MAX_THREADS`; floored at 4. Default 32.
-
-   A `delay`, never an eager read: `native-image` initializes this namespace at
-   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
-  (delay (max 4
-              (long (or (some-> (System/getenv "VIS_GATHER_MAX_THREADS")
-                                str/trim
-                                parse-long)
-                        32)))))
-
-(defonce ^:private gather-executor
-  ;; Pool backing the sandbox `gather` builtin. Each thunk runs a GraalPy
-  ;; `Value.execute` that PINS its carrier for the blocking tool call (the
-  ;; polyglot boundary does not unmount virtual threads), so virtual threads gave
-  ;; no overlap benefit here and only let carrier spawning grow unbounded. This is
-  ;; a bounded, self-reclaiming PLATFORM pool: up to `gather-max-threads` daemon
-  ;; workers of genuine overlap, 30 s idle keep-alive, and a SynchronousQueue with
-  ;; no retained backlog. Saturated nested work may run inline only from a platform
-  ;; thread; a virtual submitter instead blocks on the queue's virtual-thread-safe
-  ;; handoff until a platform worker is free, so GraalPy never pins its carrier.
-  ;;
-  ;; A `delay`, never an eager build: `native-image` initializes this namespace at
-  ;; BUILD time, so constructing the pool here forced `@gather-max-threads` on the
-  ;; BUILDER — shipping its `VIS_GATHER_MAX_THREADS` answer and putting a live
-  ;; ThreadPoolExecutor in the image heap. Built on first `gather`, in the process
-  ;; that will actually run the thunks.
-  (delay
-    (let [seq
-          (AtomicLong. 0)
-
-          tf
-          (reify
-            ThreadFactory
-              (newThread [_ r]
-                (doto (Thread. ^Runnable r (str "vis-gather-" (.getAndIncrement seq)))
-                  (.setDaemon true))))
-
-          rejection-handler
-          (reify
-            java.util.concurrent.RejectedExecutionHandler
-              (rejectedExecution [_ task executor]
-                (cond (.isShutdown ^ThreadPoolExecutor executor)
-                      (throw (java.util.concurrent.RejectedExecutionException.
-                               "Gather executor is shut down"))
-                      (.isVirtual (Thread/currentThread))
-                      (try (.put (.getQueue ^ThreadPoolExecutor executor) ^Runnable task)
-                           (catch InterruptedException e
-                             (.interrupt (Thread/currentThread))
-                             (throw (java.util.concurrent.RejectedExecutionException.
-                                      "Interrupted while applying gather backpressure"
-                                      e))))
-                      :else (.run ^Runnable task))))]
-
-      (doto (ThreadPoolExecutor. 0
-                                 (int @gather-max-threads)
-                                 30
-                                 TimeUnit/SECONDS
-                                 (SynchronousQueue.)
-                                 tf
-                                 rejection-handler)
-        (.allowCoreThreadTimeOut true)))))
-
-(defn- settle-gather-futures!
-  "Settle every submitted gather future — `{:ok v}` or `{:err e}` per slot,
-   in order. On success paths ALL thunks run to completion (a failing slot
-   never aborts its siblings). But the moment the SETTLING thread itself is
-   interrupted (turn `cancel!` / eval-timeout `.cancel(true)` on the worker
-   future), every still-running CHILD future is hard-cancelled
-   (`.cancel(true)`) and the `InterruptedException` propagates. Without the
-   propagation+cancel, an interrupt during settle was swallowed as that
-   slot's `:err` and the loop blocked on the NEXT `.get` — so a cancelled
-   `gather(rg(...), rg(...))` left orphaned virtual threads grinding at
-   100% CPU each until process exit."
-  [futs]
-  (let [cancel-all! (fn []
-                      (doseq [^Future f futs]
-                        (try (.cancel f true) (catch Throwable _ nil))))]
-    (try (mapv (fn [^Future f]
-                 (try {:ok (.get f)}
-                      (catch ExecutionException e {:err (or (.getCause e) e)})
-                      (catch InterruptedException e (throw e))
-                      (catch Throwable e {:err e})))
-               futs)
-         (catch InterruptedException e (cancel-all!) (throw e)))))
+  (:import [java.util.concurrent ExecutionException ExecutorService Future ThreadFactory]))
 
 ;; Single-iteration runner
 
@@ -858,74 +760,84 @@
 (defn- python-op-error
   "Map a throwable from the Python eval path to the op-error shape. A turn cancel
    is a normal, terse interruption — never the JVM stack that happened to be
-   waiting when Cancel landed. Other GraalPy PolyglotExceptions go through
-   env/map-polyglot-error (proper :python/syntax|runtime|host phase + location);
-   anything else falls back to extension/ex->op-error."
+   waiting when Cancel landed. What the INTERPRETER raised carries its own
+   `Type: message` text and goes through env/map-python-error (proper
+   :python/syntax|runtime|host phase + location); anything else falls back to
+   extension/ex->op-error."
   [python-context e code cancel-token]
   (if (cancellation/cancelled? cancel-token)
     {:message "Python execution was interrupted" :type :vis/interrupted}
-    (try (if (= "org.graalvm.polyglot.PolyglotException" (.getName (class e)))
-           (env/map-polyglot-error python-context e code)
+    (try (if (= "com.blockether.vispython.VisPythonException" (.getName (class e)))
+           (env/map-python-error python-context (ex-message e) code)
            (extension/ex->op-error e {:form-source code}))
          (catch Throwable _ {:message (or (ex-message e) (.getName (class e)))}))))
 
-;; ONE persistent interpreter per session. The GraalPy sandbox is created ONCE
+;; ONE persistent interpreter per session. The Python sandbox is created ONCE
 ;; (`create-environment`) and reused across every turn, so the model's globals
 ;; (defs, imports, variables) carry across calls and turns NATURALLY, REPL-style.
 ;; (Resuming a session in a FRESH process starts with an empty sandbox; durable
 ;; file edits and conversation history persist, so the model recomputes what it
 ;; needs.)
 
-(def ^:private GUEST_INTERRUPT_GRACE_MS
-  "How long [[interrupt-guest!]] waits for the GraalPy safepoint to unwind a
-   runaway guest before giving up."
-  5000)
-
 (defn- interrupt-guest!
-  "Cancel whatever is EXECUTING in `python-context` right now, at a Truffle
-   safepoint.
+  "Cancel whatever is EXECUTING in `python-context` right now, at a bytecode
+   boundary.
 
-   `Future.cancel(true)` only interrupts the JAVA worker thread, and GraalPy does
-   NOT observe `Thread.interrupt` inside guest code: a model block that spins
-   (`while True: ...`) survived every eval timeout / Esc cancel and kept burning a
-   whole core FOREVER — measured at 1.01 busy cores with BOTH worker futures
-   already cancelled — while its virtual thread stayed pinned to a
-   ForkJoinPool carrier and its frames stayed reachable. Only
-   `Context.interrupt` (or a cancelling close) unwinds guest frames. Safe from
-   any thread that is not itself executing this context (the loop/eval-timeout
-   thread and the canceller are not), never throws, and leaves the context
-   REUSABLE when it returns true. A false result is proof that the interpreter
-   must be retired before the Java worker interrupt can race another turn.
+   `Future.cancel(true)` only interrupts the JAVA worker thread, and the
+   interpreter does NOT observe `Thread.interrupt` inside guest code: a model
+   block that spins (`while True: ...`) survived every eval timeout / Esc cancel
+   and kept burning a whole core FOREVER — measured at 1.01 busy cores with BOTH
+   worker futures already cancelled. Only the interpreter's own interrupt, which
+   raises `KeyboardInterrupt` in the thread running the session, unwinds it.
 
-   Returns TRUE when it landed, i.e. every thread executing the context left it
-   inside the grace. FALSE is the javadoc's own failure mode — \"a context thread
-   may not be interruptible if it uses non-interruptible waiting or executes
-   non-interruptible host code\", reported as a `TimeoutException` — and it is
-   the ONLY reason to fall back on `Thread.interrupt`, which lands inside
-   GraalPy's GIL re-acquire (`PythonContext.ensureGilAfterFailure` takes the lock
-   uninterruptibly) and leaves a worker abandoned there dead OWNING the GIL. Host
-   waits that poll [[rt/guest-safepoint!]] keep this returning true."
+   Returns TRUE when it landed, i.e. the block is unwinding and the session stays
+   REUSABLE. FALSE is a guest the exception cannot reach — blocked in a host call
+   or inside C, where nothing is executing bytecode — and it is the ONLY reason to
+   fall back on retiring the environment and interrupting the Java worker."
   [python-context]
   (boolean (when python-context
-             (try (.interrupt ^org.graalvm.polyglot.Context python-context
-                              (java.time.Duration/ofMillis (long GUEST_INTERRUPT_GRACE_MS)))
-                  true
-                  (catch java.util.concurrent.TimeoutException _ false)
-                  (catch Throwable _ false)))))
+             (try (env/interrupt-guest! python-context) (catch Throwable _ false)))))
 
-(defn- interrupt-or-retire!
-  "Try the non-destructive GraalPy interrupt, then retire the environment before
-   hard-interrupting its worker when the guest cannot unwind.
+(defn- interrupt-or-dispose!
+  "Interrupt the guest; dispose the session when the interrupt cannot land.
+   Answers whether it LANDED, because a landed interrupt leaves the block
+   unwinding — free to hand back what it printed — while a failed one leaves a
+   thread the loop can never reach again.
 
-   Retirement MUST happen first. Extension-owned host work may still be executing
-   with GraalPy's GIL released, so a next-turn probe can temporarily enter the old
-   context. The interrupted host thread can then return and die while reacquiring
-   the GIL. The retired context is deliberately not closed here because that host
-   work may still be inside it."
-  [environment python-context exec-future]
-  (when-not (interrupt-guest! python-context)
-    (env/retire-context! environment)
-    (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil))))
+   Disposal MUST happen before the Java worker interrupt. Host work started by
+   the block may still be running, and a returning host thread must not find a
+   session the loop has already handed to the next turn."
+  [python-context exec-future]
+  (let [landed? (interrupt-guest! python-context)]
+    (when-not landed?
+      (env/dispose-python-context! python-context)
+      (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil)))
+    landed?))
+
+(def ^:private INTERRUPT_UNWIND_MS
+  "How long the loop waits for an interrupted block to unwind and answer what it
+   printed before the wall killed it."
+  2000)
+
+(defn- unwound-stdout
+  "What an INTERRUPTED block printed before it was killed, or nil.
+
+   The kill is an exception INSIDE the guest, so the block still reaches its own
+   outcome: the runtime answers the captured stdout beside the
+   `KeyboardInterrupt`. That output is real work — progress lines of a fetch loop,
+   results already computed — and an envelope carrying a bare `Timeout` and
+   nothing else is unactionable, so the loop waits briefly for the unwind."
+  [exec-future]
+  (try (let [result
+             (.get ^java.util.concurrent.Future exec-future
+                   (long INTERRUPT_UNWIND_MS)
+                   java.util.concurrent.TimeUnit/MILLISECONDS)
+
+             out
+             (:stdout result)]
+
+         (when (and (string? out) (seq out)) out))
+       (catch Throwable _ nil)))
 
 (defn attachment-descriptor
   "One `session_attachment` row as the compact DESCRIPTOR `list_attachments()` and
@@ -1199,7 +1111,7 @@
                   fs-mutation-kinds))))
 
 (defn- run-python-code
-  "Run an agent code block through the embedded GraalPy sandbox. Wraps the
+  "Run an agent code block through the embedded Python sandbox. Wraps the
    worker-future + cancellation + tool-event/render sinks + `*1`/`*e` recovery
    stack around `env/run-python-block` (whole-block; tools fire in order through
    their ProxyExecutable wrappers, which read the SAME dynamic sinks)."
@@ -1380,7 +1292,7 @@
                                      ;; `rt/guest-safepoint!`. A context that refuses
                                      ;; that interrupt is retired before the Java
                                      ;; interrupt can strand its GIL.
-                                     (interrupt-or-retire! env python-context exec-future))))
+                                     (interrupt-or-dispose! python-context exec-future))))
 
         settle-activity!
         (fn [envelope]
@@ -1426,7 +1338,7 @@
         (try (rt/await-wall exec-future eval-deadline timeout-sentinel)
              (catch Throwable e
                (reset! thrown e)
-               (interrupt-or-retire! env python-context exec-future)
+               (interrupt-or-dispose! python-context exec-future)
                {:lru {} :error (python-op-error python-context e code cancel-token)})
              (finally (when dispose-cancel-hook
                         (try (dispose-cancel-hook) (catch Throwable _ nil)))))
@@ -1438,53 +1350,47 @@
           raw-execution-result)]
 
     (if (identical? timeout-sentinel execution-result)
-      ;; Eval timeout: prefer a Truffle safepoint interrupt. A guest that
-      ;; refuses to unwind retires its context before the Java interrupt.
-      (do (interrupt-or-retire! env python-context exec-future)
-          ;; The unwinding guest cannot reach the host any more, so its `with` never
-          ;; closes: the wall that killed the block ends its views too, and the model
-          ;; still reads the picture they held.
-          (let [;; What the block PRINTED before the wall is real work — progress lines
-                ;; of a fetch loop, results already computed. The guest never reaches
-                ;; its own `{:stdout}` outcome here, so drain the capture buffer onto
-                ;; the envelope instead of answering with a bare `Timeout` and
-                ;; nothing else: that is unactionable, and the model re-runs the whole
-                ;; block blind.
-                out
-                (env/partial-stdout python-context)
+      ;; Eval timeout: interrupt the guest at a bytecode boundary. A guest the
+      ;; exception cannot reach retires its environment before the Java interrupt.
+      (let [landed?
+            (interrupt-or-dispose! python-context exec-future)
 
-                envelope
-                (cond-> {:lru {}
-                         :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
-                         :timeout? true}
-                  out
-                  (assoc :stdout out))
+            ;; The unwinding guest cannot reach the host any more, so its `with` never
+            ;; closes: the wall that killed the block ends its views too, and the model
+            ;; still reads the picture they held.
+            ;;
+            ;; What the block PRINTED before the wall is real work — progress lines of
+            ;; a fetch loop, results already computed. An interrupted block unwinds
+            ;; through its own outcome and hands that capture buffer back, so the
+            ;; envelope is never a bare `Timeout` and nothing else: that is
+            ;; unactionable, and the model re-runs the whole block blind.
+            out
+            (when landed? (unwound-stdout exec-future))
 
-                activity-envelope
-                (settle-activity! envelope)
+            envelope
+            (cond-> {:lru {}
+                     :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
+                     :timeout? true}
+              out
+              (assoc :stdout out))
 
-                swept
-                (sweep-abandoned! {:reason :timeout
-                                   :error (str "the run watching this view was stopped at its "
-                                               (/ timeout-ms 1000)
-                                               "s wall")})]
+            activity-envelope
+            (settle-activity! envelope)
 
-            (envelope-with-settled-views activity-envelope swept)))
+            swept
+            (sweep-abandoned! {:reason :timeout
+                               :error (str "the run watching this view was stopped at its "
+                                           (/ timeout-ms 1000)
+                                           "s wall")})]
+
+        (envelope-with-settled-views activity-envelope swept))
       (let [;; A cancel unwinds the same way a wall does. An ordinary Python
             ;; exception does NOT — `with vis.live` closes on its way out — so this
             ;; finds nothing to sweep and says nothing.
-            ;; A cancel kills the block from OUTSIDE the guest, so it never reaches its
-            ;; own `{:stdout}` outcome and every line it printed dies with the frame —
-            ;; the same loss the wall drains the capture buffer for. A Python exception
-            ;; carries its own stdout already and is left alone.
-            printed
-            (when (and (:error execution-result) (nil? (:stdout execution-result)))
-              (env/partial-stdout python-context))
-
+            ;; A killed block still runs its own outcome, so the stdout it had
+            ;; already printed arrives with the error and needs no draining here.
             activity-envelope
-            (settle-activity! (cond-> execution-result
-                                printed
-                                (assoc :stdout printed)))
+            (settle-activity! execution-result)
 
             swept
             (when (:error execution-result)
@@ -4219,7 +4125,7 @@
 
 ;; ── The model-facing surface: ONE tool ───────────────────────────────────────
 ;; `python_execution` is the only call the provider ever sees. Every capability is
-;; a plain Python name bound into GraalPy inside it, so confinement, rendering and
+;; a plain Python name bound into CPython inside it, so confinement, rendering and
 ;; docs have exactly one home and the model never routes between surfaces.
 ;; Replying with plain text and NO tool call ends the turn.
 
@@ -4274,9 +4180,8 @@
      "is gone from the transcript once the block ends. A shell is WATCHED here: `sh = await shell(...)`, then a BOUNDED "
      "loop that calls `sh.logs()` on the handle it got back and breaks on what it read (an error line, "
      "a parsed port); `sh.wait(secs)` is that loop already written — no tool "
-     "waits for you. Close what you open (`with open(...)`): a dropped file handle is "
-     "NOT auto-closed here, so the sandbox reclaims leaked descriptors and refuses more than 512 held at "
-     "once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell` children."
+     "waits for you. Close what you open (`with open(...)`): the sandbox refuses more than 512 "
+     "descriptors held at once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell` children."
      (when-let [cap (python-execution-capability-line caps)]
        (str " " cap)))
    :result
@@ -4620,55 +4525,6 @@
            :model (some-> (:name resolved-model)
                           str)}
           (into {} (remove (comp nil? val)) watchdog-timeouts))))
-
-(def ^:private FD_RECLAIM_THRESHOLD
-  "Reclaim leaked file descriptors once open FDs cross this fraction of the
-   process limit. Below it, the per-iteration check is just a cheap OS-bean read;
-   at/above it, a GC pass closes file objects the sandbox dropped WITHOUT
-   `with open(...)` — GraalPy does not refcount-close a dropped file object, so
-   an os.walk that reads a large tree can pile up thousands of descriptors before
-   GC catches up, starving the JVM's SHARED descriptor table (auth sockets, git,
-   cancel) and wedging the session (vis session 7d3f9026). Proactive reclaim
-   keeps a leaky sandbox block from ever reaching EMFILE."
-  0.6)
-
-(defn- fd-usage
-  "[open-count max-count] file descriptors for THIS process via the JVM OS bean,
-   or nil when the platform bean is not a `UnixOperatingSystemMXBean` (e.g.
-   Windows) or reports no limit. Cheap — a couple of native counter reads."
-  []
-  (let [bean (java.lang.management.ManagementFactory/getOperatingSystemMXBean)]
-    (when (instance? com.sun.management.UnixOperatingSystemMXBean bean)
-      (let [b ^com.sun.management.UnixOperatingSystemMXBean bean
-            m (.getMaxFileDescriptorCount b)]
-
-        (when (pos? m) [(.getOpenFileDescriptorCount b) m])))))
-
-(defn reclaim-fds-under-pressure!
-  "When open FDs exceed `FD_RECLAIM_THRESHOLD` of the process limit, force a GC +
-   finalization pass so descriptors held by unreachable (leaked) file objects are
-   CLOSED — the sandbox's cheapest safety net against open-without-close Python
-   (mirrors the on-demand reclaim `shell`'s spawn path already does, but PROACTIVE
-   at the iteration boundary so the control plane never starves). No-op — one bean
-   read — when there is headroom. Returns the number of descriptors freed when it
-   acted, else nil."
-  []
-  (when-let [[open lim] (fd-usage)]
-    (when (> (/ (double open) (double lim)) (double FD_RECLAIM_THRESHOLD))
-      (System/gc)
-      (System/runFinalization)
-      ;; The Cleaner/finalizer threads need a beat to actually release the FDs
-      ;; after GC marks the file objects unreachable (same 100-150ms `shell`
-      ;; uses). Only paid under pressure, never on the common path.
-      (Thread/sleep 120)
-      (let [after (or (first (fd-usage)) open)
-            freed (max 0 (- (long open) (long after)))]
-
-        (tel/log! {:level :warn
-                   :id ::fd-reclaim
-                   :data {:before open :after after :limit lim :freed freed}
-                   :msg "file-descriptor pressure — GC reclaimed leaked handles"})
-        freed))))
 
 (defn- close-llm-session!
   "Close and forget an environment-owned stateful provider session."
@@ -8439,12 +8295,6 @@
                      [attempt-env (hydrate-environment-router env)
                       result
                       (try
-                        ;; Cheap FD-pressure guard BEFORE the provider call: a
-                        ;; prior iteration's sandbox Python may have leaked
-                        ;; descriptors (open without `with`), and this call is
-                        ;; about to open an auth/refresh socket. Reclaim under
-                        ;; pressure so a leak never starves the control plane.
-                        (reclaim-fds-under-pressure!)
                         (reset! provider-output-started? false)
                         (run-iteration
                           attempt-env
@@ -10610,11 +10460,12 @@
   ;; per-session, so nothing is stopped here — only this session's policy is removed.
   ;; EVERY step before the sandbox is best-effort AND cannot skip it. These run
   ;; first because they need the environment intact, but not one of them is worth
-  ;; the Python heap: a throw here used to abandon `res/dispose!` below, and the
-  ;; only caller that recycles between turns swallows the exception — so a single
-  ;; failing unregister leaked a whole Engine, silently, every five turns. The
-  ;; sandbox teardown is therefore a `finally`, and a failure is LOGGED rather
-  ;; than dropped, because a leak nothing reports is one nobody can find.
+  ;; the Python heap: a throw here used to abandon the sandbox teardown below, and
+  ;; the only caller that recycles between turns swallows the exception — so a
+  ;; single failing unregister leaked a whole session's Python namespace,
+  ;; silently, every five turns. The sandbox teardown is therefore a `finally`,
+  ;; and a failure is LOGGED rather than dropped, because a leak nothing reports
+  ;; is one nobody can find.
   (try
     (doseq [[step run!]
             [[:egress-proxy
@@ -10637,15 +10488,14 @@
                        ["gateway: env teardown step failed" (name step)
                         (str (:session-id environment)) (ex-message t)]))))
     (finally
-      ;; The whole sandbox, in the one order that works — host handles, Context,
-      ;; Engine. `sandbox-resources/dispose!` owns that order so no teardown site
-      ;; has to restate it, and each step gives back something different: the
-      ;; handles, the action threads that would otherwise root this Context
-      ;; forever, and the Python heap the Engine retains.
-      (try (res/dispose! environment)
+      ;; The sandbox goes LAST and always: a session's Python namespace is a
+      ;; reference cycle through every function defined in it, and the host half
+      ;; holds one closure per tool, so dropping either alone keeps the other
+      ;; alive.
+      (try (env/dispose-python-context! (:python-context environment))
            (catch Throwable t
              (tel/log! :error
-                       ["gateway: sandbox dispose failed - Engine LEAKED"
+                       ["gateway: sandbox dispose failed - session LEAKED"
                         (str (:session-id environment)) (ex-message t)])))
       (when (:db-info environment)
         (try (persistance/db-dispose-connection! (:db-info environment))
@@ -10725,13 +10575,14 @@
    Returns the vis environment map."
   [router {:keys [db session channel external-id title workspace-id prewarm?]}]
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
-  ;; Everything from here to the end runs with the sandbox GUARDED: the Context is
+  ;; Everything from here to the end runs with the sandbox GUARDED: the session is
   ;; built ~130 lines before this function returns, and workspace resolution,
   ;; extension registration and the defs restore all still run after it. A throw in
   ;; that stretch used to ABANDON the sandbox — and an abandoned one is never
-  ;; reclaimed, because its GraalPy action thread is a GC root that pins the
-  ;; Context, its Engine and the whole Python heap. So the failure path leaked
-  ;; worse than success ever could, on exactly the runs a caller would retry.
+  ;; reclaimed, because nothing else disposes a session the loop no longer points
+  ;; at: its namespace, its host doors and the native memory behind them stay live
+  ;; for the process. So the failure path leaked worse than success ever could, on
+  ;; exactly the runs a caller would retry.
   (let [pending (volatile! nil)]
     (try
       (let [db-info (persistance/db-create-connection! db)
@@ -10859,87 +10710,6 @@
             ;; sentinel) so the fold shows in the Python result. See
             ;; `compaction-verbs` for the intent shape + range handling.
             compaction (compaction-verbs ctx-atom session-rebase-atom)
-            ;; maki-style in-program concurrency: run each thunk (a Python callable,
-            ;; e.g. `lambda: rg({...})`) on a VIRTUAL THREAD and return results in
-            ;; order. GraalPy releases its lock on blocking I/O, so I/O-bound tool
-            ;; calls genuinely overlap inside ONE python_execution call. Dynamic sink
-            ;; bindings (tool-event/render) are conveyed via `bound-fn*` so tools
-            ;; called concurrently still render. ALL thunks run; if several FAIL,
-            ;; every future is still settled (we don't abort at the first throw) and
-            ;; ONE aggregated error names EVERY failure by slot index — so the model
-            ;; fixes them all in one pass instead of one-per-iteration. No failures →
-            ;; results in order, exactly as before.
-            gather-fn (fn gather [& thunks]
-                        (let [thunks (if (and (= 1 (count thunks)) (sequential? (first thunks)))
-                                       (vec (first thunks)) ; gather([f1 f2]) too
-                                       (vec thunks))
-                              call (fn [t]
-                                     (cond (instance? Value t) (.execute ^Value t (object-array 0))
-                                           (ifn? t) (t)
-                                           :else t))
-                              futs (mapv (fn [t]
-                                           (.submit ^ExecutorService @gather-executor
-                                                    ^Callable
-                                                    (bound-fn* (fn []
-                                                                 (call t)))))
-                                         thunks)
-                              ;; settle EVERY future — value OR error per slot; child
-                              ;; futures are hard-cancelled when WE get interrupted
-                              outcomes (settle-gather-futures! futs)
-                              failures (keep-indexed (fn [i o]
-                                                       (when (contains? o :err) [i (:err o)]))
-                                                     outcomes)]
-
-                          (if (empty? failures)
-                            (mapv :ok outcomes)
-                            ;; aggregate ALL failures into ONE error (slot index +
-                            ;; message); chain the first as cause for the traceback.
-                            (throw (ex-info
-                                     (str "gather: " (count failures)
-                                          "/" (count outcomes)
-                                          " awaitables failed — "
-                                          (str/join "; "
-                                                    (map (fn [[i e]]
-                                                           (str "[" i
-                                                                "] " (or (ex-message e) (str e))))
-                                                         failures)))
-                                     {:vis/gather-failures
-                                      (mapv (fn [[i e]]
-                                              {:index i :message (or (ex-message e) (str e))})
-                                            failures)
-                                      :vis/gather-total (count outcomes)}
-                                     (second (first failures)))))))
-            ;; ISOLATED sibling of `gather-fn`, backing `__vis_par_isolated__`. Runs
-            ;; every thunk on the SAME bounded platform pool with the SAME real overlap,
-            ;; but NEVER throws an aggregate on failure: each slot returns a per-call
-            ;; SENTINEL — `{"__vis_ok__" true "__vis_val__" v}` on success, or
-            ;; `{"__vis_ok__" false "__vis_exc__" <Throwable>}` on failure. The raw
-            ;; Throwable crosses back as a host object (env/->clj `asHostObject`), so
-            ;; the loop maps it through the SAME `python-op-error` path a serial call
-            ;; uses — byte-identical error fidelity, but ISOLATED (one failing
-            ;; observation never poisons its siblings). Exposed to the sandbox as
-            ;; `__vis_par_isolated__` so python code can fan out inside ONE block.
-            par-isolated-fn
-            (fn par-isolated [& thunks]
-              (let [thunks (if (and (= 1 (count thunks)) (sequential? (first thunks)))
-                             (vec (first thunks))
-                             (vec thunks))
-                    call (fn [t]
-                           (cond (instance? Value t) (.execute ^Value t (object-array 0))
-                                 (ifn? t) (t)
-                                 :else t))
-                    futs (mapv (fn [t]
-                                 (.submit ^ExecutorService @gather-executor
-                                          ^Callable
-                                          (bound-fn* (fn []
-                                                       (call t)))))
-                               thunks)]
-
-                (mapv (fn [o]
-                        (if (contains? o :err)
-                          {"__vis_ok__" false "__vis_exc__" (:err o)}
-                          {"__vis_ok__" true "__vis_val__" (:ok o)}))
-                      (settle-gather-futures! futs))))
             ;; Build the ctx-loop env subset used by the engine bindings + helpers.
             ;; Just the cursor counters + the single ctx-atom. Warnings
             ;; live as `:engine/warnings` on the ctx itself, no side atoms.
@@ -10967,16 +10737,12 @@
                            (extension/builtin-sandbox-bindings (fn []
                                                                  @environment-atom))
                            ;; Engine verbs (no `done` — a plain-text reply
-                           ;; finalizes the turn): the compaction verbs +
-                           ;; `__vis_par__`, the bounded host platform pool
-                           ;; that backs the async runtime's `gather`
-                           ;; (Python-side `gather`/`await` live in the
-                           ;; env_python async-runtime preamble; this is
-                           ;; the dispatcher they call to overlap awaitables
-                           ;; on bounded platform workers).
+                           ;; finalizes the turn): the compaction verbs.
+                           ;; `gather` is GUEST-side now — the interpreter's own
+                           ;; worker pool runs the thunks, because a Python
+                           ;; callable can only be called from inside the
+                           ;; interpreter, never from a host thread.
                            compaction
-                           {(symbol "__vis_par__") gather-fn
-                            (symbol "__vis_par_isolated__") par-isolated-fn}
                            ;; Canonical stateful-resource lifecycle:
                            ;; `resource_stop(id)` (B-dispatch — act by id;
                            ;; ctx advertises can_stop). Session-scoped so the
@@ -10990,8 +10756,8 @@
             ;; rebuilds this snapshot.
             security-config (security-config-snapshot)
             configured-rw-roots (security-policy/read-write-roots security-config)
-            ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
-            ;; deny-by-default polyglot Context, wires the Clojure tools as Python
+            ;; Engine substrate: embedded CPython (env/create-python-context builds a
+            ;; deny-by-default Python session, wires the Clojure tools as Python
             ;; callables, and installs doc/apropos introspection). Its live roots are the
             ;; workspace overlay plus immutable configured read/write roots. Python
             ;; filesystem bindings consume the same roots through the environment below.
@@ -11112,7 +10878,7 @@
                          :session/state-id session-state-id
                          :channel resolved-channel
                          ;; Immutable canonical security policy plus its live workspace overlay.
-                         ;; Context, GraalPy, native file tools, shell, managed language processes,
+                         ;; Python session, native file tools, shell, managed language processes,
                          ;; and egress all derive from this same environment-owned value.
                          :security-policy security-config
                          :security/filesystem-roots configured-rw-roots
@@ -11169,7 +10935,7 @@
                   :standing-ctx-atom (atom (:standing-ctx persisted-prompt-cache-state))
                   :state-atom state-atom
                   :python-context python-context
-                  ;; A failed Context.interrupt makes reuse permanently unsafe even
+                  ;; A failed guest interrupt makes reuse permanently unsafe even
                   ;; while a probe can still enter around extension-owned host work.
                   ;; The next turn abandons this environment instead.
                   :python-context-retired-atom (atom false)
@@ -11234,7 +11000,7 @@
         env)
       (catch Throwable t
         ;; Best-effort: a teardown must never replace the real failure with its own.
-        (try (res/dispose! @pending) (catch Throwable _ nil))
+        (try (env/dispose-python-context! (:python-context @pending)) (catch Throwable _ nil))
         (throw t)))))
 
 ;; Session env cache
@@ -11260,7 +11026,7 @@
    boundary so its immutable security-policy snapshot rebuilds from the
    freshly-reloaded vis.yml. This is the sanctioned way `/reload` replaces the
    frozen network-domain / filesystem-root policy: the snapshot drives the
-   GraalPy context, egress proxy, and process jail at env-creation time, so it
+   Python session, egress proxy, and process jail at env-creation time, so it
    can only change by rebuilding the env — never by an in-place reseat."}
   policy-reload-epoch
   (atom 0))
@@ -11287,8 +11053,8 @@
   [id]
   (persistance/->uuid id))
 
-;; Idle-env reaper — authoritative backstop against unbounded GraalPy Context
-;; growth. Every cached session env pins a GraalPy `Context` (see
+;; Idle-env reaper — authoritative backstop against unbounded Python session
+;; growth. Every cached session env pins a Python session (see
 ;; `dispose-environment!`); the cache itself is never bounded and the tab-close
 ;; release path (TUI → gateway `/release`) is best-effort and skips busy / still-
 ;; open / stale-registry sessions, so Contexts leaked whenever that path missed.
@@ -11296,10 +11062,10 @@
 ;; gone idle past a TTL — guarded by each entry's `ReentrantLock` (a running
 ;; turn holds it, so `tryLock` failing means "busy, skip") so an eval is never
 ;; killed mid-flight. Evicting a resident env is SAFE: the transcript lives in
-;; the DB and `ensure-env!` transparently rebuilds the Context on the next touch.
+;; the DB and `ensure-env!` transparently rebuilds the session on the next touch.
 
 (def ^:private env-idle-ttl-ms
-  "Idle window before a cached session env's GraalPy Context is disposed by the
+  "Idle window before a cached session env's Python session is disposed by the
    background reaper. Override with `VIS_ENV_IDLE_TTL_MS`; <= 0 disables the TTL
    sweep. Default 15 min.
 
@@ -11335,24 +11101,21 @@
              (* 60 1000))))
 
 (def ^:private env-max-turns-per-ctx
-  "Turns a single session's GraalPy Context serves before the reaper recycles it
+  "Turns a single session's Python session serves before the reaper recycles it
    between turns. Override with `VIS_ENV_MAX_TURNS_PER_CTX`; <= 0 disables.
    Default 5.
 
-   Lowered from 25 because the recycle is far cheaper than it looks and the thing
-   it bounds is the largest single consumer of this process's heap. A live
-   gateway's heap dump was 2 GB of live objects, of which roughly a third was
-   Python string data alone — 2.55M `TruffleString` against 2.87M `byte[]` — plus
-   ~495k `PDict`. That is a session's ephemeral Python working set, and nothing
-   caps it except this number.
+   Lowered from 25 because the recycle is far cheaper than it looks and the
+   thing it bounds is a session's ephemeral Python working set. That set lives
+   in interpreter memory, outside the Java heap counters, which is what the
+   reaper's RSS gate is for; nothing else caps it except this number.
 
-   The recycle itself measures at ~300ms, and effectively all of it is the eager
-   `re` + `json` imports (~198ms + ~108ms); a fresh Engine and Context are ~1ms
-   together once the JVM is warm. Amortized that is 60ms per turn at 5, against
-   turns that run for minutes. What a recycle actually costs is the model's
-   ephemeral globals, which is the POINT of it — `persist-session-defs!` carries
-   the module aliases, scalar constants and function sources across, so what is
-   lost is data the model can rebuild, not code it would have to rewrite.
+   A session is a module namespace inside a process-wide interpreter, so a
+   recycle allocates no new interpreter and re-imports only what the next block
+   asks for. What a recycle actually costs is the model's ephemeral globals,
+   which is the POINT of it — `persist-session-defs!` carries the module
+   aliases, scalar constants and function sources across, so what is lost is
+   data the model can rebuild, not code it would have to rewrite.
 
    A `delay`, never an eager read: `native-image` initializes this namespace at
    BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
@@ -11361,55 +11124,15 @@
                      parse-long)
              5)))
 
-(def ^:private env-heap-watermark-pct
-  "JVM heap-usage percent (used/max) at or above which the reaper treats the
-   process as under memory pressure and force-evicts EVERY idle (unlocked)
-   session env this sweep — ignoring the idle TTL — to shed GraalPy Contexts
-   fast. A running turn holds its entry's lock so it is never evicted; the
-   transcript reloads from the DB on the next touch. Override with
-   `VIS_ENV_HEAP_WATERMARK_PCT`; <= 0 disables the watermark. Default 85.
-
-   A `delay`, never an eager read: `native-image` initializes this namespace at
-   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
-  (delay (or (some-> (System/getenv "VIS_ENV_HEAP_WATERMARK_PCT")
-                     str/trim
-                     parse-long)
-             85)))
-
-(def ^:private env-heap-budget-mb
-  "Absolute heap-used ceiling in MB. At or above it, the reaper force-evicts every
-   idle session env. Override with `VIS_ENV_HEAP_BUDGET_MB`; <= 0 disables.
-
-   RUNTIME-DEPENDENT for the same reason as [[env-rss-budget-mb]]: 2048 is a
-   ceiling on the native image and ordinary working memory on a `-Xmx5g` JVM.
-   Sampled across 482 reaper sweeps from four gateway runs, a JVM gateway's heap
-   ran at a median of 1638 MB and a p90 of 2458 MB, so the 2 GB gate stood at
-   16.8% of sweeps — a gate that open is not reporting pressure, it is reporting
-   the workload. 4096 stands at 2.3%, just ahead of [[env-heap-watermark-pct]]'s
-   85% (1.2% of the same sweeps) so it still fires FIRST, which is the point of
-   having an absolute gate beside a proportional one.
-
-   Why an absolute gate at all when a percentage exists: the percentage is only
-   meaningful where `maxMemory` is, and it says nothing about how much a peer
-   process may need. This one is a flat ceiling a deployment can state outright.
-
-   A `delay`, never an eager read: `native-image` initializes this namespace at
-   BUILD time, so a top-level `getenv` would ship the BUILDER's answer — and the
-   runtime split below would answer for the BUILDER's runtime, not this one."
-  (delay (or (some-> (System/getenv "VIS_ENV_HEAP_BUDGET_MB")
-                     str/trim
-                     parse-long)
-             (if (env/native-image?) 2048 4096))))
-
 (def ^:private env-rss-budget-mb
-  "Resident-set ceiling in MB. JVM heap alone misses GraalPy/native allocations,
+  "Resident-set ceiling in MB. JVM heap alone misses interpreter/native allocations,
    so this gate also forces idle-env eviction when process RSS is high. Override
    with `VIS_ENV_RSS_BUDGET_MB`; <= 0 disables.
 
    RUNTIME-DEPENDENT, because the two runtimes do not carry the same floor. The
    native image keeps 3072; the JVM gets 5120, because a `-Xmx5g` gateway sits
    ABOVE 3 GB resident as a matter of course — heap committed plus metaspace plus
-   GraalPy native is already past it before any session is busy. A gate below the
+   CPython native is already past it before any session is busy. A gate below the
    idle floor is not a gate: measured on a working gateway it read `pressure=true`
    on every single reaper sweep for hours, which drives `effective-ttl` to 0 and
    force-evicts every idle env on every sweep. The reaper was permanently in its
@@ -11421,7 +11144,7 @@
   (delay (or (some-> (System/getenv "VIS_ENV_RSS_BUDGET_MB")
                      str/trim
                      parse-long)
-             (if (env/native-image?) 3072 5120))))
+             (if (util/native-image?) 3072 5120))))
 
 (defn- process-rss-bytes
   "Best-effort process resident set in bytes. Reads procfs on Linux and `ps` on
@@ -11465,23 +11188,19 @@
 
     (if (pos? mx) (long (/ (* 100 (- (.totalMemory rt) (.freeMemory rt))) mx)) 0)))
 
-(defn- memory-pressure-for-rss?
-  [rss-bytes]
-  (or (and (pos? (long @env-heap-watermark-pct))
-           (>= (long (heap-used-pct)) (long @env-heap-watermark-pct)))
-      (and (pos? (long @env-heap-budget-mb))
-           (let [rt (Runtime/getRuntime)]
-             (>= (- (.totalMemory rt) (.freeMemory rt)) (* (long @env-heap-budget-mb) 1024 1024))))
-      (and (pos? (long @env-rss-budget-mb))
-           (>= (long rss-bytes) (* (long @env-rss-budget-mb) 1024 1024)))))
+(defn- memory-pressure?
+  "True when process RSS crosses [[env-rss-budget-mb]].
 
-(defn- heap-pressure?
-  "True when JVM heap percentage, absolute heap, or process RSS crosses its
-   configured gate. The RSS gate catches GraalPy/native memory invisible to the
-   Java heap counters. Accepts a sampled RSS value to avoid duplicate process
+   RSS is the ONE truthful gauge here: a session is a namespace inside the
+   embedded CPython, so what it holds is native memory this process is resident
+   for — never JVM heap. Evicting envs cannot shed heap, so a heap gate would
+   fire on work that has nothing to do with sessions and stay silent on the
+   growth that does. Accepts a sampled RSS value to avoid duplicate process
    calls during metrics and reaper sweeps."
-  ([] (heap-pressure? (process-rss-bytes)))
-  ([rss-bytes] (memory-pressure-for-rss? rss-bytes)))
+  ([] (memory-pressure? (process-rss-bytes)))
+  ([rss-bytes]
+   (and (pos? (long @env-rss-budget-mb))
+        (>= (long rss-bytes) (* (long @env-rss-budget-mb) 1024 1024)))))
 
 (defn- cpu-load-pct
   "Whole-process CPU load as a percent (0–100; -1 when the JVM can't sample the
@@ -11530,7 +11249,7 @@
                                    gc-beans)
      :jvm-thread-count (.getThreadCount thread-bean)
      :env-cache-size (count @cache)
-     :env-heap-pressure (heap-pressure? rss)}))
+     :env-memory-pressure (memory-pressure? rss)}))
 
 (defn- mem-log-enabled?
   "Master switch for memory-observability logging, shared conceptually with the
@@ -11604,7 +11323,7 @@
 
 (defn reap-idle-envs!
   "One reaper sweep: dispose + evict cached session envs idle past
-   `env-idle-ttl-ms` (or, under heap pressure past `env-heap-watermark-pct`,
+   `env-idle-ttl-ms` (or, under memory pressure past `env-rss-budget-mb`,
    EVERY idle env this sweep — TTL ignored), then — if the cache still exceeds
    `env-cache-max` — force-evict the least-recently-active idle entries until
    back under the cap. Every eviction is lock-guarded (a running turn is
@@ -11624,7 +11343,7 @@
         (process-rss-bytes)
 
         pressure?
-        (heap-pressure? rss-bytes)
+        (memory-pressure? rss-bytes)
 
         effective-ttl
         (if pressure? 0 (long @env-idle-ttl-ms))
@@ -11714,8 +11433,6 @@
   (and (pos? (long @env-reaper-interval-ms))
        (or (pos? (long @env-idle-ttl-ms))
            (pos? (long @env-cache-max))
-           (pos? (long @env-heap-watermark-pct))
-           (pos? (long @env-heap-budget-mb))
            (pos? (long @env-rss-budget-mb)))))
 
 (defn- ensure-env-reaper!
@@ -11738,12 +11455,12 @@
         (cache-key session-id)
 
         ;; Whatever this insert is about to displace. Overwriting the entry used
-        ;; to drop it on the floor: its GraalPy Context — and, since every
-        ;; Context now carries its own Engine, that Engine with everything ever
-        ;; built on it — stayed reachable for the life of the process, because
-        ;; nothing else ever disposes an env the cache no longer points at. A
-        ;; gateway up 16h held 36 live Engines against 3 live PythonContexts and
-        ;; only 5 reaper evictions: the difference was displaced envs.
+        ;; to drop it on the floor: its Python session — the namespace, its host
+        ;; doors and the native memory behind them — stayed reachable for the life
+        ;; of the process, because nothing else ever disposes an env the cache no
+        ;; longer points at. A gateway up 16h held 36 such stranded sessions against
+        ;; 3 live ones and only 5 reaper evictions: the difference was displaced
+        ;; envs.
         displaced
         (get @cache k)]
 
@@ -11854,8 +11571,8 @@
 ;; and sandbox bindings read those, NOT the global registry — so a `/reload`
 ;; that swaps the registry must also reseat every cached env. Otherwise a
 ;; newly added extension stays invisible to running sessions and stale rows
-;; keep calling into the closed GraalPy context ("Context execution was
-;; cancelled"). Same propagation pattern as `refresh-cached-routers!`.
+;; keep calling into a disposed Python session, whose doors went with it.
+;; Same propagation pattern as `refresh-cached-routers!`.
 
 (defn set-provider!
   "Set the single active provider config. Persists to disk, updates
@@ -11906,7 +11623,7 @@
 
 (defn- open-env!
   ;; App session entry (create! + resume). The vis engine is the embedded
-  ;; GraalPy Python sandbox — there is no other substrate.
+  ;; CPython Python sandbox — there is no other substrate.
   [id {:keys [channel external-id title workspace-id prewarm?]}]
   (let [router
         (get-router)
@@ -11943,7 +11660,7 @@
       ;; hot render/status paths (`gateway.state/live-env`, `context-snapshot`)
       ;; resolve the env via `env-for` on every poll, and touching here reset
       ;; the idle clock each time — so a rendered-but-idle session was NEVER
-      ;; reaped (its Context stayed resident indefinitely).
+      ;; reaped (its Python session stayed resident indefinitely).
       entry
       (let [env (open-env! k {})]
         (swap! cache (fn [m]
@@ -11955,7 +11672,7 @@
   "Between-turns context recycle (Layer 2): rebuild a FRESH env for session `k`
    and swap it into the existing cache entry IN PLACE — REUSING the same
    `ReentrantLock` so a caller queued on the lock re-reads the fresh env — then
-   dispose the OLD GraalPy Context (and its own per-env DB connection). MUST be
+   dispose the OLD Python session (and its own per-env DB connection). MUST be
    called while holding the entry lock, so no turn races the swap and `old` is
    stable. The transcript lives in the DB; `open-env!` resumes it, so the model
    loses only its ephemeral Python globals — the point of the recycle."
@@ -11993,12 +11710,12 @@
 (defn- detach-entry!
   "Drop `entry` from the cache, but only while it is still `k`'s entry.
 
-   Nothing is disposed and the lock is not touched: the thread parked inside
-   that Context still owns both, and closing a Context out from under a live
-   guest thread is not safe. So the Context, its actions-pool thread and its
-   native heap leak until the process exits — which beats a session that can
-   never take another turn. The next [[ensure-env!]] builds a fresh env under a
-   FRESH lock, and the ghost is left holding an object nobody references."
+   Nothing is disposed and the lock is not touched: the thread parked inside that
+   session still owns both, and dropping a session out from under a live guest
+   thread is not safe. So the session and the native memory it holds leak until
+   the process exits — which beats a session that can never take another turn.
+   The next [[ensure-env!]] builds a fresh env under a FRESH lock, and the ghost
+   is left holding an object nobody references."
   [k entry]
   (loop []
 
@@ -12027,7 +11744,7 @@
    it, WITHOUT ever parking on it forever.
 
    This used to be a bare `.lock`. A turn wedged inside the engine — parked on
-   GraalPy's GIL, where `Thread.interrupt` cannot reach it — never unlocks, so
+   CPython's GIL, where `Thread.interrupt` cannot reach it — never unlocks, so
    every later turn for that session parked in `Unsafe.park`: `turn.started` on
    the wire, not one event after it, and deaf to its own cancel, for the life of
    the daemon. Meanwhile the cancel backstop had already synthesized
@@ -12037,11 +11754,11 @@
    CONDEMNED one is detached and rebuilt rather than waited on; `tryLock` is
    interruptible, so a queued turn's own cancel finally reaches it.
 
-   A FREE lock is not enough. A failed `Context.interrupt` retires the
-   environment before the Java worker interrupt: extension-owned host work may
-   have released the GIL, so a probe can answer now and the returning host thread
-   can still die while reacquiring it later. A context whose GIL is already leaked
-   instead fails the probe. `env-python/context-enterable?` rejects both states,
+   A FREE lock is not enough. A failed guest interrupt retires the environment
+   before the Java worker interrupt: extension-owned host work may have released
+   the GIL, so a probe can answer now and the returning host thread can still die
+   while reacquiring it later. A session whose GIL is already leaked instead fails
+   the probe. `env-python/context-enterable?` rejects both states,
    so the next turn detaches and rebuilds the environment before entering Python.
    Nothing is disposed: host work may still be inside a retired context, and
    closing a context with an already leaked GIL cannot safely enter it. The rescue
@@ -12272,22 +11989,20 @@
        ;; `entry`, so the queued turn runs against the CURRENT context.
        (turn! (:environment (or (get @cache k) entry)) message-vec opts)
        (finally
-         ;; Housekeeping must NEVER strand the lock. A throw from `touch-entry!`,
-         ;; `bump-turns!` or the guest-side `collect-garbage!` used to skip the
-         ;; `.unlock` below, pinning this session's entry as permanently
-         ;; "busy": `evict-if-idle!` tryLocks, fails forever, and the Context
-         ;; (plus its actions-pool thread and native heap) leaks for the life of
-         ;; the gateway. Unlock in an inner `finally` so it is unconditional.
+         ;; Housekeeping must NEVER strand the lock. A throw from `touch-entry!`
+         ;; or `bump-turns!` used to skip the `.unlock` below, pinning this
+         ;; session's entry as permanently "busy": `evict-if-idle!` tryLocks,
+         ;; fails forever, and the session — plus every door and namespace it
+         ;; holds — leaks for the life of the gateway. Unlock in an inner
+         ;; `finally` so it is unconditional.
          (try (let [cur (or (get @cache k) entry)]
                 (touch-entry! cur)
                 (let [n (bump-turns! cur)]
-                  (if (and (pos? (long @env-max-turns-per-ctx))
-                           (>= (long n) (long @env-max-turns-per-ctx)))
-                    ;; Layer 2: recycle this session's Context between turns so a
-                    ;; single never-idle session can't grow it unbounded.
-                    (try (recycle-env! k) (catch Throwable _ nil))
-                    ;; Layer 1: best-effort guest gc.collect() between turns.
-                    (env/collect-garbage! (:environment cur)))))
+                  ;; Recycle this session's interpreter namespace between turns so a
+                  ;; single never-idle session cannot grow it unbounded.
+                  (when (and (pos? (long @env-max-turns-per-ctx))
+                             (>= (long n) (long @env-max-turns-per-ctx)))
+                    (try (recycle-env! k) (catch Throwable _ nil)))))
               (catch Throwable _ nil)
               (finally (.unlock lock))))))))
 

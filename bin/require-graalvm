@@ -4,12 +4,12 @@
 #
 # Why this exists at all: three different JDKs will happily start a Clojure REPL
 # here and only fail later, expensively.
-#   * a stock JDK 25 (temurin/oracle): boots, then the embedded GraalPy refuses
-#     to initialise (no Truffle runtime) and there is no `native-image` at all;
+#   * a stock JDK 25 (temurin/oracle): boots, but there is no `native-image` at
+#     all;
 #   * Oracle GraalVM: builds fine but relicenses the shipped binary under GFTC —
 #     the exact thing audit/README.md §4.1 says we do not do;
-#   * a NEAR version (CE 25.0.2, CE 25.1.1): Truffle/SVM hard-refuse the
-#     org.graalvm.* 25.1.3 jars pinned in deps.edn, mid-build or mid-boot.
+#   * a NEAR version (CE 25.0.2, CE 25.1.1): the pin is locked to one version so
+#     an image is never built on a JDK the build was not proven against.
 # So: one pinned edition+version, one check, one installer, used by CI, the
 # Dockerfile, build.clj and humans.
 #
@@ -146,13 +146,10 @@ trust_java_options() {
 
 
 # ── The OTHER half of the pin ────────────────────────────────────────────────
-# A correct JDK is only half the contract. deps.edn's org.graalvm.* jars and
-# .sdkmanrc's candidate must name the SAME version as .graalvm-version, or the
-# failure is late and opaque: Truffle refuses a runtime whose built-in version
-# differs from the polyglot jars, minutes into the image build. Until now only
-# the Dockerfile checked it (`check-graal-pins`), so a host build could drift
-# silently — this script is the one gate CI, build.clj, the Dockerfile and
-# humans all pass through, so it enforces the whole pin, everywhere.
+# A correct JDK is only half the contract. .sdkmanrc's candidate must name the
+# SAME version as .graalvm-version, and the pin's own lock must hold. This
+# script is the one gate CI, build.clj, the Dockerfile and humans all pass
+# through, so it enforces the whole pin, everywhere.
 check_pins() {
   local bad=0 v
   # ── The pin is LOCKED (see .graalvm-version) ───────────────────────────────
@@ -165,15 +162,6 @@ check_pins() {
     say "    but GRAAL_VERSION=${GRAAL_VERSION}. Move GRAAL_MAX_VERSION deliberately"
     say "    (or set GRAAL_PIN_LOCKED=\"false\") — see .graalvm-version."
     exit 1
-  fi
-  if [ -f "${repo_root}/deps.edn" ]; then
-    while read -r v; do
-      [ "$v" = "$GRAAL_VERSION" ] || {
-        say "  ✗ deps.edn pins org.graalvm.* ${v}, .graalvm-version says ${GRAAL_VERSION}"
-        bad=1
-      }
-    done < <(sed -n 's|.*org\.graalvm\.[^ ]* *{:mvn/version *"\([^"]*\)".*|\1|p' \
-                    "${repo_root}/deps.edn")
   fi
   if [ -f "${repo_root}/.sdkmanrc" ]; then
     v="$(sed -n 's/^java=//p' "${repo_root}/.sdkmanrc" | head -n1)"

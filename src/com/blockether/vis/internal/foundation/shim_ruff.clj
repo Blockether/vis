@@ -19,7 +19,7 @@
   "Run `f`, returning the 2-vector the ruff shim expects: `[true result]` on
    success, `[false message]` on any Throwable. Errors cross the boundary as
    DATA so the Python side can raise a catchable `ruff.RuffError` instead of a
-   raw host `PolyglotException` (GraalPy does not route host exceptions through
+   raw host error (a Throwable crossing the bridge is not routed through
    Python's `except Exception`)."
   [f]
   (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))

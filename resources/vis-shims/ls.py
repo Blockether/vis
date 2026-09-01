@@ -4,7 +4,7 @@
 # inside the block it is already running rather than a wire round trip.
 # The walk stays on the HOST (fff: .gitignore/.ignore aware, directories first),
 # and errors cross the boundary as DATA - a kind the shim turns into the real
-# Python exception, since GraalPy does not route host exceptions through except.
+# Python exception, since CPython does not route host exceptions through except.
 
 
 def __vis_install_ls__():

@@ -9,6 +9,8 @@
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.main]
             [com.blockether.vis.internal.python-project]
+            [com.blockether.vis.internal.python-test-runner]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private python-cli-context #'com.blockether.vis.internal.main/python-cli-context)
@@ -28,6 +30,31 @@
     (with-redefs [config/original-stdout ps]
       (let [exit (run-python-source! ctx code)]
         {:exit exit :out (.toString baos "UTF-8")}))))
+
+(def ^:private ensure-pytest!
+  "Install the real `pytest` for the sandbox once, so a `-m pytest` case runs on a
+   machine that has never had it."
+  #'com.blockether.vis.internal.python-test-runner/ensure-pytest!)
+
+(defn- scratch-dir!
+  "A throwaway directory INSIDE the process's working directory, which is exactly
+   what `python-cli-context` roots the interpreter at.
+
+   The CLI interpreter is confined to the directory the human ran it in, so a
+   fixture in the system temp folder is a directory the guest genuinely may not
+   read — the confinement is the product, not the obstacle."
+  ^java.nio.file.Path [^String prefix]
+  (let [target (doto (java.io.File. "target") .mkdirs)]
+    (java.nio.file.Files/createTempDirectory (.toPath target)
+                                             prefix
+                                             (make-array java.nio.file.attribute.FileAttribute 0))))
+
+(defn- delete-tree!
+  "Delete `dir` and everything under it, deepest entry first."
+  [^java.nio.file.Path dir]
+  (with-open [walk (java.nio.file.Files/walk dir (make-array java.nio.file.FileVisitOption 0))]
+    (doseq [^java.nio.file.Path p (reverse (vec (.toArray (.sorted walk))))]
+      (.delete (.toFile p)))))
 
 (defdescribe
   python-cli-test
@@ -49,19 +76,7 @@
         (let [{:keys [exit out]} (run-src ctx "print('carry', carry + 1)")]
           (expect (= 0 exit))
           (expect (re-find #"carry 8" out))))
-    (it "numpy shim computes"
-        (let [{:keys [exit out]}
-              (run-src ctx "import numpy as np\nprint('np', int(np.arange(5).sum()))")]
-          (expect (= 0 exit))
-          (expect (re-find #"np 10" out))))
-    (it "pandas shim computes"
-        (let [{:keys [exit out]}
-              (run-src ctx
-                       (str "import pandas as pd\n"
-                            "print('pd', int(pd.DataFrame({'a': [1, 2, 3]})['a'].sum()))"))]
-          (expect (= 0 exit))
-          (expect (re-find #"pd 6" out))))
-    (it "sqlite3 shim roundtrips"
+    (it "the standard library is CPython's own, not a reimplementation"
         (let [{:keys [exit out]}
               (run-src ctx
                        (str "import sqlite3\n"
@@ -71,19 +86,24 @@
                             "print('sql', c.execute('select sum(n) from t').fetchone()[0])"))]
           (expect (= 0 exit))
           (expect (re-find #"sql 7" out))))
-    (it "yaml shim parses"
-        (let [{:keys [exit out]} (run-src ctx
-                                          (str "import yaml\n"
-                                               "d = yaml.safe_load('a: 1\\nb: [2, 3]')\n"
-                                               "print('yaml', d['a'], d['b'][1])"))]
+    (it "the stdlib arrives whole — the modules a shim never covered import too"
+        (let [{:keys [exit out]}
+              (run-src ctx
+                       (str "import csv, decimal, lzma, secrets, unicodedata, zlib\n"
+                            "print('stdlib', unicodedata.name('A'), decimal.Decimal('0.1') + 0)"))]
           (expect (= 0 exit))
-          (expect (re-find #"yaml 1 3" out))))
-    (it "http-client shims import clean"
+          (expect (re-find #"stdlib LATIN CAPITAL LETTER A 0.1" out))))
+    ;; The shims are gone: a distribution the sandbox never installed is simply
+    ;; not there, and says so in Python's own words instead of answering with a
+    ;; reimplementation. With network it would be fetched; this context has none.
+    (it "a distribution nobody installed is absent, not imitated"
         (let [{:keys [exit out]} (run-src ctx
-                                          (str "import requests, httpx, bs4, toml, tabulate\n"
-                                               "print('imports ok')"))]
+                                          (str "try:\n"
+                                               "    import pandas\n" "    print('imitated')\n"
+                                               "except ImportError as e:\n"
+                                               "    print('absent', type(e).__name__)"))]
           (expect (= 0 exit))
-          (expect (re-find #"imports ok" out))))
+          (expect (re-find #"absent ModuleNotFoundError" out))))
     (it "a no-network context blocks socket name resolution"
         (let [{:keys [exit out]} (run-src ctx
                                           (str "import socket\n" "try:\n"
@@ -168,22 +188,20 @@
             (java.io.ByteArrayInputStream. (.getBytes "piped-payload\n" "UTF-8"))
 
             {:keys [python-context]}
-            (env/create-python-context {} nil {:enabled? false} in)]
+            (tpc/new-context {} nil {:enabled? false} in)]
 
         (try (let [{:keys [stdout error]} (env/run-python-block
                                             python-context
                                             "import sys\nprint('stdin', sys.stdin.read().strip())")]
                (expect (nil? error))
                (expect (re-find #"stdin piped-payload" (str stdout))))
-             (finally (.close ^org.graalvm.polyglot.Context python-context))))))
+             (finally (env/dispose-python-context! python-context))))))
 
 (defdescribe
   python-module-exit-test
   (it "preserves a bundled pytest collection failure's non-zero exit status"
       (let [dir
-            (java.nio.file.Files/createTempDirectory
-              "vis-python-module-exit-"
-              (make-array java.nio.file.attribute.FileAttribute 0))
+            (scratch-dir! "vis-python-module-exit-")
 
             test-file
             (.toFile (.resolve dir "test_import.py"))
@@ -195,6 +213,7 @@
             (python-cli-context {:network? false :argv ["pytest" (.getAbsolutePath test-file)]})]
 
         (try
+          (ensure-pytest! ctx)
           (let [baos
                 (java.io.ByteArrayOutputStream.)
 
@@ -205,20 +224,19 @@
                 (with-redefs [config/original-stdout ps]
                   ((var-get #'com.blockether.vis.internal.main/run-python-module!) ctx "pytest"))]
 
-            (expect (= 1 exit))
+            ;; pytest's own code, not a flattened 1: a collection error is
+            ;; ExitCode.INTERRUPTED (2), and the point of the case is that the
+            ;; module runner hands the guest's status back untouched.
+            (expect (= 2 exit))
             (expect (re-find #"ERROR collecting" (.toString baos "UTF-8"))))
-          (finally (.close ^org.graalvm.polyglot.Context ctx)
-                   (.delete test-file)
-                   (.delete (.toFile dir)))))))
+          (finally (env/dispose-python-context! ctx) (delete-tree! dir))))))
 
 (defdescribe
   python-module-pythonpath-test
   (it
     "uses PYTHONPATH for pytest collection, like a src-layout project"
     (let [dir
-          (java.nio.file.Files/createTempDirectory "vis-python-pythonpath-"
-                                                   (make-array java.nio.file.attribute.FileAttribute
-                                                               0))
+          (scratch-dir! "vis-python-pythonpath-")
 
           src
           (.resolve dir "src")
@@ -249,7 +267,8 @@
                                :argv ["pytest" (.getAbsolutePath test-file)]
                                :env {"PYTHONPATH" (.toString src)}})]
 
-      (try (let [baos
+      (try (ensure-pytest! ctx)
+           (let [baos
                  (java.io.ByteArrayOutputStream.)
 
                  ps
@@ -261,12 +280,7 @@
 
              (expect (= 0 exit))
              (expect (re-find #"1 passed" (.toString baos "UTF-8"))))
-           (finally (.close ^org.graalvm.polyglot.Context ctx)
-                    (.delete test-file)
-                    (.delete init-file)
-                    (.delete (.toFile package))
-                    (.delete (.toFile src))
-                    (.delete (.toFile dir)))))))
+           (finally (env/dispose-python-context! ctx) (delete-tree! dir))))))
 
 (def ^:private python-project-import-roots com.blockether.vis.internal.python-project/import-roots)
 
@@ -274,9 +288,7 @@
   "Materialise a throwaway project: `pyproject.toml` plus the `dirs` that its
    metadata points at. Returns the project root as a `java.io.File`."
   [pyproject dirs]
-  (let [root (.toFile (java.nio.file.Files/createTempDirectory
-                        "vis-python-srclayout-"
-                        (make-array java.nio.file.attribute.FileAttribute 0)))]
+  (let [root (.toFile (scratch-dir! "vis-python-srclayout-"))]
     (doseq [d dirs]
       (.mkdirs (java.io.File. root ^String d)))
     (spit (java.io.File. root "pyproject.toml") pyproject)
@@ -286,9 +298,7 @@
   "Materialise a throwaway project from a `name -> content` map, plus the `dirs`
    its metadata points at. Returns the project root as a `java.io.File`."
   [files dirs]
-  (let [root (.toFile (java.nio.file.Files/createTempDirectory
-                        "vis-python-srclayout-"
-                        (make-array java.nio.file.attribute.FileAttribute 0)))]
+  (let [root (.toFile (scratch-dir! "vis-python-srclayout-"))]
     (doseq [d dirs]
       (.mkdirs (java.io.File. root ^String d)))
     (doseq [[name content] files]
@@ -297,8 +307,8 @@
 
 (defdescribe
   python-src-layout-inference-test
-  ;; The declarations are read by PYTHON's own `tomllib`/`configparser` inside a
-  ;; GraalPy context, so these cases need a live interpreter -- one for the ns.
+  ;; The declarations are read by PYTHON's own `tomllib`/`configparser` inside the
+  ;; interpreter, so these cases need a live one -- one for the ns.
   (let [ctx
         (python-cli-context {:network? false})
 
@@ -380,23 +390,17 @@
 ;; guest `sys.stderr` fell through to `System/err` — which `config/init-cli!` has
 ;; already pointed at vis.log. Every guest traceback, warning and
 ;; `sys.stderr.write` was silently discarded, pytest's `-s` stderr included.
+;; The interpreter owns descriptor 2 itself now, so what this guards is that
+;; nothing on the host ever takes it away again.
 (defdescribe python-cli-stderr-test
-             (it "wires guest sys.stderr to the process's real stderr, not the log file"
-                 (let [baos
-                       (java.io.ByteArrayOutputStream.)
-
-                       ps
-                       (java.io.PrintStream. baos true "UTF-8")
-
-                       ctx
-                       (with-redefs [config/original-stderr ps]
-                         (python-cli-context {:network? false}))]
-
-                   (try (let [{:keys [error]} (env/run-python-block
-                                                ctx
-                                                (str "import sys\n"
-                                                     "sys.stderr.write('ERR-DIRECT\\n')\n"
-                                                     "sys.stderr.flush()"))]
+             (it "leaves guest sys.stderr on the process's own descriptor 2"
+                 (let [ctx (python-cli-context {:network? false})]
+                   (try (let [{:keys [stdout error]}
+                              (env/run-python-block
+                                ctx
+                                (str "import sys\n" "sys.stderr.write('ERR-DIRECT\\n')\n"
+                                     "sys.stderr.flush()\n"
+                                     "print('stderr fd', sys.stderr.fileno())"))]
                           (expect (nil? error))
-                          (expect (re-find #"ERR-DIRECT" (.toString baos "UTF-8"))))
-                        (finally (.close ^org.graalvm.polyglot.Context ctx))))))
+                          (expect (re-find #"stderr fd 2" (str stdout))))
+                        (finally (env/dispose-python-context! ctx))))))

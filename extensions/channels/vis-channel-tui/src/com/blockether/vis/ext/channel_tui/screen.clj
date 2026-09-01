@@ -840,7 +840,7 @@
          true)))
 
 (defn- local-registry-slash-commands
-  "The manifest-only slash catalog available without starting GraalPy in this process."
+  "The manifest-only slash catalog available without starting CPython in this process."
   []
   (try (let [specs
              (filter slash-available-in-tui? (vis/registered-slashes))
@@ -933,7 +933,7 @@
 
 (defn- start-deferred-gateway-slash-load!
   "Ask the already-listening gateway for its catalog after the first usable frame.
-   The gateway initializes Python once; this TUI process never constructs GraalPy."
+   The gateway initializes Python once; this TUI process never constructs CPython."
   [session-id]
   (vis/worker-future "tui-gateway-slash-load"
                      (fn []

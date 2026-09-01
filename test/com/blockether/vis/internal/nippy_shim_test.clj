@@ -1,26 +1,24 @@
-(ns com.blockether.vis.internal.nippy-compat-shim-test
+(ns com.blockether.vis.internal.nippy-shim-test
   "The Nippy shim exposes Vis persistence BLOB decoding/encoding to real sandbox
    Python while preserving the strings-only boundary and disabling Java
    Serializable fallback."
-  (:require [com.blockether.vis.internal.env-python :as ep]
-            [com.blockether.vis.internal.foundation.shim-nippy :as shim-nippy]
+  (:require [com.blockether.vis.internal.foundation.shim-nippy :as shim-nippy]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]
             [taoensso.nippy :as nippy])
   (:import [java.util Base64 Date]
-           [mikera.vectorz Vector Vector1 Vector2 Vector3 Vector4]
-           [org.graalvm.polyglot Context]))
+           [mikera.vectorz Vector Vector1 Vector2 Vector3 Vector4]))
 
-(defn- ev [^Context context code] (ep/->clj (.eval context "python" code)))
+(defn- ev [context code] (tpc/ev context code))
 
 (defmacro with-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (tpc/shared)]
+  `(let [~(with-meta 'python-context {:tag `String}) (tpc/shared)]
      ~@body))
 
 (defmacro with-fresh-python-context
   [& body]
-  `(tpc/with-own [~(with-meta 'python-context {:tag `Context}) {}] ~@body))
+  `(tpc/with-own [~(with-meta 'python-context {:tag `String}) {}] ~@body))
 
 (defn- encoded-fixture [value] (.encodeToString (Base64/getEncoder) (nippy/freeze value)))
 
@@ -33,12 +31,15 @@
 
 (defdescribe
   nippy-module-test
-  (it "stays lazy, imports as a module, and publishes no-import helpers"
+  (it "is a real module whose functions ARE the prebound names"
+      ;; The door is seeded WITH the session rather than imported on first use:
+      ;; there is one interpreter and one `nippy` module in it, and the two names
+      ;; the prompt advertises are the module's own functions under another name.
       (with-fresh-python-context
         (expect (true?
                   (ev python-context
-                      (str "import sys\n" "before = 'nippy' not in sys.modules\n"
-                           "import nippy\n" "before and nippy is sys.modules['nippy'] "
+                      (str "import sys\n"
+                           "import nippy\n" "nippy is sys.modules['nippy'] "
                            "and nippy.decode is nippy_decode and nippy.encode is nippy_encode "
                            "and nippy.loads is nippy.decode and nippy.dumps is nippy.encode")))))))
 

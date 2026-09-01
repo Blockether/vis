@@ -62,7 +62,7 @@
                           StandardCopyOption)))
 
 ;; Tools in this namespace (grep/cat/patch/move/…) can execute
-;; DEFERRED on a virtual thread that has entered the GraalPy polyglot Context —
+;; DEFERRED on a virtual thread that has entered the CPython Python session —
 ;; e.g. inside `await gather(grep(a), cat(b))`. While on a context-entered thread, GraalVM's
 ;; HostAccess DENIES reflective Java calls (clojure.lang.Reflector → "Cannot
 ;; reflectively invoke …"). So every Java interop call here MUST compile to a
@@ -874,9 +874,7 @@
   "First `:fs/access` refusal among `paths`, or nil when every one is allowed.
 
    ONE place asks the gate, so Python bindings and sandbox `open(...)` cannot
-   drift into two vocabularies. `operation` is the verb the hook sees
-   (`\"file-read\"`, `\"file-write\"`) — the same vocabulary `internal/sandbox-fs`
-   passes for guest IO."
+   (`\"file-read\"`, `\"file-write\"`)."
   [env kind operation paths]
   (when (extension/gate-hooked? :fs/access)
     (some (fn [path]

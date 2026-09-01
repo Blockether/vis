@@ -911,7 +911,7 @@
 (defdescribe
   fd-exhaustion-kind-test
   ;; Regression: vis session 7d3f9026 — a sandbox os.walk that did
-  ;; `open(fp).read()` without `with` leaked file descriptors under GraalPy,
+  ;; `open(fp).read()` without `with` leaked file descriptors under CPython,
   ;; exhausting the JVM's shared descriptor table. That broke the OAuth refresh
   ;; SOCKET, so the turn failed and surfaced as a generic "Provider unavailable"
   ;; — masking the real cause. The FD signature must be recognised wherever it
@@ -925,7 +925,7 @@
         (expect (= :file-descriptors-exhausted (perr/provider-error-kind err)))
         (expect (= "Out of file descriptors" (perr/provider-error-title err)))
         (expect (re-find #"(?i)file descriptors" (perr/provider-error-explanation err)))
-        (expect (re-find #"GraalPy" (perr/provider-error-explanation err)))
+        (expect (re-find #"CPython" (perr/provider-error-explanation err)))
         ;; The sentence DENIES an outage ("This is NOT a provider outage"), so the
         ;; guard has to forbid the CLAIM, not the two words that carry the denial.
         (expect (str/includes? (perr/provider-error-explanation err) "NOT a provider outage"))

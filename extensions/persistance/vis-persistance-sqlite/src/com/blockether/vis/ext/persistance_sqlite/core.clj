@@ -2575,13 +2575,7 @@
    data. These get a :vis/ref marker
    so the system knows to re-eval from the `expression` column to reconstruct them."
   [v]
-  (or (fn? v)
-      (instance? clojure.lang.Var v)
-      (instance? java.util.concurrent.Future v)
-      (some-> v
-              class
-              .getName
-              (str/starts-with? "org.graalvm.polyglot."))))
+  (or (fn? v) (instance? clojure.lang.Var v) (instance? java.util.concurrent.Future v)))
 
 (defn- freeze-safe
   "Prepare `v` for nippy serialization.

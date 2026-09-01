@@ -11,19 +11,13 @@
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.manifest :as manifest]
+            [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.io File]
-           [org.graalvm.polyglot Context]))
+  (:import [java.io File]))
 
 (def ^:private shim-ns-dir "src/com/blockether/vis/internal/foundation")
 
 (def ^:private shim-resource-dir "resources/vis-shims")
-
-(def ^:private env-python-installed
-  "Python shim sources NOT contributed as `:ext/sandbox-shims`. `posix.py` is
-   installed directly by `env-python/install-posix-refusal-shim!` into every
-   sandbox context, so it deliberately has no `shim_*.clj`."
-  #{"vis-shims/posix.py"})
 
 (defn- shim-namespaces
   "Every namespace the distribution initializes that lends sandbox shims. Role is
@@ -62,9 +56,16 @@
   (extension/sandbox-shims))
 
 (defdescribe shim-registration-test
-             (it "finds the shim namespaces on disk at all"
-                 ;; Guards the guard: a wrong directory would make every check below vacuous.
-                 (expect (< 10 (count (shim-ns-files)))))
+             (it "finds the doors on disk at all"
+                 ;; Guards the guard: a wrong directory would make every check below
+                 ;; vacuous. A door is a capability the HOST performs, so this set is
+                 ;; closed and small — anything a wheel can serve is pip's job, not a
+                 ;; shim's.
+                 (expect (= #{"shim_anydoc.clj" "shim_attach.clj" "shim_ls.clj" "shim_nippy.clj"
+                              "shim_ruff.clj"}
+                            (set (map (fn [^File f]
+                                        (.getName f))
+                                      (shim-ns-files))))))
              (it "lists every shim_*.clj in manifest initialization"
                  (let [listed
                        (shim-namespaces)
@@ -138,19 +139,13 @@
                             (filter (fn [^String n]
                                       (.endsWith n ".py")))
                             (map (fn [^String n]
-                                   (str "vis-shims/" n)))
-                            (remove env-python-installed))
+                                   (str "vis-shims/" n))))
 
                        orphans
                        (remove declared on-disk)]
 
                    (expect (empty? orphans)
                            (str "Python shim sources nobody declares: " (pr-str orphans)))))
-             (it "still installs the env-python-owned posix bridge"
-                 ;; The one documented exception must keep existing, or `subprocess` /
-                 ;; `os.system` stop routing to the shell tools.
-                 (doseq [resource env-python-installed]
-                   (expect (some? (io/resource resource)) (str resource " is missing"))))
              (it "embeds vis-shims/ in the native image"
                  ;; Without this native-image argument every shim resolves in dev and none
                  ;; of them resolves in the shipped binary.
@@ -166,8 +161,8 @@
                  (filter :shim/docs)
                  first)
 
-            ^Context ctx
-            (:python-context (ep/create-python-context {}))
+            ctx
+            (:python-context (tpc/new-context {}))
 
             name
             (first (concat (:shim/imports shim) (:shim/globals shim)))
@@ -201,15 +196,16 @@
                  distinct
                  vec)
 
-            ^Context ctx
-            (:python-context (ep/create-python-context {}))
+            ctx
+            (:python-context (tpc/new-context {}))
 
             code
             (str "_names = [" (str/join ", " (map pr-str names))
                  "]\n" "print([n for n in _names if (n + '(') not in doc(n)])")
 
             undocumented
-            (try (:stdout (ep/run-python-block ctx code "t1/i1")) (finally (.close ctx)))]
+            (try (:stdout (ep/run-python-block ctx code "t1/i1"))
+                 (finally (ep/dispose-python-context! ctx)))]
 
         ;; Guards the guard: an empty name list would make the check vacuous.
         (expect (< 5 (count names)))

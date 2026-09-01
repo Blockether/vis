@@ -10,18 +10,16 @@
 # Bundle layout (exactly what `vis-agent update` unpacks):
 #   vis-agent             the public Bash wrapper
 #   vis-agent-native      the private native runtime
-#   vis-agent-resources/  GraalPy/Truffle language resources
+#   vis-agent-python/     the embedded CPython: cdylib + vendored interpreter
 #   vis-agent-native.build  the build stamp: version, commit, track, timestamp
 #   install-vis-agent     the installer, so a bundle can bootstrap itself
 #
-# The resources DIRECTORY is not optional. The image is built with
-# `-H:-IncludeLanguageResources -H:+CopyLanguageResources` (see
-# resources/META-INF/native-image/com.blockether/vis/native-image.properties):
-# the Python stdlib is no longer inside the executable, native-image writes it to
-# `resources/` next to the binary instead, and shipping the binary alone gives
-# every user a runtime whose first Python call dies with
-# "ModuleNotFoundError: No module named 'ast'". Hence: hard error, never a
-# warning.
+# The interpreter DIRECTORY is not optional. It is tens of megabytes, so
+# `clojure -T:build native` stages it beside the binary instead of embedding it
+# (build.clj `stage-python-sidecar!`), the wrapper points
+# VIS_PYTHON_NATIVE_PATH at it, and shipping the binary alone gives every user a
+# runtime whose first Python call dies with a library-not-found. Hence: hard
+# error, never a warning.
 set -euo pipefail
 
 die() { printf 'stage-release-bundle: %s\n' "$@" >&2; exit 1; }
@@ -60,10 +58,10 @@ if [[ -n "$from_dir" ]]; then
     [[ -f "$from_dir/$entry" ]] || die "$from_dir is missing $entry"
     install -m 0755 "$from_dir/$entry" "$bundle/$entry"
   done
-  [[ -d "$from_dir/vis-agent-resources" ]] || \
-    die "$from_dir is missing vis-agent-resources/ — the language-resources sidecar" \
-        "Rebuild it: the image must be built with -H:+CopyLanguageResources."
-  cp -R "$from_dir/vis-agent-resources" "$bundle/vis-agent-resources"
+  [[ -d "$from_dir/vis-agent-python" ]] || \
+    die "$from_dir is missing vis-agent-python/ — the embedded CPython sidecar" \
+        "Rebuild it: 'clojure -T:build native' stages it beside the image."
+  cp -R "$from_dir/vis-agent-python" "$bundle/vis-agent-python"
   [[ -f "$from_dir/vis-agent-native.build" ]] || \
     die "$from_dir is missing vis-agent-native.build — the build stamp" \
         "'clojure -T:build native' writes it beside the image; without it nobody" \
@@ -72,15 +70,15 @@ if [[ -n "$from_dir" ]]; then
 else
   [[ -x "$native" ]] || die "no native runtime at $native"
   native_dir="$(cd -P "$(dirname "$native")" && pwd)"
-  resources="${VIS_NATIVE_RESOURCES:-$native_dir/resources}"
-  [[ -d "$resources" ]] || \
-    die "no language-resources sidecar at $resources" \
-        "native-image writes it beside the image when the build sets" \
-        "-H:+CopyLanguageResources; rebuild with 'clojure -T:build native'."
+  python_dir="${VIS_NATIVE_PYTHON:-$native_dir/vis-agent-python}"
+  [[ -d "$python_dir" ]] || \
+    die "no embedded CPython sidecar at $python_dir" \
+        "'clojure -T:build native' stages it beside the image; rebuild instead" \
+        "of packing a runtime with no interpreter."
   install -m 0755 "$repo_root/bin/vis-agent" "$bundle/vis-agent"
   install -m 0755 "$native" "$bundle/vis-agent-native"
   install -m 0755 "$repo_root/bin/install-vis-agent" "$bundle/install-vis-agent"
-  cp -R "$resources" "$bundle/vis-agent-resources"
+  cp -R "$python_dir" "$bundle/vis-agent-python"
   # Provenance travels WITH the binary, and beside it: a runtime that aborts on
   # every command still has to answer which commit built it.
   [[ -f "$native.build" ]] || \

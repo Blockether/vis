@@ -356,7 +356,7 @@ class _State(_MutableMapping):
     """
 
     def _keys(self):
-        # Inside Vis the host answers a polyglot list; outside it, a real one.
+        # Inside Vis the host answers a host-marshalled list; outside it, a real one.
         return [str(key) for key in _host.state_keys()]
 
     def get(self, key, default=None):

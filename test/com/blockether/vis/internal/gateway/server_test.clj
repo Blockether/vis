@@ -2325,7 +2325,7 @@
                 :turns-executing 2
                 :turns-waiting 1
                 :env-cache-size 3
-                :env-heap-pressure true
+                :env-memory-pressure true
                 :jvm-heap-used-bytes 1024
                 :jvm-gc-count-total 4
                 :jvm-thread-count 9})]
@@ -2335,7 +2335,7 @@
     (testing "exports resource-pressure and concurrency gauges"
       (is (re-find #"vis_turns_executing 2" text))
       (is (re-find #"vis_turns_waiting 1" text))
-      (is (re-find #"vis_env_heap_pressure 1" text))
+      (is (re-find #"vis_env_memory_pressure 1" text))
       (is (re-find #"vis_jvm_heap_used_bytes 1024" text)))))
 
 (defn- non-loopback-ipv4

@@ -23,7 +23,7 @@
 
 (set! *warn-on-reflection* true)
 
-;; Data — what crosses the Clojure -> GraalPy boundary
+;; Data — what crosses the Clojure -> CPython boundary
 
 (s/def :vis.doc/name string?)
 (s/def :vis.doc/text string?)

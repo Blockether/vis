@@ -1066,7 +1066,7 @@
          [:turn-concurrency-limit "vis_turn_concurrency_limit" "gauge"]
          [:replay-events-retained "vis_replay_events_retained" "gauge"]
          [:env-cache-size "vis_env_cache_size" "gauge"]
-         [:env-heap-pressure "vis_env_heap_pressure" "gauge"]
+         [:env-memory-pressure "vis_env_memory_pressure" "gauge"]
          [:jvm-heap-used-bytes "vis_jvm_heap_used_bytes" "gauge"]
          [:process-rss-bytes "vis_process_rss_bytes" "gauge"]
          [:jvm-heap-committed-bytes "vis_jvm_heap_committed_bytes" "gauge"]

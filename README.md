@@ -16,7 +16,7 @@
 
 # Vis
 
-Vis is a coding agent that writes Python into a sandboxed GraalPy runtime, keeps durable state outside the context window, and inspects/changes the host project through tools.
+Vis is a coding agent that writes Python into a sandboxed CPython runtime, keeps durable state outside the context window, and inspects/changes the host project through tools.
 
 ## Install
 

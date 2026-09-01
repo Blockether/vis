@@ -14,8 +14,8 @@
             [com.blockether.vis.internal.shell-log :as shell-log]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]
-            [lazytest.core :refer [defdescribe expect it]])
-  (:import [org.graalvm.polyglot Context]))
+            [com.blockether.vis.test-python-context :as tpc]
+            [lazytest.core :refer [defdescribe expect it]]))
 
 ;; The impls are private (named for clarity inside the ns); reach them by var
 ;; so tests drive the real gate/render contract without the Python wrapper.
@@ -1206,14 +1206,12 @@
         (let [src (slurp (io/resource f))]
           (expect (str/includes? src marker) f)
           (expect (not (str/includes? src "time.sleep(poll)")) f)))
-      ;; The POSIX shim is not a caller at all: `subprocess` never spawns, so it
+      ;; `subprocess` is not a caller at all: it never spawns in the sandbox, so it
       ;; owns no wait, no cursor, no second copy of the shell contract and no
-      ;; wording of its own - it raises the host's `PROCESS_SURFACE` sentences.
-      (let [src (slurp (io/resource "vis-shims/posix.py"))]
-        (expect (not (str/includes? src "_shell_wait")))
-        (expect (str/includes? src "__vis_process_surface__"))
-        (doseq [copy ["never spawn in the vis sandbox" "DISABLED"]]
-          (expect (not (str/includes? src copy)) copy))))
+      ;; wording of its own — the refusal raises the host's `PROCESS_SURFACE`
+      ;; sentences from the one runtime module.
+      (let [src (slurp (io/resource "vis-python/async_runtime.py"))]
+        (expect (str/includes? src "__vis_process_surface__"))))
   (it "bounds MEMORY as well as time when a command never stops printing"
       ;; A runaway printer produced ~1 MB/s: an unbounded accumulator turned a long
       ;; wait into a heap problem, so the wait keeps head+tail exactly as a
@@ -1569,16 +1567,15 @@
 ;; shell must be usable directly from ordinary Python.
 
 (defn- py-ctx
-  "A real sandbox Context wired with the REAL built-in bindings, so `shell` here
+  "A real sandbox session wired with the REAL built-in bindings, so `shell` here
    is the genuine tool (not a stub) resolving `env` at call time."
-  ^Context [env]
-  (:python-context (ep/create-python-context (extension/builtin-sandbox-bindings (constantly
-                                                                                   env)))))
+  ^String [env]
+  (:python-context (tpc/new-context (extension/builtin-sandbox-bindings (constantly env)))))
 
 (defn- py
-  "Eval one Python expression in `c` and marshal the value back to Clojure."
-  [^Context c code]
-  (ep/->clj (.eval c "python" code)))
+  "Eval one Python expression in session `c` and marshal the value back to Clojure."
+  [^String c code]
+  (tpc/ev c code))
 
 (defdescribe
   python-sandbox-surface-test
@@ -1865,10 +1862,11 @@
 
 (defn- interrupt-during
   "Run `code` in a fresh session's own context on its own thread, let it reach the
-   host wait, then soft-cancel it the documented way. Answers `{:landed :outcome
-   :reusable}`: whether `Context.interrupt` landed inside its grace, what the
-   parked eval did, and whether the SAME context still evaluates afterwards —
-   staying non-destructive is the whole reason to prefer it to `Thread.interrupt`."
+   host wait, then cancel it the way the loop does: interrupt the guest THREAD and
+   ask the interpreter to raise `KeyboardInterrupt`. Answers `{:landed :outcome
+   :reusable}`: whether a thread state took the interrupt, what the parked eval did,
+   and whether the SAME session still evaluates afterwards — staying non-destructive
+   is the whole reason a cancel is not a process kill."
   [^String label code]
   (let [sid
         (str label "-" (System/nanoTime))
@@ -1877,26 +1875,24 @@
         (py-ctx {:session-id sid})
 
         outcome
-        (promise)]
+        (promise)
 
-    (doto (Thread. ^Runnable
-                   (fn []
-                     (deliver outcome (try (py c code) :returned (catch Throwable _ :unwound))))
-                   label)
-      (.setDaemon true)
-      (.start))
+        guest
+        (doto (Thread. ^Runnable
+                       (fn []
+                         (deliver outcome (try (py c code) :returned (catch Throwable _ :unwound))))
+                       label)
+          (.setDaemon true)
+          (.start))]
+
     (try
       ;; Long enough that the block is inside the host wait, and far from its own
-      ;; deadline: nothing but the interrupt can end it.
+      ;; deadline: nothing but the cancel can end it.
       (Thread/sleep 2000)
-      (let [landed (try (.interrupt c (java.time.Duration/ofMillis 5000))
-                        true
-                        (catch java.util.concurrent.TimeoutException _ false))]
+      (let [landed (do (.interrupt guest) (ep/interrupt-guest! c))]
         {:landed landed
          :outcome (deref outcome 5000 :still-parked)
-         ;; The interrupt is NON-DESTRUCTIVE and the GIL came back with the unwinding
-         ;; thread: the SAME context serves the next turn. A leaked GIL parks this
-         ;; eval forever instead.
+         ;; The cancel is NON-DESTRUCTIVE: the SAME session serves the next turn.
          :reusable (= 2 (py c "1 + 1"))})
       (finally (resources/stop-all! sid)))))
 
@@ -1905,14 +1901,10 @@
              "A cancel reaches the block THROUGH the host wait it is parked in."
              ;; Regression (session 7df808ff): a cancel could not reach a block parked in
              ;; this loop. Its chatty branch never blocks — bytes are always available, so
-             ;; it re-reads without sleeping — and it polled no safepoint, so
-             ;; `Context.interrupt` timed out on the javadoc's own "non-interruptible host
-             ;; code" and only the WAITER unwound. The guest thread was then abandoned
-             ;; inside GraalPy, where it dies OWNING the GIL
-             ;; (`PythonContext.ensureGilAfterFailure` takes it uninterruptibly, and a
-             ;; ReentrantLock whose owner is dead is never released), so every later turn of
-             ;; that session parked forever in `PythonContext.acquireGil` at `:engine-start`.
-             (it "unwinds a parked sh.wait at the polyglot interrupt and REUSES the context"
+             ;; it re-reads without sleeping, and nothing in it noticed that the turn had
+             ;; been cancelled: only the WAITER unwound while the guest thread stayed
+             ;; parked, and the session it owned was unusable from then on.
+             (it "unwinds a parked sh.wait at the cancel and REUSES the session"
                  (let [result (interrupt-during "shell-wait-cancel-test"
                                                 (str "sh = __vis_settle__(shell("
                                                      "'while true; do echo x; done',"
@@ -1927,14 +1919,11 @@
              ;; Session 7df808ff pinned the other half of the cancel contract. A run parks in
              ;; `Process.waitFor` for up to ten minutes, and the wedge that started that
              ;; investigation was a cancel that could not reach a parked block at all: the
-             ;; guest thread stayed inside GraalPy, was abandoned there, and died owning the
-             ;; GIL, so every later turn of that session parked in `PythonContext.acquireGil`
-             ;; forever. Unlike the wait loop above, this park needs no safepoint poll of its
-             ;; own — the JDK wait it blocks in is interruptible, so the polyglot interrupt
-             ;; reaches it however long its budget was — and that is exactly what must not
-             ;; regress: the child dies, the block gets its own envelope back rather than an
-             ;; unwind, and the SAME context serves the next turn.
-             (it "kills the child and keeps the context USABLE, whatever budget the run owned"
+             ;; guest thread stayed inside the interpreter and the session it owned was
+             ;; wedged for every later turn. That is what must not regress: the child dies,
+             ;; the block gets its own envelope back rather than an unwind, and the SAME
+             ;; session serves the next turn.
+             (it "kills the child and keeps the session USABLE, whatever budget the run owned"
                  (let [marker
                        (java.io.File/createTempFile "vis-run-cancel" ".log")
 
@@ -1949,7 +1938,11 @@
                        at-cancel
                        (.length marker)]
 
-                   (expect (:landed result))
+                   ;; The interpreter's own interrupt cannot land here — the block is
+                   ;; parked INSIDE a host call (`Process.waitFor`), which is exactly
+                   ;; the `false` the door documents. The thread interrupt is what ends
+                   ;; this park, and what the loop's cancel sends first.
+                   (expect (false? (:landed result)))
                    ;; The run ANSWERS: `shell-run-impl` kills the tree and reports, so the
                    ;; block resumes at its next statement instead of unwinding.
                    (expect (= :returned (:outcome result)))

@@ -19,8 +19,7 @@
      clojure -T:build deploy  :package vis-channel-tui
 
    The `:package` selector matches `:lib` short name (after the slash)."
-  (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
+  (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.tools.build.api :as b]
             [deps-deploy.deps-deploy :as dd]))
@@ -341,7 +340,7 @@
 ;; EVERY namespace (core + every extension; the closed manifest initializes their
 ;; lightweight entrypoints at runtime, so every lazy handler must remain reachable) -> uberjar -> native-image.
 ;;
-;; Embedded GraalPy + dynamic extension loading make this non-trivial; see the
+;; Embedded CPython + dynamic extension loading make this non-trivial; see the
 ;; `:native` alias (graal-build-time) and `native-image-args`. Cross-platform:
 ;; the same `uber`/`native` tasks run on Linux/macOS; CI matrixes them.
 
@@ -400,46 +399,20 @@
                              [k (str/trim v)])))
                    (str/split-lines (slurp f)))))))
 
-(defn- assert-graal-pins!
-  "The OTHER half of the `.graalvm-version` contract, enforced on the JVM side.
-  A correct JDK is only half the story: deps.edn's org.graalvm.* jars must name
-  the same version as `.graalvm-version`, or Truffle refuses a runtime whose
-  built-in version differs from the polyglot jars — minutes into the image
-  build, with an opaque NoClassDefFoundError. The Dockerfile's `check-graal-pins`
-  and `bin/require-graalvm`'s `check_pins` are the same gate; this is the host /
-  CI gate so `clojure -T:build native` can never build on a drifted pin."
+(defn- assert-graal-pin!
+  "The `.graalvm-version` lock, enforced on the JVM side. The pin is LOCKED at
+  25.1.3 and nothing higher: 25.2.x's points-to analysis never converges on this
+  tree and OOMs the builder at every heap size, so a bump is refused here rather
+  than six minutes into `native`. The Dockerfile's `check-graal-pins` and
+  `bin/require-graalvm`'s `check_pins` are the same gate."
   []
   (when-let [{:strs [GRAAL_VERSION GRAAL_MAX_VERSION GRAAL_PIN_LOCKED]} @graal-pin]
-    ;; The pin is LOCKED: 25.1.3, nothing higher. 25.2.x's points-to analysis
-    ;; never converges on this tree and OOMs the builder at every heap size, so
-    ;; a bump is refused here rather than six minutes into `native`.
     (when (and (= "true" GRAAL_PIN_LOCKED) (not= GRAAL_VERSION GRAAL_MAX_VERSION))
       (throw (ex-info (str ".graalvm-version is LOCKED at " (or GRAAL_MAX_VERSION "<unset>")
                            " (NOT UPGRADABLE), but GRAAL_VERSION=" GRAAL_VERSION
                            ".\n  Move GRAAL_MAX_VERSION deliberately, or set "
                            "GRAAL_PIN_LOCKED=\"false\" — see .graalvm-version.")
-                      {:locked GRAAL_MAX_VERSION :got GRAAL_VERSION})))
-    (let [bad (into []
-                    (comp (filter #(str/includes? (str %) "org.graalvm."))
-                          (keep (fn [form]
-                                  (let [sym (first form)
-                                        v (-> form
-                                              second
-                                              :mvn/version)]
-
-                                    (when (and v (not= v GRAAL_VERSION)) [sym v])))))
-                    (->> (edn/read-string (slurp (io/file "deps.edn")))
-                         :deps))]
-      (when (seq bad)
-        (throw (ex-info (str "deps.edn org.graalvm.* pins do not match .graalvm-version "
-                             GRAAL_VERSION
-                             ".\n" (str/join "\n"
-                                             (map (fn [[sym v]]
-                                                    (str "  " sym " " v " ≠ " GRAAL_VERSION))
-                                                  bad))
-                             "\n  .graalvm-version is the single source of truth — "
-                             "bump it and every pin together.")
-                        {:expected GRAAL_VERSION :mismatched bad}))))))
+                      {:locked GRAAL_MAX_VERSION :got GRAAL_VERSION})))))
 
 (def ^:private graalvm-script
   "The one resolver/installer — the same file CI, the Dockerfile and humans use.
@@ -512,7 +485,7 @@
 
 (defn- rerun-under-graalvm!
   "Re-run THIS build task in a child process rooted at `home` — the `nvm use`
-   move. Truffle/SVM read the RUNNING JDK, so switching JDKs means a new
+   move. SVM reads the RUNNING JDK, so switching JDKs means a new
    process, never a new system property; the child is marked so a still-wrong
    JVM fails hard instead of forking forever. Never returns: the child's exit
    code becomes ours."
@@ -559,7 +532,7 @@
    this far and each fails later and more expensively: a stock JDK 25 has no
    `native-image` at all; Oracle GraalVM builds a binary that is no longer
    GPL+CE-licensed (audit/README.md §4.1 promises CE only); a near CE version
-   is hard-rejected by Truffle/SVM against the org.graalvm.* pins in deps.edn —
+   is hard-rejected by SVM against the checked-in reachability metadata —
    usually minutes into the image build.
 
    `java.vendor.version` is the one property that separates all three
@@ -570,7 +543,7 @@
    re-exec under it; installation declined (`:auto-install-graalvm false` /
    VIS_AUTO_INSTALL_GRAALVM=0) or failed → the hard refusal."
   [task opts]
-  (assert-graal-pins!)
+  (assert-graal-pin!)
   (when-let [{want "GRAAL_VENDOR_VERSION" edition "GRAAL_EDITION" version "GRAAL_VERSION"}
              @graal-pin]
     (let [got (or (System/getProperty "java.vendor.version") "unknown JDK")]
@@ -734,8 +707,9 @@
   "Build the all-in-one vis uberjar (`target/vis.jar`) with Main-Class
    `com.blockether.vis.core`. Handy for `java -jar target/vis.jar --version` to
    sanity-check the AOT'd app. NOTE: the native build does NOT use this jar —
-   GraalPy's polyglot jar declares `ForceOnModulePath`, which a flat uberjar
-   (no module-info) breaks; `native` builds from a classpath of real jars."
+   a jar's own META-INF/native-image config and module-info are what the image
+   build reads, and a flat uberjar flattens them away; `native` builds from a
+   classpath of real jars."
   [opts]
   (b/delete {:path native-uber})
   (resolve-profile opts)
@@ -865,7 +839,102 @@
       (->> (keys deps)
            (mapcat jars-by-artifact)
            vec))))
+(def ^:private python-sidecar-dir
+  "The embedded CPython distribution, staged BESIDE the image as
+   `target/vis-agent-python/`: a cdylib plus a vendored interpreter tree that
+   `bin/vis-agent` points `VIS_PYTHON_NATIVE_PATH` at. Tens of megabytes that
+   deliberately stay out of the executable — a release bundle ships the
+   directory, and a binary without it answers every Python block with a
+   library-not-found."
+  "target/vis-agent-python")
 
+(defn- jar-entry-names
+  "Every entry name in a jar, or nil when it cannot be read as one."
+  [path]
+  (try (with-open [zip (java.util.zip.ZipFile. (io/file path))]
+         (mapv #(.getName ^java.util.zip.ZipEntry %) (enumeration-seq (.entries zip))))
+       (catch Exception _ nil)))
+
+(defn- python-native-jars
+  "The BUILD HOST's embedded-CPython jar, at the version `basis` pins for the
+   runtime's own jar. The interpreter is tens of megabytes and a machine runs
+   exactly one platform's copy, so the artifact stays OUT of `deps.edn` and off
+   the image classpath: it is resolved here and staged beside the binary.
+
+   Native images cannot use the runtime tools.deps downloader, so a missing
+   artifact is a hard build failure, never a warning."
+  [basis]
+  (let [version
+        (get-in basis [:libs 'com.blockether/vis-python-runtime :mvn/version])
+
+        artifact
+        (symbol "com.blockether" (str "vis-python-runtime-native-" (native-lib-token)))]
+
+    ;; A :local/root checkout pins no version — its `resources/prebuilds/` is
+    ;; already a classpath root, so there is nothing to resolve.
+    (when version
+      (let [native-basis (b/create-basis {:project nil
+                                          :extra   {:deps {artifact {:mvn/version version}}}})]
+        (->> (get-in native-basis [:libs artifact :paths])
+             (filter #(str/ends-with? % ".jar"))
+             vec)))))
+
+(defn- stage-python-sidecar!
+  "Copy `prebuilds/<platform>/` out of the vis-python-runtime artifact into
+   `target/vis-agent-python/`.
+
+   A source checkout resolves it as a directory root and `cp -R` keeps the
+   tree's symlinks and executable bits, which a jar cannot carry; a jar root is
+   unpacked entry by entry and only `bin/` files and shared libraries get the
+   executable bit back. Missing is a hard build failure."
+  [basis]
+  (let [tok
+        (native-lib-token)
+
+        prefix
+        (str "prebuilds/" tok "/")
+
+        roots
+        (into (vec (:classpath-roots basis)) (python-native-jars basis))
+
+        dir
+        (->> roots
+             (map #(io/file % prefix))
+             (filter #(.isDirectory ^java.io.File %))
+             first)
+
+        jar
+        (when-not dir
+          (->> roots
+               (filter #(str/ends-with? % ".jar"))
+               (filter #(some (fn [e]
+                                (str/starts-with? e prefix))
+                              (jar-entry-names %)))
+               first))]
+
+    (b/delete {:path python-sidecar-dir})
+    (cond dir (let [{:keys [exit]} (b/process {:command-args ["cp" "-R" (str dir)
+                                                              python-sidecar-dir]})]
+                (when-not (zero? exit)
+                  (throw (ex-info "Could not stage the CPython sidecar."
+                                  {:from (str dir) :exit exit}))))
+          jar (with-open [zip (java.util.zip.ZipFile. (io/file jar))]
+                (doseq [^java.util.zip.ZipEntry entry (enumeration-seq (.entries zip))
+                        :let [name (.getName entry)]
+                        :when (and (str/starts-with? name prefix) (not (.isDirectory entry)))]
+
+                  (let [target (io/file python-sidecar-dir (subs name (count prefix)))]
+                    (io/make-parents target)
+                    (with-open [in (.getInputStream zip entry)]
+                      (io/copy in target))
+                    (when (or (str/includes? name "/bin/")
+                              (str/ends-with? name ".dylib")
+                              (str/ends-with? name ".so"))
+                      (.setExecutable target true false)))))
+          :else (throw (ex-info
+                         "Native build requires the embedded CPython for its target platform."
+                         {:platform tok :resource prefix})))
+    (println "->" python-sidecar-dir)))
 (defn- sherpa-native-jars
   "The BUILD HOST's sherpa-onnx native jar, at the version `basis` pins for the
    API jar. The voice extension depends on that 187 KB API jar ALONE — its five
@@ -910,8 +979,7 @@
    :local/root source/resource dirs — their compiled+copied form already lives in
    `native-class-dir`, and re-adding them would resurrect the per-extension
    manifest collision. Keeping deps as separate jars lets native-image honor each
-   jar's module-info + native-image.properties (polyglot's `ForceOnModulePath`,
-   GraalPy's build-time init, etc.)."
+   jar's module-info + native-image.properties."
   [basis]
   (let
     [jars
@@ -945,45 +1013,15 @@
          (into [native-class-dir])
          (str/join java.io.File/pathSeparator))))
 
-(defn- truffle-platform-tokens
-  "[os arch] the GraalPy/Truffle internal-resource dirs use under
-   META-INF/resources/ (verified against python-resources jar layout):
-   darwin|linux / aarch64|amd64."
-  []
-  (let [os
-        (str/lower-case (System/getProperty "os.name"))
-
-        arch
-        (str/lower-case (System/getProperty "os.arch"))]
-
-    [(cond (str/includes? os "mac") "darwin"
-           :else "linux") (if (#{"aarch64" "arm64"} arch) "aarch64" "amd64")]))
-
-(defn- oracle-native-image?
-  "True when the native build KEEPS the GraalPy/Truffle optimizing JIT in the image
-   (bigger binary, much longer build, faster CPU-bound Python). Default false = the
-   lean interpreter build. Set with `:oracle-native-image true` or the VIS_ORACLE_NATIVE_IMAGE
-   env token (1/true/yes/on)."
-  [opts]
-  (if (some? (:oracle-native-image opts))
-    (boolean (:oracle-native-image opts))
-    (contains? #{"1" "true" "yes" "on"}
-               (some-> (System/getenv "VIS_ORACLE_NATIVE_IMAGE")
-                       str/trim
-                       str/lower-case))))
-
 (defn- native-image-args
   "native-image CLI args. Config travels INSIDE the classpath jars
    (META-INF/native-image/…); here we add only classpath/main/output, the
    manifest/docs/db resource includes, and the build-host voice native libs
    (sherpa-onnx's JNI plus the ONNX Runtime it links) so voice ASR works in the binary.
    The ~465 MB parakeet model is NEVER embedded — it ships separately."
-  [basis jit?]
+  [basis]
   (let [tok
         (native-platform-token)
-
-        [t-os t-arch]
-        (truffle-platform-tokens)
 
         ;; ── Builder JVM heap ────────────────────────────────────────────────
         ;; WHO sizes the builder JVM is one env var, VIS_NATIVE_BUILDER_HEAP:
@@ -1033,8 +1071,8 @@
 
         ;; Extra native-image args spliced from the environment (space-separated).
         ;; Lets CI tune the builder JVM per-runner (e.g. -J-Xmx6g -J-Xms2g to fit a
-        ;; RAM-constrained free macOS runner, overriding GraalPy's bundled -Xms14g
-        ;; since command-line -J args are applied AFTER the classpath properties).
+        ;; RAM-constrained free macOS runner), applied AFTER everything computed
+        ;; here.
         extra
         (some-> (System/getenv "VIS_NATIVE_EXTRA_ARGS")
                 str/trim
@@ -1050,11 +1088,20 @@
 
     (cond-> ["-cp" (native-classpath basis) "-o" native-bin
              ;; Restricted native access (java.lang.foreign): rift's downcalls and
-             ;; the GraalPy/Truffle host need it, and lanterna's TTYDeviceControl
+             ;; the embedded CPython bridge need it, and lanterna's TTYDeviceControl
              ;; probes for it before degrading to forking /bin/stty. Without this the
              ;; JDK prints a 4-line "restricted method" warning on the first paint —
              ;; and a future JDK blocks the call outright.
              "--enable-native-access=ALL-UNNAMED"
+             ;; ── Manifest reachability ───────────────────────────────────────
+             ;; The engine resolves every manifest entrypoint dynamically, so a
+             ;; namespace the BUILDER never loads has no class in the binary and
+             ;; the first command dies with "Could not locate ...__init.class".
+             ;; Initializing this ONE class at build time loads it, and its
+             ;; top-level form then loads every entrypoint the manifest names —
+             ;; the explicit form of what used to happen by accident, through a
+             ;; dependency's build-time preload chain.
+             "--initialize-at-build-time=com.blockether.vis.internal.native_preload__init"
              ;; …and that class must decide IN THE BINARY. Its <clinit> builds the
              ;; termios/ioctl MethodHandles; graal-build-time initializes it inside the
              ;; BUILDER JVM, where java.lang.foreign simply works, so the image
@@ -1081,14 +1128,10 @@
              ;; read a page), so without this pattern the corpus holds zero pages in
              ;; the native binary.
              "-H:IncludeResources=vis-docs/.*"
-             ;; Python SHIM sources (resources/vis-shims/*.py), slurped at sandbox
-             ;; context creation via io/resource. Without this pattern EVERY shim
-             ;; (numpy, pandas, yaml, ...) is missing in the native binary.
+             ;; The five host doors (resources/vis-shims/*.py), slurped at session
+             ;; creation via io/resource. Without this pattern `attach`, `ls`,
+             ;; `nippy`, `ruff` and `anydoc` are missing in the native binary.
              "-H:IncludeResources=vis-shims/.*"
-             ;; Python helper sources (resources/vis-python/*.py) slurped at RUNTIME
-             ;; via io/resource -- e.g. the packaging-metadata reader `vis-agent python`
-             ;; uses to discover a project's import roots.
-             "-H:IncludeResources=vis-python/.*"
              ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/vis/*.py, on
              ;; :paths as a resource root): the body every extension context execs, and
              ;; the same file PyPI ships as `vis-agent`. `vis/VERSION` above is an
@@ -1104,32 +1147,17 @@
              ;; tree-sitter native at all and the runtime resolver-download
              ;; path — which a native image cannot take — is the only hope.
              (str "-H:IncludeResources=natives/" (pack-native-token) "/.*")
-             ;; GraalPy/Truffle per-platform internal-resource manifests.
-             ;; These used to ride in via the macOS agent trace with
-             ;; darwin/aarch64 HARDCODED — which embedded the Mac entries
-             ;; into Linux images (python-resources ships every
-             ;; platform's dirs in one jar) and left the build host's own
-             ;; manifests out everywhere else. Host-parameterized instead.
-             (str "-H:IncludeResources=META-INF/resources/" t-os "/" t-arch "/native.sha256")
-             (str "-H:IncludeResources=META-INF/resources/engine/libtruffleattach/"
-                  t-os
-                  "/"
-                  t-arch
-                  "/.*")
-             ;; ── GraalPy native-image bring-up ──────────────────────────────
-             ;; `org.graalvm.python/python-resources` ships its config at the
-             ;; NON-standard `META-INF/resources/native-image.properties`, which
-             ;; native-image does NOT auto-discover. Apply it explicitly:
-             ;;   • embed the Python stdlib VirtualFileSystem (org.graalvm.python.vfs)
-             ;;     — without it GraalPy scans the real FS for a home that isn't
-             ;;     there and the first Context.create() hangs (readdir + cond_wait).
-             ;;   • PreinitializeContexts=python snapshots an initialized Python
-             ;;     context INTO the image, so runtime `Context.create("python")`
-             ;;     resumes the snapshot instead of doing full (hanging) init.
-             ;;   • Python needs a big charset set + a deep C stack.
-             "-H:+UnlockExperimentalVMOptions" "-H:IncludeResources=org.graalvm.python.vfs/.*"
-             "-J-Dpolyglot.image-build-time.PreinitializeContexts=python" "-R:StackSize=16777216"
-             "-H:+AddAllCharsets"
+             ;; ── Embedded CPython ────────────────────────────────────────────
+             ;; The interpreter itself is a cdylib plus a vendored tree, resolved
+             ;; at RUNTIME (VIS_PYTHON_NATIVE_PATH / VIS_PYTHON_HOME, which the
+             ;; shipped wrapper points at the distribution's own copy) — the tens
+             ;; of megabytes that stay OUT of the binary. The Python the host
+             ;; EXECUTES inside it — the runtime bootstrap, the async runtime and
+             ;; the SOURCES manifest addressing them — is declared by the runtime
+             ;; jar's own reachability metadata and needs nothing here.
+             ;; A CPython call runs on the very host thread that made the
+             ;; downcall, so the image keeps the deep stack it expects.
+             "-H:+UnlockExperimentalVMOptions" "-R:StackSize=16777216"
              ;; ── Locales ─────────────────────────────────────────────────────
              ;; native-image ships ONE locale: whichever one the BUILD HOST
              ;; happened to default to (`-H:DefaultLocale` defaults to the
@@ -1148,40 +1176,10 @@
              (str "-H:IncludeLocales="
                   (str/join "," ["en-US" "en-GB" "en-IN" "pl-PL" "de-DE" "zh-CN" "zh-TW" "hi-IN"]))
              ;; ── Binary-size + build-time reduction ──────────────────────────
-             ;; A GraalPy image is huge (~558 MB): ~115 MB machine code +
-             ;; ~465 MB SVM image heap (embedded CPython interpreter/stdlib +
-             ;; icu4j locale data + charsets). Two levers, both from GraalPy's
-             ;; own "Reducing Binary Size" guide — they ALSO slash native-image
-             ;; BUILD time (the full :voice image otherwise stalls the runner
-             ;; building/compiling ~18k Truffle runtime-compiled methods):
-             ;;   • -Os optimizes the COMPILED CODE for size instead of -O2
-             ;;     speed — trims the ~115 MB __text with negligible impact on
-             ;;     an I/O-bound agent, and cuts compile time.
+             ;; -Os optimizes the COMPILED CODE for size instead of -O2 speed:
+             ;; it trims the __text section with negligible impact on an
+             ;; I/O-bound agent, and cuts native-image build time with it.
              "-Os"]
-      ;; ── Embedded-Python JIT vs interpreter — the single biggest size lever ──
-      ;; DEFAULT (`:oracle-native-image` false): run GraalPy INTERPRETED by forcing Truffle's
-      ;; fallback runtime, dropping the Graal JIT from the image. GraalPy documents
-      ;; this as ~40% smaller, and it removes the ~18k runtime-compiled Truffle
-      ;; methods that otherwise make native-image build slow/hang — right for vis's
-      ;; short, I/O-bound python_execution glue. `:oracle-native-image true` KEEPS the
-      ;; optimizing runtime for CPU-bound Python, at the cost of a bigger binary and
-      ;; a much longer build. The runtime engine adapts to either (build-engine*).
-      (not jit?)
-      (conj "-Dtruffle.TruffleRuntime=com.oracle.truffle.api.impl.DefaultTruffleRuntime"
-            "-Dpolyglot.engine.WarnInterpreterOnly=false")
-
-      ;; ── Auxiliary engine cache — Oracle/JIT image ONLY ──────────────────────
-      ;; env_python's `shared-engine` persists the warmed, JIT-compiled Truffle
-      ;; code with `Engine.storeCache`/`engine.CacheLoad`, skipping the JVMCI
-      ;; warm-up that dominates GraalPy boot. The feature is contributed only by
-      ;; the optimizing Truffle runtime, so it exists ONLY in the Oracle/JIT
-      ;; image; without these build flags `.storeCache` throws
-      ;; UnsupportedOperationException and the runtime silently cold-starts.
-      ;; ReservedAuxiliaryImageBytes is address space only, not resident memory;
-      ;; both are experimental (UnlockExperimentalVMOptions is set above).
-      jit?
-      (conj "-H:+AuxiliaryEngineCache" "-H:ReservedAuxiliaryImageBytes=2145482548")
-
       ;; voice JNI native libs for THIS platform: sherpa's JNI and the ONNX
       ;; Runtime beside it, both under sherpa-onnx/native/<tok>/ in the host's
       ;; native-lib jar, which is exactly where sherpa's LibraryUtils looks them
@@ -1207,8 +1205,7 @@
 (defn native-image-only
   "FAST native-image iteration: re-run native-image ONLY, reusing the existing
    `target/native-classes` from a prior `native` build (no re-AOT). For tuning
-   native-image flags; run `native` once first to populate the AOT classes. Honors
-   `:oracle-native-image true` (or VIS_ORACLE_NATIVE_IMAGE) to keep the GraalPy JIT in the image."
+   native-image flags; run `native` once first to populate the AOT classes."
   [opts]
   (assert-graalvm-ce! :native-image-only opts)
   (resolve-profile opts)
@@ -1217,11 +1214,10 @@
     ;; builder then dies at [8/8] Creating image with "Path exists as directory".
     (b/delete {:path native-bin})
     (println "native-image (reusing target/native-classes)…")
-    (let [{:keys [exit]} (b/process {:command-args
-                                     (into [(native-image-command)]
-                                           (native-image-args basis (oracle-native-image? opts)))})]
+    (let [{:keys [exit]} (b/process {:command-args (into [(native-image-command)]
+                                                         (native-image-args basis))})]
       (if (zero? exit)
-        (do (write-build-stamp!) (println "-> built" native-bin))
+        (do (write-build-stamp!) (stage-python-sidecar! basis) (println "-> built" native-bin))
         (throw (ex-info "native-image build failed" {:exit exit}))))))
 
 (defn native
@@ -1229,15 +1225,13 @@
      1. `target/vis.jar`  — build artifact, never a selectable distribution
      2. `target/vis`      — private native runtime behind `bin/vis-agent`
    They share one AOT pass. Requires `native-image` on PATH (GraalVM CE 25.1.3)
-   and ≥16 GB RAM (GraalPy's libpythonvm needs -Xms14g). Releases always package
+   and ≥16 GB RAM for the builder JVM. Releases always package
    `bin/vis-agent` together with the native runtime.
 
    Options:
      :profile :community — the ONE distribution and the default: every extension
                            (all channels, voice ASR, web `search`). Accepted for
                            compatibility; there is nothing else to pick.
-     :oracle-native-image true — KEEP the GraalPy JIT in the image (bigger binary, slower
-                           build, faster CPU-bound Python). Default: lean interpreter.
      :auto-install-graalvm false — keep a missing GraalVM CE a hard error instead of
                            installing the pin (VIS_AUTO_INSTALL_GRAALVM=0 does the same).
                            By default a missing pin is downloaded + installed, and an
@@ -1258,11 +1252,10 @@
     ;; builder then dies at [8/8] Creating image with "Path exists as directory".
     (b/delete {:path native-bin})
     ;; (2) Private native runtime. Built from a classpath of real jars (NOT the
-    ;; uberjar) so polyglot/graalpy keep their module-info + native-image.properties.
+    ;; uberjar) so every jar keeps its module-info + native-image.properties.
     (println "native-image:" native-bin "(community)" "(this takes several minutes)…")
-    (let [{:keys [exit]} (b/process {:command-args
-                                     (into [(native-image-command)]
-                                           (native-image-args basis (oracle-native-image? opts)))})]
+    (let [{:keys [exit]} (b/process {:command-args (into [(native-image-command)]
+                                                         (native-image-args basis))})]
       (if (zero? exit)
-        (do (write-build-stamp!) (println "-> built" native-bin))
+        (do (write-build-stamp!) (stage-python-sidecar! basis) (println "-> built" native-bin))
         (throw (ex-info "native-image build failed" {:exit exit}))))))

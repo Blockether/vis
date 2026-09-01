@@ -356,7 +356,7 @@ imports `contract.*`, and no SDK invents a second spelling for a contract vocabu
   `gateway.edn`.
 - Clojure production HTTP uses `babashka.http-client`. JavaScript ships framework-free ESM usable in
   browsers, Node and Capacitor plus `.d.ts`; it has no React or Capacitor dependency. Python remains
-  usable on the CPython floor supported by GraalPy.
+  usable on the CPython floor the embedded interpreter ships.
 - Move the exact `packages/vis-agent/src/vis` source into the Python SDK and extend it rather than
   creating a hand-synchronized copy. Delete the `vis-agent` distribution/path when all callers move;
   keep the ergonomic `import vis` name as the chosen SDK API, not as an alias package.

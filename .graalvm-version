@@ -5,10 +5,10 @@
 # GraalVM COMMUNITY Edition 25.1.3 — NOT Oracle GraalVM, NOT a stock JDK.
 #   * CE is GPLv2 + Classpath Exception; Oracle GraalVM is GFTC. Only CE keeps the
 #     redistribution story of the shipped binary FOSS (audit/README.md §4.1).
-#   * The version is EXACT: the embedded GraalPy/Truffle jars pinned in deps.edn
-#     (org.graalvm.* 25.1.3) refuse a JDK whose built-in Truffle differs.
-# Bump this file and deps.edn's org.graalvm.* pins together. Everything else
-# (CI action, Dockerfile, build.clj, bin/require-graalvm) reads THIS file.
+#   * The version is EXACT: the image is only ever built on the JDK this build
+#     has been proven against end to end.
+# Bump this file alone. Everything else (CI action, Dockerfile, build.clj,
+# bin/require-graalvm) reads THIS file.
 #
 # DO NOT MOVE TO 25.2.x — the 25.2 native-image builder cannot build this image.
 #   Measured on macOS arm64 / 36 GB RAM with `clojure -T:build native`:
@@ -34,12 +34,12 @@ GRAAL_VERSION="25.1.3"
 # ── PIN LOCK: 25.1.3, NOTHING HIGHER ─────────────────────────────────────────
 # This pin is LOCKED, i.e. NOT UPGRADABLE for now. GRAAL_VERSION must equal
 # GRAAL_MAX_VERSION exactly; anything else is REFUSED — by bin/require-graalvm
-# (check_pins), by build.clj (assert-graal-pins!), by .github/actions/
+# (check_pins), by build.clj (assert-graal-pin!), by .github/actions/
 # setup-graalvm-25 and by com.blockether.vis.graalvm-pin-test. So a drive-by
 # bump of one file fails at the first gate instead of six minutes into a
 # native-image build that then dies of OutOfMemoryError.
-# Lifting the lock is a DELIBERATE act: move BOTH keys together (plus deps.edn's
-# org.graalvm.* pins, the tag, the asset version and the shas), and only after
+# Lifting the lock is a DELIBERATE act: move BOTH keys together (plus the tag,
+# the asset version and the shas), and only after
 # `clojure -T:build native` has been proven to complete end to end on the new
 # version. 25.2.x does NOT — see the block above.
 GRAAL_PIN_LOCKED="true"
