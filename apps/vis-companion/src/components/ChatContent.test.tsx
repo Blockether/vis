@@ -1599,7 +1599,7 @@ describe("a turn drawn as one thread", () => {
     Array.from(container.querySelectorAll("[data-step-node] svg")).flatMap(
       (mark) => {
         const kind = Array.from(mark.classList).find((name) =>
-          /^lucide-circle-(check|dot|x)$/.test(name),
+          /^lucide-circle-(check|dot|x|slash)$/.test(name),
         );
         return kind ? [kind.replace("lucide-circle-", "")] : [];
       },
@@ -1620,7 +1620,9 @@ describe("a turn drawn as one thread", () => {
       <IterationTrace iterations={STORY_TURN_ITERATIONS_SETTLED} whole />,
     );
 
-    expect(marks(container)).toEqual(["check", "x", "check"]);
+    // The middle step FAILED and the last one was STOPPED before it finished:
+    // a cross and a struck-through ring, never the same mark for both.
+    expect(marks(container)).toEqual(["check", "x", "slash"]);
   });
 
   it("leaves exactly one ring open while the turn is still moving", () => {
