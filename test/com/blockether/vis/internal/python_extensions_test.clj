@@ -1157,41 +1157,36 @@ vis.extension(
                  (expect (false? (:ok? res))))
                (finally (ps/db-dispose-connection! store)))))))
 
-;; /test slash + `vis-agent extension test` CLI — the user-facing surface for the runner
+;; /test is the user-facing surface for the Python extension runner.
 
-(defdescribe
-  cli-and-slash-wiring-test
-  (it "the loader exposes a /test slash command and a `vis-agent extension test` CLI command"
-      (with-loaded {"counter.py" counter-py}
-                   (fn [_ _]
-                     ;; Force a fresh registration so we read the
-                     ;; CURRENT loader spec, not a stale one left by an
-                     ;; earlier load in a reused REPL JVM (the
-                     ;; `loader-registered?` defonce guard blocks re-runs).
-                     (reset! @#'pyx/loader-registered? false)
-                     (#'pyx/register-loader-extension!)
-                     (let [loader
-                           (registered "python-extensions")
+(defdescribe slash-test-wiring-test
+             (it "exposes /test without contributing an extension CLI command"
+                 (with-loaded {"counter.py" counter-py}
+                              (fn [_ _]
+                                ;; Force a fresh registration so we read the
+                                ;; CURRENT loader spec, not a stale one left by an
+                                ;; earlier load in a reused REPL JVM (the
+                                ;; `loader-registered?` defonce guard blocks re-runs).
+                                (reset! @#'pyx/loader-registered? false)
+                                (#'pyx/register-loader-extension!)
+                                (let [loader
+                                      (registered "python-extensions")
 
-                           slash
-                           (some #(when (= "test" (:slash/name %)) %) (:ext/slash-commands loader))
+                                      slash
+                                      (some #(when (= "test" (:slash/name %)) %)
+                                            (:ext/slash-commands loader))]
 
-                           cli
-                           (some #(when (= "test" (:cmd/name %)) %) (:ext/cli loader))]
-
-                       (expect (some? loader))
-                       (expect (some? slash))
-                       (expect (ifn? (:slash/run-fn slash)))
-                       (expect (some? cli))
-                       (expect (ifn? (:cmd/run-fn cli)))
-                       (expect (true? (:cmd/internal? cli))))))))
+                                  (expect (some? loader))
+                                  (expect (some? slash))
+                                  (expect (ifn? (:slash/run-fn slash)))
+                                  (expect (empty? (:ext/cli loader))))))))
 
 (defdescribe
   run-and-report-test
   (it "renders a friendly message when no tests are found"
       (expect (str/includes? (#'runner/render-test-report {:files 0 :ok? true :results []})
                              "No Python extension tests")))
-  (it "the shared /test + `vis-agent extension test` code path runs tests and renders a report"
+  (it "the /test code path runs tests and renders a report"
       (let [ext-dir
             (temp-dir)
 
@@ -1241,17 +1236,6 @@ vis.extension(
                    (expect (str/includes? report "test_beta"))))
                (finally (ps/db-dispose-connection! store)))))))
 
-;; `vis-agent extension test` exit signal — a :vis/user-error ex-info, NEVER System/exit
-
-(defdescribe
-  cli-exit-signal-test
-  (it "signals a failed run by throwing a :vis/user-error ex-info (mapped to a non-zero exit)"
-      (let [ex (#'runner/failure-ex {:ok? false :failed 2 :errored 0})]
-        (expect (instance? clojure.lang.ExceptionInfo ex))
-        (expect (true? (:vis/user-error (ex-data ex))))
-        (expect (str/includes? (ex-message ex) "2 failed"))))
-  (it "produces no exit signal (nil) when every test passed"
-      (expect (nil? (#'runner/failure-ex {:ok? true :passed 3})))))
 
 ;; Providers — a `vis.provider(...)` registers a first-class provider descriptor
 

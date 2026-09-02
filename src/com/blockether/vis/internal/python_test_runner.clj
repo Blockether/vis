@@ -9,8 +9,8 @@
 
    Split out of `python-extensions` (which owns loading/registration) so the
    runner is a single, testable responsibility. It depends on that namespace's
-   trusted-context builder; the reverse wiring (`/test` slash + `vis-agent extension test`
-   CLI) is resolved lazily there to avoid a require cycle.
+   trusted-context builder; the reverse `/test` wiring is resolved lazily there
+   to avoid a require cycle.
 
    The source of truth for the outcome is the shim's PER-TEST record list
    (nodeid, outcome, message). Counts and pass/fail are DERIVED from those
@@ -269,8 +269,7 @@
   "Render a `test-python-extensions!` result into a human-readable report: a
    one-line summary (`✓/✗ N file(s): P passed, F failed, …`), then per FILE a
    `✓/✗ <file>` line, then per TEST a `✓/✗/s <nodeid>` line (failures carry the
-   first line of the assertion detail). Pure — the shared renderer for the
-   `/test` slash command and `vis-agent extension test`."
+   first line of the assertion detail). Pure — the renderer for `/test`."
   [{:keys [files passed failed errored skipped ok? results] :as res}]
   (cond (:error res) (str "✗ Python extension tests could not run: " (:error res))
         (zero? (long (or files 0))) "No Python extension tests found (test_*.py / *_test.py)."
@@ -322,8 +321,8 @@
           (str/join "\n" (cons summary (mapcat file-block results))))))
 
 (defn ^:no-doc run-and-report
-  "Run every Python extension test and return `{:result <map> :report <string>}`.
-   The one shared code path behind the `/test` slash command and `vis-agent extension test`."
+  "Run every Python extension test and return `{:result <map> :report <string>}`
+   for the `/test` slash command."
   [opts]
   (let [result (test-python-extensions! opts)]
     {:result result :report (render-test-report result)}))
@@ -338,26 +337,3 @@
                     (str "Python extension tests: " (if (:ok? result) "all passed" "failures")))
      :slash/body report}))
 
-(defn- failure-ex
-  "The `:vis/user-error` ex-info to throw when a run FAILED, or nil when it's
-   ok. Pure and testable — the exit signal without a `System/exit` (the
-   top-level CLI maps `:vis/user-error` to a non-zero exit)."
-  [result]
-  (when-not (:ok? result)
-    (ex-info (or (:error result)
-                 (format "Python extension tests failed: %d failed, %d errored"
-                         (long (or (:failed result) 0))
-                         (long (or (:errored result) 0))))
-             {:type :vis.ext-test/failures :vis/user-error true})))
-
-(defn ^:no-doc test-cli!
-  "`vis-agent extension test` — run every Python extension test, print a report, and signal
-   a non-zero exit on failure by throwing a `:vis/user-error` ex-info. NEVER
-   calls `System/exit`: pure and testable, and safe to call from anywhere
-   without killing the host."
-  [_parsed _residual]
-  (let [{:keys [result report]} (run-and-report nil)]
-    (println report)
-    (when-let [e (failure-ex result)]
-      (throw e))
-    result))

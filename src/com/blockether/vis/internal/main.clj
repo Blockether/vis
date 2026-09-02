@@ -1941,9 +1941,8 @@
    `clojure -M:vis` finds deps.edn) but passes the real invocation cwd as
    `-Duser.dir`. Java resolves relative `File` paths against the OS cwd, so a
    bare `out.html` would silently land in the source root while the printed
-   path (from `user.dir`) said otherwise. Anchor relatives to `user.dir` (same
-   convention as `vis-agent extension scaffold`); absolute paths pass through
-   untouched."
+   path (from `user.dir`) said otherwise. Anchor relatives to `user.dir`;
+   absolute paths pass through."
   [path]
   (let [f (io/file path)]
     (.getPath (if (.isAbsolute f) f (io/file (System/getProperty "user.dir") path)))))
@@ -2678,167 +2677,6 @@
           (stdout! (str "\n  " (count exts) " extension(s)\n")))))
   (shutdown-agents))
 
-(defn- safe-extension-name
-  [s]
-  (let [name (some-> s
-                     str
-                     str/trim
-                     (str/replace #"[^A-Za-z0-9._-]+" "-")
-                     (str/replace #"^-+|-+$" ""))]
-    (when (seq name) name)))
-
-(defn- extension-namespace
-  [name explicit]
-  (let [base (or (some-> explicit
-                         str/trim
-                         not-empty)
-                 (str "vis.ext."
-                      (-> name
-                          str/lower-case
-                          (str/replace #"[^a-z0-9._-]+" "-")
-                          (str/replace #"[-_]+" "-"))))]
-    (symbol base)))
-
-(defn- namespace->path
-  [ns-sym]
-  (str (-> (str ns-sym)
-           (str/replace "-" "_")
-           (str/replace "." "/"))
-       ".clj"))
-
-(defn- scaffold-extension-files
-  [{:keys [name namespace]}]
-  (let [ns-sym
-        (extension-namespace name namespace)
-
-        ns-path
-        (namespace->path ns-sym)]
-
-    {"deps.edn" (str "{:paths [\"src\" \"resources\"]\n" " :deps {}}\n")
-     (str "src/" ns-path) (str "(ns "
-                               ns-sym
-                               "\n"
-                               "  (:require [com.blockether.vis.core :as vis]))\n\n"
-                               "(defn hello\n"
-                               "  []\n"
-                               "  \"hello from "
-                               name
-                               "\")\n\n"
-                               "(def vis-extension\n"
-                               "  (vis/extension\n"
-                               "    {:ext/name \""
-                               name
-                               "\"\n"
-                               "     :ext/description \"User extension " name
-                               "\"\n" "     :ext/version \"0.1.0\"\n"
-                               "     :ext/author \"local\"\n" "     :ext/owner \"local\"\n"
-                               "     :ext/kind \"user\"}))\n\n" "(defn register!\n"
-                               "  []\n" "  (vis/register-extension! vis-extension))\n")}))
-
-(defn- parse-scaffold-opts
-  [parsed residual]
-  (let [argv
-        (vec residual)
-
-        parsed-name
-        (:name parsed)
-
-        parsed-dir
-        (:dir parsed)
-
-        parsed-namespace
-        (:namespace parsed)
-
-        force?
-        (boolean (or (:force parsed) (some #{"--force"} argv)))
-
-        parsed-argv
-        (loop [xs
-               argv
-
-               positional
-               []
-
-               opts
-               {}]
-
-          (if-let [x (first xs)]
-            (case x
-              "--force"
-              (recur (rest xs) positional opts)
-
-              "--dir"
-              (recur (nnext xs) positional (assoc opts :dir (second xs)))
-
-              "--namespace"
-              (recur (nnext xs) positional (assoc opts :namespace (second xs)))
-
-              (recur (rest xs) (conj positional x) opts))
-            (assoc opts :positional positional)))
-
-        dir
-        (or parsed-dir (:dir parsed-argv))
-
-        namespace
-        (or parsed-namespace (:namespace parsed-argv))
-
-        name
-        (safe-extension-name (or parsed-name (first (:positional parsed-argv))))]
-
-    {:name name :dir dir :namespace namespace :force? force?}))
-
-(defn- cli-extensions-scaffold!
-  [parsed residual]
-  (config/init-cli!)
-  (let [{:keys [name dir force?] :as opts} (parse-scaffold-opts parsed residual)]
-    (when-not name
-      (throw (ex-info
-               "Usage: vis-agent extension scaffold <name> [--dir DIR] [--namespace NS] [--force]"
-               {:type :cli/usage})))
-    (let [target-path (or dir (str ".vis/vis-extensions/" name))
-          target (let [f (io/file target-path)]
-                   (if (.isAbsolute f) f (io/file (System/getProperty "user.dir") target-path)))
-          files (scaffold-extension-files opts)]
-
-      (doseq [[rel content] files]
-        (let [f (io/file target rel)]
-          (when (and (.exists f) (not force?))
-            (throw (ex-info "Refusing to overwrite existing extension file"
-                            {:type :extension/scaffold-file-exists :path (.getPath f)})))
-          (.mkdirs (.getParentFile ^java.io.File f))
-          (spit f content)))
-      (stdout!
-        (str
-          "Created extension scaffold at " (.getPath target)
-          "\n"
-          "Add its register! symbol to META-INF/vis/manifest.edn in your custom distribution."))))
-  (shutdown-agents))
-
-(defn- cli-extension-check!
-  "Static-check Python extension files WITHOUT running them.
-
-   Reports per file, then exits 1 if anything was refused, so it drops straight
-   into a pre-commit hook or CI. Paths may be files or directories; with none, the
-   extension directories vis itself loads are checked."
-  [_parsed residual]
-  (config/init-cli!)
-  (let [ec
-        (fn [sym]
-          (requiring-resolve (symbol "com.blockether.vis.internal.extension-check" (name sym))))
-
-        paths
-        (vec (remove #(str/starts-with? (str %) "-") residual))
-
-        files
-        ((ec 'expand-paths) paths)]
-
-    (if (empty? files)
-      (stdout!
-        "No Python extension files found. Pass a file or a directory, or add one to .vis/extensions/.")
-      (let [reports ((ec 'check-files) files)]
-        (stdout! ((ec 'report-text) reports))
-        (when-not ((ec 'ok?) reports) (shutdown-agents) (System/exit 1))))
-    (shutdown-agents)))
 
 
 
@@ -3594,8 +3432,8 @@
                     "vis-agent doctor --purge --days 30"]
      :cmd/run-fn cli-doctor!}
     {:cmd/name "extension"
-     :cmd/doc "Inspect, scaffold, or run an extension-contributed CLI command."
-     :cmd/usage "vis-agent extension <list|scaffold|...> [args...]"
+     :cmd/doc "Inspect or run an extension-contributed CLI command."
+     :cmd/usage "vis-agent extension <list|...> [args...]"
      :cmd/subcommands #(registry/registered-under ["extension"])}
     {:cmd/name "gateway"
      :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
@@ -4038,40 +3876,14 @@
      :cmd/run-fn cli-delete-project!}]]
   (registry/register-cmd! spec))
 
-;;; ── `vis-agent extension` subcommands (host-owned canonical) ────────────────────────
-;;
-;; `list` and `scaffold` are NOT extension contributions -- they are
-;; the CANONICAL host commands the vis-agent binary ships with. Extensions add
-;; to the `vis-agent extension` parent through `:ext/cli`; the host marks its own
-;; entries with `:cmd/internal? true` so help and listing layers can
-;; tell host-owned canonical commands apart from extension-contributed
-;; ones at a glance.
+;;; ── `vis-agent extension` subcommand (host-owned canonical) ─────────────────────────
 
-(doseq [spec [{:cmd/name "list"
-               :cmd/parent ["extension"]
-               :cmd/internal? true
-               :cmd/doc "List every registered extension with metadata."
-               :cmd/usage "vis-agent extension list"
-               :cmd/run-fn cli-extensions!}
-              {:cmd/name "scaffold"
-               :cmd/parent ["extension"]
-               :cmd/internal? true
-               :cmd/doc "Create a user extension project scaffold."
-               :cmd/usage
-               "vis-agent extension scaffold <name> [--dir DIR] [--namespace NS] [--force]"
-               :cmd/examples
-               ["vis-agent extension scaffold my-tools"
-                "vis-agent extension scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
-               :cmd/run-fn cli-extensions-scaffold!}
-              {:cmd/name "check"
-               :cmd/parent ["extension"]
-               :cmd/internal? true
-               :cmd/doc "Statically check Python extension files without running them."
-               :cmd/usage "vis-agent extension check [PATH ...]"
-               :cmd/examples ["vis-agent extension check"
-                              "vis-agent extension check .vis/extensions/deploy.py"]
-               :cmd/run-fn cli-extension-check!}]]
-  (registry/register-cmd! spec))
+(registry/register-cmd! {:cmd/name "list"
+                         :cmd/parent ["extension"]
+                         :cmd/internal? true
+                         :cmd/doc "List every registered extension with metadata."
+                         :cmd/usage "vis-agent extension list"
+                         :cmd/run-fn cli-extensions!})
 
 ;; Dispatcher entry point (-main)
 

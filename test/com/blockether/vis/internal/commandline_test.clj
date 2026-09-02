@@ -44,11 +44,11 @@
 (defn- mixed-children-cmd
   []
   {:cmd/name "extension"
-   :cmd/doc "Inspect, scaffold, or run an extension-contributed CLI command."
+   :cmd/doc "Inspect or run an extension-contributed CLI command."
    :cmd/usage "vis-agent extension <subcmd>"
    :cmd/subcommands
    [{:cmd/name "list" :cmd/doc "List every registered extension." :cmd/internal? true}
-    {:cmd/name "scaffold" :cmd/doc "Create a user extension scaffold." :cmd/internal? true}
+    {:cmd/name "inspect" :cmd/doc "Inspect extension metadata." :cmd/internal? true}
     {:cmd/name "voice" :cmd/doc "Voice extension commands."}
     {:cmd/name "audit" :cmd/doc "Audit extension commands."}]
    :cmd/extra-sections [{:title "INSTALLED EXTENSIONS"
@@ -63,7 +63,7 @@
           (expect (str/includes? out "COMMANDS"))
           (expect (str/includes? out "EXTENSION COMMANDS"))
           (expect (str/includes? out "list"))
-          (expect (str/includes? out "scaffold"))
+          (expect (str/includes? out "inspect"))
           (expect (str/includes? out "voice"))
           (expect (str/includes? out "audit"))
           (expect (not (str/includes? out "---- extensions ----")))

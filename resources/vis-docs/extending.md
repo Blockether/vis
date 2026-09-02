@@ -38,7 +38,7 @@ Everything on this page, by what you are trying to do:
 | register an LLM provider | [LLM providers](#llm-providers), [Managed providers](#managed-providers) | — |
 | keep data across restarts | [Durable state](#durable-state) | — |
 | publish a page for `doc(name)` | [Your page and your `apropos` row](#your-page-and-your-apropos-row) | [Shipping doc pages](#shipping-doc-pages) |
-| check and test what I wrote | [Checking an extension before it runs](#checking-an-extension-before-it-runs), [Testing your Python extension](#testing-your-python-extension) | [Testing and verification](#testing-and-verification) |
+| test what I wrote | [Testing your Python extension](#testing-your-python-extension) | [Testing and verification](#testing-and-verification) |
 ---
 
 ## Python extensions
@@ -639,9 +639,8 @@ check comes before the expensive lookup behind it.
 A validator takes **one** argument (the value) or **two** (the value and every
 answer in the form — flat, whatever the layout); that second argument is how one
 field compares itself with another, across groups included. Any other shape is
-refused where you wrote it - by `vis.ask` when the request is built, and by
-`vis-agent extension check` without running the file at all - never in front
-of the human who is finally typing:
+refused by `vis.ask` when the request is built, never in front of the human who
+is finally typing:
 
 ```python
 vis.ask("Sign up", [vis.plaintext("email", validate=lambda: None)])
@@ -1222,47 +1221,6 @@ A single `.py` file is the simplest extension. For anything larger, drop a
 So an ordinary Python project becomes a Vis extension by adding one
 `extension.py` on top that imports it.
 
-### Checking an extension before it runs
-
-```bash
-vis-agent extension check                       # every file that would load
-vis-agent extension check .vis/extensions/deploy.py
-```
-
-The check never runs your extension. The file is parsed, and three questions get
-answered from the parse tree alone:
-
-* does it parse at all;
-* does it only reach for `vis.<name>` that the `vis` module actually has, so
-  `vis.plaintxt(...)` is caught here instead of in front of a human;
-* would every `vis.ask(...)` request and every `vis.live(...)` view be accepted -
-  judged by the engine's own seam, the same judge the running dialog and the
-  running view use, never a second opinion.
-
-That is possible because the builders are pure: reconstructing
-`vis.select("env", [])` builds a dict and touches nothing else. An argument that
-cannot be known without running the file (a field list handed in as a parameter,
-an f-string title, a comprehension) is reported as **skipped** rather than
-guessed at.
-
-A `validate=` function is judged too, by SHAPE and without ever being called: a
-lambda or a `def` in the file stands in for one taking exactly the arguments it
-declares, so `validate=lambda: None` and `validate=takes_nothing` are refused
-here for the same reason `vis.ask` refuses them. A validator that arrives from
-somewhere the parse tree cannot see is assumed to be the ordinary one value
-shape rather than reported.
-
-```text
-FAIL .vis/extensions/deploy.py  (2 forms checked, 1 skipped)
-  .vis/extensions/deploy.py:31:12: invalid-request: Invalid human-input field env: select needs at least one option
-  .vis/extensions/deploy.py:44:12: unknown-attribute: the vis module has no plaintxt
-1 file, 2 forms checked, 2 problems
-```
-
-The exit code is `1` when anything was refused, so it drops straight into a
-pre-commit hook or CI. A file that registers nothing (`no-extension`) and a file
-that cannot be read (`unreadable`) are problems too - a run over a directory
-always reaches the last file and reports every one of them.
 
 ### Testing your Python extension
 
@@ -1282,12 +1240,7 @@ def test_add():
     assert add(2, 3) == 5
 ```
 
-Run them:
-
-```text
-/test            # in a session — inline pass/fail report
-vis-agent extension test     # from the shell — prints a report, exits non-zero on failure
-```
+Run them in a session with `/test` for an inline pass/fail report.
 
 The `vis` library also carries one generic live-view test host. It keeps fixtures
 out of the active session, records only what the extension emitted, and lets a test

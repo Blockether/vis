@@ -537,32 +537,21 @@
   (contract/host-globals))
 
 (defn ^:no-doc bind-inert-host!
-  "Bind every host member as a REFUSAL, so the `vis` module can be BUILT without
-   any of it being usable.
+  "Bind every host member to a refusal, with optional overrides by member name.
 
-   `vis-agent extension check` needs the real module -- it reads the builders and
-   the exported names straight out of it -- but a static check runs nobody's side
-   effects. A stub that throws is how the checker stays honest about what it did
-   not run: a form is judged by the engine on the Clojure side, never by
-   executing the extension.
-
-   `overrides` may hand back members by name: the checker binds
-   `__vis_host_request_input__` to a judge that normalizes the request and
-   settles it `undeliverable`, and `__vis_host_live__` to one that normalizes a
-   view and mounts nothing, so a form is judged by asking for it and a view by
-   opening it while nobody is asked and nothing is shown."
+   Contract tests use this to import the real `vis` module without making host
+   operations available."
   ([^Context ctx] (bind-inert-host! ctx nil))
   ([^Context ctx overrides]
    (let [g (.getBindings ctx "python")]
      (doseq [member host-member-names]
        (.putMember g
                    ^String member
-                   (->executable
-                     (or (get overrides member)
-                         (fn [& _]
-                           (throw (ex-info
-                                    (str "host call " member " is not available while checking")
-                                    {:type :vis/extension-check-inert :member member}))))))))))
+                   (->executable (or (get overrides member)
+                                     (fn [& _]
+                                       (throw (ex-info (str "host call " member " is not available")
+                                                       {:type :vis/inert-host
+                                                        :member member}))))))))))
 
 ;; Adapters — Python callables wrapped as the Clojure fns the extension
 ;; registry expects. Every adapter is defensive: a closed context (after
@@ -2122,16 +2111,9 @@
 (defn- register-loader-extension!
   []
   (when (compare-and-set! loader-registered? false true)
-    ;; `/test` + `vis-agent extension test` live in the sibling `python-test-runner` ns.
-    ;; Resolve them lazily so THIS loader ns carries no compile-time dependency
-    ;; on the runner (which itself depends on this ns's trusted-context builder
-    ;; — the one seam that would otherwise be a require cycle).
-    (let [test-cli!
-          (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-cli!)
-
-          test-slash
-          (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-slash)]
-
+    ;; `/test` lives in the sibling `python-test-runner` namespace. Resolve it
+    ;; lazily because the runner depends on this namespace's trusted-context builder.
+    (let [test-slash (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-slash)]
       (extension/register-extension!
         {:ext/name "python-extensions"
          :ext/description
@@ -2153,12 +2135,4 @@
            "Debug network filters: run the host allow/deny gate + every registered network_filter over a synthetic request, showing each verdict and any Python traceback."
            :slash/usage "/net-probe [METHOD] <url | host[:port]>"
            :slash/run-fn net-probe-slash}]
-         :ext/cli
-         [{:cmd/name "test"
-           :cmd/internal? true
-           :cmd/doc
-           "Run every Python extension test (test_*.py / *_test.py) in a trusted GraalPy context."
-           :cmd/usage "vis-agent extension test"
-           :cmd/examples ["vis-agent extension test"]
-           :cmd/run-fn test-cli!}]
          :ext/doctor-fn doctor-fn}))))
