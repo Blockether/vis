@@ -2210,14 +2210,12 @@
                       ;; `x` and inherit `content-w`, so they still sit inset from
                       ;; the right edge by h-pad even though the bg fills past them.
                       ;; Assistant answer text starts at the same column as
-                      ;; the `Vis` label. User bubbles keep their inset so the
-                      ;; left rail remains visually separate from prompt text.
-                      ;; An error card is inset like a user block (the companion's
-                      ;; `px-2.5`): the edge bar then lands in the padding column
-                      ;; instead of eating the first character of the code. The wrap
-                      ;; width is `bubble-w - 2*h-pad` for every role already, so the
-                      ;; inset costs no row and no re-wrap.
-                      x (+ (long bx) (long (if (or user? error?) h-pad 0)))
+                      ;; the `Vis` label. User and error bubbles keep their inset, as does
+                      ;; model prose inside a receipt: the receipt rail owns column zero
+                      ;; and would otherwise overwrite that prose's first character.
+                      ;; The wrap width is `bubble-w - 2*h-pad` for every role already,
+                      ;; so the inset costs no row and no re-wrap.
+                      x (+ (long bx) (long (if (or user? error? (:receipt-prose? meta)) h-pad 0)))
                       y (+ (long btop) (long i))
                       iw bubble-w
                       fbx bx
@@ -6900,7 +6898,8 @@
           ;; the thinking band above / the green code band below. The
           ;; coalesce pass upstream collapses any doubled blank to one.
           (-> [(line-entry "")]
-              (into (layout/ast->entries (vis/markdown->ast p) fill-w {:mode :channel}))
+              (into (mapv #(update % :meta assoc :receipt-prose? true)
+                          (layout/ast->entries (vis/markdown->ast p) fill-w {:mode :channel})))
               (conj (line-entry ""))))
 
         ;; Block count headers (`1 observation · 2 mutations`) and their

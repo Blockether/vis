@@ -5726,6 +5726,7 @@ h = 8"
 
         trace
         [{:thinking "Read the app first."
+          :assistant-prose "Balanced. Now inspect the schema."
           :forms [{:code "print(1)"
                    :stdout "1"
                    :result-kind :none
@@ -5794,6 +5795,10 @@ h = 8"
           (expect (and head tail) "the receipt paints the thinking and the chronology")
           (expect (every? rail-at? (range (long head) (inc (long tail))))
                   "every row between them stands on the same column")))
+    ;; Regression, issue photo-2026-09-02: the receipt rail overwrote the first character
+    ;; of model prose between tool blocks, so `Balanced` was painted as `│alanced`.
+    (it "keeps receipt prose clear of the rail"
+        (expect (some? (row-with "Balanced. Now inspect the schema."))))
     (it "crosses the program's own paper instead of stopping at its edge"
         (let [python
               (row-with "PYTHON")
