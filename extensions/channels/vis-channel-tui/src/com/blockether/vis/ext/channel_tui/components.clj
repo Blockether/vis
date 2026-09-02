@@ -142,15 +142,16 @@
      ;; on hover it lifts to the accent (or the destructive red for `:danger?`
      ;; actions like close), always bold. So find-bar and dialog buttons read as
      ;; the same control instead of two palettes. `:accent?` is the exception: a
-     ;; PRIMARY/CTA chip (the `+` new-workspace button). `header-active-tab-accent`
+     ;; PRIMARY/CTA chip (the `+` new-session button). `header-active-tab-accent`
      ;; is the SAME blue as the active tab bg, so a white-on-accent chip vanished
      ;; against the tabs and its inverted hover became a blank WHITE block. Instead
-     ;; the `+` rests as a GREEN create pill (white glyph on `code-success-fg`) that
-     ;; contrasts every tab, and on hover DARKENS to a solid deep-blue fill
-     ;; (`header-hover-fg`) — a clear, always-visible state change, never white.
+     ;; the `+` rests on the GREEN create fill (`code-success-fg`) with that fill's
+     ;; `contrast-ink`: Tokyo Night's pale active-tab ink measured only 1.25:1 on
+     ;; the green, while the derived dark ink measures 10.6:1. On hover the cap
+     ;; DARKENS to `header-hover-fg` — a clear, always-visible state change.
      (cond (and hovered? danger?) (p/set-colors! g t/header-active-tab-fg t/close-button-hover-fg)
            (and hovered? accent?) (p/set-colors! g t/header-active-tab-fg t/header-hover-fg)
-           accent? (p/set-colors! g t/header-active-tab-fg t/code-success-fg)
+           accent? (p/set-colors! g (t/contrast-ink t/code-success-fg) t/code-success-fg)
            hovered? (p/set-colors! g t/header-active-tab-fg t/header-active-tab-accent)
            tint (let [[fg bg] (t/chip-tint tint)]
                   (p/set-colors! g fg bg))

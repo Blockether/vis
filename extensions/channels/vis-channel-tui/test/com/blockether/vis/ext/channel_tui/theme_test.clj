@@ -139,5 +139,7 @@
                (expect (>= (contrast-ratio t/header-active-tab-fg t/header-active-tab-bg) 4.5))
                (expect (>= (contrast-ratio t/dialog-hint-key t/dialog-bg) 4.5))
                (expect (>= (contrast-ratio t/status-bad t/warning-bg) 4.5))
-               (expect (>= (contrast-ratio t/footer-error-fg t/warning-bg) 4.5)))
+               (expect (>= (contrast-ratio t/footer-error-fg t/warning-bg) 4.5))
+               (expect (>= (contrast-ratio (t/contrast-ink t/code-success-fg) t/code-success-fg)
+                           3.0)))
              (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))))

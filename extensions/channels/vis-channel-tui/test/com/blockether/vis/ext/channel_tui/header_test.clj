@@ -5,6 +5,7 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.header :as vh]
+            [com.blockether.vis.internal.theme :as shared-theme]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
@@ -288,6 +289,30 @@
             ;; with the shared accent while preserving its inverse foreground.
             (expect (= t/header-active-tab-fg (:fg (write-by-text " #123e4567 "))))
             (expect (= t/header-active-tab-accent (:bg (write-by-text " #123e4567 ")))))))))
+
+;; Regression, user report: Tokyo Night painted the new-session plus in pale blue on
+;; its bright green cap, leaving the meaningful glyph at 1.25:1 contrast.
+(defdescribe new-session-plus-contrast-test
+             (it "uses the cap's contrast ink in Tokyo Night"
+                 (try (t/apply-theme! :tokyonight-night)
+                      (.reset interactions/hit-map)
+                      (let [writes
+                            (atom [])
+
+                            db
+                            {:title "Chat"
+                             :session {:id "123e4567-e89b-12d3-a456-426614174000"}
+                             :active-tab-id :one
+                             :tabs [{:id :one :label "application-request"}]}]
+
+                        (.beginFrame interactions/hit-map)
+                        (header/draw-header! (dummy-text-graphics writes) db 0 160)
+                        (.commitFrame interactions/hit-map)
+                        (let [plus (some #(when (= " + " (:text %)) %) @writes)]
+                          (expect (some? plus))
+                          (expect (= (t/contrast-ink t/code-success-fg) (:fg plus)))
+                          (expect (= t/code-success-fg (:bg plus)))))
+                      (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
 
 ;; Regression, task td-b200ee: equal-width cells left large empty pads around a
 ;; one-character title while truncating the longer neighbouring title.
