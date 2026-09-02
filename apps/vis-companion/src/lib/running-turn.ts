@@ -151,17 +151,30 @@ export function reduceRunningTurnEvent(
   const type = event.type;
   if (type === "turn.started") {
     const startedId = eventString(event, "turn_id");
+    // The bubble we are already painting, if this frame names it. It carries the
+    // image bytes `turn.started` never does — and OUR clock.
+    const own = turn && (!turn.id || turn.id === startedId) ? turn : null;
     return {
       id: startedId,
       request: eventString(event, "request"),
       answer: "",
       iterations: [],
-      startedAt:
-        typeof event.started_at === "number" ? event.started_at : Date.now(),
+      // `started_at` is the GATEWAY host's clock; the elapsed line under "Vis" is
+      // `Date.now() - startedAt` on the device. Stamping our own bubble with the
+      // foreign clock made that counter jump by the whole difference the instant
+      // the frame landed — forward by the skew, or back to `0ms` on a phone
+      // running ahead — right at "sent" turning into "accepted". The adoption
+      // path rebases through `server_time_ms` for exactly this reason
+      // (`SessionScreen`); this frame carries no such pair, so a bubble we
+      // started ourselves keeps the stamp it started with.
+      startedAt: own
+        ? own.startedAt
+        : typeof event.started_at === "number"
+          ? event.started_at
+          : Date.now(),
       status: "running",
       // `turn.started` for an optimistically painted turn carries no image bytes.
-      attachments:
-        turn && (!turn.id || turn.id === startedId) ? turn.attachments : undefined,
+      attachments: own?.attachments,
     };
   }
   if (!turn) return turn;

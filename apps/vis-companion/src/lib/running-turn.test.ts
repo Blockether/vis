@@ -186,3 +186,36 @@ describe("Activity ownership inside a running turn", () => {
     expect(turn?.iterations).toEqual([]);
   });
 });
+
+// Regression, reported from a phone: "when a new turn starts there is sometimes a
+// flicker, as if the status went from sent to accepted by the gateway". The
+// elapsed line under "Vis" counts `Date.now() - startedAt` on the DEVICE, and
+// `turn.started` carries the GATEWAY host's `started_at`: adopting it moved the
+// counter by the whole clock difference the instant the frame landed — forward by
+// the skew, or back to 0ms on a phone running ahead.
+describe("the turn this device started", () => {
+  const optimistic = { ...runningTurn, id: "", startedAt: 1_000_000 };
+  const startedFrame = (id: string, at: number) =>
+    event({ type: "turn.started", turn_id: id, request: "show your plan", started_at: at });
+
+  it("keeps its own clock when turn.started names it", () => {
+    const started = reduceRunningTurnEvent(optimistic, startedFrame("gw-1", 1_009_000));
+
+    expect(started?.startedAt).toBe(1_000_000);
+    expect(started?.id).toBe("gw-1");
+  });
+
+  it("keeps its own clock once the POST has already named the turn", () => {
+    const named = { ...optimistic, id: "gw-1" };
+
+    expect(reduceRunningTurnEvent(named, startedFrame("gw-1", 991_000))?.startedAt).toBe(
+      1_000_000,
+    );
+  });
+
+  it("takes the gateway's stamp for a turn it is not painting yet", () => {
+    expect(reduceRunningTurnEvent(null, startedFrame("gw-2", 1_700_000))?.startedAt).toBe(
+      1_700_000,
+    );
+  });
+});
