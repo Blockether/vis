@@ -10,6 +10,7 @@
             [clojure.string :as str]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.python-host :as python-host]
+            [com.blockether.vis.internal.python-runtime :as python-runtime]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
 (defn- reply
@@ -21,6 +22,7 @@
 (defn- block-session!
   "An interpreter session equipped with the sandbox runtime and `tools`."
   [tools]
+  (python-runtime/ensure-library!)
   (runtime/initialize!)
   (let [session (str "vis-host-" (System/nanoTime))]
     (runtime/install-runtime! session)

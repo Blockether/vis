@@ -516,7 +516,7 @@ license on the distributed native runtime**.
 
 | Layer | What it is | Coordinates / tool | License | Redistribution *for a fee* |
 |---|---|---|---|---|
-| **Embedded interpreter** | CPython 3.14, built from source and shipped beside the binary as the agent's sandboxed Python substrate | `com.blockether/vis-python-runtime` + its per-platform `…-native-<platform>` jar (Clojars) | **MIT** for the bridge, **PSF-2.0** for CPython and its standard library | **Permitted** — both are permissive |
+| **Embedded interpreter** | CPython 3.14, built from source and shipped beside the binary as the agent's sandboxed Python substrate | `com.blockether/vis-python-runtime` (Clojars) plus that repository's per-platform release archive | **MIT** for the bridge, **PSF-2.0** for CPython and its standard library | **Permitted** — both are permissive |
 | **Build tool** | The `native-image` compiler that AOT-compiles vis into the standalone binary (`clojure -T:build native`) | **GraalVM Community Edition (CE) for JDK 25.1.3**, installed from the pinned `graalvm-ce-builds` asset via `.github/actions/setup-graalvm-25` (every CI + native-release workflow) | **GPL-2.0 with Classpath Exception** | **Permitted** — the Classpath Exception frees the output binary |
 
 **Which GraalVM we support.** The release build uses **GraalVM CE 25.1.3**
@@ -535,7 +535,7 @@ any terms with no copyleft reaching first-party code.
 ### 4.2 Embedded interpreter & bundled models
 
 The distribution ships **CPython 3.14** (`com.blockether/vis-python-runtime`
-plus its per-platform native jar, ~69 MB unpacked beside the binary) as the
+plus its per-platform release archive, ~69 MB unpacked beside the binary) as the
 agent's sandboxed Python substrate; it is mandatory for the core binary. The
 bridge is **MIT**, CPython and its standard library are **PSF-2.0**. Both are
 permissive and cleared for commercial redistribution.

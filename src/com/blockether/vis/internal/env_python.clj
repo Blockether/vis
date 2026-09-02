@@ -35,6 +35,7 @@
             [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python-host :as python-host]
+            [com.blockether.vis.internal.python-runtime :as python-runtime]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
@@ -821,9 +822,12 @@
 
    Public because a session is not the only thing that needs the interpreter up:
    a Python EXTENSION loads at startup, before any sandbox exists, and the first
-   of the two to arrive is the one that starts it."
+   of the two to arrive is the one that starts it. The interpreter itself may
+   not be on this machine yet — `python-runtime/ensure-library!` is what fetches
+   it, and it costs nothing once it has."
   []
   (when (compare-and-set! interpreter-started false true)
+    (python-runtime/ensure-library!)
     (runtime/initialize! {:source-paths [@guest-source-dir]})
     (runtime/logs! (fn [ndjson]
                      (doseq [line (str/split-lines (str ndjson))]

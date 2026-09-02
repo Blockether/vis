@@ -28,6 +28,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.python-host :as python-host]
+            [com.blockether.vis.internal.python-runtime :as python-runtime]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis-python-runtime :as runtime]
             [taoensso.telemere :as tel])
@@ -163,6 +164,9 @@
         peer
         (peer-over channel)]
 
+    ;; This process resolves the interpreter for itself: it is a child JVM with
+    ;; its own classpath and no inherited resolution.
+    (python-runtime/ensure-library!)
     (runtime/initialize! {})
     (runtime/bind-host! (fn [tool payload]
                           (request! peer {"op" "host" "tool" tool "payload" payload})))

@@ -848,45 +848,41 @@
    library-not-found."
   "target/vis-agent-python")
 
-(defn- jar-entry-names
-  "Every entry name in a jar, or nil when it cannot be read as one."
-  [path]
-  (try (with-open [zip (java.util.zip.ZipFile. (io/file path))]
-         (mapv #(.getName ^java.util.zip.ZipEntry %) (enumeration-seq (.entries zip))))
-       (catch Exception _ nil)))
-
-(defn- python-native-jars
-  "The BUILD HOST's embedded-CPython jar, at the version `basis` pins for the
-   runtime's own jar. The interpreter is tens of megabytes and a machine runs
-   exactly one platform's copy, so the artifact stays OUT of `deps.edn` and off
-   the image classpath: it is resolved here and staged beside the binary.
-
-   Native images cannot use the runtime tools.deps downloader, so a missing
-   artifact is a hard build failure, never a warning."
+(defn- python-archive
+  "The platform archive for the version `basis` pins, cached under
+   `~/.vis/python/archives/`. The interpreter is tens of megabytes and a machine
+   runs exactly one platform's copy, so it is not a maven dependency: it is the
+   runtime repository's release asset, fetched once per version and reused by
+   every later build. A `:local/root` checkout answers nil — its
+   `resources/prebuilds/` is already a classpath root and nothing is fetched."
   [basis]
-  (let [version
-        (get-in basis [:libs 'com.blockether/vis-python-runtime :mvn/version])
+  (when-let [version (get-in basis [:libs 'com.blockether/vis-python-runtime :mvn/version])]
+    (let [tok (native-lib-token)
+          name (format "vis-python-runtime-%s-%s.tar.gz" tok version)
+          archive (io/file (System/getProperty "user.home") ".vis" "python" "archives" name)
+          url (str "https://github.com/Blockether/vis-python-runtime/releases/download/v" version
+                   "/" name)]
 
-        artifact
-        (symbol "com.blockether" (str "vis-python-runtime-native-" (native-lib-token)))]
+      (when-not (.isFile archive)
+        (io/make-parents archive)
+        (println "-> fetching" url)
+        (let [partial (io/file (str archive ".part"))
+              {:keys [exit]} (b/process {:command-args ["curl" "-fsSL" "-o" (str partial) url]})]
 
-    ;; A :local/root checkout pins no version — its `resources/prebuilds/` is
-    ;; already a classpath root, so there is nothing to resolve.
-    (when version
-      (let [native-basis (b/create-basis {:project nil
-                                          :extra   {:deps {artifact {:mvn/version version}}}})]
-        (->> (get-in native-basis [:libs artifact :paths])
-             (filter #(str/ends-with? % ".jar"))
-             vec)))))
+          (when-not (zero? exit)
+            (throw (ex-info "Could not download the embedded CPython for this platform."
+                            {:url url :exit exit})))
+          (.renameTo partial archive)))
+      archive)))
 
 (defn- stage-python-sidecar!
-  "Copy `prebuilds/<platform>/` out of the vis-python-runtime artifact into
-   `target/vis-agent-python/`.
+  "Put the embedded CPython for this platform into `target/vis-agent-python/`.
 
-   A source checkout resolves it as a directory root and `cp -R` keeps the
-   tree's symlinks and executable bits, which a jar cannot carry; a jar root is
-   unpacked entry by entry and only `bin/` files and shared libraries get the
-   executable bit back. Missing is a hard build failure."
+   A source checkout of the runtime has it as a classpath directory and `cp -R`
+   keeps the tree's symlinks and executable bits; otherwise the release archive
+   is unpacked with `tar`, which keeps the same. Missing is a hard build
+   failure: a binary without the sidecar answers every Python block with a
+   library-not-found."
   [basis]
   (let [tok
         (native-lib-token)
@@ -894,46 +890,28 @@
         prefix
         (str "prebuilds/" tok "/")
 
-        roots
-        (into (vec (:classpath-roots basis)) (python-native-jars basis))
-
         dir
-        (->> roots
+        (->> (:classpath-roots basis)
              (map #(io/file % prefix))
              (filter #(.isDirectory ^java.io.File %))
-             first)
-
-        jar
-        (when-not dir
-          (->> roots
-               (filter #(str/ends-with? % ".jar"))
-               (filter #(some (fn [e]
-                                (str/starts-with? e prefix))
-                              (jar-entry-names %)))
-               first))]
+             first)]
 
     (b/delete {:path python-sidecar-dir})
-    (cond dir (let [{:keys [exit]} (b/process {:command-args ["cp" "-R" (str dir)
-                                                              python-sidecar-dir]})]
-                (when-not (zero? exit)
-                  (throw (ex-info "Could not stage the CPython sidecar."
-                                  {:from (str dir) :exit exit}))))
-          jar (with-open [zip (java.util.zip.ZipFile. (io/file jar))]
-                (doseq [^java.util.zip.ZipEntry entry (enumeration-seq (.entries zip))
-                        :let [name (.getName entry)]
-                        :when (and (str/starts-with? name prefix) (not (.isDirectory entry)))]
-
-                  (let [target (io/file python-sidecar-dir (subs name (count prefix)))]
-                    (io/make-parents target)
-                    (with-open [in (.getInputStream zip entry)]
-                      (io/copy in target))
-                    (when (or (str/includes? name "/bin/")
-                              (str/ends-with? name ".dylib")
-                              (str/ends-with? name ".so"))
-                      (.setExecutable target true false)))))
-          :else (throw (ex-info
-                         "Native build requires the embedded CPython for its target platform."
-                         {:platform tok :resource prefix})))
+    (if dir
+      (let [{:keys [exit]} (b/process {:command-args ["cp" "-R" (str dir) python-sidecar-dir]})]
+        (when-not (zero? exit)
+          (throw (ex-info "Could not stage the CPython sidecar." {:from (str dir) :exit exit}))))
+      (let [archive (or (python-archive basis)
+                        (throw
+                          (ex-info
+                            "Native build requires the embedded CPython for its target platform."
+                            {:platform tok :resource prefix})))]
+        (.mkdirs (io/file python-sidecar-dir))
+        (let [{:keys [exit]} (b/process {:command-args ["tar" "xzf" (str archive) "-C"
+                                                        python-sidecar-dir]})]
+          (when-not (zero? exit)
+            (throw (ex-info "Could not unpack the CPython sidecar."
+                            {:archive (str archive) :exit exit}))))))
     (println "->" python-sidecar-dir)))
 (defn- sherpa-native-jars
   "The BUILD HOST's sherpa-onnx native jar, at the version `basis` pins for the

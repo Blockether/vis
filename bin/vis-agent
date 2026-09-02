@@ -34,9 +34,8 @@ set -euo pipefail
 # Raise the open-file (descriptor) soft limit for Vis and every child it spawns
 # (the client, the detached gateway daemon, sandbox subprocesses). Vis runs
 # Python inside the process, and a sandbox block that walks a large tree can hold
-# many files at once. The process descriptor table is SHARED across
-# everything (classpath jars, the HTTP server, SQLite, git spawns, the provider
-# everything (classpath jars, the HTTP server, SQLite, git spawns, the provider
+# many files at once. The process descriptor table is SHARED across everything
+# (classpath jars, the HTTP server, SQLite, git spawns, the provider
 # auth sockets), so one leak starves the control plane and wedges the session
 # (vis session 7d3f9026: a sandbox os.walk without `with` hit EMFILE, which then
 # broke credential hydration, the OAuth refresh socket, git, and cancel). The

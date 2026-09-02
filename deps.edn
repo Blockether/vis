@@ -61,11 +61,12 @@
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
-  ;; The embedded CPython the sandbox runs, replacing GraalPy. The per-platform
-  ;; interpreter (com.blockether/vis-python-runtime-native-<platform>, tens of MB)
-  ;; is deliberately NOT pinned here: the image build resolves the host's own and
-  ;; stages it beside the binary.
-  com.blockether/vis-python-runtime {:mvn/version "0.1.0"}
+  ;; The embedded CPython the sandbox runs, replacing GraalPy. This pin is the
+  ;; BRIDGE only; the interpreter for a platform is tens of megabytes and ships
+  ;; as that repository's release archive, fetched once into
+  ;; ~/.vis/python/runtime/ (internal.python-runtime) or staged beside the binary
+  ;; by the image build.
+  com.blockether/vis-python-runtime {:mvn/version "0.1.1"}
   com.cnuernber/charred {:mvn/version "1.041"}
   com.google.zxing/core {:mvn/version "3.5.4"}
   ;; JVM codecs backing the lazy sandbox nippy_encode/nippy_decode helpers.
