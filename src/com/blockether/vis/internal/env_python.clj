@@ -1022,6 +1022,10 @@
     (confine! roots-fn)
     (runtime/stdin! (guest-stdin-text stdin))
     (runtime/install-runtime! session)
+    ;; `println` is the sandbox's historical second spelling of Python `print`, not a
+    ;; host tool that callers must remember to inject. Seed it before protected-name
+    ;; discovery so a block may shadow it locally but can never replace it for the session.
+    (exec! session "globals().setdefault('println', print)")
     (try (runtime/install-module! session "auto_imports") (catch Throwable _ nil))
     (try (runtime/install-module! session "process_redirect") (catch Throwable _ nil))
     (install-protected-names! session custom-bindings)
