@@ -57,15 +57,15 @@ def test_gateway_contract_is_generated_whole():
 
     assert gateway is vis_contract.CONTRACT["gateway"]
     assert gateway["version"] == 4
-    assert len(gateway["routes"]) == 99
-    assert len(operations) == 121
+    assert len(gateway["routes"]) == 100
+    assert len(operations) == 122
     assert Counter(operation["request"] for operation in operations) == {
-        "none": 84,
+        "none": 85,
         "json": 34,
         "binary": 3,
     }
     assert Counter(operation["response"] for operation in operations) == {
-        "json": 107,
+        "json": 108,
         "resource": 2,
         "sse": 3,
         "empty": 3,

@@ -90,6 +90,17 @@
         (try (expect (= :no-socket (outcome off "localhost")))
              (expect (= :no-socket (raw-connect-outcome off "127.0.0.1")))
              (finally (dispose! off)))))
+  ;; The guard's wrapper and its policy holder live in the INTERPRETER, not in a
+  ;; session: a confined session left its allowlist behind and the next session,
+  ;; granted no network at all, answered `blocked` from Python instead of the
+  ;; capability layer's refusal. Green in isolation, red only after a neighbour ran.
+  (it "a previous session's allowlist does not answer for a session with no network"
+      (let [confined (sandbox
+                       {:enabled? true :jail-enabled? true :allowed-domains ["example.com"]})]
+        (expect (= :blocked (outcome confined "evil.com")))
+        (dispose! confined)
+        (let [off (sandbox nil)]
+          (try (expect (= :no-socket (outcome off "localhost"))) (finally (dispose! off))))))
   (it "`*` allowlist ⇒ unrestricted EXCEPT the always-on metadata denylist"
       (let [star (sandbox {:enabled? true :jail-enabled? true :allowed-domains ["*"]})]
         (try (expect (= :ok (outcome star "localhost")))

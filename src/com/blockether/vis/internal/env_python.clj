@@ -901,6 +901,14 @@
                   "globals()['__vis_denied_domains__'] = "
                   (py-json-literal (vec denied))))
       (try (runtime/install-module! session "network_guard") (catch Throwable _ nil)))
+    (when-not guard?
+      ;; The guard's policy holder and its socket wrapper are PROCESS state — one
+      ;; interpreter serves every session — so a session that enforces nothing has
+      ;; to clear the holder. Left in place, the previous session's allowlist
+      ;; answers first and reports a domain refusal for a session whose sockets
+      ;; the capability layer had already refused outright.
+      (try (exec! session "import builtins; builtins.__vis_net_policy__ = None")
+           (catch Throwable t (tel/log! {:level :warn :id ::network-policy-not-cleared :error t}))))
     (when (and net? proxy-port)
       (exec! session
              (str "globals()['__vis_proxy_url__'] = 'http://127.0.0.1:"
@@ -935,7 +943,7 @@
   (boolean (and network-enabled?
                 (string? spec)
                 (re-matches #"[A-Za-z0-9][A-Za-z0-9._-]{0,63}" spec)
-                (try (zero? (long (:exit (runtime/pip-install! {} [spec]) 1)))
+                (try (zero? (long (:exit (python-runtime/pip-install! [spec]) 1)))
                      (catch Throwable t
                        (tel/log! {:level :warn :id ::pip-install-failed :spec spec :error t})
                        false)))))

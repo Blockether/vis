@@ -22,7 +22,7 @@
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.python-extensions :as pyx]
             [com.blockether.vis.internal.python-extension-host :as pyext]
-            [com.blockether.vis-python-runtime :as runtime])
+            [com.blockether.vis.internal.python-runtime :as python-runtime])
   (:import [java.io File]))
 
 (set! *warn-on-reflection* true)
@@ -39,14 +39,23 @@
   "Make the REAL `pytest` importable in `session`, installing it ONCE into the
    sandbox's own packages directory when the machine has never had it. Answers
    nil on success and the reason on failure — a missing test runner is a result,
-   never a crash."
+   never a crash.
+
+   The retry invalidates the import caches first: a path entry remembers the
+   directory listing it saw, so a package pip wrote into a directory that was
+   ALREADY on `sys.path` stays invisible for the life of the process. Measured
+   on a machine that had never installed pytest — the install succeeded and the
+   very next import still raised `ModuleNotFoundError`."
   [^String session]
   (try (pyext/exec! session "import pytest")
        nil
        (catch Throwable _
-         (let [{:keys [exit out]} (runtime/pip-install! ["pytest"])]
+         (let [{:keys [exit out]} (python-runtime/pip-install! ["pytest"])]
            (if (zero? (long (or exit 1)))
-             (try (pyext/exec! session "import pytest") nil (catch Throwable t (ex-message t)))
+             (try (pyext/exec! session
+                               "import importlib; importlib.invalidate_caches(); import pytest")
+                  nil
+                  (catch Throwable t (ex-message t)))
              (str "pytest could not be installed: " out))))))
 
 (defn- walk-py

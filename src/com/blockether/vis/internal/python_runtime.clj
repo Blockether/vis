@@ -139,3 +139,20 @@
                           {:home (str home) :platform platform :version version})))
         (runtime/use-library! (str home))
         (.getAbsolutePath library))))
+
+(defn pip-install!
+  "Install `specs` with pip and make what landed importable in THIS process,
+   answering pip's own `{:exit … :out … :command …}`.
+
+   pip runs as a host process writing into a directory this interpreter already
+   has on `sys.path`, and a path entry remembers the listing it saw when it was
+   first read. Without the invalidation the install succeeds and the very next
+   import still raises `ModuleNotFoundError` — for the life of the process.
+   Measured on a machine that had never installed pytest."
+  [specs]
+  (let [result (runtime/pip-install! {} specs)]
+    (when (zero? (long (or (:exit result) 1)))
+      (try (runtime/exec! runtime/default-session "import importlib; importlib.invalidate_caches()")
+           (catch Throwable t
+             (tel/log! {:level :warn :id ::import-caches-not-refreshed :error t}))))
+    result))
