@@ -4151,6 +4151,28 @@
                                 (str/includes? l p/INLINE_BOLD_OFF))
                              (str "unbalanced sentinels on line " (pr-str l)))))))
 
+;; Regression, issue #164: a pure-Python execution collapsed its source behind the
+;; receipt by default, so the TUI showed only `DONE · PYTHON`.
+(defdescribe python-source-visible-by-default-test
+             (let [entries
+                   (format-iteration-entry-entries
+                     (iteration/canonicalize {:position 0
+                                              :thinking nil
+                                              :forms [{:success? true
+                                                       :code "values = [x * 2 for x in range(4)]"
+                                                       :stdout "[0, 2, 4, 6]"}]})
+                     80
+                     1
+                     {:session-id "s1" :session-turn-id "t1"})
+
+                   text
+                   (str/join "\n" (map (comp strip-sentinels body-of strip-ansi :line) entries))]
+
+               (it "keeps Python source visible while execution details start collapsed"
+                   (expect (str/includes? text "values = [x * 2 for x in range(4)]"))
+                   (expect (str/includes? text "PYTHON"))
+                   (expect (not (str/includes? text "[0, 2, 4, 6]"))))))
+
 (defdescribe
   python-code-disclosure-is-a-header-test
   ;; ONE accordion rule across every collapsible band (THINKING, op-cards, the
@@ -4954,7 +4976,7 @@ h = 8"
         (expect (str/includes? (render-row true) "▾ RUN CI"))
         (expect (str/includes? (render-row false) "▸ RUN CI"))))
   (it
-    "renders one collapsed execution receipt and opens its evidence hierarchy"
+    "renders visible source with collapsed details and opens its evidence hierarchy"
     (render/invalidate-cache!)
     (let [trace
           [{:forms
@@ -4989,7 +5011,7 @@ h = 8"
           (render-row 80 {:vis.channel-tui/expand-all-details? true})]
 
       (expect (str/includes? collapsed "▸ GREP · TEST EVIDENCE"))
-      (expect (not (str/includes? collapsed "grep({...})")))
+      (expect (str/includes? collapsed "grep({...})"))
       (expect (not (str/includes? collapsed "18 matches")))
       (expect (not (str/includes? collapsed "ACTIVITY")))
       (expect (str/includes? expanded "▾ GREP · TEST EVIDENCE"))
@@ -5008,7 +5030,8 @@ h = 8"
           (expect (every? #(<= (count %) width) lines)
                   (str "the unified receipt stays inside a " width "-column grid"))))))
   ;; Regression, issue td-546817: Python evaluations without detected host activities
-  ;; bypassed the execution receipt and remained in the legacy always-expanded layout.
+  ;; bypassed the execution receipt, so their output could not collapse independently
+  ;; from the source that remains visible.
   (it "uses the unified execution receipt when Python has no detected activities"
       (render/invalidate-cache!)
       (let [trace
@@ -5037,7 +5060,7 @@ h = 8"
             (render-row {:vis.channel-tui/expand-all-details? true})]
 
         (expect (str/includes? collapsed "▸ PYTHON · 29ms"))
-        (expect (not (str/includes? collapsed "print(1)")))
+        (expect (str/includes? collapsed "print(1)"))
         (expect (str/includes? expanded "▾ PYTHON · 29ms"))
         (expect (str/includes? expanded "PYTHON"))
         (expect (str/includes? expanded "print(1)"))

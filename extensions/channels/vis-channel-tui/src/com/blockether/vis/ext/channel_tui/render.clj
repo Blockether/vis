@@ -6782,6 +6782,9 @@
                 execution-body
                 (vec (concat code-block result-block artifact-block generic-run-entries))
 
+                execution-details
+                (vec (concat result-block artifact-block generic-run-entries))
+
                 ;; THE SENTENCE THAT INTRODUCES A CALL IS TRANSCRIPT TEXT, above the band and
                 ;; outside its fold. The companion prints a form's comment as an ordinary block
                 ;; before the receipt; folding it under the receipt's own chevron hid the words
@@ -6815,12 +6818,17 @@
                             :node-id execution-node-id
                             :collapsed? (not execution-expanded?)}}]
 
-                (vec (concat comment-block
-                             [(line-entry "") summary]
-                             (when execution-expanded? [(line-entry "")])
-                             (when execution-expanded? execution-body)
-                             (when (and execution-expanded? activity-surface)
-                               activity-surface)))))))
+                ;; Source is evidence, not a detail. The receipt folds output and host
+                ;; activity, while the Python band remains visible in both states and keeps
+                ;; its own five-line disclosure for long programs.
+                (vec (concat
+                       comment-block
+                       [(line-entry "") summary]
+                       (when (or (seq code-block) (and execution-expanded? (seq execution-details)))
+                         [(line-entry "")])
+                       code-block
+                       (when execution-expanded? execution-details)
+                       (when (and execution-expanded? activity-surface) activity-surface)))))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result
