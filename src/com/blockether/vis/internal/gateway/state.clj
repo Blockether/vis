@@ -301,15 +301,41 @@
 
 ;; Event log + fan-out
 
-(defn- trim-ring
-  "Keep the newest replay events in a persistent queue. `subvec` is deliberately
-   avoided: its view retains the entire historical backing vector and turns a
-   nominally bounded replay ring into an unbounded heap retention path."
-  [events]
-  (loop [ring (if (instance? clojure.lang.PersistentQueue events)
-                events
-                (into clojure.lang.PersistentQueue/EMPTY events))]
-    (if (> (count ring) (long @EVENT_RING_MAX)) (recur (pop ring)) ring)))
+(defn- conj-ring
+  "Append `event` to `entry`'s bounded replay ring, remembering the highest
+   `\"seq\"` the bound had to EVICT as `:evicted-through`.
+
+   `subvec` is deliberately avoided: its view retains the entire historical
+   backing vector and turns a nominally bounded replay ring into an unbounded
+   heap retention path.
+
+   That evicted high-water is the ring's FLOOR, and without it a resume cannot
+   tell \"nothing new for you\" from \"I cannot make you whole\": filtering
+   `seq > cursor` over a ring that already dropped that cursor's neighbourhood
+   answers a TAIL whose opening frames are gone - deltas for blocks nothing
+   started, activity for forms nothing opened - and neither side can see the
+   hole. `replay-floor` is what turns that into a decision."
+  [entry event]
+  (let [events
+        (:events entry)
+
+        max-events
+        (long @EVENT_RING_MAX)]
+
+    (loop [ring
+           (conj (if (instance? clojure.lang.PersistentQueue events)
+                   events
+                   (into clojure.lang.PersistentQueue/EMPTY (or events [])))
+                 event)
+
+           floor
+           (long (:evicted-through entry 0))]
+
+      (if (> (count ring) max-events)
+        (recur (pop ring) (max floor (long (or (get (peek ring) "seq") 0))))
+        (assoc entry
+          :events ring
+          :evicted-through floor)))))
 
 (defn- form-coordinate
   "The transport coordinate shared by one form's running and terminal frames."
@@ -345,7 +371,7 @@
             events
             (into clojure.lang.PersistentQueue/EMPTY events)]
 
-        (assoc entry :events (trim-ring (conj events event))))
+        (conj-ring (assoc entry :events events) event))
       entry)))
 
 (defn- fan-out!
@@ -477,7 +503,7 @@
                  (assoc-in [:turns (:turn_id payload) :event_start_seq] n)
 
                  store?
-                 (update :events #(trim-ring (conj (or % []) event))))
+                 (conj-ring event))
                (materialize-form-activity event)))))
      (let [event @captured]
        (fan-out! sid event)
@@ -551,7 +577,7 @@
                             :next-seq n
                             :last-active (util/now-ms))
                     store?
-                    (update :events #(trim-ring (conj (or % []) ev)))
+                    (conj-ring ev)
 
                     (= type "turn.started")
                     (-> (assoc :current-turn tid)
@@ -827,6 +853,17 @@
    as the cursor yields a live-only stream (empty replay)."
   [sid]
   (:next-seq (session-entry sid) 0))
+
+(defn replay-floor
+  "Highest `\"seq\"` this session's replay ring has already dropped, 0 while it
+   still holds everything it stored.
+
+   A subscriber resuming BELOW the floor asks for events the ring no longer has:
+   the honest answer is not the tail that happens to remain but a rewind to a
+   whole picture (see `server/resolve-sse-cursor`), because a partial tail paints
+   deltas onto blocks whose openings were evicted."
+  [sid]
+  (long (:evicted-through (session-entry sid) 0)))
 
 (defn running-turn-start-cursor
   "For a live-only subscriber joining a session mid-turn: the cursor (one below

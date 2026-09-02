@@ -2477,6 +2477,41 @@
            (is (= 12 (resolve-cursor sid -1))))
          (finally (swap! registry dissoc (str sid))))))
 
+(deftest sse-cursor-rewinds-a-client-below-the-replay-floor
+  ;; The replay ring is bounded, so ONE long turn evicts thousands of its own
+  ;; frames. A client that dropped out mid-turn was served the surviving TAIL
+  ;; verbatim: megabytes of deltas for blocks whose `content.block.started` had
+  ;; been evicted, a picture neither side could tell from a complete one, and a
+  ;; reconnect that answered the same partial ring again.
+  (let [resolve-cursor
+        (rv 'resolve-sse-cursor)
+
+        registry
+        @(ns-resolve 'com.blockether.vis.internal.gateway.state 'registry)
+
+        sid
+        (java.util.UUID/randomUUID)
+
+        idle-sid
+        (java.util.UUID/randomUUID)]
+
+    (swap! registry assoc
+      (str sid)
+      {:next-seq 900
+       :evicted-through 400
+       :current-turn "t-run"
+       :turns {"t-run" {:event_start_seq 120}}}
+      (str idle-sid)
+      {:next-seq 900 :evicted-through 400})
+    (try (testing "a cursor the ring already evicted replays the running turn whole"
+           (is (= 119 (resolve-cursor sid 300))))
+         (testing "a cursor still inside the ring is honoured verbatim"
+           (is (= 500 (resolve-cursor sid 500))))
+         (testing
+           "with no turn running it resolves to the live tail, leaving history to the transcript"
+           (is (= 900 (resolve-cursor idle-sid 300))))
+         (finally (swap! registry dissoc (str sid) (str idle-sid))))))
+
 (deftest mcp-kill-start-and-oauth-routes-test
   (testing "runtime kill/start and every headless OAuth leg answer through the ring layer"
     (let [flow

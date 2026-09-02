@@ -765,6 +765,16 @@
    resume in one place: the client learns the real cursor from the
    `subscription.ready` echo, so it recovers on the very next reconnect.
 
+   A cursor BELOW the ring's floor (`state/replay-floor`) is the sentinel too.
+   The ring is bounded, so ONE long turn evicts thousands of its own frames: a
+   client that dropped out mid-turn resumes at a cursor whose neighbourhood is
+   gone, and `seq > cursor` answers the surviving TAIL — deltas for blocks whose
+   `content.block.started` was evicted, activity for forms it never saw opened —
+   megabytes of it, and a partial picture neither side can detect. Rewinding
+   replays the running turn WHOLE, exactly what a fresh join is served, and
+   falls back to the live tail when nothing is running so the durable transcript
+   fills the history in.
+
    Shared by every session stream the daemon serves, so `/v1/events?sids=…` and the
    fleet feed resolve a cursor identically."
   ^long [sid requested]
@@ -772,9 +782,12 @@
         (long requested)
 
         current
-        (long (state/current-seq sid))]
+        (long (state/current-seq sid))
 
-    (if (or (neg? requested) (> requested current))
+        floor
+        (long (state/replay-floor sid))]
+
+    (if (or (neg? requested) (> requested current) (< requested floor))
       (long (or (state/running-turn-start-cursor sid) current))
       requested)))
 
