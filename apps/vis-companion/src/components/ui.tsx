@@ -964,10 +964,10 @@ function useTapPress(
  * same `active:scale-[0.94]`, and none of them had a focus ring.
  *
  * `tone` is what the control MEANS, and the box follows from it: `quiet` is a
- * glyph in the strip, `send` is the verb the strip exists for, `stop` fills the
- * slot the send left, `recording` is `quiet` while it is listening. Nothing here
- * is a `className` at the call site, because a strip whose boxes disagree is
- * exactly what this replaced.
+ * glyph in the strip, `send` is the verb the strip exists for, `stop` is the same
+ * disc replacing send in its reserved slot, and `recording` is `quiet` while it is
+ * listening. Nothing here is a `className` at the call site, because a strip whose
+ * boxes disagree is exactly what this replaced.
  *
  * The PRESS itself is `useTapPress` above: this strip is tapped with the
  * keyboard up more than anything else in the app, and on iOS a tap is not
@@ -1022,9 +1022,9 @@ export function ComposerButton({
     // — the state is a SHAPE — and the arrow, now on the field's own paper,
     // measures 5.27:1.
     send: 'size-8 rounded-full border border-dialog-edge bg-dialog-title text-dialog-title-foreground hover:bg-accent-2 disabled:scale-100 disabled:border-transparent disabled:bg-transparent disabled:text-dialog-hint mouse:size-7',
-    // It stands in the send's slot, which is already the right size: taking the
-    // whole of it is how the two never disagree about where the strip ends.
-    stop: 'size-full border border-err bg-cancelled hover:bg-warn-surface starting:scale-90 starting:opacity-0',
+    // It REPLACES send in the reserved slot, so it owns the same disc itself.
+    // Depending on the parent's dimensions made the gallery stretch it across a row.
+    stop: 'size-8 rounded-full border border-err bg-cancelled hover:bg-warn-surface starting:scale-90 starting:opacity-0 mouse:size-7',
   }[tone];
   return (
     <button
@@ -1032,7 +1032,7 @@ export function ComposerButton({
       aria-label={label}
       disabled={disabled}
       {...press}
-      className={`relative grid shrink-0 place-items-center overflow-hidden ${tone === 'send' ? '' : 'rounded-control'} transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${face} ${className}`}
+      className={`relative grid shrink-0 place-items-center overflow-hidden ${tone === 'send' || tone === 'stop' ? '' : 'rounded-control'} transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${face} ${className}`}
       {...props}
     >
       {isHolding && (

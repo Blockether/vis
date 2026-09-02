@@ -2428,6 +2428,20 @@ describe("the composer's own controls", () => {
     }
   });
 
+  // Regression, user report with a Storybook screenshot: the stop control borrowed
+  // `size-full` from a slot the gallery did not provide and stretched across the row.
+  it("owns its stop slot instead of borrowing a parent's size", () => {
+    const stop = classes(
+      renderToStaticMarkup(
+        <ComposerButton tone="stop" label="Stop response">
+          {"■"}
+        </ComposerButton>,
+      ),
+    );
+
+    expect(stop).not.toContain("size-full");
+  });
+
   // Regression, measured on the composer sheet: a send with nothing to send kept
   // its filled square and greyed the arrow inside it — hint ink on button paper
   // is 1.96:1 in blockether-light, so the reader was told to ignore a mark they
