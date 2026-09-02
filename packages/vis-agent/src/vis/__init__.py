@@ -166,9 +166,18 @@ def _kwargs_call(fn):
     return _call
 
 
-def symbol(fn, name=None, tag="observation", is_hidden=False):
+def _symbol_spec(fn, name, tag, is_hidden):
     if not callable(fn):
         raise ValueError("vis.symbol(fn, ...) requires a callable")
+    public_name = name or fn.__name__
+    if (
+        not isinstance(public_name, str)
+        or not public_name.isidentifier()
+        or public_name.startswith("_")
+    ):
+        raise ValueError(
+            f"vis.symbol name must be a public Python identifier, got {public_name!r}"
+        )
     if tag not in ("observation", "mutation"):
         raise ValueError(f"vis.symbol tag must be observation or mutation, got {tag!r}")
     doc = inspect.getdoc(fn)
@@ -190,13 +199,79 @@ def symbol(fn, name=None, tag="observation", is_hidden=False):
     return {
         "marker": "symbol",
         "fn": _kwargs_call(fn),
-        "name": name or fn.__name__,
+        "name": public_name,
         "tag": tag,
         "hidden": bool(is_hidden),
         "doc": doc,
         "params": params,
         "varargs": varargs,
     }
+
+
+def method(fn=None, *, tag="observation", is_hidden=False):
+    """Declare per-method tool metadata for an object exported by vis.symbol()."""
+    if tag not in ("observation", "mutation"):
+        raise ValueError(f"vis.method tag must be observation or mutation, got {tag!r}")
+
+    def _mark(actual):
+        declared = (
+            actual.__func__
+            if isinstance(actual, (staticmethod, classmethod))
+            else actual
+        )
+        if not callable(declared):
+            raise ValueError("vis.method(...) requires a callable method")
+        declared.__vis_symbol_tag__ = tag
+        declared.__vis_symbol_hidden__ = bool(is_hidden)
+        return actual
+
+    return _mark if fn is None else _mark(fn)
+
+
+def _public_methods(obj):
+    candidates = {}
+    for cls in reversed(type(obj).__mro__):
+        for name, raw in vars(cls).items():
+            if name.startswith("_"):
+                continue
+            declared = (
+                raw.__func__ if isinstance(raw, (staticmethod, classmethod)) else raw
+            )
+            # Never invoke arbitrary descriptors while discovering capabilities.
+            if inspect.isroutine(declared):
+                candidates[name] = declared
+    try:
+        own = vars(obj)
+    except TypeError:
+        own = {}
+    for name, value in own.items():
+        if not name.startswith("_") and callable(value):
+            candidates[name] = value
+    return [
+        (name, getattr(obj, name), declared) for name, declared in candidates.items()
+    ]
+
+
+def symbol(fn, name=None, tag="observation", is_hidden=False):
+    if inspect.isroutine(fn):
+        return _symbol_spec(fn, name, tag, is_hidden)
+    if (
+        not name
+        or not isinstance(name, str)
+        or not name.isidentifier()
+        or name.startswith("_")
+    ):
+        raise ValueError(
+            "vis.symbol(object, ...) requires name=<public Python identifier>"
+        )
+    methods = []
+    for method_name, bound, raw in _public_methods(fn):
+        method_tag = getattr(raw, "__vis_symbol_tag__", tag)
+        method_hidden = getattr(raw, "__vis_symbol_hidden__", is_hidden)
+        methods.append(_symbol_spec(bound, method_name, method_tag, method_hidden))
+    if not methods:
+        raise ValueError("vis.symbol(object, ...) requires at least one public method")
+    return {"marker": "namespace", "name": name, "methods": methods}
 
 
 def slash(name, run, doc=None, usage=None):

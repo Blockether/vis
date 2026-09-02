@@ -83,8 +83,8 @@ vis.extension(
     kind="integration",
     alias="todo",
     symbols=[
-        # sandbox name = f"{alias}_{name}"; name defaults to fn.__name__
-        # with a leading "<alias>_" stripped — so todo_add binds as todo_add.
+        # A Python extension declares its sandbox names exactly; alias is metadata.
+        # These stay todo_add, todo_toggle, todo_list and todo_clear.
         vis.symbol(todo_add, tag="mutation"),
         vis.symbol(todo_toggle, tag="mutation"),
         vis.symbol(todo_list, tag="observation"),

@@ -841,17 +841,8 @@
 
 (defn set-python-binding!
   "Bind `sym` -> `val` in the Python sandbox globals. Clojure fns are wired as
-   callables; everything else is marshalled.
-
-   ASYNC-BY-DEFAULT: a tool fn bound here is also DEFERRED (wrapped by
-   `__vis_deferred__`, same as `build-agent-context`'s defer step) so
-   `await tool(...)` / `gather(tool(...))` work. This matters because extension
-   and foundation tools are (re)installed via this fn AFTER the context's own
-   defer pass — without deferring here they'd stay raw/synchronous and the
-   `await` the prompt teaches would fail. The compaction verbs
-   (`fold_session`/`__vis_par__`) are bound via `create-python-context`, not
-   here, so they stay direct. No-op when the async preamble isn't installed
-   (the printer/parser helper contexts never bind tools)."
+   callables; everything else is marshalled. Dotted symbols publish a capability
+   namespace whose declared methods use the same deferred tool path as globals."
   [python-context sym val]
   (let [^Context ctx
         python-context
@@ -865,24 +856,37 @@
         aliases
         (py-aliases-for-sym sym)
 
+        dotted?
+        (str/includes? nm ".")
+
         member
         (if (fn? val) (wrap-ifn val) (->py val))]
 
-    (add-protected-names! g (cons nm aliases))
-    (.putMember g nm member)
-    (doseq [alias aliases]
-      (.putMember g alias member))
-    (when (fn? val)
-      (try
-        (doseq [defer-name (cons nm aliases)]
-          (.putMember g "__vis_defer1__" defer-name)
-          (.eval
-            ctx
-            "python"
-            (str
-              "if '__vis_deferred__' in globals() and callable(globals().get(__vis_defer1__)):\n"
-              "    globals()[__vis_defer1__] = __vis_deferred__(globals()[__vis_defer1__], __vis_defer1__)")))
-        (finally (.putMember g "__vis_defer1__" nil))))))
+    (add-protected-names! g (if dotted? [(first (str/split nm #"\." 2))] (cons nm aliases)))
+    (if dotted?
+      (do (.putMember g "__vis_dotted_name__" nm)
+          (.putMember g "__vis_dotted_member__" member)
+          (try (.eval ctx
+                      "python"
+                      "__vis_set_dotted_tool__(__vis_dotted_name__, __vis_dotted_member__)")
+               (finally (.putMember g "__vis_dotted_name__" nil)
+                        (.putMember g "__vis_dotted_member__" nil))))
+      (do
+        (.putMember g nm member)
+        (doseq [alias aliases]
+          (.putMember g alias member))
+        (when (fn? val)
+          (try
+            (doseq [defer-name (cons nm aliases)]
+              (.putMember g "__vis_defer1__" defer-name)
+              (.eval
+                ctx
+                "python"
+                (str
+                  "if '__vis_deferred__' in globals() and callable(globals().get(__vis_defer1__)):
+"
+                  "    globals()[__vis_defer1__] = __vis_deferred__(globals()[__vis_defer1__], __vis_defer1__)")))
+            (finally (.putMember g "__vis_defer1__" nil))))))))
 
 (defn- set-python-binding-meta!
   "Record one piece of model-facing metadata for `sym` (and its py-aliases) in
@@ -966,23 +970,30 @@
     (.putMember g "__vis_protected_names__" (->py (vec (sort (set/union existing names')))))))
 
 (defn remove-python-binding!
-  "Remove `sym` from the Python sandbox globals ENTIRELY — the member key
-   disappears, so `apropos`/`dir` no longer list it and calling it raises
-   a plain NameError. This is how a deactivated tool must vanish:
-   `putMember nil` only parks a None under the name, which `apropos`
-   still lists and which calls as 'NoneType is not callable'."
+  "Remove `sym` from the Python sandbox entirely, including dotted namespace
+   members and all discovery metadata."
   [python-context sym]
-  (try (let [g (python-globals python-context)]
-         (.removeMember g (sym->py-name sym))
-         (doseq [alias (py-aliases-for-sym sym)]
-           (.removeMember g alias))
-         ;; Drop any recorded doc too, so a deactivated tool leaves no stale
-         ;; `__vis_docs__` entry that `doc`/`apropos` would keep surfacing.
-         (doseq [nm (cons (sym->py-name sym) (py-aliases-for-sym sym))]
+  (try (let [g
+             (python-globals python-context)
+
+             names
+             (cons (sym->py-name sym) (py-aliases-for-sym sym))]
+
+         (doseq [nm names]
+           (if (str/includes? nm ".")
+             (do (.putMember g "__vis_dotted_name__" nm)
+                 (.eval ^Context python-context
+                        "python"
+                        "__vis_remove_dotted_tool__(__vis_dotted_name__)"))
+             (.removeMember g nm))
            (.putMember g "__vis_meta_sym__" (str nm))
            (.eval ^Context python-context
                   "python"
-                  "globals().get('__vis_docs__', {}).pop(__vis_meta_sym__, None)"))
+                  (str
+                    "for __vis_meta_table__ in ('__vis_docs__', '__vis_sigs__', '__vis_keys__'):
+"
+                    "    globals().get(__vis_meta_table__, {}).pop(__vis_meta_sym__, None)")))
+         (.putMember g "__vis_dotted_name__" nil)
          (.putMember g "__vis_meta_sym__" nil))
        (catch Throwable _ false)))
 
@@ -1284,10 +1295,12 @@
                     (let [^Value a (aget args 0)]
                       (cond (.isString a) (.asString a)
                             ;; An `AproposItem` IS a target: a row answers with the
-                            ;; exact name `doc` reads, so a reader passes the row back
-                            ;; instead of retyping the name off it.
+                            ;; exact name `doc` reads, so a reader passes the row back.
                             (and (.hasMember a "name") (.isString (.getMember a "name")))
                             (.asString (.getMember a "name"))
+                            ;; Deferred dotted methods carry their exact public name.
+                            (and (.hasMember a "__name__") (.isString (.getMember a "__name__")))
+                            (.asString (.getMember a "__name__"))
                             :else (str a))))
 
                   es
@@ -1306,7 +1319,8 @@
                           (first (filter #(= wanted (doc-corpus/normalize-name (:name %))) es)))
 
                       m
-                      (when hit (.getMember g ^String (:name hit)))]
+                      (when (and hit (not (str/includes? ^String (:name hit) ".")))
+                        (.getMember g ^String (:name hit)))]
 
                   (if hit
                     (let [note

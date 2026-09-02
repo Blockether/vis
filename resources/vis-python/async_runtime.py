@@ -2749,6 +2749,66 @@ def __vis_stamp_tool__(fn, nm):
     return fn
 
 
+def __vis_resolve_tool__(nm):
+    obj = globals().get(str(nm).split(".", 1)[0])
+    for part in str(nm).split(".")[1:]:
+        try:
+            obj = getattr(obj, part)
+        except (AttributeError, TypeError):
+            return None
+    return obj
+
+
+class __vis_ToolNamespace__:
+    # A capability object, not the extension's raw object: only methods explicitly
+    # discovered by vis.symbol() can cross this boundary.
+    __slots__ = ("__vis_members__",)
+
+    def __init__(self):
+        object.__setattr__(self, "__vis_members__", {})
+
+    def __getattribute__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        members = object.__getattribute__(self, "__vis_members__")
+        try:
+            return members[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def __dir__(self):
+        return sorted(object.__getattribute__(self, "__vis_members__"))
+
+
+def __vis_set_dotted_tool__(nm, realfn):
+    root, member = str(nm).split(".", 1)
+    if not root.isidentifier() or not member.isidentifier() or member.startswith("_"):
+        raise ValueError("invalid extension tool namespace: " + str(nm))
+    g = globals()
+    namespace = g.get(root)
+    if namespace is None:
+        namespace = __vis_ToolNamespace__()
+        g[root] = namespace
+    if not isinstance(namespace, __vis_ToolNamespace__):
+        raise ValueError("extension tool namespace collides with global: " + root)
+    members = object.__getattribute__(namespace, "__vis_members__")
+    members[member] = __vis_deferred__(realfn, str(nm))
+
+
+def __vis_remove_dotted_tool__(nm):
+    root, member = str(nm).split(".", 1)
+    namespace = globals().get(root)
+    if not isinstance(namespace, __vis_ToolNamespace__):
+        return
+    members = object.__getattribute__(namespace, "__vis_members__")
+    members.pop(member, None)
+    if not members:
+        globals().pop(root, None)
+    names = globals().get("__vis_tool_names__") or []
+    if nm in names:
+        names.remove(nm)
+
+
 def __vis_stamp_tools__(names=None):
     # HOST-CALLED once docs/signatures are seeded, and again after a late
     # binding: (re)stamp every deferred tool, or only the ones named. A name the
@@ -2756,7 +2816,7 @@ def __vis_stamp_tools__(names=None):
     # set by `__vis_deferred__` and by nothing else.
     g = globals()
     for nm in list(g.get("__vis_tool_names__") or [] if names is None else names):
-        fn = g.get(nm)
+        fn = __vis_resolve_tool__(nm)
         if callable(fn) and getattr(fn, "__vis_is_tool__", False):
             __vis_stamp_tool__(fn, nm)
 

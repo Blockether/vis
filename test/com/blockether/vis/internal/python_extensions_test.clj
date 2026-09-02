@@ -21,6 +21,7 @@
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.python-extensions :as pyx]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.python-test-runner :as runner]
             [lazytest.core :refer [defdescribe expect it]])
@@ -169,35 +170,139 @@ vis.extension(
 
 ;; Loading + registry
 
-(defdescribe
-  load-and-register-test
-  (it "loads a file, registers the extension, and strips the alias prefix from symbol names"
-      (with-loaded {"counter.py" counter-py}
-                   (fn [result _]
-                     (expect (= {:loaded 1 :failed 0 :changed? true} result))
-                     (let [ext (registered "counter")]
-                       (expect (some? ext))
-                       (expect (= 'counter (get-in ext [:ext/engine :ext.engine/alias])))
-                       (expect (= '[bump read boom]
-                                  (mapv :ext.symbol/symbol
-                                        (get-in ext [:ext/engine :ext.engine/symbols]))))
-                       ;; docstring became the model-facing doc; arglists carry the
-                       ;; real Python parameter names
-                       (let [bump (first (get-in ext [:ext/engine :ext.engine/symbols]))]
-                         (expect (str/includes? (:ext.symbol/doc bump) "bump the counter"))
-                         (expect (= ['[by]] (:ext.symbol/arglists bump)))
-                         (expect (= :mutation (:ext.symbol/tag bump))))
-                       ;; is_hidden=True -> the :ext.symbol/hidden? predicate key
-                       (let [boom (last (get-in ext [:ext/engine :ext.engine/symbols]))]
-                         (expect (= 'boom (:ext.symbol/symbol boom)))
-                         (expect (true? (:ext.symbol/hidden? boom))))))))
-  (it "is idempotent: an unchanged scan is a no-op"
-      (with-loaded {"counter.py" counter-py}
-                   (fn [_ {:keys [ext-dir]}]
-                     (let [again (pyx/load-python-extensions! {:dirs [(str ext-dir)]})]
-                       (expect (= false (:changed? again)))
-                       (expect (= 1 (:loaded again))))))))
+(defdescribe load-and-register-test
+             (it "loads a file and keeps each flat function's exact declared public name"
+                 (with-loaded {"counter.py" counter-py}
+                              (fn [result _]
+                                (expect (= {:loaded 1 :failed 0 :changed? true} result))
+                                (let [ext (registered "counter")]
+                                  (expect (some? ext))
+                                  (expect (= 'counter (get-in ext [:ext/engine :ext.engine/alias])))
+                                  (expect (= '[counter_bump counter_read counter_boom]
+                                             (mapv :ext.symbol/symbol
+                                                   (get-in ext [:ext/engine :ext.engine/symbols]))))
+                                  ;; docstring became the model-facing doc; arglists carry the
+                                  ;; real Python parameter names
+                                  (let [bump (first (get-in ext [:ext/engine :ext.engine/symbols]))]
+                                    (expect (str/includes? (:ext.symbol/doc bump)
+                                                           "bump the counter"))
+                                    (expect (= ['[by]] (:ext.symbol/arglists bump)))
+                                    (expect (= :mutation (:ext.symbol/tag bump))))
+                                  ;; is_hidden=True -> the :ext.symbol/hidden? predicate key
+                                  (let [boom (last (get-in ext [:ext/engine :ext.engine/symbols]))]
+                                    (expect (= 'counter_boom (:ext.symbol/symbol boom)))
+                                    (expect (true? (:ext.symbol/hidden? boom))))))))
+             (it "is idempotent: an unchanged scan is a no-op"
+                 (with-loaded {"counter.py" counter-py}
+                              (fn [_ {:keys [ext-dir]}]
+                                (let [again (pyx/load-python-extensions! {:dirs [(str ext-dir)]})]
+                                  (expect (= false (:changed? again)))
+                                  (expect (= 1 (:loaded again))))))))
 
+(def ^:private object-namespace-py
+  "\"\"\"Object namespace fixture.\"\"\"
+import vis
+
+class BuildStatus:
+    def __init__(self, state):
+        self.state = state
+
+class Jenkins:
+    def poll(self, job, number=None, wait=0):
+        \"\"\"Poll one Jenkins build.\"\"\"
+        return BuildStatus(f'{job}:{number}:{wait}')
+
+    @vis.method(tag='mutation')
+    def deploy_status(self, job, number=None):
+        \"\"\"Inspect deployment stages for one build.\"\"\"
+        return {'job': job, 'number': number}
+
+    def _credential(self):
+        \"\"\"Must not cross the namespace boundary.\"\"\"
+        return 'secret'
+
+jenkins = Jenkins()
+vis.extension(
+    name='glms', description='Object namespace fixture.', kind='integration', alias='glms',
+    symbols=[vis.symbol(jenkins, name='glms_jenkins')],
+)
+")
+
+(defdescribe
+  python-object-namespace-test
+  ;; Regression, issue #166: object integrations had to flatten every method into a
+  ;; separately prefixed function, or expose a raw object that bypassed tool execution.
+  (it "exports only public methods under the exact declared sandbox namespace"
+      (with-loaded
+        {"object_namespace.py" object-namespace-py}
+        (fn [result _]
+          (expect (= {:loaded 1 :failed 0 :changed? true} result))
+          (let [ext
+                (registered "glms")
+
+                entries
+                (get-in ext [:ext/engine :ext.engine/symbols])
+
+                poll
+                (symbol-fn ext 'glms_jenkins.poll)
+
+                deploy
+                (symbol-fn ext 'glms_jenkins.deploy_status)]
+
+            (expect (= '[glms_jenkins.poll glms_jenkins.deploy_status]
+                       (mapv :ext.symbol/symbol entries)))
+            (expect (= [:observation :mutation] (mapv :ext.symbol/tag entries)))
+            (expect (= [['[job number wait]] ['[job number]]] (mapv :ext.symbol/arglists entries)))
+            (expect (nil? (symbol-fn ext 'glms_jenkins._credential)))
+            (expect (= "typed"
+                       (let [value (:result (poll "typed" nil 0))]
+                         (when (.hasMember ^org.graalvm.polyglot.Value value "state") "typed"))))
+            (expect (= "build" (get-in (deploy "build" 42) [:result "job"]))))))))
+
+(defdescribe
+  python-object-namespace-sandbox-test
+  ;; Regression, issue #166: namespaced methods could not be called through the
+  ;; sandbox's deferred tool machinery or discovered as dotted public symbols.
+  (it
+    "calls, introspects, types, and removes only declared namespace methods"
+    (with-loaded
+      {"object_namespace.py" object-namespace-py}
+      (fn [_ _]
+        (let [ext
+              (registered "glms")
+
+              made
+              (ep/create-python-context {})
+
+              ctx
+              (:python-context made)
+
+              env
+              {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
+
+          (try (lp/sync-active-extension-symbols! env [ext])
+               (let [result
+                     (ep/run-python-block
+                       ctx
+                       (str "import inspect\n" "status = await glms_jenkins.poll('job', number=4)\n"
+                            "try:\n    glms_jenkins._credential\n    private = 'leaked'\n"
+                            "except AttributeError:\n    private = 'safe'\n"
+                            "print(type(status).__name__, status.state, private, "
+                            "str(inspect.signature(glms_jenkins.poll)), "
+                            "[x.name for x in apropos('glms_jenkins')], "
+                            "'Poll one Jenkins build.' in doc(glms_jenkins.poll))"))
+
+                     out
+                     (:stdout result)]
+
+                 (expect (str/includes? out "ForeignObject job:4:0 safe"))
+                 (expect (str/includes? out "(job, number, wait"))
+                 (expect (str/includes? out "glms_jenkins.poll"))
+                 (expect (str/ends-with? (str/trim out) "True"))
+                 (lp/sync-active-extension-symbols! env [])
+                 (expect (= {:stdout "False\n"}
+                            (ep/run-python-block ctx "print('glms_jenkins' in globals())"))))
+               (finally (.close ^Context ctx))))))))
 ;; Tool adapter — envelope semantics
 
 (defdescribe tool-envelope-test
@@ -205,7 +310,7 @@ vis.extension(
                  (with-loaded {"counter.py" counter-py}
                               (fn [_ _]
                                 (let [bump
-                                      (symbol-fn (registered "counter") 'bump)
+                                      (symbol-fn (registered "counter") 'counter_bump)
 
                                       result
                                       (bump 5)]
@@ -259,7 +364,7 @@ vis.extension(
       (with-loaded {"kwargs.py" kwargs-py}
                    (fn [_ _]
                      (let [probe
-                           (symbol-fn (registered "kwargs") 'probe)
+                           (symbol-fn (registered "kwargs") 'kw_probe)
 
                            result
                            ;; how the sandbox delivers probe(g, mode=deep, is_deep=True)
@@ -272,13 +377,13 @@ vis.extension(
   (it "a plain positional call is untouched"
       (with-loaded {"kwargs.py" kwargs-py}
                    (fn [_ _]
-                     (let [result ((symbol-fn (registered "kwargs") 'probe) "g" "deep")]
+                     (let [result ((symbol-fn (registered "kwargs") 'kw_probe) "g" "deep")]
                        (expect (= "deep" (get-in result [:result "mode"])))
                        (expect (false? (get-in result [:result "is_deep"])))))))
   (it "a genuine mapping positional stays ONE argument"
       (with-loaded {"kwargs.py" kwargs-py}
                    (fn [_ _]
-                     (let [result ((symbol-fn (registered "kwargs") 'mapping) {"a" 1 "b" 2})]
+                     (let [result ((symbol-fn (registered "kwargs") 'kw_mapping) {"a" 1 "b" 2})]
                        (expect (extension/envelope-success? result))
                        (expect (= 1 (get-in result [:result "payload" "a"])))
                        (expect (= 2 (get-in result [:result "payload" "b"]))))))))
@@ -350,7 +455,7 @@ vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
                        (expect (= [{:name "PATH" :required? true}
                                    {:name "VIS_TEST_NEVER_SET_129" :required? true}]
                                   (:ext/env ext)))
-                       (let [probe (symbol-fn ext 'probe)
+                       (let [probe (symbol-fn ext 'env_probe)
                              out (get-in (probe) [:result])]
 
                          (expect (true? (get out "has_path")))
@@ -370,11 +475,11 @@ vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
              (it "vis.state survives a full reload (fresh contexts, same DB)"
                  (with-loaded {"counter.py" counter-py}
                               (fn [_ {:keys [ext-dir]}]
-                                (let [bump (symbol-fn (registered "counter") 'bump)]
+                                (let [bump (symbol-fn (registered "counter") 'counter_bump)]
                                   (expect (= 7 (get-in (bump 7) [:result "count"])))
                                   ;; full teardown + fresh contexts
                                   (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
-                                  (let [read (symbol-fn (registered "counter") 'read)]
+                                  (let [read (symbol-fn (registered "counter") 'counter_read)]
                                     (expect (= 7 (get-in (read) [:result "count"])))))))))
 
 (def ^:private state-mapping-py
@@ -424,7 +529,7 @@ vis.extension(
                  (with-loaded {"state_mapping.py" state-mapping-py}
                               (fn [_ _]
                                 (let [probe
-                                      (symbol-fn (registered "state-mapping") 'probe)
+                                      (symbol-fn (registered "state-mapping") 'state_probe)
 
                                       out
                                       (:result (probe))]
@@ -860,7 +965,8 @@ vis.extension(
       (with-loaded
         {"counter.py" counter-py}
         (fn [_ {:keys [ext-dir]}]
-          (expect (= 0 (get-in ((symbol-fn (registered "counter") 'read)) [:result "count"])))
+          (expect (= 0
+                     (get-in ((symbol-fn (registered "counter") 'counter_read)) [:result "count"])))
           (write-ext! ext-dir "counter.py" (str "BOOM = _vis_undefined_ + 1\n" counter-py))
           (let [result (pyx/load-python-extensions! {:dirs [(str ext-dir)]})]
             (expect (= 1 (:loaded result)))
@@ -868,9 +974,9 @@ vis.extension(
             (expect (str/includes? (:error (first (pyx/load-failures))) "_vis_undefined_"))
             (let [ext (registered "counter")]
               (expect (some? ext))
-              (expect (= '[bump read boom]
+              (expect (= '[counter_bump counter_read counter_boom]
                          (mapv :ext.symbol/symbol (get-in ext [:ext/engine :ext.engine/symbols]))))
-              (expect (= 0 (get-in ((symbol-fn ext 'read)) [:result "count"]))))))))
+              (expect (= 0 (get-in ((symbol-fn ext 'counter_read)) [:result "count"]))))))))
   (it "change listeners see every (re)load and removal"
       (let [events (atom [])]
         (pyx/add-change-listener! ::test #(swap! events conj %))
@@ -951,7 +1057,7 @@ vis.extension(
                      (expect (= {:loaded 1 :failed 0 :changed? true} result))
                      (let [ext (registered "pkgext")]
                        (expect (some? ext))
-                       (let [add (symbol-fn ext 'add)
+                       (let [add (symbol-fn ext 'pkg_add)
                              res (add 2 3)]
 
                          (expect (extension/envelope-success? res))
@@ -981,7 +1087,7 @@ vis.extension(
           (expect (= {:loaded 1 :failed 0 :changed? true} result))
           (let [ext (registered "myext")]
             (expect (some? ext))
-            (let [add (symbol-fn ext 'add)]
+            (let [add (symbol-fn ext 'mx_add)]
               (expect (= 3 (get-in (add 1 2) [:result "sum"])))))))))
 
 ;; Python-level self-tests — test_*.py / *_test.py run through the pytest shim
@@ -2198,7 +2304,7 @@ vis.extension(
                          (registered "forms")
 
                          res
-                         (:result ((symbol-fn ext 'report)))]
+                         (:result ((symbol-fn ext 'forms_report)))]
 
                      ;; the builders compose plain wire data: a group, and nameless ink
                      (expect (= "group:column" (get res "kind")))

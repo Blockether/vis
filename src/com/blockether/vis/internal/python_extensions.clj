@@ -854,30 +854,19 @@
 
 ;; Registration dict -> extension spec
 
-(defn- symbol-base-name
-  "Symbol name for the registry: `name or fn.__name__` with a leading
-   `<alias>_` stripped, so a module can use readable full names
-   (`todo_add` under alias `todo`) without double-prefixing in the
-   sandbox."
-  [alias-sym ^String n]
-  (let [prefix (str alias-sym "_")]
-    (if (and alias-sym (str/starts-with? n prefix) (> (count n) (count prefix)))
-      (subs n (count prefix))
-      n)))
+(defn- symbol-name
+  "The exact public sandbox name declared by the Python author."
+  [spec]
+  (clojure.core/symbol (str (get spec "name"))))
 
 ;; Extension TAG vocabulary: the .py author declares "observation"/"mutation";
 ;; the registry stores the internal tag keyword. Bounded map — no minting.
 (def ^:private symbol-tags {"observation" :observation "mutation" :mutation})
 
 (defn- ->symbol-entry
-  "`spec` is a Python registration dict — STRING keys (strings-only boundary).
-   A Python-declared symbol is a plain sandbox function: its `doc` is what
-   `doc(name)` answers, and it is never advertised as a provider tool."
-  [ext-name alias-sym ^Context ctx spec]
-  (let [sym
-        (clojure.core/symbol (symbol-base-name alias-sym (str (get spec "name"))))
-
-        pyfn
+  "Turn one Python callable registration into an ordinary observed tool entry."
+  [ext-name ^Context ctx sym spec]
+  (let [pyfn
         (get spec "fn")
 
         argv
@@ -896,6 +885,20 @@
                              :doc (str (get spec "doc"))
                              :arglists [argv]}
                             opts)))
+
+(defn- ->symbol-entries
+  "Expand a flat function or an object namespace into registry tool entries."
+  [ext-name ^Context ctx spec]
+  (if (= "namespace" (str (get spec "marker")))
+    (let [namespace-name (str (get spec "name"))]
+      (mapv (fn [method-spec]
+              (->symbol-entry ext-name
+                              ctx
+                              (clojure.core/symbol
+                                (str namespace-name "." (get method-spec "name")))
+                              method-spec))
+            (get spec "methods")))
+    [(->symbol-entry ext-name ctx (symbol-name spec) spec)]))
 
 (defn- ->slash-spec
   [ext-name ^Context ctx spec]
@@ -1285,7 +1288,7 @@
                 clojure.core/symbol)
 
         symbols
-        (mapv #(->symbol-entry ext-name alias-sym ctx %) (get reg "symbols"))
+        (vec (mapcat #(->symbol-entries ext-name ctx %) (get reg "symbols")))
 
         slashes
         (mapv #(->slash-spec ext-name ctx %) (get reg "slash_commands"))
@@ -1319,7 +1322,7 @@
              :ext/description (str (get reg "description"))
              :ext/kind (str (or (get reg "kind") "python"))
              :ext/source-nses ['com.blockether.vis.internal.python-extensions]
-             :ext/engine (cond-> {:ext.engine/symbols symbols}
+             :ext/engine (cond-> {:ext.engine/symbols symbols :ext.engine/exact-symbol-names? true}
                            alias-sym
                            (assoc :ext.engine/alias alias-sym))}
       (get reg "version")

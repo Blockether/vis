@@ -10612,23 +10612,23 @@
 
        (doseq [ext installed
                :let [alias (extension/ext-alias-symbol ext)
+                     exact-names? (extension/ext-exact-symbol-names? ext)
                      by-sym
                      (into {} (map (juxt :ext.symbol/symbol identity) (extension/ext-symbols ext)))]
                [sym f] (try (extension/wrap-extension ext environment) (catch Throwable _ nil))]
 
-         ;; Aliased extensions (`:ext.engine/alias 'clj`) bind into the FLAT
-         ;; Python sandbox as `<alias>_<name>` — the snake form of the
-         ;; `alias/name` shape (clj_eval, db_status, search_web, br_open). Without
-         ;; folding the alias in, the tool leaked as its BARE suffix (`eval`,
-         ;; `status`, `web`), so the model's prompt-promised `clj_eval(...)`
-         ;; call hit a NameError and `apropos`/`dir` showed the wrong names.
-         ;; Builtins carry no alias → bound bare, like the engine verbs.
+         ;; Clojure extensions use `<alias>_<name>` in Python. Python-authored
+         ;; extensions declare their public names verbatim: the registry alias is
+         ;; metadata only, and dotted names become safe namespace objects in
+         ;; env/set-python-binding!. Builtins carry no alias and remain bare.
          ;;
          ;; Deactivated extensions get their members REMOVED, not nil'd:
-         ;; `putMember nil` parks a None under the name, which `apropos`
-         ;; kept listing and which called as 'NoneType is not callable' —
-         ;; a disabled tool must not exist in the sandbox at all.
-         (let [target (if alias (clojure.core/symbol (str alias "/" (name sym))) sym)]
+         ;; `putMember nil` parks a None under the name, which `apropos` kept
+         ;; listing and which called as 'NoneType is not callable' — a disabled
+         ;; tool must not exist in the sandbox at all.
+         (let [target (if (and alias (not exact-names?))
+                        (clojure.core/symbol (str alias "/" (name sym)))
+                        sym)]
            ;; Bound only when the extension is active and the symbol's `:active-fn`
            ;; holds for env — one gate for every Python binding.
            (if (and (contains? active-set (:ext/name ext))

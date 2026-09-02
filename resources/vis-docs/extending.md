@@ -132,7 +132,7 @@ Exactly one call per file. Keyword arguments:
 | `description` | str, required | One-liner for `vis-agent extension list` and the model's extensions snapshot. |
 | `kind` | str | Section label (`"integration"`, `"guard"`, …). Defaults to `"python"`. |
 | `version` | str | Plain metadata. |
-| `alias` | str | Python-name prefix for tools. Required when `symbols=` is declared. |
+| `alias` | str | Short registry identity used in extension listings. Required with `symbols=`; it does not prefix the public Python API. |
 | `symbols` | list of `vis.symbol(...)` | Model-facing tools. |
 | `prompt` | str or callable | Model-facing fragment. A callable receives the env dict every turn and returns a string or `None` (no fragment that turn). |
 | `activation` | callable | `(env) -> bool`, evaluated per turn; gates the whole extension. Default: always on. |
@@ -222,14 +222,14 @@ vis.extension(
 ### Tools
 
 ```python
-vis.symbol(fn, name=None, tag="observation", is_hidden=False)
+vis.symbol(fn_or_object, name=None, tag="observation", is_hidden=False)
+vis.method(fn=None, *, tag="observation", is_hidden=False)
 ```
 
 - `tag` declares what the tool does: `"observation"` (reads state) or `"mutation"`
   (changes state) — same contract as Clojure tools.
-- The sandbox name is `f"{alias}_{name}"`; `name` defaults to `fn.__name__`
-  with a leading `"{alias}_"` stripped, so a module can use readable full
-  names (`todo_add` under alias `todo`) without double-prefixing.
+- A function's sandbox name is exactly `name`, defaulting to `fn.__name__`. The
+  extension `alias` never prefixes it.
 - **The docstring is mandatory** — it is the whole contract. `apropos(pattern)`
   filters the symbol name with a regular expression, while `doc(name)` returns the
   docstring verbatim. Choose a descriptive symbol name and put preconditions,
@@ -248,10 +248,43 @@ vis.symbol(fn, name=None, tag="observation", is_hidden=False)
   itself spells with a trailing `?` (`is_tool_call` → `:tool-call?`); those map
   through one named table instead of by convention.
 
-**A tool is a Python function, never a provider tool.** `python_execution` is the
+An integration object can publish all of its public methods under one exact name:
+
+```python
+class Jenkins:
+    def poll(self, job, number=None, wait=0):
+        """Poll one build and return its typed status object."""
+        ...
+
+    @vis.method(tag="mutation")
+    def rebuild(self, job, number):
+        """Start a replacement build."""
+        ...
+
+    def _credential(self):
+        ...
+
+jenkins = Jenkins()
+vis.extension(
+    name="glms",
+    description="Jenkins integration.",
+    alias="glms",
+    symbols=[vis.symbol(jenkins, name="glms_jenkins")],
+)
+```
+
+This exposes exactly `glms_jenkins.poll(...)` and
+`glms_jenkins.rebuild(...)`. Public callable methods are discovered in definition
+order; properties, data attributes, and names beginning with `_` never cross the
+boundary. `vis.method(...)` overrides `tag` or `is_hidden` for one method; otherwise
+the enclosing `vis.symbol(...)` defaults apply. Each method keeps its own signature
+and docstring in `apropos`/`doc`, runs through the same deferred worker and result
+envelope as a flat tool, and may return a custom typed object without flattening it.
+
+**A tool is a Python callable, never a provider tool.** `python_execution` is the
 only thing a model is handed a schema for; every symbol an extension registers is
-a bare name inside that sandbox, called like any other Python function. There is
-no JSON Schema to write, no `description=`/`result=` pair to keep in sync with the
+called like an ordinary Python function or namespaced method. There is no JSON
+Schema to write, no `description=`/`result=` pair to keep in sync with the
 docstring, and no per-symbol renderer: a printed result is carded from the value
 itself.
 
