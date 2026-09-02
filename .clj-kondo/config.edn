@@ -12,8 +12,6 @@
   ;; Four sandbox LEASES, each `[binding (create …)] & body` — exactly a `let`
   ;; binding pair, so kondo resolves the bound symbol (and a destructuring map)
   ;; in the body instead of calling every use of it an unresolved symbol.
-  com.blockether.vis.test-python-context/with-own clojure.core/let
-  com.blockether.vis.test-python-context/with-own-env clojure.core/let
   com.blockether.vis.internal.sandbox-resources/with-sandbox clojure.core/let
   com.blockether.vis.internal.sandbox-resources/keeping-sandbox clojure.core/let}
 
@@ -57,4 +55,13 @@
    com.blockether.vis.internal.foundation.environment.agents-test/with-tmp
    hooks.com.blockether.vis.with-tmp/with-tmp
    com.blockether.vis.internal.foundation.environment.skills-test/with-tmp
-   hooks.com.blockether.vis.with-tmp/with-tmp}}}
+   hooks.com.blockether.vis.with-tmp/with-tmp
+
+   ;; The sandbox leases: `[sym & create-python-context args]`, which is NOT a
+   ;; `let` binding vector — linting it as one reads the roots argument as a
+   ;; binding form, so every lease that states its own roots (every jailed one)
+   ;; was an error.
+   com.blockether.vis.test-python-context/with-own
+   hooks.com.blockether.vis.with-own-sandbox/with-own
+   com.blockether.vis.test-python-context/with-own-env
+   hooks.com.blockether.vis.with-own-sandbox/with-own-env}}}
