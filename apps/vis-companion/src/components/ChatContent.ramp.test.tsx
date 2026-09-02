@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TranscriptIteration } from "../lib/types";
@@ -39,7 +39,10 @@ const FRAME_MS = 70;
  * Mount a trace of `count` iterations and pump animation frames until it stops
  * asking for them, answering how many frames the backfill took.
  */
-function rampFrames(count: number): { frames: number; segments: number } {
+function rampFrames(
+  count: number,
+  { unfold = false }: { unfold?: boolean } = {},
+): { frames: number; segments: number } {
   const queue: FrameRequestCallback[] = [];
   let clock = 0;
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
@@ -57,19 +60,31 @@ function rampFrames(count: number): { frames: number; segments: number } {
   );
   const rail = () => view.container.firstElementChild?.children.length ?? 0;
 
-  let frames = 0;
-  let previous = -1;
-  while (queue.length > 0 && frames < 2000) {
-    const tick = queue.shift();
-    if (!tick) break;
-    clock += FRAME_MS;
-    act(() => {
-      tick(clock);
-    });
-    frames += 1;
-    // The backfill is over once a whole frame mounted nothing new.
-    if (rail() === previous && queue.length === 0) break;
-    previous = rail();
+  const pump = () => {
+    let frames = 0;
+    let previous = -1;
+    while (queue.length > 0 && frames < 2000) {
+      const tick = queue.shift();
+      if (!tick) break;
+      clock += FRAME_MS;
+      act(() => {
+        tick(clock);
+      });
+      frames += 1;
+      // The backfill is over once a whole frame mounted nothing new.
+      if (rail() === previous && queue.length === 0) break;
+      previous = rail();
+    }
+    return frames;
+  };
+
+  let frames = pump();
+  if (unfold) {
+    // The rule is the only button a folded trace paints.
+    const rule = view.container.querySelector("button");
+    if (!rule) throw new Error("a folded trace painted no rule to press");
+    fireEvent.click(rule);
+    frames += pump();
   }
   const segments = rail();
   view.unmount();
@@ -82,8 +97,21 @@ afterEach(() => {
 });
 
 describe("a trace backfilling the turns a reader is scrolling into", () => {
-  it("fills in a handful of frames, not one frame per handful of segments", () => {
+  // Regression, user report ("this session is so big it will not load"): one turn
+  // of a real session held 1,116 iterations, and the trace painted every one of
+  // them — measured in Chromium at 393x852, 107,090 px and 23,806 DOM nodes for
+  // that turn alone, 180 screens a reader had to drag through. The ramp above
+  // decides how FAST the trace mounts; only a fold decides how MUCH of it exists.
+  it("stops at the fold instead of mounting a whole turn nobody scrolled to", () => {
     const { frames, segments } = rampFrames(300);
+
+    // The last 24 steps, plus the rule that says how many are behind them.
+    expect(segments).toBe(25);
+    expect(frames).toBeLessThanOrEqual(20);
+  });
+
+  it("hands the rest back in a handful of frames, not one frame per handful", () => {
+    const { frames, segments } = rampFrames(300, { unfold: true });
 
     // A step that triples until it hurts reaches all 300 segments in well
     // under twenty paid frames. The old floor-bound controller needed one

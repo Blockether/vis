@@ -1102,6 +1102,26 @@ export const STORY_TURN_ITERATIONS_SETTLED: TranscriptIteration[] = STORY_TURN_I
 );
 
 /**
+ * A LONG turn — the one the fold exists for.
+ *
+ * One turn of a real session held 1,116 steps, and painted whole it measured
+ * 107,090 px and 23,806 DOM nodes: 180 screens a reader had to drag through to
+ * reach the answer. 120 steps is enough to see what the fold does — the rule,
+ * the count standing behind it, and the last steps where the reader left them.
+ * Cycled from the settled fixture so the marks alternate and every render of
+ * this sheet is the same one.
+ */
+export const STORY_TURN_ITERATIONS_LONG: TranscriptIteration[] = Array.from(
+  { length: 120 },
+  (_, index) => {
+    const source =
+      STORY_TURN_ITERATIONS_SETTLED[
+        index % STORY_TURN_ITERATIONS_SETTLED.length
+      ];
+    return { ...source, id: `long-i${index}`, position: index };
+  },
+);
+/**
  * ONE EXCHANGE — what was asked, and the turn that answered it.
  *
  * The only fixture where the human's bubble and the machine's thread are on

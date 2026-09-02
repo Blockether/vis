@@ -2424,6 +2424,23 @@ const RAMP_STEP_TARGET_MS = 100;
 /** Over this the step really did hurt the scroll: halve and re-learn. */
 const RAMP_STEP_LONG_MS = 200;
 
+// A TURN IS NOT A MESSAGE, AND ONE OF THEM CAN BE 180 SCREENS.
+//
+// Measured in a phone frame on a captured 8-turn window of a real session:
+// 213 905 px of transcript over 46 911 nodes, of which ONE turn — 1 116
+// iterations — was 107 090 px and 23 806 nodes. Its segments are not fat (median
+// 140 px, nothing over 322 px); there are simply 814 of them, so a reader
+// scrolling up to the answer above that turn crosses 180 screens of tool steps.
+// Paint skipping cannot reach it either: `content-visibility` only skips a box
+// the viewport is OUTSIDE, and a reader crossing that turn is inside it the whole
+// way — the two newest turns measured `content-visibility: visible` and carried
+// half the document between them.
+//
+// So a trace paints its LAST segments and cuts the rest behind the same rule the
+// transcript already uses for earlier turns. One press hands the whole trace back
+// through the ramp above, a chunk per frame.
+const SEGMENT_FOLD = 24;
+
 // A screen holds several traces (one per turn), and if they all ramp at once
 // every frame pays for several mounts and several forced layouts while each
 // trace's stopwatch is really timing its neighbours — so all of them read "too
@@ -2767,6 +2784,9 @@ export const IterationTrace = memo(function IterationTrace({
     whole ? 0 : Math.max(0, segments.length - SEGMENT_FIRST_PAINT),
   );
 
+  // The reader pressed the rule: this trace never folds again.
+  const [unfolded, setUnfolded] = useState(false);
+
   // `whole` also arrives LATE, and it has to count then too. WHICH reconcile
   // tick retires the running-turn bubble is not this trace's business: the settled row
   // can mount a tick BEFORE the bubble is dropped — the registry still calls the
@@ -2776,7 +2796,13 @@ export const IterationTrace = memo(function IterationTrace({
   // and no frame.
   const hidden = whole ? 0 : hiddenSegments;
 
-  const rampDone = hidden <= 0;
+  // Where the ramp stops. `hidden` still only ever SHRINKS, so a trace that is
+  // being written never folds away a segment it has already painted: the floor
+  // rises under it and the ramp simply has nothing left to do.
+  const foldFloor =
+    whole || unfolded ? 0 : Math.max(0, segments.length - SEGMENT_FOLD);
+
+  const rampDone = hidden <= foldFloor;
 
   // A chunk per frame, so the work the first paint skipped never lands as one
   // long frame either.
@@ -2823,17 +2849,25 @@ export const IterationTrace = memo(function IterationTrace({
       }
 
       step.startedAt = performance.now();
-      setHiddenSegments((count) => Math.max(0, count - step.size));
+      setHiddenSegments((count) => Math.max(foldFloor, count - step.size));
     };
     frame = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(frame);
-  }, [hiddenSegments, rampDone, rampId, whole]);
+  }, [foldFloor, hiddenSegments, rampDone, rampId, whole]);
 
   if (!segments.length) return null;
-  const shown = rampDone ? segments : segments.slice(hidden);
+  const shown = hidden > 0 ? segments.slice(hidden) : segments;
 
   return (
     <div ref={rootRef} className="mb-2.5 grid">
+      {rampDone && hidden > 0 && (
+        <LoadMore
+          label={`Show ${hidden} earlier step${hidden === 1 ? "" : "s"} of this turn`}
+          onClick={() => setUnfolded(true)}
+        >
+          {hidden} earlier step{hidden === 1 ? "" : "s"}
+        </LoadMore>
+      )}
       {shown.map((segment, index) => (
         <TraceSegment
           key={segment.key}
