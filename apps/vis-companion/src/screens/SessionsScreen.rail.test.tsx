@@ -255,7 +255,7 @@ describe('the machine hue inside the list', () => {
     return block;
   };
 
-  it('wraps a machine that stands alone in nothing at all', async () => {
+  it('closes a machine that stands alone with the list’s final edge', async () => {
     const view = renderSessionsScreen(alone);
     restore = () => {
       view.unmount();
@@ -264,8 +264,11 @@ describe('the machine hue inside the list', () => {
 
     await waitFor(() => expect(screen.getByText('First')).toBeTruthy());
 
-    // The landmark stays — it is a NAME, not ink — and its projects are simply the list.
+    // The landmark stays — it is a NAME, not identity paint — while the final neutral
+    // 2px rule says exactly where the whole machine list ends.
     const block = blockWithoutHue('visgw projects');
+    expect(block.className).toContain('border-b-2');
+    expect(block.className).toContain('border-dialog-edge');
     expect(block.querySelector('section[data-project-root]')).toBeTruthy();
   });
 

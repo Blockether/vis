@@ -506,8 +506,8 @@ export const ProjectGroup = memo(function ProjectGroup({
             />
           </HeaderActions>
         </SectionHeader>
-        {/* The rows carry no bottom rule of their own: the trough that opens the next
-          project, or the card's own bottom border, closes the group. */}
+        {/* The rows carry no bottom rule of their own: the next project's incoming edge,
+          or the final machine edge around the whole passage, closes the group. */}
         {isShowing && rows.length > 0 && (
           <div ref={rowsRef}>
             {rows.map((session) => {

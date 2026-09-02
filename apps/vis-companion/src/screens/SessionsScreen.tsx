@@ -2133,12 +2133,11 @@ export function SessionsScreen({
             so every page of the pager resized the frame under the finger (page 74 has 1
             row) and the whole screen jumped; its two side rules also stole 12px of a
             390px glass for nothing. Full bleed, no vertical rules, and `h-full` keep the
-            frame fixed while the rows scroll inside it. Its bottom is not a dark rule
-            across the sheet: a fleet closes each machine in that machine's own rail,
-            exactly where its content ends, and a sole machine simply stops — a closing
-            rule under a list nobody is comparing it to closes nothing. The section's own
-            `env(safe-area-inset-bottom)` keeps the last row and the pager clear of the
-            home indicator.
+            frame fixed while the rows scroll inside it. The final machine closes the list with
+            one neutral 2px rule exactly where its content ends; machine identity stays in the
+            switcher instead of becoming another frame around every section. The section's own
+            `env(safe-area-inset-bottom)` keeps that edge and the final row clear of the home
+            indicator.
             At `sm` the card detaches from the viewport edges but still fills the
             available height. Its list owns overflow; the document never grows a second
             scrollbar or leaves an intrinsic-height strip above empty desktop paper. */}
@@ -2215,7 +2214,15 @@ export function SessionsScreen({
             {sections.map(({ machine, groups, reading }, sectionIndex) => {
               const key = machineKey(machine.conn);
               return (
-                <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
+                <section
+                  key={key}
+                  aria-label={`${machineLabel(machine.conn)} projects`}
+                  className={
+                    sectionIndex === sections.length - 1
+                      ? 'border-b-2 border-dialog-edge'
+                      : undefined
+                  }
+                >
                   {/* Every machine keeps its own named panel and landmark, even when it
                       is the only one in the fleet: the landmark is a NAME, not ink. */}
                   {/* Reported (paraphrased: bin that rail on the left): a machine's
