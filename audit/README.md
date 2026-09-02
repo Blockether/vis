@@ -44,7 +44,7 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 61 unique, across 16 `deps.edn` modules (root + extensions).
+- **Direct dependency coordinates:** 62 unique, across 16 `deps.edn` modules (root + extensions).
 - **Declared jar footprint (direct coords):** ~38 MB; concentrated in the embedded CPython runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
@@ -102,7 +102,7 @@ license on the distributed native runtime**.
 
 | Layer | What it is | Coordinates / tool | License | Redistribution *for a fee* |
 |---|---|---|---|---|
-| **Embedded interpreter** | CPython 3.14, built from source and shipped beside the binary as the agent's sandboxed Python substrate | `com.blockether/vis-python-runtime` (Clojars) plus that repository's per-platform release archive | **MIT** for the bridge, **PSF-2.0** for CPython and its standard library | **Permitted** — both are permissive |
+| **Embedded interpreter** | CPython 3.14, built from source and shipped beside the binary as the agent's sandboxed Python substrate | `com.blockether/vis-python-runtime` pinned to an immutable Git commit, plus that repository's per-platform release archive | **MIT** for the bridge, **PSF-2.0** for CPython and its standard library | **Permitted** — both are permissive |
 | **Build tool** | The `native-image` compiler that AOT-compiles vis into the standalone binary (`clojure -T:build native`) | **GraalVM Community Edition (CE) for JDK 25.1.3**, installed from the pinned `graalvm-ce-builds` asset via `.github/actions/setup-graalvm-25` (every CI + native-release workflow) | **GPL-2.0 with Classpath Exception** | **Permitted** — the Classpath Exception frees the output binary |
 
 **Which GraalVM we support.** The release build uses **GraalVM CE 25.1.3**
@@ -197,7 +197,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.150` | Apache-2.0 | 611 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.39` | MIT | 175 KB | Blockether (in-house) |
-| `com.blockether/vis-python-runtime` | `0.1.1` | MIT | 116 KB | Blockether (in-house) |
+| `com.blockether/vis-python-runtime` | `git:0aca5406f147443a9db2e7fcefde4c2011b798d6` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
@@ -207,6 +207,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.taoensso/telemere-slf4j` | `1.2.1` | EPL-1.0 | 19 KB | 3rd-party |
 | `com.taoensso/trove` | `1.1.0` | EPL-1.0 | 17 KB | 3rd-party |
 | `info.sunng/ring-jetty9-adapter` | `0.40.3` | EPL-1.0 | 163 KB | 3rd-party |
+| `io.github.clj-holmes/clj-watson` | `git:be98e4db74fb8927db4825cc73bbe2606e44e5e3` | EPL-2.0 | source checkout | 3rd-party |
 | `io.github.clojure/tools.build` | `0.10.14` | EPL-1.0 | 32 KB | 3rd-party |
 | `io.github.java-diff-utils/java-diff-utils` | `4.17` | Apache-2.0 | 77 KB | 3rd-party |
 | `io.github.noahtheduke/lazytest` | `2.0.0` | EPL-1.0 | 46 KB | 3rd-party |
@@ -292,8 +293,8 @@ _Durable session store (SQLite + Flyway migrations)._
 | EPL-1.0 | 21 |
 | MIT | 15 |
 | Apache-2.0 | 13 |
+| EPL-2.0 | 4 |
 | BSD-2-Clause | 3 |
-| EPL-2.0 | 3 |
 | Bouncy Castle Licence | 2 |
 | LGPL-3.0 | 2 |
 | (floating) | 1 |
@@ -320,7 +321,7 @@ under **Apache-2.0** — **with the copyleft exception(s) below that need legal 
   and every `extensions/*` module.
 - **Blockether in-house libraries** (separate repos, we own source + releases):
   every `com.blockether/*` coordinate above.
-- **3rd-party:** everything else in §5, sourced from Clojars / Maven Central.
+- **3rd-party:** everything else in §5, sourced from its declared Maven or git repository.
 
 ---
 

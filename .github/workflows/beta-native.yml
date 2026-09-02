@@ -186,7 +186,7 @@ jobs:
           # can say a beta is running without executing the binary.
           VIS_RELEASE_TRACK: beta
           VIS_AUTO_INSTALL_GRAALVM: "0"
-        run: clojure -T:build native
+        run: clojure -X:deps prep && clojure -T:build native
       - name: Stage wrapper bundle
         shell: bash
         run: bin/stage-release-bundle "${{ matrix.bin }}" "${{ matrix.asset }}"

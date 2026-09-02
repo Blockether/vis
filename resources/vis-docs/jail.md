@@ -191,20 +191,15 @@ See [Extending Vis](extending.md) for the extension API.
 
 | host | enforcer | requirement |
 |---|---|---|
-| macOS | Seatbelt through `/usr/bin/sandbox-exec` | included with macOS |
-| Linux and WSL2 | bubblewrap mount and network namespaces | `bubblewrap`; `passt` for filtered egress |
+| macOS | Seatbelt through bundled `libvisjail.dylib` | included with the Vis Python runtime |
+| Linux and WSL2 | embedded bubblewrap through bundled `libvisjail.so` | included with the Vis Python runtime |
 | WSL1 and other systems | no supported OS process jail | use a supported host for kernel confinement |
 
-On Debian or Ubuntu:
-
-```bash
-sudo apt-get install -y bubblewrap passt
-```
-
-On Linux, `bwrap` is required for filesystem confinement. `pasta`, supplied by
-`passt`, creates a private network namespace that can reach only the gateway proxy
-port. If `pasta` is missing, filtered egress becomes no egress and Vis prints one
-warning.
+No system package, helper executable, `PATH` entry, or operator install is required. Vis
+loads the platform library adjacent to `libvispython`; the library applies Seatbelt or
+bubblewrap before the child command starts. On Linux, a filtered proxy policy currently
+uses a private network namespace with no route, so it fails closed rather than exposing
+direct egress.
 
 If an enabled jail cannot be enforced, Vis prints one warning and starts the child
 unconfined. This is not a security boundary. A missing or failed session policy is a
@@ -245,9 +240,9 @@ names. These settings are ignored outside macOS.
 2. Run `/reload` after a config edit, then send a message in each session that must
    adopt it.
 3. Use `/net-probe METHOD URL` or `/net-probe host:port` for egress decisions.
-4. On Linux, verify `bwrap --version` and `pasta --version` when the startup warning
-   reports a missing enforcer.
-5. Treat a child started after an unenforceable-jail warning as unconfined.
+4. If startup reports a missing enforcer, verify that the selected Python runtime
+   contains the matching `libvisjail` platform library.
+5. An enabled jail that cannot be enforced refuses to start the child.
 
 The policy snapshot resolves paths and symlinks when the session environment is
 built. Live workspace roots can change within that snapshot, but editing `vis.yml`

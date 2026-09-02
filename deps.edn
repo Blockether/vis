@@ -61,12 +61,14 @@
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
-  ;; The embedded CPython the sandbox runs, replacing GraalPy. This pin is the
-  ;; BRIDGE only; the interpreter for a platform is tens of megabytes and ships
-  ;; as that repository's release archive, fetched once into
-  ;; ~/.vis/python/runtime/ (internal.python-runtime) or staged beside the binary
-  ;; by the image build.
-  com.blockether/vis-python-runtime {:mvn/version "0.1.1"}
+  ;; The embedded CPython the sandbox runs, replacing GraalPy. The JVM bridge is
+  ;; pinned to an immutable runtime commit; its per-platform interpreter ships as
+  ;; that repository's release archive, fetched once into ~/.vis/python/runtime/
+  ;; (internal.python-runtime) or staged beside the native image. Git dependencies
+  ;; with :deps/prep-lib require `clojure -X:deps prep` after a fresh checkout.
+  com.blockether/vis-python-runtime
+  {:git/url "https://github.com/Blockether/vis-python-runtime.git"
+   :git/sha "0aca5406f147443a9db2e7fcefde4c2011b798d6"}
   com.cnuernber/charred {:mvn/version "1.041"}
   com.google.zxing/core {:mvn/version "3.5.4"}
   ;; JVM codecs backing the lazy sandbox nippy_encode/nippy_decode helpers.
@@ -194,10 +196,10 @@
   ;; `clojure -T:build native` first, and because it must fail loudly when the binary
   ;; is missing instead of skipping inside the default suite:
   ;;   clojure -T:build native && clojure -M:test-native
-  ;; No network hook: its only socket is the loopback provider stub it serves itself,
-  ;; and the binary under test is a separate process the hook cannot see. The pty it
-  ;; spawns that binary on is Panama FFM into libc (internal.foundation.pty), so this
-  ;; run needs the same native-access grants every other Vis JVM gets.
+   ;; No network hook: its only socket is the loopback provider stub it serves itself,
+   ;; and the binary under test is a separate process the hook cannot see. Its PTY is
+   ;; owned by the adjacent libvisjail runtime, so this run needs the same native-access
+   ;; grants every other Vis JVM gets.
   :test-native {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
                 :extra-paths ["test-native"]
                 :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"

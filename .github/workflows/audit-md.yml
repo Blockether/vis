@@ -3,9 +3,9 @@ name: Audit doc (audit/README.md)
 # Keeps audit/README.md — the dependency / license / footprint inventory — generated
 # straight from the deps.edn graph, so it can never drift from the code.
 #
-# scripts/gen-audit.bb walks every deps.edn, resolves each artifact's license
-# (following parent POMs) and jar size from Clojars / Maven Central, and renders
-# the whole document.
+# scripts/gen-audit.bb walks every deps.edn, resolves each Maven or git dependency
+# license and distributable size from its declared source, and renders the whole
+# document.
 #
 #   Fail-only mode: this workflow NEVER commits to the repo. On every trigger it
 #   regenerates audit/README.md and FAILS if the committed copy drifted, so a

@@ -114,28 +114,20 @@
   "Spawn `command`+`args` (with extra `env`), wire newline-delimited JSON-RPC.
    Returns `{:request-fn :notify-fn :close-fn :alive-fn :pid}`."
   [name {:keys [command args env cwd]}]
-  (let [pb
-        ;; DETACHED: a stdio MCP server is third-party code that outlives the call and
-        ;; used to inherit the daemon's process group, so its own `kill 0`/teardown (or
-        ;; a Ctrl-C in the terminal) reached the gateway JVM. The detacher execs in
-        ;; place, so `:pid`, the stdio pipes and `destroy` are unchanged.
-        (ProcessBuilder. ^java.util.List
-                         (process-jail/detached-argv (vec (cons command (map str (or args []))))))
+  (let [directory
+        (when (and cwd (string? cwd) (.isDirectory (io/file cwd))) cwd)
 
-        _
-        (when (seq env)
-          (let [m (.environment pb)]
-            (doseq [[k v] env]
-              (.put m (str (clj-name k)) (str v)))))
-
-        _
-        (when (and cwd (string? cwd) (.isDirectory (io/file cwd))) (.directory pb (io/file cwd)))
-
-        _
-        (.redirectErrorStream pb false)
+        extra-env
+        (into {}
+              (map (fn [[k v]]
+                     [(str (clj-name k)) (str v)]))
+              env)
 
         proc
-        (.start pb)
+        (process-jail/spawn! (vec (cons command (map str (or args []))))
+                             directory
+                             nil
+                             {:extra-environment extra-env})
 
         out
         (BufferedReader. (io/reader (.getInputStream proc)))

@@ -708,10 +708,10 @@
              [resource-logs resources/logs]
              [stop-resource! resources/stop!])
 
-;; Standard language-process jail contract — packs obtain argv + proxy env in one
-;; fail-closed policy resolution before spawning a managed REPL or test runner.
+;; Standard language-process jail contract — packs hand every managed REPL or
+;; test runner to the one runtime-owned native spawn boundary.
 (import-vars [prepare-session-jail! process-jail/prepare-session-jail!]
-             [session-process-launch process-jail/session-process-launch]
+             [session-process-spawn! process-jail/session-process-spawn!]
              ;; ONE call's own `env` delta: resolved (literal or source map) and
              ;; fingerprinted, so a pack can compare a REUSED process against the
              ;; environment this start asked for without ever holding a value.

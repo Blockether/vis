@@ -72,6 +72,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
+          clojure -X:deps prep
           # -a '*'  scan every alias (test/build/native + extension locals)
           # -o sarif emits SARIF 2.1.0 to stdout, followed by a plain-text
           #          "Dependencies scanned / Vulnerable dependencies found"
@@ -178,6 +179,7 @@ jobs:
         if: steps.guard.outputs.run == 'true'
         run: |
           set -uo pipefail
+          clojure -X:deps prep
           # -t dependency-check is clj-watson's default; explicit here for clarity.
           clojure -M:clj-watson scan -p deps.edn -a '*' \
             -t dependency-check -o sarif > clj-watson-nvd.raw 2> clj-watson-nvd.stderr || true

@@ -79,7 +79,6 @@
             [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
            (java.lang ProcessHandle)
-           (java.util HashMap)
            (java.util.concurrent TimeUnit)))
 
 ;; Limits
@@ -511,56 +510,26 @@
 
 (defn- spawn!
   ^Process [cmd ^File dir policy]
-  (try
-    (let [^java.util.List args
-          ;; A STRING is ONE `bash -lc` line. A SEQUENTIAL is a literal argv run with no
-          ;; shell at all — nothing to quote, nothing to interpret — which is how an argv run
-          ;; rides this same spawn/jail/capture machinery.
-          ;; The detach prefix (when the platform has one) goes OUTSIDE the jail wrapper:
-          ;; it only setpgid()s and execs, so everything that actually RUNS is still jailed.
-          (process-jail/detached-argv (process-jail/wrap-argv (if (sequential? cmd)
-                                                                (mapv str cmd)
-                                                                [(bash-command) "--noprofile"
-                                                                 "--norc" "-lc" (str cmd)])
-                                                              policy))
+  (try (let [args
+             (if (sequential? cmd)
+               (mapv str cmd)
+               [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)])
 
-          pb
-          (ProcessBuilder. args)]
+             ^Process p
+             (spawn-retrying-fds #(process-jail/spawn! args
+                                                       dir
+                                                       policy
+                                                       {:extra-environment child-env
+                                                        :merge-stderr? true}))]
 
-      (.directory pb dir)
-      ;; Route the child's HTTP clients at the loopback egress proxy when the jail
-      ;; policy walls it to proxy-only egress (net-off-except-loopback).
-      (if-let [full (process-jail/jailed-child-env policy)]
-        ;; Confined child: REPLACE the inherited env with the allowlisted set plus the
-        ;; declared `environment:` values, so the operator's API keys/tokens are never
-        ;; handed to sandboxed code while a DECLARED variable still arrives.
-        (let [^java.util.Map e (.environment pb)]
-          (.clear e)
-          (.putAll e ^java.util.Map full))
-        (let [pe (process-jail/child-env-additions policy)]
-          (when (seq pe) (.putAll (.environment pb) ^java.util.Map pe))))
-      ;; A name THIS call asked to unset leaves the map before Vis's own
-      ;; variables land: the confined branch never built it, but the inherited
-      ;; one still carries the parent's.
-      (let [^java.util.Map e (.environment pb)]
-        (doseq [k (:env-removals policy)]
-          (.remove e ^String k)))
-      ;; AFTER the policy branch on purpose: the confined one REPLACED the map.
-      (.putAll (.environment pb) ^java.util.Map child-env)
-      ;; ONE stream, exactly like the pty path every model-facing run takes: a
-      ;; terminal has no separate error channel, so a result that offered a second
-      ;; one could only ever answer nil and be read as "nothing went wrong".
-      (.redirectErrorStream pb true)
-      (let [^Process p (spawn-retrying-fds #(.start pb))]
-        (when (::cleanup policy)
-          (let [^java.util.concurrent.CompletableFuture done (.onExit p)]
-            (.thenRun done
-                      ^Runnable
-                      (reify
-                        Runnable
-                          (run [_] (cleanup-jail-policy! policy))))))
-        p))
-    (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
+         (when (::cleanup policy)
+           (.thenRun (.onExit p)
+                     ^Runnable
+                     (reify
+                       Runnable
+                         (run [_] (cleanup-jail-policy! policy)))))
+         p)
+       (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
 
 (def ^:private pty-child-env
   "What every PTY child gets ON TOP of the ambient (or allowlisted) environment.
@@ -589,41 +558,15 @@
     "GIT_PAGER" "cat"))
 
 (defn- pty-spawn!
-  "Spawn `cmd` under a REAL pseudo-terminal (internal.foundation.pty — pure Java
-   FFM, no JNA and no extracted native helper): isatty() is TRUE, $TERM is set,
-   and stdin is writable (the send op) — so interactive CLIs that refuse a dumb
-   pipe (browser-auth prompts, password `read`, REPLs) actually run. Returns the
-   pty HANDLE MAP (`:pid :in :send :wait :alive? :destroy`) that the pump /
-   kill-tree! / wait path below consume. stdout+stderr share the one PTY stream
-   — a real terminal has no separate error channel, which is why a shell result
-   carries ONE `out` field and no `stderr` at all.
-   `policy` is the jail policy value applied to this spawn; a fresh-config policy
-   carries an idempotent cleanup callback retained for the process lifetime."
+  "Spawn `cmd` through the runtime-owned PTY and jail boundary."
   [cmd ^File dir policy]
   (try (assoc (spawn-retrying-fds
-                (fn []
-                  (pty/spawn!
-                    {:command (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc"
-                                                       (str cmd)]
-                                                      policy)
-                     :dir (.getPath ^File dir)
-                     :env (let [^HashMap e (if-let [full (process-jail/jailed-child-env policy)]
-                                             ;; Confined child: allowlisted env + declared
-                                             ;; `environment:` values (secrets dropped).
-                                             (HashMap. ^java.util.Map full)
-                                             (doto (HashMap. ^java.util.Map (System/getenv))
-                                               (.putAll ^java.util.Map
-                                                        (process-jail/child-env-additions
-                                                          policy))))]
-                            ;; Unset what this call asked to unset, then let the pty's
-                            ;; own variables land on top: `TERM` and the pagers are what
-                            ;; make a pty a pty, so they stay Vis's to set.
-                            (doseq [k (:env-removals policy)]
-                              (.remove e ^String k))
-                            (.putAll e ^java.util.Map pty-child-env)
-                            e)
-                     :cols 120
-                     :rows 40})))
+                #(pty/spawn! {:command [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)]
+                              :dir (.getPath dir)
+                              :env (process-jail/process-environment policy pty-child-env)
+                              :policy policy
+                              :cols 120
+                              :rows 40}))
          ::cleanup (::cleanup policy))
        (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
 

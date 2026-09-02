@@ -595,6 +595,13 @@
                    (expect (= "full suite" (target {})))
                    (expect (= "full suite" (target {"paths" [nil "  "]}))))))
 
+(defn- managed-launch-probe
+  [handler-env]
+  (let [^Process process (vis/session-process-spawn! (:session-id handler-env)
+                                                     ["/bin/sh" "-c" "true"]
+                                                     (System/getProperty "java.io.tmpdir"))]
+    (zero? (.waitFor process))))
+
 (defdescribe
   language-process-jail-refresh-test
   (it "refreshes the session jail before a test handler launches a process"
@@ -602,11 +609,7 @@
             (fake-env [{:language "clojure"
                         :test-fn (fn [handler-env _]
                                    {:success? true
-                                    :result {:launch? (boolean (seq (:argv
-                                                                      (vis/session-process-launch
-                                                                        (:session-id handler-env)
-                                                                        ["clojure"
-                                                                         "-Sdescribe"]))))}})}])
+                                    :result {:launch? (managed-launch-probe handler-env)}})}])
 
             session-id
             (:session-id env)
@@ -621,11 +624,7 @@
             (fake-env [{:language "clojure"
                         :repl-eval-fn (fn [handler-env _]
                                         {:success? true
-                                         :result {:launch? (boolean
-                                                             (seq (:argv (vis/session-process-launch
-                                                                           (:session-id handler-env)
-                                                                           ["clojure"
-                                                                            "-Sdescribe"]))))}})}])
+                                         :result {:launch? (managed-launch-probe handler-env)}})}])
 
             session-id
             (:session-id env)
@@ -640,11 +639,7 @@
             (fake-env [{:language "clojure"
                         :start-repl-fn (fn [handler-env _ _]
                                          {:success? true
-                                          :result {:launch?
-                                                   (boolean (seq (:argv (vis/session-process-launch
-                                                                          (:session-id handler-env)
-                                                                          ["clojure"
-                                                                           "-Sdescribe"]))))}})}])
+                                          :result {:launch? (managed-launch-probe handler-env)}})}])
 
             session-id
             (:session-id env)

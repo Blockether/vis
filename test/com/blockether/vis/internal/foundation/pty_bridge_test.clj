@@ -14,8 +14,7 @@
            (java.nio.file Paths)))
 
 (defn- cat-binary
-  "`posix_spawn` takes a PATH, never a PATH lookup, so the smallest echoing child
-   is resolved by hand."
+  "The native spawn ABI takes an absolute executable path."
   ^String []
   (first (filter #(.exists (File. ^String %)) ["/bin/cat" "/usr/bin/cat"])))
 

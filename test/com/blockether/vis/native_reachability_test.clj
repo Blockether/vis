@@ -291,5 +291,16 @@
       (let [src (slurp (io/file "src" "com" "blockether" "vis" "internal" "native_preload.clj"))]
         (expect (str/includes? src "(manifest/initializers)")
                 "the manifest's own entrypoints must be one source of the preload list")
-        (expect (str/includes? src "__init.class")
-                "the compiled namespace tree must be the other"))))
+        (expect (str/includes? src "__init.class") "the compiled namespace tree must be the other")
+        (expect (and (str/includes? src "(throw")
+                     (str/includes? src "Native-image could not preload"))
+                "one failed preload must abort instead of producing a broken binary")))
+  (it "keeps prepared git dependency roots on the native-image classpath"
+      ;; The runtime's Clojure source, Java prep output and native-image metadata are
+      ;; three directory roots, not jars. Filtering the classpath down to jars removed
+      ;; HostFunction.class while leaving the native build deceptively green.
+      (let [src (slurp (io/file "build.clj"))]
+        (expect (str/includes? src "(filter :git/sha)")
+                "native-classpath must distinguish source git deps from local projects")
+        (expect (str/includes? src "(mapcat :paths)")
+                "every declared root of a prepared git dependency must reach native-image"))))

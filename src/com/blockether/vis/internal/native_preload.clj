@@ -73,27 +73,17 @@
        sort))
 
 (defn preload!
-  "Load every namespace the image must keep. A namespace that cannot load is
-   reported and stepped over: the engine refuses at run time with the real
-   reason, and a build that died here would say less."
+  "Load every namespace the image must keep. Any failure aborts the build: stepping
+   over one produces an apparently successful image that cannot initialize the
+   affected extension and usually poisons every namespace that requires it."
   []
-  (let [targets
-        (distinct (concat (map (comp symbol namespace) (manifest/initializers))
-                          (compiled-namespaces)))
-
-        failed
-        (volatile! 0)]
-
+  (let [targets (distinct (concat (map (comp symbol namespace) (manifest/initializers))
+                                  (compiled-namespaces)))]
     (doseq [target targets]
       (try (require target)
            (catch Throwable t
-             (vswap! failed inc)
-             (println "[vis] native-image preload failed:" (str target)
-                      "-" (or (ex-message t) (str t))))))
-    (println "[vis] native-image preload:"
-             (- (count targets) @failed)
-             "of"
-             (count targets)
-             "namespaces loaded")))
+             (throw
+               (ex-info (str "Native-image could not preload " target) {:namespace target} t)))))
+    (println "[vis] native-image preload:" (count targets) "namespaces loaded")))
 
 (preload!)

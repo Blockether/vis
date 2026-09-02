@@ -514,22 +514,8 @@
           :always
           (conj "-o" "junit_family=xunit1" (str "--junitxml=" (.getPath junit))))
 
-        launch
-        (vis/session-process-launch session-id cmd)
-
-        pb
-        (doto (ProcessBuilder. ^java.util.List (:argv launch))
-          (.directory (io/file dir))
-          (.redirectErrorStream true))
-
-        _env
-        (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
-          (when (:replace-env? launch) (.clear e))
-          (doseq [[k v] (:env launch)]
-            (.put e ^String k ^String v)))
-
         p
-        (.start pb)
+        (vis/session-process-spawn! session-id cmd dir {:merge-stderr? true})
 
         out
         (future (slurp (.getInputStream p)))

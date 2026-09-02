@@ -624,25 +624,18 @@
            (if-let [{:keys [tool cmd]} (launcher-for dir aliases port)]
              (try
                (let [log (log-file dir)
-                     ;; Resolve argv + proxy env atomically through the shared,
-                     ;; fail-closed language-process contract. nREPL alone may bind a
-                     ;; loopback listener; direct outbound traffic remains jailed.
-                     launch
-                     (vis/session-process-launch session-id cmd {:loopback-port port :env env})
-                     jailed-cmd (:argv launch)
-                     pb (doto (ProcessBuilder. ^java.util.List jailed-cmd)
-                          (.directory (io/file dir))
-                          (.redirectErrorStream true)
-                          (.redirectOutput log))
-                     _env (let [^java.util.Map e (.environment ^ProcessBuilder pb)]
-                            (when (:replace-env? launch) (.clear e))
-                            (doseq [[k v] (:env launch)]
-                              (.put e ^String k ^String v))
-                            ;; An inherited environment still carries what this
-                            ;; start asked to UNSET; a replaced one never built it.
-                            (doseq [k (:env-remove launch)]
-                              (.remove e ^String k)))
-                     proc (.start pb)
+                     ;; Resolve policy + complete env and spawn through libvisjail.
+                     ;; nREPL alone may bind its selected loopback listener.
+                     proc (vis/session-process-spawn!
+                            session-id
+                            cmd
+                            dir
+                            {:loopback-port port :env env :merge-stderr? true})
+                     _log-pump (future (try (with-open [in (.getInputStream ^Process proc)
+                                                        out (io/output-stream log)]
+
+                                              (io/copy in out))
+                                            (catch Throwable _ nil)))
                      pid (try (.pid proc) (catch Throwable _ nil))
                      info {:id (id-of dir)
                            :process proc

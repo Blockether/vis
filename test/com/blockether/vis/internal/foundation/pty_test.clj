@@ -1,21 +1,17 @@
 (ns com.blockether.vis.internal.foundation.pty-test
-  "What a pty child is allowed to INHERIT.
+  "What a libvisjail PTY child is allowed to inherit.
 
-   `posix_spawn` performs only the file actions it is handed — unlike the JDK's
-   own spawn path, whose `jspawnhelper` closes every descriptor above stdio
-   before it execs. The JVM sets FD_CLOEXEC on nothing, so a pty child used to
-   inherit the whole descriptor table of the process that spawned it, the
-   gateway's LISTENING socket included. A child that outlived the gateway and
-   never exited on its own then held that socket forever and the next
-   `gateway start` failed to bind a port nothing was serving."
+   The native spawn boundary must close every descriptor except its stdio and explicit
+   control pipes. A child once inherited the gateway's listening socket; if that child
+   outlived the gateway, the next start could not bind a port that nothing served."
   (:require [com.blockether.vis.internal.foundation.pty :as pty]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io File)
            (java.net InetSocketAddress ServerSocket)))
 
 (defn- sleep-binary
-  "`posix_spawn` takes a PATH, never a PATH lookup."
-  ^String []
+  "The native spawn ABI takes an absolute executable path."
+  []
   (first (filter #(.exists (File. ^String %)) ["/bin/sleep" "/usr/bin/sleep"])))
 
 (defn- bindable?
@@ -48,8 +44,8 @@
                         (finally ((:destroy child) true) ((:wait child)))))))
 
 (defn- sh-binary
-  "`posix_spawn` takes a PATH, never a PATH lookup."
-  ^String []
+  "The native spawn ABI takes an absolute executable path."
+  []
   (first (filter #(.exists (File. ^String %)) ["/bin/sh" "/usr/bin/sh"])))
 
 ;; Regression, CI flake on macos-latest: a provider callback that shelled out for

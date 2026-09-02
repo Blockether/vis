@@ -848,32 +848,58 @@
    library-not-found."
   "target/vis-agent-python")
 
-(defn- python-archive
-  "The platform archive for the version `basis` pins, cached under
-   `~/.vis/python/archives/`. The interpreter is tens of megabytes and a machine
-   runs exactly one platform's copy, so it is not a maven dependency: it is the
-   runtime repository's release asset, fetched once per version and reused by
-   every later build. A `:local/root` checkout answers nil — its
-   `resources/prebuilds/` is already a classpath root and nothing is fetched."
+(defn- python-runtime-version
+  "The version resource produced by the git dependency's prep step. Resolve it
+   through the basis classpath rather than a Maven coordinate: this dependency is
+   source plus prepared Java classes, not a published jar."
   [basis]
-  (when-let [version (get-in basis [:libs 'com.blockether/vis-python-runtime :mvn/version])]
-    (let [tok (native-lib-token)
-          name (format "vis-python-runtime-%s-%s.tar.gz" tok version)
-          archive (io/file (System/getProperty "user.home") ".vis" "python" "archives" name)
-          url (str "https://github.com/Blockether/vis-python-runtime/releases/download/v" version
-                   "/" name)]
+  (or (some->> (:classpath-roots basis)
+               (map #(io/file % "vis-python-runtime" "VERSION"))
+               (filter #(.isFile ^java.io.File %))
+               first
+               slurp
+               str/trim
+               not-empty)
+      (throw (ex-info "The prepared Python runtime has no version resource."
+                      {:hint "Run clojure -X:deps prep before building."}))))
 
-      (when-not (.isFile archive)
-        (io/make-parents archive)
-        (println "-> fetching" url)
-        (let [partial (io/file (str archive ".part"))
-              {:keys [exit]} (b/process {:command-args ["curl" "-fsSL" "-o" (str partial) url]})]
+(defn- python-archive
+  "The platform archive for the pinned runtime, cached under
+   `~/.vis/python/archives/`. The interpreter is tens of megabytes and a machine
+   runs exactly one platform's copy, so it is not a Maven dependency: it is the
+   runtime repository's release asset, fetched once per version and reused by
+   every later build."
+  [basis]
+  (let [version
+        (python-runtime-version basis)
 
-          (when-not (zero? exit)
-            (throw (ex-info "Could not download the embedded CPython for this platform."
-                            {:url url :exit exit})))
-          (.renameTo partial archive)))
-      archive)))
+        tok
+        (native-lib-token)
+
+        name
+        (format "vis-python-runtime-%s-%s.tar.gz" tok version)
+
+        archive
+        (io/file (System/getProperty "user.home") ".vis" "python" "archives" name)
+
+        url
+        (str "https://github.com/Blockether/vis-python-runtime/releases/download/v" version
+             "/" name)]
+
+    (when-not (.isFile archive)
+      (io/make-parents archive)
+      (println "-> fetching" url)
+      (let [partial
+            (io/file (str archive ".part"))
+
+            {:keys [exit]}
+            (b/process {:command-args ["curl" "-fsSL" "-o" (str partial) url]})]
+
+        (when-not (zero? exit)
+          (throw (ex-info "Could not download the embedded CPython for this platform."
+                          {:url url :exit exit})))
+        (.renameTo partial archive)))
+    archive))
 
 (defn- stage-python-sidecar!
   "Put the embedded CPython for this platform into `target/vis-agent-python/`.
@@ -953,14 +979,23 @@
 
 (defn- native-classpath
   "Classpath for the native build: the AOT classes dir FIRST (so compiled app +
-   merged manifest win), then every dependency JAR. We deliberately DROP the
-   :local/root source/resource dirs — their compiled+copied form already lives in
-   `native-class-dir`, and re-adding them would resurrect the per-extension
-   manifest collision. Keeping deps as separate jars lets native-image honor each
-   jar's module-info + native-image.properties."
+   merged manifest win), then prepared git dependency roots, then dependency JARs.
+   We deliberately DROP :local/root source/resource dirs — their compiled+copied
+   form already lives in `native-class-dir`, and re-adding them would resurrect
+   the per-extension manifest collision. A git dependency is different: its
+   `:deps/prep-lib` output and native-image metadata exist only in its declared
+   roots, so all of those roots must reach the builder. Keeping other deps as
+   separate jars lets native-image honor each jar's module-info and metadata."
   [basis]
   (let
-    [jars
+    [git-roots
+     (->> (:libs basis)
+          vals
+          (filter :git/sha)
+          (mapcat :paths)
+          distinct)
+
+     jars
      (->>
        (:classpath-roots basis)
        (filter #(str/ends-with? % ".jar"))
@@ -987,8 +1022,10 @@
          #(re-find
             #"/org/clojure/tools\.deps/|/org/clojure/tools\.deps\.edn/|/tools\.deps\.maven-s3-transporter/|/com/cognitect/aws/|/org/apache/maven/"
             %)))]
-    (->> (concat jars (native-lib-jars basis) (sherpa-native-jars basis))
+
+    (->> (concat git-roots jars (native-lib-jars basis) (sherpa-native-jars basis))
          (into [native-class-dir])
+         distinct
          (str/join java.io.File/pathSeparator))))
 
 (defn- native-image-args

@@ -58,6 +58,7 @@ jobs:
       # is fast and deterministic.
       - name: Generate static docs site
         run: |
+          clojure -X:deps prep
           clojure -Sdeps '{:paths ["src" "resources"]
             :deps {org.commonmark/commonmark {:mvn/version "0.24.0"}
                    org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.24.0"}

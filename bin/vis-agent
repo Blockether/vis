@@ -762,7 +762,7 @@ build_native_runtime() {
   say "building the native runtime from $source_root ('clojure -T:build native')"
   # A build of YOURS, whatever environment it inherited: a rebuild run from a CI
   # shell must not stamp itself with that job's track (build.clj `release-tracks`).
-  ( cd "$source_root" && VIS_RELEASE_TRACK=dev clojure -T:build native ) || exit 1
+  ( cd "$source_root" && clojure -X:deps prep && VIS_RELEASE_TRACK=dev clojure -T:build native ) || exit 1
 }
 
 # ── update: source runtime ───────────────────────────────────────────────────
@@ -1217,10 +1217,12 @@ if stream_trace_on; then
 fi
 
 # Preserve the invocation directory through user.dir while resolving deps from
-# the selected source.
+# the selected source. Git dependencies compile their JVM bridges into their own
+# prep output; tools.deps skips work whose :deps/prep-lib :ensure path exists.
 measure_log "exec cold clojure -M:vis from $source_root"
 ensure_compatible_jvm_runtime || exit 1
 cd "$source_root"
+clojure -X:deps prep || exit 1
 if (( ${#vis_extension_sdeps[@]} > 0 )); then
   run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} "${vis_extension_sdeps[@]}" -M:vis "$@"
 else

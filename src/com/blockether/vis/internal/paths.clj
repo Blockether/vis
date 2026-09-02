@@ -117,11 +117,7 @@
    short-lived CLI."
   #{"gateway" "tui" "vis"})
 
-(def ^:private log-roles
-  "Every writer whose diagnostics land in `~/.vis/logs`. `pasta` is not a vis
-   process: it is the network-jail helper `process-jail` spawns, and vis owns the
-   file it hands it."
-  (conj process-roles "pasta"))
+(def ^:private log-roles "Every vis writer whose diagnostics land in `~/.vis/logs`." process-roles)
 
 (def ^:private process-start-stamp
   ;; Delayed for native-image: forcing this at namespace initialization would put

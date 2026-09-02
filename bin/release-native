@@ -114,6 +114,7 @@ build_macos_arm64() {
   say "building macos-arm64 (clojure -T:build native)"
   # build.clj sizes the builder heap from this machine's RAM and re-execs under
   # the pinned GraalVM CE by itself; nothing to tune here.
+  clojure -X:deps prep
   clojure -T:build native
   bin/stage-release-bundle target/vis "$asset"
   say "smoke: help + gateway boot"

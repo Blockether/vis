@@ -211,7 +211,7 @@ jobs:
           # its own workflow, beta-native.yml).
           VIS_RELEASE_TRACK: ${{ steps.target.outputs.publish == 'true' && 'stable' || 'dry-run' }}
           VIS_AUTO_INSTALL_GRAALVM: "0"
-        run: clojure -T:build native
+        run: clojure -X:deps prep && clojure -T:build native
       # ONE definition of a release bundle, shared with `bin/release-native` so a
       # locally built asset and a CI asset cannot drift. It also fails hard when
       # the language-resources sidecar is missing — the image no longer embeds
@@ -404,7 +404,7 @@ jobs:
           # its own workflow, beta-native.yml).
           VIS_RELEASE_TRACK: ${{ steps.target.outputs.publish == 'true' && 'stable' || 'dry-run' }}
           VIS_AUTO_INSTALL_GRAALVM: "0"
-        run: clojure -T:build native
+        run: clojure -X:deps prep && clojure -T:build native
       - name: Stage wrapper bundle
         shell: bash
         run: bin/stage-release-bundle target/vis "$VIS_ASSET"

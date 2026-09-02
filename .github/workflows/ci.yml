@@ -137,8 +137,9 @@ jobs:
           path: ~/.vis/native
           key: vis-native-${{ runner.os }}-${{ hashFiles('extensions/common/vis-foundation-voice/src/com/blockether/vis/ext/foundation_voice/sherpa.clj') }}
           restore-keys: vis-native-${{ runner.os }}-
-      - name: Provision the sherpa-onnx native runtime
+      - name: Prepare git dependencies and provision sherpa-onnx
         run: |
+          clojure -J-Duser.home="$HOME" -X:deps prep
           clojure -J-Duser.home="$HOME" -M -e "(require '[com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]) (prn (sherpa/ensure-native!))"
       - name: Run test suite
         env:
@@ -191,7 +192,7 @@ jobs:
           key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       - name: Resolve ${{ matrix.path }} classpath
-        run: cd ${{ matrix.path }} && clojure -Spath > /dev/null
+        run: cd ${{ matrix.path }} && clojure -X:deps prep && clojure -Spath > /dev/null
 
   # The cheapest gate there is (~6 s for the whole tree) and the one a beta build
   # must not skip: clj-kondo through the repo's own :lint alias. It runs beside
@@ -215,7 +216,7 @@ jobs:
           key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       - name: Lint the whole tree
-        run: clojure -M:lint
+        run: clojure -X:deps prep && clojure -M:lint
   # AOT gate: compile EVERY namespace (core + every extension) exactly as the
   # native build's prepare-native-classes! does. This is what catches compile
   # errors (e.g. an unresolved symbol in an extension) BEFORE the slow, gated
@@ -254,6 +255,7 @@ jobs:
         # here or it reaches a published binary.
         run: |
           set -o pipefail
+          clojure -X:deps prep
           clojure -T:build uber 2>&1 | tee aot.log
           if grep -E 'Reflection warning|Boxed math warning' aot.log; then
             echo "::error::AOT emitted reflection or boxed-math warnings (listed above)"

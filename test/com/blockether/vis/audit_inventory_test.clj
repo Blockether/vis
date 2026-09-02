@@ -6,9 +6,10 @@
    something we ship — exactly what happened to `com.blockether/imaging 0.1.7`.
 
    This gate is offline and cheap: every in-house `com.blockether/*` coordinate
-   the root deps.edn pins must appear in the inventory at that exact version
-   with a resolved license and jar size, and wherever Maven already cached the
-   artifact the stated license must agree with the POM the build consumed."
+   the root deps.edn pins must appear in the inventory at that exact Maven
+   version or git commit with a resolved license and distributable size, and
+   wherever Maven already cached an artifact the stated license must agree with
+   the POM the build consumed."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -30,12 +31,14 @@
         (str/split-lines (slurp audit-file))))
 
 (defn- in-house-coords
-  "Every `com.blockether/*` mvn coordinate the root deps.edn pins."
+  "Every `com.blockether/*` Maven or git coordinate the root deps.edn pins."
   []
   (into (sorted-map)
         (keep (fn [[sym coord]]
-                (when (and (symbol? sym) (= "com.blockether" (namespace sym)) (:mvn/version coord))
-                  [(str sym) (:mvn/version coord)])))
+                (when (and (symbol? sym) (= "com.blockether" (namespace sym)))
+                  (when-let [version (cond (:mvn/version coord) (:mvn/version coord)
+                                           (:git/sha coord) (str "git:" (:git/sha coord)))]
+                    [(str sym) version]))))
         (:deps (edn/read-string (slurp (io/file "deps.edn"))))))
 
 (defn- cached-pom-license
@@ -132,7 +135,7 @@
 
 (defdescribe
   audit-inventory-test
-  (it "states a resolved license and jar size for every in-house coordinate"
+  (it "states a resolved license and size for every in-house coordinate"
       (expect (.isFile audit-file))
       (let [rows (inventory)]
         (doseq [[coord version] (in-house-coords)
@@ -143,7 +146,7 @@
                   (str coord " is pinned at " version " but audit/README.md lists " (:version row)))
           (expect (not (contains? #{"UNKNOWN" "(floating)" ""} (:license row)))
                   (str coord " has an unresolved license: " (:license row)))
-          (expect (not= "—" (:size row)) (str coord " has an unresolved jar size")))))
+          (expect (not= "—" (:size row)) (str coord " has an unresolved distributable size")))))
   (it "keeps com.blockether/imaging MIT — the license its published POM declares"
       (let [row (get (inventory) "com.blockether/imaging")]
         (expect (= "MIT" (:license row)))

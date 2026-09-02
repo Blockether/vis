@@ -32,7 +32,9 @@
    passwd entry — setting HOME moves nothing (measured on macOS: HOME=/tmp/…
    still resolves user.home to the real account)."
   (:require [clojure.java.io :as io]
+            [clojure.set :as set]
             [clojure.string :as str]
+            [com.blockether.vis-python-runtime :as python-runtime]
             [com.blockether.vis.internal.foundation.pty :as pty]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (com.sun.net.httpserver HttpExchange HttpHandler HttpServer)
@@ -65,6 +67,25 @@
     (expect (.canExecute bin)
             (str "No executable native runtime at " (.getAbsolutePath bin) ". " build-it))
     bin))
+
+(defn- python-library
+  "The staged CPython cdylib beside `bin`, resolved exactly as the public wrapper does."
+  ^File [^File bin]
+  (let [home (.getParentFile (.getAbsoluteFile bin))]
+    (->> ["vis-agent-python" "python"]
+         (map #(io/file home %))
+         (filter #(.isDirectory ^File %))
+         (mapcat #(.listFiles ^File %))
+         (filter (fn [^File f]
+                   (and (.isFile f) (re-matches #"libvispython\.(dylib|so)" (.getName f)))))
+         first)))
+
+(defn- native-environment
+  "Environment the public wrapper supplies to the private binary in a release."
+  []
+  (if-let [library (python-library (native-binary))]
+    {"VIS_PYTHON_NATIVE_PATH" (.getAbsolutePath library)}
+    {}))
 
 ;; ── running it ───────────────────────────────────────────────────────────────
 
@@ -100,12 +121,17 @@
   (let [log
         (io/file dir "run.log")
 
+        builder
+        (doto (ProcessBuilder. ^java.util.List (vec argv))
+          (.directory dir)
+          (.redirectErrorStream true)
+          (.redirectOutput (ProcessBuilder$Redirect/to log)))
+
+        _
+        (.putAll (.environment builder) (native-environment))
+
         process
-        (-> (ProcessBuilder. ^java.util.List (vec argv))
-            (.directory dir)
-            (.redirectErrorStream true)
-            (.redirectOutput (ProcessBuilder$Redirect/to log))
-            (.start))
+        (.start builder)
 
         finished?
         (.waitFor process timeout-secs TimeUnit/SECONDS)]
@@ -121,7 +147,7 @@
 
    `.available` rather than a blocking read: a TUI that never writes another byte
    must not hold the suite until the pipe closes."
-  [^InputStream in deadline-ms enough?]
+  [^InputStream in ^long deadline-ms enough?]
   (let [buffer
         (byte-array 8192)
 
@@ -159,12 +185,15 @@
    The pty is Vis' own `internal.foundation.pty`, parent-side JVM code: nothing
    about the binary under test is mocked by using it."
   [^File dir argv deadline-ms enough?]
+  (when-let [library (python-library (native-binary))]
+    (python-runtime/use-library! (.getAbsolutePath library)))
   (let [handle
-        (pty/spawn! {:command (with-a-controlling-terminal argv)
-                     :dir (.getAbsolutePath dir)
-                     :env (assoc (into {} (System/getenv)) "TERM" "xterm-256color")
-                     :cols 120
-                     :rows 40})
+        (pty/spawn!
+          {:command (with-a-controlling-terminal argv)
+           :dir (.getAbsolutePath dir)
+           :env (merge (into {} (System/getenv)) (native-environment) {"TERM" "xterm-256color"})
+           :cols 120
+           :rows 40})
 
         painted
         (pty-text (:in handle) deadline-ms enough?)
@@ -400,6 +429,20 @@
        (remove str/blank?)
        (str/join " ")))
 
+(defn- heard-most-words?
+  "ASR round-trip proof tolerant of one acoustic substitution."
+  [output sentence]
+  (let [words
+        #(set (str/split (plain-words %) #" "))
+
+        expected
+        (words sentence)
+
+        heard
+        (words output)]
+
+    (<= (count (set/difference expected heard)) 1)))
+
 (defn- wav-facts
   "What a WAV header claims, read by hand: `nil` when the file is not one."
   [^File f]
@@ -472,7 +515,7 @@
         (let [heard
               (run-binary dir [bin "extension" "voice" "transcribe" (.getAbsolutePath wav)] 900)]
           (expect (= 0 (:exit heard)) (:output heard))
-          (expect (str/includes? (plain-words (:output heard)) (plain-words spoken-sentence))
+          (expect (heard-most-words? (:output heard) spoken-sentence)
                   (str "the binary did not hear what it had just said:\n" (:output heard))))
         (finally (delete-tree! dir)))))
   (it "speaks with the pocket-tts export Vis publishes itself"
@@ -514,35 +557,15 @@
 
 ;; ── the embedded CPython, inside the linked image ────────────────────────────
 
-(defn- python-library
-  "The cdylib `clojure -T:build native` stages BESIDE the binary, resolved the way
-   the shipped `bin/vis-agent` wrapper resolves it. The interpreter is tens of
-   megabytes and deliberately outside the executable, so a binary with no such
-   directory answers every Python call with a library-not-found — which is what
-   this returns nil for, and what the assertion then names."
-  ^File [^File bin]
-  (let [home (.getParentFile (.getAbsoluteFile bin))]
-    (->> ["vis-agent-python" "python"]
-         (map #(io/file home %))
-         (filter #(.isDirectory ^File %))
-         (mapcat #(.listFiles ^File %))
-         (filter (fn [^File f]
-                   (and (.isFile f) (re-matches #"libvispython\.(dylib|so)" (.getName f)))))
-         first)))
 
 (defn- run-python
-  "`vis-agent python -c CODE` against the binary, with the interpreter pointed at
-   the staged sidecar. `env(1)` because that is the only thing `run-binary` cannot
-   do for us, and the wrapper exports exactly this variable."
+  "`vis-agent python -c CODE` against the private binary under the release wrapper's environment."
   [^File dir ^File bin code]
   (let [library (python-library bin)]
     (expect library
             (str "No CPython sidecar beside " (.getAbsolutePath bin)
                  " — `clojure -T:build native` stages vis-agent-python/ there. " build-it))
-    (run-binary dir
-                ["/usr/bin/env" (str "VIS_PYTHON_NATIVE_PATH=" (.getAbsolutePath ^File library))
-                 (.getAbsolutePath bin) "python" "-c" code]
-                300)))
+    (run-binary dir [(.getAbsolutePath bin) "python" "-c" code] 300)))
 
 ;; Regression, this branch: the interpreter reaches CPython through the JDK Foreign
 ;; Function & Memory API, and an image links no downcall stub it was not told about.

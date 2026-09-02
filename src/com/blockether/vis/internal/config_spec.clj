@@ -320,7 +320,7 @@
   "The Mach services a confined child must reach to read the macOS Keychain:
    the security server itself plus the trust/revocation daemons it calls into.
    Verified against `security`, `gh auth token` and `git credential-osxkeychain`
-   under `sandbox-exec`; without them the lookup fails with
+   under Seatbelt; without them the lookup fails with
    `SecKeychainSearchCreateFromAttributes: … parameters … not valid`."
   ["com.apple.SecurityServer" "com.apple.ocspd" "com.apple.trustd.agent"])
 

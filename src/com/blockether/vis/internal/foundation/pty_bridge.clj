@@ -1,12 +1,11 @@
 (ns com.blockether.vis.internal.foundation.pty-bridge
-  "Passthrough bridge on top of the FFM pseudo-terminal (internal.foundation.pty).
+  "Passthrough bridge on top of the libvisjail pseudo-terminal adapter.
 
-   The problem it solves: a background `shell` child runs INSIDE the vis process (the FFM
-   PTY master fd + reader thread live in vis's heap). That's great for the agent
-   (the shell send / logs ops) but a HUMAN can't jump into the live terminal to
-   finish a step the agent can't — click through a browser OAuth, answer a prompt
-   only a person can. tmux gets that for free because its server is a separate
-   daemon you can `tmux attach` to; the FFM child is not.
+   The problem it solves: a background `shell` child owns a native PTY whose master
+   descriptor is managed by Vis. That is convenient for the agent (shell send/logs),
+   but a human cannot jump into the live terminal to finish a browser authorization or
+   answer an interactive prompt. tmux gets that from a separate server; libvisjail does
+   not expose such a user-facing attachment endpoint.
 
    This namespace restores that capability WITHOUT tmux: each background PTY
    optionally exposes a per-shell UNIX-DOMAIN SOCKET. vis is the server (it holds

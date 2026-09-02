@@ -2,10 +2,10 @@
 ;; Regenerate audit/README.md from the deps.edn graph.
 ;;
 ;; Walks the root deps.edn + every extension deps.edn (skipping e2e test
-;; fixtures), collects every DIRECT Maven coordinate (top-level :deps plus
+;; fixtures), collects every DIRECT Maven or git coordinate (top-level :deps plus
 ;; each alias's :extra-deps / :replace-deps / :deps), de-duplicates so each
 ;; coordinate is reported once under the FIRST module that declares it, then
-;; fetches each artifact's license + jar size from Clojars / Maven Central.
+;; resolves each artifact's license and distributable size from its source.
 ;; From that it renders the whole audit/README.md: the dependency inventory, the
 ;; license distribution, the resource footprint, and a copyleft warning that
 ;; appears automatically whenever an (L)GPL license is detected.
@@ -53,23 +53,26 @@
    "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-x64" "Apache-2.0"
    "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-x64" "Apache-2.0"
    "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-aarch64" "Apache-2.0"
-   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-win-x64" "Apache-2.0"})
+   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-win-x64" "Apache-2.0"
+   ;; These git dependencies have no Maven POM to carry their repository license.
+   "com.blockether/vis-python-runtime" "MIT"
+   "io.github.clj-holmes/clj-watson" "EPL-2.0"})
 
 ;; ---------------------------------------------------------------- deps parsing
 
 (defn- coords-from-map
-  "Pull {sym version} pairs out of a :deps-style map (mvn coords only)."
+  "Pull {sym display-version} pairs out of a :deps-style map."
   [m]
   (into {}
-        (for [[sym v]
-              m
-
-              :when (and (symbol? sym) (map? v) (:mvn/version v))]
-
-          [sym (:mvn/version v)])))
+        (keep (fn [[sym coord]]
+                (when (and (symbol? sym) (map? coord))
+                  (when-let [version (cond (:mvn/version coord) (:mvn/version coord)
+                                           (:git/sha coord) (str "git:" (:git/sha coord)))]
+                    [sym version]))))
+        m))
 
 (defn- module-coords
-  "Every direct mvn coord a deps.edn declares (top :deps + all alias deps)."
+  "Every direct Maven or git coord a deps.edn declares."
   [deps]
   (apply merge
     (coords-from-map (:deps deps))
@@ -83,8 +86,8 @@
   (if (= rel-path "deps.edn") "core" (fs/file-name (fs/parent rel-path))))
 
 (defn- discover-modules
-  "Ordered [label rel-path coords] for every deps.edn with mvn coords, core
-   first then the rest by path. e2e scenario fixtures are skipped."
+  "Ordered [label rel-path coords] for every deps.edn with Maven or git coords,
+   core first then the rest by path. e2e scenario fixtures are skipped."
   [root]
   (let [edns (->> (cons (fs/file root "deps.edn") (fs/glob root "**/deps.edn"))
                   (map #(str (fs/relativize root %)))
@@ -208,7 +211,7 @@
   "License for group/artifact/version, following <parent> POMs when a child
    inherits its license (Apache Commons, Flyway, …). Bounded recursion."
   ([group artifact version] (resolve-license group artifact version 0))
-  ([group artifact version depth]
+  ([group artifact version ^long depth]
    (when (and version (< depth 6))
      (when-let [pom (fetch-pom-body group artifact version)]
        (or (pom-license pom)
@@ -227,11 +230,14 @@
    otherwise render `1,1 MB` under a comma-decimal locale and churn the whole
    document (and fail `--check`) on any developer machine that is not en_US."
   [bytes]
-  (cond (nil? bytes) "—"
-        (>= bytes (* 1024 1024)) (String/format java.util.Locale/ROOT
-                                                "%.1f MB"
-                                                (into-array Object [(/ bytes 1024.0 1024.0)]))
-        :else (format "%d KB" (long (Math/round (/ bytes 1024.0))))))
+  (if (nil? bytes)
+    "—"
+    (let [n (long bytes)]
+      (if (>= n (* 1024 1024))
+        (String/format java.util.Locale/ROOT
+                       "%.1f MB"
+                       (into-array Object [(/ (double n) 1024.0 1024.0)]))
+        (format "%d KB" (long (Math/round (/ (double n) 1024.0))))))))
 
 (defn- reported-size
   "The exact string rendered in one inventory size cell."
@@ -274,31 +280,33 @@
             (str/split-lines (slurp f))))))
 
 (defn- artifact-info
-  "License + jar size for one coordinate (floating RELEASE/LATEST -> unknown).
-   `prev` carries what the document already states, so a transient lookup
-   failure keeps the vetted cell rather than downgrading it."
+  "License + distributable size for one coordinate. Git dependencies are source
+   checkouts, not jars, so their inventory cell says that instead of inventing a
+   package size. `prev` preserves vetted Maven data across transient failures."
   [prev sym version]
   (binding [*out* *err*]
     (println "  ·" (str sym) version))
-  (if (contains? #{"RELEASE" "LATEST"} version)
-    {:license "(floating)" :size-bytes nil :floating true}
-    (let [head
-          (fetch-first :head sym version)
+  (if (str/starts-with? version "git:")
+    {:license (or (license-overrides (str sym)) "UNKNOWN") :size "source checkout"}
+    (if (contains? #{"RELEASE" "LATEST"} version)
+      {:license "(floating)" :size-bytes nil :floating true}
+      (let [head
+            (fetch-first :head sym version)
 
-          known
-          (get prev (str sym " " version))
+            known
+            (get prev (str sym " " version))
 
-          bytes
-          (or (jar-size-bytes head)
-              (some-> (m2-file (namespace sym) (name sym) version "jar")
-                      fs/size))]
+            bytes
+            (or (jar-size-bytes head)
+                (some-> (m2-file (namespace sym) (name sym) version "jar")
+                        fs/size))]
 
-      {:license (or (license-overrides (str sym))
-                    (resolve-license (namespace sym) (name sym) version)
-                    (:license known)
-                    "UNKNOWN")
-       :size-bytes bytes
-       :size (when (nil? bytes) (:size known))})))
+        {:license (or (license-overrides (str sym))
+                      (resolve-license (namespace sym) (name sym) version)
+                      (:license known)
+                      "UNKNOWN")
+         :size-bytes bytes
+         :size (when (nil? bytes) (:size known))}))))
 
 ;; ------------------------------------------------------------------- rendering
 
@@ -516,7 +524,7 @@ license on the distributed native runtime**.
 
 | Layer | What it is | Coordinates / tool | License | Redistribution *for a fee* |
 |---|---|---|---|---|
-| **Embedded interpreter** | CPython 3.14, built from source and shipped beside the binary as the agent's sandboxed Python substrate | `com.blockether/vis-python-runtime` (Clojars) plus that repository's per-platform release archive | **MIT** for the bridge, **PSF-2.0** for CPython and its standard library | **Permitted** — both are permissive |
+| **Embedded interpreter** | CPython 3.14, built from source and shipped beside the binary as the agent's sandboxed Python substrate | `com.blockether/vis-python-runtime` pinned to an immutable Git commit, plus that repository's per-platform release archive | **MIT** for the bridge, **PSF-2.0** for CPython and its standard library | **Permitted** — both are permissive |
 | **Build tool** | The `native-image` compiler that AOT-compiles vis into the standalone binary (`clojure -T:build native`) | **GraalVM Community Edition (CE) for JDK 25.1.3**, installed from the pinned `graalvm-ce-builds` asset via `.github/actions/setup-graalvm-25` (every CI + native-release workflow) | **GPL-2.0 with Classpath Exception** | **Permitted** — the Classpath Exception frees the output binary |
 
 **Which GraalVM we support.** The release build uses **GraalVM CE 25.1.3**
@@ -646,7 +654,7 @@ under **Apache-2.0**"
   and every `extensions/*` module.
 - **Blockether in-house libraries** (separate repos, we own source + releases):
   every `com.blockether/*` coordinate above.
-- **3rd-party:** everything else in §5, sourced from Clojars / Maven Central.
+- **3rd-party:** everything else in §5, sourced from its declared Maven or git repository.
 
 ---
 

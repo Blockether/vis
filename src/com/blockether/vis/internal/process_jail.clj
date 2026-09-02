@@ -37,37 +37,30 @@
        read-everywhere default): system code/config + RW paths + `:allow-read`
        are readable; `:deny-read` wins.
 
-   `wrap-argv` compiles the policy, per spawn, into the OS enforcement primitive:
-
-     - macOS  : a Seatbelt profile handed to the system `sandbox-exec -p` — ships
-                with the OS, ZERO install. IMPLEMENTED + verified.
-     - Linux  : bubblewrap (`bwrap`) mount + network namespaces. IMPLEMENTED (fs
-                confinement + net-off wall); filtered egress via the proxy still
-                needs seccomp, so a proxy-restricted net is denied ENTIRELY (safe)
-                rather than left open. `supported?` is true only when `bwrap` is
-                installed; otherwise `unenforceable-reason` explains the gap so a
-                requested jail fails LOUD instead of silently passing the child.
-     - other  : unsupported — callers keep the cooperative gate as the floor.
+   `spawn!` compiles the policy per process and hands it to the adjacent
+   `libvisjail`: Seatbelt on macOS, embedded bubblewrap on Linux. No enforcer
+   executable is searched on PATH or installed by the operator. Other operating
+   systems are unsupported and an enabled policy fails before spawn.
 
    Two locks learned from the kernel, baked in here:
-     1. sandbox-exec matches RESOLVED real paths, so every root is realpath'd
-        before templating (`/tmp` -> `/private/tmp`, else the rule never matches).
-     2. a default-deny profile MUST `(import \"system.sb\")` or dyld/sysctl startup
-        reads are denied and every binary aborts before `main`."
+     1. Seatbelt matches RESOLVED real paths, so every root is realpath'd before
+        templating (`/tmp` -> `/private/tmp`, else the rule never matches).
+     2. a default-deny profile must import system.sb or dyld/sysctl startup reads
+        are denied and every binary aborts before `main`."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis-python-runtime :as python-runtime]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
            (java.nio.file LinkOption Paths)
-           (java.util.concurrent TimeUnit)))
+           (java.util HashMap)))
 
 (def ^:private link-opts (make-array LinkOption 0))
 
 (defn- real-path
-  "Canonical real-path string of `s`, or nil when it can't be resolved. sandbox-exec
-   matches on RESOLVED paths, so roots MUST pass through here before templating."
+  "Canonical real-path string of `s`, or nil when it cannot be resolved. Seatbelt
+   matches resolved paths, so roots must pass through here before templating."
   [s]
   (let [s (paths/expand-home s)]
     (when-not (str/blank? (str s))
@@ -89,39 +82,10 @@
           (str/includes? n "linux") :linux
           :else :other)))
 
-(def ^:private macos-sandbox-exec "/usr/bin/sandbox-exec")
-
-;; Linux enforcement uses bubblewrap (`bwrap`) as the argv-prefix wrapper — the same
-;; shape as macOS `sandbox-exec`. It is a setuid/unprivileged-userns helper that
-;; builds a mount + PID + (optionally) network namespace for the child before exec.
-;; Detected at its standard install locations; nil when absent (Linux then reports
-;; the jail as UNENFORCEABLE rather than silently passing the child through).
-(def ^:private linux-bwrap
-  (some (fn [p]
-          (when (.canExecute (File. ^String p)) p))
-        ["/usr/bin/bwrap" "/bin/bwrap" "/usr/local/bin/bwrap"]))
-
-;; Linux FILTERED EGRESS uses pasta (from the passt project) -- a userspace,
-;; unprivileged TCP/IP stack. bwrap `--unshare-net` gives the child an isolated
-;; network namespace whose loopback is its OWN, so the gateway proxy on the host's
-;; `127.0.0.1:<port>` is unreachable -- filtered egress would die entirely. pasta
-;; bridges ONLY that one port back to the host: `pasta -T <proxy-port> -t none
-;; -u none -U none` forwards the child's `127.0.0.1:<proxy-port>` to the host
-;; loopback and NOTHING else -- no default route (internet unreachable), no
-;; gateway map (host control plane / other loopback ports unreachable). Exact
-;; parity with the macOS "only the proxy port" Seatbelt rule, verified on a real
-;; Linux kernel. nil when absent -- filtered egress then degrades to NO egress
-;; (`--unshare-net`, safe) with a loud one-time warning. Same install class as
-;; bwrap (`apt-get install passt`); works on WSL2 (real kernel) too.
-(def ^:private linux-pasta
-  (some (fn [p]
-          (when (.canExecute (File. ^String p)) p))
-        ["/usr/bin/pasta" "/bin/pasta" "/usr/local/bin/pasta"]))
-
-;; WSL detection. WSL2 runs a REAL Linux kernel -- namespaces, bwrap and pasta all
-;; work, so it is treated as ordinary Linux. WSL1 is a syscall-translation shim
-;; with NO real kernel namespaces, so bwrap cannot enforce anything; it is reported
-;; UNENFORCEABLE (fail loud) rather than silently passing children through. The
+;; WSL detection. WSL2 runs a real Linux kernel, so user and mount namespaces work
+;; and it is treated as ordinary Linux. WSL1 is a syscall-translation shim with no
+;; real kernel namespaces, so embedded bubblewrap cannot enforce anything; it is
+;; reported UNENFORCEABLE rather than silently passing children through. The
 ;; kernel `osrelease` distinguishes them: WSL2 = `...-microsoft-standard-WSL2`,
 ;; WSL1 = `...-Microsoft` (no `WSL2` marker).
 (defn- linux-osrelease [] (try (slurp "/proc/sys/kernel/osrelease") (catch Throwable _ "")))
@@ -133,44 +97,25 @@
     (and (str/includes? r "microsoft") (not (str/includes? r "wsl2")))))
 
 (defn supported?
-  "True when the current OS can ENFORCE a jail. macOS: Seatbelt via the system
-   `sandbox-exec`. Linux: bubblewrap (`bwrap`) namespaces. Other OSes: not
-   supported -- callers keep the cooperative admission gate as the floor and
-   `unenforceable-reason` explains why so `jail.enabled: true` never silently no-ops."
+  "True when the current OS has a matching `libvisjail` beside libvispython.
+   WSL1 is excluded because it has no real Linux namespaces."
   []
-  (case (os-kind)
-    :macos
-    (.canExecute (File. ^String macos-sandbox-exec))
-
-    :linux
-    (and (boolean linux-bwrap) (not (wsl1?)))
-
-    false))
+  (and (#{:macos :linux} (os-kind))
+       (not (wsl1?))
+       (try (boolean (python-runtime/resolve-jail)) (catch Throwable _ false))))
 
 (defn unenforceable-reason
-  "Nil when `supported?`, else a human string explaining why the jail CANNOT be
-   enforced on this host -- so a requested `jail.enabled: true` fails LOUD instead of
-   passing the child through unconfined. Distinguishes 'wrong OS' from 'right OS,
-   enforcer binary missing' (the actionable case: install the tool)."
+  "Nil when `supported?`, else a human explanation of the platform/runtime gap."
   []
   (when-not (supported?)
-    (case (os-kind)
-      :macos
-      "macOS jail needs /usr/bin/sandbox-exec, which is not executable here"
-
-      :linux
-      (cond
-        (wsl1?)
-        "WSL1 has no real Linux kernel namespaces; the jail needs WSL2 (run `wsl --set-version <distro> 2`)"
-        :else
-        "Linux jail needs bubblewrap (`bwrap`); install it (e.g. `apt-get install bubblewrap`)")
-
-      "the OS process jail is not available on this operating system")))
+    (cond (= :other (os-kind)) "the OS process jail is not available on this operating system"
+          (wsl1?) "WSL1 has no real Linux kernel namespaces; the jail needs WSL2"
+          :else "the selected Python runtime has no matching libvisjail")))
 
 (defn- inherited-jail?
   "True inside a child already confined by this process-jail contract. Seatbelt
-   restrictions are inherited across exec, and macOS rejects a second
-   `sandbox-exec` application, so descendants must not wrap themselves again."
+   restrictions are inherited across exec, and macOS rejects applying a second
+   profile, so descendants must not wrap themselves again."
   []
   (= "1" (System/getenv "VIS_SEATBELT_ACTIVE")))
 
@@ -243,8 +188,8 @@
    `{:rw [..] :ro [..] :deny-write [..] :deny-read [..] :net-enabled? <bool>}`
    (all paths already canonical). Rules are emitted in Seatbelt's LAST-match-wins
    order: allow reads (system + rw + ro), allow writes (rw), then the deny carve-
-   outs so `:deny-write`/`:deny-read` win over the allows. One-line string for
-   `sandbox-exec -p`."
+   outs so `:deny-write`/`:deny-read` win over the allows. One-line string consumed
+   directly by `libvisjail`."
   ^String
   [{:keys [rw ro deny-write deny-read deny-exec net-enabled? proxy-port loopback-port inbound-ports
            mach-services]}]
@@ -427,22 +372,11 @@
          " databases.")))
 
 (defn linux-bwrap-args
-  "Compile the bubblewrap flag vector (ending in `--`) from a RESOLVED policy map
-   (the same shape `macos-profile` consumes). Filesystem: read-only bind the system
-   toolchain roots + `:ro`, read-write bind `:rw` (session roots + tmp), then
-   re-bind `:deny-write` read-only and mask `:deny-read` (empty tmpfs for dirs,
-   /dev/null for files) -- later binds win, so the denies override the allows. Only
-   bound paths exist inside the child, so everything else on the host (e.g. `~/.ssh`)
-   is simply absent. `:deny-exec` binaries are masked with /dev/null (a char device),
-   so `execve` fails EACCES -- the Linux equivalent of macOS's `(deny process-exec*)`;
-   it is bound AFTER the allow binds so a denied binary inside an allowed `:ro` root
-   is still blocked. Network: for FILTERED egress (`:proxy-port` set) pasta wraps
-   the bwrap child, giving it a private net namespace that reaches ONLY the host
-   gateway proxy port (see `linux-pasta`) -- exact macOS parity; bwrap then SHARES
-   that namespace (no `--unshare-net`). Without pasta, filtered egress degrades to
-   `--unshare-net` (no egress at all, safe). Net-off also `--unshare-net`; an
-   explicitly-open network (`net-enabled?` with no proxy, e.g. a managed nREPL)
-   shares the host network namespace."
+  "Compile embedded-bubblewrap policy flags (ending in `--`) from a RESOLVED
+   policy map. Only bound paths exist in the child. Later read-only/masked binds
+   make deny-write, deny-read and deny-exec win. Filtered egress and managed
+   inbound ports omit `--unshare-net` because libvisjail creates the private network
+   namespace and bridges only those named loopback endpoints."
   ^java.util.List
   [{:keys [rw ro deny-write deny-read deny-exec net-enabled? proxy-port loopback-port]}]
   (let [rw
@@ -518,27 +452,14 @@
                                    ["--ro-bind-try" "/dev/null" t])))))
                 dex)
 
-        ;; Network. proxy-port set = FILTERED egress: when pasta is present it gives
-        ;; the child a private net ns reaching ONLY the host proxy port, and bwrap
-        ;; SHARES that ns (no --unshare-net). Without pasta, filtered egress degrades
-        ;; to a full no-egress wall rather than leaving the child open. net-off and
-        ;; the no-pasta fallback both --unshare-net; an explicitly-open network
-        ;; (net-enabled? with no proxy, e.g. a managed nREPL) shares the host ns.
-        pasta?
-        (boolean (and proxy-port linux-pasta))
-
+        ;; A named proxy or inbound endpoint asks libvisjail to own the private
+        ;; namespace and its two narrow loopback bridges. With neither endpoint,
+        ;; bubblewrap itself closes the network unless policy explicitly opens it.
         net
-        (cond pasta? []
-              proxy-port ["--unshare-net"]
-              net-enabled? []
-              :else ["--unshare-net"])
+        (if (or proxy-port loopback-port net-enabled?) [] ["--unshare-net"])
 
         bwrap-args
-        ;; ABSOLUTE enforcer path — the very binary `supported?` validated. A bare name
-        ;; would be resolved by PATH at exec time (and, under the detach prefix, by the
-        ;; CHILD's scrubbed PATH), so a shadowing shim earlier on PATH could replace the
-        ;; jail with an arbitrary program, and a PATH without it would fail the launch.
-        (vec (concat [(or linux-bwrap "bwrap") "--die-with-parent" "--proc" "/proc" "--dev" "/dev"]
+        (vec (concat ["--die-with-parent" "--proc" "/proc" "--dev" "/dev"]
                      ro-flags
                      rw-flags
                      dw-flags
@@ -547,138 +468,9 @@
                      net
                      ["--"]))]
 
-    (if pasta?
-      ;; pasta wraps bwrap: `-T <port>` forwards the child's loopback proxy port to
-      ;; the host (egress); `-t <loopback-port>` forwards the host INBOUND to the
-      ;; child's loopback port so vis can attach to a managed nREPL bound inside the
-      ;; ns (else `-t none`); `-u none -U none` disable UDP. So the ONLY reachable
-      ;; destination is the gateway proxy, and the only inbound is the nREPL port.
-      ;; pasta is the argv PREFIX, so everything it says goes to the CHILD's stdio
-      ;; and is read back as if the command itself had printed it ("No routable
-      ;; interface for IPv6: IPv6 is disabled" on a host without IPv6). `--quiet`
-      ;; drops only the INFORMATIONAL half, so `--log-file` moves the rest of pasta's
-      ;; diagnostics into this vis process' own log directory.
-      (into (vec (concat [(or linux-pasta "pasta") "--quiet" "--log-file" (paths/log-file "pasta")
-                          "-T" (str proxy-port)]
-                         (if loopback-port ["-t" (str loopback-port)] ["-t" "none"])
-                         ["-u" "none" "-U" "none" "--"]))
-            bwrap-args)
-      bwrap-args)))
+    bwrap-args))
 
-(defonce ^:private unenforceable-warned (atom false))
 
-(defn- warn-unenforceable!
-  "Emit ONE loud stderr line when a jail was requested (`jail.enabled: true` -> an enabled
-   policy) but this host cannot enforce it, so the operator learns the child is
-   running UNCONFINED instead of the failure being silent. Deduped per process."
-  [reason]
-  (when (compare-and-set! unenforceable-warned false true)
-    (binding [*out* *err*]
-      (println (str "vis WARNING: the jail is enabled but CANNOT be enforced on this host -- "
-                    reason
-                    ". Shell/REPL children run UNCONFINED (full host access). "
-                    "See `vis-docs sandbox`.")))))
-
-(defonce ^:private no-pasta-warned (atom false))
-
-(defn- warn-no-pasta!
-  "Emit ONE loud stderr line on Linux when FILTERED egress was requested (a proxy
-   policy) but pasta is absent, so the operator learns the child has NO network
-   (egress denied entirely) instead of the degradation being silent. `passt`
-   provides pasta. Deduped per process."
-  []
-  (when (compare-and-set! no-pasta-warned false true)
-    (binding [*out* *err*]
-      (println
-        (str "vis WARNING: Linux filtered egress needs pasta (from `passt`) but it is "
-             "not installed -- jailed shell/REPL children get NO network (egress denied "
-             "entirely). Install it (e.g. `apt-get install passt`). See `vis-docs sandbox`.")))))
-
-(defn wrap-argv
-  "Given the base executor argv and a jail POLICY value, return the argv to spawn.
-   macOS wraps the first managed process with `sandbox-exec` (descendants inherit
-   the kernel policy and are left unwrapped, since Seatbelt rejects a second
-   application). Linux wraps with bubblewrap (`bwrap`) namespaces. When a jail is
-   requested but the host cannot enforce it, the child is passed through UNWRAPPED
-   but a loud one-time warning fires -- `jail.enabled: true` never silently no-ops."
-  [argv policy]
-  (let [wanted? (and policy (not (:disabled? policy)))]
-    (if (and wanted? (supported?) (not (inherited-jail?)))
-      (case (os-kind)
-        :macos
-        ;; Absolute path (see `bwrap-args`): never a PATH lookup for the enforcer.
-        (into [macos-sandbox-exec "-p" (macos-profile (compile-policy policy))] argv)
-
-        :linux
-        (let [pol (compile-policy policy)]
-          (when (and (:proxy-port pol) (not linux-pasta)) (warn-no-pasta!))
-          (into (linux-bwrap-args pol) argv))
-
-        argv)
-      (do (when (and wanted? (not (inherited-jail?)))
-            (when-let [reason (unenforceable-reason)]
-              (warn-unenforceable! reason)))
-          argv))))
-
-(defn- path-executable
-  "Absolute path of `exe` on THIS process' PATH, or nil. Resolved from the daemon's
-   own environment because a jailed child's env is REPLACED by the allowlist, so a
-   bare program name may no longer resolve at exec time."
-  ^String [^String exe]
-  (some (fn [dir]
-          (let [f (File. ^String dir ^String exe)]
-            (when (and (.isFile f) (.canExecute f)) (.getPath f))))
-        (remove str/blank? (str/split (str (System/getenv "PATH")) #":"))))
-
-(defn- execs-in-place?
-  "Probe a detacher: run `prefix … /bin/sh -c 'exit 77'` and demand 77 back.
-   A detacher is only usable when it `exec`s the command IN PLACE — util-linux
-   `setsid` forks when it cannot become a session leader and the parent exits 0,
-   which would silently replace every command's exit status with a lie. False on
-   a platform without `/bin/sh` (Windows), which just leaves the prefix off."
-  [prefix]
-  (try (let [p (.start (doto (ProcessBuilder. ^java.util.List
-                                              (into (vec prefix) ["/bin/sh" "-c" "exit 77"]))
-                         (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD)
-                         (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)))]
-         (try (and (.waitFor p 5 TimeUnit/SECONDS) (= 77 (.exitValue p)))
-              (finally (try (.close (.getOutputStream p)) (catch Throwable _ nil))
-                       (when (.isAlive p) (.destroyForcibly p)))))
-       (catch Throwable t (cancellation/preserve-interrupt! t) false)))
-
-(def ^:private detach-argv
-  "argv PREFIX that runs a child in its OWN process group, or `[]`.
-
-   The daemon is its own process-group leader and a plain `ProcessBuilder` child
-   inherits that group plus the controlling terminal (measured: child pgid ==
-   gateway pid). So a tool that signals its OWN group — `kill 0`, `kill -- -$$`,
-   a harness or build script tearing down its children, Ctrl-C in the tab a
-   foreground daemon was started from — delivered that SIGINT/SIGTERM to the
-   GATEWAY as well: the shutdown hook drained and cancelled every other session's
-   live turn, and the log made it look like a deliberate stop.
-
-   Each candidate `exec`s in place (verified once by [[execs-in-place?]]), so the
-   pid `ProcessBuilder` hands back is still the real command: exit status, stdio
-   pipes and every `ProcessHandle` kill path are unchanged. Empty when no
-   candidate exists — the child then shares the group exactly as before."
-  (delay (or (some (fn [prefix]
-                     (when (and prefix (execs-in-place? prefix)) prefix))
-                   [(when-let [perl (path-executable "perl")]
-                      [perl "-e" "setpgrp(0,0); exec { $ARGV[0] } @ARGV or die $!" "--"])
-                    (when-let [setsid (path-executable "setsid")]
-                      [setsid])])
-             [])))
-
-(defn detached-argv
-  "`argv` prefixed so the spawned child LEADS ITS OWN process group instead of
-   inheriting the daemon's — the containment that keeps a child's group-directed
-   signal (or the terminal's) away from the gateway JVM. Unchanged argv on a
-   platform with no in-place detacher.
-
-   Applies OUTSIDE [[wrap-argv]]: the detacher only `setpgid`s and `exec`s, so
-   everything that actually RUNS is still inside the jail."
-  [argv]
-  (into (vec @detach-argv) argv))
 
 (defn- java-proxy-options
   [{:keys [proxy-port java-trust-store java-trust-store-password java-proxy? loopback-port]}]
@@ -703,10 +495,10 @@
 
 (defn proxy-env
   "Environment additions for a confined child. `VIS_SEATBELT_ACTIVE` records that
-   the kernel policy is already inherited, preventing invalid nested
-   `sandbox-exec` calls. When a gateway proxy endpoint is present, common proxy and
-   CA variables cover curl/git/Python/Bun/etc.; managed JVM children additionally
-   receive proxy + ephemeral truststore properties through JAVA_TOOL_OPTIONS."
+   the kernel policy is already inherited, preventing an invalid nested profile.
+   When a gateway proxy endpoint is present, common proxy and CA variables cover
+   curl/git/Python/Bun/etc.; managed JVM children additionally receive proxy plus
+   ephemeral truststore properties through JAVA_TOOL_OPTIONS."
   [policy]
   (if (:disabled? policy)
     {}
@@ -764,17 +556,12 @@
 
 (def ^:private env-passthrough-prefixes ["LC_"])
 
-;; ── Variables that hijack the PRE-JAIL exec chain ──────────────────────────────
+;; ── Variables that hijack the PRE-POLICY child bootstrap ───────────────────────
 ;;
-;; The spawned argv is not the command: it is `perl -e 'setpgrp; exec …'` (the
-;; detacher, see `detach-argv`) exec'ing `sandbox-exec`/`bwrap`, which only THEN
-;; installs the kernel policy. Every one of those hops runs with the CHILD's
-;; environment while still UNCONFINED, so a variable that makes a program run
-;; code at startup — before it reaches `main` — is a complete jail bypass.
-;;
-;; Measured on macOS: with `PERL5OPT=-Mevil PERL5LIB=…` in the child env, the
-;; detacher ran the module and wrote a file in `$HOME` that the very same jailed
-;; argv was denied (`WRITE-DENIED`, no file) without it.
+;; `libvisjail` creates the child and installs its kernel policy before the requested
+;; command starts. Loader and runtime variables still affect native setup before the
+;; command reaches `main`, and can redirect code loading outside the policy's intended
+;; executable graph. They therefore never cross this trust boundary.
 ;;
 ;; These names are therefore refused UNCONDITIONALLY — declaring one under
 ;; `environment:` cannot re-enable it, because the whole point of a declaration
@@ -874,7 +661,63 @@
    decides what ELSE a child may keep."
   [policy]
   (merge (declared-env policy) (proxy-env policy)))
+(defn process-environment
+  "Build the COMPLETE child environment for `policy`, then overlay trusted
+   host-owned `extra`. Confined children start from the scrubbed allowlist;
+   disabled policies preserve the ambient environment and apply removals."
+  ([policy] (process-environment policy nil))
+  ([policy extra]
+   (let [^HashMap environment (if-let [full (jailed-child-env policy)]
+                                (HashMap. ^java.util.Map full)
+                                (doto (HashMap. ^java.util.Map (System/getenv))
+                                  (.putAll ^java.util.Map (child-env-additions policy))))]
+     (doseq [k (:env-removals policy)]
+       (.remove environment ^String k))
+     (when (seq extra) (.putAll environment ^java.util.Map extra))
+     environment)))
 
+(defn spawn!
+  "Spawn `argv` through the runtime-owned process boundary. An enabled policy
+   is compiled to Seatbelt or embedded-bubblewrap input; a disabled policy still
+   gets libvisjail's detached process group, PTY and lifecycle implementation.
+
+   Options: `:directory`, an exact `:environment` or trusted
+   `:extra-environment`, `:pty?`, `:merge-stderr?`, `:rows`, and `:columns`."
+  ([argv directory policy] (spawn! argv directory policy nil))
+  ([argv directory policy {:keys [environment extra-environment pty? merge-stderr? rows columns]}]
+   (let [wanted?
+         (and policy (not (:disabled? policy)))
+
+         inherited?
+         (and wanted? (inherited-jail?))
+
+         confined?
+         (and wanted? (not inherited?))
+
+         _
+         (when (and confined? (not (supported?)))
+           (throw (ex-info (str "Process denied: " (unenforceable-reason))
+                           {:type ::jail-unavailable})))
+
+         compiled
+         (when confined? (compile-policy policy))]
+
+     (python-runtime/spawn-process!
+       (mapv str argv)
+       {:environment (or environment (process-environment policy extra-environment))
+        :directory (some-> directory
+                           str)
+        :confined? confined?
+        :seatbelt-profile (when (= :macos (os-kind))
+                            (some-> compiled
+                                    macos-profile))
+        :linux-arguments (if (= :linux (os-kind)) (if compiled (linux-bwrap-args compiled) []) [])
+        :proxy-port (when (= :linux (os-kind)) (:proxy-port compiled))
+        :inbound-port (when (= :linux (os-kind)) (:loopback-port compiled))
+        :pty? (boolean pty?)
+        :merge-stderr? (boolean merge-stderr?)
+        :rows (int (or rows 0))
+        :columns (int (or columns 0))}))))
 ;; ── ONE call's own environment ──────────────────────────────────────────────
 ;; `environment:` says what EVERY child of Vis gets. A verb that SPAWNS also
 ;; carries what THIS child gets on top, and it carries it as an ARGUMENT of the
@@ -989,8 +832,8 @@
   "`policy` with ONE call's resolved delta merged over its project environment.
    Names set to nil become `:env-removals`: a confined child's environment is
    built from nothing so they are simply never added, while an UNCONFINED child
-   inherits this process' environment and must have them removed by name at the
-   spawn ([[session-process-launch]] reports them as `:env-remove`).
+   inherits this process' environment and must have them removed before the
+   complete map crosses the native spawn boundary.
 
    A nil policy is a spawn with no jail at all, and the delta still applies —
    a caller cannot lose its own variables by running where the jail is off."
@@ -1052,10 +895,9 @@
                    " repl_stop that REPL, then start it with this env.")}))
 
 ;; ── Standard language-process jail contract ────────────────────────────────
-;; Language packs spawn managed REPLs and project test runners via raw
-;; ProcessBuilder calls outside the shell executors. Every such spawn obtains its
-;; argv + proxy environment from `session-process-launch`, which resolves one live
-;; per-session policy atomically and fails closed when the session is unavailable.
+;; Language packs spawn managed REPLs and project test runners through
+;; `session-process-spawn!`, which resolves one live per-session policy atomically
+;; and crosses the one libvisjail boundary.
 
 (def ^:private repl-toolchain-read-dirs
   "Installed language runtimes/toolchains a managed process may READ to boot. They
@@ -1147,41 +989,16 @@
                         {:type ::session-jail-missing :session-id session-id})))
       policy)))
 
-(defn session-process-launch
-  "THE language-surface launch contract. Atomically resolve `session-id`'s policy
-   and return `{:argv ... :env ...}` for one managed language subprocess.
+(defn session-process-spawn!
+  "THE managed-language launch contract. Resolve `session-id` atomically, derive
+   its REPL/test policy, merge this call's environment delta, and spawn through
+   [[spawn!]]. Unknown, disposed, or failing sessions are denied before spawn.
 
-   `:loopback-port` is reserved for a managed nREPL's preselected local listener.
-   Unknown, nil, disposed, or failing sessions are denied before spawn; the
-   contract never silently returns a naked argv. On an OS without a supported
-   enforcer, `:argv` keeps its jail shape unchanged (the platform capability gap is
-   explicit), while the policy lookup still must succeed.
-
-   `:argv` is additionally [[detached-argv]]-prefixed: a managed REPL/interpreter
-   is long-lived, third-party and often runs test harnesses that signal their own
-   process group, and it used to inherit the DAEMON's group (measured: managed
-   nREPL pgid == gateway pid). One `kill 0` inside it took the gateway down with
-   it, cancelling every other session's live turn."
-  ([session-id argv] (session-process-launch session-id argv nil))
-  ([session-id argv {:keys [loopback-port env]}]
-   (let [policy
-         (-> (session-base-policy! session-id)
-             (language-process-policy loopback-port)
-             ;; THIS launch's own `env` delta, on top of the project environment —
-             ;; the argument a `repl_start`/`run_tests` call carried, resolved and
-             ;; scrubbed by the one contract that owns both.
-             (with-call-env (call-env-values env)))
-
-         full
-         (jailed-child-env policy)]
-
-     ;; Confined child ⇒ FULL scrubbed env replaces the operator's (secrets dropped);
-     ;; unenforced platform ⇒ additions merged onto the inherited env (unchanged).
-     (if full
-       {:argv (detached-argv (wrap-argv argv policy)) :env full :replace-env? true :env-remove []}
-       {:argv (detached-argv (wrap-argv argv policy))
-        :env (child-env-additions policy)
-        :replace-env? false
-        ;; The inherited environment is kept, so an unset name is only unset if
-        ;; the spawn REMOVES it from the child's map.
-        :env-remove (vec (sort (:env-removals policy)))}))))
+   Options additionally accept `:loopback-port`, `:env`, and every [[spawn!]]
+   option. The returned value is a `java.lang.Process`."
+  ([session-id argv directory] (session-process-spawn! session-id argv directory nil))
+  ([session-id argv directory {:keys [loopback-port env] :as opts}]
+   (let [policy (-> (session-base-policy! session-id)
+                    (language-process-policy loopback-port)
+                    (with-call-env (call-env-values env)))]
+     (spawn! argv directory policy (dissoc opts :loopback-port :env)))))
