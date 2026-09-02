@@ -1040,7 +1040,6 @@
     ;; discovery so a block may shadow it locally but can never replace it for the session.
     (exec! session "globals().setdefault('println', print)")
     (try (runtime/install-module! session "auto_imports") (catch Throwable _ nil))
-    (try (runtime/install-module! session "process_redirect") (catch Throwable _ nil))
     (install-protected-names! session custom-bindings)
     ;; Tools first as ONE registration — the guest gets every name in one pass,
     ;; and the contracts below stamp the wrappers that pass leaves behind.

@@ -92,8 +92,11 @@
   (let [edns (->> (cons (fs/file root "deps.edn") (fs/glob root "**/deps.edn"))
                   (map #(str (fs/relativize root %)))
                   distinct
-                  (remove #(str/includes? % "/e2e/"))
-                  (remove #(str/includes? % "/target/"))
+                  ;; Anchored on a path SEGMENT: a top-level `target/` (a stale
+                  ;; build copy of an older checkout, GraalPy deps and all) has
+                  ;; no leading slash to match, and inventoried this repository
+                  ;; twice with dependencies it no longer has.
+                  (remove #(re-find #"(^|/)(e2e|target)/" %))
                   sort
                   (sort-by #(if (= % "deps.edn") "" %)))]
     (for [rel edns

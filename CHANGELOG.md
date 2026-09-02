@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(live): read an archive focus snapshot from the wire spelling
 - fix(sandbox): start the interpreter once and let the second session wait
 - refactor(sandbox): let CPython own the sandbox's descriptors
+- refactor(sandbox): stop repairing the subprocess redirect CPython does itself
 ## [v0.1.41] - 2026-08-21
 
 ### Changed

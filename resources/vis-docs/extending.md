@@ -1128,11 +1128,11 @@ running Vis. Five consequences worth knowing before you write one:
   it arrives.
 - A file or descriptor redirect (`stdout=open(...)`, `stderr=open(...)`,
   `stdout=os.open(...)`, `stdin=open(...)`) reaches the file you named, and the
-  file is complete once the call returns. CPython itself discards such a
-  redirect, so Vis translates it into a pumped pipe on your behalf; a sink with
-  no descriptor (a `BytesIO`) raises `io.UnsupportedOperation`, exactly as on
-  CPython. `stdout=sys.stdout` goes to the extension's log rather than to
-  descriptor 1, which belongs to the JVM and not to your extension.
+  file is complete once the call returns — the interpreter does that itself, so
+  nothing of Vis' stands between your redirect and the file. A sink with no
+  descriptor (a `BytesIO`) raises `io.UnsupportedOperation`, as anywhere else.
+  `stdout=sys.stdout` goes to the extension's log rather than to descriptor 1,
+  which belongs to the JVM and not to your extension.
 - A stream you asked for but never read does **not** deadlock the child, unlike
   CPython: Vis keeps reading the pipe into a backlog of up to 8 MiB per stream,
   so `Popen(stdout=PIPE)` followed by `wait()` still completes. Beyond that the
@@ -1140,10 +1140,8 @@ running Vis. Five consequences worth knowing before you write one:
   without end still needs you to read it or close the stream.
 - `Popen.pid` is the child's real OS pid, so `ps`, `lsof`, a pidfile or your own
   supervisor all find it, and `poll()`, `wait()`, `terminate()` and
-  `os.kill(p.pid, sig)` work on it. CPython's emulated posix would otherwise
-  hand you a per-context child-slot index (`1`, `2`, ..., reused after a reap);
-  Vis replaces it and keeps the index on `__vis_virtual_pid__` for its own use.
-  A pid held past `wait()` names a dead process rather than another child.
+  `os.kill(p.pid, sig)` work on it. A pid held past `wait()` names a dead process
+  rather than another child.
 
 Ordinary process paths stay trusted and unrestricted: `subprocess`, `os.system`,
 `os.popen`, and `vis.shell({...})` ignore the process jail even when a session has
