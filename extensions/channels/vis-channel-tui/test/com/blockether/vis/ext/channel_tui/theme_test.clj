@@ -118,6 +118,14 @@
                  (expect (some? v))
                  (expect (= expected (rgb-vec @v)))))
              (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
+    (it "adapts every TokyoNight style from its canonical terminal background"
+        (try (doseq [[theme-id expected] {:tokyonight-day [225 226 231]
+                                          :tokyonight-moon [34 36 54]
+                                          :tokyonight-night [26 27 38]
+                                          :tokyonight-storm [36 40 59]}]
+               (t/apply-theme! theme-id)
+               (expect (= expected (rgb-vec t/terminal-bg))))
+             (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
     (it "applies dark theme through the atom-backed shared theme registry"
         (try (t/apply-theme! :vis-dark)
              (expect (= [12 14 18] (rgb-vec t/terminal-bg)))

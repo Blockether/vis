@@ -197,7 +197,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.150` | Apache-2.0 | 611 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.39` | MIT | 175 KB | Blockether (in-house) |
-| `com.blockether/vis-python-runtime` | `git:0aca5406f147443a9db2e7fcefde4c2011b798d6` | MIT | source checkout | Blockether (in-house) |
+| `com.blockether/vis-python-runtime` | `git:419bd6c79e7cc4a22d750992ec0659faac9b6725` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |

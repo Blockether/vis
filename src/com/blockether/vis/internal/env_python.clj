@@ -363,9 +363,9 @@
   #{"exec" "eval" "compile" "__import__"})
 
 (def ^:private protected-baseline-names
-  "Python globals the agent may CALL but must not rebind. Rebinding a tool or
-   parser-helper name would shadow the persistent session substrate."
-  #{"apropos" "doc" "defs" "gather" "__vis_count_forms__" "__vis_banned_name__"})
+  "Python globals the agent may CALL but must not rebind. Rebinding output, tool, or
+   parser-helper names would shadow the persistent session substrate."
+  #{"print" "println" "apropos" "doc" "defs" "gather" "__vis_count_forms__" "__vis_banned_name__"})
 
 (def PROCESS_SURFACE
   "THE sentences about this sandbox's process surface — written ONCE, here, and
@@ -432,9 +432,9 @@
 (defn- protected-names-for-bindings
   [custom-bindings]
   (set (concat protected-baseline-names
-               (mapcat (fn [[sym _]]
-                         (cons (sym->py-name sym) (py-aliases-for-sym sym)))
-                       (or custom-bindings {})))))
+               (map (fn [[sym _]]
+                      (first (str/split (sym->py-name sym) #"\." 2)))
+                    (or custom-bindings {})))))
 
 (defn- install-protected-names!
   "Declare which globals the block may SHADOW but never overwrite for the
@@ -461,11 +461,9 @@
    A FUNCTION becomes a host tool: the name is registered for this session in
    [[python-host]] and installed by the runtime as a deferred callable, so
    `await tool(...)` and `gather(tool(...), …)` work exactly like the tools the
-   context was built with. Anything else is DATA and crosses as JSON.
-
-   Extension and foundation tools are (re)installed through here after the
-   context exists, which is why the deferral happens here too and not only at
-   build time."
+   context was built with. A dotted name publishes one declared method through a
+   capability namespace instead of exposing the extension's raw object. Anything
+   else is DATA and crosses as JSON."
   [session sym val]
   (let [nm
         (sym->py-name sym)
@@ -474,9 +472,12 @@
         (py-aliases-for-sym sym)
 
         names
-        (cons nm aliases)]
+        (cons nm aliases)
 
-    (add-protected-names! session names)
+        protected
+        (map #(first (str/split % #"\." 2)) names)]
+
+    (add-protected-names! session protected)
     (if (fn? val)
       (python-host/install-tools! session
                                   (into {}
@@ -528,15 +529,18 @@
   (set-python-binding-meta! session sym "__vis_keys__" keys-text))
 
 (defn remove-python-binding!
-  "Remove `sym` from `session` ENTIRELY — the name disappears, so a deactivated
-   tool raises a plain NameError instead of calling as None, and its page leaves
-   no stale entry behind."
+  "Remove `sym` from `session` entirely, including dotted namespace members and
+   every discovery metadata table."
   [session sym]
   (let [names (cons (sym->py-name sym) (py-aliases-for-sym sym))]
     (exec! session
            (str "for __vis_n__ in " (py-json-literal (vec names))
-                ":\n" "    globals().pop(__vis_n__, None)\n"
-                "    globals().get('__vis_docs__', {}).pop(__vis_n__, None)\n" "del __vis_n__"))
+                ":\n" "    if '.' in __vis_n__:\n"
+                "        __vis_remove_dotted_tool__(__vis_n__)\n" "    else:\n"
+                "        globals().pop(__vis_n__, None)\n"
+                "    for __vis_table__ in ('__vis_docs__', '__vis_sigs__', '__vis_keys__'):\n"
+                "        globals().get(__vis_table__, {}).pop(__vis_n__, None)\n"
+                "del __vis_n__, __vis_table__"))
     nil))
 
 (defn bind-and-bump!

@@ -38,7 +38,7 @@ Everything on this page, by what you are trying to do:
 | register an LLM provider | [LLM providers](#llm-providers), [Managed providers](#managed-providers) | — |
 | keep data across restarts | [Durable state](#durable-state) | — |
 | publish a page for `doc(name)` | [Your page and your `apropos` row](#your-page-and-your-apropos-row) | [Shipping doc pages](#shipping-doc-pages) |
-| check and test what I wrote | [Checking an extension before it runs](#checking-an-extension-before-it-runs), [Testing your Python extension](#testing-your-python-extension) | [Testing and verification](#testing-and-verification) |
+| test what I wrote | [Testing your Python extension](#testing-your-python-extension) | [Testing and verification](#testing-and-verification) |
 ---
 
 ## Python extensions
@@ -132,7 +132,7 @@ Exactly one call per file. Keyword arguments:
 | `description` | str, required | One-liner for `vis-agent extension list` and the model's extensions snapshot. |
 | `kind` | str | Section label (`"integration"`, `"guard"`, …). Defaults to `"python"`. |
 | `version` | str | Plain metadata. |
-| `alias` | str | Python-name prefix for tools. Required when `symbols=` is declared. |
+| `alias` | str | Short registry identity used in extension listings. Required with `symbols=`; it does not prefix the public Python API. |
 | `symbols` | list of `vis.symbol(...)` | Model-facing tools. |
 | `prompt` | str or callable | Model-facing fragment. A callable receives the env dict every turn and returns a string or `None` (no fragment that turn). |
 | `activation` | callable | `(env) -> bool`, evaluated per turn; gates the whole extension. Default: always on. |
@@ -222,14 +222,14 @@ vis.extension(
 ### Tools
 
 ```python
-vis.symbol(fn, name=None, tag="observation", is_hidden=False)
+vis.symbol(fn_or_object, name=None, tag="observation", is_hidden=False)
+vis.method(fn=None, *, tag="observation", is_hidden=False)
 ```
 
 - `tag` declares what the tool does: `"observation"` (reads state) or `"mutation"`
   (changes state) — same contract as Clojure tools.
-- The sandbox name is `f"{alias}_{name}"`; `name` defaults to `fn.__name__`
-  with a leading `"{alias}_"` stripped, so a module can use readable full
-  names (`todo_add` under alias `todo`) without double-prefixing.
+- A function's sandbox name is exactly `name`, defaulting to `fn.__name__`. The
+  extension `alias` never prefixes it.
 - **The docstring is mandatory** — it is the whole contract. `apropos(pattern)`
   filters the symbol name with a regular expression, while `doc(name)` returns the
   docstring verbatim. Choose a descriptive symbol name and put preconditions,
@@ -248,10 +248,43 @@ vis.symbol(fn, name=None, tag="observation", is_hidden=False)
   itself spells with a trailing `?` (`is_tool_call` → `:tool-call?`); those map
   through one named table instead of by convention.
 
-**A tool is a Python function, never a provider tool.** `python_execution` is the
+An integration object can publish all of its public methods under one exact name:
+
+```python
+class Jenkins:
+    def poll(self, job, number=None, wait=0):
+        """Poll one build and return its typed status object."""
+        ...
+
+    @vis.method(tag="mutation")
+    def rebuild(self, job, number):
+        """Start a replacement build."""
+        ...
+
+    def _credential(self):
+        ...
+
+jenkins = Jenkins()
+vis.extension(
+    name="glms",
+    description="Jenkins integration.",
+    alias="glms",
+    symbols=[vis.symbol(jenkins, name="glms_jenkins")],
+)
+```
+
+This exposes exactly `glms_jenkins.poll(...)` and
+`glms_jenkins.rebuild(...)`. Public callable methods are discovered in definition
+order; properties, data attributes, and names beginning with `_` never cross the
+boundary. `vis.method(...)` overrides `tag` or `is_hidden` for one method; otherwise
+the enclosing `vis.symbol(...)` defaults apply. Each method keeps its own signature
+and docstring in `apropos`/`doc`, runs through the same deferred worker and result
+envelope as a flat tool, and may return a custom typed object without flattening it.
+
+**A tool is a Python callable, never a provider tool.** `python_execution` is the
 only thing a model is handed a schema for; every symbol an extension registers is
-a bare name inside that sandbox, called like any other Python function. There is
-no JSON Schema to write, no `description=`/`result=` pair to keep in sync with the
+called like an ordinary Python function or namespaced method. There is no JSON
+Schema to write, no `description=`/`result=` pair to keep in sync with the
 docstring, and no per-symbol renderer: a printed result is carded from the value
 itself.
 
@@ -606,9 +639,8 @@ check comes before the expensive lookup behind it.
 A validator takes **one** argument (the value) or **two** (the value and every
 answer in the form — flat, whatever the layout); that second argument is how one
 field compares itself with another, across groups included. Any other shape is
-refused where you wrote it - by `vis.ask` when the request is built, and by
-`vis-agent extension check` without running the file at all - never in front
-of the human who is finally typing:
+refused by `vis.ask` when the request is built, never in front of the human who
+is finally typing:
 
 ```python
 vis.ask("Sign up", [vis.plaintext("email", validate=lambda: None)])
@@ -1188,47 +1220,6 @@ A single `.py` file is the simplest extension. For anything larger, drop a
 So an ordinary Python project becomes a Vis extension by adding one
 `extension.py` on top that imports it.
 
-### Checking an extension before it runs
-
-```bash
-vis-agent extension check                       # every file that would load
-vis-agent extension check .vis/extensions/deploy.py
-```
-
-The check never runs your extension. The file is parsed, and three questions get
-answered from the parse tree alone:
-
-* does it parse at all;
-* does it only reach for `vis.<name>` that the `vis` module actually has, so
-  `vis.plaintxt(...)` is caught here instead of in front of a human;
-* would every `vis.ask(...)` request and every `vis.live(...)` view be accepted -
-  judged by the engine's own seam, the same judge the running dialog and the
-  running view use, never a second opinion.
-
-That is possible because the builders are pure: reconstructing
-`vis.select("env", [])` builds a dict and touches nothing else. An argument that
-cannot be known without running the file (a field list handed in as a parameter,
-an f-string title, a comprehension) is reported as **skipped** rather than
-guessed at.
-
-A `validate=` function is judged too, by SHAPE and without ever being called: a
-lambda or a `def` in the file stands in for one taking exactly the arguments it
-declares, so `validate=lambda: None` and `validate=takes_nothing` are refused
-here for the same reason `vis.ask` refuses them. A validator that arrives from
-somewhere the parse tree cannot see is assumed to be the ordinary one value
-shape rather than reported.
-
-```text
-FAIL .vis/extensions/deploy.py  (2 forms checked, 1 skipped)
-  .vis/extensions/deploy.py:31:12: invalid-request: Invalid human-input field env: select needs at least one option
-  .vis/extensions/deploy.py:44:12: unknown-attribute: the vis module has no plaintxt
-1 file, 2 forms checked, 2 problems
-```
-
-The exit code is `1` when anything was refused, so it drops straight into a
-pre-commit hook or CI. A file that registers nothing (`no-extension`) and a file
-that cannot be read (`unreadable`) are problems too - a run over a directory
-always reaches the last file and reports every one of them.
 
 ### Testing your Python extension
 
@@ -1248,12 +1239,7 @@ def test_add():
     assert add(2, 3) == 5
 ```
 
-Run them:
-
-```text
-/test            # in a session — inline pass/fail report
-vis-agent extension test     # from the shell — prints a report, exits non-zero on failure
-```
+Run them in a session with `/test` for an inline pass/fail report.
 
 The `vis` library also carries one generic live-view test host. It keeps fixtures
 out of the active session, records only what the extension emitted, and lets a test

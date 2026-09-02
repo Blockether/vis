@@ -1,9 +1,9 @@
 /**
  * Prove every story against every shipped palette in a fresh document.
  *
- * axe caches flattened translucent paints within a document, so changing six
- * theme attributes around one mounted story can report a light paper beneath
- * dark-theme ink. A URL per story/palette is both faster than six builds and
+ * axe caches flattened translucent paints within a document, so changing every
+ * theme attribute around one mounted story can report a light paper beneath
+ * dark-theme ink. A URL per story/palette is both faster than repeated builds and
  * faithful to how the app first paints a selected theme.
  */
 import { createServer } from 'node:http';
@@ -13,16 +13,13 @@ import { extname, resolve, sep } from 'node:path';
 import { chromium } from 'playwright';
 
 const require = createRequire(import.meta.url);
-const axeSource = await readFile(require.resolve('axe-core/axe.min.js'), 'utf8');
+const [axeSource, themeCatalog] = await Promise.all([
+  readFile(require.resolve('axe-core/axe.min.js'), 'utf8'),
+  readFile(resolve('src/lib/themes.generated.ts'), 'utf8'),
+]);
 const staticRoot = resolve(process.argv[2] ?? 'storybook-static');
-const themes = [
-  'blockether-light',
-  'blockether-dark',
-  'solarized-light',
-  'solarized-dark',
-  'vis-light',
-  'vis-dark',
-];
+const themes = [...themeCatalog.matchAll(/\bid: '([^']+)'/g)].map((match) => match[1]);
+if (themes.length === 0) throw new Error('The generated application theme catalog is empty.');
 const mime = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',

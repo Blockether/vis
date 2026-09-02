@@ -6,8 +6,8 @@ import '../src/index.css';
 
 /**
  * The palette is the APP's, applied the app's own way: `applyTheme` stamps
- * `data-theme` on the document exactly as `main.tsx` does at launch, and the six
- * entries in the toolbar are `THEMES` — the catalog `clojure -X:companion-themes`
+ * `data-theme` on the document exactly as `main.tsx` does at launch, and every
+ * entry in the toolbar comes from `THEMES` — the catalog `clojure -X:companion-themes`
  * generates from the engine's `theme.clj`. A palette therefore cannot exist in
  * this gallery and be missing from the product, and a contrast measured here is
  * the contrast that ships.

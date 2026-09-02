@@ -182,6 +182,12 @@
                  (expect (= "vis" (#'main/log-role-for-args ["gateway" "status"])))
                  (expect (= "vis" (#'main/log-role-for-args ["python" "-c" "print(1)"])))))
 
+(defdescribe extension-command-surface-test
+             (it "keeps only listing and contributed commands under `vis-agent extension`"
+                 (let [names (set (map :cmd/name (registry/registered-under ["extension"])))]
+                   (expect (contains? names "list"))
+                   (expect (every? #(not (contains? names %)) ["scaffold" "check" "test"])))))
+
 (defdescribe
   gateway-command-help-test
   (it

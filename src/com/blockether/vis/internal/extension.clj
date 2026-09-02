@@ -864,13 +864,17 @@
 (s/def :ext.engine/ns (s/and symbol? #(nil? (namespace %))))
 
 (s/def :ext.engine/alias (s/and symbol? #(nil? (namespace %))))
+;; Python-authored extensions declare their public sandbox names verbatim. Their
+;; extension alias remains registry metadata and never changes the Python API.
+(s/def :ext.engine/exact-symbol-names? boolean?)
 ;; Built-in extensions ship in the main jar and bind their symbols BARE into the
 ;; sandbox ns (no alias), like the engine verbs. Mutually exclusive with :alias.
 (s/def :ext.engine/builtin? boolean?)
 
 (s/def :ext/engine
-  (s/keys :opt [:ext.engine/ns :ext.engine/alias :ext.engine/builtin? :ext.engine/symbols
-                :ext.engine/classes :ext.engine/imports]))
+  (s/keys :opt [:ext.engine/ns :ext.engine/alias :ext.engine/builtin?
+                :ext.engine/exact-symbol-names? :ext.engine/symbols :ext.engine/classes
+                :ext.engine/imports]))
 ;; Canonical source markers attached to registered extensions via the
 ;; sidecar atom. Also surfaced in ctx :extensions / extension summaries
 ;; and stamped onto tool-result info.
@@ -917,6 +921,11 @@
     true))
 
 (defn ext-alias-symbol [ext] (get-in ext [:ext/engine :ext.engine/alias]))
+
+(defn ext-exact-symbol-names?
+  "True when an extension's symbol names are already its exact Python API."
+  [ext]
+  (boolean (get-in ext [:ext/engine :ext.engine/exact-symbol-names?])))
 
 (defn ext-builtin?
   "True when this extension is a BUILT-IN: its symbols bind BARE into the

@@ -17,6 +17,10 @@ export const THEMES: readonly ThemeChoice[] = [
   { id: 'blockether-dark', label: 'Blockether Dark', mode: 'dark', chrome: '#0f1117' },
   { id: 'solarized-dark', label: 'Solarized Dark', mode: 'dark', chrome: '#002b36' },
   { id: 'solarized-light', label: 'Solarized Light', mode: 'light', chrome: '#fdf6e3' },
+  { id: 'tokyonight-day', label: 'Tokyo Day', mode: 'light', chrome: '#e1e2e7' },
+  { id: 'tokyonight-moon', label: 'Tokyo Moon', mode: 'dark', chrome: '#222436' },
+  { id: 'tokyonight-night', label: 'Tokyo Night', mode: 'dark', chrome: '#1a1b26' },
+  { id: 'tokyonight-storm', label: 'Tokyo Storm', mode: 'dark', chrome: '#24283b' },
   { id: 'vis-dark', label: 'Vis Dark', mode: 'dark', chrome: '#0c0e12' },
   { id: 'vis-light', label: 'Vis Light', mode: 'light', chrome: '#ffffff' },
 ];

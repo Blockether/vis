@@ -19,6 +19,7 @@ import vis_runtime
 #: Python's own builtins, which a TOOL-discovery surface must never list.
 NON_TOOLS = frozenset({"asyncio"})
 
+
 def _ask(namespace, tool, args):
     """Call the host tool `tool` with `args`, answering the value it replied with.
 
@@ -39,7 +40,7 @@ def _tables(namespace):
     """The metadata tables the engine seeded, as plain dicts."""
     out = {}
     for key in ("docs", "calls", "sigs", "kinds", "keys"):
-        table = namespace.get("__vis_%s__" % key)
+        table = namespace.get(f"__vis_{key}__")
         out[key] = dict(table) if isinstance(table, dict) else {}
     return out
 
@@ -111,7 +112,9 @@ def install(namespace):
         return [item(row["kind"], row["name"], row["body"]) for row in rows]
 
     def doc(target=None):
-        name = getattr(target, "name", target)
+        name = getattr(target, "name", None)
+        if name is None:
+            name = getattr(target, "__name__", target)
         name = "" if name is None else str(name)
         return _ask(
             namespace,
