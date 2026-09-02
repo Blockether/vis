@@ -4152,18 +4152,18 @@ export function SessionScreen({
       : undefined,
   };
   const title = session?.title?.trim() || "Chat";
-  const visibleStart = Math.max(0, turns.length - visibleTurnCount);
-  // What is mounted this frame: the window, clamped by the hydration ramp.
-  const renderStart = Math.max(visibleStart, turns.length - hydratedTurnCount);
-  // Everything older than the first bubble on screen, wherever it lives.
-  const earlierTotal = visibleStart + earlierRemaining;
   const runningTurnId = runningTurn?.id;
-  // While a running turn streams, drop the transcript's own copy of that same turn
-  // (a running turn is persisted as a bare 'running' row) so it isn't rendered
-  // twice — the running-turn bubble owns it until `settle` confirms the finished row.
-  const visibleTurns = useMemo(
+  // Which turns can be PAINTED at all, measured BEFORE the render window.
+  //
+  // A running turn is ALSO persisted as a bare 'running' row, and that row is
+  // never drawn — the running-turn bubble owns it. Counting it in `turns.length`
+  // still slid the window by one the moment the gateway wrote it, about five
+  // seconds after send: the oldest turn on screen was unmounted, its markdown and
+  // highlighting thrown away, and the transcript lost that turn's pixels under a
+  // reader pinned to the end. That read as the whole screen flashing mid-send.
+  const paintableTurns = useMemo(
     () =>
-      turns.slice(renderStart).filter((turn) => {
+      turns.filter((turn) => {
         // A persisted 'running' row is a placeholder, not a result. Painted from
         // the cache — reopening a session you already left — it resurrects the
         // working spinner and its elapsed clock for a turn that has since been
@@ -4176,7 +4176,19 @@ export function SessionScreen({
         if (isRunningRow(turn)) return false;
         return true;
       }),
-    [turns, renderStart, runningTurn, runningTurnId, turnsFresh],
+    [turns, runningTurn, runningTurnId, turnsFresh],
+  );
+  const visibleStart = Math.max(0, paintableTurns.length - visibleTurnCount);
+  // What is mounted this frame: the window, clamped by the hydration ramp.
+  const renderStart = Math.max(
+    visibleStart,
+    paintableTurns.length - hydratedTurnCount,
+  );
+  // Everything older than the first bubble on screen, wherever it lives.
+  const earlierTotal = visibleStart + earlierRemaining;
+  const visibleTurns = useMemo(
+    () => paintableTurns.slice(renderStart),
+    [paintableTurns, renderStart],
   );
   // Memoized rows keep their element IDENTITY across composer keystrokes
   // (prompt/caret state), so React bails out of the whole transcript subtree
