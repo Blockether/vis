@@ -16,7 +16,8 @@
 (defn- reply
   "The reply map for one call to `tool` with `args` in `session`."
   [session tool args]
-  (json/read-json (python-host/dispatch tool
+  (json/read-json (python-host/dispatch session
+                                        tool
                                         (json/write-json-str {"session" session "args" args}))))
 
 (defn- block-session!
@@ -91,3 +92,24 @@
          (finally (doseq [session [one two]]
                     (python-host/forget-session! session)
                     (runtime/close-session! session))))))
+
+(deftest a-forged-session-buys-nothing-test
+  ;; Measured before this was closed: `vis_runtime.host_call` is an ordinary
+  ;; module function and the session in its envelope is JSON the guest writes, so
+  ;; a block that named a neighbour's session was served the neighbour's tools —
+  ;; with the neighbour's roots. The interpreter now says who called, and that is
+  ;; the only thing this authorizes against.
+  (let [served (atom [])
+        victim (block-session! {"secret" (fn [] (swap! served conj :ran) "SECRET")})
+        attacker (block-session! {})]
+    (testing "the session that owns the tool is served"
+      (is (= "SECRET" (get (reply victim "secret" []) "value"))))
+    (testing "a caller that is not that session is refused, whatever the payload claims"
+      (let [answer (json/read-json
+                     (python-host/dispatch attacker
+                                           "secret"
+                                           (json/write-json-str {"session" victim "args" []})))]
+        (is (nil? (get answer "value")))
+        (is (str/includes? (str (get answer "error")) "no vis tool named"))))
+    (testing "the tool ran only for its own session"
+      (is (= [:ran] @served)))))

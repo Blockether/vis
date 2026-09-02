@@ -19,8 +19,10 @@
    interpreter is: a second `bind!` would replace a live upcall stub while a
    block sits inside it."
   (:require [charred.api :as json]
+            [clojure.string :as str]
             [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis-python-runtime :as runtime]))
+            [com.blockether.vis-python-runtime :as runtime]
+            [taoensso.telemere :as tel]))
 
 (defonce
   ^:private
@@ -140,18 +142,29 @@
       (try (answer tool f args) (finally (clojure.lang.Var/resetThreadBindingFrame held))))
     (answer tool f args)))
 (defn dispatch
-  "Serve one call from the sandbox: `payload` in, reply JSON out.
+  "Serve one call from the sandbox: WHO called, `payload` in, reply JSON out.
+
+   `caller` is the INTERPRETER's answer — the namespace the call was made from —
+   and it is the only thing this authorizes against. The payload also carries a
+   session, because the guest's envelope always did, but that field is written
+   by the guest: a block that named a neighbour's session used to be served the
+   neighbour's tools, with the neighbour's roots (measured: a confined block read
+   a file its own policy had refused it one statement earlier). A mismatch is a
+   forgery attempt and is recorded as one.
 
    THE host function itself, kept public so a test can measure the boundary
    without an interpreter. It never throws: a failure is a reply the guest
    raises as `RuntimeError`, because a host that throws here unwinds through the
    interpreter's upcall stub."
-  [tool payload]
+  [caller tool payload]
   (let [request
         (json/read-json payload)
 
-        session
+        claimed
         (get request "session")
+
+        session
+        (if (str/blank? (str caller)) nil caller)
 
         args
         (vec (get request "args"))
@@ -159,6 +172,13 @@
         f
         (or (get-in @registry [session tool]) (get-in @registry [door-session tool]))]
 
+    (when (and claimed session (not= claimed session))
+      (tel/log! {:level :warn
+                 :id ::session-mismatch
+                 :tool tool
+                 :caller session
+                 :claimed claimed
+                 :msg "a sandbox call named a session other than its own"}))
     (envelope tool
               (if f
                 (answer-in-frame session tool f args)

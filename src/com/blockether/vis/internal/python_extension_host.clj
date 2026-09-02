@@ -168,8 +168,14 @@
     ;; its own classpath and no inherited resolution.
     (python-runtime/ensure-library!)
     (runtime/initialize! {})
-    (runtime/bind-host! (fn [tool payload]
-                          (request! peer {"op" "host" "tool" tool "payload" payload})))
+    ;; The caller is the CHILD interpreter's answer, forwarded whole: the parent
+    ;; authorizes against it, and a payload that names something else is the
+    ;; guest's word, not the interpreter's.
+    (runtime/bind-host! (fn [session tool payload]
+                          (request! peer {"op" "host"
+                                          "session" session
+                                          "tool" tool
+                                          "payload" payload})))
     (pump! peer serve-op (constantly "the vis process that owns this host is gone"))
     (.close channel)))
 
@@ -249,7 +255,8 @@
                                (fn [p m]
                                  (send-line! p
                                              {"id" (get m "id")
-                                              "value" (python-host/dispatch (get m "tool")
+                                              "value" (python-host/dispatch (get m "session")
+                                                                            (get m "tool")
                                                                             (get m "payload"))}))
                                (fn []
                                  (str "the python extension host exited; see "
