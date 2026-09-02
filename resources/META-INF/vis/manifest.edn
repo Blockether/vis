@@ -9,8 +9,6 @@
    :apropos "META-INF/vis/apropos/shim-attach.edn"}
   {:register com.blockether.vis.internal.foundation.shim-ls/register!
    :apropos "META-INF/vis/apropos/shim-ls.edn"}
-  {:register com.blockether.vis.internal.foundation.shim-anydoc/register!
-   :apropos "META-INF/vis/apropos/shim-anydoc.edn"}
   com.blockether.vis.internal.foundation.mcp.core/register!
   com.blockether.vis.internal.foundation.harness.core/register!
   com.blockether.vis.ext.channel-tui.core/register!

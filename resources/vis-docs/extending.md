@@ -1273,7 +1273,6 @@ second session pays nothing for the same import.
 What Vis publishes ITSELF is small on purpose — the doors that reach the HOST and
 could not come from an index:
 
-- `anydoc` — any document as Markdown, and any question about it as citations (see below).
 - `ruff` — in-process lint and format, the same `com.blockether/ruff` cdylib the Python language pack uses.
 - `ls` — the workspace file lister, answering the host's own index.
 - Globals, no import needed — `attach`, `list_attachments`, `get_attachment`, `read_attachment`, `show_attachment`, plus `nippy_encode` / `nippy_decode`.
@@ -1288,88 +1287,10 @@ could not come from an index:
 
 `subprocess`, `os.system` and `os.popen` never spawn in the agent sandbox: they raise and name the sandbox's `shell(...)` call, which is the one door to a process. (Trusted extension code, outside the sandbox, keeps the real `subprocess`.) The filesystem is confined to the session's roots by an audit hook inside the interpreter — not by anything Python can rebind.
 
-`doc("anydoc")` and `doc("ruff")` are those doors' contracts, harvested from their
-own Python docstrings. The authoring contract for a door lives in
+`doc("ruff")` is that door's contract, harvested from its own Python
+docstrings. The authoring contract for a door lives in
 [Sandbox shims and autoloads](#sandbox-shims-and-autoloads) below — a
 Clojure-extension capability, since a door needs host callables.
-
-### Asking a document a question — `anydoc`
-
-`anydoc` converts anything the native `imaging` cdylib reads (PDF, DOCX, XLSX,
-PPTX, HTML, CSV, EPUB, Markdown, …) and answers questions **about** it with
-citations, so nothing has to paste a 200-page PDF into a context window:
-
-```python
-import anydoc
-
-hits = anydoc.search('"quarterly revenue" +march -draft', "/data/reports")
-for c in hits[:5]:
-    print(c)                       # q1.pdf p.7 line 12 > Revenue > …
-    print(c.snippet, c.page, c.section, c.score)
-print(hits.total_matches, hits.is_truncated, hits.skipped)
-print(hits.explain())              # the parse, the filters, the ranking
-```
-
-Reading is separate from asking: `anydoc.to_document(source)` gives a
-`Document` (`.markdown .text .blocks .pages .assets .outline()`),
-`anydoc.to_markdown(…)` the Markdown alone, and `doc.search(…)` asks one
-document you already hold. A source is a path, raw bytes or an open binary file,
-whichever one the caller happens to hold; bytes with no signature of their own
-(a `.csv`) need `name=` or `format=` to say what they are.
-`sources` is a path, a directory (walked), bytes, a `Document`, a list of any of
-those, or a `{id: source}` mapping when the ids — or the names those bytes need
-to be read at all — are yours to choose.
-
-`blocks` are the document's OWN structure, straight from the cdylib: heading,
-paragraph, list item, table row (with its cells), code, note — each carrying its
-page, line, breadcrumb path and character offsets. That is what makes a citation
-possible in a format that has no lines, and what a phrase crosses when it wraps.
-
-**Query language** — `results.explain()` prints how one parsed:
-
-| Query | Means |
-| --- | --- |
-| `march revenue` | bare terms, ANY may match, ranked by BM25 |
-| `"quarterly revenue"` | a phrase — crosses line wraps AND table cells |
-| `revenue +march`, `revenue AND march` | the document MUST contain `march` |
-| `revenue -draft`, `revenue NOT draft` | the document must NOT contain `draft` |
-| `rev*` | prefix |
-| `NEAR(revenue march, 8)` | within 8 words of each other |
-| `/reven[us]e?/` | a regular expression over folded text |
-| `heading:march` | headings only; also `table: list: code: note: paragraph:` |
-| `revenue section:Revenue`, `revenue page:3` | filters — under that heading, on that page |
-
-Exclusions and filters only NARROW a search, so a query needs at least one thing
-to look FOR: `-draft` or `page:3` on its own is refused, pointing at the
-character and saying what to add.
-
-Both the corpus and the query are FOLDED before matching, so `efficient` finds a
-PDF's `ﬁ` ligature, `Zurich` finds `Zürich`, `HAUPTSTRASSE` finds `Hauptstraße`,
-`don't` finds Word's curly apostrophe, `quarterly` finds a `quar-` / `terly`
-hyphen break across two lines, and
-`payments` finds `payment`. `fold=False`, `stem=False`, `ignore_case=False` and
-`whole_word=False` each turn one of those off. `limit` / `per_document` cap what
-is RETURNED and never what is counted (`total_matches`, `is_truncated`),
-`snippet` and `mark=("**", "**")` shape the quote, `context` adds neighbouring
-lines as `.before` / `.after`, and `kinds` / `pages` / `format` / `order` narrow
-without touching the query.
-
-Every hit is a `Citation`: `.document_id .format .page .section .path .line
-.column .offset .end .match .text .snippet .highlight .score .cell .block_kind`.
-
-Refusals are typed and say what to do about it: `QueryError` points at the
-character it choked on, `DocumentError` carries `.document_id` and `.format`,
-`SourceError` rejects something that cannot be a document — all `AnydocError`,
-and each also the builtin (`ValueError` / `TypeError`) a caller would have
-caught anyway. A file merely FOUND under a directory never ends a search: it
-lands in `results.skipped` with its reason. A term nothing matched comes back in
-`results.suggestions` (`{"marhc": ["march"]}`), which is how a typo answers.
-
-Conversions are cached in the host on the content HASH, so `doc.search(…)` and a
-second question about the same corpus convert nothing. The cache has no door of
-its own: it evicts least-recently-used down to how many documents it may hold,
-how large one may be and how many characters they weigh TOGETHER - assets and
-block structure included, since that is what a scanned PDF actually costs.
 
 ---
 
@@ -1626,9 +1547,8 @@ from an index needs nothing from you. A **shim** is for what an index cannot
 carry: a *host-backed* Python module whose familiar API is a thin façade, its real
 work DELEGATED across the boundary to Clojure/JVM callables you supply. This is
 exactly how `import ruff` (backed by the `com.blockether/ruff` cdylib the language
-pack lints with) and `import anydoc` (backed by the native imaging document
-reader) work — both ship as built-in shim extensions (`foundation.shim-ruff`,
-`foundation.shim-anydoc`), and the engine installs them through the SAME generic
+pack lints with) works — it ships as a built-in shim extension
+(`foundation.shim-ruff`), and the engine installs it through the SAME generic
 path any extension uses.
 
 List one or more shim specs under `:ext/sandbox-shims`:

@@ -61,8 +61,7 @@
                  ;; vacuous. A door is a capability the HOST performs, so this set is
                  ;; closed and small — anything a wheel can serve is pip's job, not a
                  ;; shim's.
-                 (expect (= #{"shim_anydoc.clj" "shim_attach.clj" "shim_ls.clj" "shim_nippy.clj"
-                              "shim_ruff.clj"}
+                 (expect (= #{"shim_attach.clj" "shim_ls.clj" "shim_nippy.clj" "shim_ruff.clj"}
                             (set (map (fn [^File f]
                                         (.getName f))
                                       (shim-ns-files))))))

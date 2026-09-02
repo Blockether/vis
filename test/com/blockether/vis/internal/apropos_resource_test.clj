@@ -291,11 +291,11 @@ def __vis_harvest__(modules, names):
                                         (str/replace stem "_" "-"))))))
                  set)]
 
-        (expect (= 5 (count expected)))
+        (expect (= 4 (count expected)))
         (expect (= expected listed))))
   (it "makes every pack that lends a shim name its own document resource"
       (let [entries (shim-entries)]
-        (expect (= 5 (count entries)))
+        (expect (= 4 (count entries)))
         (doseq [{:keys [register apropos]} entries]
           (expect (string? apropos) register)
           (expect (some? (io/resource apropos)) apropos)
@@ -308,8 +308,8 @@ def __vis_harvest__(modules, names):
             names
             (map :name entries)]
 
-        (expect (= 5 (count (registered-shims))))
-        (expect (< 30 (count entries)))
+        (expect (= 4 (count (registered-shims))))
+        (expect (< 20 (count entries)))
         ;; Unique ACROSS packs, not merely within one: `apropos` answers the first
         ;; record to claim a name, so two packs claiming one name would hide a symbol.
         (expect (= (count names) (count (distinct names))))

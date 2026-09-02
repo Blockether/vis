@@ -1106,9 +1106,9 @@
              ;; read a page), so without this pattern the corpus holds zero pages in
              ;; the native binary.
              "-H:IncludeResources=vis-docs/.*"
-             ;; The five host doors (resources/vis-shims/*.py), slurped at session
+             ;; The four host doors (resources/vis-shims/*.py), slurped at session
              ;; creation via io/resource. Without this pattern `attach`, `ls`,
-             ;; `nippy`, `ruff` and `anydoc` are missing in the native binary.
+             ;; `nippy` and `ruff` are missing in the native binary.
              "-H:IncludeResources=vis-shims/.*"
              ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/vis/*.py, on
              ;; :paths as a resource root): the body every extension context execs, and

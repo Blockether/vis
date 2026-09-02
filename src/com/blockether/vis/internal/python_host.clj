@@ -213,7 +213,7 @@
   "Install `tools` into `session` AND register them for every session.
 
    A shim door is ONE host capability, not a per-session closure, and Python is
-   PROCESS state: `nippy`, `ruff` and `anydoc` staple themselves onto
+   PROCESS state: `nippy` and `ruff` staple themselves onto
    `builtins` and `sys.modules`, so a second session's `import nippy` finds the
    module the FIRST session built - holding proxies that still name it. The
    shared key is what keeps those doors answering after that session is gone."

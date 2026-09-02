@@ -663,7 +663,7 @@
 
    NAMES are a trap in BOTH directions. The sandbox is a real CPython with pip,
    so `numpy` is numpy and the model should write against the upstream library —
-   but a name Vis publishes ITSELF (`ruff`, `anydoc`, the attachment globals)
+   but a name Vis publishes ITSELF (`ruff`, the attachment globals)
    reaches the host, not PyPI, and a model that assumes the package from the
    index writes against an API that was never there. So one line per door, keyed
    by the very names advertised above it, carrying the surface and the refusals —

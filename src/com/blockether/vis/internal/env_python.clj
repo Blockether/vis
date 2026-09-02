@@ -967,7 +967,7 @@
   "Give `session` every registered sandbox shim: its host bindings first, then
    its Python.
 
-   A shim is a DOOR — `ls`, `attach`, `nippy`, `ruff`, `anydoc` are Vis
+   A shim is a DOOR — `ls`, `attach`, `nippy` and `ruff` are Vis
    capabilities the host performs, not packages anyone can pip install — so the
    bindings go in as SYNCHRONOUS host tools and the source is exec'd in the
    session's own globals, where each shim's `__vis_install_<name>__` staples its
