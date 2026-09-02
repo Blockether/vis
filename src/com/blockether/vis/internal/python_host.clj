@@ -173,9 +173,16 @@
         (or (get-in @registry [session tool]) (get-in @registry [door-session tool]))]
 
     (when (and claimed session (not= claimed session))
-      (tel/log! {:level :warn
+      ;; Loud only when the caller does NOT own the tool, which is somebody
+      ;; reaching for a neighbour's. A caller that owns it is served its own and
+      ;; the envelope is merely stale — `vis_autoinstall` keeps ONE finder for
+      ;; the process and re-points it at each new session's callable, so an
+      ;; import can carry the previous session's name (measured at gateway boot:
+      ;; caller `vis_sandbox_5`, claimed `vis_sandbox_4`). That used to run the
+      ;; OTHER session's closure, with the other session's network policy.
+      (tel/log! {:level (if f :debug :warn)
                  :id ::session-mismatch
-                 :data {:tool tool :caller session :claimed claimed}
+                 :data {:tool tool :caller session :claimed claimed :served? (some? f)}
                  :msg "a sandbox call named a session other than its own"}))
     (envelope tool
               (if f
