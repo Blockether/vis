@@ -454,7 +454,7 @@ export const ProjectGroup = memo(function ProjectGroup({
               // there is: one quiet line under the name, in the hint ink both already
               // wear. The count had a shelf of its own under this band until the pager
               // took the band's trailing column and left it nothing to stand on.
-              <span className="flex min-w-0 items-center gap-2">
+              <span className="flex max-w-full min-w-0 items-center gap-2">
                 {qualifierPath && (
                   <>
                     <span className="min-w-0 truncate">{qualifierPath}</span>
@@ -489,7 +489,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             whole of a project. What the group REPORTS cannot come up here with it:
             measured on a 320px screen, the count, the live pulse and the yellow verb
             take this cluster's width first and leave the project name 24px. */}
-          <HeaderActions>
+          <HeaderActions align="start">
             {isShowing && (
               <Pager
                 page={shownPage}

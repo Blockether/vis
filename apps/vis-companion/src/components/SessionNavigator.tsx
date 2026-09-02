@@ -98,6 +98,7 @@ export const LIST_EDGE_END = 'pr-3 sm:pr-4';
 // 13px from the paper on its other side. `gap-2` still separates two controls from
 // each other, which is the only distance this cluster has to invent.
 const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-3 sm:pr-4';
+const HEADER_TRAIL = 'flex shrink-0 items-center gap-2 self-start pr-3 pt-1 sm:pr-4';
 
 /**
  * THE MARK COLUMN, and every band AND every row in the list reserves it.
@@ -282,35 +283,34 @@ export function HeaderTitle({
     // The glyph centres against the STACK (`items-center`), which is the whole block
     // it marks — a fold owns both lines of the name it folds. Baseline-aligning the
     // mark alongside them drops a 10px block below the ink it belongs to.
-    <span className={`flex min-w-0 flex-1 items-center gap-2 ${LIST_EDGE}`}>
+    <span className={`flex min-w-0 flex-1 items-center gap-2 overflow-hidden ${LIST_EDGE}`}>
       {/* The column is RESERVED, marked or not: the machine header wears a hue
           block here and the project header below it wears nothing, and a column
           that only exists when it is filled put the machine's name at x=36 and
           the project's at x=14 on a 390px iPhone — the deeper row starting
           further left, which is hierarchy read backwards. */}
       <span className={LIST_MARK}>{mark}</span>
-      {/* `items-start` keeps each line as wide as its own ink and no wider: the
-          name stays a word-sized press target rather than a full-width one, and
-          both lines still truncate, because shrink-to-fit is capped by the column
-          the trailing cluster leaves. */}
-      <span className="flex min-w-0 flex-col items-start">
+      {/* The column takes exactly what the trailing cluster leaves. `items-start` keeps
+          each line as wide as its own ink and no wider, while `max-w-[100%]` caps that
+          ink at the column so both lines truncate before the controls. */}
+      <span className="flex min-w-0 flex-1 flex-col items-start overflow-hidden">
         {onRename ? (
           <EditableName
-            face={`min-w-0 truncate bg-transparent p-0 font-mono font-bold text-white ${HEADER_TYPE}`}
+            face={`max-w-[100%] min-w-0 truncate bg-transparent p-0 font-mono font-bold text-white ${HEADER_TYPE}`}
             label={renameLabel ?? 'Rename'}
             value={typeof name === 'string' ? name : ''}
             onCommit={onRename}
           />
         ) : (
           <span
-            className={`min-w-0 truncate font-mono font-bold text-white ${HEADER_TYPE}`}
+            className={`max-w-[100%] min-w-0 truncate font-mono font-bold text-white ${HEADER_TYPE}`}
           >
             {name}
           </span>
         )}
         {qualifier && (
           <span
-            className="min-w-0 truncate font-mono text-ui text-dialog-hint mouse:text-meta"
+            className="max-w-[100%] min-w-0 truncate font-mono text-ui text-dialog-hint mouse:text-meta"
             title={qualifierTitle}
           >
             {qualifier}
@@ -486,7 +486,7 @@ export function Pager({
         aria-hidden={can ? undefined : true}
         tabIndex={can ? undefined : -1}
       >
-        <ChevronIcon back={isBack} className="size-4" />
+        <ChevronIcon back={isBack} className="size-3.5" />
       </IconButton>
     );
   };
@@ -542,7 +542,7 @@ export function Pager({
             at `sm`, where a number is a tap and not a squeeze between two others. */}
         <span
           aria-hidden="true"
-          className="min-w-14 px-1 text-center font-mono text-meta text-dialog-hint tabular-nums sm:hidden"
+          className="min-w-12 px-1 text-center font-mono text-chip text-dialog-hint tabular-nums sm:hidden"
         >
           {page} / {pageCount}
         </span>
@@ -587,8 +587,15 @@ export function Pager({
  * edge; the session rows below them then ran their disclosure flush to the screen, a
  * third distance. One component decides all of it now.
  */
-export function HeaderActions({ children }: { children: ReactNode }) {
-  return <span className={LIST_TRAIL}>{children}</span>;
+export function HeaderActions({
+  children,
+  align = 'center',
+}: {
+  children: ReactNode;
+  /** Header bands start controls on their first line; rows center them across the cell. */
+  align?: 'center' | 'start';
+}) {
+  return <span className={align === 'start' ? HEADER_TRAIL : LIST_TRAIL}>{children}</span>;
 }
 
 /**
@@ -870,12 +877,9 @@ export function MachineTab({
  *
  * A project header REPEATS, so this control repeats with it — and a filled amber disc
  * repeated four times is four primary verbs on one screen, which is the count the design
- * contract allows once. Photographed on a 393px phone with four checkouts open, the
- * yellow that is supposed to mean "the one thing to do here" was the loudest ink in
- * every band and the machine's own `Projects` disc above them was indistinguishable
- * from it. So the plus in a repeating header is INK (`quiet`), the screen's one filled
- * verb stays where the screen itself begins, and nothing about what this control does,
- * where it stands or how big its target is has changed.
+ * contract allows once. The screen's one filled verb stays where the screen itself begins;
+ * this repeating plus is amber INK on the band's own paper, enough to say "create" without
+ * turning every project boundary into a primary action.
  *
  * The face stays on the compact 32px header rhythm while `IconButton` preserves a 44px
  * touch target outside the painted box. `where` remains in the tooltip and `machine` in
@@ -908,7 +912,11 @@ export function NewSessionButton({
       title={title}
       onClick={(event) => onPress(event.currentTarget)}
     >
-      {isBusy ? <LoadingIcon className="size-4" /> : <PlusIcon className="size-4" />}
+      {isBusy ? (
+        <LoadingIcon className="size-4" />
+      ) : (
+        <PlusIcon className="size-4 text-accent-ink" />
+      )}
     </IconButton>
   );
 }

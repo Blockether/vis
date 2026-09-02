@@ -227,7 +227,7 @@ describe("ProjectCrumb", () => {
     );
 
     expect(html).toContain("flex-1");
-    expect(html).not.toContain("w-full");
+    expect(html).not.toMatch(/(?:^|\s)w-full(?:\s|")/);
   });
 
   it("is plain when the project has no session list", () => {
@@ -803,7 +803,7 @@ describe("a project band carries its own count and its own pager", () => {
     band.indexOf("qualifier={"),
     band.indexOf("qualifierTitle="),
   );
-  const cluster = /<HeaderActions>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? "";
+  const cluster = /<HeaderActions[^>]*>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? "";
 
   it("walks the project from the band's own trailing cluster", () => {
     expect(cluster).toMatch(/<Pager\s+page=\{shownPage\}/);
@@ -1567,7 +1567,7 @@ describe("NewSessionButton, one action", () => {
       <NewSessionButton machine="visgw" where="vis" onPress={() => {}} />,
     );
     expect(html.match(/<button/g)).toHaveLength(1);
-    expect(html).toContain(renderToStaticMarkup(<PlusIcon className="size-4" />));
+    expect(html).toContain(renderToStaticMarkup(<PlusIcon className="size-4 text-accent-ink" />));
     expect(html).not.toContain("border-r-0");
   });
 
@@ -1860,7 +1860,7 @@ describe("project verbs use distinct marks", () => {
     const glyph = (markup: string) => markup.match(/<svg[\s\S]*?<\/svg>/g)?.[0];
     const start = glyph(session);
     const inventory = glyph(projects);
-    expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-4" />));
+    expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-4 text-accent-ink" />));
     expect(inventory).toBe(renderToStaticMarkup(<ProjectsIcon className="size-4" />));
     expect(start).not.toBe(inventory);
   });

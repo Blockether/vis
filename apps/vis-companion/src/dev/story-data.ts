@@ -1418,22 +1418,22 @@ function fleetRow(
 /** Four checkouts on one machine — the shape the list is read in every day. */
 export const STORY_FLEET_PROJECTS: StoryProject[] = [
   {
-    root: '~/vis',
-    name: 'vis',
-    projectId: 'project-vis',
+    root: '~/rewrite',
+    name: 'uberworkspace',
+    projectId: 'project-rewrite',
     rows: [
-      fleetRow('~/vis', 'fd3c03f9', STORY_SESSION.title, 1, 61, 'running'),
-      fleetRow('~/vis', '41d78df4', 'Scrolling up in a long session is 180 screens', 14, 118, 'awaiting'),
-      fleetRow('~/vis', '9c1e77ab', 'Keep the running placeholder out of the render window', 52, 24),
-      fleetRow('~/vis', '2b40f6c1', 'Gateway wire: encode NaN before the transport throws', 96, 9),
-      fleetRow('~/vis', '77aa1e30', 'Native reachability for the YAML reader', 180, 33),
-      fleetRow('~/vis', '0d55c2e8', 'Delimiter repair stays syntax-only', 240, 6),
-      fleetRow('~/vis', 'b6f9004d', 'Human input: one vocabulary, five checked seams', 320, 41),
-      fleetRow('~/vis', '3ee81b57', 'Sandbox shim handles leak without the registry', 470, 15),
-      fleetRow('~/vis', 'a1c4d902', 'Lazytest: clojure.test is silently undiscovered', 690, 12),
-      fleetRow('~/vis', '5f7b3c11', 'Audit inventory gate runs offline', 900, 4),
-      fleetRow('~/vis', 'c80a6e24', 'Docs catalog and what doc() answers', 1_100, 27),
-      fleetRow('~/vis', 'e2d5f087', 'Commit convention cutoff moved past the release', 1_450, 8),
+      fleetRow('~/rewrite', 'fd3c03f9', STORY_SESSION.title, 1, 61, 'running'),
+      fleetRow('~/rewrite', '41d78df4', 'Scrolling up in a long session is 180 screens', 14, 118, 'awaiting'),
+      fleetRow('~/rewrite', '9c1e77ab', 'Keep the running placeholder out of the render window', 52, 24),
+      ...Array.from({ length: 110 }, (_, index) =>
+        fleetRow(
+          '~/rewrite',
+          `history-${String(index + 4).padStart(3, '0')}`,
+          `Rewrite history ${index + 4}`,
+          96 + index * 17,
+          (index % 41) + 1,
+        ),
+      ),
     ],
   },
   {

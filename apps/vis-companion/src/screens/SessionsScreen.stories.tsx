@@ -52,11 +52,22 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-/** Four checkouts on one machine, which is what a project boundary has to survive. */
+/** Four checkouts on one machine, including a paged project on a phone-width rail. */
 export const Fleet: Story = {
+  decorators: [
+    (Story) => (
+      <div className="w-[393px]">
+        <Story />
+      </div>
+    ),
+  ],
   play: async ({ canvasElement }) => {
     const page = within(canvasElement);
-    await expect(await page.findByText('vis')).toBeVisible();
+    await expect(await page.findByText('uberworkspace')).toBeVisible();
     await expect(await page.findByText('svar')).toBeVisible();
+    await expect(await page.findByTitle('~/rewrite')).toBeVisible();
+    await expect(
+      await page.findByRole('navigation', { name: 'Pages of uberworkspace sessions' }),
+    ).toBeVisible();
   },
 };
