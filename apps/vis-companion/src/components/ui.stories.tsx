@@ -169,6 +169,7 @@ export const Marks: Story = {
       <Group of="Navigation and the ways out">
         <BackButton label="Back to sessions" />
         <CloseButton label="Close the attachment" />
+        <CloseButton label="Remove queued message" isStandalone />
         <CloseButton label="Close settings" isBand />
       </Group>
       <Group of="Work in progress">

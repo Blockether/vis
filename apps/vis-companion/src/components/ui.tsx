@@ -1021,7 +1021,7 @@ export function ComposerButton({
     // the reader could not see the thing being greyed. The paper is what leaves
     // — the state is a SHAPE — and the arrow, now on the field's own paper,
     // measures 5.27:1.
-    send: 'size-8 border border-dialog-edge bg-dialog-title text-dialog-title-foreground hover:bg-accent-2 disabled:scale-100 disabled:border-transparent disabled:bg-transparent disabled:text-dialog-hint mouse:size-7',
+    send: 'size-8 rounded-full border border-dialog-edge bg-dialog-title text-dialog-title-foreground hover:bg-accent-2 disabled:scale-100 disabled:border-transparent disabled:bg-transparent disabled:text-dialog-hint mouse:size-7',
     // It stands in the send's slot, which is already the right size: taking the
     // whole of it is how the two never disagree about where the strip ends.
     stop: 'size-full border border-err bg-cancelled hover:bg-warn-surface starting:scale-90 starting:opacity-0',
@@ -1032,7 +1032,7 @@ export function ComposerButton({
       aria-label={label}
       disabled={disabled}
       {...press}
-      className={`relative grid shrink-0 place-items-center overflow-hidden rounded-control transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${face} ${className}`}
+      className={`relative grid shrink-0 place-items-center overflow-hidden ${tone === 'send' ? '' : 'rounded-control'} transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${face} ${className}`}
       {...props}
     >
       {isHolding && (
@@ -1537,8 +1537,9 @@ export function NotifyConnectionSwitch({
  * So there is one, and everything about its face is decided here:
  *
  * - TARGET AND FACE ARE DIFFERENT. A ✕ either ends a band (`isBand`) with the band's
- *   full 48×48 target (36×36 for a mouse), or sits inside another control as a 32px
- *   mark (`mouse:size-6`). The band target now carries a 32px circular FACE, 28px for
+ *   full 48×48 target (36×36 for a mouse), stands alone at the end of a row
+ *   (`isStandalone`) with a 32px circular face, or sits inside another control as a
+ *   32px mark (`mouse:size-6`). The band target carries a 32px circular FACE, 28px for
  *   a mouse: the visible control rides the header rhythm while the invisible room
  *   around it keeps the way out comfortably hittable. A wrapped title can make the
  *   band taller; the target still stretches with it while its face stays round.
@@ -1558,13 +1559,14 @@ export function NotifyConnectionSwitch({
  *   be a box inside a box.
  *
  * WHERE it sits is the call site's only business: `className` may POSITION it (the
- * attachment chip hangs it on the chip's right edge) and nothing else. `isBand` is not
- * a size choice but a PLACE — it says this ✕ is a band's own last target rather than a
- * mark inside another control.
+ * attachment chip hangs it on the chip's right edge) and nothing else. `isBand` and
+ * `isStandalone` name PLACES — a band's last target or a row action without a parent
+ * face — rather than caller-selected paint.
  */
 export function CloseButton({
   label,
   isBand = false,
+  isStandalone = false,
   className = '',
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -1576,6 +1578,8 @@ export function CloseButton({
    * face inside it stays on the control rhythm instead of inflating to the touch target.
    */
   isBand?: boolean;
+  /** This ✕ ends a row without another control supplying its face. */
+  isStandalone?: boolean;
 }) {
   const mark = <CloseIcon />;
   return (
@@ -1586,7 +1590,9 @@ export function CloseButton({
       className={`grid shrink-0 place-items-center text-current motion-reduce:transition-none ${
         isBand
           ? 'group w-12 self-stretch transition-opacity duration-150 focus-visible:outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-40 mouse:w-9'
-          : 'size-8 self-center border-l border-current/20 transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current mouse:size-6'
+          : isStandalone
+            ? 'size-8 self-center rounded-full border border-current/20 transition-[background-color,color,transform] duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 active:scale-[0.94] disabled:cursor-not-allowed disabled:opacity-40 mouse:size-7'
+            : 'size-8 self-center border-l border-current/20 transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current mouse:size-6'
       } ${className}`}
       {...props}
     >

@@ -157,6 +157,7 @@ export function QueuedTurnsTray({
                 )}
                 <CloseButton
                   label={`Remove queued message ${index + 1}`}
+                  isStandalone
                   className="-me-2.5"
                   disabled={isBusy}
                   onClick={() => {
