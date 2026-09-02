@@ -1222,7 +1222,24 @@ fi
 measure_log "exec cold clojure -M:vis from $source_root"
 ensure_compatible_jvm_runtime || exit 1
 cd "$source_root"
-clojure -X:deps prep || exit 1
+# `prep` compiles a git dependency's own JVM bridge, and tools.deps skips the work
+# when the :ensure path is already there — but finding that out costs a JVM start,
+# measured at 1.03s on EVERY vis-agent invocation, for a step that does nothing
+# after the first. So the answer is remembered against the thing that invalidates
+# it: the dependency set. A changed deps.edn (a bumped pin, a new library) is a
+# different stamp and preps again.
+vis_prep_stamp=""
+if command -v shasum >/dev/null 2>&1; then
+  vis_prep_stamp="$(shasum -a 256 "$source_root/deps.edn" 2>/dev/null | cut -d' ' -f1)"
+fi
+vis_prep_marker="$vis_home/run/prepped-${vis_prep_stamp:-none}"
+if [[ -z "$vis_prep_stamp" || ! -f "$vis_prep_marker" ]]; then
+  clojure -X:deps prep || exit 1
+  if [[ -n "$vis_prep_stamp" ]]; then
+    mkdir -p "$vis_home/run" 2>/dev/null || true
+    : > "$vis_prep_marker" 2>/dev/null || true
+  fi
+fi
 if (( ${#vis_extension_sdeps[@]} > 0 )); then
   run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} "${vis_extension_sdeps[@]}" -M:vis "$@"
 else

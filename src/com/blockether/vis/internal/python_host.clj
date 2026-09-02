@@ -175,9 +175,7 @@
     (when (and claimed session (not= claimed session))
       (tel/log! {:level :warn
                  :id ::session-mismatch
-                 :tool tool
-                 :caller session
-                 :claimed claimed
+                 :data {:tool tool :caller session :claimed claimed}
                  :msg "a sandbox call named a session other than its own"}))
     (envelope tool
               (if f
