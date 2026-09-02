@@ -798,19 +798,24 @@
   (boolean (when python-context
              (try (env/interrupt-guest! python-context) (catch Throwable _ false)))))
 
-(defn- interrupt-or-dispose!
-  "Interrupt the guest; dispose the session when the interrupt cannot land.
-   Answers whether it LANDED, because a landed interrupt leaves the block
-   unwinding — free to hand back what it printed — while a failed one leaves a
-   thread the loop can never reach again.
+(defn- interrupt-block!
+  "Interrupt the guest, and the Java worker when the guest could not be reached.
+   Answers whether the guest interrupt LANDED — a landed one leaves the block
+   unwinding, free to hand back what it printed.
 
-   Disposal MUST happen before the Java worker interrupt. Host work started by
-   the block may still be running, and a returning host thread must not find a
-   session the loop has already handed to the next turn."
+   The SESSION SURVIVES either way. This used to dispose it — drop the guest
+   namespace and forget every host tool bound to it — whenever the interrupt did
+   not land, which was the right answer for GraalPy: there a thread could leak
+   the GIL and leave a namespace nothing could enter. On the embedded CPython it
+   is wrong twice over. `vispython_interrupt` answers 0 for exactly one reason —
+   there is no thread running that session's code, i.e. the block already
+   finished — and CPython delivers the async exception at the next bytecode
+   boundary regardless, measured through `time.sleep(25)` and through a blocked
+   host call. So the old fallback threw away a HEALTHY session: the model's next
+   block came back `grep is not defined`, because the tools went with it."
   [python-context exec-future]
   (let [landed? (interrupt-guest! python-context)]
     (when-not landed?
-      (env/dispose-python-context! python-context)
       (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil)))
     landed?))
 
@@ -1292,7 +1297,7 @@
                                      ;; `rt/guest-safepoint!`. A context that refuses
                                      ;; that interrupt is retired before the Java
                                      ;; interrupt can strand its GIL.
-                                     (interrupt-or-dispose! python-context exec-future))))
+                                     (interrupt-block! python-context exec-future))))
 
         settle-activity!
         (fn [envelope]
@@ -1338,7 +1343,7 @@
         (try (rt/await-wall exec-future eval-deadline timeout-sentinel)
              (catch Throwable e
                (reset! thrown e)
-               (interrupt-or-dispose! python-context exec-future)
+               (interrupt-block! python-context exec-future)
                {:lru {} :error (python-op-error python-context e code cancel-token)})
              (finally (when dispose-cancel-hook
                         (try (dispose-cancel-hook) (catch Throwable _ nil)))))
@@ -1353,7 +1358,7 @@
       ;; Eval timeout: interrupt the guest at a bytecode boundary. A guest the
       ;; exception cannot reach retires its environment before the Java interrupt.
       (let [landed?
-            (interrupt-or-dispose! python-context exec-future)
+            (interrupt-block! python-context exec-future)
 
             ;; The unwinding guest cannot reach the host any more, so its `with` never
             ;; closes: the wall that killed the block ends its views too, and the model
@@ -11841,12 +11846,12 @@
    CONDEMNED one is detached and rebuilt rather than waited on; `tryLock` is
    interruptible, so a queued turn's own cancel finally reaches it.
 
-   A FREE lock is not enough. A failed guest interrupt retires the environment
-   before the Java worker interrupt: extension-owned host work may have released
-   the GIL, so a probe can answer now and the returning host thread can still die
-   while reacquiring it later. A session whose GIL is already leaked instead fails
-   the probe. `env-python/context-enterable?` rejects both states,
-   so the next turn detaches and rebuilds the environment before entering Python.
+   A FREE lock is not enough. A session whose context was disposed — a teardown,
+   a recycle, an environment that failed halfway through being built — cannot be
+   entered again, and `env-python/context-enterable?` is what says so, so the
+   next turn detaches and rebuilds the environment before entering Python. A
+   cancel is NOT one of those states any more: it interrupts the block and
+   leaves the session standing.
    Nothing is disposed: host work may still be inside a retired context, and
    closing a context with an already leaked GIL cannot safely enter it. The rescue
    is taken at most once per acquisition — a FRESH context that still refuses is

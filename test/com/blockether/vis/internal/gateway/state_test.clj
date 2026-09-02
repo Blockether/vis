@@ -3648,16 +3648,25 @@
 
       (with-redefs-fn {#'state/registry registry}
         (fn []
+          ;; An id-addressed cancel stops exactly the turn it names.
           (expect (= {:status "cancelling"} (state/cancel-turn! sid "a")))
           (expect (= :client-cancel-turn (cancellation/cancel-reason token-a)))
-          (expect (= "b" (:turn_id (state/cancel-current-turn! sid "b-key"))))
+          ;; A tid-less stop means "stop what this session is doing": it takes
+          ;; the turn the caller owns AND every other turn still running here.
+          ;; Cancelling only `:current-turn` left the rest burning — measured on
+          ;; a live gateway, two of them for another 56 seconds and five more
+          ;; provider requests.
+          (let [stopped (state/cancel-current-turn! sid "b-key")]
+            (expect (= "b" (:turn_id stopped)))
+            (expect (= ["c"] (:also_cancelled stopped))))
           (expect (= :client-cancel-current (cancellation/cancel-reason token-b)))
+          (expect (= :client-cancel-current (cancellation/cancel-reason token-c)))
+          ;; The shutdown sweep still signals every running turn, and relabels
+          ;; none of them: the FIRST cancel owns the attribution.
           (expect (= 3 (state/cancel-all-running!)))
-          (expect (= :gateway-shutdown (cancellation/cancel-reason token-c)))
-          ;; The shutdown sweep does not relabel the two already-attributed
-          ;; cancels.
           (expect (= :client-cancel-turn (cancellation/cancel-reason token-a)))
-          (expect (= :client-cancel-current (cancellation/cancel-reason token-b))))))))
+          (expect (= :client-cancel-current (cancellation/cancel-reason token-b)))
+          (expect (= :client-cancel-current (cancellation/cancel-reason token-c))))))))
 
 ;; Regression: the tid-less cancel (`POST /v1/sessions/:sid/cancel-current`) fired
 ;; the cancel token of WHATEVER turn held `:current-turn`, with no proof the caller

@@ -4326,6 +4326,32 @@
                                                       cancel-waiting-turn!)
                      {:status "cancelling"})))))
 
+(defn cancel-session-turns!
+  "Fire the cancellation token of EVERY running turn in `sid`, answering the ids
+   signalled.
+
+   A stop means \"stop what this session is doing\", and a session runs more than
+   one turn: the `:current-turn` slot names ONE of them, so an id-addressed
+   cancel used to leave the rest burning. Measured from a live gateway — a turn
+   cancelled cleanly in 1.3s while two others in the same session kept running
+   for another 56 seconds and spent five more provider requests, until a gateway
+   shutdown finally ended them. The user pressed stop once and watched the
+   session carry on.
+
+   Each turn goes through `cancel-turn!`, so each gets the stamped source, the
+   `cancelling_at` mark and its own terminal backstop."
+  ([sid] (cancel-session-turns! sid :client-cancel-session))
+  ([sid source]
+   (into []
+         (keep (fn [[tid turn]]
+                 ;; A turn already unwinding is left alone: its token is fired,
+                 ;; its backstop is armed, and firing again would only restamp
+                 ;; the moment somebody asked it to stop.
+                 (when (and (= "running" (:status turn)) (nil? (:cancelling_at turn)))
+                   (let [res (cancel-turn! sid tid source)]
+                     (when-not (:error res) tid)))))
+         (:turns (session-entry sid)))))
+
 (defn cancel-current-turn!
   "Tid-less twin of `cancel-turn!`: fire the cancellation token of the turn
    currently holding `sid`'s `:current-turn` slot, but ONLY when `owner-key` is
@@ -4352,8 +4378,19 @@
                       ["gateway: refusing tid-less cancel of turn" tid
                        (str "owner=" (pr-str turn-key)) (str "caller=" (pr-str owner-key))])
             {:error :not-owner :turn_id tid})
+        ;; A stop means "stop what this session is doing". The owner key proves
+        ;; the caller may stop THIS session — it names the turn they submitted —
+        ;; and once it has, every turn running here goes with it: a session runs
+        ;; more than one, and cancelling only the `:current-turn` slot left the
+        ;; rest burning (measured on a live gateway: one turn ended in 1.3s, two
+        ;; others ran on for 56 seconds and five more provider requests).
         (let [res (cancel-turn! sid tid :client-cancel-current)]
-          (if (:error res) res (assoc res :turn_id tid)))))
+          (if (:error res)
+            res
+            (let [also (remove #{tid} (cancel-session-turns! sid :client-cancel-current))]
+              (cond-> (assoc res :turn_id tid)
+                (seq also)
+                (assoc :also_cancelled (vec also))))))))
     {:error :no-running-turn}))
 
 (defn cancel-all-running!
