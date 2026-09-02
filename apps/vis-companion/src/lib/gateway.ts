@@ -606,9 +606,8 @@ function sameJson(a: unknown, b: unknown): boolean {
 /**
  * One page of the session list, pinned to the exact rows its ETag was issued for.
  *
- * The gateway hashes `[total limit root after rows awaiting overview]` into the
- * validator, so a 304 revalidates the whole record — the counts may be reused,
- * not just the rows.
+ * The gateway hashes the whole record it answers with — the rows, the count and the
+ * overview — into the validator, so a 304 revalidates all of it, not just the rows.
  */
 type SessionsWindow = {
   etag: string;
@@ -617,12 +616,6 @@ type SessionsWindow = {
   rows: Session[];
   /** The gateway's own count of the WHOLE list this window is the head of. */
   total: number;
-  /**
-   * The sessions this gateway says are PARKED on an unanswered human-input request,
-   * complete and from OUTSIDE the window (`state/list-sessions-page`). It rides the
-   * same validator as the rows, so a 304 says the demand is unchanged too.
-   */
-  awaiting: Session[];
   /** Stable project and fleet totals, present on the head window only. */
   overview: GatewayOverview | null;
 };
@@ -916,8 +909,7 @@ export class GatewayClient {
     string,
     { full: Session[]; windows: Map<string, SessionsWindow> }
   >();
-  /** Backing stores refreshed by the head of every list read. */
-  private parked: Session[] = [];
+  /** Backing store refreshed by the head of every list read. */
   private overview: GatewayOverview | null;
   constructor(conn: GatewayConn) {
     this.base = normalizeBase(conn.url);
@@ -2549,21 +2541,6 @@ export class GatewayClient {
     return readSnapshot<Session[]>(this.snapshotKey("sessions"));
   }
 
-  /**
-   * The sessions this gateway last reported PARKED on an unanswered human-input
-   * request.
-   *
-   * The list is ordered by content time and nothing else, so a parked run sits
-   * wherever it last spoke — in a long fleet, past the end of the window this device
-   * has read. The gateway therefore answers those rows BESIDE the window
-   * (`state/list-sessions-page`) and a screen pins them above the list, instead of an
-   * ordering that lifted them into it and moved every row under the reader the moment
-   * a turn asked for a human or was answered.
-   */
-  parkedSessions(): Session[] {
-    return this.parked;
-  }
-
   /** Last meta row seen for ONE session. */
   cachedSession(sid: string): Session | null {
     return readSnapshot<Session>(this.snapshotKey("session", sid));
@@ -2804,9 +2781,9 @@ export class GatewayClient {
    * trip per window — measured against a 1192-session store, 12 serial requests every
    * ten seconds per machine, eleven of them proving nothing had changed — and the
    * ~315 KB it drained in was only ever re-cut into a page of ten. Every number that
-   * needed the whole list is answered BESIDE this window now: `total` and the
-   * per-project counts in `overview`, the runs parked on a human in `awaiting`, and a
-   * project's own page from `listProjectPage`. Nothing on this device asks for the
+    * needed the whole list is answered BESIDE this window now: `total` and the
+    * per-project counts in `overview`, and a project's own page from `listProjectPage`.
+    * Nothing on this device asks for the
    * fleet any more.
    *
    * - **Conditional GET.** The window carries a weak `ETag`, so an unchanged list
@@ -2871,11 +2848,6 @@ export class GatewayClient {
                 after: HEAD_CURSOR,
                 rows: cached,
                 total: persisted.total,
-                // The remembered pin says nothing about who is waiting on a human: a
-                // demand is a fact of the CURRENT answer, so it starts empty and the
-                // first read fills it. Its overview is durable and was issued beside
-                // the same head validator.
-                awaiting: [],
                 overview: this.overview,
               },
             ],
@@ -2896,7 +2868,6 @@ export class GatewayClient {
       const res = await this.requestFull<{
         sessions?: Session[];
         total?: number;
-        awaiting?: Session[];
         overview?: GatewayOverview;
       }>(
         "GET",
@@ -2909,34 +2880,30 @@ export class GatewayClient {
       );
       if (res.status === 304 && pin) return pin;
       const rows = res.data?.sessions ?? [];
-      const awaiting = res.data?.awaiting ?? [];
       const overview = after === HEAD_CURSOR ? (res.data?.overview ?? null) : null;
       if (after === HEAD_CURSOR) {
         this.overview = overview;
         writeSnapshot(this.snapshotKey("projects-overview"), overview);
       }
       // Every row names the model it runs on, so opening any of them paints the
-      // right chip on the FIRST frame instead of after a per-session round trip. A
-      // parked row is one a reader opens FIRST, and it may not be in `rows` at all.
-      this.seedSessionModels(rows.concat(awaiting));
+      // right chip on the FIRST frame instead of after a per-session round trip.
+      this.seedSessionModels(rows);
       return {
         etag: res.etag ?? "",
         after,
         rows,
         total: res.data?.total ?? rows.length,
-        awaiting,
         overview,
       };
     };
 
     const head = await fetchWindow(HEAD_CURSOR);
-    // The demand and the stable project totals ride BESIDE the window and are
-    // complete there, whatever depth this device is holding.
-    this.parked = head.awaiting;
+    // The stable project totals ride BESIDE the window and are complete there,
+    // whatever depth this device is holding.
     this.overview = head.overview;
     // Active work warms in the background. A row that just FINISHED is different:
     // wait for its newest page before returning it, so NEW never outruns its transcript.
-    const visible = head.rows.concat(head.awaiting);
+    const visible = head.rows;
     this.prefetchActiveTranscripts(visible);
     if (!(await this.prefetchSettledTranscripts(cached, visible))) return cached ?? [];
 

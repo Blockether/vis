@@ -271,6 +271,19 @@ describe("SectionHeader", () => {
     expect(html).not.toContain("bg-panel-2");
   });
 
+  // Regression, user report (paraphrased: the projects should have some separation from
+  // each other, a border or something): the band stood on the page's own paper with no
+  // edge at all, so nothing but distance said where one project ended and the next began.
+  it("carries the boundary: its own paper, and one rule coming in", () => {
+    const html = renderToStaticMarkup(<SectionHeader>rows</SectionHeader>);
+
+    expect(html).toContain("bg-level-project");
+    expect(html).toContain("border-t");
+    // The edge comes IN, over the name. A rule under it would only repeat the hairline
+    // that already separates two rows of the project it heads.
+    expect(html).not.toContain("border-b");
+  });
+
   // Regression, user report (paraphrased: the project header has practically no top or
   // bottom padding): under a pointer the band spelled 36px, a number measured while its
   // header was one line. Once the path and the session count stacked UNDER the name the
@@ -851,14 +864,22 @@ describe("a project band carries its own count and its own pager", () => {
 describe("SectionGap", () => {
   const html = renderToStaticMarkup(<SectionGap />);
 
-  it("is 8px of the machine's own paper, one step deeper than the card", () => {
+  it("is air and not a line: it paints nothing at all", () => {
     expect(html).toContain('aria-hidden="true"');
+    expect(html).not.toMatch(/border|bg-|rounded/);
+    expect(renderToStaticMarkup(<SectionGap of="machine" />)).not.toMatch(
+      /border|bg-|rounded/,
+    );
+  });
+
+  it("opens a machine by more than it opens a project", () => {
+    expect(renderToStaticMarkup(<SectionGap of="machine" />)).not.toEqual(html);
   });
 
   it("opens every group but the first, and every machine but the first", () => {
     expect(sessionsListSource).toContain("{groupIndex > 0 && <SectionGap />}");
     expect(sessionsListSource).toContain(
-      "{sectionIndex > 0 && <SectionGap />}",
+      '{sectionIndex > 0 && <SectionGap of="machine" />}',
     );
   });
 });

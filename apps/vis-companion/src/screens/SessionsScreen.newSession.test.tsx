@@ -105,9 +105,10 @@ describe('where "New session" lives', () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText("First");
-    // The title already names the project; its compact path remains visible as context.
+    // The title already names the project, so a compact path that only repeats the
+    // name is not printed under it; the canonical root stays on the element itself.
     const qualifier = screen.getByTitle("/Users/dev/project");
-    expect(qualifier.textContent).toContain("~/project");
+    expect(qualifier.textContent).not.toContain("~/project");
     expect(qualifier.textContent).toContain("1 session");
 
     view.requests.length = 0;

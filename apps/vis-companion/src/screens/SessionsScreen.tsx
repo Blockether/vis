@@ -18,7 +18,6 @@ import {
   type SessionRowCommands,
 } from '../components/SessionList';
 import {
-  NeedsYou,
   ProjectGroup,
   type ProjectCreation,
   type SessionRowsContext,
@@ -600,10 +599,8 @@ export function SessionsScreen({
             (machine) => machineKey(machine.conn) === key,
           );
           const merged = reconcileSessions(held?.sessions ?? null, rows);
-          // Parked rows and stable project totals arrive BESIDE the head window.
-          // Adopt all three in one patch so no intermediate frame tallies whichever
-          // session pages happened to land first.
-          const parked = reconcileSessions(held?.awaiting ?? null, api.parkedSessions());
+          // The stable project totals arrive BESIDE the head window. Adopt both in one
+          // patch so no intermediate frame tallies whichever session pages landed first.
           const reportedOverview = api.projectsOverview();
           const overview =
             reportedOverview && held?.overview && sameOverview(held.overview, reportedOverview)
@@ -614,14 +611,12 @@ export function SessionsScreen({
             held.error === null &&
             held.answered &&
             merged === held.sessions &&
-            parked === held.awaiting &&
             overview === held.overview
           )
             return;
           patchMachine(key, (machine) => ({
             ...machine,
             sessions: merged,
-            awaiting: parked,
             overview,
             error: null,
             answered: true,
@@ -1409,32 +1404,6 @@ export function SessionsScreen({
     [heldRows, sessions],
   );
 
-  // THE DEMAND IS PINNED, NEVER LIFTED.
-  //
-  // A run parked on an unanswered human-input request is the one state a reader cannot
-  // infer and only they can clear: the turn is live, nothing is streaming, and it will
-  // stay that way until they answer it. It used to LEAD the gateway's ordering key,
-  // which moved every row on the screen whenever a turn asked for a human or got its
-  // answer — and, because the key is applied before the page is cut, pushed another
-  // session out of the window a reader was paging. So the gateway now answers those
-  // rows BESIDE the window (`GatewayClient.parkedSessions`), complete however deep in
-  // the fleet they sit, and they are pinned in their own band above a list whose order
-  // never flinches.
-  //
-  // A SEARCH IS THE READER'S OWN QUESTION and this band is not part of the answer, so
-  // it stands down while a query is live.
-  const parked = useMemo(
-    () =>
-      searchNeedle
-        ? []
-        : filtered.flatMap((entry) =>
-            (entry.machine.awaiting ?? []).map((session) => ({
-              session,
-              conn: entry.machine.conn,
-            })),
-          ),
-    [filtered, searchNeedle],
-  );
   // Per-machine tallies for the strip and the machine headers.
   const tallies = useMemo(
     () =>
@@ -2194,9 +2163,6 @@ export function SessionsScreen({
         )}
 
         <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable] py-3 sm:px-3 sm:pt-0">
-        {/* Pinned above the list, and it does not scroll away with a machine's
-            section: the demand belongs to the whole fleet in view. */}
-        <NeedsYou sessions={parked} context={rowContext} />
         {/* A PROMOTION WAITS FOR THE READER, and the arrow points UP because that
             is where those rows go. Rows fresher than the oldest row on screen are
             counted here instead of being inserted under the thumb; the tap is the
@@ -2260,7 +2226,7 @@ export function SessionsScreen({
                       computer ends is the trough this gap opens and the name its
                       landmark carries — the first project of the second machine can
                       still never read as the fifth project of the first. */}
-                  {sectionIndex > 0 && <SectionGap />}
+                  {sectionIndex > 0 && <SectionGap of="machine" />}
                   {/* The active tab directly above the card already names this machine, so
                       the list has no second selected/unselected presentation to maintain. */}
                   {groups.length === 0
@@ -2282,7 +2248,7 @@ export function SessionsScreen({
                     : groups.map((group, groupIndex) => (
                         // Two projects used to be separated by the SAME hairline that
                         // separates two sessions of one project. Every group after the
-                        // first opens on 8px of the machine's own paper instead.
+                        // first opens on air instead — the list's own paper, unpainted.
                         <Fragment key={`${key}\u0000${group.root}`}>
                         {groupIndex > 0 && <SectionGap />}
                         <ProjectGroup

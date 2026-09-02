@@ -1,4 +1,4 @@
-/** Project-owned session groups and the fleet-wide human-attention band. */
+/** One project's band, its session rows, and how that project is paged. */
 
 import {
   memo,
@@ -16,9 +16,7 @@ import {
 } from "../../components/SessionList";
 import {
   HeaderActions,
-  HeaderMeta,
   HeaderTally,
-  HeaderTitle,
   NewSessionButton,
   Pager,
   ProjectCrumb,
@@ -83,78 +81,6 @@ const NO_ROWS: Session[] = [];
 
 /** Two project pages are read ahead after the visible page answers. */
 const PAGES_AHEAD = 2;
-
-/**
- * THE BAND FOR RUNS PARKED ON A HUMAN — pinned above the list, never lifted into it.
- *
- * The navigator is ordered by content time and nothing else, so a session waiting on
- * its operator sits wherever it last spoke: in a long fleet, past the end of the window
- * this device has read. The band is where that demand is complete (the gateway answers
- * those rows beside the window — `GatewayClient.parkedSessions`), and it is the price
- * of taking liveness out of the ordering key: nothing moves under the reader any more,
- * and the one state only they can clear still costs no scrolling.
- *
- * The rows are the LIST's own rows, not a summary of them: the same `SessionRow`, the
- * same swipe, the same INPUT NEEDED mark. A parked session that IS in the window below
- * appears in both places, the way a pinned message does — its place in its project is
- * where the reader will look for it next time.
- */
-export const NeedsYou = memo(function NeedsYou({
-  sessions,
-  context,
-}: {
-  /** One entry per parked session, carrying the machine it is parked on. */
-  sessions: { session: Session; conn: GatewayConn }[];
-  context: SessionRowsContext;
-}) {
-  const { getClient, drafts, matches, needle, actions: rowActions } = context;
-  if (sessions.length === 0) return null;
-  return (
-    <section aria-label="Sessions waiting on you">
-      {/* The band wears the warning hue as its outgoing rule, the same ink the rows
-          below say INPUT NEEDED in, so the line under the name is read before it. */}
-      <SectionHeader rule="border-warn-strong">
-        <HeaderTitle
-          name="Needs you"
-          qualifier="Parked on an answer from you"
-        />
-        <HeaderActions>
-          <HeaderMeta>
-            <HeaderTally count={sessions.length} unit="session" />
-          </HeaderMeta>
-        </HeaderActions>
-      </SectionHeader>
-      {sessions.map(({ session, conn }) => {
-        const pending =
-          rowActions.deletion.target?.session.id === session.id &&
-          machineKey(rowActions.deletion.target.conn) === machineKey(conn);
-        const deletion: SessionRowDeletion = pending
-          ? {
-              isBusy: rowActions.deletion.isBusy,
-              error: rowActions.deletion.error,
-              confirm: rowActions.deletion.confirm,
-              cancel: rowActions.deletion.cancel,
-            }
-          : null;
-        return (
-          <SessionRow
-            key={`${machineKey(conn)}\u0000${session.id}`}
-            session={session}
-            draft={
-              drafts[draftMessageKey(getClient(conn).base, session.id)] ??
-              EMPTY_DRAFT_MESSAGE
-            }
-            conn={conn}
-            match={matches?.get(session.id) ?? null}
-            needle={needle}
-            commands={rowActions.commands}
-            deletion={deletion}
-          />
-        );
-      })}
-    </section>
-  );
-});
 
 // Memoised: a 5.5s poll that changes nothing returns the SAME row objects
 // (`reconcileSessions`), so an unchanged group must not re-render its rows.
@@ -250,6 +176,20 @@ export const ProjectGroup = memo(function ProjectGroup({
   // A project with no sessions has nothing to reveal. It still names the destination
   // of its New-session action, but it is not a fold and must not wear disclosure furniture.
   const hasSessions = tally.count > 0;
+  // WHERE THIS CHECKOUT IS, and only when that is not what its NAME already said.
+  //
+  // The path exists to tell two `vis` checkouts apart. A project that sits directly in
+  // home under its own folder name answers that question with the name itself, so
+  // `vis` wore `~/vis` under it — the same word twice, in the line that also has to
+  // carry the count and the live states, and on a 393px phone the address won that
+  // fight and truncated to `~/v…`. `HeaderTitle` already refuses exactly this for a
+  // machine whose address IS its name; a project is the same rule one level down.
+  const where = compactProjectPath(root, project);
+  const qualifierPath = where
+    ? where === `~/${project}`
+      ? ""
+      : where
+    : "No workspace path";
   // A FILTER is a fleet-wide question and its answer may not sit behind a fold: while
   // a query is on, every project that still has rows shows them. The fold the reader
   // set is untouched and is back the moment the query is.
@@ -483,24 +423,24 @@ export const ProjectGroup = memo(function ProjectGroup({
       {/* The rail's index finds this band by the two facts that identify it, and the
         only two a jump can be sure of: which machine, and which root. */}
       <section
-        /* THE PROJECT IS A SHEET, on every screen. One 16px panel corner — the rung
-         for a layer standing OVER the page — one hairline, and the card's own paper
-         on the derived page behind it. `overflow-clip` and NOT `overflow-hidden`:
-         clip rounds the corners without making the sheet a scroll container, so the
-         band inside it still sticks to the list's own scrollport. The lane it stands
-         in is 12px either way and only the source of it differs: the desk takes it
-         from the scroller, which has the empty states and a machine's own words
-         standing in it too, and the phone takes it here, so a fleet's hue keeps the
-         page beside the sheets instead of becoming a second frame around them. */
-        className="mx-3 overflow-clip rounded-panel border border-dialog-edge bg-panel sm:mx-0"
+        /* THE PROJECT IS NOT AN OBJECT, IT IS A PASSAGE OF THE LIST.
+           It was a sheet: 12px lane, 16px corner, a hairline all the way round and the
+           card's own paper — so a phone showed four papers (page, machine, panel, band)
+           and two edges for every heading, and the reader reported the result as holes
+           and ugly seams while scrolling. A container that holds objects with their own
+           edges is not itself an object: the group spends nothing on paint of its own.
+           What separates it from the next project is the BAND that leads it — that band's
+           paper and its incoming rule (`HEADER_BAND`) — over the air above it
+           (`SectionGap`). */
         aria-label={`${project} sessions`}
         data-machine={machineKey(conn)}
         data-project-root={root}
       >
-        {/* The project band wears the accent as its outgoing rule — one band per
-          project, and the yellow line under it says the rows below belong to the
-          name above them rather than to the machine two bands up. */}
-        <SectionHeader rule="border-accent">
+        {/* The band's edge comes IN, over the name, and belongs to the band. The 2px
+          accent line that used to close this header was the fourth yellow on a screen the
+          contract gives one to, and it drew the boundary at the wrong end: under a name is
+          where the rows it heads begin. */}
+        <SectionHeader>
           {/* The leading half NAMES the project and FOLDS it: folder name, the path that
             tells two `vis` checkouts apart UNDER it, and a chevron in the mark column
             the band already reserves, so the name keeps the list's one leading edge
@@ -514,12 +454,14 @@ export const ProjectGroup = memo(function ProjectGroup({
               // there is: one quiet line under the name, in the hint ink both already
               // wear. The count had a shelf of its own under this band until the pager
               // took the band's trailing column and left it nothing to stand on.
-              <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
-                <span className="min-w-0 truncate">
-                  {compactProjectPath(root, project) || "No workspace path"}
-                </span>
+              <span className="flex min-w-0 items-center gap-2">
+                {qualifierPath && (
+                  <>
+                    <span className="min-w-0 truncate">{qualifierPath}</span>
+                    <span aria-hidden>·</span>
+                  </>
+                )}
                 <span className="flex shrink-0 items-center gap-2">
-                  <span aria-hidden>·</span>
                   <HeaderTally count={tally.count} unit="session" />
                   <ProjectStatusCounts
                     live={tally.live}

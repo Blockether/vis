@@ -9,7 +9,7 @@ describe("sessions feature boundaries", () => {
   it("leaves session presentation outside the fleet orchestrator", () => {
     const ownedRenderers = [
       ...sessionsScreenSource.matchAll(
-        /^(?:const\s+)?(SessionRow|SessionStats|NavigatorSkeleton|NeedsYou|ProjectGroup)\s*=|^function\s+(SessionStats|NavigatorSkeleton|NeedsYou|ProjectGroup)\s*\(/gm,
+        /^(?:const\s+)?(SessionRow|SessionStats|NavigatorSkeleton|ProjectGroup)\s*=|^function\s+(SessionStats|NavigatorSkeleton|ProjectGroup)\s*\(/gm,
       ),
     ].map((match) => match[1] ?? match[2]);
 
@@ -29,7 +29,7 @@ describe("sessions feature boundaries", () => {
   });
 
   it("passes row interaction through one reusable feature contract", () => {
-    const signatures = ["NeedsYou", "ProjectGroup"].map((name) => {
+    const signatures = ["ProjectGroup"].map((name) => {
       const match = sessionProjectGroupsSource.match(
         new RegExp(
           `${name} = memo\\(function ${name}\\(\\{([\\s\\S]*?)\\}: \{`,
