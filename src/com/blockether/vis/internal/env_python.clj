@@ -562,16 +562,21 @@
    whose environment is scrubbed because the human never sees it, the CLI
    forwards the caller's own."
   [session {:keys [argv env]}]
+  ;; The temporaries are named for THIS statement, never `__vis_os__` /
+  ;; `__vis_sys__`: the runtime is exec'd into these same globals, so those two
+  ;; names are ITS module aliases — and the `del` below took `__vis_os__` away
+  ;; from the sandbox's own `open`, which then raised NameError for the life of
+  ;; the session.
   (when (some? argv)
     (exec! session
-           (str "import sys as __vis_sys__\n"
-                "__vis_sys__.argv = list(" (py-json-literal (vec argv))
-                ")\n" "del __vis_sys__")))
+           (str "import sys as __vis_seed_sys__\n"
+                "__vis_seed_sys__.argv = list(" (py-json-literal (vec argv))
+                ")\n" "del __vis_seed_sys__")))
   (when (seq env)
     (exec! session
-           (str "import os as __vis_os__\n"
-                "__vis_os__.environ.update(" (py-json-literal env)
-                ")\n" "del __vis_os__")))
+           (str "import os as __vis_seed_os__\n"
+                "__vis_seed_os__.environ.update(" (py-json-literal env)
+                ")\n" "del __vis_seed_os__")))
   session)
 
 ;; =============================================================================
