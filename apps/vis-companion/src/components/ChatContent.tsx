@@ -1800,7 +1800,7 @@ const RAIL_GUTTER = "pl-6";
 const RAIL_LINE =
   "before:absolute before:left-[6px] before:top-0 before:z-[1] before:w-0.5 before:bg-code-edge before:content-['']";
 const RAIL_NODE = "absolute -left-[17px] top-0 z-[2] -translate-x-1/2";
-const RAIL_BLEED = "-ml-4 pl-4";
+const RAIL_BLEED = "-ml-4 pl-3";
 // A block that is not a step but stands on the same thread — the human's own
 // bubble — puts its left edge ON that line rather than beside it: inset by its
 // own two-pixel stroke, so the stroke ends where the line's does (8px) and the
@@ -1863,11 +1863,11 @@ export const ThinkingBand = memo(function ThinkingBand({
   children: string;
   /**
    * Reach the band's paper LEFT until it meets the thread line — edge ON the line,
-   * never across it — and set its words in the same column the steps are set in.
-   * A step's reasoning is not a block standing beside the thread, it is the first
-   * thing that step did, so the paper touches the line; but the line is the spine
-   * of the turn and no paper crosses it. Off wherever the band stands alone: a
-   * single reasoning block has no thread to reach.
+   * never across it — while its words share the human message's prose edge. A step's
+   * reasoning is not a block standing beside the thread, it is the first thing that
+   * step did, so the paper touches the line; but the line is the spine of the turn and
+   * no paper crosses it. Off wherever the band stands alone: a single reasoning block
+   * has no thread to reach.
    */
   railed?: boolean;
 }) {
