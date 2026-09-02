@@ -650,6 +650,222 @@
    :footer-warning-fg [189 150 27]
    :footer-error-fg [239 136 134]})
 
+(def tokyonight-storm-colors
+  "Canonical tokyonight.nvim Storm colours (upstream 4.14.1)."
+  {:bg [36 40 59]
+   :bg-dark [31 35 53]
+   :bg-dark1 [27 30 45]
+   :bg-highlight [41 46 66]
+   :blue [122 162 247]
+   :blue0 [61 89 161]
+   :blue5 [137 221 255]
+   :blue7 [57 75 112]
+   :cyan [125 207 255]
+   :dark5 [115 122 162]
+   :fg [192 202 245]
+   :fg-dark [169 177 214]
+   :green [158 206 106]
+   :magenta [187 154 247]
+   :orange [255 158 100]
+   :purple [157 124 216]
+   :red [247 118 142]
+   :red1 [219 75 75]
+   :yellow [224 175 104]})
+
+(def tokyonight-night-colors
+  "Canonical tokyonight.nvim Night colours: Storm with its three darker grounds."
+  (merge tokyonight-storm-colors {:bg [26 27 38] :bg-dark [22 22 30] :bg-dark1 [12 14 20]}))
+
+(def tokyonight-moon-colors
+  "tokyonight.nvim Moon colours; its muted ink is lifted only enough for AA on raised bands."
+  {:bg [34 36 54]
+   :bg-dark [30 32 48]
+   :bg-dark1 [25 27 41]
+   :bg-highlight [47 51 77]
+   :blue [130 170 255]
+   :blue0 [62 104 215]
+   :blue5 [137 221 255]
+   :blue7 [57 75 112]
+   :cyan [134 225 252]
+   :dark5 [115 122 162]
+   :fg [200 211 245]
+   :fg-dark [169 177 214]
+   :green [195 232 141]
+   :magenta [192 153 255]
+   :orange [255 150 108]
+   :purple [252 167 234]
+   :red [255 117 127]
+   :red1 [197 59 83]
+   :yellow [255 199 119]})
+
+(def tokyonight-day-colors
+  "tokyonight.nvim Day colours, with small-text inks moved only darker for AA."
+  {:bg [225 226 231]
+   :bg-dark [208 213 227]
+   :bg-dark1 [205 211 225]
+   :bg-highlight [196 200 218]
+   :blue [46 125 233]
+   :blue0 [120 144 221]
+   :blue5 [46 88 87]
+   :blue7 [180 194 240]
+   :cyan [0 113 151]
+   :dark5 [104 112 154]
+   :fg [45 79 157]
+   :fg-dark [55 96 191]
+   :green [88 117 57]
+   :magenta [152 84 241]
+   :orange [177 92 0]
+   :purple [120 71 189]
+   :red [245 42 101]
+   :red1 [198 67 67]
+   :yellow [140 108 62]
+   ;; TokyoNight Day's vivid terminal colours are marks, not readable small text.
+   ;; These keep each hue while clearing 4.5:1 on its canonical #e1e2e7 paper.
+   :cyan-ink [0 98 127]
+   :green-ink [70 97 34]
+   :orange-ink [143 72 0]
+   :red-ink [145 48 63]
+   :yellow-ink [100 70 30]})
+
+(defn- tokyonight-palette
+  "Adapt one canonical tokyonight.nvim colour set to Vis' semantic palette."
+  [mode colors]
+  (let [{:keys [bg bg-dark bg-dark1 bg-highlight blue blue5 blue7 cyan dark5 fg fg-dark green
+                magenta orange purple red yellow cyan-ink green-ink orange-ink red-ink yellow-ink]}
+        colors
+
+        dark?
+        (= :dark mode)
+
+        surface
+        (if dark? bg-dark bg)
+
+        field
+        (if dark? bg-dark1 bg)
+
+        subtle-bg
+        (if dark? bg-highlight bg)
+
+        active-bg
+        (if dark? blue7 fg)
+
+        active-fg
+        (if dark? fg bg)
+
+        muted
+        (if dark? fg-dark fg)
+
+        border
+        (if dark? dark5 fg-dark)
+
+        cyan-text
+        (or cyan-ink cyan)
+
+        green-text
+        (or green-ink green)
+
+        orange-text
+        (or orange-ink orange)
+
+        red-text
+        (or red-ink red)
+
+        yellow-text
+        (or yellow-ink yellow)]
+
+    (merge
+      (if dark? dark-palette light-palette)
+      {:terminal-bg bg
+       :text-fg fg
+       :header-fg fg
+       :header-hover-fg cyan-text
+       :close-button-hover-fg red-text
+       :header-active-tab-fg active-fg
+       :header-active-tab-bg active-bg
+       :header-active-tab-accent blue
+       :header-tab-number-fg active-fg
+       :box-bg bg
+       :box-fg fg
+       :border-fg border
+       :dialog-bg surface
+       :dialog-fg fg
+       :dialog-title-fg active-fg
+       :dialog-title-bg active-bg
+       :button-bg active-bg
+       :button-fg active-fg
+       :dialog-border border
+       :dialog-shadow (if dark? bg-dark1 bg-highlight)
+       :dialog-hint muted
+       :dialog-hint-key fg
+       :input-field-bg field
+       :user-bubble-bg bg
+       :user-bubble-fg fg
+       :user-role-fg muted
+       :turn-separator-bg subtle-bg
+       :turn-separator-fg border
+       :ai-bubble-bg bg
+       :ai-bubble-fg fg
+       :ai-role-fg green-text
+       :status-ok green-text
+       :status-bad red-text
+       :warning-bg subtle-bg
+       :warning-fg yellow-text
+       :warning-border orange-text
+       :cancelled-bg subtle-bg
+       :cancelled-fg muted
+       :code-block-bg surface
+       :code-ok-bg subtle-bg
+       :code-err-bg subtle-bg
+       :result-bg surface
+       :result-path-bg (if dark? blue7 bg)
+       :result-path-fg cyan-text
+       :result-highlight-fg purple
+       :code-block-fg fg
+       :code-success-fg green-text
+       :code-error-fg red-text
+       :code-duration-fg muted
+       :code-result-fg fg
+       :code-error-result-fg red-text
+       :code-syntax-special-fg purple
+       :code-syntax-keyword-fg cyan-text
+       :code-syntax-string-fg orange-text
+       :code-syntax-number-fg (if dark? blue5 fg)
+       :code-syntax-comment-fg muted
+       :code-border-fg border
+       :iteration-header-fg muted
+       :iteration-header-bg subtle-bg
+       :answer-sep-fg border
+       :answer-sep-bg bg
+       :answer-bg bg
+       :answer-fg fg
+       :md-h1-fg fg
+       :md-h2-fg (if dark? blue5 purple)
+       :md-h3-fg (if dark? magenta green-text)
+       :confidence-fg muted
+       :md-summary-bg (if dark? blue7 bg)
+       :md-summary-fg fg
+       :th-md-summary-bg subtle-bg
+       :th-md-summary-fg muted
+       :link-chrome-fg cyan-text
+       :link-chrome-arrow-fg muted
+       :link-chrome-url-fg cyan-text
+       :link-chrome-hover-bg subtle-bg
+       :link-chrome-hover-fg cyan-text
+       :link-chrome-blocked-fg muted
+       :footer-fg fg
+       :footer-fg-muted muted
+       :footer-fg-strong fg
+       :footer-spinner-fg green-text
+       :footer-warning-fg yellow-text
+       :footer-error-fg red-text})))
+
+(def tokyonight-storm-palette (tokyonight-palette :dark tokyonight-storm-colors))
+
+(def tokyonight-night-palette (tokyonight-palette :dark tokyonight-night-colors))
+
+(def tokyonight-moon-palette (tokyonight-palette :dark tokyonight-moon-colors))
+
+(def tokyonight-day-palette (tokyonight-palette :light tokyonight-day-colors))
 (defn- make-theme
   [id display-name mode palette]
   {:name id
@@ -681,6 +897,21 @@
   "Blockether brand dark theme — matching blockether.com."
   (make-theme "blockether-dark" "Blockether Dark" :dark blockether-dark-palette))
 
+(def tokyonight-day
+  "tokyonight.nvim Day theme."
+  (make-theme "tokyonight-day" "Tokyo Day" :light tokyonight-day-palette))
+
+(def tokyonight-moon
+  "tokyonight.nvim Moon theme."
+  (make-theme "tokyonight-moon" "Tokyo Moon" :dark tokyonight-moon-palette))
+
+(def tokyonight-night
+  "tokyonight.nvim Night theme."
+  (make-theme "tokyonight-night" "Tokyo Night" :dark tokyonight-night-palette))
+
+(def tokyonight-storm
+  "tokyonight.nvim Storm theme."
+  (make-theme "tokyonight-storm" "Tokyo Storm" :dark tokyonight-storm-palette))
 (def default-theme blockether-light)
 
 (def built-in-themes
@@ -689,7 +920,11 @@
    "vis-light" vis-light
    "vis-dark" vis-dark
    "solarized-light" solarized-light
-   "solarized-dark" solarized-dark})
+   "solarized-dark" solarized-dark
+   "tokyonight-day" tokyonight-day
+   "tokyonight-moon" tokyonight-moon
+   "tokyonight-night" tokyonight-night
+   "tokyonight-storm" tokyonight-storm})
 
 (defonce themes
   ;; Process theme registry atom, keyed by string theme id.

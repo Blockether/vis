@@ -20,6 +20,16 @@
     (is (= (companion-themes/catalog-module) (generated companion-themes/catalog-file-name))
         "run `clojure -X:companion-themes`")))
 
+(deftest all-tokyonight-styles-ship-in-the-application-catalog
+  (let [expected {"tokyonight-day" {:mode :light :bg "#e1e2e7"}
+                  "tokyonight-moon" {:mode :dark :bg "#222436"}
+                  "tokyonight-night" {:mode :dark :bg "#1a1b26"}
+                  "tokyonight-storm" {:mode :dark :bg "#24283b"}}]
+    (doseq [[id {:keys [mode bg]}] expected]
+      (let [theme-map (get theme/built-in-themes id)]
+        (is (some? theme-map) id)
+        (is (= mode (:mode theme-map)) id)
+        (is (= bg (get (theme/theme->web-css-vars theme-map) "--bg")) id)))))
 (deftest every-built-in-theme-is-paintable-without-a-gateway
   (let [css
         (companion-themes/stylesheet)

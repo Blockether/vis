@@ -942,10 +942,10 @@
           (expect (some #{"Terminal UI"} sections))
           (expect (not-any? #{"Models"} sections))
           (expect (some #(= :theme-name (:key %)) rows))
-          ;; vis-dark/light are pinned to the TOP; blockether + solarized
-          ;; themes follow, sorted by id.
+          ;; vis-dark/light are pinned to the TOP; every other built-in follows by id.
           (expect (= [:vis-light :vis-dark :blockether-dark :blockether-light :solarized-dark
-                      :solarized-light]
+                      :solarized-light :tokyonight-day :tokyonight-moon :tokyonight-night
+                      :tokyonight-storm]
                      (:choices (first (filter #(= :theme-name (:key %)) rows)))))
           ;; Mouse auto-copy is now ALWAYS ON (`:settings? false`) — out of Settings.
           (expect (not-any? #(= :mouse-selection-copy (:key %)) rows))
@@ -973,7 +973,8 @@
              (with-redefs [vis/get-router (constantly nil)]
                (let [row (first (filter #(= :theme-name (:key %)) (settings-rows)))]
                  (expect (= [:vis-light :vis-dark :THEME_NAME :blockether-dark :blockether-light
-                             :solarized-dark :solarized-light]
+                             :solarized-dark :solarized-light :tokyonight-day :tokyonight-moon
+                             :tokyonight-night :tokyonight-storm]
                             (:choices row)))
                  (expect (= "Theme: THEME_NAME"
                             (settings-option-label row {:theme-name :THEME_NAME})))))
