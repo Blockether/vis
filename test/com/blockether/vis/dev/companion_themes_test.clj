@@ -21,15 +21,21 @@
         "run `clojure -X:companion-themes`")))
 
 (deftest all-tokyonight-styles-ship-in-the-application-catalog
-  (let [expected {"tokyonight-day" {:mode :light :bg "#e1e2e7"}
-                  "tokyonight-moon" {:mode :dark :bg "#222436"}
-                  "tokyonight-night" {:mode :dark :bg "#1a1b26"}
-                  "tokyonight-storm" {:mode :dark :bg "#24283b"}}]
-    (doseq [[id {:keys [mode bg]}] expected]
-      (let [theme-map (get theme/built-in-themes id)]
+  ;; Regression, user report: the first adapter collapsed TokyoNight's application planes
+  ;; onto nearly identical paint and left Tokyo Day's body copy needlessly faint.
+  (let [expected {"tokyonight-day" {:mode :light :bg "#e1e2e7" :surface "#d0d5e3" :fg "#243b73"}
+                  "tokyonight-moon" {:mode :dark :bg "#222436" :surface "#191b29" :fg "#c8d3f5"}
+                  "tokyonight-night" {:mode :dark :bg "#1a1b26" :surface "#0c0e14" :fg "#c0caf5"}
+                  "tokyonight-storm" {:mode :dark :bg "#24283b" :surface "#1b1e2d" :fg "#c0caf5"}}]
+    (doseq [[id {:keys [mode bg surface fg]}] expected]
+      (let [theme-map (get theme/built-in-themes id)
+            css-vars (theme/theme->web-css-vars theme-map)]
+
         (is (some? theme-map) id)
         (is (= mode (:mode theme-map)) id)
-        (is (= bg (get (theme/theme->web-css-vars theme-map) "--bg")) id)))))
+        (is (= bg (get css-vars "--bg")) id)
+        (is (= surface (get css-vars "--surface")) id)
+        (is (= fg (get css-vars "--fg")) id)))))
 (deftest every-built-in-theme-is-paintable-without-a-gateway
   (let [css
         (companion-themes/stylesheet)

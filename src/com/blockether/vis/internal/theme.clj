@@ -710,8 +710,10 @@
    :blue7 [180 194 240]
    :cyan [0 113 151]
    :dark5 [104 112 154]
-   :fg [45 79 157]
-   :fg-dark [55 96 191]
+   ;; Body copy needs more than a technical AA pass on Tokyo Day's cool grey paper.
+   ;; Keep the canonical blue hue, but separate primary and quiet ink at 8.3:1 / 6.0:1.
+   :fg [36 59 115]
+   :fg-dark [45 79 157]
    :green [88 117 57]
    :magenta [152 84 241]
    :orange [177 92 0]
@@ -738,13 +740,13 @@
         (= :dark mode)
 
         surface
-        (if dark? bg-dark bg)
+        (if dark? bg-dark1 bg-dark)
 
         field
-        (if dark? bg-dark1 bg)
+        bg-dark1
 
         subtle-bg
-        (if dark? bg-highlight bg)
+        bg-highlight
 
         active-bg
         (if dark? blue7 fg)
@@ -753,7 +755,7 @@
         (if dark? fg bg)
 
         muted
-        (if dark? fg-dark fg)
+        fg-dark
 
         border
         (if dark? dark5 fg-dark)
