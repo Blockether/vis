@@ -812,6 +812,13 @@ describe("a project band carries its own count and its own pager", () => {
     expect(sessionsListSource.match(/<Pager\b/g)?.length).toBe(1);
   });
 
+  // Regression, user report with a marked phone screenshot: the pager and New session
+  // control hugged the band's first line instead of sharing its vertical centre.
+  it("centers the pager and verb together through the project band", () => {
+    expect(cluster).toContain('<HeaderActions align="center">');
+    expect(cluster).not.toContain('align="start"');
+  });
+
   it("counts the project under its name, never in that cluster", () => {
     expect(qualifier).toContain('<HeaderTally count={tally.count} unit="session" />');
     expect(qualifier).toContain("<ProjectStatusCounts");

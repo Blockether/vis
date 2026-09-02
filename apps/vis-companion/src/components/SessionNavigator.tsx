@@ -98,7 +98,7 @@ export const LIST_EDGE_END = 'pr-3 sm:pr-4';
 // 13px from the paper on its other side. `gap-2` still separates two controls from
 // each other, which is the only distance this cluster has to invent.
 const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-3 sm:pr-4';
-const HEADER_TRAIL = 'flex shrink-0 items-center gap-2 self-start pr-3 pt-1 sm:pr-4';
+const CENTERED_TRAIL = 'flex shrink-0 items-center gap-2 self-stretch pr-3 sm:pr-4';
 
 /**
  * THE MARK COLUMN, and every band AND every row in the list reserves it.
@@ -586,16 +586,18 @@ export function Pager({
  * finally the same button still sat at two different distances from the same screen
  * edge; the session rows below them then ran their disclosure flush to the screen, a
  * third distance. One component decides all of it now.
+ *
+ * A row stretches its trailing target through its height. A header instead centres its
+ * compact controls through the full band, so neither is pinned to the title's first line.
  */
 export function HeaderActions({
   children,
-  align = 'center',
+  align = 'stretch',
 }: {
   children: ReactNode;
-  /** Header bands start controls on their first line; rows center them across the cell. */
-  align?: 'center' | 'start';
+  align?: 'center' | 'stretch';
 }) {
-  return <span className={align === 'start' ? HEADER_TRAIL : LIST_TRAIL}>{children}</span>;
+  return <span className={align === 'center' ? CENTERED_TRAIL : LIST_TRAIL}>{children}</span>;
 }
 
 /**
@@ -636,10 +638,10 @@ export const RowDisclosure = forwardRef<
   );
 });
 
-/** A header's own quiet voice: what it counts, in the list's monospace hint ink. */
+/** A header's smaller quiet voice: what it counts, in the list's monospace hint ink. */
 export function HeaderMeta({ children }: { children: ReactNode }) {
   return (
-    <span className="flex items-center gap-2 font-mono text-ui text-dialog-hint mouse:text-meta">
+    <span className="flex items-center gap-2 font-mono text-meta text-dialog-hint">
       {children}
     </span>
   );

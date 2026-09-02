@@ -489,7 +489,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             whole of a project. What the group REPORTS cannot come up here with it:
             measured on a 320px screen, the count, the live pulse and the yellow verb
             take this cluster's width first and leave the project name 24px. */}
-          <HeaderActions align="start">
+          <HeaderActions align="center">
             {isShowing && (
               <Pager
                 page={shownPage}
