@@ -2725,21 +2725,31 @@ export class GatewayClient {
     sid: string,
     tid: string | undefined,
     signal?: AbortSignal,
+    refresh = false,
   ): Promise<GatewayAttachment[]> {
     if (!tid) return [];
     const cached = this.cachedSentAttachments(sid, tid);
-    if (cached?.length) return cached;
+    if (!refresh && cached?.length) return cached;
     const key = `${sid}\u0000${tid}`;
     const inflight = this.attachmentFetches.get(key);
     if (inflight) return inflight;
     const pending = (async () => {
+      const metadataOnly = refresh && !!cached?.length;
+      const suffix = metadataOnly ? "?transcription_only=true" : "";
       const res = await this.request<{ attachments?: GatewayAttachment[] }>(
         "GET",
-        `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments`,
+        `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments${suffix}`,
         undefined,
         signal,
       );
-      const rows = (res.attachments ?? []).filter((row) => !!row?.base64);
+      const received = res.attachments ?? [];
+      const rows = metadataOnly
+        ? cached.map((base, index) => ({
+            ...base,
+            ...received[index],
+            base64: base.base64,
+          }))
+        : received.filter((row) => !!row?.base64);
       this.rememberSentAttachments(sid, tid, rows);
       return rows;
     })();

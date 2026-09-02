@@ -655,6 +655,45 @@ describe('GatewayClient turn cancellation', () => {
     expect(JSON.stringify(submitBody)).not.toContain('YWJj');
   });
 
+  it('refreshes transcription metadata without downloading audio again', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          attachments: [
+            {
+              filename: 'memo.m4a',
+              media_type: 'audio/mp4',
+              transcription: 'ready words',
+            },
+          ],
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    client.rememberSentAttachments('session-1', 'turn-audio', [
+      {
+        filename: 'memo.m4a',
+        media_type: 'audio/mp4',
+        base64: 'AAAAIGZ0eXBNNEEg',
+      },
+    ]);
+
+    const rows = await client.fetchTurnAttachments(
+      'session-1',
+      'turn-audio',
+      undefined,
+      true,
+    );
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      'transcription_only=true',
+    );
+    expect(rows[0]?.base64).toBe('AAAAIGZ0eXBNNEEg');
+    expect(rows[0]?.transcription).toBe('ready words');
+  });
+
   it('cancels a known turn by id, which needs no correlation id', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({})));
     vi.stubGlobal('fetch', fetchMock);

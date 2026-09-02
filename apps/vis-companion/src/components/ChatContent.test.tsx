@@ -566,6 +566,41 @@ describe("user bubble recordings", () => {
   it("never stands a recording on a picture's plate", () => {
     expect(html()).not.toContain(mediaFrameClass);
   });
+
+  it("keeps the same player when gateway metadata catches up", () => {
+    const bytes = "AAAAIGZ0eXBNNEEg";
+    const { container, rerender } = render(
+      <UserMessage
+        attachments={[
+          { filename: "memo.m4a", media_type: "audio/mp4", base64: bytes },
+        ]}
+      >
+        listen
+      </UserMessage>,
+    );
+    const player = container.querySelector("audio");
+    expect(player).not.toBeNull();
+    if (player) player.currentTime = 7;
+
+    rerender(
+      <UserMessage
+        attachments={[
+          {
+            id: "stored-audio",
+            filename: "memo.m4a",
+            media_type: "audio/mp4",
+            base64: bytes,
+            transcription: "ready words",
+          },
+        ]}
+      >
+        listen
+      </UserMessage>,
+    );
+
+    expect(container.querySelector("audio")).toBe(player);
+    expect(container.querySelector("audio")?.currentTime).toBe(7);
+  });
 });
 // ONE picture is a plate; several are a GALLERY. A transcript where somebody
 // dropped four screenshots used to be four 60svh plates stacked down the

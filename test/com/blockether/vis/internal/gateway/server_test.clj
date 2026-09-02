@@ -4,6 +4,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
             [com.blockether.vis.internal.gateway.client :as client]
@@ -278,6 +279,45 @@
                                                                   (java.util.Base64/getDecoder)
                                                                   ^String (:base64 attachment))
                                                                 "UTF-8")))))))
+
+(deftest audio-upload-starts-transcription-before-turn-submit
+  (let [sid
+        (random-uuid)
+
+        body-bytes
+        (.getBytes "audio-bytes" "UTF-8")
+
+        calls
+        (atom 0)
+
+        submitted
+        (atom nil)]
+
+    (with-redefs-fn {#'state/soul (constantly {:id sid})
+                     #'audio-transcribe/request-attachments!
+                     (fn [rows]
+                       (let [n (swap! calls inc)]
+                         (mapv #(cond-> (assoc % :transcription-status "pending") (= n 2)
+                                  (assoc :transcription "ready words"))
+                               rows)))
+                     #'state/submit-turn! (fn [_ opts]
+                                            (reset! submitted opts)
+                                            {:turn {:turn_id "turn-audio"}})}
+      #(let [uploaded
+             ((rv 'upload-attachment-handler)
+               {:path-params {:sid (str sid)}
+                :query-params {"filename" "memo.m4a" "media_type" "audio/mp4"}
+                :headers {"content-length" (str (alength body-bytes))}
+                :body (java.io.ByteArrayInputStream. body-bytes)}) upload-id
+             (get (wire/parse-json (:body uploaded)) "upload_id") response
+             ((rv 'submit-turn-handler)
+               {:path-params {:sid (str sid)}
+                :body (java.io.ByteArrayInputStream.
+                        (.getBytes (wire/json-str {:request "listen"
+                                                   :attachments [{:upload_id upload-id}]})
+                                   "UTF-8"))}) attachment (first (:attachments @submitted))]
+         (is (= 201 (:status uploaded))) (is (= 202 (:status response))) (is (= 2 @calls))
+         (is (= "ready words" (:transcription attachment)))))))
 
 (deftest list-turns-status-filter-routes-to-queued-overlay
   (let [sid

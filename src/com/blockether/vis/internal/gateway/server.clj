@@ -21,6 +21,7 @@
             [com.blockether.vis.contract.openapi :as openapi-contract]
             [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.internal.attachments :as attachments]
+            [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.docs :as docs]
@@ -565,6 +566,18 @@
   (cond (str/starts-with? (str media-type) "video/") attachments/max-video-bytes
         (str/starts-with? (str media-type) "audio/") attachments/max-audio-bytes
         :else attachments/max-upload-image-bytes))
+(defn- upload->attachment
+  [{:keys [filename media-type bytes]}]
+  {:filename filename
+   :media-type media-type
+   :size (alength ^bytes bytes)
+   :base64 (.encodeToString (Base64/getEncoder) ^bytes bytes)})
+
+(defn- refresh-upload-transcription
+  "Start or collect the local words for one staged upload without waiting."
+  [upload]
+  (first (audio-transcribe/request-attachments! [(upload->attachment upload)])))
+
 (defn- upload-attachment-handler
   "POST raw attachment bytes, returning an opaque id for a later turn submission."
   [request]
@@ -602,19 +615,17 @@
 
                       (reap-uploads! now)
                       (store-upload! upload-id upload)
+                      ;; Upload completion is the earliest instant the gateway owns the whole
+                      ;; recording. Start its local transcript here, before the tiny turn POST.
+                      (refresh-upload-transcription upload)
                       (json-response 201 {:upload_id upload-id :size (alength bytes)})))))))
 
 (defn- resolve-upload-attachments
   [sid rows]
   (mapv (fn [row]
           (if-let [upload-id (or (get row "upload_id") (get row :upload-id))]
-            (when-let [{stored-sid :sid :keys [filename media-type bytes]} (@pending-uploads
-                                                                            upload-id)]
-              (when (= sid stored-sid)
-                {:filename filename
-                 :media-type media-type
-                 :size (alength ^bytes bytes)
-                 :base64 (.encodeToString (Base64/getEncoder) ^bytes bytes)}))
+            (when-let [{stored-sid :sid :as upload} (@pending-uploads upload-id)]
+              (when (= sid stored-sid) (refresh-upload-transcription upload)))
             row))
         (or rows [])))
 
@@ -2993,19 +3004,26 @@
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- turn-attachments-handler
-  "GET /v1/sessions/:sid/turns/:tid/attachments — the inline images a USER sent
-   with one turn: `{\"attachments\": [{filename, media_type, base64}, …]}`.
+  "GET /v1/sessions/:sid/turns/:tid/attachments — the inline media a USER sent
+   with one turn. `?transcription_only=true` omits the large base64 body when a
+   client already has the bytes and is only collecting local speech results.
 
    The live rail deliberately ships byte-free chips, and a turn's persisted row
    only exists once it lands, so before this endpoint the only copy of a
-   still-running turn's pictures was the sending client's own memory — an app
-   restart, or a second device, painted the message with its images missing.
-   The gateway has held them the whole time (registry entry while in flight,
-   attachment store afterwards); this hands them back on demand, which is why it
+   still-running turn's media was the sending client's own memory — an app
+   restart, or a second device, painted the message with its media missing.
+   The gateway has held it the whole time (registry entry while in flight,
+   attachment store afterwards); this hands it back on demand, which is why it
    is a SEPARATE endpoint and not a fatter turn row."
   [request]
   (if-let [sid (path-sid request)]
-    (json-response {:attachments (vec (state/turn-attachments sid (path-tid request)))})
+    (let [rows (state/turn-attachments sid (path-tid request))
+          refreshed (audio-transcribe/request-attachments! (wire/->engine rows))
+          response (if (= "true" (query-str request "transcription_only"))
+                     (mapv #(dissoc % :base64) refreshed)
+                     refreshed)]
+
+      (json-response {:attachments response}))
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- session-model-handler

@@ -3647,9 +3647,10 @@ export function SessionScreen({
     ).trim();
     const request =
       expandFileMentions(expandPastePlaceholders(authoredRequest, pastes)) ||
-      (attachments.length ? "Please inspect the attached image(s)." : "");
-    const displayRequest =
-      collapsePastePlaceholders(authoredRequest, pastes) || request;
+      (attachments.length ? "Please inspect the attached file(s)." : "");
+    // The fallback exists only to give the model a non-blank turn. The transcript
+    // shows what the human actually authored: for attachment-only turns, the media.
+    const displayRequest = collapsePastePlaceholders(authoredRequest, pastes);
     if (!request || voicePhase !== "idle") return;
     // Capture the activation that authored this turn before any network await.
     // Leave/session navigation invalidates it, so a late POST response cannot
@@ -4222,31 +4223,52 @@ export function SessionScreen({
   }, [loadTranscript]);
   const liveViews = useLiveViews(client, subscriptions, sid, revealFiledLiveRecord);
   const watching = liveViews.at(-1)?.title ?? null;
-  // The sender's own copy of the pictures dies with the process. Ask the gateway
-  // for the bytes of a running turn that has none in hand — a restarted app, or a
-  // second device, has no other source until the turn lands and is refetched.
+  // The sender's own copy of a recording has its bytes but not the local transcript
+  // the gateway started at upload. Revalidate while that transcript is pending; the
+  // player below keeps its DOM identity while only the words underneath catch up.
   const [fetchedRunningTurnAttachments, setFetchedRunningTurnAttachments] = useState<{
     id: string;
     rows: GatewayAttachment[];
   } | null>(null);
   const runningTurnAttachments = runningTurn?.attachments;
+  const runningTurnNeedsAttachmentRefresh =
+    !runningTurnAttachments?.length ||
+    runningTurnAttachments.some(
+      (row) => row.media_type?.startsWith("audio/") && !row.transcription,
+    );
   useEffect(() => {
-    if (!runningTurnId || runningTurnAttachments?.length) return;
-    if (client.cachedSentAttachments(sid, runningTurnId)?.length) return;
+    if (!runningTurnId || !runningTurnNeedsAttachmentRefresh) return;
     const controller = new AbortController();
     let cancelled = false;
-    void client
-      .fetchTurnAttachments(sid, runningTurnId, controller.signal)
-      .then((rows) => {
-        if (!cancelled && rows.length)
-          setFetchedRunningTurnAttachments({ id: runningTurnId, rows });
-      })
-      .catch(() => {});
+    let timer: number | undefined;
+    const refresh = async () => {
+      try {
+        const rows = await client.fetchTurnAttachments(
+          sid,
+          runningTurnId,
+          controller.signal,
+          true,
+        );
+        if (cancelled || !rows.length) return;
+        setFetchedRunningTurnAttachments({ id: runningTurnId, rows });
+        const pending = rows.some(
+          (row) =>
+            row.media_type?.startsWith("audio/") &&
+            !row.transcription &&
+            (!row.transcription_status || row.transcription_status === "pending"),
+        );
+        if (pending) timer = window.setTimeout(refresh, 1000);
+      } catch {
+        // A reconnect or transcript reload gets another chance; the recording remains playable.
+      }
+    };
+    void refresh();
     return () => {
       cancelled = true;
       controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [client, sid, runningTurnId, runningTurnAttachments]);
+  }, [client, sid, runningTurnId, runningTurnNeedsAttachmentRefresh]);
 
   const turnRows = useMemo(
     () =>
@@ -4312,11 +4334,12 @@ export function SessionScreen({
     // A screenshot just sent lives only in this device's memory until the turn
     // is persisted: the live rail and the queue tray ship no attachment bytes.
     const liveAttachments =
+      (fetchedRunningTurnAttachments &&
+      fetchedRunningTurnAttachments.id === runningTurnId
+        ? fetchedRunningTurnAttachments.rows
+        : undefined) ??
       runningTurn.attachments ??
-      client.cachedSentAttachments(sid, runningTurn.id) ??
-      (fetchedRunningTurnAttachments?.id === runningTurn.id
-        ? fetchedRunningTurnAttachments?.rows
-        : undefined);
+      client.cachedSentAttachments(sid, runningTurn.id);
     return (
       <div
         className={`${turns.length ? "mt-10 " : ""}${transcriptEnterClass}`}

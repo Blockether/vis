@@ -3958,6 +3958,12 @@ function attachmentSrc(att: GatewayAttachment): string {
     : `data:${att.media_type};base64,${att.base64}`;
 }
 
+// Metadata catches up while a recording plays. Identity belongs to its content
+// slot, not to a database id that arrives later and would replace the player.
+function attachmentKey(att: GatewayAttachment, index: number): string {
+  return `${index}:${att.media_type}:${att.filename}:${att.size ?? att.base64.length}`;
+}
+
 export const UserMessage = memo(function UserMessage({
   children,
   attachments,
@@ -4059,7 +4065,7 @@ export const UserMessage = memo(function UserMessage({
               has no picture, so it stands as a row rather than on a plate. */}
           {recordings.map((att, index) => (
             <MediaRecording
-              key={att.id ?? `rec-${index}`}
+              key={attachmentKey(att, index)}
               name={att.filename}
               meta={mediaMeta(att)}
               transcription={att.transcription}
