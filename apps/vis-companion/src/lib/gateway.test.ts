@@ -190,6 +190,33 @@ describe('GatewayClient canonical queued turn state', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(client.cachedSession('session-1')).toBeNull();
   });
+
+  // Regression, Vis session 57dfea5e-0c2d-4190-a82c-0e1992e352c3: the session
+  // response restored queued rows without the hold that made them actionable.
+  it('caches the paused marker beside the queued rows from one session response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            id: 'session-1',
+            title: 'Session',
+            queued_turns: [
+              { turn_id: 'waiting', status: 'queued', request: 'Run this after recovery' },
+            ],
+            queue_paused: { reason: 'turn_failed', held: 1 },
+          }),
+        ),
+      ),
+    );
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    await client.session('session-1', undefined, true);
+
+    expect(client.cachedQueuedTurns('session-1')?.[0]?.turnId).toBe('waiting');
+    expect(client.cachedQueuePaused('session-1')).toEqual({ reason: 'turn_failed', held: 1 });
+  });
 });
 // The one fact about its own list the gateway cannot know is which sessions are
 // holding words typed on THIS device. It is SENT — and a window whose ETag was

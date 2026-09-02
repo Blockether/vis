@@ -2231,12 +2231,19 @@
 
 (defn- soul-handler
   [request]
-  (let [sid (path-sid request)]
+  (let [sid
+        (path-sid request)
+
+        include-queued?
+        (= "queued" (get-in request [:query-params "include"]))]
+
     (if-let [soul (some-> sid
                           state/soul)]
       (json-response (cond-> soul
-                       (= "queued" (get-in request [:query-params "include"]))
-                       (assoc :queued_turns (state/list-queued-turns sid))))
+                       include-queued?
+                       (assoc :queued_turns
+                         (state/list-queued-turns sid) :queue-paused
+                         (state/queue-paused-info sid))))
       (session-404 (get-in request [:path-params :sid])))))
 
 (defn- patch-session-handler
@@ -2639,8 +2646,10 @@
         (= "queued" (get-in request [:query-params "status"]))]
 
     (if (and sid (state/soul sid))
-      (json-response {:turns
-                      (if queued-only? (state/list-queued-turns sid) (state/list-turns sid))})
+      (json-response
+        (cond-> {:turns (if queued-only? (state/list-queued-turns sid) (state/list-turns sid))}
+          queued-only?
+          (assoc :queue-paused (state/queue-paused-info sid))))
       (session-404 (get-in request [:path-params :sid])))))
 
 (defn- get-turn-handler

@@ -1751,6 +1751,7 @@ export function SessionScreen({
         row = await client.session(sid, controller.signal, true);
         setSession(row);
         acceptQueueBacklog(client.cachedQueuedTurns(sid) ?? [], backlogReadAt);
+        setQueuePaused(client.cachedQueuePaused(sid));
       } catch {
         /* Unreachable gateway: fall through, the transcript read reports it. */
       }
@@ -1859,7 +1860,8 @@ export function SessionScreen({
         const backlogReadAt = Date.now();
         const backlog = await client.queuedTurns(sid);
         if (cancelled) return;
-        acceptQueueBacklog(backlog, backlogReadAt);
+        acceptQueueBacklog(backlog.turns, backlogReadAt);
+        setQueuePaused(backlog.paused);
       } catch {
         /* Keep the last known backlog; the next tick retries. */
       }

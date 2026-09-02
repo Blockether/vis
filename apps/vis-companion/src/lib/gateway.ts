@@ -20,6 +20,7 @@ import type {
   ModelPref,
   QueuedAttachment,
   QueuedTurn,
+  QueuePausedInfo,
   ProviderLimits,
   ProviderPreset,
   ProviderStatus,
@@ -871,6 +872,16 @@ export function queuedTurnFromWire(row: Record<string, unknown>): QueuedTurn {
   };
 }
 
+/** The gateway-owned hold paired with a queued backlog, or no hold at all. */
+function queuePausedFromWire(value: unknown): QueuePausedInfo | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  return {
+    reason: typeof row.reason === "string" ? row.reason : "turn_failed",
+    held: Math.max(0, Number(row.held ?? 0)),
+  };
+}
+
 function attachmentPayloadBlob(attachment: GatewayAttachment): Blob {
   const encoded = attachment.base64.startsWith("data:")
     ? attachment.base64.slice(attachment.base64.indexOf(",") + 1)
@@ -887,6 +898,8 @@ type AttachmentSource = { blob: Blob; url: string };
 export class GatewayClient {
   readonly base: string;
   private readonly token?: string;
+  /** Last canonical queue hold read with this session's backlog. */
+  private readonly queuePaused = new Map<string, QueuePausedInfo | null>();
   // (session, iteration, index) → the produced artifact's downloaded Blob and its
   // object URL. Text readers consume the Blob directly; media elements consume the
   // URL. One source owns both so neither path downloads or re-reads the other.
@@ -2621,6 +2634,11 @@ export class GatewayClient {
     return readSnapshot<QueuedTurn[]>(this.snapshotKey("queued", sid));
   }
 
+  /** Last queue hold paired with `cachedQueuedTurns`, including an explicit clear. */
+  cachedQueuePaused(sid: string): QueuePausedInfo | null {
+    return this.queuePaused.get(sid) ?? null;
+  }
+
   /**
    * The running-turn bubble of ONE session, as it was last painted.
    *
@@ -3148,20 +3166,29 @@ export class GatewayClient {
     signal?: AbortSignal,
     includeQueued = false,
   ): Promise<Session> {
-    const response = await this.request<Session & { queued_turns?: unknown }>(
+    const response = await this.request<
+      Session & { queued_turns?: unknown; queue_paused?: unknown }
+    >(
       "GET",
       `/v1/sessions/${encodeURIComponent(sid)}${includeQueued ? "?include=queued" : ""}`,
       undefined,
       signal,
     );
-    const { queued_turns: queuedTurns, ...row } = response;
+    const {
+      queued_turns: queuedTurns,
+      queue_paused: queuePaused,
+      ...row
+    } = response;
     if (includeQueued && !Array.isArray(queuedTurns)) {
       throw new Error("Gateway response omitted queued_turns");
     }
     const merged = reconcileRow(this.cachedSession(sid), row as Session);
     writeSnapshot(this.snapshotKey("session", sid), merged);
 
-    if (includeQueued) this.storeQueuedTurns(sid, queuedTurns as SubmittedTurn[]);
+    if (includeQueued) {
+      this.storeQueuedTurns(sid, queuedTurns as SubmittedTurn[]);
+      this.queuePaused.set(sid, queuePausedFromWire(queuePaused));
+    }
     return merged;
   }
 
@@ -3939,14 +3966,22 @@ export class GatewayClient {
     return rows;
   }
 
-  async queuedTurns(sid: string, signal?: AbortSignal): Promise<QueuedTurn[]> {
-    const response = await this.request<{ turns: SubmittedTurn[] }>(
+  async queuedTurns(
+    sid: string,
+    signal?: AbortSignal,
+  ): Promise<{ turns: QueuedTurn[]; paused: QueuePausedInfo | null }> {
+    const response = await this.request<{
+      turns: SubmittedTurn[];
+      queue_paused?: Record<string, unknown> | null;
+    }>(
       "GET",
       `/v1/sessions/${encodeURIComponent(sid)}/turns?status=queued`,
       undefined,
       signal,
     );
-    return this.storeQueuedTurns(sid, response.turns);
+    const paused = queuePausedFromWire(response.queue_paused);
+    this.queuePaused.set(sid, paused);
+    return { turns: this.storeQueuedTurns(sid, response.turns), paused };
   }
 
   /**

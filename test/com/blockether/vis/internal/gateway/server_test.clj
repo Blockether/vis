@@ -305,6 +305,24 @@
            (is (= 200 (:status ((rv 'list-turns-handler) request))))
            (is (= [[:all sid]] @calls))))))
 
+;; Regression, Vis session 57dfea5e-0c2d-4190-a82c-0e1992e352c3: a client that
+;; missed queue.paused could recover the queued rows but not the paused marker, so it
+;; had no way to continue work after the provider recovered.
+(deftest queued-turn-poll-includes-paused-state
+  (let [sid
+        (random-uuid)
+
+        request
+        {:path-params {:sid (str sid)} :query-params {"status" "queued"}}]
+
+    (with-redefs-fn {#'state/soul (constantly {:id sid})
+                     #'state/list-queued-turns (constantly [{:turn_id "waiting"}])
+                     #'state/queue-paused-info (constantly {:reason "turn_failed" :held 1})}
+      #(let [body (:body ((rv 'list-turns-handler) request))] (is (str/includes?
+                                                                    body
+                                                                    "\"queue_paused\""))
+         (is (str/includes? body "\"turn_failed\""))))))
+
 (deftest soul-handler-optionally-includes-queued-turns
   (let [sid
         (random-uuid)
@@ -319,11 +337,13 @@
                                     (when (= sid actual) {:id sid}))
                      #'state/list-queued-turns (fn [actual]
                                                  (swap! calls conj actual)
-                                                 [{:turn_id "queued-1"}])}
+                                                 [{:turn_id "queued-1"}])
+                     #'state/queue-paused-info (constantly {:reason "turn_failed" :held 1})}
       #(do (let [response ((rv 'soul-handler) (assoc request :query-params {"include" "queued"}))]
              (is (= 200 (:status response)))
              (is (re-find #"\"id\"" (:body response)))
              (is (re-find #"\"queued_turns\"" (:body response)))
+             (is (re-find #"\"queue_paused\"" (:body response)))
              (is (re-find #"\"turn_id\":\"queued-1\"" (:body response))))
            (is (= [sid] @calls))
            (reset! calls [])
