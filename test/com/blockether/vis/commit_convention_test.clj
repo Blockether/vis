@@ -13,8 +13,8 @@
    is immutable, so when a commit that broke a rule is already on `main` the
    cutoff MOVES past it rather than staying red forever — the hook keeps new work
    honest, and this test keeps the hook from being skipped. It last moved past
-   `69f63a613`, which carried no session trailer and a body over six lines."
-  "2026-08-29T08:01:00+00:00")
+   `aca874e9e`, whose body ran to seven lines."
+  "2026-09-02T01:35:20+00:00")
 
 (def ^:private max-subject-chars 72)
 
@@ -44,18 +44,26 @@
     (when (pos? (int exit)) (throw (ex-info (str "git failed: " err) {:args (vec args)})))
     out))
 
+(defn- ours?
+  "A row this convention covers. A bot has no conversation to name in a trailer,
+   and the shallow boundary is not a commit anyone wrote: GitHub builds the pull
+   request's own merge commit and `actions/checkout` fetches that one alone, so
+   git hides its parents and `--no-merges` never sees the merge it is."
+  [[_ email parents _]]
+  (and (not (re-find bot-author-re (str email))) (not (str/blank? parents))))
+
 (defn- covered-commits
-  "[hash email message] for every commit after the cutoff; merges and bots
-   are not ours to police."
+  "[hash email message] for every commit after the cutoff that is ours to police."
   []
   (->> (str/split (git "log" (str "--after=" enforced-since)
-                       "--no-merges" "--format=%h%x1f%ae%x1f%B%x1e")
+                       "--no-merges" "--format=%h%x1f%ae%x1f%P%x1f%B%x1e")
                   #"\x1e")
        (map str/trim)
        (remove str/blank?)
-       (map #(str/split % #"\x1f" 3))
-       (remove (fn [[_ email _]]
-                 (re-find bot-author-re (str email))))))
+       (map #(str/split % #"\x1f" 4))
+       (filter ours?)
+       (map (fn [[hash email _ message]]
+              [hash email message]))))
 
 (defn- problems
   "Every rule this one commit message breaks, as `hash — rule` lines."
@@ -123,6 +131,11 @@
           (doseq [fragment expected-fragments]
             (expect (some #(str/includes? % fragment) found)
                     (str fragment " not reported for " (pr-str message)))))))
+  (it "leaves the bots and the shallow boundary out of the covered rows"
+      (let [rows [["abc1234" "dev@example.com" "def5678" "fix(cli): ok"]
+                  ["bbb2222" "dependabot[bot]@users.noreply.github.com" "def5678" "chore: bump"]
+                  ["ccc3333" "dev@example.com" "" "Merge aca874e into db10c81"]]]
+        (expect (= ["abc1234"] (mapv first (filter ours? rows))))))
   (it "every commit after the cutoff carries the line, the cap and the trailer"
       (let [found (if (.exists (io/file "deps.edn")) (mapcat problems (covered-commits)) [])]
         (expect (empty? found) (str "commits outside the convention:\n" (str/join "\n" found))))))
