@@ -263,6 +263,20 @@
           (expect (str/includes? (str (:stdout r1)) "not callable"))
           (expect (nil? (:error r2)))
           (expect (= "patched" (out r2)))))
+    ;; Regression, user report: rebinding either output callable in one block broke later output.
+    (it "keeps print and println callable after a block shadows them"
+        (let [ctx (tpc/context-with! ::ctx
+                                     {'println (fn [& args]
+                                                 (str/join " " args))})
+              r1
+              (ep/run-python-block ctx "print = 'not callable'\nprintln = 'not callable'" "t1/i1")
+              r2 (ep/run-python-block ctx
+                                      "print('still printing')\nprint(println('still', 'println'))"
+                                      "t1/i2")]
+
+          (expect (nil? (:error r1)))
+          (expect (nil? (:error r2)))
+          (expect (= "still printing\nstill println" (out r2)))))
     (it "a READ before the shadowing assignment still sees the tool"
         (let [r (ep/run-python-block
                   (mk)

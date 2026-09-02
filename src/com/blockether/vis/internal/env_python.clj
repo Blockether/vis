@@ -942,9 +942,9 @@
   [python-context sym keys-line]
   (set-python-binding-meta! python-context sym "__vis_keys__" keys-line))
 (def ^:private protected-baseline-names
-  "Python globals the agent may CALL but must not rebind. Rebinding a tool or
-   parser-helper name would shadow the persistent session substrate."
-  #{"apropos" "doc" "defs" "gather" "__vis_count_forms__" "__vis_banned_name__"})
+  "Python globals the agent may CALL but must not rebind. Rebinding output, tool, or
+   parser-helper names would shadow the persistent session substrate."
+  #{"print" "println" "apropos" "doc" "defs" "gather" "__vis_count_forms__" "__vis_banned_name__"})
 
 (defn- protected-names-for-bindings
   [custom-bindings]
