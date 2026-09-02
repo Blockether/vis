@@ -1158,17 +1158,6 @@
 
     (when-not (= answer ::over-budget) answer)))
 
-(defn partial-stdout
-  "What the block PRINTED before a wall or a cancel killed it, or nil.
-
-   The guest never reaches its own outcome when the run is killed from outside,
-   so the capture buffer is the only place that work survives. `nil` (not \"\")
-   when nothing was printed or the interpreter cannot answer."
-  [session]
-  (when session
-    (let [out (try (guest-value session "__vis_partial_stdout__()") (catch Throwable _ nil))]
-      (when (and (string? out) (seq out)) out))))
-
 (defn interrupt-guest!
   "Ask the interpreter to raise `KeyboardInterrupt` in the thread running guest
    code, answering whether it landed.

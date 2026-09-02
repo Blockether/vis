@@ -5001,12 +5001,11 @@
                ;; The sleep/poll prohibition lives HERE and nowhere else: the core
                ;; prompt deliberately dropped its duplicate copy.
                "`sh.logs()`" "no tool waits for you"
-               ;; A descriptor the block HOLDS is capped, not reclaimed: hold
-               ;; enough of them and no `shell` child can be spawned at all. The
-               ;; ceiling and its message belong to the runtime repo
-               ;; (`fd_test`); the description says so, because the cheapest fix
-               ;; is the block never holding them in the first place.
-               "Close what you open" "with open(...)" "leaked descriptors" "VIS_PY_MAX_OPEN_FILES"]]
+               ;; Dropping a handle closes it — that is the interpreter's job, not
+               ;; ours. What still bites is what the block HOLDS: the descriptor
+               ;; table is the whole process's, and filling it stops `shell` from
+               ;; spawning at all, so the ceiling and its escape hatch are named.
+               "close what you KEEP" "VIS_PY_MAX_OPEN_FILES"]]
         (expect (str/includes? (:description tool) fact))))))
 
 

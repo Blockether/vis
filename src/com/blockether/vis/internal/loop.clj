@@ -4180,8 +4180,9 @@
      "is gone from the transcript once the block ends. A shell is WATCHED here: `sh = await shell(...)`, then a BOUNDED "
      "loop that calls `sh.logs()` on the handle it got back and breaks on what it read (an error line, "
      "a parsed port); `sh.wait(secs)` is that loop already written — no tool "
-     "waits for you. Close what you open (`with open(...)`): the sandbox refuses more than 512 "
-     "descriptors held at once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell` children."
+     "waits for you. A file or socket you drop is closed for you; close what you KEEP "
+     "(`with open(...)`, `sh.stop()`) — the sandbox refuses an open past its descriptor "
+     "ceiling (`VIS_PY_MAX_OPEN_FILES`), because a full table stops `shell` children spawning."
      (when-let [cap (python-execution-capability-line caps)]
        (str " " cap)))
    :result

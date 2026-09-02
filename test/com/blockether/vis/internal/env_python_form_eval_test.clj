@@ -150,26 +150,29 @@
       (let [r (ep/run-python-block (py-ctx) "print(round(math.sqrt(2) + math.pi, 6))")]
         (expect (nil? (:error r)))
         (expect (= "4.555806" (out r)))))
-  (it
-    "makes glob available without an import in run_python code"
-    (let [r (ep/run-python-block (py-ctx) "print(hasattr(glob, 'glob') and callable(glob.glob))")]
-      (expect (nil? (:error r)))
-      (expect (= "True" (out r))))
-    (it "makes builtins available without an import in run_python code"
-        (let [r (ep/run-python-block
-                  (py-ctx)
-                  "print(hasattr(builtins, 'len') and builtins.len([1, 2]) == 2)")]
-          (expect (nil? (:error r)))
-          (expect (= "True" (out r)))))
-    (it
-      "does not expose auto-imported modules as apropos-listed tools/globals"
-      (let
-        [r
-         (ep/run-python-block
-           (py-ctx)
-           "names = ['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'Counter', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins']; bool(set(names) & set().union(*({item.name for item in apropos(m)} for m in names))))")]
+  (it "makes glob available without an import in run_python code"
+      (let [r (ep/run-python-block (py-ctx)
+                                   "print(hasattr(glob, 'glob') and callable(glob.glob))")]
         (expect (nil? (:error r)))
-        (expect (= "False" (out r)))))))
+        (expect (= "True" (out r)))))
+  (it "makes builtins available without an import in run_python code"
+      (let [r (ep/run-python-block
+                (py-ctx)
+                "print(hasattr(builtins, 'len') and builtins.len([1, 2]) == 2)")]
+        (expect (nil? (:error r)))
+        (expect (= "True" (out r)))))
+  (it
+    "does not expose auto-imported modules as apropos-listed tools/globals"
+    (let
+      [r
+       (ep/run-python-block
+         (py-ctx)
+         (str "names = ['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections',"
+              " 'Counter', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins']\n"
+              "listed = set().union(*({item.name for item in apropos(m)} for m in names))\n"
+              "print(bool(set(names) & listed))"))]
+      (expect (nil? (:error r)))
+      (expect (= "False" (out r))))))
 
 (defdescribe
   verb-arg-boundary-test

@@ -543,10 +543,11 @@
       (str "WHAT HAPPENED: this Vis process ran out of file descriptors (the OS "
            "open-file limit), so it could no longer open sockets or files — the "
            "provider auth token could not be refreshed and the call surfaced as a "
-           "provider failure. This is NOT a provider outage. Usual cause: a sandbox "
-           "tool that opened many files WITHOUT closing them — under CPython a file "
-           "dropped without `with open(...) as f:` is not closed until GC, so "
-           "walking a large tree reading files exhausts the shared descriptor table.")
+           "provider failure. This is NOT a provider outage. Usual cause: something "
+           "HOLDING many files or sockets open at once — a sandbox block keeping "
+           "handles in a list, or a burst of `shell` children. CPython hands a "
+           "descriptor back as soon as the handle is dropped, so what exhausts the "
+           "shared table is what is still held, not what was read and let go.")
       (context-overflow-error? err)
       (str "WHAT HAPPENED: the request exceeded the model's context window."
            (when-let [input (:input-tokens data)]
@@ -771,11 +772,12 @@
 
     (case (provider-error-kind err)
       :file-descriptors-exhausted
-      (str "NEXT STEP: free the leaked descriptors and retry — stop chatty background "
-           "shells (`sh.stop()`), and in sandbox Python always `with open(...) as f:` "
-           "(a dropped file object is NOT closed under CPython). A fresh turn also "
-           "reclaims them once GC runs. If it recurs, raise the process open-file "
-           "limit (Vis raises it at launch, but a very large tree walk can still " "exhaust it).")
+      (str "NEXT STEP: free the descriptors and retry — stop chatty background "
+           "shells (`sh.stop()`), and hold fewer files open at once: the sandbox "
+           "interpreter hands a descriptor back the moment the block drops the "
+           "handle, so what exhausts the table is handles something still HOLDS. "
+           "If it recurs, raise the process open-file limit (Vis raises it at "
+           "launch, but a very large tree walk can still exhaust it).")
 
       :context-overflow
       "NEXT STEP: fold older settled history, choose a larger-context model, or start a fresh session."
