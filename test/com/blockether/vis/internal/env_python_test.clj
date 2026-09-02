@@ -1541,3 +1541,23 @@ Follow every fixture step without truncation."}]))
                @starter
                (expect (.await second-returned 10 java.util.concurrent.TimeUnit/SECONDS)))
              (finally (.countDown release) (reset! @flag was)))))))
+
+(defdescribe
+  jail-decides-confinement-test
+  ;; ONE switch, and it means what it says. With a jail the guest is confined to
+  ;; the session's roots; without one nothing is confined — because a session
+  ;; with no jail already reaches the whole machine through `shell`, and a
+  ;; Python-only boundary standing beside an open shell is theatre. A session
+  ;; that wants a boundary without a jail asks for one per call, with
+  ;; `jailed_shell`.
+  (it "confines the guest to the session's roots when the session has a jail"
+      (tpc/with-own [ctx {} (constantly [(System/getProperty "user.dir")]) {:jail-enabled? true}]
+        (let [answer (ep/run-python-block ctx "print(open('/etc/hosts').read()[:1])")]
+          (expect (some? (:error answer)))
+          (expect (str/includes? (str (get-in answer [:error :message]))
+                                 "outside approved filesystem roots")))))
+  (it "leaves the guest unconfined when the session has no jail"
+      (tpc/with-own [ctx {} (constantly [(System/getProperty "user.dir")]) {:jail-enabled? false}]
+        (let [answer (ep/run-python-block ctx "print(len(open('/etc/hosts').read()) > 0)")]
+          (expect (nil? (:error answer)))
+          (expect (str/includes? (str (:stdout answer)) "True"))))))

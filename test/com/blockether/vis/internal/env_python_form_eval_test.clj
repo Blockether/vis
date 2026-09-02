@@ -930,11 +930,15 @@ print(await patch({'path': css}))"
    `PermissionError` the model kept hitting when it reached for
    importlib.exec_module / open() on a project file.
 
-   The roots are the CONFINEMENT: the interpreter denies what falls outside
-   them, so these sandboxes are rooted at the project directory and `/etc` is
-   what lies outside."
+   The roots are the CONFINEMENT and the JAIL is what turns them on: a session
+   with `jail.enabled` false reaches the whole machine through `shell` anyway, so
+   the interpreter is not confined there and there is no denial to hint at. These
+   sandboxes are jailed, rooted at the project directory, and `/etc` is what lies
+   outside."
   (let [mk (fn []
-             (:python-context (tpc/new-context {} (constantly [(System/getProperty "user.dir")]))))]
+             (:python-context (tpc/new-context {}
+                                               (constantly [(System/getProperty "user.dir")])
+                                               {:jail-enabled? true})))]
     (it "open() policy denial names the exact blocked operation and safe remedy"
         (let [m (get-in (ep/run-python-block (mk) "open('/etc/hosts').read()" "t1/i1")
                         [:error :message])]

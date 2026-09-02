@@ -866,19 +866,32 @@
   (str "vis_sandbox_" (swap! session-counter inc)))
 
 (defn- confine!
-  "Point the process's filesystem policy at what THIS session may read and
-   write. Confinement is the interpreter's, not a session's — the C policy is
-   process state — so a second sandbox in one process REPLACES it. That is the
-   open design question the migration plan names; today a gateway serves one
-   workspace at a time."
-  [roots-fn]
-  (when roots-fn
-    (try (let [roots (vec (distinct (map str (roots-fn))))]
+  "Put the process's filesystem policy where `jail-enabled?` says it belongs.
+
+   The jail is ONE switch and it means what it says: with `jail.enabled: true`
+   the guest is confined to this session's roots, and with the jail off nothing
+   is confined — because with the jail off a block already reaches the whole
+   machine through `shell`, and a Python-only boundary beside an open shell is
+   theatre, not a boundary. `jailed_shell` is the other direction: a session
+   without a jail can still ask for a confined child.
+
+   Lifting is EXPLICIT (two empty lists) rather than skipped, because the policy
+   is the interpreter's and not a session's — the C state is process-wide, so a
+   session that simply declined to set it would inherit whatever the last one
+   left behind. For the same reason a gateway serving one workspace at a time is
+   still the assumption here: two live sessions disagreeing about the jail get
+   the policy of whichever built its sandbox last."
+  [roots-fn jail-enabled?]
+  (try (if (and jail-enabled? roots-fn)
+         (let [roots (vec (distinct (map str (roots-fn))))]
            (runtime/confine! roots
                              roots
                              (str "Refused: the sandbox filesystem is confined to this "
-                                  "session's roots.")))
-         (catch Throwable t (tel/log! {:level :warn :id ::confine-failed :error t}) nil))))
+                                  "session's roots."))
+           (tel/log! {:level :debug :id ::confined :roots (count roots)}))
+         (do (runtime/confine! [] [] "")
+             (tel/log! {:level :debug :id ::unconfined :jail-enabled? (boolean jail-enabled?)})))
+       (catch Throwable t (tel/log! {:level :warn :id ::confine-failed :error t}) nil)))
 
 (defn- install-network!
   "Install the in-guest network policy for `session`: the domain guard when the
@@ -1037,7 +1050,7 @@
   [custom-bindings roots-fn network-opts stdin _stderr _gate-fn]
   (ensure-interpreter!)
   (let [session (new-session-name)]
-    (confine! roots-fn)
+    (confine! roots-fn (:jail-enabled? network-opts))
     (runtime/stdin! (guest-stdin-text stdin))
     (runtime/install-runtime! session)
     ;; `println` is the sandbox's historical second spelling of Python `print`, not a
