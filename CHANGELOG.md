@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - refactor(sandbox): stop repairing the subprocess redirect CPython does itself
 - fix(sandbox): stop the environment seeding from unbinding the runtime's own names
 - fix(sandbox): authorize a host call against the caller the interpreter names
+- feat(extensions): give a trusted extension the filesystem through vis.fs
 ## [v0.1.41] - 2026-08-21
 
 ### Changed

@@ -129,7 +129,13 @@
                 (try {"id" id
                       "value" (case op
                                 "install-runtime"
-                                (runtime/install-runtime! session)
+                                ;; Trusted BEFORE anything runs in it: this
+                                ;; process exists to run the user's own
+                                ;; extension code, and the runtime's `_vis_fs`
+                                ;; asks the interpreter whether the session it
+                                ;; is running is one the host trusts.
+                                (do (runtime/trust! session)
+                                    (runtime/install-runtime! session))
 
                                 "install-sync-tool"
                                 (runtime/install-sync-tool! session code)
@@ -144,7 +150,8 @@
                                 (runtime/eval-str session code)
 
                                 "close"
-                                (runtime/close-session! session)
+                                (do (runtime/trust! session false)
+                                    (runtime/close-session! session))
 
                                 (throw (ex-info (str "no extension-host op named " op) {:op op})))}
                      (catch Throwable t {"id" id "error" (or (ex-message t) (str t))})))))

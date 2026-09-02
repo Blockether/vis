@@ -146,6 +146,38 @@ Exactly one call per file. Keyword arguments:
 The **env dict** passed to `prompt`/`activation` callables is deliberately
 small: `{"cwd", "session_id", "channel"}` — unrelated to `env=` below.
 
+### Filesystem
+
+An extension reads and writes its OWN files — a config directory, a cache, a
+checkout it maintains — through `vis.fs`, and those calls do the work in C,
+inside the runtime, past the confinement that exists for the model's sandbox:
+
+```python
+import vis
+
+vis.fs.mkdir("~/.cache/acme")                     # every parent too
+vis.fs.write("~/.cache/acme/state.json", payload)  # str or bytes
+data = vis.fs.read_text("~/.cache/acme/state.json")
+vis.fs.copy(src, dst)                              # mode travels with the bytes
+vis.fs.move(src, dst)                              # rename, or copy+remove across devices
+for name in vis.fs.list("~/.cache/acme"):
+    ...
+vis.fs.stat(path)      # {"kind", "size", "mtime"} or None
+vis.fs.remove(path)    # a directory only when it is empty
+```
+
+`vis.fs.read` answers **bytes**; `read_text` decodes. Ordinary `open()` still
+works and is still the right thing for paths inside the session's own roots —
+what `vis.fs` adds is everything OUTSIDE them, which a jailed session refuses to
+Python because the interpreter cannot tell whose Python it is.
+
+This is a capability the extension was GIVEN, in the same sense as `vis.shell`:
+it is not a widening of the session's policy, and the model's sandbox cannot
+borrow it. The runtime authorizes on the session it was ASKED to run, which no
+Python can forge — taking another session's globals out of `sys.modules` and
+`exec`ing into them, which defeats any check made on the calling frame, changes
+nothing here.
+
 ### Environment
 
 An extension context gets **no blanket copy of the host environment**; that

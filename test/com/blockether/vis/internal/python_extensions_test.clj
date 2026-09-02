@@ -2586,3 +2586,58 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
                (finally (reset! live-load nil)
                         (pyx/reload-python-extensions! {:dirs []})
                         (ps/db-dispose-connection! store)))))))
+
+(def ^:private fs-door-py
+  "\"\"\"Filesystem door fixture.\"\"\"
+import vis
+
+
+def fsdoor_probe(path, text):
+    \"\"\"await fsdoor_probe(path, text) -> dict — write and read back through the host's door.\"\"\"
+    vis.fs.mkdir(path.rsplit(\"/\", 1)[0])
+    vis.fs.write(path, text)
+    vis.fs.copy(path, path + \".copy\")
+    vis.fs.move(path + \".copy\", path + \".moved\")
+    return {
+        \"exists\": vis.fs.exists(path),
+        \"read\": vis.fs.read_text(path),
+        \"moved\": vis.fs.read_text(path + \".moved\"),
+        \"listed\": sorted(vis.fs.list(path.rsplit(\"/\", 1)[0])),
+        \"removed\": vis.fs.remove(path),
+        \"gone\": vis.fs.exists(path),
+    }
+
+
+vis.extension(
+    name=\"fsdoor\",
+    description=\"Reads and writes through the host's door.\",
+    kind=\"integration\",
+    alias=\"fsdoor\",
+    symbols=[vis.symbol(fsdoor_probe, tag=\"mutation\")],
+)
+")
+
+(defdescribe
+  filesystem-door-test
+  ;; The extension's own filesystem, performed by the HOST. Under a jail the
+  ;; interpreter refuses the extension's own files to Python — they are not the
+  ;; session's roots — so the door is how a trusted extension still reaches them,
+  ;; exactly as `shell` is how it still reaches a process. What makes it a door
+  ;; and not a widening is that a sandbox block cannot borrow it: it is bound in
+  ;; extension namespaces only, and the host authorizes on the session the
+  ;; interpreter names.
+  (it "writes, reads, lists and removes a path the session never named"
+      (with-loaded
+        {"fsdoor.py" fs-door-py}
+        (fn [_ _]
+          (let [outside (str (System/getProperty "java.io.tmpdir")
+                             "/vis-fs-door-" (System/nanoTime))
+                target (str outside "/note.txt")
+                ext (registered "fsdoor")
+                answer (:result ((symbol-fn ext 'fsdoor_probe) target "written by the door"))]
+            (expect (= true (get answer "exists")))
+            (expect (= "written by the door" (get answer "read")))
+            (expect (= "written by the door" (get answer "moved")))
+            (expect (= ["note.txt" "note.txt.moved"] (get answer "listed")))
+            (expect (= true (get answer "removed")))
+            (expect (= false (get answer "gone"))))))))

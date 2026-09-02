@@ -549,6 +549,73 @@ def jailed_shell_session(opts):
     return Shell(call(opts), call)
 
 
+class _Fs:
+    # The extension's own filesystem, performed by the RUNTIME in C.
+    #
+    # Under a jail the interpreter confines Python to the session's roots, and the
+    # files an extension owns are not the project's - `~/.config/gh`, a cache, a
+    # checkout it maintains. `open()` is refused there; these are not, because the
+    # bytes move in C where the audit hook does not stand. It is the filesystem
+    # counterpart of `shell`: a capability an extension was GIVEN, not a policy the
+    # session inherits.
+    #
+    # The model's sandbox cannot borrow it. The runtime asks WHAT IT WAS ASKED TO
+    # RUN, which no Python can forge - taking another session's globals out of
+    # `sys.modules` and `exec`ing into them, which defeats any check made on the
+    # calling frame, changes nothing here.
+    #
+    # `read` answers bytes; `read_text` decodes. `write` takes str or bytes.
+
+    @staticmethod
+    def _door():
+        import _vis_fs
+
+        return _vis_fs
+
+    @staticmethod
+    def read(path):
+        return _Fs._door().read(str(path))
+
+    @staticmethod
+    def read_text(path, encoding="utf-8"):
+        return _Fs._door().read(str(path)).decode(encoding)
+
+    @staticmethod
+    def write(path, data, append=False):
+        return _Fs._door().write(str(path), data, bool(append))
+
+    @staticmethod
+    def list(path):
+        return _Fs._door().list(str(path))
+
+    @staticmethod
+    def copy(src, dst):
+        return _Fs._door().copy(str(src), str(dst))
+
+    @staticmethod
+    def move(src, dst):
+        return _Fs._door().move(str(src), str(dst))
+
+    @staticmethod
+    def remove(path):
+        return bool(_Fs._door().remove(str(path)))
+
+    @staticmethod
+    def mkdir(path):
+        return bool(_Fs._door().mkdir(str(path)))
+
+    @staticmethod
+    def stat(path):
+        return _Fs._door().stat(str(path))
+
+    @staticmethod
+    def exists(path):
+        return _Fs._door().stat(str(path)) is not None
+
+
+fs = _Fs()
+
+
 class Answer:
     # The outcome of `vis.ask(...)`. Truthy only when the human submitted.
     # `values` is keyed by each field's `name` and always carries every field; a
