@@ -7,6 +7,8 @@
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as ext]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.python-runtime :as python-runtime]
+            [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -1511,3 +1513,31 @@ Follow every fixture step without truncation."}]))
         (expect (str/includes? stdout "False"))
         (expect (str/includes? stdout "True"))
         (expect (str/includes? stdout "['defs', 'doc']")))))
+
+(defdescribe
+  ensure-interpreter-second-caller-test
+  (it
+    "makes a caller that arrives mid-start WAIT for the interpreter"
+    ;; The flag used to be set before the start finished, so the second caller
+    ;; returned to an interpreter still inside `Py_Initialize` and confined it —
+    ;; the audit hook then refused the interpreter's OWN startup (`getpath`
+    ;; raising OSError) and every session after it failed in `vispython_exec`.
+    ;; Measured on a gateway prewarming its api and tui sessions together.
+    (let [entered (java.util.concurrent.CountDownLatch. 1)
+          release (java.util.concurrent.CountDownLatch. 1)
+          second-returned (java.util.concurrent.CountDownLatch. 1)
+          flag #'ep/interpreter-started
+          was @@flag]
+      (with-redefs [python-runtime/ensure-library! (fn [] nil)
+                    runtime/initialize! (fn [_] (.countDown entered) (.await release) nil)
+                    runtime/logs! (fn [_] nil)]
+        (reset! @flag false)
+        (try (let [starter (future (ep/ensure-interpreter!))]
+               (.await entered)
+               (future (ep/ensure-interpreter!) (.countDown second-returned))
+               (expect (false? (.await second-returned 300 java.util.concurrent.TimeUnit/MILLISECONDS))
+                       "a second caller returned while the interpreter was still starting")
+               (.countDown release)
+               @starter
+               (expect (.await second-returned 10 java.util.concurrent.TimeUnit/SECONDS)))
+             (finally (.countDown release) (reset! @flag was)))))))

@@ -68,7 +68,7 @@
   ;; with :deps/prep-lib require `clojure -X:deps prep` after a fresh checkout.
   com.blockether/vis-python-runtime
   {:git/url "https://github.com/Blockether/vis-python-runtime.git"
-   :git/sha "419bd6c79e7cc4a22d750992ec0659faac9b6725"}
+   :git/sha "cabd5310abee61e1b235b206dd061a934c096608"}
   com.cnuernber/charred {:mvn/version "1.041"}
   com.google.zxing/core {:mvn/version "3.5.4"}
   ;; JVM codecs backing the lazy sandbox nippy_encode/nippy_decode helpers.

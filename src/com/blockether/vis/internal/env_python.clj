@@ -819,6 +819,7 @@
            (.getAbsolutePath dir))))
 
 (defonce ^:private interpreter-started (atom false))
+(defonce ^:private interpreter-lock (Object.))
 
 (defn ensure-interpreter!
   "Start the process's ONE interpreter, with Vis' own guest modules on the path.
@@ -828,16 +829,28 @@
    a Python EXTENSION loads at startup, before any sandbox exists, and the first
    of the two to arrive is the one that starts it. The interpreter itself may
    not be on this machine yet — `python-runtime/ensure-library!` is what fetches
-   it, and it costs nothing once it has."
+   it, and it costs nothing once it has.
+
+   A caller that arrives second WAITS, and that is the whole point of the lock:
+   a flag set before the work is done let the second caller return to a Python
+   that was still inside `Py_Initialize` and confine it, and the audit hook then
+   refused the interpreter's OWN startup — `getpath` raising OSError, `error
+   evaluating path`, and every session after it failing in `vispython_exec`.
+   Measured on a gateway prewarming its api and tui sessions together. The flag
+   is set only after a start SUCCEEDS, so a machine that could not fetch the
+   interpreter this time gets to try again rather than serving a dead one."
   []
-  (when (compare-and-set! interpreter-started false true)
-    (python-runtime/ensure-library!)
-    (runtime/initialize! {:source-paths [@guest-source-dir]})
-    (runtime/logs! (fn [ndjson]
-                     (doseq [line (str/split-lines (str ndjson))]
-                       (when-not (str/blank? line)
-                         (tel/log! {:level :debug :id ::python-runtime} line)))))
-    nil))
+  (when-not @interpreter-started
+    (locking interpreter-lock
+      (when-not @interpreter-started
+        (python-runtime/ensure-library!)
+        (runtime/initialize! {:source-paths [@guest-source-dir]})
+        (runtime/logs! (fn [ndjson]
+                         (doseq [line (str/split-lines (str ndjson))]
+                           (when-not (str/blank? line)
+                             (tel/log! {:level :debug :id ::python-runtime} line)))))
+        (reset! interpreter-started true))))
+  nil)
 
 (defonce ^:private session-counter (atom 0))
 

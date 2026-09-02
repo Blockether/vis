@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(gateway): supersede explicit GitHub run watches when replacement runs start
 - fix(live): rewrite a live log pane without pumping copies into its record
 - fix(live): read an archive focus snapshot from the wire spelling
+- fix(sandbox): start the interpreter once and let the second session wait
 ## [v0.1.41] - 2026-08-21
 
 ### Changed
