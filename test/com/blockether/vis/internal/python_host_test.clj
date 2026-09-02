@@ -113,3 +113,23 @@
         (is (str/includes? (str (get answer "error")) "no vis tool named"))))
     (testing "the tool ran only for its own session"
       (is (= [:ran] @served)))))
+
+(deftest binding-without-an-interpreter-is-not-a-failure-test
+  ;; Measured while loading a Python extension in a process that never started a
+  ;; sandbox: `bind!` marked itself done BEFORE binding, so the throw from a
+  ;; cdylib that had never been fetched left the flag set — the FIRST extension
+  ;; in such a process failed to load and every later one skipped the bind and
+  ;; only appeared to work. Binding needs an interpreter this process may simply
+  ;; not have; the extension host binds its own, in its own process.
+  (let [bound (deref #'python-host/bound)]
+    (try
+      (reset! (deref #'python-host/bound) false)
+      (with-redefs [runtime/bind-host! (fn [_] (throw (ex-info "no library here" {})))]
+        (testing "a process with nothing to bind says so instead of throwing"
+          (is (false? (python-host/bind!)))))
+      (testing "and it stays retryable, so the next caller with an interpreter binds"
+        (let [handed (atom nil)]
+          (with-redefs [runtime/bind-host! (fn [f] (reset! handed f) nil)]
+            (is (true? (python-host/bind!)))
+            (is (some? @handed)))))
+      (finally (reset! (deref #'python-host/bound) bound)))))

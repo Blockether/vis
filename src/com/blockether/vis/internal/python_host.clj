@@ -187,13 +187,34 @@
   (atom false))
 
 (defn bind!
-  "Make [[dispatch]] the host this process's interpreter calls back into.
+  "Make [[dispatch]] the host THIS process's interpreter calls back into, if this
+   process has an interpreter to bind.
 
    Idempotent: the interpreter holds one upcall stub, and rebinding it while a
-   block is inside a call would swap the target under a live frame."
+   block is inside a call would swap the target under a live frame. Answers
+   whether a host is bound now.
+
+   Two things this used to get wrong, both measured while loading a Python
+   extension in a process that never started a sandbox. It marked itself done
+   BEFORE the bind, so a bind that threw left the flag set and every later caller
+   skipped it — the first extension in such a process failed to load and the rest
+   only appeared to work. And it insisted on the interpreter existing at all:
+   binding needs the cdylib resolved, which a process that only talks to the
+   extension host has no reason to have fetched. A library that will not resolve
+   is not an error here, it is a process with nothing to bind — the extension
+   host binds its OWN interpreter in its own process, and the parent binds when
+   it builds a sandbox."
   []
-  (when (compare-and-set! bound false true) (runtime/bind-host! dispatch))
-  nil)
+  (when-not @bound
+    (locking bound
+      (when-not @bound
+        (try (runtime/bind-host! dispatch)
+             (reset! bound true)
+             (catch Throwable t
+               (tel/log! {:level :debug
+                          :id ::no-interpreter-to-bind
+                          :data {:error (ex-message t)}}))))))
+  @bound)
 
 (defn- install!
   "Register `tools` for `session` and bind each name in the guest with `bind-one`."
