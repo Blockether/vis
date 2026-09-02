@@ -34,9 +34,12 @@
     (Files/createSymbolicLink (.toPath (io/file source "python" "bin" "python"))
                               (.toPath (io/file "python3"))
                               (make-array FileAttribute 0))
-    (let [^java.util.List command ["tar" "czf" (.getAbsolutePath out)
-                                   "-C" (.getAbsolutePath source) "."]
-          process (.start (ProcessBuilder. command))]
+    (let [^java.util.List command
+          ["tar" "czf" (.getAbsolutePath out) "-C" (.getAbsolutePath source) "."]
+
+          process
+          (.start (ProcessBuilder. command))]
+
       (.waitFor process))
     out))
 

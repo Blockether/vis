@@ -55,16 +55,20 @@
   (->> (enumeration-seq (.getResources (this-loader) (str/join "/" compiled-package)))
        (keep (fn [^java.net.URL url]
                (when (= "file" (.getProtocol url))
-                 (let [tree (io/file (.toURI url))
-                       root (nth (iterate #(.getParentFile ^java.io.File %) tree)
-                                 (count compiled-package))]
+                 (let [tree
+                       (io/file (.toURI url))
+
+                       root
+                       (nth (iterate #(.getParentFile ^java.io.File %) tree)
+                            (count compiled-package))]
+
                    (when (.isDirectory tree) [root tree])))))
        (mapcat (fn [[^java.io.File root ^java.io.File tree]]
                  (->> (file-seq tree)
                       (filter #(and (.isFile ^java.io.File %)
                                     (str/ends-with? (.getName ^java.io.File %) "__init.class")))
-                      (map #(path->namespace
-                              (str (.relativize (.toPath root) (.toPath ^java.io.File %))))))))
+                      (map #(path->namespace (str (.relativize (.toPath root)
+                                                               (.toPath ^java.io.File %))))))))
        distinct
        sort))
 
@@ -73,18 +77,23 @@
    reported and stepped over: the engine refuses at run time with the real
    reason, and a build that died here would say less."
   []
-  (let [targets (distinct (concat (map (comp symbol namespace) (manifest/initializers))
-                                  (compiled-namespaces)))
-        failed  (volatile! 0)]
+  (let [targets
+        (distinct (concat (map (comp symbol namespace) (manifest/initializers))
+                          (compiled-namespaces)))
+
+        failed
+        (volatile! 0)]
+
     (doseq [target targets]
       (try (require target)
            (catch Throwable t
              (vswap! failed inc)
-             (println "[vis] native-image preload failed:"
-                      (str target)
-                      "-"
-                      (or (ex-message t) (str t))))))
-    (println "[vis] native-image preload:" (- (count targets) @failed) "of" (count targets)
+             (println "[vis] native-image preload failed:" (str target)
+                      "-" (or (ex-message t) (str t))))))
+    (println "[vis] native-image preload:"
+             (- (count targets) @failed)
+             "of"
+             (count targets)
              "namespaces loaded")))
 
 (preload!)

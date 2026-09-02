@@ -3253,7 +3253,7 @@
 ;; native image: both drive the same `env/*` machinery.
 
 (defn- python-cli-context
-"Build a fresh standalone Python sandbox for `vis-agent python`: the same
+  "Build a fresh standalone Python sandbox for `vis-agent python`: the same
    interpreter the agent runs, filesystem rooted at the current working
    directory, network enabled unless `network?` is false. No tool bindings --
    just the interpreter and its host-call doors.
@@ -3867,81 +3867,81 @@
 
 ;;; ── `vis-agent sessions` subcommands ──────────────────────────────────────────
 
-(doseq
-  [spec
-   [{:cmd/name "list"
-     :cmd/parent ["sessions"]
-     :cmd/doc "List persisted sessions."
-     :cmd/usage "vis-agent sessions list [all|tui|cli]"
-     :cmd/args [{:name "channel"
-                 :kind :positional
-                 :type :string
-                 :doc "Optional channel filter (all|tui|cli; default all)."}]
-     :cmd/examples ["vis-agent sessions list" "vis-agent sessions list tui"]
-     :cmd/run-fn cli-sessions-list!}
-    {:cmd/name "show"
-     :cmd/parent ["sessions"]
-     :cmd/doc "Show one session's metadata, turns, and fork states."
-     :cmd/usage "vis-agent sessions show <SESSION-ID>"
-     :cmd/args [{:name "session-id"
-                 :kind :positional
-                 :type :string
-                 :required true
-                 :doc "Session id (full UUID or unambiguous prefix)."}]
-     :cmd/examples ["vis-agent sessions show 3a7b2c1d"]
-     :cmd/run-fn cli-show-session!}
-    {:cmd/name "fork"
-     :cmd/parent ["sessions"]
-     :cmd/doc "Fork a session from its latest state."
-     :cmd/usage "vis-agent sessions fork <SESSION-ID> [--title TITLE]"
-     :cmd/args [{:name "session-id"
+(doseq [spec [{:cmd/name "list"
+               :cmd/parent ["sessions"]
+               :cmd/doc "List persisted sessions."
+               :cmd/usage "vis-agent sessions list [all|tui|cli]"
+               :cmd/args [{:name "channel"
+                           :kind :positional
+                           :type :string
+                           :doc "Optional channel filter (all|tui|cli; default all)."}]
+               :cmd/examples ["vis-agent sessions list" "vis-agent sessions list tui"]
+               :cmd/run-fn cli-sessions-list!}
+              {:cmd/name "show"
+               :cmd/parent ["sessions"]
+               :cmd/doc "Show one session's metadata, turns, and fork states."
+               :cmd/usage "vis-agent sessions show <SESSION-ID>"
+               :cmd/args [{:name "session-id"
+                           :kind :positional
+                           :type :string
+                           :required true
+                           :doc "Session id (full UUID or unambiguous prefix)."}]
+               :cmd/examples ["vis-agent sessions show 3a7b2c1d"]
+               :cmd/run-fn cli-show-session!}
+              {:cmd/name "fork"
+               :cmd/parent ["sessions"]
+               :cmd/doc "Fork a session from its latest state."
+               :cmd/usage "vis-agent sessions fork <SESSION-ID> [--title TITLE]"
+               :cmd/args
+               [{:name "session-id"
                  :kind :positional
                  :type :string
                  :required true
                  :doc "Session id (full UUID or unambiguous prefix)."}
                 {:name "title" :kind :flag :type :string :doc "Title to set on the new fork."}]
-     :cmd/examples ["vis-agent sessions fork 3a7b2c1d"
-                    "vis-agent sessions fork 3a7b2c1d --title \"Branch A\""]
-     :cmd/run-fn cli-fork-session-command!}
-    {:cmd/name "delete"
-     :cmd/parent ["sessions"]
-     :cmd/doc "Delete a session tree from persistent storage."
-     :cmd/usage "vis-agent sessions delete <SESSION-ID>"
-     :cmd/args [{:name "session-id"
+               :cmd/examples ["vis-agent sessions fork 3a7b2c1d"
+                              "vis-agent sessions fork 3a7b2c1d --title \"Branch A\""]
+               :cmd/run-fn cli-fork-session-command!}
+              {:cmd/name "delete"
+               :cmd/parent ["sessions"]
+               :cmd/doc "Delete a session tree from persistent storage."
+               :cmd/usage "vis-agent sessions delete <SESSION-ID>"
+               :cmd/args [{:name "session-id"
+                           :kind :positional
+                           :type :string
+                           :required true
+                           :doc "Session id (full UUID or unambiguous prefix)."}]
+               :cmd/examples ["vis-agent sessions delete 3a7b2c1d"]
+               :cmd/run-fn cli-delete-session!}
+              {:cmd/name "export"
+               :cmd/parent ["sessions"]
+               :cmd/doc "Export a session: Markdown on stdout, or styled HTML to a file."
+               :cmd/usage "vis-agent sessions export <SESSION-ID> [--md | --html PATH]"
+               :cmd/args
+               [{:name "session-id"
                  :kind :positional
                  :type :string
                  :required true
-                 :doc "Session id (full UUID or unambiguous prefix)."}]
-     :cmd/examples ["vis-agent sessions delete 3a7b2c1d"]
-     :cmd/run-fn cli-delete-session!}
-    {:cmd/name "export"
-     :cmd/parent ["sessions"]
-     :cmd/doc
-     "Export a session: Markdown on stdout, or styled HTML to a file."
-     :cmd/usage "vis-agent sessions export <SESSION-ID> [--md | --html PATH]"
-     :cmd/args
-     [{:name "session-id"
-       :kind :positional
-       :type :string
-       :required true
-       :doc "Session id (full UUID or unambiguous prefix)."}
-      {:name "md" :kind :flag :type :boolean :doc "Print Markdown to stdout (default)."}
-      {:name "html" :kind :flag :type :string :doc "Write styled HTML export to PATH."}]
-     :cmd/examples ["vis-agent sessions export 3a7b2c1d --md"
-                    "vis-agent sessions export 3a7b2c1d --html out.html"]
-     :cmd/run-fn cli-export-session!}
-    {:cmd/name "search"
-     :cmd/parent ["sessions"]
-     :cmd/doc "Transcript search with the same matching semantics as the TUI session navigator."
-     :cmd/usage "vis-agent sessions search <query> [--limit N]"
-     :cmd/args [{:name "query"
+                 :doc "Session id (full UUID or unambiguous prefix)."}
+                {:name "md" :kind :flag :type :boolean :doc "Print Markdown to stdout (default)."}
+                {:name "html" :kind :flag :type :string :doc "Write styled HTML export to PATH."}]
+               :cmd/examples ["vis-agent sessions export 3a7b2c1d --md"
+                              "vis-agent sessions export 3a7b2c1d --html out.html"]
+               :cmd/run-fn cli-export-session!}
+              {:cmd/name "search"
+               :cmd/parent ["sessions"]
+               :cmd/doc
+               "Transcript search with the same matching semantics as the TUI session navigator."
+               :cmd/usage "vis-agent sessions search <query> [--limit N]"
+               :cmd/args
+               [{:name "query"
                  :kind :positional
                  :type :string
                  :doc "Words to search for (case-insensitive token prefixes, as in the TUI)."}
                 {:name "limit" :kind :flag :type :string :doc "Max hits to print (default 25)."}]
-     :cmd/examples ["vis-agent sessions search \"provider credentials\""
-                    "vis-agent sessions search \"authentication failed\" --limit 100"]
-     :cmd/run-fn cli-sessions-search!}]]
+               :cmd/examples ["vis-agent sessions search \"provider credentials\""
+                              "vis-agent sessions search \"authentication failed\" --limit 100"]
+               :cmd/run-fn cli-sessions-search!}]]
   (registry/register-cmd! spec))
 
 ;;; ── `vis-agent projects` subcommands ──────────────────────────────────────────

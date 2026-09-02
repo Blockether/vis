@@ -552,21 +552,24 @@
 ;; vis_runtime. Both are invisible everywhere except here.
 (defdescribe
   native-binary-runs-python-in-the-embedded-interpreter-test
-  (it "executes a block and prints what the block printed"
-      (let [dir
-            (temp-dir "vis-native-python")
+  (it
+    "executes a block and prints what the block printed"
+    (let
+      [dir
+       (temp-dir "vis-native-python")
 
-            {:keys [exit output]}
-            (run-python dir
-                        (require-binary)
-                        "import json, sys; print(json.dumps({'v': sys.version_info[:2], 'n': sum(range(11))}))")]
+       {:keys [exit output]}
+       (run-python
+         dir
+         (require-binary)
+         "import json, sys; print(json.dumps({'v': sys.version_info[:2], 'n': sum(range(11))}))")]
 
-        (try (expect (= 0 exit) output)
-             (expect (str/includes? output "\"n\": 55")
-                     (str "the embedded interpreter did not run the block:\n" output))
-             (expect (re-find #"\"v\": \[3, \d+\]" output)
-                     (str "no CPython 3 in the binary:\n" output))
-             (finally (delete-tree! dir)))))
+      (try (expect (= 0 exit) output)
+           (expect (str/includes? output "\"n\": 55")
+                   (str "the embedded interpreter did not run the block:\n" output))
+           (expect (re-find #"\"v\": \[3, \d+\]" output)
+                   (str "no CPython 3 in the binary:\n" output))
+           (finally (delete-tree! dir)))))
   (it "reads a file through the guarded filesystem door"
       ;; Reading is the audit hook's happy path: the block's own directory is a
       ;; session root, and an interpreter whose confinement policy failed to install

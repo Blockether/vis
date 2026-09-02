@@ -8,8 +8,7 @@
    OutOfMemoryError. This is the cheap gate: it reads the same file the shell
    script, the CI action and build.clj read, and asserts the lock plus every
    mirror of it."
-  (:require 
-            [clojure.java.io :as io]
+  (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
 

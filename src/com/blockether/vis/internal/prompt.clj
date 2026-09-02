@@ -704,26 +704,25 @@
         auto-imports
         (str/join "`, `" env-python/AUTO_IMPORTED_PYTHON_NAMES)]
 
-    (prompt-block
-      "sandbox-shims"
-      (str "Auto-imported by `python_execution` (no `import`): `"
-           auto-imports
-           "`."
-           "\nThe sandbox is a REAL CPython with pip and `~/.vis/python/packages`: "
-           "`numpy` IS numpy, so write against the upstream library. A top-level "
-           "import of a package that is not installed yet is fetched once, "
-           "automatically, whenever the network is on."
-           (when (seq shim-imports)
-             (str "\nModules Vis publishes ITSELF — they reach the host, never PyPI "
-                  "(import before use): `"
-                  (str/join "`, `" shim-imports)
-                  "`. `doc(\"<name>\")` is their contract; trust it over your memory "
-                  "of any package with the same name."))
-           (when (seq shim-globals)
-             (str "\nPrebound globals (use directly; never import them): `"
-                  (str/join "`, `" shim-globals)
-                  "`."))
-           "\n" (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
+    (prompt-block "sandbox-shims"
+                  (str "Auto-imported by `python_execution` (no `import`): `"
+                       auto-imports
+                       "`."
+                       "\nThe sandbox is a REAL CPython with pip and `~/.vis/python/packages`: "
+                       "`numpy` IS numpy, so write against the upstream library. A top-level "
+                       "import of a package that is not installed yet is fetched once, "
+                       "automatically, whenever the network is on."
+                       (when (seq shim-imports)
+                         (str "\nModules Vis publishes ITSELF — they reach the host, never PyPI "
+                              "(import before use): `" (str/join "`, `" shim-imports)
+                              "`. `doc(\"<name>\")` is their contract; trust it over your memory "
+                              "of any package with the same name."))
+                       (when (seq shim-globals)
+                         (str "\nPrebound globals (use directly; never import them): `"
+                              (str/join "`, `" shim-globals)
+                              "`."))
+                       "\n"
+                       (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

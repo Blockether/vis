@@ -276,14 +276,13 @@
   (it "keeps the preload namespace outside every other namespace's load"
       ;; It requires the manifest and loads every entrypoint, and an entrypoint
       ;; requires the engine back: required from inside that graph it is a cyclic load.
-      (let [requiring
-            (->> (concat (file-seq (io/file "src")) (file-seq (io/file "extensions")))
-                 (filter (fn [^java.io.File file]
-                           (and (.isFile file)
-                                (str/ends-with? (.getName file) ".clj")
-                                (not= "native_preload.clj" (.getName file)))))
-                 (filter #(str/includes? (slurp %) "internal.native-preload"))
-                 (mapv str))]
+      (let [requiring (->> (concat (file-seq (io/file "src")) (file-seq (io/file "extensions")))
+                           (filter (fn [^java.io.File file]
+                                     (and (.isFile file)
+                                          (str/ends-with? (.getName file) ".clj")
+                                          (not= "native_preload.clj" (.getName file)))))
+                           (filter #(str/includes? (slurp %) "internal.native-preload"))
+                           (mapv str))]
         (expect (empty? requiring)
                 (str "nothing may require the preload namespace: " (pr-str requiring)))))
   (it "derives what it loads instead of carrying a list"
