@@ -129,21 +129,21 @@ export function SectionHeader({ children }: { children: ReactNode }) {
 }
 
 /**
- * THE AIR between two sections, and it is air: this component PAINTS NOTHING.
+ * THE AIR BEFORE A NEW MACHINE, and it is air: this component PAINTS NOTHING.
  *
- * Reported twice (paraphrased: there is no visual differentiation between the projects,
- * and later: those gaps between projects are ugly holes). The first answer was a slab of
- * the machine's own paper — a strip of a second colour travelling up the glass, read as a
- * HOLE in the list rather than a boundary of it. The paper here is the list's own, so
- * this is a pause and not a hole, and the LINE that opens a project is the band's
- * (`HEADER_BAND`). What is left is the one thing a line cannot say: how far apart.
+ * Two projects have nothing between them at all. The band that opens a project already
+ * carries the boundary — its own paper, and the rule that comes in over the name
+ * (`HEADER_BAND`) — so the 16px that used to precede it was an unpainted strip closed by
+ * a hairline at each end, which reads as an empty ROW of the list. Reported twice as a
+ * hole. A pause that separates nothing a line has not already separated is not structure.
  *
- * 16px opens a project and 32px opens a machine, so the eye ranks the two without a
- * legend. It is a `div` and not a margin because a margin collapses and this distance is
- * structural.
+ * A MACHINE is the one break the bands cannot say, because the first project of the next
+ * computer wears exactly the band a project inside this one wears. 32px of the list's own
+ * paper says it without a second colour, a rail or a legend. It is a `div` and not a
+ * margin because a margin collapses and this distance is structural.
  */
-export function SectionGap({ of = 'project' }: { of?: 'project' | 'machine' }) {
-  return <div aria-hidden="true" className={of === 'machine' ? 'h-8' : 'h-4'} />;
+export function MachineGap() {
+  return <div aria-hidden="true" className="h-8" />;
 }
 
 /**

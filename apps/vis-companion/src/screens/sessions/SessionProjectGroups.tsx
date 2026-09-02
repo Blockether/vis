@@ -430,8 +430,8 @@ export const ProjectGroup = memo(function ProjectGroup({
            and ugly seams while scrolling. A container that holds objects with their own
            edges is not itself an object: the group spends nothing on paint of its own.
            What separates it from the next project is the BAND that leads it — that band's
-           paper and its incoming rule (`HEADER_BAND`) — over the air above it
-           (`SectionGap`). */
+           paper and its incoming rule (`HEADER_BAND`) — and nothing else: no air above
+           it, because 16px of blank paper between two hairlines read as an empty row. */
         aria-label={`${project} sessions`}
         data-machine={machineKey(conn)}
         data-project-root={root}

@@ -52,6 +52,7 @@ import {
   HeaderMeta,
   HeaderTally,
   HeaderTitle,
+  MachineGap,
   MachineMark,
   MachineProjectsButton,
   MachineSwitcher,
@@ -62,7 +63,6 @@ import {
   ProjectStatusCounts,
   PullToSearchHint,
   RowDisclosure,
-  SectionGap,
   SectionHeader,
 } from './SessionNavigator';
 
@@ -491,12 +491,11 @@ export const Bands: Story = {
         <HeaderRenameDemo />
         <PagerDemo />
       </Group>
-      <Group of="What separates two sections, which is distance and not a line">
+      <Group of="What separates one machine from the next, which is distance and not a line">
         <div className="w-full">
           <SectionHeader>Machines</SectionHeader>
-          <SectionGap />
           <BandLabel>Recent</BandLabel>
-          <SectionGap of="machine" />
+          <MachineGap />
           <BandLabel>Another machine</BandLabel>
         </div>
       </Group>

@@ -1,12 +1,12 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Banner, Button, LoadMore, Spinner } from '../components/ui';
 import {
+  MachineGap,
   MachineMark,
   MachineProjectsButton,
   MachineSwitcher,
   MachineTab,
   PullToSearchHint,
-  SectionGap,
 } from '../components/SessionNavigator';
 import {
   NavigatorSkeleton,
@@ -2162,7 +2162,7 @@ export function SessionsScreen({
           </div>
         )}
 
-        <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable] py-3 sm:px-3 sm:pt-0">
+        <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable] pb-3 sm:px-3">
         {/* A PROMOTION WAITS FOR THE READER, and the arrow points UP because that
             is where those rows go. Rows fresher than the oldest row on screen are
             counted here instead of being inserted under the thumb; the tap is the
@@ -2226,7 +2226,7 @@ export function SessionsScreen({
                       computer ends is the trough this gap opens and the name its
                       landmark carries — the first project of the second machine can
                       still never read as the fifth project of the first. */}
-                  {sectionIndex > 0 && <SectionGap of="machine" />}
+                  {sectionIndex > 0 && <MachineGap />}
                   {/* The active tab directly above the card already names this machine, so
                       the list has no second selected/unselected presentation to maintain. */}
                   {groups.length === 0
@@ -2246,12 +2246,10 @@ export function SessionsScreen({
                         </div>
                       )
                     : groups.map((group, groupIndex) => (
-                        // Two projects used to be separated by the SAME hairline that
-                        // separates two sessions of one project. Every group after the
-                        // first opens on air instead — the list's own paper, unpainted.
-                        <Fragment key={`${key}\u0000${group.root}`}>
-                        {groupIndex > 0 && <SectionGap />}
+                        // Nothing separates two projects: the band that opens the next
+                        // one brings its own paper and its own rule in over the name.
                         <ProjectGroup
+                          key={`${key}\u0000${group.root}`}
                           group={group}
                           machine={machine}
                           context={rowContext}
@@ -2261,7 +2259,6 @@ export function SessionsScreen({
                           // project it lands on is the one that opens by itself.
                           initiallyOpen={groupIndex === 0}
                         />
-                        </Fragment>
                       ))}
                 </section>
               );

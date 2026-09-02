@@ -116,6 +116,7 @@ import {
   HeaderMeta,
   HeaderTally,
   HeaderTitle,
+  MachineGap,
   MachineMark,
   MachineProjectsButton,
   MachineSwitcher,
@@ -126,7 +127,6 @@ import {
   ProjectCrumb,
   ProjectStatusCounts,
   RowDisclosure,
-  SectionGap,
   SectionHeader,
 } from "./SessionNavigator";
 import { MenuHeading } from "./Menu";
@@ -858,29 +858,20 @@ describe("a project band carries its own count and its own pager", () => {
   });
 });
 
-// Regression, same report ("no visual differentiation between the projects"): a
-// project boundary was ONE hairline — the same hairline two sessions of one project
-// are separated by — so four checkouts read as one long list.
-describe("SectionGap", () => {
-  const html = renderToStaticMarkup(<SectionGap />);
+// Regression, second report on the same list ("those gaps between projects are ugly
+// holes"): a project boundary was 16px of unpainted paper closed by a hairline at each
+// end, which reads as an empty row. The band opens a project now; only a MACHINE keeps air.
+describe("MachineGap", () => {
+  const html = renderToStaticMarkup(<MachineGap />);
 
   it("is air and not a line: it paints nothing at all", () => {
     expect(html).toContain('aria-hidden="true"');
     expect(html).not.toMatch(/border|bg-|rounded/);
-    expect(renderToStaticMarkup(<SectionGap of="machine" />)).not.toMatch(
-      /border|bg-|rounded/,
-    );
   });
 
-  it("opens a machine by more than it opens a project", () => {
-    expect(renderToStaticMarkup(<SectionGap of="machine" />)).not.toEqual(html);
-  });
-
-  it("opens every group but the first, and every machine but the first", () => {
-    expect(sessionsListSource).toContain("{groupIndex > 0 && <SectionGap />}");
-    expect(sessionsListSource).toContain(
-      '{sectionIndex > 0 && <SectionGap of="machine" />}',
-    );
+  it("opens every machine but the first, and nothing opens a project", () => {
+    expect(sessionsListSource).toContain("{sectionIndex > 0 && <MachineGap />}");
+    expect(sessionsListSource).not.toMatch(/SectionGap/);
   });
 });
 
