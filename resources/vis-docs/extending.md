@@ -1039,9 +1039,29 @@ Vis runs one provider-owned authentication flow, calls `get_token_fn` again, and
 the request. Concurrent requests share that one flow. A cancelled or failed flow ends
 with an authentication error rather than looping.
 
+For an extension author, the implementation recipe is:
+
+1. Set `is_managed=True`; do not add or ask the user to add a `state.yml` provider entry.
+2. Supply a `preset` with `default_models` and the endpoint defaults the extension owns.
+3. Make `get_token_fn()` a passive credential read. Return `{"token": "..."}` (plus any
+   runtime `api_url`, `llm_headers`, `responses_path` or `api_style`), or
+   `{"token": None}` while signed out. Never launch OAuth from this callback.
+4. When sign-in is required, supply `auth_fn(printer)`. It must complete the interactive
+   flow, persist the credential where `get_token_fn()` can read it, and return `"ok"` or
+   `"already-authenticated"` on success. Use `printer(...)` for instructions the user
+   should see.
+5. Keep `status_fn()` and `limits_fn()` passive too. Put token renewal in
+   `refresh_token_fn()` when the provider supports it.
+
+If an existing managed extension starts login from `get_token_fn`, `status_fn`, or a
+picker hook, move that side effect into `auth_fn`. Check explicit login with
+`vis-agent providers auth <id>`, then make a real model request while signed out to
+verify first-use login and request resumption.
+
 Fleet reads, status probes, startup, and opening a model picker never run `auth_fn`.
 The flow starts only from an authentication action or a request that will use the
 provider. No managed provider creates a provider entry in `state.yml`.
+
 ### Execution model and trust
 
 Extension files run in **trusted GraalPy contexts** — one per file, separate
