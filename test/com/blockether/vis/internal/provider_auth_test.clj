@@ -447,21 +447,42 @@
 
                    (expect (= true (pauth/supported? :corp))))))
 
-(defdescribe provider-auth-managed-test
-             ;; A provider its extension declares MANAGED has its credential issued by the
-             ;; runtime. The daemon still minted an `api-key` flow for it, so any client —
-             ;; the TUI band, the companion — collected a key that could never be used.
-             (it "refuses to start a flow for a provider declared managed"
-                 (with-redefs [providers/configured-providers-cached
-                               (constantly [{:id :corp}])
+;; Regression, issue #165: managed ownership unconditionally blocked a provider
+;; descriptor that also declared interactive authentication.
+(defdescribe
+  provider-auth-managed-test
+  ;; A provider its extension declares MANAGED has its credential issued by the
+  ;; runtime. The daemon still minted an `api-key` flow for it, so any client —
+  ;; the TUI band, the companion — collected a key that could never be used.
+  (it "refuses to start a flow for a provider declared managed"
+      (with-redefs [providers/configured-providers-cached
+                    (constantly [{:id :corp}])
 
-                               registry/provider-by-id
-                               (constantly {:provider/id :corp
-                                            :provider/label "Corp"
-                                            :provider/is-managed true})]
+                    registry/provider-by-id
+                    (constantly
+                      {:provider/id :corp :provider/label "Corp" :provider/is-managed true})]
 
-                   (expect (= false (pauth/supported? :corp)))
-                   (let [result (pauth/start-auth! :corp)]
-                     (expect (= false (:ok? result)))
-                     (expect (= :auth-managed (:error result)))
-                     (expect (str/includes? (:message result) "managed"))))))
+        (expect (= false (pauth/supported? :corp)))
+        (let [result (pauth/start-auth! :corp)]
+          (expect (= false (:ok? result)))
+          (expect (= :auth-managed (:error result)))
+          (expect (str/includes? (:message result) "managed")))))
+  (it "allows a managed provider to expose its own headless authentication flow"
+      (let [descriptor {:provider/id :corp
+                        :provider/label "Corp"
+                        :provider/is-managed true
+                        :provider/auth-fn (constantly :ok)
+                        :provider/auth-start-fn (constantly {:kind :pkce
+                                                             :url "https://auth.example/start"
+                                                             :flow {:verifier "secret"}})}]
+        (with-redefs [providers/configured-providers-cached (constantly [])
+                      registry/provider-by-id (constantly descriptor)]
+
+          (expect (= true (pauth/supported? :corp)))
+          (let [result (pauth/start-auth! :corp)
+                flow (:flow result)]
+
+            (expect (= true (:ok? result)))
+            (expect (= "pkce" (:kind flow)))
+            (expect (= "https://auth.example/start" (:url flow)))
+            (pauth/cancel-auth! (:flow-id flow)))))))

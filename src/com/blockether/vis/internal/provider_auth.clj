@@ -198,7 +198,7 @@
            :message (str
                       (name provider-id)
                       " mints its own credential with api_key_command — there is no key to enter")}
-          (providers/managed? provider-id)
+          (= :managed (providers/auth-kind provider-id))
           {:ok? false
            :error :auth-managed
            :message (str (name provider-id)

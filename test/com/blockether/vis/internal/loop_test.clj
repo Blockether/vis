@@ -6117,9 +6117,101 @@
 
 (def ^:private try-refresh-provider-token! (deref #'lp/try-refresh-provider-token!))
 
+(def ^:private managed-auth-flights (deref #'lp/managed-auth-flights))
+
+(def ^:private ensure-managed-provider-auth! (deref #'lp/ensure-managed-provider-auth!))
+
+(def ^:private hydrate-environment-router (deref #'lp/hydrate-environment-router))
+
 (def ^:private AUTH_REFRESH_WINDOW_MS (deref #'lp/AUTH_REFRESH_WINDOW_MS))
 
 (def ^:private AUTH_REFRESH_WINDOW_MAX (deref #'lp/AUTH_REFRESH_WINDOW_MAX))
+
+;; Regression, issue #165: concurrent first requests to an automatically bound
+;; managed provider could not invoke its declared interactive authentication at all.
+(defdescribe
+  managed-provider-first-use-auth-test
+  (it "runs one authentication flight and lets every concurrent request reuse its credential"
+      (reset! managed-auth-flights {})
+      (let [token
+            (atom nil)
+
+            auth-calls
+            (atom 0)
+
+            entered
+            (promise)
+
+            release
+            (promise)
+
+            descriptor
+            {:provider/id :corp
+             :provider/is-managed true
+             :provider/get-token-fn (fn []
+                                      {:token @token})
+             :provider/auth-fn (fn [_]
+                                 (swap! auth-calls inc)
+                                 (deliver entered true)
+                                 @release
+                                 (reset! token "signed-in"))}]
+
+        (with-redefs [registry/provider-by-id (constantly descriptor)]
+          (let [requests (vec (repeatedly 8 #(future (ensure-managed-provider-auth! :corp))))]
+            (expect (= true (deref entered 2000 ::timed-out)))
+            (deliver release true)
+            (expect (every? #(= {:token "signed-in"} (deref % 2000 ::timed-out)) requests))
+            (expect (= 1 @auth-calls)))))
+      (reset! managed-auth-flights {}))
+  (it "starts authentication only at the actual provider-request boundary"
+      (reset! managed-auth-flights {})
+      (let [token
+            (atom nil)
+
+            auth-calls
+            (atom 0)
+
+            descriptor
+            {:provider/id :corp
+             :provider/is-managed true
+             :provider/get-token-fn (fn []
+                                      {:token @token})
+             :provider/auth-fn (fn [_]
+                                 (swap! auth-calls inc)
+                                 (reset! token "signed-in"))}
+
+            environment
+            {:router {:providers [{:id :corp}]}}]
+
+        (with-redefs [registry/provider-by-id (constantly descriptor)]
+          (expect (= environment (hydrate-environment-router environment)))
+          (expect (zero? @auth-calls))
+          (expect (= "signed-in"
+                     (get-in (hydrate-environment-router environment :corp)
+                             [:router :providers 0 :api-key])))
+          (expect (= 1 @auth-calls))))
+      (reset! managed-auth-flights {}))
+  (it
+    "returns one clear failure when authentication produces no credential"
+    (reset! managed-auth-flights {})
+    (let [auth-calls
+          (atom 0)
+
+          descriptor
+          {:provider/id :corp
+           :provider/is-managed true
+           :provider/get-token-fn (constantly {:token nil})
+           :provider/auth-fn (fn [_]
+                               (swap! auth-calls inc))}
+
+          failure
+          (with-redefs [registry/provider-by-id (constantly descriptor)]
+            (try (ensure-managed-provider-auth! :corp) nil (catch clojure.lang.ExceptionInfo e e)))]
+
+      (expect (= 1 @auth-calls))
+      (expect (= :provider/authentication-failed (:type (ex-data failure))))
+      (expect (str/includes? (ex-message failure) "did not produce a usable credential")))
+    (reset! managed-auth-flights {})))
 
 (defdescribe
   auth-refresh-circuit-breaker-test

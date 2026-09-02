@@ -6800,6 +6800,91 @@
                               :provider/refresh-token-fn)
                       (config/command-backed? pid))))))
 
+(defonce ^:private managed-auth-flights
+  ;; provider-id -> promise carrying one first-use authentication result. The map only
+  ;; contains live attempts; the leader removes its own promise after delivery.
+  (atom {}))
+
+(defn- usable-token-envelope? [envelope] (util/non-blank-string? (:token envelope)))
+
+(defn- managed-auth-failure
+  [pid message cause]
+  (ex-info (str "Authentication for " (name pid) " " message)
+           {:type :provider/authentication-failed :provider pid}
+           cause))
+
+(defn- run-managed-auth-flight!
+  "Run at most one interactive first-use authentication for `pid`; concurrent turns
+   await that same result. The provider is re-read inside the elected flight so a
+   credential installed between the caller's probe and election skips OAuth."
+  [pid provider]
+  (let [candidate
+        (promise)
+
+        [_ flights]
+        (swap-vals! managed-auth-flights
+                    (fn [current]
+                      (if (contains? current pid) current (assoc current pid candidate))))
+
+        flight
+        (get flights pid)
+
+        leader?
+        (identical? candidate flight)]
+
+    (when leader?
+      (let [get-token-fn
+            (:provider/get-token-fn provider)
+
+            auth-fn
+            (:provider/auth-fn provider)
+
+            outcome
+            (try (let [before
+                       (try (get-token-fn) (catch Throwable _ nil))
+
+                       envelope
+                       (if (usable-token-envelope? before)
+                         before
+                         (do (auth-fn (constantly nil)) (get-token-fn)))]
+
+                   (if (usable-token-envelope? envelope)
+                     {:value envelope}
+                     {:error (managed-auth-failure
+                               pid
+                               "was cancelled or did not produce a usable credential."
+                               nil)}))
+                 (catch Throwable t
+                   {:error (if (= :provider/authentication-failed (:type (ex-data t)))
+                             t
+                             (managed-auth-failure
+                               pid
+                               (str "failed: " (or (ex-message t) "unknown authentication error"))
+                               t))}))]
+
+        (deliver candidate outcome)
+        (swap! managed-auth-flights (fn [current]
+                                      (if (identical? candidate (get current pid))
+                                        (dissoc current pid)
+                                        current)))))
+    (let [{:keys [value error]} @flight]
+      (if error (throw error) value))))
+
+(defn- ensure-managed-provider-auth!
+  "Resolve `pid` immediately before a real provider request. A managed provider with
+   an auth function authenticates only when its token lookup has no usable credential;
+   startup, status probes, and picker rendering never call this function."
+  [pid]
+  (let [provider
+        (registry/provider-by-id pid)
+
+        get-token-fn
+        (:provider/get-token-fn provider)]
+
+    (when (and (:provider/is-managed provider) (:provider/auth-fn provider) get-token-fn)
+      (let [envelope (try (get-token-fn) (catch Throwable _ nil))]
+        (if (usable-token-envelope? envelope) envelope (run-managed-auth-flight! pid provider))))))
+
 (defn- hydrate-router-credentials
   "Return an attempt-local copy of `router` with every provider's current
    credential fields resolved immediately before request dispatch.
@@ -6871,9 +6956,13 @@
     (if (= hydrated provider-entries) router (assoc router :providers hydrated))))
 
 (defn- hydrate-environment-router
-  "Hydrate only the router snapshot used by this provider attempt."
-  [environment]
-  (update environment :router hydrate-router-credentials))
+  "Hydrate only the router snapshot used by this provider attempt. The two-arity
+   form is the real request boundary: it may run managed first-use authentication
+   for the provider the router already resolved, never for unrelated fleet entries."
+  ([environment] (update environment :router hydrate-router-credentials))
+  ([environment provider-id]
+   (ensure-managed-provider-auth! provider-id)
+   (update environment :router hydrate-router-credentials)))
 
 (defn- router-provider-token
   "Token actually carried by provider `pid` in this exact router snapshot."
@@ -8436,7 +8525,7 @@
                         env environment]
 
                    (let
-                     [attempt-env (hydrate-environment-router env)
+                     [attempt-env (hydrate-environment-router env (:provider resolved-model))
                       result
                       (try
                         ;; Cheap FD-pressure guard BEFORE the provider call: a

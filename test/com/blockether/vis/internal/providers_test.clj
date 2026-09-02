@@ -275,6 +275,7 @@
   (let [detected (atom true)]
     (with-redefs [config/load-config (constantly {:providers [{:id :openai
                                                                :models [{:name "gpt-x"}]}]})
+                  config/deleted-provider-ids (constantly #{})
                   registry/registered-providers
                   (constantly [{:provider/id :anthropic-coding-plan
                                 :provider/detect-fn (fn []
@@ -825,37 +826,57 @@
            (is (= 3 @rebuilt) "a fleet mutation rebuilds the shared router"))
          (finally (providers/set-router-rebuild-hook! prev)))))
 
+;; Regression, issue #165: `is_managed` overrode a declared auth function, so an
+;; automatically bound extension provider could never obtain its initial credential.
 (deftest managed-provider-binds-itself-and-is-never-an-add-provider-row
-  ;; A MANAGED provider (`:provider/is-managed`) has its credential ISSUED by the
-  ;; runtime — a corporate gateway, a device policy — so there is nothing local
-  ;; to detect and nothing for a human to type. Without the flag such a provider
-  ;; was invisible until someone ran "Add provider", whose only second act is to
-  ;; collect an API key that every seam below has to refuse.
-  (let [registered
+  ;; MANAGED owns binding and configuration, not necessarily credential issuance.
+  ;; Runtime-issued and provider-authenticated variants both bind without a config
+  ;; entry and stay out of Add Provider; only the latter may invoke its auth function.
+  (let [auth-calls
+        (atom 0)
+
+        registered
         [{:provider/id :acme-managed :provider/label "Acme (Managed)" :provider/is-managed true}
+         {:provider/id :acme-managed-oauth
+          :provider/label "Acme (Managed OAuth)"
+          :provider/is-managed true
+          :provider/auth-fn (fn [_]
+                              (swap! auth-calls inc))}
          {:provider/id :acme-byo :provider/label "Acme (Own key)"}]]
-    (with-redefs [config/load-config (constantly {:providers [{:id :openai
-                                                               :models [{:name "gpt-x"}]}]})
-                  registry/registered-providers (constantly registered)
-                  registry/provider-by-id (into {} (map (juxt :provider/id identity)) registered)
+
+    (with-redefs [config/load-config
+                  (constantly {:providers [{:id :openai :models [{:name "gpt-x"}]}]})
+
+                  registry/registered-providers
+                  (constantly registered)
+
+                  registry/provider-by-id
+                  (into {} (map (juxt :provider/id identity)) registered)
+
                   config/provider-template
                   (fn [pid]
                     {:id pid :api-style :openai :default-models ["acme-1"]})
-                  config/provider-presets (constantly [{:id :acme-managed :label "Acme (Managed)"}
-                                                       {:id :acme-byo :label "Acme (Own key)"}])]
+
+                  config/provider-presets
+                  (constantly [{:id :acme-managed :label "Acme (Managed)"}
+                               {:id :acme-managed-oauth :label "Acme (Managed OAuth)"}
+                               {:id :acme-byo :label "Acme (Own key)"}])]
 
       (providers/invalidate-configured-providers!)
       (is (= true (providers/managed? :acme-managed)))
       (is (= false (providers/managed? :acme-byo)))
       (is (= :managed (providers/auth-kind :acme-managed)))
+      (is (= :oauth (providers/auth-kind :acme-managed-oauth)))
       (is (= :api-key (providers/auth-kind :acme-byo)))
       ;; NEITHER has a detect-fn: the managed one binds because it is managed.
-      (is (= [:acme-managed] (mapv :id (providers/authenticated-preset-providers)))
-          "a managed provider binds itself, an unmanaged one without creds does not")
-      (is (= [:openai :acme-managed] (mapv :id (providers/picker-fleet)))
-          "so the model picker holds it with no Add Provider step")
+      (is (= [:acme-managed :acme-managed-oauth]
+             (mapv :id (providers/authenticated-preset-providers)))
+          "managed providers bind themselves regardless of authentication kind")
+      (is (= [:openai :acme-managed :acme-managed-oauth] (mapv :id (providers/picker-fleet)))
+          "so the model picker holds them with no Add Provider step")
       (is (= [:acme-byo] (mapv :id (providers/available-presets)))
-          "and Add Provider only offers the provider a human can actually add")))
+          "and Add Provider only offers the provider a human can actually add")
+      (is (zero? @auth-calls) "fleet, picker, and Add Provider reads never start OAuth")))
   (providers/invalidate-configured-providers!))
 
 (deftest status-label-reads-the-same-for-a-wire-key-and-an-engine-key
