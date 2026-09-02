@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(sandbox): authorize a host call against the caller the interpreter names
 - feat(extensions): give a trusted extension the filesystem through vis.fs
 - fix(extensions): stop the first Python extension failing where there is no interpreter to bind
+- perf(gateway): build a session when one is asked for, not four at boot
 ## [v0.1.41] - 2026-08-21
 
 ### Changed

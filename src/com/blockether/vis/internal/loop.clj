@@ -10663,7 +10663,7 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title workspace-id prewarm?]}]
+  [router {:keys [db session channel external-id title workspace-id]}]
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   ;; Everything from here to the end runs with the sandbox GUARDED: the session is
   ;; built ~130 lines before this function returns, and workspace resolution,
@@ -10760,11 +10760,11 @@
                                                                    :system-prompt system-prompt
                                                                    :workspace-id (:id
                                                                                    active-workspace)
-                                                                   ;; Unadopted TUI warm-pool sessions are
-                                                                   ;; created UNCLAIMED (:claimed? false) so
-                                                                   ;; they stay out of the cross-channel list
-                                                                   ;; until a tab uses them (first turn claims).
-                                                                   :claimed? (not prewarm?)}
+                                                                   ;; Every session is created for somebody
+                                                                   ;; who asked for it, so it is claimed from
+                                                                   ;; the start and shows in the cross-channel
+                                                                   ;; list.
+                                                                   :claimed? true}
                                                             root-provider
                                                             (assoc :provider root-provider))))
             ;; Resolve the session_state row id ONCE here (reliable at env build)
@@ -11714,7 +11714,7 @@
 (defn- open-env!
   ;; App session entry (create! + resume). The vis engine is the embedded
   ;; CPython Python sandbox — there is no other substrate.
-  [id {:keys [channel external-id title workspace-id prewarm?]}]
+  [id {:keys [channel external-id title workspace-id]}]
   (let [router
         (get-router)
 
@@ -11734,10 +11734,7 @@
                               (assoc :title title)
 
                               workspace-id
-                              (assoc :workspace-id workspace-id)
-
-                              prewarm?
-                              (assoc :prewarm? prewarm?)))]
+                              (assoc :workspace-id workspace-id)))]
 
     env))
 
@@ -11897,7 +11894,7 @@
                     When omitted, a trunk workspace is auto-minted in
                     create-environment."
   ([channel] (create! channel nil))
-  ([channel {:keys [title external-id workspace-id prewarm?]}]
+  ([channel {:keys [title external-id workspace-id]}]
    (let [env
          (open-env! nil
                     (cond-> {:channel channel
@@ -11905,10 +11902,7 @@
                                                   str)
                              :title title}
                       workspace-id
-                      (assoc :workspace-id workspace-id)
-
-                      prewarm?
-                      (assoc :prewarm? prewarm?)))
+                      (assoc :workspace-id workspace-id)))
 
          id
          (:session-id env)

@@ -841,7 +841,7 @@
    that was still inside `Py_Initialize` and confine it, and the audit hook then
    refused the interpreter's OWN startup — `getpath` raising OSError, `error
    evaluating path`, and every session after it failing in `vispython_exec`.
-   Measured on a gateway prewarming its api and tui sessions together. The flag
+   Measured on a gateway building two sessions at once. The flag
    is set only after a start SUCCEEDS, so a machine that could not fetch the
    interpreter this time gets to try again rather than serving a dead one."
   []
