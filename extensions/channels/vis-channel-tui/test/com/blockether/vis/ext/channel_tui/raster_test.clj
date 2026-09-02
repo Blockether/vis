@@ -1,16 +1,13 @@
-(ns com.blockether.vis.ext.channel-tui.cinema-test
-  "The MP4 export pipeline, END TO END: a captured grid -> imaging-rendered RGB
-   `Picture`s -> jcodec H.264 -> a real `.mp4` on disk.
+(ns com.blockether.vis.ext.channel-tui.raster-test
+  "The \"look at the pixels\" path, END TO END: a captured grid -> imaging draw
+   ops with an EMBEDDED mono face -> a real PNG on disk.
 
-   This is deliberately an INTEGRATION test. Every step below used to run on
-   Java2D (`BufferedImage` + `AWTSequenceEncoder` + a system font); it now runs
-   on the imaging cdylib with an EMBEDDED mono face, and none of that is
-   observable from the pure functions around it -- a screencast whose glyphs
-   silently stopped painting, or whose frame geometry stopped being even (H.264
-   refuses odd dimensions), still produces a plausible-looking File."
-  (:require [clojure.java.io :as io]
-            [com.blockether.vis.ext.channel-tui.capture :as cap]
-            [com.blockether.vis.ext.channel-tui.cinema :as cinema]
+   Deliberately an INTEGRATION test. None of what it pins is observable from the
+   pure functions around it -- a screenshot whose glyphs silently stopped
+   painting, or whose bold, italic and underline quietly rasterized as plain
+   text, still produces a plausible-looking File."
+  (:require [com.blockether.vis.ext.channel-tui.capture :as cap]
+            [com.blockether.vis.ext.channel-tui.raster :as raster]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- cell [ch fg bg bold] {:ch (str ch) :fg fg :bg bg :bold bold})
@@ -22,85 +19,6 @@
    (vec (for [x (range cols)]
           (cell (if (< (long x) (.length s)) (.charAt s (int x)) \space) fg bg bold)))))
 
-(defn- frames
-  "`n` frames of a `cols`x2 grid. `text?` false paints blank cells only -- same
-   geometry, no glyphs, which is what makes the two encodes comparable."
-  [n cols text?]
-  (vec (for [i (range n)]
-         {:grid [(row (if text? (str "vis cinema " i) "") cols [230 230 230] [20 20 28])
-                 (row (if text? "colour ✓ ĄŻ 你好" "") cols [90 200 120] [20 20 28])]})))
-
-(defn- mp4!
-  [nm cols text?]
-  (let [out (io/file (System/getProperty "java.io.tmpdir") nm)]
-    (.delete out)
-    (.deleteOnExit out)
-    (cinema/frames->mp4! {:cols cols :rows 2 :frames (frames 2 cols text?)}
-                         out
-                         {:font-size 18 :fps 6})))
-
-(defn- bytes-of ^bytes [f] (java.nio.file.Files/readAllBytes (.toPath (io/file f))))
-
-(defn- ascii-index
-  "Index of the first occurrence of ASCII `tag` in `ba` at or after `from`."
-  ([^bytes ba ^String tag] (ascii-index ba tag 0))
-  ([^bytes ba ^String tag from]
-   (let [t (.getBytes tag "US-ASCII")]
-     (first (for [i (range (long from) (- (alength ba) (alength t)))
-                  :when (every? #(= (aget ba (+ (long i) (long %))) (aget t (int %)))
-                                (range (alength t)))]
-
-              i)))))
-
-(defn- u16
-  [^bytes ba ^long i]
-  (+ (* 256 (bit-and (aget ba (int i)) 0xff)) (bit-and (aget ba (int (inc i))) 0xff)))
-
-(defn- avc-dimensions
-  "`[w h]` from the MP4's `avc1` VisualSampleEntry: 6 reserved + 2 data-ref +
-   16 pre-defined/reserved after the box type, then width and height. Searched
-   from `stsd` on purpose -- `avc1` is ALSO an ftyp compatible brand, 24 bytes
-   into the file, and that copy is not a sample entry at all."
-  [^bytes ba]
-  (when-let [stsd (ascii-index ba "stsd")]
-    (when-let [i (ascii-index ba "avc1" stsd)]
-      [(u16 ba (+ (long i) 28)) (u16 ba (+ (long i) 30))])))
-
-(defdescribe frames->mp4-test
-             (it "writes a real, non-empty MP4 container"
-                 (let [f
-                       (mp4! "vis-cinema-test.mp4" 24 true)
-
-                       ba
-                       (bytes-of f)]
-
-                   (expect (.exists f))
-                   ;; `ftyp` is the first box of every ISO base-media file.
-                   (expect (= 4 (ascii-index ba "ftyp")))
-                   (expect (some? (ascii-index ba "avc1")))
-                   (expect (< 1000 (alength ba)))))
-             (it "sizes the video from the CELL metrics, in even H.264 dimensions"
-                 (let [[w h]
-                       (avc-dimensions (bytes-of (mp4! "vis-cinema-test.mp4" 24 true)))
-
-                       [w2 _]
-                       (avc-dimensions (bytes-of (mp4! "vis-cinema-wide-test.mp4" 48 true)))]
-
-                   (expect (pos? w))
-                   (expect (pos? h))
-                   ;; H.264 4:2:0 cannot encode an odd width/height at all.
-                   (expect (even? w))
-                   (expect (even? h))
-                   ;; Twice the columns is twice the frame, give or take one rounding cell.
-                   (expect (< (Math/abs (- (double w2) (* 2.0 w))) (/ w 12.0)))))
-             (it "actually PAINTS the glyphs -- text costs bits, blank cells do not"
-                 (let [inked
-                       (alength (bytes-of (mp4! "vis-cinema-test.mp4" 24 true)))
-
-                       blank
-                       (alength (bytes-of (mp4! "vis-cinema-blank-test.mp4" 24 false)))]
-
-                   (expect (> inked (* 1.5 blank))))))
 
 (defn- png!
   "One captured grid straight to a PNG path, through the shared capture helper."
@@ -128,18 +46,18 @@
 (defdescribe
   grid->png-test
   "`grid->png!` is the \"look at the pixels\" path: ONE captured grid straight to a
-   PNG, through the same ops the screencast encodes."
+   PNG."
   (it "paints an untouched grid on the theme's paper, never on a black void"
       ;; Regression: Lanterna reports an unpainted cell's colour as DEFAULT, which
       ;; reads back as ANSI black -- every screenshot of the app came out on black
       ;; paper, a colour the app never shows.
       (let [paper
-            (:bg (cinema/cell nil))
+            (:bg (raster/cell nil))
 
             painted
             (set (apply concat
-                   (cap/png-rows (png! "vis-cinema-paper.png"
-                                       [(vec (repeat 8 (cinema/cell nil)))]))))]
+                   (cap/png-rows (png! "vis-raster-paper.png"
+                                       [(vec (repeat 8 (raster/cell nil)))]))))]
 
         (expect (not= [0 0 0] paper))
         (expect (= #{paper} painted))))
@@ -150,7 +68,7 @@
       (let [rows
             (cap/png-rows
               (png!
-                "vis-cinema-rule.png"
+                "vis-raster-rule.png"
                 [(row "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500" 8 [0 0 0] [255 255 255])]))
 
             middle
@@ -168,10 +86,10 @@
               (cap/ink (png! nm [(row "Name Size" 12 [0 0 0] [255 255 255] bold)])))
 
             plain
-            (ink "vis-cinema-plain.png" false)
+            (ink "vis-raster-plain.png" false)
 
             heavy
-            (ink "vis-cinema-bold.png" true)]
+            (ink "vis-raster-bold.png" true)]
 
         (expect (pos? plain))
         (expect (> heavy (* 1.1 plain)))))
@@ -182,10 +100,10 @@
     ;; the transcript, the dialogs and the header paint was photographed as
     ;; roman text.
     (let [roman
-          (cap/png-rows (png! "vis-cinema-roman.png" [(row "Name Size" 12 [0 0 0] [255 255 255])]))
+          (cap/png-rows (png! "vis-raster-roman.png" [(row "Name Size" 12 [0 0 0] [255 255 255])]))
 
           slanted
-          (cap/png-rows (png! "vis-cinema-italic.png"
+          (cap/png-rows (png! "vis-raster-italic.png"
                               [(styled (row "Name Size" 12 [0 0 0] [255 255 255]) :italic)]))
 
           upright-profile
@@ -217,11 +135,11 @@
                              rows)))
 
             plain
-            (cap/png-rows (png! "vis-cinema-plain-rule.png"
+            (cap/png-rows (png! "vis-raster-plain-rule.png"
                                 [(row "Name Size" 12 [0 0 0] [255 255 255])]))
 
             lined
-            (cap/png-rows (png! "vis-cinema-underline.png"
+            (cap/png-rows (png! "vis-raster-underline.png"
                                 [(styled (row "Name Size" 12 [0 0 0] [255 255 255]) :underline)]))]
 
         (expect (not (rule? plain)))

@@ -153,7 +153,11 @@
   ;; alias has to keep mainng lazytest.main — `run_tests` appends its own selector
   ;; flags (--namespace / --var) to `clojure -M:test`.
   :test
-  {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+  {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
+               ;; TEST ONLY, and only for the TUI pack's video tests, which encode the
+               ;; fixture `.mp4`s they then decode through com.blockether/imaging.
+               ;; Nothing shipped encodes video, so it stays off every runtime classpath.
+               org.jcodec/jcodec {:mvn/version "0.2.5"}}
    :extra-paths
    ["test" "dev" "extensions/channels/vis-channel-tui/test"
     "extensions/common/vis-foundation-search/test" "extensions/common/vis-foundation-voice/test"

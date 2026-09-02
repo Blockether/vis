@@ -377,10 +377,8 @@
 
     (cond
       ;; Nothing ever polled for THIS provider (first paint after launch),
-      ;; so there is not even a remembered report to show. A headless
-      ;; cinema replay never polls, so keep that row clean instead of a
-      ;; forever-stuck "loading…".
-      (nil? report) (when-not (:cinema? db) "limits: loading…")
+      ;; so there is not even a remembered report to show.
+      (nil? report) "limits: loading…"
       (= :error status) (let [msg (or (get-in report [:error :message]) "unavailable")]
                           (str "limits: error (" msg ")"))
       (= :unauthenticated status) "limits: sign in required"

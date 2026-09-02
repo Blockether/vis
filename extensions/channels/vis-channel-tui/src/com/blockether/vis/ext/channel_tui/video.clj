@@ -5,9 +5,8 @@
    `imaging/decode-video` and `imaging/video->gif` are the pure-Rust demuxer
    (re_mp4) + H.264 decoder (rust_h264) inside the same cdylib that already does
    every still image in vis. That means no `ffmpeg` on PATH, no `java.desktop`,
-   nothing to install, and it survives the GraalVM native image — while jcodec
-   stays on this jar's classpath for what it is genuinely good at, ENCODING a
-   replayed session in `channel-tui.cinema`.
+   nothing to install, and it survives the GraalVM native image. jcodec is a TEST
+   dependency only, where it encodes the fixture clips this namespace decodes.
 
    What is left in this namespace is the TERMINAL half: brand sniffing, sizing a
    clip to a cell grid, and the Kitty/iTerm2 escape sequences that actually

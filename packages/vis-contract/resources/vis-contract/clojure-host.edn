@@ -36,7 +36,7 @@
                            com.blockether.vis.internal.python-test-runner 1
                            com.blockether.vis.internal.render 2
                            com.blockether.vis.internal.runtime-settings 2
-                           com.blockether.vis.internal.theme 4
+                           com.blockether.vis.internal.theme 3
                            com.blockether.vis.internal.view 1
                            com.blockether.vis.internal.view.materializer 1
                            com.blockether.vis.internal.voice 4

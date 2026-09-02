@@ -2,7 +2,7 @@
   "Build-time reachability for everything the engine loads DYNAMICALLY.
 
    The manifest resolves an entrypoint with `requiring-resolve`, a pack reaches
-   its own optional half the same way (voice's ASR, the TUI's cinema), and a
+   its own optional half the same way (voice's ASR), and a
    native image contains only what the BUILDER saw. A namespace nobody loads
    while the image is built therefore has no class in the binary, and the first
    command that wants it dies with \"Could not locate ...__init.class on

@@ -1929,13 +1929,6 @@
   [db sid]
   ((requiring-resolve 'com.blockether.vis.internal.foundation.transcript/transcript-html) db sid))
 
-(defn- cinema-export-fn
-  "Resolve the headless session-cinema exporter from the channel-tui extension,
-   or nil when that jar is not on the classpath. Deferred so `--md`/`--html`
-   never pay the Lanterna load cost."
-  []
-  (requiring-resolve 'com.blockether.vis.ext.channel-tui.cinema/export!))
-
 (defn- resolve-out-path
   "Resolve a user-supplied output path against the invocation directory.
    `bin/vis-agent` runs the JVM source runtime from its source root (so
@@ -1951,7 +1944,7 @@
 
 (defn- ensure-ext
   "Append `.ext` to `path` when it doesn't already end with it (case-insensitive),
-   so a bare `siema` given to `--mp4`/`--html` lands as `siema.mp4`/`siema.html`."
+   so a bare `siema` given to `--html` lands as `siema.html`."
   [path ext]
   (let [dot (str "." ext)]
     (if (str/ends-with? (str/lower-case path) (str/lower-case dot)) path (str path dot))))
@@ -1975,18 +1968,11 @@
                 (ensure-ext "html")
                 resolve-out-path)
 
-        mp4-path
-        (some-> (get parsed "mp4")
-                str/trim
-                not-empty
-                (ensure-ext "mp4")
-                resolve-out-path)
-
         chosen
-        (filterv some? [(when md? :md) (when html-path :html) (when mp4-path :mp4)])]
+        (filterv some? [(when md? :md) (when html-path :html)])]
 
     (when (> (count chosen) 1)
-      (stdout! "Choose exactly one of --md, --html PATH, or --mp4 PATH.")
+      (stdout! "Choose exactly one of --md or --html PATH.")
       (shutdown-agents)
       (System/exit 2))
     (cond html-path (let [target (io/file html-path)]
@@ -1994,30 +1980,6 @@
                         (.mkdirs parent))
                       (spit target (export-html-str d (:id session)))
                       (stdout! (str "Exported HTML: " (paths/abbreviate-home (.getPath target)))))
-          mp4-path
-          (let [fmt
-                :mp4
-
-                path
-                mp4-path
-
-                export!
-                (cinema-export-fn)]
-
-            (when-let [parent (.getParentFile ^java.io.File (io/file path))]
-              (.mkdirs parent))
-            (if export!
-              (let [res (export! (:id session) {:format fmt :out path})]
-                (stdout! (format "Exported %s: %s  (%d frames, ~%ds)"
-                                 (str/upper-case (name fmt))
-                                 (paths/abbreviate-home (:path res))
-                                 (:frames res)
-                                 (long (/ (double (:video-ms res)) 1000.0)))))
-              (do
-                (stdout!
-                  "Cinema export (--mp4) needs the channel-tui extension, which is not installed.")
-                (shutdown-agents)
-                (System/exit 2))))
           :else (write-stdout! ((requiring-resolve
                                   'com.blockether.vis.internal.foundation.transcript/transcript-md)
                                  d
@@ -3955,8 +3917,8 @@
     {:cmd/name "export"
      :cmd/parent ["sessions"]
      :cmd/doc
-     "Export a session: Markdown on stdout, HTML to a file, or a headless MP4 screencast of the TUI transcript."
-     :cmd/usage "vis-agent sessions export <SESSION-ID> [--md | --html PATH | --mp4 PATH]"
+     "Export a session: Markdown on stdout, or styled HTML to a file."
+     :cmd/usage "vis-agent sessions export <SESSION-ID> [--md | --html PATH]"
      :cmd/args
      [{:name "session-id"
        :kind :positional
@@ -3964,14 +3926,9 @@
        :required true
        :doc "Session id (full UUID or unambiguous prefix)."}
       {:name "md" :kind :flag :type :boolean :doc "Print Markdown to stdout (default)."}
-      {:name "html" :kind :flag :type :string :doc "Write styled HTML export to PATH."}
-      {:name "mp4"
-       :kind :flag
-       :type :string
-       :doc "Write a pure-JVM H.264 .mp4 screencast of the (uncollapsed) TUI transcript to PATH."}]
+      {:name "html" :kind :flag :type :string :doc "Write styled HTML export to PATH."}]
      :cmd/examples ["vis-agent sessions export 3a7b2c1d --md"
-                    "vis-agent sessions export 3a7b2c1d --html out.html"
-                    "vis-agent sessions export 3a7b2c1d --mp4 session.mp4"]
+                    "vis-agent sessions export 3a7b2c1d --html out.html"]
      :cmd/run-fn cli-export-session!}
     {:cmd/name "search"
      :cmd/parent ["sessions"]

@@ -791,7 +791,7 @@
   "The WHOLE session's history. UNBOUNDED: the gateway hydrates every turn and
    every iteration before this returns, which on a long session is seconds of
    work and megabytes of JSON. Kept for surfaces that genuinely need all of it
-   (cinema's exporter); interactive open goes through `history-page`."
+   (a whole-session export); interactive open goes through `history-page`."
   [session-id]
   (try (turns->messages (vis/gateway-transcript session-id))
        (catch Exception e

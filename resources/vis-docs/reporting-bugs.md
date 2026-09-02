@@ -100,8 +100,7 @@ repro in an empty directory is a better bug report than a redacted transcript.
 
 The TUI and the companion app show your real work: file names, branch names,
 diffs, tool output. Before you screenshot, switch to a scratch project, or crop
-to the broken widget. `vis-agent sessions export --mp4` has the same exposure as a
-screen recording — it replays the real session.
+to the broken widget. A screen recording carries the same exposure.
 
 ## A template
 

@@ -10,8 +10,8 @@
   (:require [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.ext.channel-tui.capture :as cap]
-            [com.blockether.vis.ext.channel-tui.cinema :as cinema]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
+            [com.blockether.vis.ext.channel-tui.raster :as raster]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.terminals :as term]
@@ -288,7 +288,7 @@
          (.refresh screen)
          (f (term/grid (:terminal vt))
             (fn [col row]
-              (cinema/cell (.getBackCharacter screen (int col) (int row)))))
+              (raster/cell (.getBackCharacter screen (int col) (int row)))))
          (finally (.stopScreen screen)))))
 
 (defn- lum

@@ -2,8 +2,7 @@
   "PIXEL-TRUTH pictures of a REAL TUI paint, in one call.
 
    Run any dialog/screen fn against a Lanterna `DefaultVirtualTerminal`, snapshot
-   the back-buffer, and rasterize it with the SAME renderer the MP4 screencast
-   uses — bold, italic, underline, colours and box rules exactly as the terminal
+   the back-buffer, and rasterize it through the imaging cdylib's embedded mono face — bold, italic, underline, colours and box rules exactly as the terminal
    would show them.
 
      (require '[com.blockether.vis.ext.channel-tui.capture :as cap])
@@ -31,7 +30,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.imaging :as img]
-            [com.blockether.vis.ext.channel-tui.cinema :as cinema])
+            [com.blockether.vis.ext.channel-tui.raster :as raster])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.screen TerminalScreen]
@@ -75,11 +74,11 @@
         :else (throw (ex-info (str "capture: not a key: " (pr-str k)) {:key k}))))
 
 (defn- grab
-  "The terminal's WHOLE back buffer as a rows×cols vector of `cinema/cell` maps."
+  "The terminal's WHOLE back buffer as a rows×cols vector of `raster/cell` maps."
   [^DefaultVirtualTerminal terminal ^long cols ^long rows]
   (mapv (fn [y]
           (mapv (fn [x]
-                  (cinema/cell (.getCharacter terminal (TerminalPosition. (int x) (int y)))))
+                  (raster/cell (.getCharacter terminal (TerminalPosition. (int x) (int y)))))
                 (range cols)))
         (range rows)))
 
@@ -175,7 +174,7 @@
    stamp in an ocean of paper. A grid with nothing on it is returned untouched."
   [grid]
   (let [paper
-        (:bg (cinema/cell nil))
+        (:bg (raster/cell nil))
 
         blank?
         (partial blank-cell? paper)
@@ -234,7 +233,7 @@
 
 (defn- render!
   ^String [grid out i {:keys [font-size trim] :or {font-size 18 trim true}}]
-  (str (cinema/grid->png! (if trim (trim-grid grid) grid) (out-file out i) {:font-size font-size})))
+  (str (raster/grid->png! (if trim (trim-grid grid) grid) (out-file out i) {:font-size font-size})))
 
 (defn shot!
   "ONE picture of a real paint, and its PATH back.

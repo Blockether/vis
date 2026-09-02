@@ -78,12 +78,11 @@
         ;;      paste, modified keys, exact decoder timeouts, stateful queue coalescing, wheel
         ;;      momentum and Unix line-discipline modes are owned once and exposed as canonical
         ;;      KeyStroke/MouseAction values.
-        com.blockether/lanterna {:mvn/version "3.1.5-vis.49"}
-        ;; Pure-Java H.264/MP4 encoder for the headless session `cinema` export
-        ;; (channel-tui.cinema). CORE ONLY: com.blockether/imaging renders the frames
-        ;; and hands them over as jcodec RGB `Picture`s, so the java.desktop-bound
-        ;; `jcodec-javase` (AWTSequenceEncoder/AWTUtil) is gone. No native deps.
-        org.jcodec/jcodec {:mvn/version "0.2.5"}}
- :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.49"}}
+ :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
+                               ;; TEST ONLY: pure-Java H.264 encoder, which writes the
+                               ;; fixture `.mp4`s `video-test` then decodes through
+                               ;; com.blockether/imaging. Nothing shipped encodes video.
+                               org.jcodec/jcodec {:mvn/version "0.2.5"}}
                   :extra-paths ["test"]
                   :main-opts ["-m" "lazytest.main" "test"]}}}

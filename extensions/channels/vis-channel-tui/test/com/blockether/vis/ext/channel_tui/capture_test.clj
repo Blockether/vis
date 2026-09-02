@@ -6,7 +6,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.capture :as cap]
-            [com.blockether.vis.ext.channel-tui.cinema :as cinema]
+            [com.blockether.vis.ext.channel-tui.raster :as raster]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna SGR TextColor$RGB]
            [com.googlecode.lanterna.graphics TextGraphics]
@@ -55,7 +55,7 @@
             c
             (get-in (vec (first frames)) [0 0])]
 
-        (expect (= (cinema/cell nil) c))
+        (expect (= (raster/cell nil) c))
         (expect (not= [0 0 0] (:bg c)))))
   (it "feeds queued keys to the painted dialog before it runs"
       (let [{:keys [ret]} (cap/capture! {:cols 10
