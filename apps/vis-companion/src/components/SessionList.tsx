@@ -388,7 +388,7 @@ export const SessionRow = memo(function SessionRow({
                   )}
                   {hasUnsent && (
                     <span
-                      className="shrink-0 border border-warn-strong px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-warn-strong"
+                      className="shrink-0 border border-warn-strong px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-warn"
                       title="Unsent message waiting in this session's composer"
                     >
                       dirty
@@ -550,7 +550,7 @@ export function SessionStatsPanel({
         </p>
       )}
       {phase === "error" && (
-        <p className="font-mono text-chip uppercase tracking-[0.08em] text-warn-strong">
+        <p className="font-mono text-chip uppercase tracking-[0.08em] text-warn">
           Usage unavailable
         </p>
       )}
@@ -761,7 +761,7 @@ export function NavigatorSkeleton() {
           <div key={group}>
             {/* The list's OWN header band, so a loading screen can never stand at a
                 different height from the screen it turns into. */}
-            <SectionHeader rule="border-accent">
+            <SectionHeader>
               {/* Two lines, because the header it stands in for is two: a name over
                   the path that qualifies it. A one-line skeleton grew by a line the
                   moment data landed, which is a layout jump on every cold open — so

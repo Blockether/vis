@@ -2840,17 +2840,36 @@
 
 (defdescribe
   gateway-resource-bounds-test
-  (it "retains only the configured replay tail"
+  (it "retains only the configured replay tail and remembers what it evicted"
       (with-redefs-fn {#'state/EVENT_RING_MAX (delay 3)}
         (fn []
-          (let [trim-ring
-                (deref #'state/trim-ring)
+          (let [conj-ring
+                (deref #'state/conj-ring)
 
-                ring
-                (trim-ring [1 2 3 4 5])]
+                entry
+                (reduce conj-ring {} (mapv #(hash-map "seq" %) [1 2 3 4 5]))]
 
-            (expect (= [3 4 5] ring))
-            (expect (instance? clojure.lang.PersistentQueue ring))))))
+            (expect (= [3 4 5] (mapv #(get % "seq") (:events entry))))
+            (expect (instance? clojure.lang.PersistentQueue (:events entry)))
+            ;; Seqs 1 and 2 left the ring: a resume at or below 2 cannot be
+            ;; served from it, and only this high-water says so.
+            (expect (= 2 (:evicted-through entry)))))))
+  (it "reports the evicted high-water as the session's replay floor"
+      (let [sid
+            (str (java.util.UUID/randomUUID))
+
+            registry
+            @#'state/registry
+
+            saved
+            @registry]
+
+        (try (reset! registry {sid {:next-seq 9 :evicted-through 4}})
+             (expect (= 4 (state/replay-floor sid)))
+             ;; A ring that dropped nothing has no floor - and neither does a
+             ;; session this process has never seen.
+             (expect (= 0 (state/replay-floor (str (java.util.UUID/randomUUID)))))
+             (finally (reset! registry saved)))))
   (it "waits for a global turn permit and lets cancellation win without execution"
       (let [semaphore
             (java.util.concurrent.Semaphore. 1 true)

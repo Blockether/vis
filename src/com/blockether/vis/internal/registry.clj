@@ -179,10 +179,10 @@
 
 (s/def :provider/preset map?)         ;; extension-owned UI/runtime defaults: :base-url, :default-models, :api-style, :is-hidden
 
-;; The RUNTIME issues this provider's credential (a corporate gateway, a device
-;; policy, an already-signed-in host): no key is ever typed, pasted, rotated or
-;; persisted for it, and it needs no `Add provider` step — it binds as soon as
-;; the extension is loaded. `providers/managed?` is the one reader.
+;; The extension owns this provider's binding and configuration: it needs no
+;; `Add provider` step and binds as soon as the extension loads. Credential policy
+;; stays independent — absent `auth-fn` the runtime supplies it; with `auth-fn` the
+;; provider may authenticate interactively on first use. `providers/managed?` reads it.
 (s/def :provider/is-managed boolean?)
 
 (s/def :provider/on-selected-fn ifn?) ;; ({:provider :previous-provider :config :source}) -> nil

@@ -20,17 +20,6 @@ export interface FleetMachine {
    * whole of it (`GatewayClient.listSessions`) — and `null` until the first one lands.
    */
   sessions: Session[] | null;
-  /**
-   * This machine's sessions PARKED on an unanswered human-input request, as the gateway
-   * answered them BESIDE the window (`GatewayClient.parkedSessions`).
-   *
-   * The list is ordered by content time and nothing else, so a parked run sits wherever
-   * it last spoke — in a long fleet, past the end of the window this device has read.
-   * The demand is the one state a reader cannot infer and only they can clear, so it
-   * travels complete and gets PINNED above the list; an ordering that lifted it into
-   * the list moved every row under the reader the moment a turn asked or was answered.
-   */
-  awaiting?: Session[];
   /** Last load failure. Set means offline/unauthorized; the row degrades. */
   error: string | null;
   /**

@@ -54,33 +54,33 @@
   (some? (:api-key-command provider)))
 
 (defn managed?
-  "True when the extension that registered `provider-id` declares
-   `:provider/is-managed`: the RUNTIME issues that provider's credential — a
-   corporate gateway, a device policy, a host the user is already signed into —
-   so there is no key for a human to type, paste or rotate, and no `Add
-   provider` step to run. A managed provider binds itself as soon as its
-   extension is loaded ([[authenticated-preset-providers]]) and every key-taking
-   path refuses it (`provider-auth/start-auth!`, the channels' auth verbs)."
+  "True when the extension that registered `provider-id` owns its binding and
+   configuration. Managed providers bind as soon as their extension loads and stay
+   out of Add Provider. Authentication is independent: `:provider/auth-fn` may still
+   obtain a provider-owned credential on first use."
   [provider-id]
   (boolean (:provider/is-managed (registry/provider-by-id provider-id))))
 
 (defn auth-kind
   "How a provider authenticates: `:command` (an `api_key_command` mints the
-   credential — never prompt), `:oauth` (interactive flow owned by the
-   provider extension), `:managed` (the extension declares
-   `:provider/is-managed`, so the runtime issues the credential and there is
-   nothing to type), `:none` (local, no credentials), or `:api-key`.
+   credential — never prompt), `:oauth` (the registered extension declares an
+   interactive `:provider/auth-fn`), `:managed` (the extension owns configuration
+   and exposes no interactive flow), `:none` (local, no credentials), or `:api-key`.
 
-   The 1-arity classifies by id alone and therefore can never see a
-   command-minted provider; pass the configured provider map when the
-   answer decides whether to prompt a human."
+   Ownership never overrides authentication: a managed provider with `auth-fn` is
+   OAuth-capable while remaining automatically bound and absent from Add Provider.
+   The 1-arity classifies by id alone and therefore can never see a command-minted
+   provider; pass the configured provider map when that answer decides whether to
+   prompt a human."
   ([pid] (auth-kind pid nil))
   ([pid provider]
-   (cond (command-minted? provider) :command
-         (managed? pid) :managed
-         (contains? oauth-provider-ids pid) :oauth
-         (contains? local-no-auth-provider-ids pid) :none
-         :else :api-key)))
+   (let [registered (registry/provider-by-id pid)]
+     (cond (command-minted? provider) :command
+           (:provider/auth-fn registered) :oauth
+           (:provider/is-managed registered) :managed
+           (contains? oauth-provider-ids pid) :oauth
+           (contains? local-no-auth-provider-ids pid) :none
+           :else :api-key))))
 
 (defn url-host
   "Extract host from URL for display. 'https://llm.blockether.com/v1' ->

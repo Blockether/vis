@@ -190,6 +190,33 @@ describe('GatewayClient canonical queued turn state', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(client.cachedSession('session-1')).toBeNull();
   });
+
+  // Regression, Vis session 57dfea5e-0c2d-4190-a82c-0e1992e352c3: the session
+  // response restored queued rows without the hold that made them actionable.
+  it('caches the paused marker beside the queued rows from one session response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            id: 'session-1',
+            title: 'Session',
+            queued_turns: [
+              { turn_id: 'waiting', status: 'queued', request: 'Run this after recovery' },
+            ],
+            queue_paused: { reason: 'turn_failed', held: 1 },
+          }),
+        ),
+      ),
+    );
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    await client.session('session-1', undefined, true);
+
+    expect(client.cachedQueuedTurns('session-1')?.[0]?.turnId).toBe('waiting');
+    expect(client.cachedQueuePaused('session-1')).toEqual({ reason: 'turn_failed', held: 1 });
+  });
 });
 // The one fact about its own list the gateway cannot know is which sessions are
 // holding words typed on THIS device. It is SENT — and a window whose ETag was
@@ -626,6 +653,45 @@ describe('GatewayClient turn cancellation', () => {
       },
     ]);
     expect(JSON.stringify(submitBody)).not.toContain('YWJj');
+  });
+
+  it('refreshes transcription metadata without downloading audio again', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          attachments: [
+            {
+              filename: 'memo.m4a',
+              media_type: 'audio/mp4',
+              transcription: 'ready words',
+            },
+          ],
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    client.rememberSentAttachments('session-1', 'turn-audio', [
+      {
+        filename: 'memo.m4a',
+        media_type: 'audio/mp4',
+        base64: 'AAAAIGZ0eXBNNEEg',
+      },
+    ]);
+
+    const rows = await client.fetchTurnAttachments(
+      'session-1',
+      'turn-audio',
+      undefined,
+      true,
+    );
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      'transcription_only=true',
+    );
+    expect(rows[0]?.base64).toBe('AAAAIGZ0eXBNNEEg');
+    expect(rows[0]?.transcription).toBe('ready words');
   });
 
   it('cancels a known turn by id, which needs no correlation id', async () => {

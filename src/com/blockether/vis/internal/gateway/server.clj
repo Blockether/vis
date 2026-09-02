@@ -21,6 +21,7 @@
             [com.blockether.vis.contract.openapi :as openapi-contract]
             [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.internal.attachments :as attachments]
+            [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.docs :as docs]
@@ -565,6 +566,18 @@
   (cond (str/starts-with? (str media-type) "video/") attachments/max-video-bytes
         (str/starts-with? (str media-type) "audio/") attachments/max-audio-bytes
         :else attachments/max-upload-image-bytes))
+(defn- upload->attachment
+  [{:keys [filename media-type bytes]}]
+  {:filename filename
+   :media-type media-type
+   :size (alength ^bytes bytes)
+   :base64 (.encodeToString (Base64/getEncoder) ^bytes bytes)})
+
+(defn- refresh-upload-transcription
+  "Start or collect the local words for one staged upload without waiting."
+  [upload]
+  (first (audio-transcribe/request-attachments! [(upload->attachment upload)])))
+
 (defn- upload-attachment-handler
   "POST raw attachment bytes, returning an opaque id for a later turn submission."
   [request]
@@ -602,19 +615,17 @@
 
                       (reap-uploads! now)
                       (store-upload! upload-id upload)
+                      ;; Upload completion is the earliest instant the gateway owns the whole
+                      ;; recording. Start its local transcript here, before the tiny turn POST.
+                      (refresh-upload-transcription upload)
                       (json-response 201 {:upload_id upload-id :size (alength bytes)})))))))
 
 (defn- resolve-upload-attachments
   [sid rows]
   (mapv (fn [row]
           (if-let [upload-id (or (get row "upload_id") (get row :upload-id))]
-            (when-let [{stored-sid :sid :keys [filename media-type bytes]} (@pending-uploads
-                                                                            upload-id)]
-              (when (= sid stored-sid)
-                {:filename filename
-                 :media-type media-type
-                 :size (alength ^bytes bytes)
-                 :base64 (.encodeToString (Base64/getEncoder) ^bytes bytes)}))
+            (when-let [{stored-sid :sid :as upload} (@pending-uploads upload-id)]
+              (when (= sid stored-sid) (refresh-upload-transcription upload)))
             row))
         (or rows [])))
 
@@ -765,6 +776,16 @@
    resume in one place: the client learns the real cursor from the
    `subscription.ready` echo, so it recovers on the very next reconnect.
 
+   A cursor BELOW the ring's floor (`state/replay-floor`) is the sentinel too.
+   The ring is bounded, so ONE long turn evicts thousands of its own frames: a
+   client that dropped out mid-turn resumes at a cursor whose neighbourhood is
+   gone, and `seq > cursor` answers the surviving TAIL — deltas for blocks whose
+   `content.block.started` was evicted, activity for forms it never saw opened —
+   megabytes of it, and a partial picture neither side can detect. Rewinding
+   replays the running turn WHOLE, exactly what a fresh join is served, and
+   falls back to the live tail when nothing is running so the durable transcript
+   fills the history in.
+
    Shared by every session stream the daemon serves, so `/v1/events?sids=…` and the
    fleet feed resolve a cursor identically."
   ^long [sid requested]
@@ -772,9 +793,12 @@
         (long requested)
 
         current
-        (long (state/current-seq sid))]
+        (long (state/current-seq sid))
 
-    (if (or (neg? requested) (> requested current))
+        floor
+        (long (state/replay-floor sid))]
+
+    (if (or (neg? requested) (> requested current) (< requested floor))
       (long (or (state/running-turn-start-cursor sid) current))
       requested)))
 
@@ -2218,12 +2242,19 @@
 
 (defn- soul-handler
   [request]
-  (let [sid (path-sid request)]
+  (let [sid
+        (path-sid request)
+
+        include-queued?
+        (= "queued" (get-in request [:query-params "include"]))]
+
     (if-let [soul (some-> sid
                           state/soul)]
       (json-response (cond-> soul
-                       (= "queued" (get-in request [:query-params "include"]))
-                       (assoc :queued_turns (state/list-queued-turns sid))))
+                       include-queued?
+                       (assoc :queued_turns
+                         (state/list-queued-turns sid) :queue-paused
+                         (state/queue-paused-info sid))))
       (session-404 (get-in request [:path-params :sid])))))
 
 (defn- patch-session-handler
@@ -2626,8 +2657,10 @@
         (= "queued" (get-in request [:query-params "status"]))]
 
     (if (and sid (state/soul sid))
-      (json-response {:turns
-                      (if queued-only? (state/list-queued-turns sid) (state/list-turns sid))})
+      (json-response
+        (cond-> {:turns (if queued-only? (state/list-queued-turns sid) (state/list-turns sid))}
+          queued-only?
+          (assoc :queue-paused (state/queue-paused-info sid))))
       (session-404 (get-in request [:path-params :sid])))))
 
 (defn- get-turn-handler
@@ -2971,19 +3004,26 @@
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- turn-attachments-handler
-  "GET /v1/sessions/:sid/turns/:tid/attachments — the inline images a USER sent
-   with one turn: `{\"attachments\": [{filename, media_type, base64}, …]}`.
+  "GET /v1/sessions/:sid/turns/:tid/attachments — the inline media a USER sent
+   with one turn. `?transcription_only=true` omits the large base64 body when a
+   client already has the bytes and is only collecting local speech results.
 
    The live rail deliberately ships byte-free chips, and a turn's persisted row
    only exists once it lands, so before this endpoint the only copy of a
-   still-running turn's pictures was the sending client's own memory — an app
-   restart, or a second device, painted the message with its images missing.
-   The gateway has held them the whole time (registry entry while in flight,
-   attachment store afterwards); this hands them back on demand, which is why it
+   still-running turn's media was the sending client's own memory — an app
+   restart, or a second device, painted the message with its media missing.
+   The gateway has held it the whole time (registry entry while in flight,
+   attachment store afterwards); this hands it back on demand, which is why it
    is a SEPARATE endpoint and not a fatter turn row."
   [request]
   (if-let [sid (path-sid request)]
-    (json-response {:attachments (vec (state/turn-attachments sid (path-tid request)))})
+    (let [rows (state/turn-attachments sid (path-tid request))
+          refreshed (audio-transcribe/request-attachments! (wire/->engine rows))
+          response (if (= "true" (query-str request "transcription_only"))
+                     (mapv #(dissoc % :base64) refreshed)
+                     refreshed)]
+
+      (json-response {:attachments response}))
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- session-model-handler

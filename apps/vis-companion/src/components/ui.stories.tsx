@@ -52,6 +52,7 @@ import {
   HeaderMeta,
   HeaderTally,
   HeaderTitle,
+  MachineGap,
   MachineMark,
   MachineProjectsButton,
   MachineSwitcher,
@@ -62,7 +63,6 @@ import {
   ProjectStatusCounts,
   PullToSearchHint,
   RowDisclosure,
-  SectionGap,
   SectionHeader,
 } from './SessionNavigator';
 
@@ -196,7 +196,7 @@ export const Chips: Story = {
       </Group>
       <Group of="Band furniture">
         <BandLabel>Recent</BandLabel>
-        <SectionHeader rule="Machines">Machines</SectionHeader>
+        <SectionHeader>Machines</SectionHeader>
       </Group>
     </Sheet>
   ),
@@ -491,11 +491,12 @@ export const Bands: Story = {
         <HeaderRenameDemo />
         <PagerDemo />
       </Group>
-      <Group of="The rule between two sections, which is paper and not a line">
+      <Group of="What separates one machine from the next, which is distance and not a line">
         <div className="w-full">
-          <SectionHeader rule="Machines">Machines</SectionHeader>
-          <SectionGap />
+          <SectionHeader>Machines</SectionHeader>
           <BandLabel>Recent</BandLabel>
+          <MachineGap />
+          <BandLabel>Another machine</BandLabel>
         </div>
       </Group>
     </Sheet>

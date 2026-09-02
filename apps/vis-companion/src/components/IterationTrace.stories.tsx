@@ -3,6 +3,7 @@ import {
   STORY_EXCHANGE_TURN,
   STORY_TURN_ITERATIONS,
   STORY_TURN_ITERATIONS_ACTIVITY,
+  STORY_TURN_ITERATIONS_LONG,
   STORY_TURN_ITERATIONS_SETTLED,
 } from "../dev/story-data";
 import {
@@ -77,6 +78,20 @@ export const SingleStep: Story = {
 /** A step that only called: no reasoning above it, and no hole in the thread either. */
 export const NoReasoning: Story = {
   args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED.slice(1, 2) },
+};
+
+/**
+ * THE SAME THREAD WHEN THE TURN RAN FOR AN HOUR.
+ *
+ * A trace paints its LAST steps and cuts the rest behind the transcript's own
+ * rule, because a turn with a thousand steps in it is not a thread any more —
+ * it is a distance. What to look at: the rule reads as a CUT with the count
+ * standing in it, the same one earlier turns are folded behind, and the steps
+ * under it are the ones the turn ENDED on. Pressing it hands the whole turn
+ * back, a chunk per frame.
+ */
+export const Folded: Story = {
+  args: { live: false, whole: false, iterations: STORY_TURN_ITERATIONS_LONG },
 };
 
 /**

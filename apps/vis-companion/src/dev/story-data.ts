@@ -1102,6 +1102,26 @@ export const STORY_TURN_ITERATIONS_SETTLED: TranscriptIteration[] = STORY_TURN_I
 );
 
 /**
+ * A LONG turn — the one the fold exists for.
+ *
+ * One turn of a real session held 1,116 steps, and painted whole it measured
+ * 107,090 px and 23,806 DOM nodes: 180 screens a reader had to drag through to
+ * reach the answer. 120 steps is enough to see what the fold does — the rule,
+ * the count standing behind it, and the last steps where the reader left them.
+ * Cycled from the settled fixture so the marks alternate and every render of
+ * this sheet is the same one.
+ */
+export const STORY_TURN_ITERATIONS_LONG: TranscriptIteration[] = Array.from(
+  { length: 120 },
+  (_, index) => {
+    const source =
+      STORY_TURN_ITERATIONS_SETTLED[
+        index % STORY_TURN_ITERATIONS_SETTLED.length
+      ];
+    return { ...source, id: `long-i${index}`, position: index };
+  },
+);
+/**
  * ONE EXCHANGE — what was asked, and the turn that answered it.
  *
  * The only fixture where the human's bubble and the machine's thread are on
@@ -1343,3 +1363,175 @@ export const STORY_PROVIDER_ERRORS: ContentBlock[] = [
     },
   ),
 ];
+
+
+/**
+ * THE FLEET A LIST STORY READS, AND IT IS A GATEWAY, NOT A PROP.
+ *
+ * `SessionsScreen` builds its own `GatewayClient` per paired machine, so the one seam a
+ * story can hold is `fetch` — the same seam the screen's own tests hold
+ * (`screens/sessions-screen-harness.tsx`). Everything above it is production: the project
+ * overview, the keyset window a project page is cut from, and the rows themselves.
+ */
+export interface StoryProject {
+  root: string;
+  /** What the gateway named the folder, `''` when nothing did. */
+  name: string;
+  projectId: string;
+  rows: Session[];
+}
+
+/**
+ * The list prints WHEN a row last moved (`timeLabel`), against the reader's own clock, so
+ * a fleet frozen in 2030 photographs every row as a full date with a year — a shape the
+ * product only ever shows for history a year old. The fixture is therefore anchored to
+ * the clock the frame is taken on and offset in fixed minutes: derived, never random,
+ * and it paints the relative labels the screen really ships.
+ */
+const STORY_FLEET_NOW = Date.now();
+
+function fleetRow(
+  root: string,
+  id: string,
+  title: string,
+  minutesAgo: number,
+  turns: number,
+  state: 'idle' | 'running' | 'awaiting' = 'idle',
+): Session {
+  const at = new Date(STORY_FLEET_NOW - minutesAgo * 60_000).toISOString();
+  return {
+    id,
+    title,
+    status: state === 'idle' ? 'idle' : 'running',
+    live: state !== 'idle',
+    current_turn_id: state === 'idle' ? null : `turn-${id}`,
+    is_awaiting_input: state === 'awaiting',
+    favorite_rank: null,
+    turn_count: turns,
+    created_at: at,
+    modified_at: at,
+    server_time_ms: STORY_FLEET_NOW,
+    workspace: { root },
+  };
+}
+
+/** Four checkouts on one machine — the shape the list is read in every day. */
+export const STORY_FLEET_PROJECTS: StoryProject[] = [
+  {
+    root: '~/rewrite',
+    name: 'uberworkspace',
+    projectId: 'project-rewrite',
+    rows: [
+      fleetRow('~/rewrite', 'fd3c03f9', STORY_SESSION.title, 1, 61, 'running'),
+      fleetRow('~/rewrite', '41d78df4', 'Scrolling up in a long session is 180 screens', 14, 118, 'awaiting'),
+      fleetRow('~/rewrite', '9c1e77ab', 'Keep the running placeholder out of the render window', 52, 24),
+      ...Array.from({ length: 110 }, (_, index) =>
+        fleetRow(
+          '~/rewrite',
+          `history-${String(index + 4).padStart(3, '0')}`,
+          `Rewrite history ${index + 4}`,
+          96 + index * 17,
+          (index % 41) + 1,
+        ),
+      ),
+    ],
+  },
+  {
+    root: '~/svar',
+    name: 'svar',
+    projectId: 'project-svar',
+    rows: [
+      fleetRow('~/svar', '6ba99088', 'Routing falls back to the coding plan on 429', 38, 31, 'running'),
+      fleetRow('~/svar', 'd41ab7c5', 'Structured output refuses a partial object', 210, 17),
+      fleetRow('~/svar', '8c02e6f1', 'Provider cache metrics are transport-independent', 640, 22),
+      fleetRow('~/svar', 'f93b18a0', 'Retry budget per route, not per call', 1_020, 5),
+    ],
+  },
+  {
+    root: '~/work/tools/spel',
+    name: 'spel',
+    projectId: 'project-spel',
+    rows: [
+      fleetRow('~/work/tools/spel', '4a7c9d63', 'Content boundaries in the snapshot output', 155, 14),
+      fleetRow('~/work/tools/spel', '17e6b02f', 'Wait for copy the story owns, never the shell', 480, 9),
+      fleetRow('~/work/tools/spel', 'ba3f5e41', 'Device emulation before the first navigation', 1_320, 3),
+    ],
+  },
+  {
+    root: '~/infrastructure',
+    name: 'infrastructure',
+    projectId: 'project-infra',
+    rows: [
+      fleetRow('~/infrastructure', '2f8d47b9', 'Rotate the relay signing key', 2_600, 11),
+      fleetRow('~/infrastructure', 'cc51a30e', 'Ingress health check answers before the unit starts', 4_100, 2),
+    ],
+  },
+];
+
+/** The machine those projects live on, in the shape the screen takes its fleet in. */
+export const STORY_FLEET_CONNS: GatewayConn[] = [STORY_GATEWAYS[0]];
+
+/** A cursor NAMES a row, the way the gateway's own keyset does (`state/->session-cursor`). */
+const fleetCursor = (row: Session) => `2:0:${row.id}`;
+
+/**
+ * The gateway those projects are served by: `/v1/projects/overview` and the one
+ * `/v1/sessions` window, cut by `root=`, `limit=` and `after=` exactly as
+ * `state/list-sessions-page` cuts it. Deterministic, and it never touches the network.
+ */
+export function storyFleetFetch(
+  projects: StoryProject[] = STORY_FLEET_PROJECTS,
+): typeof fetch {
+  const all = projects.flatMap((project) => project.rows);
+  const isLive = (row: Session) => row.live === true;
+  const isAwaiting = (row: Session) => row.is_awaiting_input === true;
+  const overview = {
+    projects: projects.map((project) => ({
+      root: project.root,
+      project_id: project.projectId,
+      name: project.name,
+      session_count: project.rows.length,
+      live_count: project.rows.filter(isLive).length,
+      awaiting_count: project.rows.filter(isAwaiting).length,
+      last_activity_ms: STORY_FLEET_NOW,
+    })),
+    project_count: projects.length,
+    session_count: all.length,
+    live_count: all.filter(isLive).length,
+    awaiting_count: all.filter(isAwaiting).length,
+    server_time_ms: STORY_FLEET_NOW,
+  };
+  const answer = (body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ETag: '"story-fleet"' },
+    });
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const href =
+      typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const url = new URL(href);
+    if (url.pathname === '/v1/projects/overview') return answer(overview);
+    if (url.pathname === '/v1/sessions' && (init?.method ?? 'GET') === 'GET') {
+      const root = url.searchParams.get('root');
+      const listed = root
+        ? (projects.find((project) => project.root === root)?.rows ?? [])
+        : all;
+      const limit = Number(url.searchParams.get('limit') ?? listed.length) || listed.length;
+      const after = url.searchParams.get('after');
+      const from = after
+        ? listed.findIndex((row) => fleetCursor(row) === after) + 1
+        : 0;
+      const window = after && from === 0 ? [] : listed.slice(from, from + limit);
+      const last = window[window.length - 1];
+      const hasMore = from + window.length < listed.length;
+      return answer({
+        sessions: window,
+        total: listed.length,
+        has_more: hasMore,
+        next_cursor: hasMore && last ? fleetCursor(last) : null,
+        ...(after || root ? {} : { overview }),
+      });
+    }
+    return answer({});
+  }) as typeof fetch;
+}

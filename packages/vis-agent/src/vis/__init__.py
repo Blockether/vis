@@ -283,8 +283,8 @@ def provider(
         "id": id,
         "label": label,
         "preset": dict(preset or {}),
-        # MANAGED: the runtime issues this provider's credential, so vis never
-        # asks for an API key and never needs an "Add provider" step for it.
+        # MANAGED owns automatic binding/configuration. Credential policy remains
+        # independent: auth_fn may obtain a provider-owned token on first use.
         "is_managed": bool(is_managed),
         "get_token_fn": get_token_fn,
         "detect_fn": detect_fn,

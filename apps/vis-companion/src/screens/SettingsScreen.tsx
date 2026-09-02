@@ -209,13 +209,13 @@ export function SettingsDialog({
           <SettingsColumn
             title="Machines"
             action={
-              /* THE COLUMN'S ONE VERB, AND IT WEARS THE ONLY FILL IN THE DIALOG.
-                 This is the top level here — the bands nested under a machine
-                 (Providers, Notifications, MCP servers) carry the same disc in the
-                 quiet face, so a panel inside a machine can never read as a second
-                 MACHINES band. */
+              /* THE COLUMN'S ONE VERB ENDS ITS BAND AS A BARE MARK. The title already
+                 names what the plus adds; a filled disc repeated the same emphasis as
+                 the dialog close above it. `edge` spends the header's trailing gutter
+                 as hit area and lands the stroke nearer the physical right edge. */
               <IconButton
-                variant="primary"
+                variant="quiet"
+                edge
                 label="Add a machine"
                 title="Add a machine"
                 onClick={() => setIsAdding(true)}

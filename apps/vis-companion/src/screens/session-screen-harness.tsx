@@ -54,6 +54,7 @@ export function renderSessionScreen({
     // Everything the screen reads from its cache on the first render.
     cachedSession: () => session,
     cachedQueuedTurns: () => [],
+    cachedQueuePaused: () => null,
     cachedSentAttachments: () => [],
     // Everything it may ask the gateway for while the test looks at it.
     session: () => Promise.resolve(session),
@@ -62,6 +63,7 @@ export function renderSessionScreen({
     transcriptIfMoved: () => Promise.resolve(null),
     capabilities: () => Promise.resolve(null),
     voiceModel: () => Promise.resolve(null),
+    queuedTurns: () => Promise.resolve({ turns: [], paused: null }),
     turnTrace: () => Promise.resolve(null),
     submitTurn: () => Promise.resolve(null),
     cancelTurn: () => Promise.resolve(null),

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { act, screen, waitFor } from "@testing-library/react";
 
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
@@ -139,6 +139,63 @@ describe("a running transcript row without canonical session state", () => {
       await screen.findByText("This answer was already visible."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Vis is waiting for an update/)).toBeNull();
+  });
+
+  it("shows a gateway-local transcript without replacing the running recording", async () => {
+    const bytes = "AAAAIGZ0eXBNNEEg";
+    const fetchTurnAttachments = vi.fn().mockResolvedValue([
+      {
+        id: "stored-audio",
+        filename: "memo.m4a",
+        media_type: "audio/mp4",
+        base64: bytes,
+        transcription: "gateway local words",
+      },
+    ]);
+    renderSessionScreen({
+      session: sessionFixture({
+        status: "running",
+        live: true,
+        current_turn_id: "audio-turn",
+        running_request: "listen",
+      }),
+      client: {
+        cachedRunningTurn: () => ({
+          turn: {
+            id: "audio-turn",
+            request: "listen",
+            answer: "",
+            iterations: [],
+            startedAt: Date.now(),
+            status: "running",
+            attachments: [
+              {
+                filename: "memo.m4a",
+                media_type: "audio/mp4",
+                base64: bytes,
+              },
+            ],
+          },
+          seq: 1,
+        }),
+        cachedTranscript: () => [],
+        transcript: () => new Promise(() => {}),
+        fetchTurnAttachments,
+      },
+    });
+
+    await waitFor(() =>
+      expect(fetchTurnAttachments).toHaveBeenCalledWith(
+        "s1",
+        "audio-turn",
+        expect.any(AbortSignal),
+        true,
+      ),
+    );
+    const transcript = await screen.findByText("TRANSCRIPTION");
+    act(() => transcript.click());
+    expect(screen.getByText(/gateway local words/)).toBeInTheDocument();
+    expect(document.querySelectorAll("audio")).toHaveLength(1);
   });
 
   // Regression, same report: a submit paints an optimistic bubble with nothing

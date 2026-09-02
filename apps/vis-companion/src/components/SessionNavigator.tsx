@@ -22,12 +22,22 @@ const HEADER_TYPE = 'text-title';
 /**
  * The band every header in the list stands in. It sticks; nothing above it does.
  *
- * Both heights are that stack plus air, minus the rule the band sends out — 52 - 2 -
- * 34 and 48 - 2 - 34 — so whatever the stack carries decides them. That is exactly
- * how the pointer column reached zero while it still spelled 36.
+ * IT IS THE PROJECT'S EDGE. Reported (paraphrased: the projects should have some
+ * separation from each other, a border or something), air alone was not enough: a run of
+ * the list's own paper between two projects reads as a pause inside one list, not as the
+ * end of one repository and the start of the next. So the band takes the boundary back —
+ * one hairline coming in, and the band's own paper under the name — and it stays a BAND,
+ * never a card: full bleed, no corner, no second edge, nothing drawn under the rows.
+ *
+ * The rule sits on TOP for the same reason. A line above a name says the passage begins
+ * here; the same line under it only repeats the hairline that separates two rows.
+ *
+ * Both heights are that stack plus air, minus the rule the band takes in — 52 - 1 - 34
+ * and 48 - 1 - 34 — so whatever the stack carries decides them. That is exactly how the
+ * pointer column reached zero while it still spelled 36.
  */
 const HEADER_BAND =
-  'flex min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 bg-level-project';
+  'flex min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 border-t border-dialog-edge bg-level-project';
 
 /** The session list's pull gesture reports the action a release would take. */
 export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<HTMLDivElement> }) {
@@ -88,6 +98,7 @@ export const LIST_EDGE_END = 'pr-3 sm:pr-4';
 // 13px from the paper on its other side. `gap-2` still separates two controls from
 // each other, which is the only distance this cluster has to invent.
 const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-3 sm:pr-4';
+const HEADER_TRAIL = 'flex shrink-0 items-center gap-2 self-start pr-3 pt-1 sm:pr-4';
 
 /**
  * THE MARK COLUMN, and every band AND every row in the list reserves it.
@@ -106,44 +117,34 @@ const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-3 sm:pr-4'
  */
 export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
 
-export function SectionHeader({
-  rule,
-  children,
-}: {
-  /**
-   * A border-colour class for the band's OUTGOING rule, when that rule carries
-   * meaning. It replaces the hairline rather than joining it: a coloured line beside
-   * a grey one is the double border this list was reported for, and the band only
-   * ever draws one.
-   */
-  rule?: string;
-  children: ReactNode;
-}) {
-  const edge = rule ? `border-b-2 ${rule}` : 'border-b border-dialog-edge';
-  return <header className={`${HEADER_BAND} ${edge}`}>{children}</header>;
+/**
+ * One heading, standing in the band that carries the boundary (`HEADER_BAND`).
+ *
+ * It takes no rule argument. The band draws the same edge for every section it heads: a
+ * coloured line for one of them was a second vocabulary for "a group starts here", and
+ * the band that wore it — the fleet-wide pin for runs waiting on an answer — is gone.
+ * Every session is in a project, so the list has ONE kind of section.
+ */
+export function SectionHeader({ children }: { children: ReactNode }) {
+  return <header className={HEADER_BAND}>{children}</header>;
 }
 
 /**
- * THE TROUGH between two sections, and the only thing between them that is not a
- * line.
+ * THE AIR BEFORE A NEW MACHINE, and it is air: this component PAINTS NOTHING.
  *
- * Reported ("there is no visual differentiation between the projects and it all
- * looks like kind of the same thing"): the last row of one project and the header
- * of the next were separated by a single hairline, the same hairline that separates
- * two sessions inside one project — one pixel of grey asked to mean both "next row"
- * and "different repository". A boundary that matters is seen before it is read, so
- * it is 8px of the machine's own paper (`bg-level-machine`, `L 0.905` against the
- * card's `0.96`): each project reads as a slab cut from the paper its machine owns, and
- * above a fleet that machine's hue runs down the side of the gap, because it owns both
- * sides of it.
+ * Two projects have nothing between them at all. The band that opens a project already
+ * carries the boundary — its own paper, and the rule that comes in over the name
+ * (`HEADER_BAND`) — so the 16px that used to precede it was an unpainted strip closed by
+ * a hairline at each end, which reads as an empty ROW of the list. Reported twice as a
+ * hole. A pause that separates nothing a line has not already separated is not structure.
  *
- * It is 8px and not a margin: a gap collapses, a slab does not, and this one has to
- * PAINT to be a boundary at all. On a desk it paints the PAGE instead: the projects
- * it separates stand there as sheets on that page rather than as slabs cut out of
- * one card, and the paper between two objects belongs to neither of them.
+ * A MACHINE is the one break the bands cannot say, because the first project of the next
+ * computer wears exactly the band a project inside this one wears. 32px of the list's own
+ * paper says it without a second colour, a rail or a legend. It is a `div` and not a
+ * margin because a margin collapses and this distance is structural.
  */
-export function SectionGap() {
-  return <div aria-hidden="true" className="h-2 bg-level-machine sm:bg-page" />;
+export function MachineGap() {
+  return <div aria-hidden="true" className="h-8" />;
 }
 
 /**
@@ -282,35 +283,34 @@ export function HeaderTitle({
     // The glyph centres against the STACK (`items-center`), which is the whole block
     // it marks — a fold owns both lines of the name it folds. Baseline-aligning the
     // mark alongside them drops a 10px block below the ink it belongs to.
-    <span className={`flex min-w-0 flex-1 items-center gap-2 ${LIST_EDGE}`}>
+    <span className={`flex min-w-0 flex-1 items-center gap-2 overflow-hidden ${LIST_EDGE}`}>
       {/* The column is RESERVED, marked or not: the machine header wears a hue
           block here and the project header below it wears nothing, and a column
           that only exists when it is filled put the machine's name at x=36 and
           the project's at x=14 on a 390px iPhone — the deeper row starting
           further left, which is hierarchy read backwards. */}
       <span className={LIST_MARK}>{mark}</span>
-      {/* `items-start` keeps each line as wide as its own ink and no wider: the
-          name stays a word-sized press target rather than a full-width one, and
-          both lines still truncate, because shrink-to-fit is capped by the column
-          the trailing cluster leaves. */}
-      <span className="flex min-w-0 flex-col items-start">
+      {/* The column takes exactly what the trailing cluster leaves. `items-start` keeps
+          each line as wide as its own ink and no wider, while `max-w-[100%]` caps that
+          ink at the column so both lines truncate before the controls. */}
+      <span className="flex min-w-0 flex-1 flex-col items-start overflow-hidden">
         {onRename ? (
           <EditableName
-            face={`min-w-0 truncate bg-transparent p-0 font-mono font-bold text-white ${HEADER_TYPE}`}
+            face={`max-w-[100%] min-w-0 truncate bg-transparent p-0 font-mono font-bold text-white ${HEADER_TYPE}`}
             label={renameLabel ?? 'Rename'}
             value={typeof name === 'string' ? name : ''}
             onCommit={onRename}
           />
         ) : (
           <span
-            className={`min-w-0 truncate font-mono font-bold text-white ${HEADER_TYPE}`}
+            className={`max-w-[100%] min-w-0 truncate font-mono font-bold text-white ${HEADER_TYPE}`}
           >
             {name}
           </span>
         )}
         {qualifier && (
           <span
-            className="min-w-0 truncate font-mono text-chip text-dialog-hint"
+            className="max-w-[100%] min-w-0 truncate font-mono text-ui text-dialog-hint mouse:text-meta"
             title={qualifierTitle}
           >
             {qualifier}
@@ -486,7 +486,7 @@ export function Pager({
         aria-hidden={can ? undefined : true}
         tabIndex={can ? undefined : -1}
       >
-        <ChevronIcon back={isBack} className="size-4" />
+        <ChevronIcon back={isBack} className="size-3.5" />
       </IconButton>
     );
   };
@@ -542,7 +542,7 @@ export function Pager({
             at `sm`, where a number is a tap and not a squeeze between two others. */}
         <span
           aria-hidden="true"
-          className="min-w-14 px-1 text-center font-mono text-meta text-dialog-hint tabular-nums sm:hidden"
+          className="min-w-12 px-1 text-center font-mono text-chip text-dialog-hint tabular-nums sm:hidden"
         >
           {page} / {pageCount}
         </span>
@@ -587,8 +587,15 @@ export function Pager({
  * edge; the session rows below them then ran their disclosure flush to the screen, a
  * third distance. One component decides all of it now.
  */
-export function HeaderActions({ children }: { children: ReactNode }) {
-  return <span className={LIST_TRAIL}>{children}</span>;
+export function HeaderActions({
+  children,
+  align = 'center',
+}: {
+  children: ReactNode;
+  /** Header bands start controls on their first line; rows center them across the cell. */
+  align?: 'center' | 'start';
+}) {
+  return <span className={align === 'start' ? HEADER_TRAIL : LIST_TRAIL}>{children}</span>;
 }
 
 /**
@@ -632,7 +639,7 @@ export const RowDisclosure = forwardRef<
 /** A header's own quiet voice: what it counts, in the list's monospace hint ink. */
 export function HeaderMeta({ children }: { children: ReactNode }) {
   return (
-    <span className="flex items-center gap-2 font-mono text-chip text-dialog-hint">
+    <span className="flex items-center gap-2 font-mono text-ui text-dialog-hint mouse:text-meta">
       {children}
     </span>
   );
@@ -672,12 +679,15 @@ export function ProjectStatusCounts({
   const running = Math.max(0, live - awaiting);
   const statuses = [
     running > 0
-      ? { label: `${running} live`, tone: 'text-ok', dot: 'animate-pulse bg-ok motion-reduce:animate-none' }
+      ? { label: `${running} live`, tone: 'text-ok-ink', dot: 'animate-pulse bg-ok motion-reduce:animate-none' }
       : null,
     awaiting > 0
       ? {
           label: `${awaiting} needs input`,
-          tone: 'text-warn-strong',
+          // The amber INK is `--warning`; `--warning-border` is an EDGE and misses 4.5:1
+          // as 10px text (measured 4.37:1 on the light papers). The dot keeps it: a mark
+          // is not read, and it pairs with the row chip's own dot.
+          tone: 'text-warn',
           dot: 'animate-pulse bg-warn-strong motion-reduce:animate-none',
         }
       : null,
@@ -863,14 +873,18 @@ export function MachineTab({
 }
 
 /**
- * The primary verb of the session list: start one session in this project.
+ * The verb of one project: start a session in it.
  *
- * A project header repeats, so the resting control is one yellow plus rather
- * than the same phrase on every row. The face stays on the compact 32px header
- * rhythm while `Button` preserves a 44px touch target outside the painted box.
- * `where` remains in the tooltip and `machine` in the accessible name.
- * While creation is in flight, the same disc stays put and its plus becomes a
- * familiar turning ring; progress must not make one project header change width.
+ * A project header REPEATS, so this control repeats with it — and a filled amber disc
+ * repeated four times is four primary verbs on one screen, which is the count the design
+ * contract allows once. The screen's one filled verb stays where the screen itself begins;
+ * this repeating plus is amber INK on the band's own paper, enough to say "create" without
+ * turning every project boundary into a primary action.
+ *
+ * The face stays on the compact 32px header rhythm while `IconButton` preserves a 44px
+ * touch target outside the painted box. `where` remains in the tooltip and `machine` in
+ * the accessible name. While creation is in flight, the same disc stays put and its plus
+ * becomes a familiar turning ring; progress must not make one project header change width.
  */
 export function NewSessionButton({
   machine,
@@ -889,7 +903,7 @@ export function NewSessionButton({
   const title = where ? `New session on ${machine}, in ${where}` : label;
   return (
     <IconButton
-      variant="primary"
+      variant="quiet"
       density="compact"
       disabled={disabled || isBusy}
       aria-busy={isBusy || undefined}
@@ -898,7 +912,11 @@ export function NewSessionButton({
       title={title}
       onClick={(event) => onPress(event.currentTarget)}
     >
-      {isBusy ? <LoadingIcon className="size-4" /> : <PlusIcon className="size-4" />}
+      {isBusy ? (
+        <LoadingIcon className="size-4" />
+      ) : (
+        <PlusIcon className="size-4 text-accent-ink" />
+      )}
     </IconButton>
   );
 }

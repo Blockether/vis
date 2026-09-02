@@ -1751,6 +1751,7 @@ export function SessionScreen({
         row = await client.session(sid, controller.signal, true);
         setSession(row);
         acceptQueueBacklog(client.cachedQueuedTurns(sid) ?? [], backlogReadAt);
+        setQueuePaused(client.cachedQueuePaused(sid));
       } catch {
         /* Unreachable gateway: fall through, the transcript read reports it. */
       }
@@ -1859,7 +1860,8 @@ export function SessionScreen({
         const backlogReadAt = Date.now();
         const backlog = await client.queuedTurns(sid);
         if (cancelled) return;
-        acceptQueueBacklog(backlog, backlogReadAt);
+        acceptQueueBacklog(backlog.turns, backlogReadAt);
+        setQueuePaused(backlog.paused);
       } catch {
         /* Keep the last known backlog; the next tick retries. */
       }
@@ -3645,9 +3647,10 @@ export function SessionScreen({
     ).trim();
     const request =
       expandFileMentions(expandPastePlaceholders(authoredRequest, pastes)) ||
-      (attachments.length ? "Please inspect the attached image(s)." : "");
-    const displayRequest =
-      collapsePastePlaceholders(authoredRequest, pastes) || request;
+      (attachments.length ? "Please inspect the attached file(s)." : "");
+    // The fallback exists only to give the model a non-blank turn. The transcript
+    // shows what the human actually authored: for attachment-only turns, the media.
+    const displayRequest = collapsePastePlaceholders(authoredRequest, pastes);
     if (!request || voicePhase !== "idle") return;
     // Capture the activation that authored this turn before any network await.
     // Leave/session navigation invalidates it, so a late POST response cannot
@@ -4152,18 +4155,18 @@ export function SessionScreen({
       : undefined,
   };
   const title = session?.title?.trim() || "Chat";
-  const visibleStart = Math.max(0, turns.length - visibleTurnCount);
-  // What is mounted this frame: the window, clamped by the hydration ramp.
-  const renderStart = Math.max(visibleStart, turns.length - hydratedTurnCount);
-  // Everything older than the first bubble on screen, wherever it lives.
-  const earlierTotal = visibleStart + earlierRemaining;
   const runningTurnId = runningTurn?.id;
-  // While a running turn streams, drop the transcript's own copy of that same turn
-  // (a running turn is persisted as a bare 'running' row) so it isn't rendered
-  // twice — the running-turn bubble owns it until `settle` confirms the finished row.
-  const visibleTurns = useMemo(
+  // Which turns can be PAINTED at all, measured BEFORE the render window.
+  //
+  // A running turn is ALSO persisted as a bare 'running' row, and that row is
+  // never drawn — the running-turn bubble owns it. Counting it in `turns.length`
+  // still slid the window by one the moment the gateway wrote it, about five
+  // seconds after send: the oldest turn on screen was unmounted, its markdown and
+  // highlighting thrown away, and the transcript lost that turn's pixels under a
+  // reader pinned to the end. That read as the whole screen flashing mid-send.
+  const paintableTurns = useMemo(
     () =>
-      turns.slice(renderStart).filter((turn) => {
+      turns.filter((turn) => {
         // A persisted 'running' row is a placeholder, not a result. Painted from
         // the cache — reopening a session you already left — it resurrects the
         // working spinner and its elapsed clock for a turn that has since been
@@ -4176,7 +4179,19 @@ export function SessionScreen({
         if (isRunningRow(turn)) return false;
         return true;
       }),
-    [turns, renderStart, runningTurn, runningTurnId, turnsFresh],
+    [turns, runningTurn, runningTurnId, turnsFresh],
+  );
+  const visibleStart = Math.max(0, paintableTurns.length - visibleTurnCount);
+  // What is mounted this frame: the window, clamped by the hydration ramp.
+  const renderStart = Math.max(
+    visibleStart,
+    paintableTurns.length - hydratedTurnCount,
+  );
+  // Everything older than the first bubble on screen, wherever it lives.
+  const earlierTotal = visibleStart + earlierRemaining;
+  const visibleTurns = useMemo(
+    () => paintableTurns.slice(renderStart),
+    [paintableTurns, renderStart],
   );
   // Memoized rows keep their element IDENTITY across composer keystrokes
   // (prompt/caret state), so React bails out of the whole transcript subtree
@@ -4208,31 +4223,52 @@ export function SessionScreen({
   }, [loadTranscript]);
   const liveViews = useLiveViews(client, subscriptions, sid, revealFiledLiveRecord);
   const watching = liveViews.at(-1)?.title ?? null;
-  // The sender's own copy of the pictures dies with the process. Ask the gateway
-  // for the bytes of a running turn that has none in hand — a restarted app, or a
-  // second device, has no other source until the turn lands and is refetched.
+  // The sender's own copy of a recording has its bytes but not the local transcript
+  // the gateway started at upload. Revalidate while that transcript is pending; the
+  // player below keeps its DOM identity while only the words underneath catch up.
   const [fetchedRunningTurnAttachments, setFetchedRunningTurnAttachments] = useState<{
     id: string;
     rows: GatewayAttachment[];
   } | null>(null);
   const runningTurnAttachments = runningTurn?.attachments;
+  const runningTurnNeedsAttachmentRefresh =
+    !runningTurnAttachments?.length ||
+    runningTurnAttachments.some(
+      (row) => row.media_type?.startsWith("audio/") && !row.transcription,
+    );
   useEffect(() => {
-    if (!runningTurnId || runningTurnAttachments?.length) return;
-    if (client.cachedSentAttachments(sid, runningTurnId)?.length) return;
+    if (!runningTurnId || !runningTurnNeedsAttachmentRefresh) return;
     const controller = new AbortController();
     let cancelled = false;
-    void client
-      .fetchTurnAttachments(sid, runningTurnId, controller.signal)
-      .then((rows) => {
-        if (!cancelled && rows.length)
-          setFetchedRunningTurnAttachments({ id: runningTurnId, rows });
-      })
-      .catch(() => {});
+    let timer: number | undefined;
+    const refresh = async () => {
+      try {
+        const rows = await client.fetchTurnAttachments(
+          sid,
+          runningTurnId,
+          controller.signal,
+          true,
+        );
+        if (cancelled || !rows.length) return;
+        setFetchedRunningTurnAttachments({ id: runningTurnId, rows });
+        const pending = rows.some(
+          (row) =>
+            row.media_type?.startsWith("audio/") &&
+            !row.transcription &&
+            (!row.transcription_status || row.transcription_status === "pending"),
+        );
+        if (pending) timer = window.setTimeout(refresh, 1000);
+      } catch {
+        // A reconnect or transcript reload gets another chance; the recording remains playable.
+      }
+    };
+    void refresh();
     return () => {
       cancelled = true;
       controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [client, sid, runningTurnId, runningTurnAttachments]);
+  }, [client, sid, runningTurnId, runningTurnNeedsAttachmentRefresh]);
 
   const turnRows = useMemo(
     () =>
@@ -4298,11 +4334,12 @@ export function SessionScreen({
     // A screenshot just sent lives only in this device's memory until the turn
     // is persisted: the live rail and the queue tray ship no attachment bytes.
     const liveAttachments =
+      (fetchedRunningTurnAttachments &&
+      fetchedRunningTurnAttachments.id === runningTurnId
+        ? fetchedRunningTurnAttachments.rows
+        : undefined) ??
       runningTurn.attachments ??
-      client.cachedSentAttachments(sid, runningTurn.id) ??
-      (fetchedRunningTurnAttachments?.id === runningTurn.id
-        ? fetchedRunningTurnAttachments?.rows
-        : undefined);
+      client.cachedSentAttachments(sid, runningTurn.id);
     return (
       <div
         className={`${turns.length ? "mt-10 " : ""}${transcriptEnterClass}`}

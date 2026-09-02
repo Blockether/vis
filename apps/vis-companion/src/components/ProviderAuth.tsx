@@ -927,18 +927,13 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
 
   return (
     <>
-      {/* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS. Reported over a screenshot
-          of a machine's settings (paraphrased: make these buttons circles with icons
-          and put them in the headers, the screen is too big): this was a full-width
-          amber slab under the last provider, and Notifications and MCP each carried
-          one too, so one machine spent three landing-page blocks on three verbs
-          pressed once a month. A band already reserves a trailing cell, and a ＋
-          there means "add the thing this band is named after" — the same mark the
-          project band of the sessions list spends on a new session in the project it
-          heads. Quiet rather than amber: this panel is nested INSIDE a machine, and
-          the filled verb of that level is the MACHINES column's own ＋. */}
+      {/* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS. The title supplies the
+          noun, so the plus needs neither a word nor a circular face. `edge` extends its
+          hit area through the trailing gutter and moves the visible stroke toward the
+          panel edge, on the same line as the machine and MCP verbs. */}
       <IconButton
         variant="quiet"
+        edge
         label="Add a provider"
         title="Add a provider to this machine"
         onClick={() => {

@@ -998,11 +998,10 @@ selection.
 
 ### Managed providers
 
-Some providers are not the user's to sign in to: a company gateway mints the token,
-a device policy carries it, the host is already signed in. `is_managed=True`
-(`:provider/is-managed true` in Clojure) declares exactly that — **the runtime
-issues the credential, so Vis never asks a human for one and never makes anyone
-add the provider**.
+Some providers own their complete lifecycle: they bind automatically, define their
+network and models, and keep credentials outside `state.yml`. `is_managed=True`
+(`:provider/is-managed true` in Clojure) declares that **ownership and automatic
+binding**. It does not decide how the provider authenticates.
 
 ```python
 vis.extension(
@@ -1013,28 +1012,56 @@ vis.extension(
             id="corp-gateway",
             label="Corp Gateway",
             is_managed=True,
-            preset={"base_url": "https://llm.internal/v1",
+            preset={"base_url": "https://gateway.example.com/v1",
                     "api_style": "openai",
                     "default_models": ["corp-large", "corp-small"]},
-            get_token_fn=_issued_token,   # where the issued credential comes from
+            get_token_fn=_issued_token,
+            auth_fn=_browser_oauth,  # optional: provider-owned first-use auth
         ),
     ],
 )
 ```
 
-What the flag changes:
+What the flag changes — and what it does not:
 
-| seam | ordinary provider | `is_managed=True` |
-| --- | --- | --- |
-| `auth/start` — `vis-agent providers auth <id>`, the gateway route, the companion | starts an API-key or OAuth flow | refuses with `auth-managed`, so no channel can post a key |
-| auth kind | `api-key` / `oauth` | `managed` |
-| *Add Provider* picker | listed | never listed — there is nothing a human could add |
-| the fleet | appears once someone configures it | **binds itself as soon as the extension loads**, and stands in the model picker beside the configured providers |
-| TUI provider row | offers *Authenticate* | the verb is gone; the row explains the runtime owns the credential |
+| seam | ordinary provider | managed, no `auth_fn` | managed with `auth_fn` |
+| --- | --- | --- | --- |
+| ownership | user config | extension/runtime | extension/runtime |
+| auth kind | `api-key` / `oauth` | `managed` | `oauth` |
+| *Add Provider* | listed | never listed | never listed |
+| fleet | appears after configuration | binds when the extension loads | binds when the extension loads |
+| authentication | configured flow | runtime-issued credential; `auth-managed` | provider-owned interactive flow |
 
-Two slots make it routable: `get_token_fn` (the issued credential) and a `preset`
-with `default_models` (what the picker offers). A managed provider missing either
-still loads — it just has nothing to route to.
+Two slots make it routable: `get_token_fn` and a `preset` with `default_models`.
+With no `auth_fn`, `get_token_fn` reads the credential the runtime already supplies.
+With `auth_fn`, an actual request first calls `get_token_fn`; if no usable token exists,
+Vis runs one provider-owned authentication flow, calls `get_token_fn` again, and resumes
+the request. Concurrent requests share that one flow. A cancelled or failed flow ends
+with an authentication error rather than looping.
+
+For an extension author, the implementation recipe is:
+
+1. Set `is_managed=True`; do not add or ask the user to add a `state.yml` provider entry.
+2. Supply a `preset` with `default_models` and the endpoint defaults the extension owns.
+3. Make `get_token_fn()` a passive credential read. Return `{"token": "..."}` (plus any
+   runtime `api_url`, `llm_headers`, `responses_path` or `api_style`), or
+   `{"token": None}` while signed out. Never launch OAuth from this callback.
+4. When sign-in is required, supply `auth_fn(printer)`. It must complete the interactive
+   flow, persist the credential where `get_token_fn()` can read it, and return `"ok"` or
+   `"already-authenticated"` on success. Use `printer(...)` for instructions the user
+   should see.
+5. Keep `status_fn()` and `limits_fn()` passive too. Put token renewal in
+   `refresh_token_fn()` when the provider supports it.
+
+If an existing managed extension starts login from `get_token_fn`, `status_fn`, or a
+picker hook, move that side effect into `auth_fn`. Check explicit login with
+`vis-agent providers auth <id>`, then make a real model request while signed out to
+verify first-use login and request resumption.
+
+Fleet reads, status probes, startup, and opening a model picker never run `auth_fn`.
+The flow starts only from an authentication action or a request that will use the
+provider. No managed provider creates a provider entry in `state.yml`.
+
 ### Execution model and trust
 
 Extension files run in **trusted Python sessions** — one per file, separate

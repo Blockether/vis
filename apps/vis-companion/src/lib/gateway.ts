@@ -20,6 +20,7 @@ import type {
   ModelPref,
   QueuedAttachment,
   QueuedTurn,
+  QueuePausedInfo,
   ProviderLimits,
   ProviderPreset,
   ProviderStatus,
@@ -606,9 +607,8 @@ function sameJson(a: unknown, b: unknown): boolean {
 /**
  * One page of the session list, pinned to the exact rows its ETag was issued for.
  *
- * The gateway hashes `[total limit root after rows awaiting overview]` into the
- * validator, so a 304 revalidates the whole record — the counts may be reused,
- * not just the rows.
+ * The gateway hashes the whole record it answers with — the rows, the count and the
+ * overview — into the validator, so a 304 revalidates all of it, not just the rows.
  */
 type SessionsWindow = {
   etag: string;
@@ -617,12 +617,6 @@ type SessionsWindow = {
   rows: Session[];
   /** The gateway's own count of the WHOLE list this window is the head of. */
   total: number;
-  /**
-   * The sessions this gateway says are PARKED on an unanswered human-input request,
-   * complete and from OUTSIDE the window (`state/list-sessions-page`). It rides the
-   * same validator as the rows, so a 304 says the demand is unchanged too.
-   */
-  awaiting: Session[];
   /** Stable project and fleet totals, present on the head window only. */
   overview: GatewayOverview | null;
 };
@@ -878,6 +872,16 @@ export function queuedTurnFromWire(row: Record<string, unknown>): QueuedTurn {
   };
 }
 
+/** The gateway-owned hold paired with a queued backlog, or no hold at all. */
+function queuePausedFromWire(value: unknown): QueuePausedInfo | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  return {
+    reason: typeof row.reason === "string" ? row.reason : "turn_failed",
+    held: Math.max(0, Number(row.held ?? 0)),
+  };
+}
+
 function attachmentPayloadBlob(attachment: GatewayAttachment): Blob {
   const encoded = attachment.base64.startsWith("data:")
     ? attachment.base64.slice(attachment.base64.indexOf(",") + 1)
@@ -894,6 +898,8 @@ type AttachmentSource = { blob: Blob; url: string };
 export class GatewayClient {
   readonly base: string;
   private readonly token?: string;
+  /** Last canonical queue hold read with this session's backlog. */
+  private readonly queuePaused = new Map<string, QueuePausedInfo | null>();
   // (session, iteration, index) → the produced artifact's downloaded Blob and its
   // object URL. Text readers consume the Blob directly; media elements consume the
   // URL. One source owns both so neither path downloads or re-reads the other.
@@ -916,8 +922,7 @@ export class GatewayClient {
     string,
     { full: Session[]; windows: Map<string, SessionsWindow> }
   >();
-  /** Backing stores refreshed by the head of every list read. */
-  private parked: Session[] = [];
+  /** Backing store refreshed by the head of every list read. */
   private overview: GatewayOverview | null;
   constructor(conn: GatewayConn) {
     this.base = normalizeBase(conn.url);
@@ -2549,21 +2554,6 @@ export class GatewayClient {
     return readSnapshot<Session[]>(this.snapshotKey("sessions"));
   }
 
-  /**
-   * The sessions this gateway last reported PARKED on an unanswered human-input
-   * request.
-   *
-   * The list is ordered by content time and nothing else, so a parked run sits
-   * wherever it last spoke — in a long fleet, past the end of the window this device
-   * has read. The gateway therefore answers those rows BESIDE the window
-   * (`state/list-sessions-page`) and a screen pins them above the list, instead of an
-   * ordering that lifted them into it and moved every row under the reader the moment
-   * a turn asked for a human or was answered.
-   */
-  parkedSessions(): Session[] {
-    return this.parked;
-  }
-
   /** Last meta row seen for ONE session. */
   cachedSession(sid: string): Session | null {
     return readSnapshot<Session>(this.snapshotKey("session", sid));
@@ -2642,6 +2632,11 @@ export class GatewayClient {
   /** Last queued backlog seen for ONE session. */
   cachedQueuedTurns(sid: string): QueuedTurn[] | null {
     return readSnapshot<QueuedTurn[]>(this.snapshotKey("queued", sid));
+  }
+
+  /** Last queue hold paired with `cachedQueuedTurns`, including an explicit clear. */
+  cachedQueuePaused(sid: string): QueuePausedInfo | null {
+    return this.queuePaused.get(sid) ?? null;
   }
 
   /**
@@ -2730,21 +2725,31 @@ export class GatewayClient {
     sid: string,
     tid: string | undefined,
     signal?: AbortSignal,
+    refresh = false,
   ): Promise<GatewayAttachment[]> {
     if (!tid) return [];
     const cached = this.cachedSentAttachments(sid, tid);
-    if (cached?.length) return cached;
+    if (!refresh && cached?.length) return cached;
     const key = `${sid}\u0000${tid}`;
     const inflight = this.attachmentFetches.get(key);
     if (inflight) return inflight;
     const pending = (async () => {
+      const metadataOnly = refresh && !!cached?.length;
+      const suffix = metadataOnly ? "?transcription_only=true" : "";
       const res = await this.request<{ attachments?: GatewayAttachment[] }>(
         "GET",
-        `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments`,
+        `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments${suffix}`,
         undefined,
         signal,
       );
-      const rows = (res.attachments ?? []).filter((row) => !!row?.base64);
+      const received = res.attachments ?? [];
+      const rows = metadataOnly
+        ? cached.map((base, index) => ({
+            ...base,
+            ...received[index],
+            base64: base.base64,
+          }))
+        : received.filter((row) => !!row?.base64);
       this.rememberSentAttachments(sid, tid, rows);
       return rows;
     })();
@@ -2804,9 +2809,9 @@ export class GatewayClient {
    * trip per window — measured against a 1192-session store, 12 serial requests every
    * ten seconds per machine, eleven of them proving nothing had changed — and the
    * ~315 KB it drained in was only ever re-cut into a page of ten. Every number that
-   * needed the whole list is answered BESIDE this window now: `total` and the
-   * per-project counts in `overview`, the runs parked on a human in `awaiting`, and a
-   * project's own page from `listProjectPage`. Nothing on this device asks for the
+    * needed the whole list is answered BESIDE this window now: `total` and the
+    * per-project counts in `overview`, and a project's own page from `listProjectPage`.
+    * Nothing on this device asks for the
    * fleet any more.
    *
    * - **Conditional GET.** The window carries a weak `ETag`, so an unchanged list
@@ -2871,11 +2876,6 @@ export class GatewayClient {
                 after: HEAD_CURSOR,
                 rows: cached,
                 total: persisted.total,
-                // The remembered pin says nothing about who is waiting on a human: a
-                // demand is a fact of the CURRENT answer, so it starts empty and the
-                // first read fills it. Its overview is durable and was issued beside
-                // the same head validator.
-                awaiting: [],
                 overview: this.overview,
               },
             ],
@@ -2896,7 +2896,6 @@ export class GatewayClient {
       const res = await this.requestFull<{
         sessions?: Session[];
         total?: number;
-        awaiting?: Session[];
         overview?: GatewayOverview;
       }>(
         "GET",
@@ -2909,34 +2908,30 @@ export class GatewayClient {
       );
       if (res.status === 304 && pin) return pin;
       const rows = res.data?.sessions ?? [];
-      const awaiting = res.data?.awaiting ?? [];
       const overview = after === HEAD_CURSOR ? (res.data?.overview ?? null) : null;
       if (after === HEAD_CURSOR) {
         this.overview = overview;
         writeSnapshot(this.snapshotKey("projects-overview"), overview);
       }
       // Every row names the model it runs on, so opening any of them paints the
-      // right chip on the FIRST frame instead of after a per-session round trip. A
-      // parked row is one a reader opens FIRST, and it may not be in `rows` at all.
-      this.seedSessionModels(rows.concat(awaiting));
+      // right chip on the FIRST frame instead of after a per-session round trip.
+      this.seedSessionModels(rows);
       return {
         etag: res.etag ?? "",
         after,
         rows,
         total: res.data?.total ?? rows.length,
-        awaiting,
         overview,
       };
     };
 
     const head = await fetchWindow(HEAD_CURSOR);
-    // The demand and the stable project totals ride BESIDE the window and are
-    // complete there, whatever depth this device is holding.
-    this.parked = head.awaiting;
+    // The stable project totals ride BESIDE the window and are complete there,
+    // whatever depth this device is holding.
     this.overview = head.overview;
     // Active work warms in the background. A row that just FINISHED is different:
     // wait for its newest page before returning it, so NEW never outruns its transcript.
-    const visible = head.rows.concat(head.awaiting);
+    const visible = head.rows;
     this.prefetchActiveTranscripts(visible);
     if (!(await this.prefetchSettledTranscripts(cached, visible))) return cached ?? [];
 
@@ -3181,20 +3176,29 @@ export class GatewayClient {
     signal?: AbortSignal,
     includeQueued = false,
   ): Promise<Session> {
-    const response = await this.request<Session & { queued_turns?: unknown }>(
+    const response = await this.request<
+      Session & { queued_turns?: unknown; queue_paused?: unknown }
+    >(
       "GET",
       `/v1/sessions/${encodeURIComponent(sid)}${includeQueued ? "?include=queued" : ""}`,
       undefined,
       signal,
     );
-    const { queued_turns: queuedTurns, ...row } = response;
+    const {
+      queued_turns: queuedTurns,
+      queue_paused: queuePaused,
+      ...row
+    } = response;
     if (includeQueued && !Array.isArray(queuedTurns)) {
       throw new Error("Gateway response omitted queued_turns");
     }
     const merged = reconcileRow(this.cachedSession(sid), row as Session);
     writeSnapshot(this.snapshotKey("session", sid), merged);
 
-    if (includeQueued) this.storeQueuedTurns(sid, queuedTurns as SubmittedTurn[]);
+    if (includeQueued) {
+      this.storeQueuedTurns(sid, queuedTurns as SubmittedTurn[]);
+      this.queuePaused.set(sid, queuePausedFromWire(queuePaused));
+    }
     return merged;
   }
 
@@ -3972,14 +3976,22 @@ export class GatewayClient {
     return rows;
   }
 
-  async queuedTurns(sid: string, signal?: AbortSignal): Promise<QueuedTurn[]> {
-    const response = await this.request<{ turns: SubmittedTurn[] }>(
+  async queuedTurns(
+    sid: string,
+    signal?: AbortSignal,
+  ): Promise<{ turns: QueuedTurn[]; paused: QueuePausedInfo | null }> {
+    const response = await this.request<{
+      turns: SubmittedTurn[];
+      queue_paused?: Record<string, unknown> | null;
+    }>(
       "GET",
       `/v1/sessions/${encodeURIComponent(sid)}/turns?status=queued`,
       undefined,
       signal,
     );
-    return this.storeQueuedTurns(sid, response.turns);
+    const paused = queuePausedFromWire(response.queue_paused);
+    this.queuePaused.set(sid, paused);
+    return { turns: this.storeQueuedTurns(sid, response.turns), paused };
   }
 
   /**

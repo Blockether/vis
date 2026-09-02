@@ -4,6 +4,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
             [com.blockether.vis.internal.gateway.client :as client]
@@ -279,6 +280,45 @@
                                                                   ^String (:base64 attachment))
                                                                 "UTF-8")))))))
 
+(deftest audio-upload-starts-transcription-before-turn-submit
+  (let [sid
+        (random-uuid)
+
+        body-bytes
+        (.getBytes "audio-bytes" "UTF-8")
+
+        calls
+        (atom 0)
+
+        submitted
+        (atom nil)]
+
+    (with-redefs-fn {#'state/soul (constantly {:id sid})
+                     #'audio-transcribe/request-attachments!
+                     (fn [rows]
+                       (let [n (swap! calls inc)]
+                         (mapv #(cond-> (assoc % :transcription-status "pending") (= n 2)
+                                  (assoc :transcription "ready words"))
+                               rows)))
+                     #'state/submit-turn! (fn [_ opts]
+                                            (reset! submitted opts)
+                                            {:turn {:turn_id "turn-audio"}})}
+      #(let [uploaded
+             ((rv 'upload-attachment-handler)
+               {:path-params {:sid (str sid)}
+                :query-params {"filename" "memo.m4a" "media_type" "audio/mp4"}
+                :headers {"content-length" (str (alength body-bytes))}
+                :body (java.io.ByteArrayInputStream. body-bytes)}) upload-id
+             (get (wire/parse-json (:body uploaded)) "upload_id") response
+             ((rv 'submit-turn-handler)
+               {:path-params {:sid (str sid)}
+                :body (java.io.ByteArrayInputStream.
+                        (.getBytes (wire/json-str {:request "listen"
+                                                   :attachments [{:upload_id upload-id}]})
+                                   "UTF-8"))}) attachment (first (:attachments @submitted))]
+         (is (= 201 (:status uploaded))) (is (= 202 (:status response))) (is (= 2 @calls))
+         (is (= "ready words" (:transcription attachment)))))))
+
 (deftest list-turns-status-filter-routes-to-queued-overlay
   (let [sid
         (random-uuid)
@@ -305,6 +345,24 @@
            (is (= 200 (:status ((rv 'list-turns-handler) request))))
            (is (= [[:all sid]] @calls))))))
 
+;; Regression, Vis session 57dfea5e-0c2d-4190-a82c-0e1992e352c3: a client that
+;; missed queue.paused could recover the queued rows but not the paused marker, so it
+;; had no way to continue work after the provider recovered.
+(deftest queued-turn-poll-includes-paused-state
+  (let [sid
+        (random-uuid)
+
+        request
+        {:path-params {:sid (str sid)} :query-params {"status" "queued"}}]
+
+    (with-redefs-fn {#'state/soul (constantly {:id sid})
+                     #'state/list-queued-turns (constantly [{:turn_id "waiting"}])
+                     #'state/queue-paused-info (constantly {:reason "turn_failed" :held 1})}
+      #(let [body (:body ((rv 'list-turns-handler) request))] (is (str/includes?
+                                                                    body
+                                                                    "\"queue_paused\""))
+         (is (str/includes? body "\"turn_failed\""))))))
+
 (deftest soul-handler-optionally-includes-queued-turns
   (let [sid
         (random-uuid)
@@ -319,11 +377,13 @@
                                     (when (= sid actual) {:id sid}))
                      #'state/list-queued-turns (fn [actual]
                                                  (swap! calls conj actual)
-                                                 [{:turn_id "queued-1"}])}
+                                                 [{:turn_id "queued-1"}])
+                     #'state/queue-paused-info (constantly {:reason "turn_failed" :held 1})}
       #(do (let [response ((rv 'soul-handler) (assoc request :query-params {"include" "queued"}))]
              (is (= 200 (:status response)))
              (is (re-find #"\"id\"" (:body response)))
              (is (re-find #"\"queued_turns\"" (:body response)))
+             (is (re-find #"\"queue_paused\"" (:body response)))
              (is (re-find #"\"turn_id\":\"queued-1\"" (:body response))))
            (is (= [sid] @calls))
            (reset! calls [])
@@ -2476,6 +2536,41 @@
          (testing "the negative live-only sentinel is unchanged"
            (is (= 12 (resolve-cursor sid -1))))
          (finally (swap! registry dissoc (str sid))))))
+
+(deftest sse-cursor-rewinds-a-client-below-the-replay-floor
+  ;; The replay ring is bounded, so ONE long turn evicts thousands of its own
+  ;; frames. A client that dropped out mid-turn was served the surviving TAIL
+  ;; verbatim: megabytes of deltas for blocks whose `content.block.started` had
+  ;; been evicted, a picture neither side could tell from a complete one, and a
+  ;; reconnect that answered the same partial ring again.
+  (let [resolve-cursor
+        (rv 'resolve-sse-cursor)
+
+        registry
+        @(ns-resolve 'com.blockether.vis.internal.gateway.state 'registry)
+
+        sid
+        (java.util.UUID/randomUUID)
+
+        idle-sid
+        (java.util.UUID/randomUUID)]
+
+    (swap! registry assoc
+      (str sid)
+      {:next-seq 900
+       :evicted-through 400
+       :current-turn "t-run"
+       :turns {"t-run" {:event_start_seq 120}}}
+      (str idle-sid)
+      {:next-seq 900 :evicted-through 400})
+    (try (testing "a cursor the ring already evicted replays the running turn whole"
+           (is (= 119 (resolve-cursor sid 300))))
+         (testing "a cursor still inside the ring is honoured verbatim"
+           (is (= 500 (resolve-cursor sid 500))))
+         (testing
+           "with no turn running it resolves to the live tail, leaving history to the transcript"
+           (is (= 900 (resolve-cursor idle-sid 300))))
+         (finally (swap! registry dissoc (str sid) (str idle-sid))))))
 
 (deftest mcp-kill-start-and-oauth-routes-test
   (testing "runtime kill/start and every headless OAuth leg answer through the ring layer"

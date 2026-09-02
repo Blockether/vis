@@ -116,6 +116,7 @@ import {
   HeaderMeta,
   HeaderTally,
   HeaderTitle,
+  MachineGap,
   MachineMark,
   MachineProjectsButton,
   MachineSwitcher,
@@ -126,7 +127,6 @@ import {
   ProjectCrumb,
   ProjectStatusCounts,
   RowDisclosure,
-  SectionGap,
   SectionHeader,
 } from "./SessionNavigator";
 import { MenuHeading } from "./Menu";
@@ -227,7 +227,7 @@ describe("ProjectCrumb", () => {
     );
 
     expect(html).toContain("flex-1");
-    expect(html).not.toContain("w-full");
+    expect(html).not.toMatch(/(?:^|\s)w-full(?:\s|")/);
   });
 
   it("is plain when the project has no session list", () => {
@@ -269,6 +269,19 @@ describe("SectionHeader", () => {
     expect(html).not.toContain("py-2");
     expect(html).not.toContain("bg-level-machine");
     expect(html).not.toContain("bg-panel-2");
+  });
+
+  // Regression, user report (paraphrased: the projects should have some separation from
+  // each other, a border or something): the band stood on the page's own paper with no
+  // edge at all, so nothing but distance said where one project ended and the next began.
+  it("carries the boundary: its own paper, and one rule coming in", () => {
+    const html = renderToStaticMarkup(<SectionHeader>rows</SectionHeader>);
+
+    expect(html).toContain("bg-level-project");
+    expect(html).toContain("border-t");
+    // The edge comes IN, over the name. A rule under it would only repeat the hairline
+    // that already separates two rows of the project it heads.
+    expect(html).not.toContain("border-b");
   });
 
   // Regression, user report (paraphrased: the project header has practically no top or
@@ -790,7 +803,7 @@ describe("a project band carries its own count and its own pager", () => {
     band.indexOf("qualifier={"),
     band.indexOf("qualifierTitle="),
   );
-  const cluster = /<HeaderActions>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? "";
+  const cluster = /<HeaderActions[^>]*>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? "";
 
   it("walks the project from the band's own trailing cluster", () => {
     expect(cluster).toMatch(/<Pager\s+page=\{shownPage\}/);
@@ -845,21 +858,20 @@ describe("a project band carries its own count and its own pager", () => {
   });
 });
 
-// Regression, same report ("no visual differentiation between the projects"): a
-// project boundary was ONE hairline — the same hairline two sessions of one project
-// are separated by — so four checkouts read as one long list.
-describe("SectionGap", () => {
-  const html = renderToStaticMarkup(<SectionGap />);
+// Regression, second report on the same list ("those gaps between projects are ugly
+// holes"): a project boundary was 16px of unpainted paper closed by a hairline at each
+// end, which reads as an empty row. The band opens a project now; only a MACHINE keeps air.
+describe("MachineGap", () => {
+  const html = renderToStaticMarkup(<MachineGap />);
 
-  it("is 8px of the machine's own paper, one step deeper than the card", () => {
+  it("is air and not a line: it paints nothing at all", () => {
     expect(html).toContain('aria-hidden="true"');
+    expect(html).not.toMatch(/border|bg-|rounded/);
   });
 
-  it("opens every group but the first, and every machine but the first", () => {
-    expect(sessionsListSource).toContain("{groupIndex > 0 && <SectionGap />}");
-    expect(sessionsListSource).toContain(
-      "{sectionIndex > 0 && <SectionGap />}",
-    );
+  it("opens every machine but the first, and nothing opens a project", () => {
+    expect(sessionsListSource).toContain("{sectionIndex > 0 && <MachineGap />}");
+    expect(sessionsListSource).not.toMatch(/SectionGap/);
   });
 });
 
@@ -1158,9 +1170,8 @@ describe("settings is ONE dialog with two columns", () => {
     expect(settings).not.toContain("sm:divide-y-0");
   });
 
-  // Regression, user report (paraphrased, over a screenshot of this dialog with the
-  // amber slabs ringed in red: make these buttons circles with icons and put them in
-  // the headers so the settings are not so big).
+  // Regression, Vis session 57dfea5e-0c2d-4190-a82c-0e1992e352c3: the three
+  // settings pluses were circles sitting one gutter left of the edge.
   it("pairs a machine from the band's own mark, over the column rather than inside it", () => {
     // The verb used to be a button that CLOSED this dialog and navigated to the
     // machines screen. Then it was two pairing cards standing permanently open
@@ -1174,7 +1185,8 @@ describe("settings is ONE dialog with two columns", () => {
       settings.indexOf("<SettingsColumn"),
       settings.indexOf("{/* THE COG"),
     );
-    expect(band).toContain('variant="primary"');
+    expect(band).toContain('variant="quiet"');
+    expect(band).toContain("edge");
     expect(band).toContain('label="Add a machine"');
     expect(band).toContain('<PlusIcon className="size-4" />');
     // A mark has no word to be wide for, so it takes no density either.
@@ -1230,8 +1242,9 @@ describe("settings is ONE dialog with two columns", () => {
       providerAuthSource.indexOf("THE VERB RIDES THE BAND"),
       providerAuthSource.indexOf("{isPicking &&"),
     );
-    // Quiet, not amber: the fill belongs to the level above, the MACHINES column.
+    // Every add mark is bare and reaches through the band's trailing gutter.
     expect(providerButton).toContain('variant="quiet"');
+    expect(providerButton).toContain("edge");
     expect(providerButton).not.toContain('variant="primary"');
     expect(providerButton).toContain('label="Add a provider"');
     expect(providerButton).toContain('<PlusIcon className="size-4" />');
@@ -1254,6 +1267,7 @@ describe("settings is ONE dialog with two columns", () => {
     expect(mcp).not.toContain("description=");
     expect(mcp).not.toContain("meta=");
     expect(mcp).toContain('variant="quiet"');
+    expect(mcp).toContain("edge");
     expect(mcp).toContain('label="Add an MCP server"');
     expect(mcp).not.toContain("w-full justify-center");
     // The ＋ IS the form's door, so it steps out of the band while the form is open
@@ -1553,7 +1567,7 @@ describe("NewSessionButton, one action", () => {
       <NewSessionButton machine="visgw" where="vis" onPress={() => {}} />,
     );
     expect(html.match(/<button/g)).toHaveLength(1);
-    expect(html).toContain(renderToStaticMarkup(<PlusIcon className="size-4" />));
+    expect(html).toContain(renderToStaticMarkup(<PlusIcon className="size-4 text-accent-ink" />));
     expect(html).not.toContain("border-r-0");
   });
 
@@ -1846,7 +1860,7 @@ describe("project verbs use distinct marks", () => {
     const glyph = (markup: string) => markup.match(/<svg[\s\S]*?<\/svg>/g)?.[0];
     const start = glyph(session);
     const inventory = glyph(projects);
-    expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-4" />));
+    expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-4 text-accent-ink" />));
     expect(inventory).toBe(renderToStaticMarkup(<ProjectsIcon className="size-4" />));
     expect(start).not.toBe(inventory);
   });

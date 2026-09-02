@@ -1314,8 +1314,8 @@
       (seq preset)
       (assoc :provider/preset preset)
 
-      ;; MANAGED: the runtime issues this provider's credential, so no channel
-      ;; may ever ask for a key and no `Add provider` step is needed.
+      ;; MANAGED owns automatic binding/configuration. Authentication remains
+      ;; independent: `auth-fn` may obtain the first credential on actual use.
       (as-flag (get spec "is_managed"))
       (assoc :provider/is-managed true)
 
