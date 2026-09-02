@@ -48,33 +48,17 @@ export function SettingsColumn({
 }: {
   title: string;
   meta?: ReactNode;
-  /** The column's ONE verb, at the end of its band: the amber ＋. */
+  /** The column's ONE bare verb, at the physical end of its band. */
   action?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="flex min-w-0 flex-col sm:min-h-0">
-      {/* A BAND NAMES THE COLUMN IN ONE LINE, and its verb is a MARK.
-          The title, a meta and the ＋ used to share one wrapping flex line whose
-          height was the button's: the two words sat at the top of it on their
-          baseline while the ＋ centred itself in the rest, 8px lower than the title
-          it stands beside. Then the reader asked what the meta and the sentence
-          under it were FOR — a column that lists every machine does not need to
-          name one of them in its own header, and "tap a row" is not news. The verb
-          spelled itself out in WORDS for a while, which is how a band ends up as
-          wide as its longest verb; it is the disc again, and the ＋ adds the thing
-          the band is NAMED after — so the mark opening a session in the project
-          band of the list and the mark adding a machine here are one rule, not one
-          glyph meaning two things. The name and its meta wrap inside their own
-          cell, the verb is the band's trailing cell centred against whatever that
-          cell grows to. Reported since (paraphrased: the ＋ in MACHINES and the ones
-          by notifications and by MCP are uneven): this band stood 48px tall and
-          padded 16px on `sm:` while the bands nested inside a machine stood 36 and
-          padded 12, so one 32px mark floated in 8px of paper and the next had 2 —
-          and measured on a desktop the two did not even share a vertical line, 595
-          against 599. Every band in the dialog is ONE height now, 36px on touch and
-          32 under a pointer, on ONE gutter; the LEVEL is the paper, the white and
-          the amber fill, not twelve extra pixels. */}
+      {/* A BAND NAMES THE COLUMN IN ONE LINE, and its verb is a BARE MARK at the
+          physical trailing edge. The title and optional meta wrap in their own cell;
+          the action owns the remaining hit area without painting a second object in
+          the band. Column and nested-panel bands keep one 36px touch / 32px pointer
+          rhythm; their level comes from paper and type, not from a circle around ＋. */}
       <header className="min-w-0 shrink-0 border-b border-dialog-edge bg-level-machine">
         <div className="flex min-h-9 min-w-0 items-center gap-3 px-3 py-0.5 sm:px-4 mouse:min-h-8">
           <div className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -118,7 +102,7 @@ export function SettingsPanel({
 }: {
   title: string;
   meta?: ReactNode;
-  /** One verb for the whole band, sitting in it — the panel's own ＋. */
+  /** One bare verb for the whole band, aligned to its physical trailing edge. */
   action?: ReactNode;
   children: ReactNode;
 }) {
@@ -138,24 +122,10 @@ export function SettingsPanel({
           wrapped one word per line, and the band grew 213px tall. The row WRAPS
           instead — the name is measured at its own width so a status that does
           not fit beside it drops to its own line. */}
-      {/* A NESTED BAND IS NOT A COLUMN BAND. Reported over this screen: Providers,
-          Notifications and MCP servers did not read as parts OF a machine — each
-          wore the same slab, the same white and nearly the same weight as the
-          `MACHINES` band above them, so four peers stood where there are two
-          levels. The column keeps the paper, the size and the white; a panel
-          inside a machine keeps neither, and speaks in the hint colour one step
-          smaller. Reported since (paraphrased: bin that rail on the left, line the
-           borders up): the 2px accent tick it wore was the only label on the screen
-           standing 10px right of every other one. Reported since (paraphrased: the
-           pluses in MACHINES and the ones by notifications and MCP are uneven): a band
-           that carried a verb PADDED around it and stood 45px tall while the sibling
-           band without one stayed 32, so the column's rules were spaced by whether a
-           panel had anything to press; and the title, the meta and the face shared
-           ONE baseline line, which left the label's optical centre 9px above the
-           mark's. The band owns ONE height at each density — 36px on touch, 32px
-           under a pointer, the project band's own rhythm, the same the column band
-           above now keeps — the name and its meta wrap inside their own cell, and
-           the verb is the trailing cell, centred against it. */}
+      {/* A NESTED BAND IS NOT A COLUMN BAND. It keeps the smaller hint-colour title
+          but shares the column band's height and gutter. Its action occupies the
+          trailing edge as hit area while the visible plus remains bare, so an action
+          neither changes the band's height nor introduces a floating object. */}
       <header className="flex min-h-9 min-w-0 items-center gap-3 border-b border-dialog-edge px-3 py-0.5 sm:px-4 mouse:min-h-8">
         <div className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
           <h3 className="min-w-0 flex-auto truncate font-mono text-chip font-bold uppercase tracking-[0.14em] text-dialog-hint">

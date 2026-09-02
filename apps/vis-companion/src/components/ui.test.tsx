@@ -1170,9 +1170,8 @@ describe("settings is ONE dialog with two columns", () => {
     expect(settings).not.toContain("sm:divide-y-0");
   });
 
-  // Regression, user report (paraphrased, over a screenshot of this dialog with the
-  // amber slabs ringed in red: make these buttons circles with icons and put them in
-  // the headers so the settings are not so big).
+  // Regression, Vis session 57dfea5e-0c2d-4190-a82c-0e1992e352c3: the three
+  // settings pluses were circles sitting one gutter left of the edge.
   it("pairs a machine from the band's own mark, over the column rather than inside it", () => {
     // The verb used to be a button that CLOSED this dialog and navigated to the
     // machines screen. Then it was two pairing cards standing permanently open
@@ -1186,7 +1185,8 @@ describe("settings is ONE dialog with two columns", () => {
       settings.indexOf("<SettingsColumn"),
       settings.indexOf("{/* THE COG"),
     );
-    expect(band).toContain('variant="primary"');
+    expect(band).toContain('variant="quiet"');
+    expect(band).toContain("edge");
     expect(band).toContain('label="Add a machine"');
     expect(band).toContain('<PlusIcon className="size-4" />');
     // A mark has no word to be wide for, so it takes no density either.
@@ -1242,8 +1242,9 @@ describe("settings is ONE dialog with two columns", () => {
       providerAuthSource.indexOf("THE VERB RIDES THE BAND"),
       providerAuthSource.indexOf("{isPicking &&"),
     );
-    // Quiet, not amber: the fill belongs to the level above, the MACHINES column.
+    // Every add mark is bare and reaches through the band's trailing gutter.
     expect(providerButton).toContain('variant="quiet"');
+    expect(providerButton).toContain("edge");
     expect(providerButton).not.toContain('variant="primary"');
     expect(providerButton).toContain('label="Add a provider"');
     expect(providerButton).toContain('<PlusIcon className="size-4" />');
@@ -1266,6 +1267,7 @@ describe("settings is ONE dialog with two columns", () => {
     expect(mcp).not.toContain("description=");
     expect(mcp).not.toContain("meta=");
     expect(mcp).toContain('variant="quiet"');
+    expect(mcp).toContain("edge");
     expect(mcp).toContain('label="Add an MCP server"');
     expect(mcp).not.toContain("w-full justify-center");
     // The ＋ IS the form's door, so it steps out of the band while the form is open
