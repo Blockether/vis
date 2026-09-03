@@ -87,6 +87,12 @@ let wakeId = 0;
 let appState: 'foreground' | 'background' = 'foreground';
 const inflightGatewayRequests = new Map<string, TrackedGatewayRequest>();
 
+/** The retention the diagnostics panel states as facts: how long and how much the log keeps. */
+export const RETAINED_LOG_POLICY = {
+  days: RETAIN_FOR_MS / 86_400_000,
+  megabytes: MAX_RETAINED_BYTES / 1_048_576,
+} as const;
+
 function errorOf(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
 }
