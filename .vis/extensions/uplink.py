@@ -1,4 +1,4 @@
-"""Remote sandboxed server — one SSH door to a machine you administer.
+"""Uplink — one SSH door to a machine you administer.
 
 The flagship object-first extension: every operation returns a typed,
 frozen domain object (CommandResult, ServiceStatus, HealthCheck,
@@ -9,12 +9,12 @@ Configuration — three environment variables, declared through env=, so
 every `environment:` source works ({literal: ...}, {env: ...}, a keychain
 item, or a helper command whose trimmed stdout is the value):
 
-    REMOTE_SERVER_HOST      user@host; without a user part ssh picks its
+    UPLINK_HOST      user@host; without a user part ssh picks its
                             own default, which is rarely what you want
-    REMOTE_SERVER_PORT      SSH port, defaults to 22
-    REMOTE_SERVER_PASSWORD  optional; absent means key/agent auth only
+    UPLINK_PORT      SSH port, defaults to 22
+    UPLINK_PASSWORD  optional; absent means key/agent auth only
 
-Environment wins over vis.state; `/rss-host user@host [port]` persists
+Environment wins over vis.state; `/uplink-host user@host [port]` persists
 the non-secret part to vis.state for ad-hoc use without a config file.
 
 Transport is the local ssh binary. A password is handed over through an
@@ -45,7 +45,7 @@ import vis
 _CONNECT_TIMEOUT_S = 15
 _MAX_CAPTURE_BYTES = 256 * 1024
 _MAX_TRANSFER_BYTES = 64 * 1024 * 1024
-_SECRET_ENV = "RSS_REMOTE_SERVER_SECRET"
+_SECRET_ENV = "UPLINK_SECRET"
 _ASKPASS_BODY = '#!/bin/sh\nexec printf %s "$' + _SECRET_ENV + '"\n'
 
 
@@ -166,24 +166,24 @@ def _state(key: str) -> object:
 
 def _endpoint() -> _Endpoint:
     """Resolve the connection target; environment wins over vis.state."""
-    host = _env("REMOTE_SERVER_HOST") or _state("host")
+    host = _env("UPLINK_HOST") or _state("host")
     if not host:
         raise ValueError(
-            "no remote server configured — set REMOTE_SERVER_HOST "
-            "(user@host) or run /rss-host user@host [port]"
+            "no remote server configured — set UPLINK_HOST "
+            "(user@host) or run /uplink-host user@host [port]"
         )
     user, _, hostname = str(host).partition("@")
     destination = f"{user}@{hostname}" if hostname else user
-    port_raw = _env("REMOTE_SERVER_PORT") or _state("port") or 22
+    port_raw = _env("UPLINK_PORT") or _state("port") or 22
     port = int(str(port_raw).strip())
-    password = _env("REMOTE_SERVER_PASSWORD") or _state("password") or None
+    password = _env("UPLINK_PASSWORD") or _state("password") or None
     return _Endpoint(destination=destination, port=port, password=password)
 
 
 def _askpass_path(password: str) -> str:
     """Materialize the 0700 askpass helper for this password, once."""
     digest = hashlib.sha256(password.encode()).hexdigest()[:16]
-    path = os.path.join(tempfile.gettempdir(), f"rss-askpass-{digest}")
+    path = os.path.join(tempfile.gettempdir(), f"uplink-askpass-{digest}")
     if not os.path.exists(path):
         handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
         with os.fdopen(handle, "w") as helper:
@@ -304,7 +304,7 @@ def _to_int(value: object) -> int | None:
         return None
 
 
-class RemoteSandboxedServer:
+class Uplink:
     """The administered server: run, inspect and move files over one ssh door.
 
     Every method is one round trip through the same transport, so one
@@ -499,9 +499,9 @@ class RemoteSandboxedServer:
         )
 
 
-remote_sandboxed_server = RemoteSandboxedServer()
+uplink = Uplink()
 
-PROMPT = """rss_ surface active — one administered server over SSH (remote_sandboxed_server):
+PROMPT = """uplink_ surface active — one administered server over SSH (uplink):
   run(command, timeout_s=60)        execute a remote shell command
   service(unit)                     systemd unit state
   health(port, path="/healthz")     loopback HTTP from the server itself
@@ -517,7 +517,7 @@ def _slash_host(ctx: dict) -> dict:
         return vis.ok(
             f"remote server: {host}"
             if host
-            else "no host set — /rss-host user@host [port]"
+            else "no host set — /uplink-host user@host [port]"
         )
     target = args[0]
     if "@" not in target:
@@ -531,26 +531,22 @@ def _slash_host(ctx: dict) -> dict:
 
 
 vis.extension(
-    name="remote-sandboxed-server",
+    name="uplink",
     description=(
         "One administered server over SSH: run, service, health, info, put, get."
     ),
     version="0.1.0",
     kind="integration",
-    alias="rss",
-    symbols=[
-        vis.symbol(
-            remote_sandboxed_server, name="remote_sandboxed_server", tag="observation"
-        )
-    ],
+    alias="uplink",
+    symbols=[vis.symbol(uplink, name="uplink", tag="observation")],
     prompt=PROMPT,
     slash_commands=[
         vis.slash(
-            "rss-host",
+            "uplink-host",
             _slash_host,
             doc="Set or show the administered server.",
-            usage="/rss-host user@host [port]",
+            usage="/uplink-host user@host [port]",
         )
     ],
-    env=["REMOTE_SERVER_HOST", "REMOTE_SERVER_PORT", "REMOTE_SERVER_PASSWORD"],
+    env=["UPLINK_HOST", "UPLINK_PORT", "UPLINK_PASSWORD"],
 )

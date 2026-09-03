@@ -94,9 +94,9 @@ vis.extension(
 ```
 
 Start Vis (or `/reload`) and the model can call `await greeter_hello("vis")`.
-Ready-to-copy examples — a todo list, a protected-paths guard, a dynamic
-prompt toggle, a GitHub issues integration — live in the repo under
-`resources/examples/python-extensions/`.
+This repo ships its own project-local extensions under `.vis/extensions/` —
+`uplink.py` (object-first tools over one administered server) and `gh.py`
+(the GitHub surface).
 
 ### Outside Vis — `pip install vis-agent`
 
@@ -387,14 +387,13 @@ class CommandResult:
 The key boundary is the call, not the rendering:
 
 ```python
-result = remote_sandboxed_server.run("systemctl is-active visgw")  # CommandResult
+result = uplink.run("systemctl is-active visgw")  # CommandResult
 ```
 
-A complete shipped example — `run`, `service`, `health`, `info`, `put` and
+A complete shipped extension — `run`, `service`, `health`, `info`, `put` and
 `get` against one administered server over one ssh door, every result a
 frozen dataclass, credentials through a keychain-backed `environment:`
-source — lives at
-`resources/examples/python-extensions/remote_sandboxed_server.py`. Basic
+source — is this repo's own project-local `.vis/extensions/uplink.py`.
 annotations and docstrings can be validated mechanically later; the contract
 comes first.
 
@@ -439,7 +438,7 @@ language. `fn(access)` receives `{"operation": "file-read" | "file-write",
 allow, and `phase` says nothing (the operation has not run yet, so declaring
 one is refused at the call site). A gate fails **closed**: an error inside the
 hook refuses the operation, because a boundary that opens when its guard breaks
-is not a boundary. See `resources/examples/python-extensions/protected_paths.py`.
+ is not a boundary.
 
 `vis.strings_of(value)` collects every string leaf of a nested structure —
 handy for scanning op args for paths.
