@@ -420,8 +420,9 @@ export function ManageProjectsSheet({
         <MenuHeading
           cells={
             // Creation is universal chrome here: the plus is the same square band cell
-            // as the way out, while its accessible name keeps the verb explicit.
-            <BandButton label="New project" onClick={() => setAdding(true)}>
+            // as the way out, while its accessible name keeps the verb explicit. It starts
+            // this action run openly; only the following way out needs their shared rule.
+            <BandButton isFirst label="New project" onClick={() => setAdding(true)}>
               <PlusIcon className="size-3.5" />
             </BandButton>
           }

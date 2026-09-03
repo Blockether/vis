@@ -1617,7 +1617,8 @@ export function CloseButton({
  *
  * It is not `Button`: a bordered box on a title band claims a rank chrome has not
  * earned, and a smaller face inside the band gives a finger less target than the X
- * one hairline away. The cell fills the band and is welded by its own left rule.
+ * one hairline away. The cell fills the band and, unless it is first in an open run,
+ * is welded to what precedes it by its own left rule.
  *
  * A CELL WITH SOMETHING TO COMMIT WEARS THE ACCENT (`isPrimary`). The accent exists
  * only while the commit is live; a disabled cell drops it instead of dimming a false
@@ -1625,11 +1626,14 @@ export function CloseButton({
  */
 export function BandButton({
   className = '',
+  isFirst = false,
   isPrimary = false,
   label,
   children,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
+  /** This cell starts an open action run instead of continuing a ruled one. */
+  isFirst?: boolean;
   /** This cell COMMITS something, and wears the accent while it has something to commit. */
   isPrimary?: boolean;
   /** The accessible name of an icon-only cell; providing it also gives the mark a square target. */
@@ -1640,7 +1644,9 @@ export function BandButton({
   return (
     <button
       type="button"
-      className={`grid shrink-0 place-items-center self-stretch whitespace-nowrap border-l border-current/20 font-mono text-meta font-bold transition-colors duration-150 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent motion-reduce:transition-none sm:text-ui mouse:text-meta ${
+      className={`grid shrink-0 place-items-center self-stretch whitespace-nowrap ${
+        isFirst ? '' : 'border-l border-current/20'
+      } font-mono text-meta font-bold transition-colors duration-150 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent motion-reduce:transition-none sm:text-ui mouse:text-meta ${
         isIconOnly ? 'w-12 px-0 mouse:w-9' : 'px-3 sm:px-4 mouse:px-3'
       } ${
         isLive

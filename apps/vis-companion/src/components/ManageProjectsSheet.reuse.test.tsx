@@ -467,6 +467,13 @@ describe("the path band", () => {
 // the gateway's folder browser — an empty list that filled in one network round-trip
 // later, with no project rows and no trash beside them, and no way back to the inventory.
 describe("the projects mark opens the inventory", () => {
+  // Regression, user report: the create mark carried a vertical rule on its left,
+  // cutting an otherwise open title band for no structural reason.
+  it("leaves the plus open to the title", () => {
+    sheet();
+    expect(screen.getByRole("button", { name: "New project" })).not.toHaveClass("border-l");
+  });
+
   it("uses a plus for creation and keeps project paths on their own line", async () => {
     sheet();
     const create = screen.getByRole("button", { name: "New project" });
