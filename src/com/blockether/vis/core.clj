@@ -70,7 +70,7 @@
     [com.blockether.vis.internal.progress :as progress]
     [com.blockether.vis.internal.prompt :as prompt]
     [com.blockether.vis.internal.pyfmt :as pyfmt]
-    [com.blockether.vis.internal.python-extension-host :as python-extension-host]
+    [com.blockether.vis.internal.python-worker :as python-worker]
     [com.blockether.vis.internal.python-extensions :as python-extensions]
     [com.blockether.vis.internal.python-test-runner :as python-test-runner]
     [com.blockether.vis.internal.provider-key-store :as provider-key-store]
@@ -839,6 +839,6 @@
    socket is its whole instruction. It is read before argv because that process
    HAS no argv."
   [& args]
-  (if-let [socket (System/getenv python-extension-host/socket-env)]
-    (python-extension-host/serve! socket)
+  (if-let [socket (System/getenv python-worker/socket-env)]
+    (python-worker/serve! socket)
     (apply binary/-main args)))

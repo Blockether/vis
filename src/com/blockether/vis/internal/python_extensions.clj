@@ -53,7 +53,7 @@
             [com.blockether.vis.internal.security-policy :as security-policy]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.python-extension-host :as pyext]
+            [com.blockether.vis.internal.python-worker :as pyext]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.nio.file Files]
@@ -137,7 +137,7 @@
    The interpreter renders the value as JSON text, so what comes back is exactly
    what a host tool result is: plain data with string keys, and nothing live."
   [sess expr]
-  (let [text (try (pyext/run sess expr)
+  (let [text (try (pyext/run pyext/shared-key sess expr)
                   (catch Throwable t
                     (throw (ex-info (raised-message t) {:type ::python-raised :session sess} t))))]
     (when (and text (not= "null" text)) (json/read-json text :key-fn identity))))
@@ -195,7 +195,7 @@
    and the guest loses the globals they were bound to."
   [sess names]
   (python-host/forget-tools! sess names)
-  (try (pyext/exec! sess
+  (try (pyext/exec! pyext/shared-key sess
                     (str/join (map (fn [nm]
                                      (str "del " nm "\n"))
                                    names)))
@@ -214,7 +214,7 @@
           (fn [args]
             (let [[sealed callbacks] (sealed-args args)]
               (when (seq callbacks)
-                (python-host/install-sync-tools! sess callbacks pyext/install-sync-tool!))
+                (python-host/install-sync-tools! sess callbacks (partial pyext/install-sync-tool! pyext/shared-key)))
               (try (unseal sess (run-in sess (python-call-expr cid sealed)))
                    (finally (when (seq callbacks) (release-callbacks! sess (keys callbacks))))))))
         (map? x) (into {}
@@ -435,7 +435,7 @@
     ;; The extension interpreter is the CHILD process: it starts on the first
     ;; call, and the runtime - which MAKES the namespace, and carries the upcall
     ;; stub every host name is bound through - goes in before anything else.
-    (pyext/install-runtime! sess)
+    (pyext/install-runtime! pyext/shared-key sess)
     (swap! live-contexts conj sess)
     sess))
 
@@ -452,11 +452,16 @@
   [g n f]
   (vswap! g assoc n f))
 
-(defn ^:no-doc bind-host!
-  "Bind the `__vis_host_*` callbacks the bootstrap hands into the `vis`
-   module. `label` is the file's name — used only for log context; durable
-   state lives in the `extension_aggregate` table, owned by the running
-   extension's identity (see `*state-env*`)."
+(defn ^:no-doc host-doors
+  "The `__vis_host_*` callables an extension context is given, as
+   `{name fn}` — THE list, in code rather than written out anywhere else. The
+   bootstrap passes through whatever it is handed (it used to name each one, so
+   a door added here needed a runtime release), and the contract document is
+   checked against these keys.
+
+   `label` is the file's name — used only for log context; durable state lives in
+   the `extension_aggregate` table, owned by the running extension's identity
+   (see `*state-env*`)."
   [sess label]
   (let [g (volatile! {})]
     (put! g
@@ -583,8 +588,16 @@
                                    (str/join ", " (sort (keys resolved)))
                                    " resolved")})
               (json/write-json-str resolved))))
-    (python-host/install-sync-tools! sess @g pyext/install-sync-tool!)
-    sess))
+    @g))
+
+(defn ^:no-doc bind-host!
+  "Install [[host-doors]] into `sess`, so the bootstrap finds every one of them
+   at module level."
+  [sess label]
+  (python-host/install-sync-tools! sess
+                                   (host-doors sess label)
+                                   (partial pyext/install-sync-tool! pyext/shared-key))
+  sess)
 
 (defn ^:no-doc bind-test-host!
   "Install the ordinary trusted-extension host, except that a test may not mount a
@@ -600,7 +613,7 @@
      (fn [& _]
        (throw (ex-info "vis.live is not available while running tests; use an in-memory test host"
                        {:type :vis/test-live-refused})))}
-    pyext/install-sync-tool!)
+    (partial pyext/install-sync-tool! pyext/shared-key))
   sess)
 
 (def ^:no-doc host-member-names
@@ -642,7 +655,7 @@
                                   (str "host call " member " is not available while checking")
                                   {:type :vis/extension-check-inert :member member}))))]))
            host-member-names)
-     pyext/install-sync-tool!)
+     (partial pyext/install-sync-tool! pyext/shared-key))
    sess))
 
 ;; Adapters — Python callables wrapped as the Clojure fns the extension
@@ -1637,7 +1650,7 @@
   (when ctx
     (swap! live-contexts disj ctx)
     (try (python-host/forget-session! ctx) (catch Throwable _ nil))
-    (try (pyext/close-session! ctx) (catch Throwable _ nil)))
+    (try (pyext/close-session! pyext/shared-key ctx) (catch Throwable _ nil)))
   nil)
 
 (defn- load-file!
@@ -1678,7 +1691,7 @@
 
      (try (bind-host! ctx (.getName f))
           (locking ctx
-            (pyext/exec! ctx bootstrap-python)
+            (pyext/exec! pyext/shared-key ctx bootstrap-python)
             ;; Prepend the FROZEN copy of the extension file's own dir to
             ;; sys.path so sibling packages/modules import cleanly, and import
             ;; the admitted bytes rather than whatever disk holds by the time the
@@ -1692,6 +1705,7 @@
             ;; SOME frozen tree other than this load's own is therefore evicted
             ;; here, and dead trees drop off `sys.path` with it.
             (pyext/exec!
+              pyext/shared-key
               ctx
               (str "import sys as __vis_pathsys__\n"
                    "import os as __vis_pathos__\n"
@@ -1711,7 +1725,7 @@
                    "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
                    "            and not __vis_file__.startswith(__vis_ext_dir__)):\n"
                    "        del __vis_pathsys__.modules[__vis_name__]\n"))
-            (pyext/exec! ctx source))
+            (pyext/exec! pyext/shared-key ctx source))
           (let [reg (unseal ctx (run-in ctx "__vis_registration__()"))]
             (when (nil? reg)
               (throw (ex-info (str (.getName f) " never called vis.extension(...)")

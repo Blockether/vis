@@ -16,13 +16,23 @@
             [com.blockether.vis.contract.toggle :as contract-toggle]
             [com.blockether.vis.contract.view :as contract-view]
             [com.blockether.vis.internal.python-extensions :as pyx]
-            [com.blockether.vis.internal.python-extension-host :as pyext]
+            [com.blockether.vis.internal.python-worker :as pyext]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
-(defn- bootstrap-host-keys
-  "The op names the bootstrap hangs on its `_host` object, read out of its source."
+(defn- host-door-names
+  "The `__vis_host_*__` names an extension context is actually given.
+
+   Read from the HOST, not from the bootstrap's source: the bootstrap passes
+   through whatever it is handed, and it used to name each door instead, so a
+   door added in vis needed a release of the runtime that only forwarded it."
   []
-  (set (map second (re-seq #"([a-z_]+)=__vis_member__\(__vis_host_" pyx/bootstrap-python))))
+  (set (keys (pyx/host-doors "contract-probe" "contract-probe"))))
+
+(defn- host-op-names
+  "The same doors under the names `vis._host` attributes them: the marker
+   trimmed off both ends."
+  []
+  (set (map #(subs % (count "__vis_host_") (- (count %) 2)) (host-door-names))))
 
 (defn- document-parts
   "Every map key and every scalar in a rendered document, tagged, so one pass can
@@ -37,11 +47,10 @@
   python-host-contract-test
   (describe
     "the contract document"
-    (it "declares every `__vis_host_*` global the bootstrap injects"
-        (expect (= (set (re-seq #"__vis_host_\w+__" pyx/bootstrap-python))
-                   (set (contract/host-globals)))))
+    (it "declares every `__vis_host_*` global the host injects"
+        (expect (= (host-door-names) (set (contract/host-globals)))))
     (it "names each op the way the module's `_host` object attributes it"
-        (expect (= (bootstrap-host-keys) (set (contract/op-names)))))
+        (expect (= (host-op-names) (set (contract/op-names)))))
     (it "gives every refusing op a reason that names the call the author made"
         (let [refusing (filter #(= :outside/refuse (:op/outside %)) (contract/ops))]
           (expect (seq refusing))
@@ -139,7 +148,7 @@
         (let [sess (pyx/build-context "python-contract-bind-test")]
           (try (pyx/bind-host! sess "python-contract-bind-test")
                (expect (= ""
-                          (pyext/eval-str sess
+                          (pyext/eval-str pyext/shared-key sess
                                           (str "','.join(n for n in ["
                                                (str/join ", " (map pr-str (contract/host-globals)))
                                                "] if n not in globals())"))))
@@ -151,12 +160,13 @@
       (let [ctx (pyx/build-context "python-contract-test")]
         (try
           (pyx/bind-inert-host! ctx nil)
-          (pyext/exec! ctx pyx/bootstrap-python)
+          (pyext/exec! pyext/shared-key ctx pyx/bootstrap-python)
           (expect
             (=
               (sort (contract/op-names))
               (->
                 (pyext/eval-str
+                  pyext/shared-key
                   ctx
                   "','.join(sorted(n for n in vars(__import__('vis')._host) if not n.startswith('_')))")
                 (str/split #","))))
@@ -167,7 +177,7 @@
         ;; batching on a guess of its own would cost a host call per line.
         (let [ctx (pyx/build-context "python-contract-flush-test")]
           (try (pyx/bind-inert-host! ctx nil)
-               (pyext/exec! ctx pyx/bootstrap-python)
+               (pyext/exec! pyext/shared-key ctx pyx/bootstrap-python)
                (expect (= (str (:live/flush-ms (contract/live-vocabulary)))
-                          (pyext/eval-str ctx "str(__import__('vis')._FLUSH_MS)")))
+                          (pyext/eval-str pyext/shared-key ctx "str(__import__('vis')._FLUSH_MS)")))
                (finally (pyx/close-context! ctx)))))))

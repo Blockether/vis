@@ -1,28 +1,37 @@
-(ns com.blockether.vis.internal.python-extension-host
-  "The SECOND interpreter: the process trusted extension Python runs in.
+(ns com.blockether.vis.internal.python-worker
+  "ONE Python execution environment per session: a child of this same binary
+   holding the interpreter that session's sandbox AND its extensions run in.
 
-   Confinement, the thread cap and the network capability are PROCESS state in
-   the embedded runtime — one policy for every session it serves — so a single
-   process cannot hold a confined block and unconfined extension code at once.
-   Measured, before this existed: one `python_execution` confined the process,
-   and every later extension load was refused for reading its own file. The
-   sandbox keeps the process it is in, because it is the hot path; extension
-   Python moves HERE, into a child of this same binary whose interpreter is
-   unconfined and uncapped.
+   Why a process and not a namespace. Confinement, the thread cap and the
+   network capability are PROCESS state in the embedded runtime — one policy for
+   everything the interpreter serves — so sessions sharing one interpreter share
+   one policy, and `sys.modules`, every module global and every native library's
+   cache with it. A worker per session makes the policy the session's own, gives
+   each session its own imports, and lets a wedged interpreter be killed without
+   touching anybody else's work.
+
+   Why the sandbox and the extensions belong TOGETHER in it. They are the same
+   session's Python; what separates them is not a process but TRUST, which the
+   runtime keeps per session name: an extension namespace is marked trusted and
+   reaches the filesystem through `vis.fs`, the sandbox is not and is confined.
+   The identity behind that flag is what the runtime was ASKED to run, which no
+   Python can forge — `exec` into another namespace's globals does not move a
+   block into it (measured; it did, against an identity taken from frames).
 
    The wire is ONE line of JSON per message over a unix socket, both ways. The
-   parent asks (`install-runtime`, `install-sync-tool`, `exec`, `run`, `eval`,
-   `close`); the child asks back with `host`, because the registry that knows
-   what a name may call, the persistence handle and the caller's dynamic
-   binding frame all live in the parent (`python-host/dispatch`). stdout is NOT
-   the wire: extension Python that prints, or a native library writing to fd 1,
-   would corrupt it, so the child's own stdio goes to a log file instead.
+   parent asks (`install-runtime`, `install-tool`, `exec`, `run`, `run-block`,
+   `eval`, `confine`, `network`, `stdin`, `interrupt`, `close`); the child asks
+   back with `host`, because the registry that knows what a name may call, the
+   persistence handle and the caller's dynamic binding frame all live in the
+   parent (`python-host/dispatch`). stdout is NOT the wire: Python that prints,
+   or a native library writing to fd 1, would corrupt it, so a child's own stdio
+   goes to a log file instead.
 
    A message carrying `op` is a request, one without is its reply, so each side
-   numbers its own requests and no id can collide. Nothing here has a timeout:
-   an extension tool may legitimately run for minutes, and a child that DIES is
-   what the pump reports — every call waiting on it fails at once with the
-   child's log to read."
+   numbers its own requests and no id can collide. Nothing here has a timeout: a
+   block or an extension tool may legitimately run for minutes, and a child that
+   DIES is what the pump reports — every call waiting on it fails at once with
+   the child's log to read."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -48,7 +57,7 @@
   "The environment variable that turns a fresh vis process into this host. A
    process started with it set never reaches argv: the socket IS the whole
    instruction, which is why no CLI command exposes this."
-  "VIS_PYTHON_EXTENSION_SOCKET")
+  "VIS_PYTHON_WORKER_SOCKET")
 
 ;; The peer — one live connection, used identically on both sides
 
@@ -66,7 +75,7 @@
                                              java.util.concurrent.ThreadFactory
                                                (newThread [_ runnable]
                                                  (doto (Thread. ^Runnable runnable
-                                                                "vis-python-extension-host")
+                                                                "vis-python-worker")
                                                    (.setDaemon true)))))})
 
 (defn- send-line!
@@ -93,7 +102,7 @@
          (let [reply @waiting]
            (if (contains? reply "error")
              (throw (ex-info (str (get reply "error"))
-                             {:type :vis/python-extension-host :op (get message "op")}))
+                             {:type :vis/python-worker :op (get message "op")}))
              (get reply "value")))
          (finally (swap! (:pending peer) dissoc id)))))
 
@@ -140,24 +149,58 @@
                                 "install-sync-tool"
                                 (runtime/install-sync-tool! session code)
 
+                                "install-tool"
+                                (runtime/install-tool! session code)
+
+                                "install-module"
+                                (runtime/install-module! session code)
+
                                 "exec"
                                 (do (runtime/exec! session code) nil)
 
                                 "run"
                                 (runtime/run session code)
 
+                                "run-block"
+                                (runtime/run-block session code)
+
                                 "eval"
                                 (runtime/eval-str session code)
+
+                                ;; Policy is the PROCESS's, and this process is one
+                                ;; session's, which is the whole reason the worker
+                                ;; exists: what used to be "every session in the
+                                ;; gateway" is now exactly this session.
+                                "confine"
+                                (let [{:strs [read write refusal]} (json/read-json code
+                                                                                  :key-fn identity)]
+                                  (runtime/confine! (vec read) (vec write) (str refusal))
+                                  nil)
+
+                                "network"
+                                (let [{:strs [enabled refusal]} (json/read-json code
+                                                                                :key-fn identity)]
+                                  (runtime/network! (boolean enabled) (str refusal))
+                                  nil)
+
+                                "trust"
+                                (do (runtime/trust! session (= "1" code)) nil)
+
+                                "stdin"
+                                (do (runtime/stdin! code) nil)
+
+                                "interrupt"
+                                (runtime/interrupt!)
 
                                 "close"
                                 (do (runtime/trust! session false)
                                     (runtime/close-session! session))
 
-                                (throw (ex-info (str "no extension-host op named " op) {:op op})))}
+                                (throw (ex-info (str "no worker op named " op) {:op op})))}
                      (catch Throwable t {"id" id "error" (or (ex-message t) (str t))})))))
 
 (defn serve!
-  "BE the extension host: connect back to the parent on `socket-path` and serve
+  "BE a worker: connect back to the parent on `socket-path` and serve
    it until it hangs up.
 
    The interpreter here is deliberately the runtime's default one — no
@@ -195,8 +238,18 @@
 
 ;; The parent half
 
-(defonce ^:private ^{:doc "The live child: its process, its peer and the log it writes to."} child
-  (atom nil))
+(defonce
+  ^:private
+  ^{:doc "worker key -> {:process :peer :log}. One entry per live worker: a
+          SESSION's key gives that session its own interpreter, and the shared
+          key is what everything not owned by a session runs in."}
+  workers
+  (atom {}))
+
+(def shared-key
+  "The worker for Python that belongs to no single session: extension files
+   loading at startup, whose REGISTRATION is the gateway's and not a session's."
+  "shared")
 
 (defn- child-argv
   "How to start the child. The native binary starts ITSELF (the environment
@@ -209,7 +262,7 @@
     (vec (concat [(str (System/getProperty "java.home") File/separator "bin" File/separator "java")]
                  (.getInputArguments (ManagementFactory/getRuntimeMXBean))
                  ["-cp" (System/getProperty "java.class.path") "clojure.main" "-m"
-                  "com.blockether.vis.internal.python-extension-host"]))))
+                  "com.blockether.vis.internal.python-worker"]))))
 
 (defn- run-dir ^File [] (doto (io/file (System/getProperty "user.home") ".vis" "run") .mkdirs))
 
@@ -249,8 +302,8 @@
       (Files/deleteIfExists (.toPath socket))
       (when-not accepted
         (.destroy process)
-        (throw (ex-info "the python extension host did not start"
-                        {:type :vis/python-extension-host :log (.getAbsolutePath log)})))
+        (throw (ex-info "the python worker did not start"
+                        {:type :vis/python-worker :log (.getAbsolutePath log)})))
       (let [peer
             (peer-over accepted)
 
@@ -266,45 +319,79 @@
                                                                             (get m "tool")
                                                                             (get m "payload"))}))
                                (fn []
-                                 (str "the python extension host exited; see "
+                                 (str "the python worker exited; see "
                                       (.getAbsolutePath log))))
                        "vis-python-extension-pump")
           (.setDaemon true)
           (.start))
-        (tel/log! {:level :debug :id ::started} (str "python extension host pid " (.pid process)))
+        (tel/log! {:level :debug :id ::started} (str "python worker pid " (.pid process)))
         state))))
 
+(defn- alive? [state] (and state (.isAlive ^Process (:process state))))
+
 (defn- live
-  "The running child, started if this is the first call or if the last one died."
-  []
-  (let [state @child]
-    (if (and state (.isAlive ^Process (:process state)))
+  "The worker for `k`, started if this is the first call or if the last one died.
+   Starting is per key and under a lock, so two turns opening the same session at
+   once share one worker instead of racing two interpreters into existence."
+  [k]
+  (let [state (get @workers k)]
+    (if (alive? state)
       state
-      (locking child
-        (let [state @child]
-          (if (and state (.isAlive ^Process (:process state))) state (reset! child (start!))))))))
+      (locking workers
+        (let [state (get @workers k)]
+          (if (alive? state)
+            state
+            (let [started (start!)]
+              (swap! workers assoc k started)
+              started)))))))
 
 (defn- ask
-  [op session code]
-  (request! (:peer (live))
+  [k op session code]
+  (request! (:peer (live k))
             (cond-> {"op" op "session" session}
               code
               (assoc "code" code))))
 
-(defn install-runtime! [session] (ask "install-runtime" session nil))
-(defn install-sync-tool! [session tool-name] (ask "install-sync-tool" session tool-name))
-(defn exec! [session code] (ask "exec" session code))
-(defn run [session code] (ask "run" session code))
-(defn eval-str [session code] (ask "eval" session code))
-(defn close-session! [session] (ask "close" session nil))
+(defn install-runtime! [k session] (ask k "install-runtime" session nil))
+(defn install-sync-tool! [k session tool-name] (ask k "install-sync-tool" session tool-name))
+(defn install-tool! [k session tool-name] (ask k "install-tool" session tool-name))
+(defn install-module! [k session module] (ask k "install-module" session module))
+(defn exec! [k session code] (ask k "exec" session code))
+(defn run [k session code] (ask k "run" session code))
+(defn run-block [k session code] (ask k "run-block" session code))
+(defn eval-str [k session code] (ask k "eval" session code))
+(defn close-session! [k session] (ask k "close" session nil))
+(defn interrupt! [k session] (ask k "interrupt" session nil))
+(defn stdin! [k session text] (ask k "stdin" session (str text)))
+(defn trust! [k session trusted?] (ask k "trust" session (if trusted? "1" "0")))
 
-(defn stop!
-  "Stop the child, if there is one. Idempotent; the process is also a daemon of
-   this one's lifetime, so an unclean exit leaves nothing behind."
-  []
-  (locking child
-    (when-let [state @child]
-      (reset! child nil)
+(defn confine!
+  "Confine `k`'s interpreter to `read`/`write`, or lift it with two empty lists.
+   The policy is that PROCESS's, which is why one worker per session is the whole
+   point: what used to be every session in the gateway is now this session."
+  [k session read write refusal]
+  (ask k "confine" session (json/write-json-str {"read" (vec read)
+                                                 "write" (vec write)
+                                                 "refusal" (str refusal)})))
+
+(defn network!
+  [k session enabled? refusal]
+  (ask k "network" session (json/write-json-str {"enabled" (boolean enabled?)
+                                                 "refusal" (str refusal)})))
+
+(defn stop-worker!
+  "Stop the worker for `k`, if there is one. Idempotent."
+  [k]
+  (locking workers
+    (when-let [state (get @workers k)]
+      (swap! workers dissoc k)
       (try (.close ^SocketChannel (:channel (:peer state))) (catch Throwable _ nil))
       (.destroy ^Process (:process state))))
+  nil)
+
+(defn stop!
+  "Stop every worker. Idempotent; each process is a daemon of this one's
+   lifetime, so an unclean exit leaves nothing behind."
+  []
+  (doseq [k (keys @workers)] (stop-worker! k))
   nil)

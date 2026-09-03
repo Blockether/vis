@@ -21,7 +21,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.python-extensions :as pyx]
-            [com.blockether.vis.internal.python-extension-host :as pyext]
+            [com.blockether.vis.internal.python-worker :as pyext]
             [com.blockether.vis.internal.python-runtime :as python-runtime])
   (:import [java.io File]))
 
@@ -47,12 +47,12 @@
    on a machine that had never installed pytest — the install succeeded and the
    very next import still raised `ModuleNotFoundError`."
   [^String session]
-  (try (pyext/exec! session "import pytest")
+  (try (pyext/exec! pyext/shared-key session "import pytest")
        nil
        (catch Throwable _
          (let [{:keys [exit out]} (python-runtime/pip-install! ["pytest"])]
            (if (zero? (long (or exit 1)))
-             (try (pyext/exec! session
+             (try (pyext/exec! pyext/shared-key session
                                "import importlib; importlib.invalidate_caches(); import pytest")
                   nil
                   (catch Throwable t (ex-message t)))
@@ -212,22 +212,22 @@
         (pyx/build-context (.getName test-file))]
 
     (try (pyx/bind-test-host! session (.getName test-file))
-         (pyext/exec! session pyx/bootstrap-python)
+         (pyext/exec! pyext/shared-key session pyx/bootstrap-python)
          (when-let [missing (ensure-pytest! session)]
            (throw (ex-info missing {:file path})))
          ;; The two inputs cross as JSON the guest PARSES: pasting JSON straight
          ;; into Python source would keep its `\\/` escapes verbatim and break
          ;; every path in it.
-         (pyext/exec! session
+         (pyext/exec! pyext/shared-key session
                       (str "__vis_test_paths__ = "
                            (env/py-json-literal (vec paths))
                            "\n"
                            "__vis_test_file__ = "
                            (env/py-json-literal path)
                            "\n"))
-         (pyext/exec! session run-test-src)
+         (pyext/exec! pyext/shared-key session run-test-src)
          (let [outcome
-               (json/read-json (pyext/run session
+               (json/read-json (pyext/run pyext/shared-key session
                                           (str "{'report': __vis_test_report__,"
                                                " 'rc': __vis_test_rc__,"
                                                " 'output': __vis_test_output__}"))
