@@ -218,9 +218,8 @@
         (try (runtime/bind-host! dispatch)
              (reset! bound true)
              (catch Throwable t
-               (tel/log! {:level :debug
-                          :id ::no-interpreter-to-bind
-                          :data {:error (ex-message t)}}))))))
+               (tel/log!
+                 {:level :debug :id ::no-interpreter-to-bind :data {:error (ex-message t)}}))))))
   @bound)
 
 (defn- install!
@@ -263,10 +262,10 @@
   "Install `tools` into `session` AND register them for every session.
 
    A shim door is ONE host capability, not a per-session closure, and Python is
-   PROCESS state: `nippy` and `ruff` staple themselves onto
-   `builtins` and `sys.modules`, so a second session's `import nippy` finds the
-   module the FIRST session built - holding proxies that still name it. The
-   shared key is what keeps those doors answering after that session is gone."
+   PROCESS state: `attach` and `ls` staple their entry points onto `builtins`, so
+   a second session can find names the FIRST session built — holding proxies that
+   still name it. The shared key is what keeps those doors answering after that
+   session is gone."
   ([session tools] (install-doors! session tools runtime/install-sync-tool!))
   ([session tools install-one]
    (swap! registry update door-session merge tools)

@@ -1,21 +1,17 @@
 {:initialization
- [{:register com.blockether.vis.internal.foundation.core/register!
-   :apropos "META-INF/vis/apropos/docs.edn"}
-  {:register com.blockether.vis.internal.foundation.shim-ruff/register!
-   :apropos "META-INF/vis/apropos/shim-ruff.edn"}
-  {:register com.blockether.vis.internal.foundation.shim-nippy/register!
-   :apropos "META-INF/vis/apropos/shim-nippy.edn"}
-  {:register com.blockether.vis.internal.foundation.shim-attach/register!
-   :apropos "META-INF/vis/apropos/shim-attach.edn"}
-  {:register com.blockether.vis.internal.foundation.shim-ls/register!
-   :apropos "META-INF/vis/apropos/shim-ls.edn"}
+ [{:apropos "META-INF/vis/apropos/docs.edn"
+   :register com.blockether.vis.internal.foundation.core/register!}
+  {:apropos "META-INF/vis/apropos/shim-attach.edn"
+   :register com.blockether.vis.internal.foundation.shim-attach/register!}
+  {:apropos "META-INF/vis/apropos/shim-ls.edn"
+   :register com.blockether.vis.internal.foundation.shim-ls/register!}
   com.blockether.vis.internal.foundation.mcp.core/register!
   com.blockether.vis.internal.foundation.harness.core/register!
   com.blockether.vis.ext.channel-tui.core/register!
   com.blockether.vis.ext.foundation-search.core/register!
-  {:register com.blockether.vis.ext.foundation-voice.core/register!
+  {:because "sherpa-onnx ships one 8-13 MB native jar per platform and may be absent"
    :is-optional true
-   :because "sherpa-onnx ships one 8-13 MB native jar per platform and may be absent"}
+   :register com.blockether.vis.ext.foundation-voice.core/register!}
   com.blockether.vis.ext.language-clojure.core/register!
   com.blockether.vis.ext.language-python.core/register!
   com.blockether.vis.ext.persistance-sqlite.registrar/register!
@@ -25,8 +21,6 @@
   com.blockether.vis.ext.provider-openai-codex/register!
   com.blockether.vis.ext.provider-opencode-go/register!
   com.blockether.vis.ext.provider-openrouter/register!
-  com.blockether.vis.ext.provider-openai/register!
-  com.blockether.vis.ext.provider-ollama/register!
+  com.blockether.vis.ext.provider-openai/register! com.blockether.vis.ext.provider-ollama/register!
   com.blockether.vis.ext.provider-lmstudio/register!
-  com.blockether.vis.ext.provider-mistral/register!
-  com.blockether.vis.ext.provider-zai/register!]}
+  com.blockether.vis.ext.provider-mistral/register! com.blockether.vis.ext.provider-zai/register!]}

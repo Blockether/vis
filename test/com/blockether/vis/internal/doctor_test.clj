@@ -49,8 +49,8 @@
   (it "reports one info line when every sandbox shim's dependencies resolve"
       (with-redefs [extension/sandbox-shims (constantly [{:shim/name "ls"
                                                           :shim/source "vis-shims/ls.py"}
-                                                         {:shim/name "ruff"
-                                                          :shim/source "vis-shims/ruff.py"
+                                                         {:shim/name "attachments"
+                                                          :shim/source "vis-shims/attach.py"
                                                           :shim/bindings {"probe" (fn []
                                                                                     :ok)}}])]
         (let [msgs (#'doctor/sandbox-shim-messages {})]
@@ -72,16 +72,16 @@
           (expect (= 2 (doctor/exit-code msgs))))))
   (it "errors on a shim whose host bindings cannot be realized"
       (with-redefs [extension/sandbox-shims
-                    (constantly [{:shim/name "ruffy"
-                                  :shim/source "vis-shims/ruff.py"
+                    (constantly [{:shim/name "broken"
+                                  :shim/source "vis-shims/ls.py"
                                   :shim/bindings (fn []
-                                                   (throw (ex-info "ruff unavailable" {})))}])]
+                                                   (throw (ex-info "bridge unavailable" {})))}])]
         (let [msgs (#'doctor/sandbox-shim-messages {})
               err (first (filterv #(= :error (:level %)) msgs))]
 
           (expect (some? err))
           (expect (str/includes? (:message err)
-                                 "host bindings failed to resolve: ruff unavailable")))))
+                                 "host bindings failed to resolve: bridge unavailable")))))
   (it "warns on duplicate shim names, which shadow each other at install time"
       (with-redefs [extension/sandbox-shims
                     (constantly [{:shim/name "yaml" :shim/source "vis-shims/yaml.py"}

@@ -61,7 +61,7 @@
                  ;; vacuous. A door is a capability the HOST performs, so this set is
                  ;; closed and small — anything a wheel can serve is pip's job, not a
                  ;; shim's.
-                 (expect (= #{"shim_attach.clj" "shim_ls.clj" "shim_nippy.clj" "shim_ruff.clj"}
+                 (expect (= #{"shim_attach.clj" "shim_ls.clj"}
                             (set (map (fn [^File f]
                                         (.getName f))
                                       (shim-ns-files))))))
@@ -179,14 +179,13 @@
 
 (defdescribe
   shim-globals-name-their-call-test
-  "A prebound global is typed straight into a block — `ls(...)`, `nippy_decode(...)` — with
+  "A prebound global is typed straight into a block — `ls(...)`, `attach(...)` — with
    no import and no signature to inspect first, so something has to state its arguments.
    The canonical home is STRUCTURE: the harvested `:call`, which `doc(name)` prints above
    the document, exactly where a tool's `:call` line goes — a page that opens with its own
    signature previews as a signature and stops matching the words its prose is written in.
    A shim that has not moved yet may still carry the call form inside its text; naming it
-   NOWHERE is the bug (the two nippy globals were pages that named neither an argument nor
-   a result)."
+   NOWHERE makes the page unusable."
   (it "documents every shim global with its own call form"
       (let [names
             (->> (registered-shims)

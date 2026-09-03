@@ -1316,9 +1316,8 @@ second session pays nothing for the same import.
 What Vis publishes ITSELF is small on purpose — the doors that reach the HOST and
 could not come from an index:
 
-- `ruff` — in-process lint and format, the same `com.blockether/ruff` cdylib the Python language pack uses.
 - `ls` — the workspace file lister, answering the host's own index.
-- Globals, no import needed — `attach`, `list_attachments`, `get_attachment`, `read_attachment`, `show_attachment`, plus `nippy_encode` / `nippy_decode`.
+- Globals, no import needed — `attach`, `list_attachments`, `get_attachment`, `read_attachment`, and `show_attachment`.
   - `attach(...)` hands back the descriptor of what it just stored, and `list_attachments()` / `get_attachment(...)` answer the same shape: id, filename, version, media type, kind, size, audience, and the `turn_id` it belongs to — a tool artifact adds `iteration_id` / `tool_call_id`. `read_attachment(...)` returns the raw bytes and nothing else.
   - What the RUNNING block attached is addressable inside that block: pass the returned descriptor — or its filename — straight to `show_attachment`, `read_attachment` or `get_attachment`, where it carries `is_pending` until the iteration is stored.
   - **Same document, same name.** A revision goes back under the filename it already had and is stored as that artifact's next **version**, never `report_v2.png` beside `report.png`; a fresh name is a different document, and `list_attachments(name)` walks the thread.
@@ -1328,9 +1327,11 @@ could not come from an index:
   argument: a filename resolves to the latest cut unless you pass a `version`
   (negative counts back from the latest), an id resolves to that one cut.
 
+Ruff and every other package available from an index follow normal CPython packaging instead: run `vis-agent python -m pip install ruff`, then `vis-agent python -m ruff check .`. The latter invokes Ruff's real `__main__`; Vis supplies no module or fallback when the distribution is absent.
+
 `subprocess`, `os.system` and `os.popen` never spawn in the agent sandbox: they raise and name the sandbox's `shell(...)` call, which is the one door to a process. (Trusted extension code, outside the sandbox, keeps the real `subprocess`.) The filesystem is confined to the session's roots by an audit hook inside the interpreter — not by anything Python can rebind.
 
-`doc("ruff")` is that door's contract, harvested from its own Python
+`doc("ls")` is that door's contract, harvested from its own Python
 docstrings. The authoring contract for a door lives in
 [Sandbox shims and autoloads](#sandbox-shims-and-autoloads) below — a
 Clojure-extension capability, since a door needs host callables.
@@ -1587,39 +1588,37 @@ print(doc("weather_lookup"))
 
 The agent writes **Python** in a real, embedded CPython with `pip`, so a package
 from an index needs nothing from you. A **shim** is for what an index cannot
-carry: a *host-backed* Python module whose familiar API is a thin façade, its real
-work DELEGATED across the boundary to Clojure/JVM callables you supply. This is
-exactly how `import ruff` (backed by the `com.blockether/ruff` cdylib the language
-pack lints with) works — it ships as a built-in shim extension
-(`foundation.shim-ruff`), and the engine installs it through the SAME generic
-path any extension uses.
+carry: a *host-backed* Python API whose familiar façade delegates its real work
+across the boundary to Clojure/JVM callables you supply. This is exactly how the
+prebound `ls(...)` works: its Python façade delegates the workspace's
+ignore-aware listing to the host. It ships as the built-in shim extension
+`foundation.shim-ls`, installed through the SAME generic path any extension uses.
 
 List one or more shim specs under `:ext/sandbox-shims`:
 
 ```clojure
-{:shim/name        "ruff"
+{:shim/name        "ls"
  ;; RUNTIME NAMES, never inferred from :shim/name: exact top-level modules a
  ;; caller may import and exact names callable with no import. The build harvests
  ;; their Python docstrings into a manifest-listed apropos resource.
- :shim/imports     ["ruff"]
- :shim/globals     []
+ :shim/imports     []
+ :shim/globals     ["ls"]
  ;; Extra doctrine no single public name owns. Prose about a name belongs on that
  ;; module, function, or class in the shim's Python source.
- :shim/docs        "In-process Ruff, no pip/PATH: `python -m ruff check|format ...`"
+ :shim/docs        "Host-backed, ignore-aware workspace directory listing."
  ;; Host callables the shim's Python delegates to — a `{py-name -> fn}` map (or a
  ;; 0-arg fn returning one). Each is wired onto the sandbox globals as a Python
  ;; callable (args marshalled Python->Clojure, result back) BEFORE the `.py` source
- ;; evals. Return a 2-vec envelope `[true payload]` / `[false message]` so a
+ ;; evals. Return errors as DATA in the envelope your Python façade unwraps, so a
  ;; failure crosses the boundary as a catchable Python exception.
- :shim/bindings    (fn [] {"__vis_ruff_check__" (fn [src] (try [true (ruff/check src)]
-                                                       (catch Throwable t [false (str t)])))})
+ :shim/bindings    (fn [] {"__vis_list_directories__" list-directories})
  ;; CLASSPATH RESOURCE path of the shim's Python source — a real `.py` file, never
  ;; a Clojure string. It is eval'd into the sandbox: publish your module into
- ;; `sys.modules` (so `import ruff` finds it) and optionally staple it onto
- ;; `builtins` (autoload — a call with no import). Built-in shims
- ;; live in `resources/vis-shims/`; ship yours on your own classpath and, for a
- ;; native image, embed it with `-H:IncludeResources=<your-prefix>/.*`.
- :shim/source      "vis-shims/ruff.py"}
+ ;; `sys.modules` (so imports find it) and/or staple public names onto `builtins`
+ ;; (autoload — a call with no import). Built-in shims live in
+ ;; `resources/vis-shims/`; ship yours on your own classpath and, for a native
+ ;; image, embed it with `-H:IncludeResources=<your-prefix>/.*`.
+ :shim/source      "vis-shims/ls.py"}
 ```
 
 The distribution's build harvests every contributed module's Python `__doc__` and
@@ -1627,8 +1626,8 @@ its public members into a flat apropos EDN resource. The root manifest names tha
 resource explicitly, so `apropos(r"^pandas\.read_csv$")` and
 `doc("pandas.read_csv")` work without importing the module first. `:shim/docs`,
 when declared, is appended to its module document. A shim with `:shim/globals`
-must name each call in its Python docstring (`nippy_encode(obj) -> bytes`); contract
-tests reject undocumented names.
+must name each call in its Python docstring (`ls(paths, depth=1, is_hidden=False)`);
+contract tests reject undocumented names.
 
 Installed BEFORE the sandbox's baseline snapshot, so your `__vis_*` bridge names
 and published module are hidden from the model's live-vars view. Install is
@@ -1642,7 +1641,7 @@ resource is missing — a shim whose `.py` never reached the classpath fails
 loudly instead of publishing an empty module. Each shim's source is eval'd
 LAZILY, on the first `import <name>` (or first touch of an autoloaded global),
 so a session that never imports it pays nothing. Because the source is a real
-file, it is lintable, diffable, testable with the built-in `pytest` shim, and
+file, it is lintable, diffable, testable with ordinary `pytest`, and
 free of Clojure escaping hazards.
 
 ### The prompt fragment

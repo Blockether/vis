@@ -291,11 +291,11 @@ def __vis_harvest__(modules, names):
                                         (str/replace stem "_" "-"))))))
                  set)]
 
-        (expect (= 4 (count expected)))
+        (expect (= 2 (count expected)))
         (expect (= expected listed))))
   (it "makes every pack that lends a shim name its own document resource"
       (let [entries (shim-entries)]
-        (expect (= 4 (count entries)))
+        (expect (= 2 (count entries)))
         (doseq [{:keys [register apropos]} entries]
           (expect (string? apropos) register)
           (expect (some? (io/resource apropos)) apropos)
@@ -308,8 +308,8 @@ def __vis_harvest__(modules, names):
             names
             (map :name entries)]
 
-        (expect (= 4 (count (registered-shims))))
-        (expect (< 20 (count entries)))
+        (expect (= 2 (count (registered-shims))))
+        (expect (= 6 (count entries)))
         ;; Unique ACROSS packs, not merely within one: `apropos` answers the first
         ;; record to claim a name, so two packs claiming one name would hide a symbol.
         (expect (= (count names) (count (distinct names))))
@@ -318,22 +318,29 @@ def __vis_harvest__(modules, names):
                               (string? (:kind %))
                               (not (str/blank? (:text %))))
                         entries))))
-  (it "keeps a pack's roots and dotted members in that pack's own resource"
-      (let [ruff
+  (it
+    "keeps each retained shim's globals in that pack's own resource"
+    (let [records-for
+          (fn [public-name]
             (->> (shim-entries)
-                 (some #(when (some #{"ruff"} (shim-names (:shims %))) %))
+                 (some #(when (some #{public-name} (shim-names (:shims %))) %))
                  :apropos
-                 stored-entries)
+                 stored-entries))
 
-            by-name
-            (into {} (map (juxt :name identity)) ruff)]
+          listing
+          (records-for "ls")
 
-        (expect (contains? by-name "ruff"))
-        (expect (contains? by-name "ruff.check_str"))
-        (expect (= "class" (:kind (get by-name "ruff.RuffError"))))
-        (expect (every? #(contains? #{#{:name :kind :text} #{:name :kind :text :call}}
-                                    (set (keys %)))
-                        (vals by-name)))))
+          attachments
+          (records-for "attach")
+
+          records
+          (concat listing attachments)]
+
+      (expect (= #{"ls"} (set (map :name listing))))
+      (expect (= #{"attach" "get_attachment" "list_attachments" "read_attachment" "show_attachment"}
+                 (set (map :name attachments))))
+      (expect (every? #(contains? #{#{:name :kind :text} #{:name :kind :text :call}} (set (keys %)))
+                      records))))
   (it
     "matches one live harvest, pack by pack"
     (let [live-harvest

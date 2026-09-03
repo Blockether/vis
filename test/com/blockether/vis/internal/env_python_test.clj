@@ -422,15 +422,15 @@
           (expect (str/includes? out "type=tool"))
           (expect (str/includes? out "body=True"))
           (expect (str/includes? out "local=False"))))
-    (it "answers a shim member as its own symbol under its dotted name"
-        (let [out (run (str "hits = apropos(r'^nippy\\.encode$')\n"
+    (it "answers a shim global as its own symbol"
+        (let [out (run (str "hits = apropos(r'^ls$')\n"
                             "print('first=' + hits[0].name)\n" "print('type=' + hits[0].type)\n"
                             "print('item=' + str(len(doc(hits[0])) > 0))\n"
-                            "print('colon=' + str('encode' in doc('nippy::encode')))"))]
-          (expect (str/includes? out "first=nippy.encode"))
+                            "print('same=' + str(doc(hits[0]) == doc('ls')))"))]
+          (expect (str/includes? out "first=ls"))
           (expect (str/includes? out "type=function"))
           (expect (str/includes? out "item=True"))
-          (expect (str/includes? out "colon=True"))))
+          (expect (str/includes? out "same=True"))))
     (it "answers bare and empty calls with the same complete records"
         (let [out
               (run (str

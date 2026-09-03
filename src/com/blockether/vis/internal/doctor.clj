@@ -73,8 +73,8 @@
 (defn- shim-binding-map
   "A shim's host `:shim/bindings` — either the literal `{py-name -> fn}` map or
    the result of its 0-arg fn. REALIZING it is the point: that fn is where a
-   shim reaches for the host JVM library it delegates to (ruff, nippy, imaging,
-   sqlite), so a build missing that dependency throws HERE rather than mid-turn."
+   shim reaches for the host library it delegates to (for example, fff or
+   imaging), so a build missing that dependency throws HERE rather than mid-turn."
   [shim]
   (let [b (:shim/bindings shim)]
     (if (fn? b) (b) b)))
@@ -105,14 +105,14 @@
      :ok? (and (nil? (:error src)) (nil? (:error bindings)))}))
 
 (defn- sandbox-shim-messages
-  "Sandbox DEPENDENCY check. Every extension-contributed Python shim (numpy,
-   pandas, PIL, ruff, ...) is advertised to the model in the system prompt, yet
-   installation is best-effort: `env-python/install-sandbox-shims!` catches the
-   failure, logs a warning nobody reads, and the sandbox comes up WITHOUT the
-   module. The agent then discovers the hole as a `ModuleNotFoundError` in the
-   middle of a turn. Two things break silently that way — a shim source that
-   never made it onto the classpath / into the native image, and a host binding
-   whose JVM library is absent — and both are what this check surfaces.
+  "Sandbox DEPENDENCY check. Every extension-contributed Python shim (`ls`,
+   `attach`, ...) is advertised to the model in the system prompt, yet installation
+   is best-effort: `env-python/install-sandbox-shims!` catches the failure, logs a
+   warning nobody reads, and the sandbox comes up WITHOUT the host-backed door.
+   The agent then discovers the hole in the middle of a turn. Two things break
+   silently that way — a shim source that never made it onto the classpath / into
+   the native image, and a host binding whose JVM library is absent — and both are
+   what this check surfaces.
 
    Static on purpose: no Python session is created, so the check costs
    milliseconds and cannot itself wedge `vis-agent doctor`."
@@ -150,11 +150,11 @@
        [{:level :error
          :message (str "Sandbox shim registry unavailable: " (:error shims))
          :remediation
-         "The Python sandbox starts with NO shims — `import numpy` and friends fail inside every turn. Report this build (`vis-agent --version`)."}]
+         "The Python sandbox starts with NO host-backed doors — `ls` and `attach` fail inside every turn. Report this build (`vis-agent --version`)."}]
        (empty? reports)
        [{:level :warn
          :message
-         "No Python sandbox shims registered — the sandbox has none of the numpy / pandas / PIL / ruff modules the system prompt advertises."
+         "No Python sandbox shims registered — the sandbox has none of the `ls` / `attach` doors the system prompt advertises."
          :remediation
          "Built-in shims register with the foundation extensions; a build without them is incomplete. Report this build (`vis-agent --version`)."}]
        :else

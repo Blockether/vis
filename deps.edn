@@ -71,8 +71,6 @@
    :git/sha "39c34b12a6e6a3b20b5dca1f2a86db85aba819f8"}
   com.cnuernber/charred {:mvn/version "1.041"}
   com.google.zxing/core {:mvn/version "3.5.4"}
-  ;; JVM codecs backing the lazy sandbox nippy_encode/nippy_decode helpers.
-  com.taoensso/nippy {:mvn/version "3.8.0"}
   com.taoensso/telemere {:mvn/version "1.2.1"}
   ;; Version MUST match com.taoensso/telemere.
   com.taoensso/telemere-slf4j {:mvn/version "1.2.1"}
@@ -92,10 +90,6 @@
   io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
   metosin/malli {:mvn/version "0.20.1"}
   metosin/reitit-ring {:mvn/version "0.10.1"}
-  ;; Latest published Vectorz pair; compatibility registration is deferred until the
-  ;; first Nippy encode/decode call.
-  net.mikera/core.matrix {:mvn/version "0.63.0"}
-  net.mikera/vectorz-clj {:mvn/version "0.48.0"}
   org.babashka/http-client {:mvn/version "0.4.24"}
   ;; Pure-Java X.509 minting for the egress-proxy MITM CA (ephemeral, per-session) —
   ;; HTTPS verb/path enforcement for jailed shell children. No system provider is

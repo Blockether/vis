@@ -44,7 +44,7 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 62 unique, across 16 `deps.edn` modules (root + extensions).
+- **Direct dependency coordinates:** 60 unique, across 16 `deps.edn` modules (root + extensions).
 - **Declared jar footprint (direct coords):** ~38 MB; concentrated in the embedded CPython runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
@@ -202,7 +202,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
 | `com.google.zxing/core` | `3.5.4` | Apache-2.0 | 596 KB | 3rd-party |
-| `com.taoensso/nippy` | `3.8.0` | EPL-1.0 | 52 KB | 3rd-party |
 | `com.taoensso/telemere` | `1.2.1` | EPL-1.0 | 59 KB | 3rd-party |
 | `com.taoensso/telemere-slf4j` | `1.2.1` | EPL-1.0 | 19 KB | 3rd-party |
 | `com.taoensso/trove` | `1.1.0` | EPL-1.0 | 17 KB | 3rd-party |
@@ -214,8 +213,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `io.github.tonsky/clojure-plus` | `1.7.2` | MIT | 33 KB | 3rd-party |
 | `metosin/malli` | `0.20.1` | EPL-2.0 | 97 KB | 3rd-party |
 | `metosin/reitit-ring` | `0.10.1` | EPL-1.0 | 9 KB | 3rd-party |
-| `net.mikera/core.matrix` | `0.63.0` | EPL-1.0 | 130 KB | 3rd-party |
-| `net.mikera/vectorz-clj` | `0.48.0` | LGPL-3.0 | 23 KB | 3rd-party |
 | `org.apache.commons/commons-compress` | `1.28.0` | Apache-2.0 | 1.1 MB | 3rd-party |
 | `org.babashka/http-client` | `0.4.24` | MIT | 16 KB | 3rd-party |
 | `org.bouncycastle/bcpkix-jdk18on` | `1.85` | Bouncy Castle Licence | 1.3 MB | 3rd-party |
@@ -270,6 +267,7 @@ _Durable session store (SQLite + Flyway migrations)._
 |---|---|---|---|---|
 | `com.github.seancorfield/honeysql` | `2.7.1425` | EPL-2.0 | 43 KB | 3rd-party |
 | `com.github.seancorfield/next.jdbc` | `1.3.1118` | EPL-2.0 | 55 KB | 3rd-party |
+| `com.taoensso/nippy` | `3.8.0` | EPL-1.0 | 52 KB | 3rd-party |
 | `com.zaxxer/HikariCP` | `7.1.0` | Apache-2.0 | 169 KB | 3rd-party |
 | `org.flywaydb/flyway-core` | `12.11.0` | Apache-2.0 | 791 KB | 3rd-party |
 | `org.flywaydb/flyway-database-nc-sqlite` | `12.11.0` | Apache-2.0 | 6 KB | 3rd-party |
@@ -290,25 +288,20 @@ _Durable session store (SQLite + Flyway migrations)._
 
 | License | Count |
 |---|---|
-| EPL-1.0 | 21 |
+| EPL-1.0 | 20 |
 | MIT | 15 |
 | Apache-2.0 | 13 |
 | EPL-2.0 | 4 |
 | BSD-2-Clause | 3 |
 | Bouncy Castle Licence | 2 |
-| LGPL-3.0 | 2 |
 | (floating) | 1 |
+| LGPL-3.0 | 1 |
 | BSD | 1 |
 
 All licenses in the graph are **permissive / OSI-approved** (EPL-1.0/2.0, MIT,
 Apache-2.0, BSD, UPL-1.0, PSF, Public Domain) and compatible with shipping vis
 under **Apache-2.0** — **with the copyleft exception(s) below that need legal sign-off:**
 
-> **WARNING — `net.mikera/vectorz-clj` (`0.48.0`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
-> linking, but **static linking into the GraalVM native image** can trigger
-> relinking obligations. Action: confirm distribution terms with legal, or keep
-> the owning extension as an optional (droppable) jar rather than baking it into
-> the distributed binary (see §4.3).
 > **WARNING — `com.blockether/lanterna` (`3.1.5-vis.49`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
 > linking, but **static linking into the GraalVM native image** can trigger
 > relinking obligations. Action: confirm distribution terms with legal, or keep

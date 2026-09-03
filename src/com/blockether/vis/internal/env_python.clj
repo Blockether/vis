@@ -44,7 +44,8 @@
 
 (defonce
   ^:private
-  ^{:doc "session name -> the WORKER that runs it, or absent for a session this
+  ^{:doc
+    "session name -> the WORKER that runs it, or absent for a session this
           process runs itself.
 
           A gateway session gets a worker: its own process, its own interpreter,
@@ -71,11 +72,15 @@
 
 (defn- py-exec!
   [session code]
-  (if-let [k (worker-of session)] (pyext/exec! k session code) (runtime/exec! session code)))
+  (if-let [k (worker-of session)]
+    (pyext/exec! k session code)
+    (runtime/exec! session code)))
 
 (defn- py-run
   [session code]
-  (if-let [k (worker-of session)] (pyext/run k session code) (runtime/run session code)))
+  (if-let [k (worker-of session)]
+    (pyext/run k session code)
+    (runtime/run session code)))
 
 (defn- py-run-block
   [session code]
@@ -115,11 +120,15 @@
 
 (defn- py-stdin!
   [session text]
-  (if-let [k (worker-of session)] (pyext/stdin! k session text) (runtime/stdin! text)))
+  (if-let [k (worker-of session)]
+    (pyext/stdin! k session text)
+    (runtime/stdin! text)))
 
 (defn- py-interrupt!
   [session]
-  (if-let [k (worker-of session)] (pyext/interrupt! k session) (runtime/interrupt!)))
+  (if-let [k (worker-of session)]
+    (pyext/interrupt! k session)
+    (runtime/interrupt!)))
 
 (defn- py-close-session!
   [session]
@@ -681,8 +690,7 @@
    unparseable one are different outcomes, and swallowing the refusal here would
    answer 0 for both — reporting `nothing to execute` for a real syntax error."
   [session code]
-  (long (or (read-json (py-run session (str "__vis_count_forms__(" (pr-str (str code)) ")")))
-            0)))
+  (long (or (read-json (py-run session (str "__vis_count_forms__(" (pr-str (str code)) ")"))) 0)))
 
 (defn validate-no-banned-defs!
   "Throws `:vis/banned-def-head` when `code` references a banned construct
@@ -1102,12 +1110,12 @@
   "Give `session` every registered sandbox shim: its host bindings first, then
    its Python.
 
-   A shim is a DOOR — `ls`, `attach`, `nippy` and `ruff` are Vis
-   capabilities the host performs, not packages anyone can pip install — so the
-   bindings go in as SYNCHRONOUS host tools and the source is exec'd in the
-   session's own globals, where each shim's `__vis_install_<name>__` staples its
-   module or its global on. Anything a wheel can serve is not a shim: the
-   interpreter is a real CPython and `import numpy` fetches numpy."
+   A shim is a DOOR — `ls` and `attach` are Vis capabilities the host performs,
+   not packages anyone can pip install — so the bindings go in as SYNCHRONOUS
+   host tools and the source is exec'd in the session's own globals, where each
+   shim's `__vis_install_<name>__` staples its module or its global on. Anything
+   a wheel can serve is not a shim: the interpreter is a real CPython and
+   `import numpy` fetches numpy."
   [session]
   (doseq [shim (try (extension/sandbox-shims) (catch Throwable _ nil))]
     (try (let [declared (:shim/bindings shim)
@@ -1161,9 +1169,7 @@
     ;; session's rather than the gateway's. A one-shot `vis-agent python` is the
     ;; only session in its own process already, so it keeps the interpreter it
     ;; starts here.
-    (if (:worker? network-opts)
-      (swap! session-workers assoc session session)
-      (ensure-interpreter!))
+    (if (:worker? network-opts) (swap! session-workers assoc session session) (ensure-interpreter!))
     (confine! session roots-fn (:jail-enabled? network-opts))
     (py-stdin! session (guest-stdin-text stdin))
     (py-install-runtime! session)
@@ -1182,8 +1188,7 @@
                                          [nm val])
                                        (cons (sym->py-name sym) (py-aliases-for-sym sym))))))
                       (or custom-bindings {}))]
-      (when (seq tools)
-        (python-host/install-tools! session tools (partial py-install-tool!))))
+      (when (seq tools) (python-host/install-tools! session tools (partial py-install-tool!))))
     ;; …and the DATA bindings, which cross as JSON like every other value.
     (doseq [[sym val] (or custom-bindings {})
             :when (not (fn? val))]
