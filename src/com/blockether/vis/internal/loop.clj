@@ -10897,7 +10897,13 @@
             ;; in-interpreter domain guard — the sandbox network is unconfined, the
             ;; same all-or-nothing containment the OS process jail gives subprocesses.
             net-on? true
-            network-opts {:enabled? net-on?
+            network-opts {;; A gateway session runs its Python in a worker of its
+                          ;; own: the runtime's policy is a PROCESS's, so one
+                          ;; interpreter for every session was one confinement,
+                          ;; one `sys.modules` and one native cache for all of
+                          ;; them.
+                          :worker? true
+                          :enabled? net-on?
                           :jail-enabled? jail-enabled?
                           :allowed-domains (:allowed-domains net-cfg)
                           :denied-domains (:denied-domains net-cfg)

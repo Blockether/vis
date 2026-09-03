@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(extensions): stop the first Python extension failing where there is no interpreter to bind
 - perf(gateway): build a session when one is asked for, not four at boot
 - fix(gateway): stop every turn a session is running, and keep the session
+- feat(sandbox): give each gateway session its own Python worker process
 ## [v0.1.41] - 2026-08-21
 
 ### Changed

@@ -36,10 +36,92 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python-host :as python-host]
             [com.blockether.vis.internal.python-runtime :as python-runtime]
+            [com.blockether.vis.internal.python-worker :as pyext]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
+
+(defonce
+  ^:private
+  ^{:doc "session name -> the WORKER that runs it, or absent for a session this
+          process runs itself.
+
+          A gateway session gets a worker: its own process, its own interpreter,
+          and therefore its own confinement, `sys.modules` and native-library
+          caches — the policy in the runtime is the PROCESS's, so one interpreter
+          for every session was one policy for every session. A one-shot
+          `vis-agent python` keeps the interpreter it already started: it IS the
+          only session in its process, and a child would cost it a second JVM for
+          nothing."}
+  session-workers
+  (atom {}))
+
+(defn- worker-of [session] (get @session-workers session))
+
+;; ── The interpreter this session reaches, wherever it lives ─────────────────
+;; Every call a session makes goes through here, so the choice between "in this
+;; process" and "in this session's worker" is made once, by name, instead of at
+;; fifteen call sites.
+
+(defn- py-exec!
+  [session code]
+  (if-let [k (worker-of session)] (pyext/exec! k session code) (runtime/exec! session code)))
+
+(defn- py-run
+  [session code]
+  (if-let [k (worker-of session)] (pyext/run k session code) (runtime/run session code)))
+
+(defn- py-run-block
+  [session code]
+  (if-let [k (worker-of session)]
+    (pyext/run-block k session code)
+    (runtime/run-block session code)))
+
+(defn- py-install-runtime!
+  [session]
+  (if-let [k (worker-of session)]
+    (pyext/install-runtime! k session)
+    (runtime/install-runtime! session)))
+
+(defn- py-install-module!
+  [session module]
+  (if-let [k (worker-of session)]
+    (pyext/install-module! k session module)
+    (runtime/install-module! session module)))
+
+(defn- py-install-tool!
+  [session tool]
+  (if-let [k (worker-of session)]
+    (pyext/install-tool! k session tool)
+    (runtime/install-tool! session tool)))
+
+(defn- py-confine!
+  [session read write refusal]
+  (if-let [k (worker-of session)]
+    (pyext/confine! k session read write refusal)
+    (runtime/confine! read write refusal)))
+
+(defn- py-network!
+  [session enabled? refusal]
+  (if-let [k (worker-of session)]
+    (pyext/network! k session enabled? refusal)
+    (runtime/network! enabled? refusal)))
+
+(defn- py-stdin!
+  [session text]
+  (if-let [k (worker-of session)] (pyext/stdin! k session text) (runtime/stdin! text)))
+
+(defn- py-interrupt!
+  [session]
+  (if-let [k (worker-of session)] (pyext/interrupt! k session) (runtime/interrupt!)))
+
+(defn- py-close-session!
+  [session]
+  (if-let [k (worker-of session)]
+    (try (pyext/close-session! k session) (finally (pyext/stop-worker! k)))
+    (runtime/close-session! session)))
+
 
 (defn boundary-violation!
   "Throw on a keyword/symbol trying to cross the Clojure->Python boundary.
@@ -310,7 +392,7 @@
    Best-effort by design at every call site that seeds: a hiccup in a discovery
    surface must never be the reason a block fails."
   [session ^String code]
-  (try (runtime/exec! session code) nil (catch Throwable _ nil)))
+  (try (py-exec! session code) nil (catch Throwable _ nil)))
 
 (defn- read-json
   "Guest JSON text as Clojure data, `nil` when it is blank or unreadable."
@@ -324,7 +406,7 @@
    looks like in the other direction: strings, numbers, vectors, string-keyed
    maps."
   [session ^String expr]
-  (try (read-json (runtime/run session expr)) (catch Throwable _ nil)))
+  (try (read-json (py-run session expr)) (catch Throwable _ nil)))
 
 (defn- seed-json!
   "Merge `m` into the guest dict `dict-name` with `setdefault` semantics — the
@@ -483,7 +565,8 @@
                                   (into {}
                                         (map (fn [n]
                                                [n val]))
-                                        names))
+                                        names)
+                                  (partial py-install-tool!))
       (exec! session
              (str "for __vis_n__ in "
                   (py-json-literal (vec names))
@@ -591,7 +674,7 @@
    unparseable one are different outcomes, and swallowing the refusal here would
    answer 0 for both — reporting `nothing to execute` for a real syntax error."
   [session code]
-  (long (or (read-json (runtime/run session (str "__vis_count_forms__(" (pr-str (str code)) ")")))
+  (long (or (read-json (py-run session (str "__vis_count_forms__(" (pr-str (str code)) ")")))
             0)))
 
 (defn validate-no-banned-defs!
@@ -795,7 +878,8 @@
                               {"__vis_apropos__" (fn [facts pattern]
                                                    (apropos-rows (keywordize-facts facts) pattern))
                                "__vis_doc__" (fn [facts target live]
-                                               (doc-text (keywordize-facts facts) target live))})
+                                               (doc-text (keywordize-facts facts) target live))}
+                              (partial py-install-tool!))
   (exec! session "import vis_introspection\nvis_introspection.install(globals())")
   (doseq [[sym text] introspection-doc]
     (set-python-binding-doc! session sym text))
@@ -876,20 +960,20 @@
    without a jail can still ask for a confined child.
 
    Lifting is EXPLICIT (two empty lists) rather than skipped, because the policy
-   is the interpreter's and not a session's — the C state is process-wide, so a
-   session that simply declined to set it would inherit whatever the last one
-   left behind. For the same reason a gateway serving one workspace at a time is
-   still the assumption here: two live sessions disagreeing about the jail get
-   the policy of whichever built its sandbox last."
-  [roots-fn jail-enabled?]
+   is the INTERPRETER's: a session that simply declined to set it would inherit
+   whatever the last one left behind. That mattered when every session shared one
+   interpreter; a session with a worker of its own now has the policy to itself,
+   which is what the worker is for."
+  [session roots-fn jail-enabled?]
   (try (if (and jail-enabled? roots-fn)
          (let [roots (vec (distinct (map str (roots-fn))))]
-           (runtime/confine! roots
-                             roots
-                             (str "Refused: the sandbox filesystem is confined to this "
-                                  "session's roots."))
+           (py-confine! session
+                        roots
+                        roots
+                        (str "Refused: the sandbox filesystem is confined to this "
+                             "session's roots."))
            (tel/log! {:level :debug :id ::confined :roots (count roots)}))
-         (do (runtime/confine! [] [] "")
+         (do (py-confine! session [] [] "")
              (tel/log! {:level :debug :id ::unconfined :jail-enabled? (boolean jail-enabled?)})))
        (catch Throwable t (tel/log! {:level :warn :id ::confine-failed :error t}) nil)))
 
@@ -907,7 +991,11 @@
    configured by globals seeded before they run."
   [session {:keys [enabled? jail-enabled? allowed-domains denied-domains proxy-port ca-file]}]
   (let [net?
-        (boolean enabled?)
+        ;; One switch, the same one the filesystem follows: with no jail there is
+        ;; no guard — not on the filesystem and not on the network. A session
+        ;; without a jail reaches the machine through `shell` anyway, so refusing
+        ;; its sockets in Python guards nothing and only breaks ordinary code.
+        (or (not jail-enabled?) (boolean enabled?))
 
         allowed
         (vec allowed-domains)
@@ -926,7 +1014,7 @@
         guard-allowed
         (if proxy-port (into allowed ["127.0.0.1" "::1" "localhost"]) allowed)]
 
-    (try (runtime/network! net? "Refused: this session was granted no network access.")
+    (try (py-network! session net? "Refused: this session was granted no network access.")
          (catch Throwable t (tel/log! {:level :warn :id ::network-capability-failed :error t})))
     (when guard?
       (exec! session
@@ -935,7 +1023,7 @@
                   "\n"
                   "globals()['__vis_denied_domains__'] = "
                   (py-json-literal (vec denied))))
-      (try (runtime/install-module! session "network_guard") (catch Throwable _ nil)))
+      (try (py-install-module! session "network_guard") (catch Throwable _ nil)))
     (when-not guard?
       ;; The guard's policy holder and its socket wrapper are PROCESS state — one
       ;; interpreter serves every session — so a session that enforces nothing has
@@ -951,7 +1039,7 @@
                   "'\n"
                   "globals()['__vis_ca_file__'] = "
                   (py-json-literal (str (or ca-file "")))))
-      (try (runtime/install-module! session "proxy_env") (catch Throwable _ nil)))))
+      (try (py-install-module! session "proxy_env") (catch Throwable _ nil)))))
 
 (defn- install-network-probe!
   "The dev network-filter loop: `network_probe([method,] url)` and
@@ -961,8 +1049,9 @@
                          'com.blockether.vis.internal.python-extensions/net-probe-report)]
     (python-host/install-tools! session
                                 {"__vis_net_probe__" (fn [method target headers body]
-                                                       (report-fn method target headers body))})
-    (try (runtime/install-module! session "network_probe") (catch Throwable _ nil))))
+                                                       (report-fn method target headers body))}
+                                (partial py-install-tool!))
+    (try (py-install-module! session "network_probe") (catch Throwable _ nil))))
 
 (defn- pip-install!
   "Install the distribution `spec` for the sandbox, answering whether it landed.
@@ -994,7 +1083,11 @@
   [session network-opts]
   (try (python-host/install-sync-tools! session
                                         {"__vis_pip_install__"
-                                         (partial pip-install! (boolean (:enabled? network-opts)))})
+                                         (partial pip-install! (boolean (:enabled? network-opts)))}
+                                        (fn [sess nm]
+                                          (if-let [k (worker-of sess)]
+                                            (pyext/install-sync-tool! k sess nm)
+                                            (runtime/install-sync-tool! sess nm))))
        (exec! session "import vis_autoinstall; vis_autoinstall.install(__vis_pip_install__)")
        (catch Throwable t (tel/log! {:level :warn :id ::autoinstall-failed :error t}) nil)))
 
@@ -1013,7 +1106,13 @@
     (try (let [declared (:shim/bindings shim)
                bindings (if (map? declared) declared (when (ifn? declared) (declared)))]
 
-           (when (seq bindings) (python-host/install-doors! session bindings))
+           (when (seq bindings)
+             (python-host/install-doors! session
+                                         bindings
+                                         (fn [sess nm]
+                                           (if-let [k (worker-of sess)]
+                                             (pyext/install-sync-tool! k sess nm)
+                                             (runtime/install-sync-tool! sess nm)))))
            (exec! session (extension/shim-src shim)))
          (catch Throwable t
            (tel/log! {:level :warn :id ::shim-install-failed :shim (:shim/name shim) :error t})))))
@@ -1048,16 +1147,25 @@
    name and every seeded module is already BASELINE when the member snapshot is
    taken, and the model's live-vars view shows only what its own blocks made."
   [custom-bindings roots-fn network-opts stdin _stderr _gate-fn]
-  (ensure-interpreter!)
   (let [session (new-session-name)]
-    (confine! roots-fn (:jail-enabled? network-opts))
-    (runtime/stdin! (guest-stdin-text stdin))
-    (runtime/install-runtime! session)
+    ;; `:worker?` decides WHERE this session's Python runs, and it is the first
+    ;; thing decided, because every call below follows it. A gateway session
+    ;; takes a worker: its own process, its own interpreter, and therefore a
+    ;; confinement, a `sys.modules` and a native-library cache that are the
+    ;; session's rather than the gateway's. A one-shot `vis-agent python` is the
+    ;; only session in its own process already, so it keeps the interpreter it
+    ;; starts here.
+    (if (:worker? network-opts)
+      (swap! session-workers assoc session session)
+      (ensure-interpreter!))
+    (confine! session roots-fn (:jail-enabled? network-opts))
+    (py-stdin! session (guest-stdin-text stdin))
+    (py-install-runtime! session)
     ;; `println` is the sandbox's historical second spelling of Python `print`, not a
     ;; host tool that callers must remember to inject. Seed it before protected-name
     ;; discovery so a block may shadow it locally but can never replace it for the session.
     (exec! session "globals().setdefault('println', print)")
-    (try (runtime/install-module! session "auto_imports") (catch Throwable _ nil))
+    (try (py-install-module! session "auto_imports") (catch Throwable _ nil))
     (install-protected-names! session custom-bindings)
     ;; Tools first as ONE registration — the guest gets every name in one pass,
     ;; and the contracts below stamp the wrappers that pass leaves behind.
@@ -1068,7 +1176,8 @@
                                          [nm val])
                                        (cons (sym->py-name sym) (py-aliases-for-sym sym))))))
                       (or custom-bindings {}))]
-      (when (seq tools) (python-host/install-tools! session tools)))
+      (when (seq tools)
+        (python-host/install-tools! session tools (partial py-install-tool!))))
     ;; …and the DATA bindings, which cross as JSON like every other value.
     (doseq [[sym val] (or custom-bindings {})
             :when (not (fn? val))]
@@ -1133,7 +1242,8 @@
   (when session
     (swap! disposed-sessions conj session)
     (python-host/forget-session! session)
-    (try (runtime/close-session! session) (catch Throwable _ nil))
+    (try (py-close-session! session) (catch Throwable _ nil))
+    (swap! session-workers dissoc session)
     nil))
 
 ;; =============================================================================
@@ -1185,7 +1295,7 @@
    instead. One interpreter runs one block at a time, so `session` names WHOSE
    block the loop meant to stop and the interrupt reaches the thread running it."
   [session]
-  (boolean (when session (try (runtime/interrupt!) (catch Throwable _ false)))))
+  (boolean (when session (try (py-interrupt! session) (catch Throwable _ false)))))
 
 (defn- prose-leading-syntax-hint
   "When a `:python/syntax` failure came from a reply that OPENED with PROSE — the
@@ -1598,7 +1708,7 @@
         ;; The doors run on the interpreter's own threads, so the bindings above
         ;; travel to them explicitly - see `python-host/conveying`.
         (python-host/conveying session
-                               (let [outcome (or (read-json (runtime/run-block session code)) {})
+                               (let [outcome (or (read-json (py-run-block session code)) {})
                                      out (not-empty (str/trim-newline (str (:stdout outcome))))
                                      raised (:error outcome)
                                      attachments (mpl-capture/drain sink)]

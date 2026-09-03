@@ -237,9 +237,13 @@
    names bound.
 
    Registration and installation are ONE step on purpose: a name the guest can
-   call but the registry does not know is a refusal the model cannot act on."
-  [session tools]
-  (install! session tools runtime/install-tool!))
+   call but the registry does not know is a refusal the model cannot act on.
+
+   `bind-one` says WHERE the guest half is bound: this process's interpreter by
+   default, or a session's own worker when the caller hands one in. The registry
+   half is the parent's either way — a worker calls back here."
+  ([session tools] (install-tools! session tools runtime/install-tool!))
+  ([session tools bind-one] (install! session tools bind-one)))
 
 (defn install-sync-tools!
   "Bind `tools` as `session`'s host tools that answer DIRECTLY, and answer the
@@ -263,9 +267,10 @@
    `builtins` and `sys.modules`, so a second session's `import nippy` finds the
    module the FIRST session built - holding proxies that still name it. The
    shared key is what keeps those doors answering after that session is gone."
-  [session tools]
-  (swap! registry update door-session merge tools)
-  (install-sync-tools! session tools))
+  ([session tools] (install-doors! session tools runtime/install-sync-tool!))
+  ([session tools install-one]
+   (swap! registry update door-session merge tools)
+   (install-sync-tools! session tools install-one)))
 (defn forget-tools!
   "Drop `names` from `session`'s registry, answering nothing.
 
