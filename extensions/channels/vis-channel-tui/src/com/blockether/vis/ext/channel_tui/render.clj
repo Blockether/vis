@@ -6532,10 +6532,9 @@
 
                 c-lines
                 (if-not python-code-collapsible?
-                  (if activity-run
-                    ;; An Activity receipt names the CALLS, never the language. Source stays
-                    ;; visible in both receipt states, so its PYTHON band must do the same;
-                    ;; tying the label to the parent disclosure left collapsed source anonymous.
+                  (if (and activity-run execution-expanded?)
+                    ;; The Activity receipt names the calls, never the language. Once its
+                    ;; disclosure opens, short source needs the PYTHON band worn by long source.
                     ;; It never counts its own rows: `1 line shown` is a caption no other band says.
                     (vec (concat [(line-entry (str c-marker (band-label "PYTHON")))
                                   (line-entry (str c-pad ""))]
@@ -6726,9 +6725,9 @@
                                              (max 1
                                                   (- (long fill-w) (long code-text-inset-cols)))))))
 
-                ;; The program the model wrote is evidence in every state — success,
-                ;; failure and while it runs — so the only source a form hides is one it
-                ;; never had. Blank code drops the empty chrome around it.
+                ;; Plain Python source is evidence by default. An Activity receipt instead owns
+                ;; the whole tool execution, so its source follows the receipt disclosure together
+                ;; with result and host activity. Blank code drops the empty chrome around it.
                 hide-code-chrome?
                 (and (not is-error?) (str/blank? code-text))
 
@@ -6761,6 +6760,9 @@
                                 ;; Bottom band edge. No per-form status
                                 ;; footer; code blocks stay source-only.
                                 [(line-entry (str c-pad ""))])))
+
+                source-visible?
+                (or (not activity-run) execution-expanded?)
 
                 ;; A code band already closes with its one blank bottom edge, so the
                 ;; results begin immediately after that edge rather than adding a
@@ -6815,17 +6817,18 @@
                             :node-id execution-node-id
                             :collapsed? (not execution-expanded?)}}]
 
-                ;; Source is evidence, not a detail. The receipt folds output and host
-                ;; activity, while the Python band remains visible in both states and keeps
-                ;; its own five-line disclosure for long programs.
-                (vec (concat
-                       comment-block
-                       [(line-entry "") summary]
-                       (when (or (seq code-block) (and execution-expanded? (seq execution-details)))
-                         [(line-entry "")])
-                       code-block
-                       (when execution-expanded? execution-details)
-                       (when (and execution-expanded? activity-surface) activity-surface)))))))
+                ;; A tool receipt is one disclosure: collapsed leaves its summary; expanded reveals
+                ;; Python, result and host activity together. Without Activity, source remains visible
+                ;; while the ordinary execution receipt folds output only.
+                (vec (concat comment-block
+                             [(line-entry "") summary]
+                             (when (or (and source-visible? (seq code-block))
+                                       (and execution-expanded? (seq execution-details)))
+                               [(line-entry "")])
+                             (when source-visible? code-block)
+                             (when execution-expanded? execution-details)
+                             (when (and execution-expanded? activity-surface)
+                               activity-surface)))))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result

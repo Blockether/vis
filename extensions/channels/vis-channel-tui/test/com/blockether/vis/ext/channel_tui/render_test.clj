@@ -4151,8 +4151,8 @@
                                 (str/includes? l p/INLINE_BOLD_OFF))
                              (str "unbalanced sentinels on line " (pr-str l)))))))
 
-;; Regression, issue #164: a collapsed execution either hid its Python source or,
-;; once Activity named the receipt, left that still-visible source as an anonymous slab.
+;; Regression, issue #164: the source-visible default for plain Python leaked the
+;; Python body from an Activity receipt even while that receipt was collapsed.
 (defdescribe
   python-source-visible-by-default-test
   (it "keeps Python source visible while execution details start collapsed"
@@ -4173,34 +4173,48 @@
         (expect (str/includes? text "values = [x * 2 for x in range(4)]"))
         (expect (str/includes? text "PYTHON"))
         (expect (not (str/includes? text "[0, 2, 4, 6]")))))
-  (it "names visible Python source when Activity names the collapsed receipt"
-      (let [entries
-            (format-iteration-entry-entries
-              (iteration/canonicalize
-                {:position 0
-                 :thinking nil
-                 :forms [{:success? true
-                          :code "answer = search()"
-                          :stdout "one match"
-                          :activity {:state "succeeded"
-                                     :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
-                                     :rows [{:id "grep-1"
-                                             :operation "grep"
-                                             :signal "observation"
-                                             :summary "source"
-                                             :state "succeeded"}]
-                                     :omitted {:rows 0 :by-classification {}}}}]})
-              80
-              1
-              {:session-id "s1" :session-turn-id "t1"})
+  (it
+    "folds Activity source and result under the receipt"
+    (let [iteration
+          (iteration/canonicalize
+            {:position 0
+             :thinking nil
+             :forms [{:success? true
+                      :code "answer = search()"
+                      :stdout "one match"
+                      :activity {:state "succeeded"
+                                 :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+                                 :rows [{:id "grep-1"
+                                         :operation "grep"
+                                         :signal "observation"
+                                         :summary "source"
+                                         :state "succeeded"}]
+                                 :omitted {:rows 0 :by-classification {}}}}]})
 
-            text
-            (str/join "\n" (map (comp strip-sentinels body-of strip-ansi :line) entries))]
+          render-text
+          (fn [detail-expansions]
+            (->> (format-iteration-entry-entries
+                   iteration
+                   80
+                   1
+                   {:session-id "s1" :session-turn-id "t1" :detail-expansions detail-expansions})
+                 (map (comp strip-sentinels body-of strip-ansi :line))
+                 (str/join "\n")))
 
-        (expect (str/includes? text "▸ GREP · source · 0 mutations · 1 observation"))
-        (expect (str/includes? text "answer = search()"))
-        (expect (str/includes? text "PYTHON"))
-        (expect (not (str/includes? text "one match"))))))
+          collapsed
+          (render-text {})
+
+          expanded
+          (render-text {:vis.channel-tui/expand-execution-details? true})]
+
+      (expect (str/includes? collapsed "▸ GREP · source · 0 mutations · 1 observation"))
+      (expect (not (str/includes? collapsed "answer = search()")))
+      (expect (not (str/includes? collapsed "PYTHON")))
+      (expect (not (str/includes? collapsed "one match")))
+      (expect (str/includes? expanded "▾ GREP · source · 0 mutations · 1 observation"))
+      (expect (str/includes? expanded "answer = search()"))
+      (expect (str/includes? expanded "PYTHON"))
+      (expect (str/includes? expanded "RESULT")))))
 
 (defdescribe
   python-code-disclosure-is-a-header-test
@@ -5005,7 +5019,7 @@ h = 8"
         (expect (str/includes? (render-row true) "▾ RUN CI"))
         (expect (str/includes? (render-row false) "▸ RUN CI"))))
   (it
-    "renders visible source with collapsed details and opens its evidence hierarchy"
+    "collapses tool source with its details and opens the evidence hierarchy"
     (render/invalidate-cache!)
     (let [trace
           [{:forms
@@ -5040,7 +5054,8 @@ h = 8"
           (render-row 80 {:vis.channel-tui/expand-all-details? true})]
 
       (expect (str/includes? collapsed "▸ GREP · TEST EVIDENCE"))
-      (expect (str/includes? collapsed "grep({...})"))
+      (expect (not (str/includes? collapsed "grep({...})")))
+      (expect (not (str/includes? collapsed "PYTHON")))
       (expect (not (str/includes? collapsed "18 matches")))
       (expect (not (str/includes? collapsed "ACTIVITY")))
       (expect (str/includes? expanded "▾ GREP · TEST EVIDENCE"))
