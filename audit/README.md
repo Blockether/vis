@@ -44,7 +44,7 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 60 unique, across 15 `deps.edn` modules (root + extensions).
+- **Direct dependency coordinates:** 59 unique, across 15 `deps.edn` modules (root + extensions).
 - **Declared jar footprint (direct coords):** ~38 MB; concentrated in the embedded CPython runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
@@ -211,7 +211,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `io.github.java-diff-utils/java-diff-utils` | `4.17` | Apache-2.0 | 77 KB | 3rd-party |
 | `io.github.noahtheduke/lazytest` | `2.0.0` | EPL-1.0 | 46 KB | 3rd-party |
 | `io.github.tonsky/clojure-plus` | `1.7.2` | MIT | 33 KB | 3rd-party |
-| `metosin/malli` | `0.20.1` | EPL-2.0 | 97 KB | 3rd-party |
 | `metosin/reitit-ring` | `0.10.1` | EPL-1.0 | 9 KB | 3rd-party |
 | `org.apache.commons/commons-compress` | `1.28.0` | Apache-2.0 | 1.1 MB | 3rd-party |
 | `org.babashka/http-client` | `0.4.24` | MIT | 16 KB | 3rd-party |
@@ -281,8 +280,8 @@ _Durable session store (SQLite + Flyway migrations)._
 | EPL-1.0 | 20 |
 | MIT | 15 |
 | Apache-2.0 | 13 |
-| EPL-2.0 | 4 |
 | BSD-2-Clause | 3 |
+| EPL-2.0 | 3 |
 | Bouncy Castle Licence | 2 |
 | (floating) | 1 |
 | LGPL-3.0 | 1 |
