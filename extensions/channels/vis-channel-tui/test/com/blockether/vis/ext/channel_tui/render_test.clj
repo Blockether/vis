@@ -4151,27 +4151,56 @@
                                 (str/includes? l p/INLINE_BOLD_OFF))
                              (str "unbalanced sentinels on line " (pr-str l)))))))
 
-;; Regression, issue #164: a pure-Python execution collapsed its source behind the
-;; receipt by default, so the TUI showed only `DONE · PYTHON`.
-(defdescribe python-source-visible-by-default-test
-             (let [entries
-                   (format-iteration-entry-entries
-                     (iteration/canonicalize {:position 0
-                                              :thinking nil
-                                              :forms [{:success? true
-                                                       :code "values = [x * 2 for x in range(4)]"
-                                                       :stdout "[0, 2, 4, 6]"}]})
-                     80
-                     1
-                     {:session-id "s1" :session-turn-id "t1"})
+;; Regression, issue #164: a collapsed execution either hid its Python source or,
+;; once Activity named the receipt, left that still-visible source as an anonymous slab.
+(defdescribe
+  python-source-visible-by-default-test
+  (it "keeps Python source visible while execution details start collapsed"
+      (let [entries
+            (format-iteration-entry-entries (iteration/canonicalize
+                                              {:position 0
+                                               :thinking nil
+                                               :forms [{:success? true
+                                                        :code "values = [x * 2 for x in range(4)]"
+                                                        :stdout "[0, 2, 4, 6]"}]})
+                                            80
+                                            1
+                                            {:session-id "s1" :session-turn-id "t1"})
 
-                   text
-                   (str/join "\n" (map (comp strip-sentinels body-of strip-ansi :line) entries))]
+            text
+            (str/join "\n" (map (comp strip-sentinels body-of strip-ansi :line) entries))]
 
-               (it "keeps Python source visible while execution details start collapsed"
-                   (expect (str/includes? text "values = [x * 2 for x in range(4)]"))
-                   (expect (str/includes? text "PYTHON"))
-                   (expect (not (str/includes? text "[0, 2, 4, 6]"))))))
+        (expect (str/includes? text "values = [x * 2 for x in range(4)]"))
+        (expect (str/includes? text "PYTHON"))
+        (expect (not (str/includes? text "[0, 2, 4, 6]")))))
+  (it "names visible Python source when Activity names the collapsed receipt"
+      (let [entries
+            (format-iteration-entry-entries
+              (iteration/canonicalize
+                {:position 0
+                 :thinking nil
+                 :forms [{:success? true
+                          :code "answer = search()"
+                          :stdout "one match"
+                          :activity {:state "succeeded"
+                                     :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+                                     :rows [{:id "grep-1"
+                                             :operation "grep"
+                                             :signal "observation"
+                                             :summary "source"
+                                             :state "succeeded"}]
+                                     :omitted {:rows 0 :by-classification {}}}}]})
+              80
+              1
+              {:session-id "s1" :session-turn-id "t1"})
+
+            text
+            (str/join "\n" (map (comp strip-sentinels body-of strip-ansi :line) entries))]
+
+        (expect (str/includes? text "▸ GREP · source · 0 mutations · 1 observation"))
+        (expect (str/includes? text "answer = search()"))
+        (expect (str/includes? text "PYTHON"))
+        (expect (not (str/includes? text "one match"))))))
 
 (defdescribe
   python-code-disclosure-is-a-header-test

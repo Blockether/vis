@@ -6532,12 +6532,11 @@
 
                 c-lines
                 (if-not python-code-collapsible?
-                  (if (and activity-run execution-expanded?)
-                    ;; With an Activity on the receipt the status row names the CALLS,
-                    ;; so the program itself needs the name the collapsible band wears.
-                    ;; It never counts its own rows: `1 line shown` is a caption no
-                    ;; other band says, and it made a python block read like a
-                    ;; different surface than the one it is.
+                  (if activity-run
+                    ;; An Activity receipt names the CALLS, never the language. Source stays
+                    ;; visible in both receipt states, so its PYTHON band must do the same;
+                    ;; tying the label to the parent disclosure left collapsed source anonymous.
+                    ;; It never counts its own rows: `1 line shown` is a caption no other band says.
                     (vec (concat [(line-entry (str c-marker (band-label "PYTHON")))
                                   (line-entry (str c-pad ""))]
                                  c-lines-full))
