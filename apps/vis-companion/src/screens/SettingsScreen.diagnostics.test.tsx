@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 const exportDiagnostics = vi.hoisted(() => vi.fn(async () => 'Diagnostics shared.'));
@@ -16,10 +17,32 @@ import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL, APP_VERSION } from '../lib/comp
 import { RETAINED_LOG_POLICY } from '../lib/diagnostics';
 import { DiagnosticsPanel } from './settings/DiagnosticsPanel';
 
-describe('application diagnostics settings', () => {
-  it('identifies the exact app build and the gateway wire it accepts', () => {
-    render(<DiagnosticsPanel />);
+/** The dialog owns the fold's state, so the harness owns it the same way. */
+function Harness({ initialOpen = false }: { initialOpen?: boolean }) {
+  const [isOpen, setOpen] = useState(initialOpen);
+  return (
+    <DiagnosticsPanel isOpen={isOpen} onToggle={() => setOpen((open) => !open)} />
+  );
+}
 
+describe('application diagnostics settings', () => {
+  // Reported over a desktop screenshot of the settings dialog: the app-logs
+  // panel stood permanently open at the foot of the Application column — six
+  // rows and an export verb always painted for a task this device performs a
+  // few times a year. The band folds now, and hidden is hidden.
+  it('keeps every fact off the page until the band is pressed', async () => {
+    render(<Harness />);
+
+    const fold = screen.getByRole('button', { name: 'Show diagnostics' });
+    expect(fold).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText(APP_VERSION)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Export app logs' }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(fold);
+
+    expect(fold).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText(APP_VERSION)).toBeInTheDocument();
     expect(screen.getByText(APP_BUILD_NUMBER)).toBeInTheDocument();
     expect(screen.getByText(APP_BUILD_COMMIT)).toBeInTheDocument();
@@ -37,7 +60,7 @@ describe('application diagnostics settings', () => {
   });
 
   it('exports the persisted app log through the platform hand-off', async () => {
-    render(<DiagnosticsPanel />);
+    render(<Harness initialOpen />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Export app logs' }));
 

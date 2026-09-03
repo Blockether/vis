@@ -191,6 +191,10 @@ export function SettingsDialog({
   // settings fold until asked for; side by side there is room and no fold exists.
   const [appOpen, setAppOpen] = useState(false);
 
+  // The diagnostics band keeps its own fold at EVERY width: its facts are support
+  // material this device reads a few times a year, not a setting it changes.
+  const [diagOpen, setDiagOpen] = useState(false);
+
   const health = useFleetHealth(gateways);
 
   return (
@@ -294,7 +298,10 @@ export function SettingsDialog({
                 ))}
               </div>
             </SettingsPanel>
-            <DiagnosticsPanel />
+            <DiagnosticsPanel
+              isOpen={diagOpen}
+              onToggle={() => setDiagOpen((open) => !open)}
+            />
           </SettingsColumn>
         </div>
       </DialogFrame>
