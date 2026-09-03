@@ -4155,49 +4155,6 @@ export class GatewayClient {
     );
   }
 
-  /** Trusted terminal document; the bearer remains on this parent request. */
-  tuiBridgeDocument(bridgeId: string, signal?: AbortSignal): Promise<string> {
-    if (!bridgeId.trim()) return Promise.reject(new Error("bridge id must not be blank"));
-    return this.requestBody(
-      "GET",
-      `/tui/embed?bridge=${encodeURIComponent(bridgeId)}`,
-      { signal },
-      (response) => response.text(),
-    );
-  }
-
-  /** Forward one keyboard, composition, paste, pointer or wheel event to Lanterna. */
-  tuiInput(
-    values: Record<string, string | number | boolean>,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    return this.tuiPost("/tui/input", values, signal);
-  }
-
-  /** Resize the same terminal runtime to the Companion frame's measured grid. */
-  tuiResize(cols: number, rows: number, signal?: AbortSignal): Promise<void> {
-    return this.tuiPost("/tui/resize", { cols, rows }, signal);
-  }
-
-  private tuiPost(
-    path: string,
-    values: Record<string, string | number | boolean>,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const body = new URLSearchParams();
-    for (const [key, value] of Object.entries(values)) body.set(key, String(value));
-    return this.requestBody(
-      "POST",
-      path,
-      {
-        body,
-        contentType: "application/x-www-form-urlencoded;charset=UTF-8",
-        signal,
-      },
-      async () => undefined,
-    );
-  }
-
   // ── SSE live stream ─────────────────────────────────────────────
   //
   // GET /v1/events?sids=<sid> streams `data: {json}\n\n` frames. We read the
@@ -4626,30 +4583,6 @@ export class GatewayClient {
     );
   }
 
-  /** Stream the gateway's server-rendered Lanterna fragments into one trusted frame. */
-  streamTuiFrames(
-    after: number,
-    onFrame: (html: string) => void,
-    opts: {
-      signal?: AbortSignal;
-      onOpen?: () => void;
-      onError?: (error: unknown) => void;
-    } = {},
-  ): () => void {
-    return this.streamRouteFrames(
-      "/tui/events",
-      "after",
-      after,
-      "tui",
-      (html, frameName) => {
-        if (frameName !== "frame") return undefined;
-        onFrame(html);
-        const version = /\bdata-version="(\d+)"/.exec(html)?.[1];
-        return version ? Number(version) : undefined;
-      },
-      opts,
-    );
-  }
 }
 
 /**

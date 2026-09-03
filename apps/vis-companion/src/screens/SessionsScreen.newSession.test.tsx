@@ -138,7 +138,7 @@ describe('where "New session" lives', () => {
     // The one row it held that this screen owns is the sheet the amber mark opens.
     await userEvent.click(screen.getByRole("button", { name: "Projects on alpha" }));
     const sheet = within(await screen.findByRole("dialog"));
-    expect(sheet.getByText(/New project/)).toBeTruthy();
+    expect(sheet.getByRole("button", { name: "New project" })).toBeTruthy();
   });
 
   // Regression, user report (paraphrased: put `+` and the gear on the band — that is add
@@ -189,7 +189,7 @@ describe('where "New session" lives', () => {
     await screen.findByText("First");
 
     await userEvent.click(screen.getByRole("button", { name: "Projects on alpha" }));
-    await userEvent.click(screen.getByRole("button", { name: "New project…" }));
+    await userEvent.click(screen.getByRole("button", { name: "New project" }));
     await screen.findByText("No folders in here.");
     view.requests.length = 0;
     await userEvent.click(screen.getByRole("button", { name: "Use project" }));

@@ -386,8 +386,8 @@ export const Chip = forwardRef<
  * same promise three other ways — a chevron, a bare `+2 more lines`, a
  * guillemet — so one fact wore four marks and none of them was the shape of a
  * cut. The TUI draws this rule too (`more-rule` in
- * `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj`),
- * so both surfaces say it the same way.
+ * `apps/vis-tui/src/com/blockether/vis/tui/render.clj`), so both surfaces say it
+ * the same way.
  *
  * `label` is what a screen reader hears ("Load 12 more artifacts") while the
  * children are what the eye reads. With no `onClick` nothing CAN be loaded —
