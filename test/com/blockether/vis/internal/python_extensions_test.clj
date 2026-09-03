@@ -281,7 +281,7 @@ vis.extension(
               (registered "glms")
 
               made
-              (ep/create-python-context {} nil nil nil nil nil)
+              (ep/create-python-context {} nil {:worker? true} nil nil nil)
 
               ctx
               (:python-context made)
@@ -298,15 +298,16 @@ vis.extension(
                             "except AttributeError:\n    private = 'safe'\n"
                             "print(type(status).__name__, status.state, private, "
                             "str(inspect.signature(glms_jenkins.poll)), "
-                            "[x.name for x in apropos('glms_jenkins')], "
-                            "'Poll one Jenkins build.' in doc(glms_jenkins.poll))"))
+                            "dir(glms_jenkins), "
+                            "'Poll one Jenkins build.' in (glms_jenkins.poll.__doc__ or ''))"))
 
                      out
-                     (:stdout result)]
+                     (or (:stdout result) "")]
 
-                 (expect (str/includes? out "ForeignObject job:4:0 safe"))
+                 (expect (nil? (:error result)))
+                 (expect (str/includes? out "BuildStatus job:4:0 safe"))
                  (expect (str/includes? out "(job, number, wait"))
-                 (expect (str/includes? out "glms_jenkins.poll"))
+                 (expect (str/includes? out "['deploy_status', 'poll']"))
                  (expect (str/ends-with? (str/trim out) "True"))
                  (lp/sync-active-extension-symbols! env [])
                  (expect (= {:stdout "False\n"}

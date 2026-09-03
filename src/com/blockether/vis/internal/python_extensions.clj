@@ -163,11 +163,12 @@
 
    Args cross as ONE JSON string rather than as spliced literals: an argument is
    arbitrary data, and only the JSON encoder is allowed to decide how it spells."
-  [cid args]
+  [cid args preserve-objects?]
   (str "__vis_call__("
        (python-string-literal (str cid))
        ", "
        (python-string-literal (json/write-json-str (vec args)))
+       (when preserve-objects? ", True")
        ")"))
 
 (def ^:private host-callable-key
@@ -230,15 +231,20 @@
    (cond (and (map? x) (= 1 (count x)) (contains? x callable-key))
          (let [cid (str (get x callable-key))]
            (with-meta
-             (fn [args]
-               (let [[sealed callbacks] (sealed-args args)]
-                 (when (seq callbacks)
-                   ;; `install-sync-tools!` hands the installer the session itself,
-                   ;; so the installer is passed whole rather than partially applied.
-                   (python-host/install-sync-tools! sess callbacks install-sync-tool-in!))
-                 (try (unseal sess (run-in sess (python-call-expr cid sealed)))
-                      (finally (when (seq callbacks)
-                                 (release-callbacks! sess (keys callbacks)))))))
+             (fn invoke-sealed
+               ([args]
+                (invoke-sealed args false))
+               ([args preserve-objects?]
+                (let [[sealed callbacks] (sealed-args args)]
+                  (when (seq callbacks)
+                    ;; `install-sync-tools!` hands the installer the session itself,
+                    ;; so the installer is passed whole rather than partially applied.
+                    (python-host/install-sync-tools! sess callbacks install-sync-tool-in!))
+                  (try (unseal sess
+                               (run-in sess
+                                       (python-call-expr cid sealed preserve-objects?)))
+                       (finally (when (seq callbacks)
+                                  (release-callbacks! sess (keys callbacks))))))))
              {callable-path-key path}))
          (map? x) (into {}
                         (map (fn [[k v]]
@@ -258,8 +264,10 @@
    session it belongs to, so this is only the arity the adapters call through —
    kept as one place because every adapter's defensiveness is written against
    it."
-  [_sess f args]
-  (f (vec args)))
+  ([_sess f args]
+   (f (vec args) false))
+  ([_sess f args preserve-objects?]
+   (f (vec args) preserve-objects?)))
 
 (defn- plainify
   "Deep-convert the `->clj` view of a Python value into plain EDN-printable
@@ -806,12 +814,20 @@
   "Invoke a Python callable in the invoking session's interpreter when that
    session owns a worker, otherwise in the gateway-wide registration context.
    The extension namespace is trusted; the sandbox namespace beside it is not."
-  [ext-name env ctx f args]
-  (let [effective-env (or (not-empty env) extension/*current-environment*)
-        [call-ctx call-f] (session-call-target ext-name effective-env ctx f)]
-    (extension/with-context
-      {:ext (or extension/*current-extension* {:ext/name ext-name}) :env effective-env}
-      (python-host/conveying call-ctx (call-py call-ctx call-f args)))))
+  ([ext-name env ctx f args]
+   (call-py-ext ext-name env ctx f args false))
+  ([ext-name env ctx f args preserve-objects?]
+   (let [effective-env (or (not-empty env) extension/*current-environment*)
+         [call-ctx call-f] (session-call-target ext-name effective-env ctx f)
+         preserve-local? (and preserve-objects?
+                              (some-> effective-env
+                                      :python-context
+                                      pyext/worker-live?))]
+     (extension/with-context
+       {:ext (or extension/*current-extension* {:ext/name ext-name}) :env effective-env}
+       (python-host/conveying
+         call-ctx
+         (call-py call-ctx call-f args preserve-local?))))))
 
 (defn- sctx->env
   "Minimal state env for a slash callback: the persistence handle and session
@@ -875,7 +891,7 @@
   [ext-name sym ctx pyfn]
   (fn [& args]
     (let [argv (vec args)]
-      (try (extension/success {:result (call-py-ext ext-name nil ctx pyfn argv)})
+      (try (extension/success {:result (call-py-ext ext-name nil ctx pyfn argv true)})
            (catch Throwable t
              (if-let [fresh (and (not *healing-symbol*)
                                  (context-dead? ctx)
