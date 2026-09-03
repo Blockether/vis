@@ -779,50 +779,83 @@
 ;; file edits and conversation history persist, so the model recomputes what it
 ;; needs.)
 
+(def ^:private INTERRUPT_UNWIND_MS
+  "How long an acknowledged interrupt gets to unwind before its session worker
+   is killed. The same window lets a timeout recover partial stdout."
+  2000)
+
 (defn- interrupt-guest!
   "Cancel whatever is EXECUTING in `python-context` right now, at a bytecode
-   boundary.
-
-   `Future.cancel(true)` only interrupts the JAVA worker thread, and the
-   interpreter does NOT observe `Thread.interrupt` inside guest code: a model
-   block that spins (`while True: ...`) survived every eval timeout / Esc cancel
-   and kept burning a whole core FOREVER — measured at 1.01 busy cores with BOTH
-   worker futures already cancelled. Only the interpreter's own interrupt, which
-   raises `KeyboardInterrupt` in the thread running the session, unwinds it.
-
-   Returns TRUE when it landed, i.e. the block is unwinding and the session stays
-   REUSABLE. FALSE is a guest the exception cannot reach — blocked in a host call
-   or inside C, where nothing is executing bytecode — and it is the ONLY reason to
-   fall back on retiring the environment and interrupting the Java worker."
+   boundary. Protocol failures propagate: unlike a normal false reply, they mean
+   the session worker itself cannot be trusted or reused."
   [python-context]
-  (boolean (when python-context
-             (try (env/interrupt-guest! python-context) (catch Throwable _ false)))))
+  (boolean (when python-context (env/interrupt-guest! python-context))))
+
+(defn- retire-python-context-once!
+  "Kill one abandoned environment's Python process at most once. Process teardown
+   does not enter the interpreter, so it is safe even while the turn thread still
+   owns the environment lock."
+  [python-context environment reason error]
+  (let [retired
+        (:python-context-retired-atom environment)
+
+        first-retirement?
+        (if retired (compare-and-set! retired false true) true)]
+
+    (when (and python-context first-retirement?)
+      (try (env/retire-python-context! python-context) (catch Throwable _ nil))
+      (tel/log! {:level :warn
+                 :id ::python-worker-retired
+                 :error error
+                 :data {:python-context python-context :reason reason}}
+                "Python execution did not stop; retired its session process"))
+    (boolean first-retirement?)))
+
+(defn- retire-python-worker!
+  [python-context exec-future environment reason error]
+  (retire-python-context-once! python-context environment reason error)
+  (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil))
+  false)
+
+(defn- watch-python-unwind!
+  "After an interrupt was accepted, reclaim the process if guest execution still
+   has not returned. Native code may release the GIL, let the interrupt be queued,
+   and then never reach the bytecode boundary that delivers it."
+  [python-context exec-future environment]
+  (cancellation/worker-future
+    "vis-python-interrupt-unwind"
+    (fn []
+      (let [timed-out? (try (.get ^java.util.concurrent.Future exec-future
+                                  (long INTERRUPT_UNWIND_MS)
+                                  java.util.concurrent.TimeUnit/MILLISECONDS)
+                            false
+                            (catch java.util.concurrent.TimeoutException _ true)
+                            (catch InterruptedException _ (.interrupt (Thread/currentThread)) false)
+                            (catch Throwable _ false))]
+        (when timed-out?
+          (retire-python-worker! python-context
+                                 exec-future
+                                 environment
+                                 :interrupt-unwind-timeout
+                                 nil))))))
 
 (defn- interrupt-block!
-  "Interrupt the guest, and the Java worker when the guest could not be reached.
-   Answers whether the guest interrupt LANDED — a landed one leaves the block
-   unwinding, free to hand back what it printed.
-
-   The SESSION SURVIVES either way. This used to dispose it — drop the guest
-   namespace and forget every host tool bound to it — whenever the interrupt did
-   not land, which was the right answer for GraalPy: there a thread could leak
-   the GIL and leave a namespace nothing could enter. On the embedded CPython it
-   is wrong twice over. `vispython_interrupt` answers 0 for exactly one reason —
-   there is no thread running that session's code, i.e. the block already
-   finished — and CPython delivers the async exception at the next bytecode
-   boundary regardless, measured through `time.sleep(25)` and through a blocked
-   host call. So the old fallback threw away a HEALTHY session: the model's next
-   block came back `grep is not defined`, because the tools went with it."
-  [python-context exec-future]
-  (let [landed? (interrupt-guest! python-context)]
-    (when-not landed?
-      (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil)))
-    landed?))
-
-(def ^:private INTERRUPT_UNWIND_MS
-  "How long the loop waits for an interrupted block to unwind and answer what it
-   printed before the wall killed it."
-  2000)
+  "Interrupt the guest without ever leaving cancellation parked on its control
+   plane. A normal false is the race where the block already finished. A worker
+   that cannot answer, or cannot unwind an accepted interrupt, is killed and its
+   environment retired so later work gets one fresh process."
+  [python-context exec-future environment]
+  (let [landed? (try (interrupt-guest! python-context)
+                     (catch Throwable t
+                       (retire-python-worker! python-context
+                                              exec-future
+                                              environment
+                                              :interrupt-control-timeout
+                                              t)))]
+    (if landed?
+      (do (watch-python-unwind! python-context exec-future environment) true)
+      (do (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil))
+          false))))
 
 (defn- unwound-stdout
   "What an INTERRUPTED block printed before it was killed, or nil.
@@ -1297,7 +1330,7 @@
                                      ;; `rt/guest-safepoint!`. A context that refuses
                                      ;; that interrupt is retired before the Java
                                      ;; interrupt can strand its GIL.
-                                     (interrupt-block! python-context exec-future))))
+                                     (interrupt-block! python-context exec-future env))))
 
         settle-activity!
         (fn [envelope]
@@ -1343,7 +1376,7 @@
         (try (rt/await-wall exec-future eval-deadline timeout-sentinel)
              (catch Throwable e
                (reset! thrown e)
-               (interrupt-block! python-context exec-future)
+               (interrupt-block! python-context exec-future env)
                {:lru {} :error (python-op-error python-context e code cancel-token)})
              (finally (when dispose-cancel-hook
                         (try (dispose-cancel-hook) (catch Throwable _ nil)))))
@@ -1358,7 +1391,7 @@
       ;; Eval timeout: interrupt the guest at a bytecode boundary. A guest the
       ;; exception cannot reach retires its environment before the Java interrupt.
       (let [landed?
-            (interrupt-block! python-context exec-future)
+            (interrupt-block! python-context exec-future env)
 
             ;; The unwinding guest cannot reach the host any more, so its `with` never
             ;; closes: the wall that killed the block ends its views too, and the model
@@ -10575,12 +10608,11 @@
   ;; per-session, so nothing is stopped here — only this session's policy is removed.
   ;; EVERY step before the sandbox is best-effort AND cannot skip it. These run
   ;; first because they need the environment intact, but not one of them is worth
-  ;; the Python heap: a throw here used to abandon the sandbox teardown below, and
-  ;; the only caller that recycles between turns swallows the exception — so a
-  ;; single failing unregister leaked a whole session's Python namespace,
-  ;; silently, every five turns. The sandbox teardown is therefore a `finally`,
-  ;; and a failure is LOGGED rather than dropped, because a leak nothing reports
-  ;; is one nobody can find.
+  ;; the Python worker: a throw here used to abandon that whole process, and the
+  ;; only caller that recycles between turns swallows the exception — so a single
+  ;; failing unregister leaked a worker silently every five turns. Worker teardown
+  ;; is therefore a `finally`, and a failure is LOGGED rather than dropped, because
+  ;; a leak nothing reports is one nobody can find.
   (try
     (doseq [[step run!]
             [[:egress-proxy
@@ -10603,10 +10635,9 @@
                        ["gateway: env teardown step failed" (name step)
                         (str (:session-id environment)) (ex-message t)]))))
     (finally
-      ;; The sandbox goes LAST and always: a session's Python namespace is a
-      ;; reference cycle through every function defined in it, and the host half
-      ;; holds one closure per tool, so dropping either alone keeps the other
-      ;; alive.
+      ;; The sandbox goes LAST and always. For a gateway session this kills its
+      ;; worker process and releases both the sandbox and trusted extension
+      ;; namespaces without entering a possibly wedged interpreter.
       (try (env/dispose-python-context! (:python-context environment))
            (catch Throwable t
              (tel/log! :error
@@ -11184,16 +11215,16 @@
   [id]
   (persistance/->uuid id))
 
-;; Idle-env reaper — authoritative backstop against unbounded Python session
-;; growth. Every cached session env pins a Python session (see
-;; `dispose-environment!`); the cache itself is never bounded and the tab-close
-;; release path (TUI → gateway `/release`) is best-effort and skips busy / still-
-;; open / stale-registry sessions, so Contexts leaked whenever that path missed.
-;; A background daemon thread sweeps on an interval and disposes envs that have
-;; gone idle past a TTL — guarded by each entry's `ReentrantLock` (a running
-;; turn holds it, so `tryLock` failing means "busy, skip") so an eval is never
-;; killed mid-flight. Evicting a resident env is SAFE: the transcript lives in
-;; the DB and `ensure-env!` transparently rebuilds the session on the next touch.
+;; Idle-env reaper — authoritative backstop against unbounded Python worker
+;; growth. Every cached session env pins one process (see `dispose-environment!`);
+;; the cache itself is never bounded and the tab-close release path (TUI → gateway
+;; `/release`) is best-effort and skips busy / still-open / stale-registry sessions,
+;; so workers leaked whenever that path missed. A background daemon thread sweeps
+;; on an interval and disposes envs that have gone idle past a TTL — guarded by
+;; each entry's `ReentrantLock` (a running turn holds it, so `tryLock` failing means
+;; "busy, skip") so an eval is never killed mid-flight. Evicting a resident env is
+;; SAFE: the transcript lives in the DB and `ensure-env!` transparently rebuilds
+;; the session on the next touch.
 
 (def ^:private env-idle-ttl-ms
   "Idle window before a cached session env's Python session is disposed by the
@@ -11232,21 +11263,15 @@
              (* 60 1000))))
 
 (def ^:private env-max-turns-per-ctx
-  "Turns a single session's Python session serves before the reaper recycles it
+  "Turns a single session's Python worker serves before the reaper recycles it
    between turns. Override with `VIS_ENV_MAX_TURNS_PER_CTX`; <= 0 disables.
    Default 5.
 
-   Lowered from 25 because the recycle is far cheaper than it looks and the
-   thing it bounds is a session's ephemeral Python working set. That set lives
-   in interpreter memory, outside the Java heap counters, which is what the
-   reaper's RSS gate is for; nothing else caps it except this number.
-
-   A session is a module namespace inside a process-wide interpreter, so a
-   recycle allocates no new interpreter and re-imports only what the next block
-   asks for. What a recycle actually costs is the model's ephemeral globals,
-   which is the POINT of it — `persist-session-defs!` carries the module
-   aliases, scalar constants and function sources across, so what is lost is
-   data the model can rebuild, not code it would have to rewrite.
+   This bounds the ephemeral working set of a session that never stays idle long
+   enough for the TTL/RSS reaper. A recycle now replaces that session's whole
+   worker process — the startup cost is real, but so is releasing every imported
+   native library. `persist-session-defs!` carries module aliases, scalar
+   constants and function sources across; rebuildable data is deliberately lost.
 
    A `delay`, never an eager read: `native-image` initializes this namespace at
    BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
@@ -11256,8 +11281,9 @@
              5)))
 
 (def ^:private env-rss-budget-mb
-  "Resident-set ceiling in MB. JVM heap alone misses interpreter/native allocations,
-   so this gate also forces idle-env eviction when process RSS is high. Override
+  "Resident-set ceiling in MB. JVM heap alone misses each interpreter worker's
+   native allocations, so this gate samples the gateway plus every live Python
+   worker and forces idle-env eviction when their aggregate RSS is high. Override
    with `VIS_ENV_RSS_BUDGET_MB`; <= 0 disables.
 
    RUNTIME-DEPENDENT, because the two runtimes do not carry the same floor. The
@@ -11277,30 +11303,55 @@
                      parse-long)
              (if (util/native-image?) 3072 5120))))
 
-(defn- process-rss-bytes
-  "Best-effort process resident set in bytes. Reads procfs on Linux and `ps` on
-   macOS/other Unix hosts. Returns 0 when unavailable; never throws."
+(defn- runtime-pids
+  "The gateway and every live Python worker it owns, once each."
   []
-  (try (let [status-path (java.nio.file.Path/of "/proc/self/status" (make-array String 0))]
-         (if (java.nio.file.Files/isRegularFile status-path (make-array java.nio.file.LinkOption 0))
-           (let [status (java.nio.file.Files/readString status-path)
-                 kb (some-> (re-find #"(?m)^VmRSS:\s+(\d+)\s+kB" status)
-                            second
-                            parse-long)]
+  (distinct (cons (.pid (java.lang.ProcessHandle/current)) (env/python-worker-pids))))
 
-             (* (long (or kb 0)) 1024))
-           (let [pid (.pid (java.lang.ProcessHandle/current))
-                 process (.exec (Runtime/getRuntime)
+(defn- proc-rss-bytes
+  [pid]
+  (let [status-path (java.nio.file.Path/of (str "/proc/" pid "/status") (make-array String 0))]
+    (if (java.nio.file.Files/isRegularFile status-path (make-array java.nio.file.LinkOption 0))
+      (let [status (java.nio.file.Files/readString status-path)
+            kb (some-> (re-find #"(?m)^VmRSS:\s+(\d+)\s+kB" status)
+                       second
+                       parse-long)]
+
+        (* (long (or kb 0)) 1024))
+      0)))
+
+(defn- process-rss-bytes
+  "Best-effort resident set of the gateway PLUS its Python worker processes.
+   Reads procfs on Linux and one `ps` sample on macOS/other Unix hosts. Returns
+   0 when unavailable; never throws."
+  []
+  (try (let [pids
+             (vec (runtime-pids))
+
+             procfs?
+             (java.nio.file.Files/isRegularFile (java.nio.file.Path/of "/proc/self/status"
+                                                                       (make-array String 0))
+                                                (make-array java.nio.file.LinkOption 0))]
+
+         (if procfs?
+           (reduce (fn [total pid]
+                     (+ (long total) (long (proc-rss-bytes pid))))
+                   0
+                   pids)
+           (let [process (.exec (Runtime/getRuntime)
                                 ^"[Ljava.lang.String;"
-                                (into-array String ["ps" "-o" "rss=" "-p" (str pid)]))]
-
+                                (into-array String ["ps" "-o" "rss=" "-p" (str/join "," pids)]))]
              (try (if (and (.waitFor process 2 java.util.concurrent.TimeUnit/SECONDS)
                            (zero? (.exitValue process)))
-                    (* (long (or (some-> (slurp (.getInputStream process))
+                    (->> (slurp (.getInputStream process))
+                         str/split-lines
+                         (keep (fn [line]
+                                 (some-> line
                                          str/trim
-                                         parse-long)
-                                 0))
-                       1024)
+                                         parse-long)))
+                         (reduce + 0)
+                         long
+                         (* 1024))
                     0)
                   (finally (.destroy process))))))
        ;; Same shape as the shell's usage sampler: `ps` is best-effort, the
@@ -11320,14 +11371,13 @@
     (if (pos? mx) (long (/ (* 100 (- (.totalMemory rt) (.freeMemory rt))) mx)) 0)))
 
 (defn- memory-pressure?
-  "True when process RSS crosses [[env-rss-budget-mb]].
+  "True when gateway-plus-worker RSS crosses [[env-rss-budget-mb]].
 
-   RSS is the ONE truthful gauge here: a session is a namespace inside the
-   embedded CPython, so what it holds is native memory this process is resident
-   for — never JVM heap. Evicting envs cannot shed heap, so a heap gate would
-   fire on work that has nothing to do with sessions and stay silent on the
-   growth that does. Accepts a sampled RSS value to avoid duplicate process
-   calls during metrics and reaper sweeps."
+   RSS is the truthful gauge here: a session's native Python heap lives in its
+   worker process, outside JVM heap accounting. Evicting an idle env kills that
+   worker, whereas a JVM heap gate would fire on unrelated work and miss Python
+   growth. Accepts a sampled RSS value to avoid duplicate process calls during
+   metrics and reaper sweeps."
   ([] (memory-pressure? (process-rss-bytes)))
   ([rss-bytes]
    (and (pos? (long @env-rss-budget-mb))
@@ -11838,18 +11888,22 @@
 (defn- detach-entry!
   "Drop `entry` from the cache, but only while it is still `k`'s entry.
 
-   Nothing is disposed and the lock is not touched: the thread parked inside that
-   session still owns both, and dropping a session out from under a live guest
-   thread is not safe. So the session and the native memory it holds leak until
-   the process exits — which beats a session that can never take another turn.
-   The next [[ensure-env!]] builds a fresh env under a FRESH lock, and the ghost
-   is left holding an object nobody references."
+   The abandoned turn may still own the lock, so full environment disposal remains
+   unsafe. Its Python interpreter is now a separate process, however: retire that
+   process without entering it as soon as cache ownership moves on. The stale host
+   thread may linger, but its Python heap and worker capacity do not."
   [k entry]
   (loop []
 
     (let [m @cache]
       (cond (not (identical? entry (get m k))) false
-            (compare-and-set! cache m (dissoc m k)) true
+            (compare-and-set! cache m (dissoc m k)) (do (let [environment (:environment entry)]
+                                                          (retire-python-context-once!
+                                                            (:python-context environment)
+                                                            environment
+                                                            :environment-detached
+                                                            nil))
+                                                        true)
             :else (recur)))))
 
 (defn condemn-env!
@@ -11884,15 +11938,14 @@
 
    A FREE lock is not enough. A session whose context was disposed — a teardown,
    a recycle, an environment that failed halfway through being built — cannot be
-   entered again, and `env-python/context-enterable?` is what says so, so the
-   next turn detaches and rebuilds the environment before entering Python. A
-   cancel is NOT one of those states any more: it interrupts the block and
-   leaves the session standing.
-   Nothing is disposed: host work may still be inside a retired context, and
-   closing a context with an already leaked GIL cannot safely enter it. The rescue
-   is taken at most once per acquisition — a FRESH context that still refuses is
-   a real failure for the turn to report, not a reason to keep minting
-   interpreters."
+   entered again, and `env-python/context-enterable?` is what says so. A normal
+   cancel leaves the session standing; only a worker that fails to acknowledge or
+   unwind the interrupt is retired, and that process has already been killed.
+
+   Nothing is disposed here because parent-side host work may still hold the old
+   environment. The expensive interpreter process is already reclaimed on the
+   retirement path. Rescue happens at most once per acquisition — a fresh context
+   that still refuses is a real turn failure, not a reason to keep minting workers."
   [id]
   (let [k (cache-key id)]
     (loop [rescued? false]

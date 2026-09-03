@@ -28,10 +28,12 @@
    goes to a log file instead.
 
    A message carrying `op` is a request, one without is its reply, so each side
-   numbers its own requests and no id can collide. Nothing here has a timeout: a
-   block or an extension tool may legitimately run for minutes, and a child that
-   DIES is what the pump reports — every call waiting on it fails at once with
-   the child's log to read."
+   numbers its own requests and no id can collide. Work has no timeout: a block
+   or extension tool may legitimately run for minutes. CONTROL is different:
+   an interrupt that cannot reach the child is bounded, because cancellation
+   must be able to retire that process instead of parking its caller forever.
+   A child that DIES is what the pump reports — every call waiting on it fails
+   at once with the child's log to read."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -48,7 +50,7 @@
            (java.nio.channels Channels ServerSocketChannel SocketChannel)
            (java.nio.charset StandardCharsets)
            (java.nio.file Files)
-           (java.util.concurrent Executors ExecutorService)
+           (java.util.concurrent Executors ExecutorService TimeUnit)
            (java.util.concurrent.atomic AtomicLong)))
 
 (set! *warn-on-reflection* true)
@@ -89,22 +91,30 @@
       (.flush writer))))
 
 (defn- request!
-  "Ask the peer `message` and answer its reply value; its error throws here."
-  [peer message]
-  (let [id
-        (.incrementAndGet ^AtomicLong (:seq peer))
+  "Ask the peer `message` and answer its reply value; its error throws here.
+   `timeout-ms` bounds CONTROL messages only; ordinary work waits for its real
+   result."
+  ([peer message] (request! peer message nil))
+  ([peer message timeout-ms]
+   (let [id
+         (.incrementAndGet ^AtomicLong (:seq peer))
 
-        waiting
-        (promise)]
+         waiting
+         (promise)]
 
-    (swap! (:pending peer) assoc id waiting)
-    (try (send-line! peer (assoc message "id" id))
-         (let [reply @waiting]
-           (if (contains? reply "error")
-             (throw (ex-info (str (get reply "error"))
-                             {:type :vis/python-worker :op (get message "op")}))
-             (get reply "value")))
-         (finally (swap! (:pending peer) dissoc id)))))
+     (swap! (:pending peer) assoc id waiting)
+     (try (send-line! peer (assoc message "id" id))
+          (let [reply (if timeout-ms (deref waiting (long timeout-ms) ::timed-out) @waiting)]
+            (when (identical? ::timed-out reply)
+              (throw (ex-info (str "the python worker did not answer " (get message "op"))
+                              {:type :vis/python-worker-timeout
+                               :op (get message "op")
+                               :timeout-ms timeout-ms})))
+            (if (contains? reply "error")
+              (throw (ex-info (str (get reply "error"))
+                              {:type :vis/python-worker :op (get message "op")}))
+              (get reply "value")))
+          (finally (swap! (:pending peer) dissoc id))))))
 
 (defn- pump!
   "Read this peer until it closes: a reply settles whoever waits for it, a
@@ -126,7 +136,8 @@
            (recur)))
        (catch Throwable _ nil)
        (finally (doseq [[_ waiting] @(:pending peer)]
-                  (deliver waiting {"error" (reason)})))))
+                  (deliver waiting {"error" (reason)}))
+                (.shutdownNow ^ExecutorService (:workers peer)))))
 
 ;; The child half
 
@@ -197,10 +208,10 @@
   "BE a worker: connect back to the parent on `socket-path` and serve
    it until it hangs up.
 
-   The interpreter here is deliberately the runtime's default one — no
-   `confine!`, no thread cap — because the code it runs is the user's own
-   extensions, at the same trust level as a Clojure extension on the classpath.
-   Nothing the model wrote ever reaches this process."
+   This process belongs to one gateway session. Its sandbox namespace and its
+   trusted extension namespaces share this interpreter; the runtime's unforgeable
+   per-namespace trust identity decides which side of the confinement boundary a
+   call occupies. Policy remains process-wide, while trust is namespace-wide."
   [socket-path]
   (let [channel
         (SocketChannel/open (UnixDomainSocketAddress/of ^String socket-path))
@@ -340,6 +351,14 @@
   [k]
   (boolean (alive? (get @workers k))))
 
+(defn worker-pids
+  "PIDs of every live session or shared Python worker this process owns."
+  []
+  (->> (vals @workers)
+       (keep (fn [state]
+               (when (alive? state) (.pid ^Process (:process state)))))
+       vec))
+
 (defn- live
   "The worker for `k`, started if this is the first call or if the last one died.
    Starting is per key and under a lock, so two turns opening the same session at
@@ -356,12 +375,18 @@
               (swap! workers assoc k started)
               started)))))))
 
+(def ^:private INTERRUPT_REPLY_MS
+  "Maximum wait for the worker control plane to acknowledge an interrupt."
+  1000)
+
 (defn- ask
-  [k op session code]
-  (request! (:peer (live k))
-            (cond-> {"op" op "session" session}
-              code
-              (assoc "code" code))))
+  ([k op session code] (ask k op session code nil))
+  ([k op session code timeout-ms]
+   (request! (:peer (live k))
+             (cond-> {"op" op "session" session}
+               code
+               (assoc "code" code))
+             timeout-ms)))
 
 (defn install-runtime! [k session] (ask k "install-runtime" session nil))
 (defn install-sync-tool! [k session tool-name] (ask k "install-sync-tool" session tool-name))
@@ -372,7 +397,7 @@
 (defn run-block [k session code] (ask k "run-block" session code))
 (defn eval-str [k session code] (ask k "eval" session code))
 (defn close-session! [k session] (ask k "close" session nil))
-(defn interrupt! [k session] (ask k "interrupt" session nil))
+(defn interrupt! [k session] (ask k "interrupt" session nil INTERRUPT_REPLY_MS))
 (defn stdin! [k session text] (ask k "stdin" session (str text)))
 (defn trust! [k session trusted?] (ask k "trust" session (if trusted? "1" "0")))
 
@@ -391,13 +416,18 @@
                                                  "refusal" (str refusal)})))
 
 (defn stop-worker!
-  "Stop the worker for `k`, if there is one. Idempotent."
+  "Stop the worker for `k`, if there is one. Idempotent. Closing the socket
+   releases every pending parent call; a child that does not leave promptly is
+   force-killed so retired sessions cannot accumulate processes."
   [k]
   (locking workers
     (when-let [state (get @workers k)]
       (swap! workers dissoc k)
       (try (.close ^SocketChannel (:channel (:peer state))) (catch Throwable _ nil))
-      (.destroy ^Process (:process state))))
+      (let [^Process process (:process state)]
+        (.destroy process)
+        (try (when-not (.waitFor process 200 TimeUnit/MILLISECONDS) (.destroyForcibly process))
+             (catch Throwable _ (try (.destroyForcibly process) (catch Throwable _ nil)))))))
   nil)
 
 (defn stop!

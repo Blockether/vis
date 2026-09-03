@@ -12,22 +12,23 @@
    native image — the extension is Python all the way down, so nothing here
    defines a class at runtime.
 
-   Each file is evaluated in its own TRUSTED interpreter session. This is NOT
-   the model's sandbox: the model's context is untrusted, per-session and
-   deny-by-default; extension contexts are user-trusted (same trust level
-   as a Clojure extension on the classpath), process-wide, and get real
-   filesystem / network / environment access. The two share nothing — the
-   model can call an extension TOOL (through the host wrapper, envelope-
-   checked like any tool) but can never evaluate code in the extension's
-   context. Host capabilities are reachable ONLY through the bound `vis`
-   API: what crosses is JSON text, so no host object is ever reachable from
-   Python.
+   Each file is first evaluated in a TRUSTED gateway-wide registration namespace.
+   When one of its callables runs for a gateway session, the extension is realized
+   again in a trusted namespace beside that session's untrusted sandbox: ONE worker
+   process, ONE interpreter, separate namespace and trust identities. Imports and
+   native-library state are shared inside that session process; Python globals and
+   authority are not. Another session owns another process.
 
-   A session is a NAMESPACE in the one embedded interpreter, not a second
-   interpreter: opening one costs a dict, and closing one drops the extension's
-   Python with it. Calls into an extension (tool, activation, prompt, slash, op
-   hook) are serialized with `locking` on its session name, the same proven
-   pattern as the printer context.
+   The model can call an extension TOOL through the ordinary host wrapper, envelope-
+   checked like any tool, but cannot choose the trusted identity or evaluate code in
+   the extension namespace. Host capabilities are reachable only through the bound
+   `vis` API: what crosses is JSON text, so no host object is reachable from Python.
+   Startup, reload and calls with no owning session use the shared registration worker.
+
+   A context is only a NAMESPACE in its owning embedded interpreter: opening one costs
+   a dict, and closing one drops the extension's Python with it. Calls into an extension
+   (tool, activation, prompt, slash, op hook) are serialized with `locking` on its
+   session name, the same proven pattern as the printer context.
 
    The file's top-level `vis.extension(...)` call registers through the
    ordinary `register-extension!` — from the registry's perspective a
@@ -442,10 +443,9 @@
 (defonce
   ^:private
   ^{:doc
-    "The extension sessions this namespace has open. A session is a
-                 NAME in the one embedded interpreter, so `dead?` is a question
-                 only the opener can answer - the interpreter itself would just
-                 make a fresh namespace for a name nobody knows."}
+    "The extension namespace names currently open across their owning workers.
+     A stale name could otherwise be recreated as an empty namespace by its interpreter,
+     so the opener — not the interpreter — owns the liveness answer."}
   live-contexts
   (atom #{}))
 
@@ -710,15 +710,16 @@
   (atom {}))
 
 (defn- discard-context!
-  [ctx]
-  (when ctx
-    (let [worker (worker-for ctx)]
-      (swap! live-contexts disj ctx)
-      (swap! context-workers dissoc ctx)
-      (try (python-host/forget-session! ctx) (catch Throwable _ nil))
-      (when (pyext/worker-live? worker)
-        (try (pyext/close-session! worker ctx) (catch Throwable _ nil)))))
-  nil)
+  ([ctx] (discard-context! ctx true))
+  ([ctx close-in-worker?]
+   (when ctx
+     (let [worker (worker-for ctx)]
+       (swap! live-contexts disj ctx)
+       (swap! context-workers dissoc ctx)
+       (try (python-host/forget-session! ctx) (catch Throwable _ nil))
+       (when (and close-in-worker? (pyext/worker-live? worker))
+         (try (pyext/close-session! worker ctx) (catch Throwable _ nil)))))
+   nil))
 
 (defn- initialize-extension-context!
   "Evaluate admitted extension `source` in a trusted namespace of `worker`.
@@ -1788,16 +1789,18 @@
     (discard-context! ctx)))
 
 (defn ^:no-doc close-session-contexts!
-  "Close every trusted extension namespace in `worker` before its sandbox
-   namespace and worker process are retired."
+  "Forget every trusted extension namespace owned by `worker`. The worker process
+   is about to die, so entering its interpreter to close each namespace would add
+   work to the exact process teardown is reclaiming."
   [worker]
   (let [locals (into []
-                     (filter (fn [[[k _] _]] (= worker k)))
+                     (filter (fn [[[k _] _]]
+                               (= worker k)))
                      @session-contexts)]
     (when (seq locals)
       (swap! session-contexts #(apply dissoc % (map first locals)))
       (doseq [[_ row] locals]
-        (discard-context! (:context row)))))
+        (discard-context! (:context row) false))))
   nil)
 
 (defn- load-file!

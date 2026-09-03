@@ -4305,25 +4305,18 @@
      (cond (nil? turn) {:error :turn-not-found}
            (not= "running" (:status turn)) {:error :not-running :status (:status turn)}
            :else (do (tel/log! :info ["gateway: cancelling turn" tid (str "source=" (name source))])
-                     ;; Stamp the cancel wall-clock BEFORE firing the token so the
-                     ;; unwinding worker can tell post-cancel submissions (drain
-                     ;; them: "stop that, run THIS") from the pre-cancel backlog
-                     ;; (dropped) — see `drop-cancelled-backlog!`.
+                     ;; Stamp the cancel wall-clock and arm the terminal backstop
+                     ;; BEFORE firing callbacks. A cancellation hook is allowed to
+                     ;; touch an uninterruptible runtime; it must not prevent the
+                     ;; daemon from resolving the turn or freeing its capacity.
                      (update-turn! sid tid #(assoc % :cancelling_at (util/now-ms)))
-                     (some-> (:cancel-token turn)
-                             (cancellation/cancel! source))
-                     ;; A stop must ALWAYS resolve. Firing the token only unwinds a
-                     ;; worker that EXISTS and registered its hook — a turn whose launch
-                     ;; never got that far, or whose worker is parked in uninterruptible
-                     ;; code, ignored the cancel completely and kept `:current-turn`
-                     ;; forever, so Esc did nothing at all and every later message piled
-                     ;; up behind a turn nobody was running. Claim-guarded: a no-op the
-                     ;; instant a real terminal lands.
                      (start-cancel-terminal-backstop! sid
                                                       tid
                                                       (:cancel-token turn)
                                                       CANCEL_TERMINAL_GRACE_MS
                                                       cancel-waiting-turn!)
+                     (some-> (:cancel-token turn)
+                             (cancellation/cancel! source))
                      {:status "cancelling"})))))
 
 (defn cancel-session-turns!

@@ -3995,6 +3995,47 @@
                             @persisted)))
            (finally (swap! registry dissoc sid))))))
 
+(defdescribe
+  cancel-turn-backstop-order-test
+  (it
+    "arms the backstop before a cancellation callback can stall"
+    (let [sid
+          (str "cancel-order-" (java.util.UUID/randomUUID))
+
+          tid
+          "stuck-callback"
+
+          token
+          (cancellation/cancellation-token)
+
+          registry
+          @#'state/registry
+
+          callback-entered
+          (promise)
+
+          release-callback
+          (promise)
+
+          armed
+          (atom nil)]
+
+      (cancellation/on-cancel! token #(do (deliver callback-entered true) @release-callback))
+      (try (swap! registry assoc
+             sid
+             {:current-turn tid :turns {tid {:turn_id tid :status "running" :cancel-token token}}})
+           (with-redefs-fn {#'state/start-cancel-terminal-backstop!
+                            (fn [s t tok grace-ms land!]
+                              (reset! armed
+                                {:sid s :tid t :token tok :grace-ms grace-ms :land land!}))}
+             (fn []
+               (let [cancel-call (future (state/cancel-turn! sid tid :test-stop))]
+                 (try (expect (true? (deref callback-entered 1000 false)))
+                      (expect (= [sid tid] ((juxt :sid :tid) @armed)))
+                      (finally (deliver release-callback true)))
+                 (expect (= {:status "cancelling"} (deref cancel-call 1000 ::blocked))))))
+           (finally (deliver release-callback true) (swap! registry dissoc sid))))))
+
 
 (defdescribe
   stall-force-cancel-does-not-replay-test

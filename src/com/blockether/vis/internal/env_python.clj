@@ -1,10 +1,10 @@
 (ns com.blockether.vis.internal.env-python
   "The agent's action substrate: an embedded CPython the model writes Python for.
 
-   A SESSION here is a Python module namespace inside the one interpreter
-   `com.blockether.vis-python-runtime` starts for the process, named by a string —
-   the value callers carry as `:python-context`. Sessions keep separate globals
-   and share every imported module, so the second sandbox costs almost nothing.
+   A SESSION here owns one worker process and one embedded interpreter. Its
+   sandbox namespace and trusted extension namespaces share that interpreter,
+   while another session has another process, import table and native-library
+   cache. A one-shot CLI session may run in the process it already owns.
 
    Three rules shape everything below. **One dialect crosses the boundary:**
    JSON, in both directions — host to guest is a `json.loads` of a literal this
@@ -19,11 +19,11 @@
 
    Public surface used by the loop:
 
-     create-python-context / dispose-python-context! / set-python-binding! /
-     bind-and-bump! / count-top-level-forms / validate-no-banned-defs! /
-     run-python-block / persist-session-defs! / restore-session-defs! /
-     forget-session-defs! / SYSTEM_VAR_NAMES / system-var-sym? / boundary-view /
-     ctx->python-str / bind-ctx!"
+     create-python-context / dispose-python-context! / retire-python-context! /
+     interrupt-guest! / python-worker-pids / set-python-binding! / bind-and-bump! /
+     count-top-level-forms / validate-no-banned-defs! / run-python-block /
+     persist-session-defs! / restore-session-defs! / forget-session-defs! /
+     SYSTEM_VAR_NAMES / system-var-sym? / boundary-view / ctx->python-str / bind-ctx!"
   (:require [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
@@ -58,6 +58,11 @@
   (atom {}))
 
 (defn- worker-of [session] (get @session-workers session))
+
+(defn python-worker-pids
+  "PIDs of the live interpreter workers owned by this gateway process."
+  []
+  (pyext/worker-pids))
 
 ;; ── The interpreter this session reaches, wherever it lives ─────────────────
 ;; Every call a session makes goes through here, so the choice between "in this
@@ -119,7 +124,9 @@
 (defn- py-close-session!
   [session]
   (if-let [k (worker-of session)]
-    (try (pyext/close-session! k session) (finally (pyext/stop-worker! k)))
+    ;; This worker belongs only to this session. Process death releases every
+    ;; sandbox and trusted namespace without waiting behind a wedged interpreter.
+    (pyext/stop-worker! k)
     (runtime/close-session! session)))
 
 
@@ -1120,10 +1127,9 @@
 (defn- guest-stdin-text
   "What the guest's `sys.stdin` reads for a context built with `stdin`.
 
-   Descriptor 0 belongs to the HOST process, so an agent block that reaches for
-   it blocks on a terminal nobody is typing into — and with one interpreter
-   thread serving every session, that is the whole process. So the sandbox's
-   stdin is EMPTY (`\"\"`), and a stray `input()` answers `EOFError` instead of
+   Descriptor 0 belongs to the WORKER process, so an agent block that reaches
+   for it blocks on a stream nobody is feeding. The sandbox's stdin is EMPTY
+   (`\"\"`), and a stray `input()` answers `EOFError` instead of
    hanging. `System/in` is the one caller that genuinely owns descriptor 0 —
    the human running `vis-agent python` — and keeps it (`nil`). Any other
    stream is read here and handed over as its text."
@@ -1222,22 +1228,19 @@
 (defonce
   ^:private
   ^{:doc
-    "Every session name this process has dropped.
+    "Every Python context name this host has dropped.
 
-   A session is a module namespace the interpreter creates on FIRST USE, so a
-   name that ran once and was disposed would quietly come back as an EMPTY
-   namespace with no doors in it. Remembering the name is what makes that a
-   refusal instead."}
+     A one-shot local interpreter can recreate a closed namespace on first use,
+     while a gateway can start a fresh worker for the same key. Remembering the
+     name lets the loop refuse either stale environment before it enters Python."}
   disposed-sessions
   (atom #{}))
 
 (defn dispose-python-context!
-  "Drop `session`: its guest namespace, the host bindings it could call, and the
-   right to run in it ever again.
-
-   A namespace is a reference cycle through every function defined in it, so the
-   interpreter has to be told; the host half has to go with it or every closure
-   the session captured outlives it."
+  "Drop `session`: its worker or local namespace, every trusted extension
+   namespace beside it, the host bindings they could call, and the right for this
+   environment to run Python again. Gateway teardown kills the session process
+   rather than entering an interpreter that may be wedged."
   [session]
   (when session
     (swap! disposed-sessions conj session)
@@ -1259,20 +1262,21 @@
 (defn context-enterable?
   "Can the loop still run guest code in this environment?
 
-   False once the session was disposed or retired, or when the environment
-   carries no session at all. There is no half-usable state to probe for: a
-   namespace either exists in the one interpreter or it does not."
+   False once the session was disposed or its worker was retired, or when the
+   environment carries no session at all."
   [environment]
   (boolean (when-let [session (:python-context environment)]
-             (not (contains? @disposed-sessions session)))))
+             (and (not (contains? @disposed-sessions session))
+                  (not (true? (some-> (:python-context-retired-atom environment)
+                                      deref)))))))
 
 (def ^:private guest-budget-ms
   "How long a between-turns guest call may hold the TURN thread.
 
-   One interpreter, one GIL: a call into the guest waits for whatever is running
-   there. Both callers below run on the turn thread — the collect between turns,
-   the defs snapshot one line before the turn's outcome is persisted — so a block
-   that parks holding the GIL would hold the turn with it: no terminal ever
+   One session worker, one GIL: a call into that guest waits for whatever is
+   running there. Both callers below run on the turn thread — the collect between
+   turns, the defs snapshot one line before the turn's outcome is persisted — so
+   a block that parks holding its GIL would hold the turn with it: no terminal
    reaches the durable row, the turn stays `:running` in every listing, and the
    next cancel is refused as `:not-running`. Neither call is worth a turn."
   5000)
@@ -1291,17 +1295,31 @@
 
     (when-not (= answer ::over-budget) answer)))
 
+(defn retire-python-context!
+  "Kill `session`'s worker after its control plane stopped answering, then drop
+   the host doors its sandbox and trusted extension namespaces owned. Keeping the
+   session-to-worker route until ordinary disposal prevents any late caller from
+   falling through to the parent runtime."
+  [session]
+  (when-let [k (worker-of session)]
+    (pyext/stop-worker! k)
+    (when-let [close-extensions
+               (resolve 'com.blockether.vis.internal.python-extensions/close-session-contexts!)]
+      (try (close-extensions session) (catch Throwable _ nil))))
+  (try (python-host/forget-session! session) (catch Throwable _ nil))
+  nil)
+
 (defn interrupt-guest!
   "Ask the interpreter to raise `KeyboardInterrupt` in the thread running guest
    code, answering whether it landed.
 
    Bytecode-level, like CPython's own interrupt: a spinning `while True:` unwinds
    and the session survives; a thread blocked in a host call or inside C does not
-   see it until it returns. False means the caller must retire the environment
-   instead. One interpreter runs one block at a time, so `session` names WHOSE
-   block the loop meant to stop and the interrupt reaches the thread running it."
+   see it until it returns. A normal false means no block was running. Worker
+   protocol failures throw so the loop can distinguish a dead control plane from
+   that harmless race and retire only the broken process."
   [session]
-  (boolean (when session (try (py-interrupt! session) (catch Throwable _ false)))))
+  (boolean (when session (py-interrupt! session))))
 
 (defn- prose-leading-syntax-hint
   "When a `:python/syntax` failure came from a reply that OPENED with PROSE — the
