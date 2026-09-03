@@ -286,6 +286,18 @@
           (.redirectOutput (ProcessBuilder$Redirect/appendTo log)))]
 
     (.put (.environment builder) socket-env (.getAbsolutePath socket))
+    ;; The interpreter the PARENT resolved, handed over by path. Without this a
+    ;; worker resolves for itself — and a version the parent already has but the
+    ;; release page does not yet answers HTTP 404 on the download, which kills
+    ;; every worker and with it every session: `vis-agent tui` could not open one
+    ;; at all. A child must run the same interpreter as its parent anyway; asking
+    ;; the network again is how they drift.
+    (try (when-let [library (python-runtime/ensure-library!)]
+           (.put (.environment builder) runtime/native-path-env (str library)))
+         (catch Throwable t
+           (tel/log! {:level :debug
+                      :id ::no-library-to-hand-over
+                      :data {:error (ex-message t)}})))
     (let [process
           (.start builder)
 
