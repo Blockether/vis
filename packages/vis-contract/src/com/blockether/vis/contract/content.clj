@@ -29,7 +29,6 @@
    :event-types (get @contract "event_types")
    :delta-fields (get @contract "delta_fields")})
 
-(defn package-document "The validated language-neutral content document." [] @contract)
 
 (defn block-valid?
   "True when `block` satisfies the canonical block JSON Schema."

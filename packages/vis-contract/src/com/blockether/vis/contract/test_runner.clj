@@ -5,7 +5,6 @@
 
 (def ^:private contract (delay (document/load! "test-runner")))
 
-(defn package-document "The validated language-neutral test-runner document." [] @contract)
 
 (def selector-keys
   "Optional selector keys accepted by every runner."

@@ -3973,39 +3973,12 @@
 
         (error-response 400 :invalid-request (str "unknown suggest kind: " kind))))))
 
-;; Router + middleware
+;; Router and middleware
 
-;; Route contributions — the whiteboard pattern (pull, not push)
-;;
-;; The gateway core serves ONLY the JSON API. Anything else (the /ui web
-;; companion, a future surface) is a contribution the gateway PULLS at
-;; handler-build time — extensions never reach into the gateway, so there
-;; is NO ordering requirement between starting the server and loading the
-;; extension (OSGi calls this the whiteboard pattern; ServiceLoader and
-;; Spring auto-configuration are the same pull move).
-;;
-;; Primary source — declarative, vis's own slot idiom: an extension puts
-;;   {:ext/channel-contributions
-;;    {:gateway.slot/http-routes [{:id :web/ui :fn (fn [] contribution)}]}}
-;; on its extension map; the gateway enumerates the slot via
-;; `extension/channel-contributions-for` whenever it (re)builds the
-;; handler. A fingerprint check on each request notices contributions
-;; that arrived AFTER the server started (extension loaded late, jar
-;; dropped + `vis-agent extension reload`) and rebuilds — both orders just work.
-;;
-;; Secondary source — imperative escape hatch for embedded/REPL callers:
-;; `register-routes!` below.
-;;
-;; Contribution shape (all keys but :routes optional):
-;;   {:prefix            "/ui"        ; uri namespace this contribution owns
-;;    :routes            (fn [token] reitit-route-data)
-;;    :open-uris         #{"/ui" ...} ; reachable without auth
-;;    :protocol-open-uris #{"/ui" ...} ; browser routes with no API header
-;;    :request-authed-fn (fn [request token] bool)   ; extra auth carrier
-;;    :on-unauthorized   (fn [request] ring-response) ; custom 401 for :prefix
-;;    :on-not-found      (fn [request] ring-response) ; custom 404 for :prefix
-;;    :form-params?      true          ; urlencoded form parsing under :prefix
-;;    :stop-fn           (fn [])}      ; stop a runtime owned by the contribution
+;; Pull declarative HTTP route contributions from `:gateway.slot/http-routes` whenever
+;; the handler fingerprint changes; extensions never mutate the server. Embedded callers
+;; may use `register-routes!`. Contributions define routes plus optional prefix, open URI
+;; sets, custom auth/error handlers, form parsing and shutdown callback.
 (defonce ^:private route-contributions (atom {}))
 
 (defonce ^:private imperative-version (atom 0))

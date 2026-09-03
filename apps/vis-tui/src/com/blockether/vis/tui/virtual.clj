@@ -59,38 +59,9 @@
 
 (set! *unchecked-math* :warn-on-boxed)
 
-;;; ── Sticky real-height cache ───────────────────────────────────────────────────
-;;
-;; Why this exists: with the layout planner alone, off-screen
-;; messages got `estimated-height` (cheap) and visible ones got
-;; `bubble-height` (real). When the user scrolled, the visible set
-;; changed, different messages flipped between estimate <-> real, and
-;; `total-h` jittered - the scrollbar thumb position drifted on
-;; every scroll frame, and click-to-position landed somewhere else
-;; than where the user clicked because the click computed a target
-;; against the OLD total-h while the next paint used a different
-;; one.
-;;
-;; The fix: ONCE we've measured a message's real bubble-height we
-;; remember it forever (or until LRU eviction). Off-screen messages
-;; we've already seen keep their real height; only never-seen
-;; messages fall back to the estimate. The pre-warmer writes here
-;; too, so within ~1 s of opening a session EVERY assistant
-;; has its real height pinned and the scrollbar is perfectly
-;; stable.
-;;
-;; Cache key tuple: `[(identityHashCode message) bubble-w
-;; (identityHashCode settings)]`. Identity-hash on `message` is
-;; safe because chat-state messages are immutable once added
-;; (`update :messages conj` only ever appends; finalised assistant
-;; messages get replaced as a whole map exactly once). Width and
-;; settings identity capture the cache-busting axes we care about.
-;; Detail expansion state is intentionally NOT in the key: a toggle
-;; remeasures the visible clicked message, while off-screen measured
-;; heights stay sticky so the scrollback does not jump.
-;;
-;; Cap is generous (8192) because each entry is just a long height
-;; - a few KB of overhead total even at 8k entries.
+;;; Sticky measured heights
+;; Cache real immutable-message heights by content, width and settings so off-screen
+;; estimates cannot shift total height. Expansion remeasures only the visible row.
 
 (def ^:private ^:const height-cache-cap 8192)
 
@@ -1505,41 +1476,14 @@
      ;; or auto-bottom stickiness breaks.
      :anchored-scroll (when scroll-given? (:eff-scroll result))}))
 
-;;; ── Background pre-warmer ────────────────────────────────────────────────────
-;;
-;; Why this exists, top of mind: with virtualisation alone, scrolling
-;; UP through a long session pays the FULL
-;; `format-answer-with-thinking*` cost (~500 ms / big trace bubble)
-;; on the render thread the FIRST time a never-seen bubble enters
-;; the viewport - the user feels that as a frame-stall mid-scroll.
-;; Pre-warming runs the same projection on a background daemon
-;; thread right after the first paint succeeds, so by the time the
-;; user scrolls, every bubble's `format-answer-with-thinking` /
-;; `bubble-height` entries are already in the LRU. Subsequent
-;; layouts hit the cache and return in microseconds.
-;;
-;; Concurrency contract:
-;;   * `cached*` in render.clj uses double-checked locking - the
-;;     pre-warm thread NEVER blocks the render thread on the same
-;;     key, even mid-compute.
-;;   * The thread is a daemon at `Thread/MIN_PRIORITY + 1` so a
-;;     busy JVM still services UI before warming. Honestly the JVM
-;;     barely respects priority, but setting it documents purpose.
-;;   * Cancellation is via `Thread.interrupt()` - we check between
-;;     bubbles, not inside `format-answer-with-thinking*` (no way
-;;     to interrupt a CPU-bound function mid-call without
-;;     instrumenting the tokenizer, which is way more invasive than
-;;     the win is worth).
-;;   * Returns the `Thread`. Caller stores it; on session
-;;     switch / shutdown, call `stop-pre-warm!` to interrupt.
+;;; Background pre-warming
+;; Fill formatting and height caches after first paint so entering an unseen bubble does
+;; not block render. The low-priority daemon is interruptible between messages; cache
+;; computation itself stays outside render locks.
 
 (defn- warm-message-height!
   [messages idx bubble-w settings session-id detail-expansions]
-  ;; Warm EVERY message, not just assistants. User-message
-  ;; bubble-height is cheap, but the *real* value is
-  ;; `chrome+lines+1` while `estimated-height` can undershoot
-  ;; by 1 for short prompts. Skipping users means total-h drifts the
-  ;; first time they scroll into view.
+  ;; Include cheap user messages so their estimates cannot shift total height later.
   (let [m
         (nth messages idx)
 

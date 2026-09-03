@@ -31,9 +31,9 @@
           },
           "outside": {
             "enum": [
-              "outside/local",
-              "outside/prompt",
-              "outside/refuse"
+              "local",
+              "prompt",
+              "refuse"
             ]
           },
           "refusal": {

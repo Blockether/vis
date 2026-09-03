@@ -16,29 +16,8 @@
            [java.util LinkedHashMap]
            [java.util.concurrent.atomic AtomicLong]))
 
-;;; ── Render caches ──────────────────────────────────────────────────────────
-;;
-;; The TUI's main render path is hot: every visible frame used to
-;; re-run full Markdown + iteration-trace formatting for every
-;; assistant bubble in scrollback, then re-wrap every message text
-;; multiple times. With a 50-iteration trace and a few finalized
-;; bubbles in history that pegged the input thread.
-;;
-;; Messages are immutable once added to app-db (`update :messages
-;; conj` only ever appends, the loading placeholder is replaced as a
-;; whole map by `:message-received`), so identity-hash-code on the
-;; `:answer` / `:traces` / `:text` slot is a valid stand-in for
-;; content.
-;;
-;; Eviction is proper LRU via `LinkedHashMap` in access-order mode:
-;; each `get` promotes its entry to the most-recently-used end, and
-;; `removeEldestEntry` returns true once the map exceeds `fmt-cache-cap`,
-;; so `put` automatically drops the single least-recently-used entry.
-;; That keeps the working set hot (the bubbles you're currently
-;; scrolling through) while the cache stays bounded - no "oh you got
-;; one entry over the cap, here's a 5x latency spike on every visible
-;; bubble while we re-format from scratch" cliff like the old
-;; clear-the-whole-thing strategy.
+;;; Render caches
+;; Formatting is cached by immutable message identity in a bounded access-order LRU.
 (def ^:private ^:const fmt-cache-cap 4096)
 
 (defn- make-fmt-cache
@@ -96,23 +75,8 @@
 
 (defn- cached*
   [k compute-fn]
-  ;; LinkedHashMap is not thread-safe - the render thread used to be
-  ;; the only caller, but `virtual/pre-warm!` now hits these caches
-  ;; from a worker thread to keep first-scroll smooth. Two callers
-  ;; means the lock matters, AND the lock granularity matters: if
-  ;; we held it across `compute-fn` (which can run for ~500 ms on a
-  ;; big trace bubble's `format-answer-with-thinking*`), the render
-  ;; thread would stall on every cache miss the worker hit. So we
-  ;; do double-checked locking: lock only for the dictionary
-  ;; touches (.get / .put), never for the compute.
-  ;;
-  ;; If two threads race on the same missing key, both compute, but
-  ;; the second one's `(or (.get ...) ...)` discards its result and
-  ;; reuses the first one's value, so the cache map stays
-  ;; deterministic. Wasted CPU on the duplicate compute is bounded
-  ;; by the cache cap and rare in practice (the worker walks
-  ;; messages in order; by the time the render thread asks for the
-  ;; same key it's almost always already a hit).
+  ;; Pre-warming and rendering share this cache. Keep lookup and insertion locked,
+  ;; but compute misses outside the lock so expensive formatting cannot stall paint.
   (with-cache fmt-cache fmt-cache-gen k (compute-fn)))
 
 (defn invalidate-cache!
@@ -474,19 +438,7 @@
         (str (subs bar 0 start) label (subs bar end)))
       bar)))
 
-;; Sideless box-border padding
-;;
-;; The input box uses a sideless variant of `draw-box-border!` (top +
-;; bottom rules, no left/right rails, no corner glyphs). Both rules
-;; sit inset from the screen edges by `INPUT_BORDER_HORIZONTAL_PAD`
-;; columns on each side so the rule visually anchors to the message
-;; column instead of running edge-to-edge.
-;;
-;; Tweak this single number to grow / shrink both rules symmetrically.
-;; The previous bullet-point tuning history (4 -> 5 -> 4 -> 3 -> 2)
-;; lived inline in `draw-box-border!`; lifting it to a const def keeps
-;; the painter's body free of magic numbers and makes layout reviews
-;; trivial - grep for `INPUT_BORDER_HORIZONTAL_PAD`.
+;; Input-border rules share this inset; adjust it here, not in the painter.
 (def ^:private INPUT_BORDER_HORIZONTAL_PAD
   "Cols of empty space on each end of the input-box top/bottom rules.
    Total rule width = `cols - 2 * INPUT_BORDER_HORIZONTAL_PAD`."
@@ -1101,19 +1053,8 @@
            inner-w
            (max 1 (- (long cols) (* 2 (long pad))))
 
-           ;; Layout above the input box (rows decrease as we go up):
-           ;;   margin-row    -> terminal-bg gap (optional, drops first)
-           ;;   title-row     -> accent stripe (non-negotiable)
-           ;;   border-row    -> ─ rule under title (drops second)
-           ;;   suggestion rows...
-           ;;
-           ;; Sizing priority: title + at least 1 suggestion > border >
-           ;; top margin. Border and margin drop when input-top is tight
-           ;; (small terminal, lots of suggestions); only the title row
-           ;; is reserved up-front.
-           ;; Keep command/file pickers compact even in a tall terminal. The list
-           ;; scrolls around the selected row, so matches stay reachable without
-           ;; letting a bare `/` cover the entire transcript.
+           ;; Reserve the title first, then suggestions; drop the margin and border when
+           ;; space is tight. Keep the picker bounded and scroll around its selection.
            visible-cap
            (min 8 (max 0 (dec (long input-top))))
 
@@ -1994,25 +1935,13 @@
         time-str
         (vis/format-date timestamp)
 
-        ;; Below-message meta (assistant only): "blockether/glm-5.1 /
-        ;; 1 iter / tok 11461→35 / ~$0.006954 / 4.9s". Same surface
-        ;; form `format-meta-line` produces for the CLI bracket.
-        ;; Provider + model auto-extract from
-        ;; `:cost :provider` / `:cost :model` (where the iteration
-        ;; runtime persists them). The chat-state's bare-name `:model`
-        ;; field is intentionally NOT passed as the `:model` override
-        ;; here - doing so would defeat the provider/model rendering.
-        ;; Cancelled turns skip the whole block; there's no answer to
-        ;; attribute and "0 iters / no model" reads as clutter under
-        ;; a "Cancelled" placeholder. Slash/command turns skip it too: a
-        ;; `/voice`-style toggle ran no model and took no meaningful time,
-        ;; so "<model> / <time>" under it is pure noise.
+        ;; Usage metadata belongs only to assistant model turns; commands and empty
+        ;; cancellations have no meaningful model attribution.
         meta-str
         (when (and (not user?) (not slash?) (or (not cancelled?) (assistant-usage? message)))
           (vis/meta-summary-line message))
 
-        ;; Two-tier footer: the main line stays clean; the routing/fallback
-        ;; story rides a faint, italic second row that only exists on a fallback.
+        ;; Show fallback routing on a separate muted line.
         fallback-note
         (when (and meta-str (not user?) (not cancelled?)) (vis/meta-fallback-note message))]
 
@@ -2032,19 +1961,8 @@
 
           (p/set-colors! g t/dialog-hint t/terminal-bg)
           (p/put-str! g time-x label-row time-str))))
-    ;; Content begins directly under the role banner for ASSISTANT
-    ;; bubbles - the previous breathing row read as an unwanted top
-    ;; margin above the thinking block. USER bubbles keep the
-    ;; breathing row so the yellow block has visible vertical
-    ;; padding above the typed text (otherwise the yellow band
-    ;; hugs the first character and reads as a single-row strip).
-    ;; User bubbles also keep one breathing row BELOW the typed text.
-    ;; An ERROR card wants BOTH, for the same reason the companion's card has a
-    ;; margin and a padding: the top row is a MARGIN that stays on terminal-bg,
-    ;; so the amber band starts one row below its own `Vis` label instead of
-    ;; hugging it, and the bottom row is PADDING inside the fill, so the last
-    ;; sentence does not sit on the card's own edge.
-    ;; Mirror this in `bubble-height*` so the math stays in sync.
+    ;; User and error cards keep one row of vertical breathing room. Assistant
+    ;; content starts below its role banner. Keep `bubble-height*` in sync.
     (let [top-pad
           (if (or user? error?) 1 0)
 
@@ -2054,48 +1972,22 @@
           btop
           (+ (long start-row) (long top-sep-h) 1 (long top-pad))]
 
-      ;; No bubble-wide background fill. Plain user / assistant text
-      ;; renders directly on terminal bg - the only fills come from
-      ;; structured-trace marker zones (code blocks, answer
-      ;; section). Roles are visually distinguished by the colored
-      ;; label and the blank row beneath it (no horizontal divider).
-      ;; Bulk fill the content rows for the cases that want a
-      ;; bubble-wide colored block: warnings (amber alarm) and user
-      ;; messages (warm light-yellow zone). Assistant plain text and
-      ;; cancelled status keep terminal bg - their per-line marker
-      ;; switch handles any zone-specific fills (code blocks,
-      ;; answer-bg, etc.) on its own.
-      ;;
-      ;; Warnings: fill ONLY the content rows so the amber alarm
-      ;; reads as the message itself, no extra chrome.
+      ;; Only user and warning/error cards receive a whole-content fill; structured
+      ;; assistant zones paint their own backgrounds. Warning/error fill excludes chrome.
       (when (or warning? error?)
         (p/set-bg! g bg-color)
-        ;; `bottom-pad` is part of the card's SURFACE (error only): the fill
-        ;; runs one row past the last sentence so the card breathes at the
-        ;; bottom the way the answer zone's leading blank makes it breathe at
-        ;; the top.
+        ;; Extend the error surface and its left rail through bottom padding.
         (p/fill-rect! g bx btop bubble-w (+ (max 1 bubble-h) (long bottom-pad)))
-        ;; ... and the left edge bar runs the full height of that surface. A
-        ;; bar that stops one row short of the fill reads as a broken rule
-        ;; rather than as the card's own border.
         (when (and error? (pos? (long bottom-pad)))
           (p/clear-styles! g)
           (p/set-colors! g t/warning-border bg-color)
           (p/put-str! g bx (+ (long btop) bubble-h) "│")))
       ;;
-      ;; Cancelled: NO bubble-wide fill. The muted italic fg
-      ;; (`cancelled-fg`) + dimmed role label + plain status footer
-      ;; carry the "aborted" signal on bare terminal-bg.
-      ;;
-      ;; User messages: fill content rows only; the single message gap remains outside the
-      ;; fill.
+      ;; Cancelled turns stay on the terminal background; user fill excludes the
+      ;; inter-message gap.
       (when (and user? (not queued?))
         (p/set-bg! g bg-color)
-        ;; Shrink-wrap the user block to its content instead of always
-        ;; spanning the full message column: a short prompt gets a snug
-        ;; band (widest content row + symmetric h-pad) rather than a
-        ;; terminal-wide yellow stripe. Capped at `bubble-w`, so a long
-        ;; line that already fills the column still reaches both edges.
+        ;; Shrink-wrap short user messages, capped at the available column width.
         (let [content-cols
               (reduce (fn [^long m l]
                         (max m (p/display-width l)))
@@ -2110,37 +2002,13 @@
                         (- (long btop) (long top-pad))
                         user-fill-w
                         (+ (max 1 bubble-h) (long top-pad) (long bottom-pad)))))
-      ;; Text content - per-line styling via invisible marker prefixes
-      ;;
-      ;; The \"answer zone\" starts at the first line carrying ANY
-      ;; structural answer-* marker. Every line AFTER that index
-      ;; renders on `answer-bg`. We used to anchor strictly on
-      ;; `answer-hdr-marker` (the right-aligned \"FINAL ANSWER\"
-      ;; superscript), but that marker became opt-in via
-      ;; `:show-final-answer-header` - when off, the answer body lost
-      ;; its blue zone and rendered on white terminal bg. Now we
-      ;; accept any of the three structural markers
-      ;; `format-answer-with-thinking*` always emits:
-      ;;   answer-sep-marker  bold rule between trace and answer
-      ;;   answer-hdr-marker  optional \"FINAL ANSWER\" superscript
-      ;;   answer-pad-marker  blank padding above/below the answer
-      ;; Whichever appears first wins.
+      ;; The answer background begins at the first structural answer marker, including
+      ;; separators and padding when the optional header is hidden.
       (let [n
             (count lines)
 
-            ;; Restrict iteration to rows that actually intersect the
-            ;; viewport. Pre-virtualisation we walked all `n` lines
-            ;; on every redraw and let Lanterna clip OS-side; for an
-            ;; 11k-row trace bubble that pegged the render thread at
-            ;; ~110 ms / frame even with a fully warm cache. Now we
-            ;; only touch the rows whose screen
-            ;; offset is inside [0, viewport-h).
-            ;;
-            ;; `viewport-h` is the messages-area inner height; the
-            ;; caller in `draw-messages-area!` passes it. Tests /
-            ;; REPL exploration that pass `viewport-h=0` (the
-            ;; arity-3 default) keep the old paint-everything
-            ;; behaviour.
+            ;; Paint only rows intersecting the viewport. A zero viewport retains the
+            ;; paint-all behavior used by tests and REPL exploration.
             i-start
             (long (if (pos? (long viewport-h)) (max 0 (- (long btop))) 0))
 
@@ -2198,23 +2066,8 @@
               (when-not noop-row?
                 (p/clear-styles! g)
                 (let [in-answer? (> i (long answer-start))
-                      ;; Two coordinate systems per content row:
-                      ;;   text  at `x = bx + h-pad`, runs `content-w` cols  - keeps
-                      ;;         body padded inside the column.
-                      ;;   fills at `fbx = bx`,        run  `bubble-w`  cols - every
-                      ;;         marker zone (code, answer, iteration header, thinking,
-                      ;;         table...) paints the FULL message column so the colored band
-                      ;;         reaches both edges of the messages area instead of leaving a
-                      ;;         2-col white strip on each side.
-                      ;; Right-aligned labels in `format-iteration-entry` write at
-                      ;; `x` and inherit `content-w`, so they still sit inset from
-                      ;; the right edge by h-pad even though the bg fills past them.
-                      ;; Assistant answer text starts at the same column as
-                      ;; the `Vis` label. User and error bubbles keep their inset, as does
-                      ;; model prose inside a receipt: the receipt rail owns column zero
-                      ;; and would otherwise overwrite that prose's first character.
-                      ;; The wrap width is `bubble-w - 2*h-pad` for every role already,
-                      ;; so the inset costs no row and no re-wrap.
+                      ;; Text may be inset while marker-zone fills span the full message
+                      ;; column. Receipt prose keeps its rail clear.
                       x (+ (long bx) (long (if (or user? error? (:receipt-prose? meta)) h-pad 0)))
                       y (+ (long btop) (long i))
                       iw bubble-w
@@ -2225,10 +2078,7 @@
                                             (str/starts-with? body tool-output-indent))
                       line
                       (if output-indented? (str marker (subs body (count tool-output-indent))) line)
-                      ;; Result/code rows inset 2 cols for breathing room — EXCEPT a
-                      ;; no-chevron summary headline (`:result-headline`): with no
-                      ;; chevron to fill the slot, that inset reads as a dangling left
-                      ;; margin, so paint it flush against the band's left edge.
+                      ;; Inset code/result rows unless a headline has no disclosure slot.
                       code-text-inset? (and (not user?)
                                             (contains? code-text-inset-markers marker)
                                             (not (:band-flush? meta))
@@ -2243,20 +2093,16 @@
                       (if output-indented? (max 0 (- (long iw) (long tool-output-indent-cols))) iw)
                       fbx (if output-indented? (+ (long fbx) (long tool-output-indent-cols)) fbx)]
 
-                  ;; Pre-fill answer zone bg so ALL line types get it
+                  ;; Pre-fill the answer zone for every line type.
                   (when in-answer? (p/set-bg! g zone-bg) (p/fill-rect! g fbx y iw 1))
-                  ;; Reserved inline-image row: record its EXACT painted
-                  ;; position (absolute screen coords) for the post-refresh
-                  ;; graphics pass. The row itself paints blank below.
+                  ;; Record exact screen coordinates for the post-refresh image pass.
                   (when (and *image-placements* (contains? #{:image :image-pad} (:kind meta)))
                     (swap! *image-placements* conj
                       {:row (+ (long viewport-top) (long y))
                        :col x
                        :img (:img meta)
                        :img-idx (:img-idx meta)}))
-                  ;; Every painted image row (paint row + pads) is a click
-                  ;; target: clicking the picture opens the file in the OS
-                  ;; previewer (`:image` branch of `open-click-target!`).
+                  ;; Every painted image row opens its source in the system viewer.
                   (when-let [img (and (contains? #{:image :image-pad} (:kind meta)) (:img meta))]
                     (.register interactions/hit-map
                                {:bounds {:row (+ (long viewport-top) (long y))
@@ -2264,27 +2110,19 @@
                                          :width (long (max 1 (long (or (:cols img) 1))))}
                                 :kind :image
                                 :url (:path img)}))
-                  ;; Every painted row of a `vis-table` grid is a click target:
-                  ;; clicking the table opens the WHOLE data set in the sortable,
-                  ;; pageable table dialog (`:table` branch of the click case) —
-                  ;; the transcript only ever shows a preview of the rows.
+                  ;; Table preview rows open the complete data set.
                   (when-let [tbl (:table meta)]
                     (.register interactions/hit-map
                                {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
                                 :kind :table
                                 :table tbl}))
-                  ;; Every painted row of a `vis-doc` card is a click target: a
-                  ;; PDF/HTML document has nothing a terminal can paint, so the
-                  ;; card is a HANDLE and the click hands the host file to the
-                  ;; system viewer (`:doc` branch of `open-click-target!`).
+                  ;; Document-card rows open their host file.
                   (when-let [doc (:doc meta)]
                     (.register interactions/hit-map
                                {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
                                 :kind :doc
                                 :url (:path doc)}))
-                  ;; Canonical iteration artifacts carry durable identity, not a
-                  ;; cache path. The click resolves bytes through the same policy
-                  ;; as the session-wide attachment inspector.
+                  ;; Resolve durable artifacts through the attachment policy.
                   (when-let [artifact (:artifact meta)]
                     (.register interactions/hit-map
                                {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
@@ -2292,13 +2130,12 @@
                                 :session-id (:session-id meta)
                                 :artifact artifact}))
                   (cond
-                    ;; ── Iteration header - right-aligned, subtle ──
+                    ;; Iteration header.
                     (str/starts-with? line iteration-hdr-marker)
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
                         (p/fill-rect! g fbx y iw 1)
                         (p/put-str! g x y (subs line 1))
-                        ;; BLOCK header is a disclosure toggle: clicking it
-                        ;; collapses/expands the whole card (code + op rows).
+                        ;; The block header toggles its code and operation rows.
                         (when (= :toggle-details (:kind meta))
                           (let [abs-row (+ (long viewport-top) (long y))
                                 click-width (long (or (:click-width meta) iw))]
@@ -2309,23 +2146,8 @@
                                         :session-id (:session-id meta)
                                         :node-id (:node-id meta)
                                         :collapsed? (:collapsed? meta)}))))
-                    ;; ── Iteration recap — triple-zone paint ──
-                    ;;
-                    ;; Each recap line carries `:meta {:recap-kind :task |
-                    ;; :spec | :fact | :title | :recap}` so we can paint a
-                    ;; per-kind accent without changing the marker scheme.
-                    ;;
-                    ;; Layout (terminal-bg throughout):
-                    ;;   col 0       — marker (zero-width sentinel)
-                    ;;   col 1       — leading pad (single space)
-                    ;;   col 2       — gutter glyph `▎` in kind-fg col 3       — pad
-                    ;;   col 4..N    — badge token (TASK / SPEC / …) in
-                    ;;                 kind-fg, BOLD
-                    ;;   col N+2..   — body in dialog-hint, BOLD + ITALIC
-                    ;;
-                    ;; Falls back to the old uniform paint when the line
-                    ;; lacks a recognised badge (legacy recaps, untagged
-                    ;; rows, defensive guard for shape drift).
+                    ;; Recap metadata selects the badge and accent; unknown kinds use
+                    ;; the neutral fallback.
                     (str/starts-with? line recap-marker)
                     (let [raw (subs line 1)
                           recap-kind (:recap-kind meta)
@@ -2806,24 +2628,8 @@
                     (str/starts-with? line answer-hdr-marker)
                     (do (p/set-colors! g t/iteration-header-fg bg-color)
                         (p/put-str! g x y (subs line 1)))
-                    ;; ── Answer-mode markdown headings (gold gradient) ──
-                    ;;
-                    ;; H1->H3 use a saturated amber/gold gradient
-                    ;; (`t/md-h1-fg` etc.) instead of the body fg + bold,
-                    ;; so headings stop disappearing into surrounding
-                    ;; prose. The colour stack is engineered to pop on
-                    ;; both the white assistant bg and the new pale-blue
-                    ;; answer-bg - see the WCAG ratios in theme.clj.
-                    ;; Heading lines now run their content through
-                    ;; `markdown->inline` before reaching here, so the line
-                    ;; payload may contain INLINE_*_ON/OFF sentinels for
-                    ;; nested bold/italic/code spans. Painting via
-                    ;; `paint-styled-line!` (instead of raw `put-str!`)
-                    ;; consumes the sentinels in-place - they stay out of
-                    ;; the terminal output (no PUA glyphs). Heading colour + BOLD
-                    ;; remain the BASE style; inline spans STACK on top
-                    ;; (e.g. `## **plain** *and italic*` keeps the gold +
-                    ;; bold base, plus italic on the second word).
+                    ;; Answer headings keep their gold base style while the styled
+                    ;; painter consumes nested inline markers.
                     (str/starts-with? line md-h1-marker) (let [lbg (if in-answer? zone-bg bg-color)]
                                                            (p/set-colors! g t/md-h1-fg lbg)
                                                            (p/fill-rect! g fbx y iw 1)
@@ -3062,18 +2868,7 @@
                                                            (p/set-colors! g t/answer-sep-fg lbg)
                                                            (p/fill-rect! g fbx y iw 1)
                                                            (p/put-str! g x y (subs line 1)))
-                    ;; ── Markdown table (answer) ── grid blends into surrounding zone
-                    ;; Chrome (│┌─┐├┼┤└┴┘─) stays in muted `code-border-fg`,
-                    ;; cell text in dark text color, headers bold.
-                    ;;
-                    ;; Background follows context: if the table is INSIDE
-                    ;; the answer zone (after `answer-hdr-marker`) it sits
-                    ;; on `answer-bg` so it visually belongs to the answer
-                    ;; block; otherwise on `code-block-bg` (e.g. a plain
-                    ;; assistant message without an answer zone). The user
-                    ;; complaint that triggered this: tables in the answer
-                    ;; zone used to break the answer's blue band with a
-                    ;; different gray, looking like an alien element.
+                    ;; Tables inherit the answer background when inside that zone.
                     (or (str/starts-with? line md-table-head-marker)
                         (str/starts-with? line md-table-sep-marker)
                         (str/starts-with? line md-table-row-marker))
@@ -3087,9 +2882,9 @@
                       (p/set-colors! g t/code-border-fg tbg)
                       (p/fill-rect! g fbx y iw 1)
                       (if border?
-                        ;; Pure box-drawing line - single muted paint.
+                        ;; Border-only row.
                         (p/put-str! g x y stripped)
-                        ;; Header / body data row - dual-color split.
+                        ;; Header or body row.
                         (paint-table-data-line! g
                                                 x
                                                 y
@@ -3098,19 +2893,8 @@
                                                 t/code-border-fg
                                                 tbg
                                                 (when head? [p/BOLD]))))
-                    ;; ── Thinking-mode markdown headings ── dim italic on iteration bg
-                    ;;
-                    ;; All thinking-mode prose branches go through
-                    ;; `paint-styled-line!` instead of raw `put-str!` because
-                    ;; their CONTENT now contains inline sentinels:
-                    ;; markdown->lines runs `markdown->inline` on heading,
-                    ;; bullet, quote, and bold-line bodies. Without the
-                    ;; styled painter the sentinels (INLINE_CODE_ON/OFF etc.)
-                    ;; would be written to the terminal as PUA chars and the
-                    ;; backtick code spans would silently lose their styling.
-                    ;; Fenced code (th-md-code-marker) is the one exception:
-                    ;; its body is intentionally NOT inline-tokenised, so a
-                    ;; raw put-str! is correct there.
+                    ;; Thinking prose uses the styled painter because it may contain
+                    ;; inline markers; fenced code deliberately does not.
                     (str/starts-with? line th-md-h1-marker)
                     (do (p/set-colors! g t/iteration-header-fg t/iteration-header-bg)
                         (p/fill-rect! g fbx y iw 1)
@@ -4985,21 +4769,8 @@
                        (layout/ast->entries (into [:ast {}] run) content-w opts))))
            vec))))
 
-;;; ── Inline markdown tokenizer (mid-line bold / italic / strike / code) ──
-;;
-;; ── Markdown link / image pre-pass ────────────────────────────────────────
-;;
-;; Hand-rolled scanner that mirrors the regex
-;;
-;;     #"(!)?\[([^\]]*?)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)"
-;;
-;; - `[text](url)` becomes `text`, `![alt](url)` becomes `""`. Used to
-;; live as `(str/replace s #"..." (fn [m] ...))` inside `markdown->inline`.
-;; That allocated a Pattern call, a Matcher, and a per-match callback
-;; closure on every line of every assistant bubble on every redraw,
-;; which dominated cold-open cost on long sessions (multi-MB of
-;; trace lines, dozens of `[path](path)` links per answer).
-;;
+;;; Inline markdown links and images
+;; Strip link destinations with a small scanner before tokenizing inline styles.
 (defn- collapse-repeated-error-runs
   "Walk an iterations vec; collapse runs of consecutive iterations that
    share the same error signature into one rendered block carrying a
@@ -6482,18 +6253,8 @@
                 inline-error-code-lines
                 (when error (inline-error-context-lines code-text error colored-lines))
 
-                ;; A pathologically wide single line (a one-line `git_commit({...})`
-                ;; arg) is SOFT-FOLDED at the bubble edge via `p/fold-cols` so it
-                ;; stops overflowing / being clipped; indentation and in-row
-                ;; alignment survive and lines within budget pass through. The
-                ;; error path (`inline-error-code-lines`) is left UNFOLDED so its
-                ;; `^---` caret stays column-aligned to the source. A row that fits
-                ;; keeps its COLORED form; a folded (over-wide) row falls back to
-                ;; its plain segments so the column math (ANSI-blind) and overflow
-                ;; guards stay correct.
-                ;; Keep folded display rows grouped by submitted source line. The
-                ;; disclosure previews and its `+N more` count describe PROGRAM lines,
-                ;; never the extra screen rows introduced by soft wrapping.
+                ;; Soft-fold oversized source rows, but keep error caret alignment and
+                ;; count submitted source lines rather than display rows.
                 code-line-groups
                 (or (some->> inline-error-code-lines
                              (mapv vector))
@@ -6851,24 +6612,8 @@
                                           fl)))
                               (map-indexed vector forms-vec)))]
 
-            ;; TRAILING iter-pad only. It separates this iteration's
-            ;; body from the NEXT iteration below by a single
-            ;; terminal-bg blank (coalesces with the next iteration's
-            ;; leading thinking blank, same `:gap` family).
-            ;;
-            ;; The LEADING iter-pad was removed: it predates the
-            ;; retired RECAP rail (it used to separate the code from a
-            ;; recap row above). With recaps gone it only wedged a
-            ;; blank row between the THINKING band/badge and the code
-            ;; of the SAME iteration, which read as a false section
-            ;; break. Dropping it realises the documented contract
-            ;; ("zero gap between the thinking band and the code"):
-            ;;   [thinking badge / band edge]
-            ;;   [green code top]   <- glued directly under thinking
-            ;;   code lines
-            ;;   [green code bot]
-            ;;   [gap]              <- this trailing iter-pad
-            ;;   op rows / next iteration ...
+            ;; A trailing pad separates iterations; no leading pad may split thinking
+            ;; from the code it introduces.
             (when (seq block-code-lines)
               (-> (vec block-code-lines)
                   (conj (line-entry (str iteration-pad-marker "")))))))
@@ -6882,50 +6627,24 @@
         thinking-body
         (or (thinking-lines thinking) [])
 
-        ;; The model's persisted prose renders as its OWN markdown block BETWEEN
-        ;; the thinking trace and the code+result — NOT through the thinking
-        ;; formatter (it is the model's commentary/answer, not reasoning). Placed
-        ;; ABOVE the code to match the live stream (loop emits `:assistant-prose`
-        ;; before the code runs) — else it read as missing/
-        ;; detached at the bottom. Same `:mode :channel` markdown path the per-form
-        ;; result text uses, so a bold word / list paints normally instead of as a
-        ;; dim italic thinking trace.
+        ;; Persisted assistant prose sits between thinking and code and uses normal
+        ;; channel Markdown rather than thinking styles.
         prose-body
         (when-let [p (some-> (or assistant-prose streamed-prose)
                              str
                              str/trim
                              not-empty)]
-          ;; One neutral blank above AND below the prose so the
-          ;; commentary reads as its own block instead of gluing to
-          ;; the thinking band above / the green code band below. The
-          ;; coalesce pass upstream collapses any doubled blank to one.
+          ;; Keep one neutral blank on either side; coalescing removes duplicates.
           (-> [(line-entry "")]
               (into (mapv #(update % :meta assoc :receipt-prose? true)
                           (layout/ast->entries (vis/markdown->ast p) fill-w {:mode :channel})))
               (conj (line-entry ""))))
 
-        ;; Block count headers (`1 observation · 2 mutations`) and their
-        ;; block-level collapse toggle are intentionally gone. Code body always
-        ;; stays visible; op rows below it remain the only compact tool-output
-        ;; controls.
-        ;; Op rows are gone — tool output now paints per-form as stdout (in
-        ;; `form-lines` above). The block contributes thinking + code + stdout.
         header-lines
         []]
 
-    ;; Layout: header (optional ITERATION-N label) + recap lines
-    ;; (provider-fallback notices, provider-error recap, recap
-    ;; segments) + thinking lines + error rows + body (per-form
-    ;; code/result pairs). Resume / live share the same flat layout.
-    ;;
-    ;; Spacing contract is enforced two layers up by the coalesce
-    ;; pass in `trace-render-entries`: any run of adjacent blank
-    ;; rows collapses to ONE, with the THINKING pad (`MARKER_THINKING`,
-    ;; `\u200B`) preserved so the dim thinking band paints cleanly.
-    ;; That guarantees max-1-blank between rendered sections and
-    ;; zero gap between the thinking band and the code (the
-    ;; thinking pad is the bottom \"band edge\"; the code chrome
-    ;; takes over immediately).
+    ;; Compose recap, thinking, errors, prose and form output; the upstream coalescer
+    ;; keeps at most one blank between sections and none between thinking and code.
     (-> (vec (concat header header-lines recap-lines thinking-body trailing-errors))
         (into (or prose-body []))
         (into body))))
@@ -7592,25 +7311,8 @@
          (fn [line]
            {:line line :meta nil})
 
-         ;; --- Content body cache (everything EXCEPT the spinner row) ----------
-         ;; The heavy per-tick work — `trace-render-entries` (re-walks every
-         ;; iteration), `queued-progress-entries`, `coalesce-bubble-blanks`, and
-         ;; the per-line `strip-paint-markers-line` that builds `:text` — all
-         ;; scale with the WHOLE bubble and dominated the 80ms live-frame
-         ;; profile as a stream grows. NONE of it depends on the spinner clock:
-         ;; `trace-render-entries` ignores `:now-ms`, so the body only changes
-         ;; when the ITERATIONS / queue / geometry / settings / expansions
-         ;; change. Memoize it by CONTENT and splice the freshly-animated
-         ;; spinner row in below, so a bare spinner tick is O(1) + one stripped
-         ;; line instead of O(bubble).
-         ;;
-         ;; Coalesce equivalence: `coalesce-bubble-blanks` is a forward fold and
-         ;; the spinner row is always non-blank, so it forms a fold boundary.
-         ;; Coalescing the prefix (trace + one blank) and the queue
-         ;; INDEPENDENTLY, then splicing the spinner between them, produces the
-         ;; exact same rows as coalescing the whole `(concat prefix [spinner]
-         ;; queued)` in one pass (a following element never changes an earlier
-         ;; element's keep/drop decision).
+         ;; Cache the content-dependent body and splice in the clock-driven spinner,
+         ;; avoiding an O(bubble) rebuild on every animation tick.
          body
          (live-throttled-cached*
            [::progress-body (long content-w) (mapv iteration-fingerprint iterations)
@@ -8009,19 +7711,8 @@
   ([answer bubble-w] (format-answer-markdown answer bubble-w nil))
   ([answer bubble-w opts] (:text (format-answer-markdown-data answer bubble-w opts))))
 
-;;; ── Messages area (bubble-based) ───────────────────────────────────────────
-;; -- Messages-area layout constants ----------------------------------------
-;;
-;; PUBLIC because `screen.clj` must compute bubble width with the same
-;; gutter math the painter uses; if the two layers disagree by even one
-;; column, `format-iteration-entry` sizes labels (`BLOCK 3`, `FINAL ANSWER`)
-;; for one bubble-w while `draw-chat-bubble!` paints
-;; into a different bubble-w and the right-aligned labels wrap onto
-;; two lines.
-;;
-;; Single source of truth lives here; the consumer in `screen.clj` is
-;; required to derive its own width from `MESSAGE_SIDE_PAD` rather than a
-;; literal.
+;;; Messages area
+;; `screen.clj` derives width from these public constants so formatting and paint agree.
 (def ^:const MESSAGE_MARGIN_TOP 1)
 
 ;; rows above first message

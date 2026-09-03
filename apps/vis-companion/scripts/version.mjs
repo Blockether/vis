@@ -24,11 +24,9 @@ export const repoRoot = join(appDir, '..', '..');
 export const visVersionFile = join(repoRoot, 'VIS_VERSION');
 const packageFile = join(appDir, 'package.json');
 const packageLockFile = join(appDir, 'package-lock.json');
-// Both Python distributions, in dependency order: the declaration and the API that
-// is written against it. `vis-agent` also pins `vis-contract==<version>`, so the
-// same number appears a third time and is stamped here too.
+// Both Python distributions share `VIS_VERSION`; `vis-agent` pins `vis-contract`.
 const pyprojectFiles = [
-  join(repoRoot, 'packages', 'vis-contract', 'python', 'pyproject.toml'),
+  join(repoRoot, 'packages', 'vis-contract', 'pyproject.toml'),
   join(repoRoot, 'packages', 'vis-agent', 'pyproject.toml'),
 ];
 

@@ -1,22 +1,11 @@
 (ns com.blockether.vis.contract.python-host-test
-  "The Python host contract (`packages/vis-contract`) against its readers.
-
-   The contract is data precisely so that no two readers can disagree in silence:
-   the engine binds `:op/global` into every extension context, the `vis` module
-   builds its host out of `:op/name`, and outside a Vis process the
-   packaged module answers by `:op/outside`. This file is the seam that fails when
-   one of them drifts — including the one proof no regex can give, a live extension
-   context whose `vis._host` is read back and compared to the document."
+  "The Python host declaration against its engine readers."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.foundation.shell :as fshell]
-            [com.blockether.vis.internal.view :as view]
-            [com.blockether.vis.contract.content :as contract-content]
             [com.blockether.vis.contract.python-host :as contract]
-            [com.blockether.vis.contract.provider :as contract-provider]
-            [com.blockether.vis.contract.toggle :as contract-toggle]
-            [com.blockether.vis.contract.view :as contract-view]
+            [com.blockether.vis.internal.foundation.shell :as fshell]
             [com.blockether.vis.internal.python-extensions :as pyx]
             [com.blockether.vis.internal.python-worker :as pyext]
+            [com.blockether.vis.internal.view :as view]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- host-door-names
@@ -34,15 +23,6 @@
   []
   (set (map #(subs % (count "__vis_host_") (- (count %) 2)) (host-door-names))))
 
-(defn- document-parts
-  "Every map key and every scalar in a rendered document, tagged, so one pass can
-   ask what a consumer in another language actually receives."
-  [x]
-  (cond (map? x) (mapcat (fn [[k v]]
-                           (cons [:key k] (document-parts v)))
-                         x)
-        (coll? x) (mapcat document-parts x)
-        :else [[:value x]]))
 (defdescribe
   python-host-contract-test
   (describe
@@ -55,58 +35,7 @@
         (let [refusing (filter #(= :outside/refuse (:op/outside %)) (contract/ops))]
           (expect (seq refusing))
           (expect (every? #(str/includes? (:op/refusal %) (str "vis." (:op/name %))) refusing))))
-    (it "renders from the View contract without engine arguments"
-        (let [view-document (contract-view/package-document)]
-          (expect (= 1 contract-view/version))
-          (expect (= ["input" "live"] (get view-document "kinds")))
-          (expect (= ["add-node" "append" "clear" "remove" "remove-node" "set"]
-                     (get-in view-document ["live" "ops"])))
-          (expect (= view-document (get (contract/package-document) "view")))
-          (expect (string? (contract/package-document-json)))))
-    (it "hands a consumer strings, never a Clojure keyword"
-        ;; The document is read by Python, by JavaScript and by whoever curls it.
-        ;; A keyword that survived the render would arrive as ":gateway/routes" -
-        ;; a spelling no other language has, and one no JSON reader repairs.
-        (let [parts
-              (document-parts (contract/package-document))
-
-              ks
-              (map second (filter #(= :key (first %)) parts))
-
-              vs
-              (map second (filter #(= :value (first %)) parts))]
-
-          (expect (seq ks))
-          (expect (every? string? ks))
-          (expect (not-any? #(or (str/starts-with? % ":") (str/includes? % "/")) ks))
-          (expect (every? #(or (string? %) (number? %) (boolean? %) (nil? %)) vs))
-          (expect (not-any? #(and (string? %) (str/starts-with? % ":")) vs))))
-    (it "renders canonical content from its owning document"
-        (let [content-document (contract-content/package-document)]
-          (expect (= 1 contract-content/version))
-          (expect (= ["assistant" "developer" "system" "tool" "user"]
-                     (get content-document "roles")))
-          (expect (= #{"content.block.started" "content.block.delta" "content.block.completed"
-                       "turn.completed" "turn.failed" "turn.cancelled"}
-                     (set (get content-document "event_types"))))
-          (expect (= content-document (get (contract/package-document) "content")))))
-    (it "renders the canonical toggle vocabulary from its owning document"
-        (let [toggle-document (contract-toggle/package-document)]
-          (expect (= 1 contract-toggle/version))
-          (expect (= #{"boolean" "enum"} (set (get toggle-document "types"))))
-          (expect (= #{"1" "on" "true" "yes"}
-                     (set (get-in toggle-document ["boolean_wire" "true"]))))
-          (expect (= toggle-document (get (contract/package-document) "toggle")))))
-    (it "renders the provider limits vocabulary from its owning document"
-        (let [provider-document (contract-provider/package-document)]
-          (expect (= 1 contract-provider/version))
-          (expect (= #{"error" "ok" "unauthenticated" "unknown-provider" "unsupported"}
-                     (set (get-in provider-document ["limits" "statuses"]))))
-          (expect (= provider-document (get (contract/package-document) "provider")))))
     (it "speaks the shell vocabulary the engine dispatches on"
-        ;; The outside host reads these names out of the `vis_contract` document; an op
-        ;; the engine does not know would make an extension that runs inside Vis
-        ;; refuse outside it (or the other way round).
         (let [{:shell/keys [default-op spawn-ops handle-ops]}
               (contract/shell-vocabulary)
 
@@ -118,13 +47,8 @@
 
           (expect (every? #(not= ::fshell/unknown-op (op-type %)) (concat spawn-ops handle-ops)))
           (expect (= ::fshell/unknown-op (op-type "detonate")))
-          ;; An options map with no `op` means the default one, so both spell
-          ;; the same missing argument.
           (expect (= (op-type nil) (op-type default-op)))))
     (it "speaks the live vocabulary the engine dispatches on"
-        ;; Same seam one layer up: the `vis` module reads these names out of the
-        ;; document, so an op the engine cannot dispatch would strand a live view
-        ;; the moment an extension pushed into it.
         (let [{:live/keys [default-op spawn-ops handle-ops flush-ms]}
               (contract/live-vocabulary)
 
@@ -142,9 +66,6 @@
           (expect (= (op-type nil) (op-type default-op)))
           (expect (pos-int? flush-ms))))
     (it "declares every global the engine actually binds into a live context"
-        ;; `bind-inert-host!` binds the document's own list, so only the REAL
-        ;; binder can prove the engine grew a host call the document never heard
-        ;; of -- or lost one an extension still calls.
         (let [sess (pyx/build-context "python-contract-bind-test")]
           (try (pyx/bind-host! sess "python-contract-bind-test")
                (expect (= ""

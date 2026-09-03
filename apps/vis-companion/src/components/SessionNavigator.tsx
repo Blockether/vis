@@ -73,30 +73,9 @@ export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<H
  */
 export const LIST_EDGE_END = 'pr-3 sm:pr-4';
 
-/**
- * THE TRAILING CONTROL COLUMN, and every row in the list ends in it.
- *
- * The other half of the same failure: a header's `⋯` stopped 12px short of the
- * screen while the session row's disclosure — one row below it, the same size glyph,
- * the same "there is more here" promise — ran flush to the edge. Two controls in
- * what the eye reads as one column, 12px apart, which is precisely the report that
- * some things have a margin and the chevrons beside them do not.
- *
- * So the gap in front of the cluster, the gap between its controls and where it
- * stops are decided once, HERE, and a row that ends in a control wears this.
- */
-// The cluster ALWAYS owns the gutter, because what ends a row is not fixed: a
-// project header drops its `⋯` while a filter is live (a group showing 3 of 40
-// matches must not offer a control that deletes 40), and the amber verb becomes the
-// last thing in the row. An `edge` IconButton reclaims this padding with a matching
-// negative margin, so a bare GLYPH runs to the paper while a filled BOX stops at the
-// gutter — and both are true whichever one happens to be last.
-//
-// It adds NO gutter in front of itself: the first control already carries its 44px hit
-// box as padding around a 14px mark, so a `pl-2` on top of the slab's own `pr-3` put
-// 34px between a session's `IDLE` and the `›` that follows it while the same `›` sat
-// 13px from the paper on its other side. `gap-2` still separates two controls from
-// each other, which is the only distance this cluster has to invent.
+/** Shared trailing control column and edge gutter for list rows. */
+// The cluster keeps its edge whether optional controls appear; controls supply their
+// own hit-area padding and only gaps between siblings are added here.
 const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-3 sm:pr-4';
 const CENTERED_TRAIL = 'flex shrink-0 items-center gap-2 self-stretch pr-3 sm:pr-4';
 
@@ -322,28 +301,8 @@ export function HeaderTitle({
 }
 
 /**
- * The leading half of a PROJECT header.
- *
- * A project holding sessions is the level a reader scopes by, so it is the level that
- * folds: with four checkouts on one machine the screen is otherwise a scroll through
- * work nobody asked about. The mark column `HeaderTitle` already reserves carries the
- * chevron, so the name stays on the one leading edge every row in this list shares —
- * the disclosure buys a glyph, never an indent.
- *
- * A persisted project with no sessions still names where New session will start, but
- * has no list to reveal. `disclosure={null}` renders that name as a plain HeaderTitle:
- * no button, no expanded state, and no chevron pointing at nothing.
- *
- * When present, the disclosure is a `HeaderTitle` inside a pressable, not a button
- * beside one: the whole naming half answers the thumb, and the trailing cluster
- * (`HeaderActions`) keeps its own controls, so "New session" is never swallowed by
- * the fold.
- *
- * Its qualifier line carries what the project HOLDS as well as where it lives. The
- * count stood on a shelf of its own under this band, so one heading was two papers,
- * two hairlines and two sticky boxes; it cannot move into the trailing cluster
- * either, because measured at 320px the count, the live pulse and the amber verb
- * take that cluster's width first and leave the NAME 24px.
+ * Project header disclosure occupies the naming half; an empty project has no toggle,
+ * while trailing project actions remain independently pressable.
  */
 export function ProjectCrumb({
   name,
@@ -421,42 +380,9 @@ export function pageWindow(page: number, pageCount: number, span = 1): (number |
 }
 
 /**
- * THE PAGER, and there is only one of it.
- *
- * A project's history is walked a PAGE at a time, and the page is cut by the
- * gateway — never by hiding rows a client already downloaded. "Show more" grew
- * one endless column that could only ever get longer, could not be walked
- * backwards, and left the reader with no idea how much history there was; a
- * disclosure chevron on the header hid the whole project behind a tap for the
- * same reason. A page number answers both: where you are, and how much there is.
- *
- * It is NOT a band of its own: it is a cluster in the project band's own trailing
- * column, beside the verb that band offers. It rode on a `SectionShelf` hung under
- * that band — a second paper, a second hairline and a second sticky layer for one
- * heading — and before that it was painted at the FOOT of the rows, a `border-t
- * border-dialog-edge` strip on the rows' own paper one hairline above the next
- * project's header, so `1 2 … 80 ›` read either as the last session of `vis` or as
- * the first thing in `vis-companion`. In the band it travels with the name it walks:
- * at row 40 of a 794-session project the reader still sees which project they are in
- * and can still jump to page 12, because the band itself sticks.
- *
- * What the pager owns is the steps at its ends and what stands between them: from
- * `sm` up the NUMBERS, every one of them pressable, so page 5 of 73 is ONE tap and
- * not four; on a phone, where no line holds the numbers beside a project's name,
- * the position itself (`4 / 80`) at a width that never changes. The paper, the
- * list's trailing edge and the band's closing rule belong to the band. Below one
- * page it renders nothing at all — a pager for a project with four sessions is a
- * control that can never be pressed.
- *
- * A step that cannot be taken is not painted. It used to render disabled, so page
- * one wore a `<` that answered nothing and the eye still had to check it.
- *
- * But a control that DISAPPEARS must not move the one beside it: with the band
- * centred, stepping off page one dropped a `<` into the strip and slid `>` left
- * under the finger already on it, so the third tap landed on a number — walking
- * the list by tapping `>` was impossible. So each step owns a FIXED slot at its
- * end of the band, holding its width whether or not it is painted, and only the
- * numbers between them breathe. `>` is at the same x on every page.
+ * Gateway-backed project pager. It lives in the sticky project band, disappears for one
+ * page, omits unavailable arrows while preserving their slots, and shows numeric pages
+ * only where width permits.
  */
 export function Pager({
   page,
@@ -738,41 +664,8 @@ export function MachineMark({
 }
 
 /**
- * THE FLEET SWITCHER IS ONE OBJECT, NOT A ROW OF COMPETING BOXES.
- *
- * A machine tab is a STATE (one of them is always on, and it stays on after the
- * finger lifts); `Add machine` beside it is a VERB. They used to wear the same
- * species — a bordered chip next to a filled button — so the row read as "here are
- * three things you can do" when it says "you are here, and here is one thing to do".
- *
- * So the machines share ONE track and nothing inside it is bordered: the chosen
- * machine is a raised paper tile, the rest are hint ink on the track's own fill.
- * The row then holds exactly two objects, the switch and the verb, and they are
- * told apart by fill logic rather than by colour.
- *
- * `All` IS THE FIRST TILE, and it exists only above a FLEET. It is the same kind of
- * STATE as a machine tab — pressing it answers "which machine" with "every one of
- * them", and the list under it is one named section per machine, each on its own rail
- * — so it shares the track rather than standing beside it as a control of another
- * species. It wears no hue block: the hues it stands for are the sections themselves.
- * A fleet of one never renders it, because "every machine" and "this machine" would
- * hand back the same list under two names.
- *
- * The track is the BUTTON's box from the outside — 2px of padding around a 28px
- * tile is exactly the 32px every control on this row stands at, with no frame of its
- * own: the duller fill IS the track, and a border around it would only re-draw the
- * edge the fill already has, and `mouse:` takes both
- * down together to 24px — so the switch and `Add machine` share one baseline
- * whatever the pointer. Overflow scrolls INSIDE the clipped track, so a fleet of
- * six never widens the row or pushes the verb off the trailing edge.
- *
- * THE CORNERS ARE THE ONES ITS NEIGHBOUR WEARS. The first report on this row —
- * "definitely there should be no rounded corners" — was about a pill floating over a
- * stack of square bands, and the answer to it squared a CONTROL along with the
- * planes. This is a segmented switch standing beside a disc: track and tiles are
- * capsules, so every painted box on the strip is a 32px face with round ends and the
- * row reads as one rhythm instead of a rectangle next to a circle. The bands under it
- * stay square, because they are still planes.
+ * One scrollable machine-state track plus a separate add action. `All` is the first tile
+ * only for a fleet; selection is a raised tile, and overflow stays inside the track.
  */
 export function MachineSwitcher({ children }: { children: ReactNode }) {
   return (
@@ -783,38 +676,8 @@ export function MachineSwitcher({ children }: { children: ReactNode }) {
 }
 
 /**
- * One machine inside the switcher's track. Selection is a RAISED TILE — the page's
- * own paper lifted out of the track — never a border and never the accent: amber is
- * this product's verb colour, and a selected tab painted in it reads as a button
- * that will do something when you press it. A capsule, like the track that holds it.
- *
- * News is a HIGHLIGHT, not a tally. A machine tab carried two numbers (live, unread)
- * and the reader had to learn a colour code to tell them apart; what a tab has to say
- * is "something happened over here", so unread is one amber mark and bold ink. The
- * exact count belongs to the session rows that own it.
- *
- * A MACHINE THAT IS NOT ANSWERING IS NOT A PLACE TO GO, SO ITS TILE IS A VERB.
- *
- * It used to be a tab like any other, in the same ink and the same weight, wearing
- * the word "offline" — the only label on this strip that GREW when its machine got
- * worse — and pressing it scoped the whole screen to a machine with nothing to show.
- * A dead machine is now DRAINED: hollow hue, hint ink, never the raised tile, no word
- * at all, and it is dropped from `All` so nothing under the switch belongs to it.
- *
- * The one thing a dead machine can still do is come back, so that is what its tile
- * does: `isDown` makes the press a RETRY of that machine and nothing else. It is no
- * longer a state, so it carries no `aria-pressed`; the caller gives it the verb's own
- * `label` ("Reconnect to tower") and puts the machine's name and the transport's own
- * reason in `title`, which is where a 6px block cannot speak.
- *
- * `note` is what that press is doing, spoken in the tile that was pressed —
- * "reconnecting...", then the failure if it came back dead. It exists only after a
- * press: a fleet's dead machines say nothing until they are asked, and the failure
- * is a word rather than a state, so the caller takes it back off the tile.
- *
- * A FAILURE IS THE ONE WORD HERE THAT IS NOT A NAME, so `isNoteError` prints it in
- * error ink. In the tile's own hint ink it read as more chrome on a strip made of
- * chrome, and the press that went nowhere looked like a press that did nothing.
+ * Machine state tile. Unread activity is a highlight, not a count. A machine known down
+ * becomes a retry action with no pressed state and reports only an active retry/failure.
  */
 export function MachineTab({
   isOn,

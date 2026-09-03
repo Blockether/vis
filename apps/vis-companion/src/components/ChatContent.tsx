@@ -123,42 +123,9 @@ export const transcriptEnterClass =
 export const transcriptRiseClass =
   "animate-transcript-rise motion-reduce:animate-none";
 
-// One assistant turn is thousands of nodes, and opening a session mounts many
-// of them at once: measured on device, a single turn of this transcript is ~13k
-// elements and the first paint cost 409 ms, the full window 1256 ms.
-//
-// What a long session costs AFTER that is paint, and paint scales with the
-// whole mounted tree rather than with what is on screen. Measured on the iOS
-// simulator against a 30-turn session (64 517 nodes, 265 635 px), one scroll
-// frame: 82 ms for the live screen, 74 ms for an inert clone of the same DOM
-// with no React and no listeners in it — so no amount of memoization moves that
-// number, and 17 ms once each turn is its own skippable box.
-//
-// `content-visibility:auto` was reverted here once and the reason was never the
-// containment: it was the SIZE. `contain-intrinsic-size` GUESSED (480 px, later
-// 800 px), every first reveal corrected the guess, and on a scroller with no
-// scroll anchoring (WebKit has none, and the transcript sets
-// `overflow-anchor:none` on purpose) a correction ABOVE the viewport moves what
-// you are reading — 39 corrections totalling 53 307 px on one 10 000 px scroll
-// up, the worst single ones 21 002 / 12 940 / 7 752 px. The guess reproduces on
-// the simulator: `auto 800px` over those 30 turns made 23 height changes and a
-// transcript that measured 24 916 px instead of 265 635 px.
-//
-// So `useMeasuredPaintSkip` hands the engine the height a turn ALREADY has, and
-// only once layout has measured it. Same session, same fling: 0 corrections, 0
-// height changes, 0 px of drift, and mid-fling screenshots at 72 000 px/s whose
-// longest ink-free run is the settled one's (28.0 pt).
-//
-// `contain:layout style` stays retired. It faked no size, but it split a
-// 41 148 px transcript into 198 paint-isolated islands and a fast fling then
-// exposed the paper background before WebKit rasterized them — the white bands.
-// One box per TURN is the whole win (30 boxes: 17 ms a frame; the same CSS on
-// all 5 008 trace segments: 33 ms — every containment box costs ~3 µs a frame),
-// so nothing smaller than a turn declares containment.
-//
-// What keeps the OPEN cheap is still the bounded window: pagination mounts only
-// INITIAL_VISIBLE_TURNS, `Load earlier` brings the rest in on demand, and the
-// iteration ramp below stages a turn's trace. None of those guess a height.
+// Finished turns use their measured height for paint skipping; guessed intrinsic sizes
+// cause scroll drift. Keep containment at turn granularity, retain the bounded transcript
+// window, and stage newly mounted trace segments without inventing height.
 
 type DiffLineKind = "add" | "del" | "ctx";
 type DiffLine =
@@ -1781,51 +1748,18 @@ function observeBox(
   };
 }
 
-// THE THREAD'S OWN GEOMETRY, in one place.
-//
-// A turn is a column of steps hung on one vertical line: the line runs from 6px
-// to 8px, the steps 24px in, and a step's marker straddles the line so the eye
-// reads "this happened, then this" without a single word for it. The three
-// numbers are one number three ways — move the gutter and the marker follows —
-// which is why they are spelled here and never at a call site.
-//
-// The line is two pixels because the mark is fourteen: an odd rule leaves its
-// middle on a half pixel, a 14px glyph cannot centre on a half pixel, and the
-// mark then hangs visibly off its own thread — a third of a pixel at 1x and a
-// whole one at 3x. Two pixels puts both middles on 7 with nothing to round, and
-// it is the stroke the human's own bubble already draws (`RAIL_SPINE`), so one
-// vertical of one weight runs the whole exchange. `RAIL_NODE` is measured from
-// the step's own left edge, so 7 - 24 = -17.
+// Shared thread geometry keeps the spine, step markers and content offsets aligned.
 const RAIL_GUTTER = "pl-6";
 const RAIL_LINE =
   "before:absolute before:left-[6px] before:top-0 before:z-[1] before:w-0.5 before:bg-code-edge before:content-['']";
 const RAIL_NODE = "absolute -left-[17px] top-0 z-[2] -translate-x-1/2";
 const RAIL_BLEED = "-ml-4 pl-3";
-// A block that is not a step but stands on the same thread — the human's own
-// bubble — puts its left edge ON that line rather than beside it: inset by its
-// own two-pixel stroke, so the stroke ends where the line's does (8px) and the
-// paper behind it starts where a railed band's paper starts. One vertical then
-// runs the whole exchange, from what was asked into what the machine did.
+// Human content places its own stroke on the shared spine.
 const RAIL_SPINE = "ml-1.5";
-// The same edge for what carries no stroke of its own — the pictures under that
-// bubble — which therefore starts one stroke further in, on the paper edge
-// rather than on the line.
+// Unstroked media begins at the spine's paper edge.
 const RAIL_SPINE_PAPER = "ml-2";
 
-/**
- * ONE STEP, MARKED ON THE LINE.
- *
- * A ring straddling the thread, on the page's own paper, so the line reads as
- * broken BY the step instead of passing behind it. Four rings and no fifth:
- * moving, ended badly, stopped on purpose, done — the same marks the run's own
- * panel draws, in the same order, so a column of them can be read at a glance
- * from the gutter alone.
- *
- * The ring is now the ONLY thing that says how a step ended: the receipt beside
- * it prints the calls and the elapsed time and no state word. So it stays
- * `aria-hidden` and the row carries a `sr-only` word instead — one statement of
- * it for the eye, one for a screen reader, never two for either.
- */
+/** A state ring marks each step visually; an `sr-only` label carries the same state. */
 function StepNode({ mark }: { mark: StepMark }) {
   return (
     <span
@@ -2402,18 +2336,8 @@ export const AttachmentRail = memo(function AttachmentRail({
 // the rest a chunk per frame, holding the reader's pixel while the page grows
 // above them (`overflow-anchor` is off on this scroller, so nobody else will).
 const SEGMENT_FIRST_PAINT = 8;
-// A step costs the same whatever its size — one reconcile of the whole trace,
-// one style pass, one paint — and only the nodes it mounts scale with it.
-// Measured on device (iPhone 17 Pro, a 30-turn session, "Load earlier"):
-// 140 nodes in a step cost 81 ms, 2 105 nodes in ONE commit cost 160 ms, so the
-// fixed part is ~70 ms and the marginal part ~0.05 ms per node. The step size
-// is therefore not a work budget at all: it counts how many times that 70 ms is
-// paid. The controller before this one aimed each step at 6 ms of "work" it
-// never measured (the field was written nowhere) and halved on any frame over
-// 32 ms — which EVERY step overruns — so it sat on its floor and paid the fixed
-// cost once per two segments: 20 000 nodes took 6.7 s of 30-200 ms frames, and
-// a reader scrolling up chased bare paper the whole way. Triple while a step
-// stays inside its target, halve only when one really hurt.
+// Ramp whole trace segments with a measured end-to-end budget. Grow quickly under the
+// target and halve only after a genuinely long step.
 const SEGMENT_RAMP_START = 16;
 const SEGMENT_RAMP_MIN = 8;
 const SEGMENT_RAMP_MAX = 128;
@@ -2424,29 +2348,11 @@ const RAMP_STEP_TARGET_MS = 100;
 /** Over this the step really did hurt the scroll: halve and re-learn. */
 const RAMP_STEP_LONG_MS = 200;
 
-// A TURN IS NOT A MESSAGE, AND ONE OF THEM CAN BE 180 SCREENS.
-//
-// Measured in a phone frame on a captured 8-turn window of a real session:
-// 213 905 px of transcript over 46 911 nodes, of which ONE turn — 1 116
-// iterations — was 107 090 px and 23 806 nodes. Its segments are not fat (median
-// 140 px, nothing over 322 px); there are simply 814 of them, so a reader
-// scrolling up to the answer above that turn crosses 180 screens of tool steps.
-// Paint skipping cannot reach it either: `content-visibility` only skips a box
-// the viewport is OUTSIDE, and a reader crossing that turn is inside it the whole
-// way — the two newest turns measured `content-visibility: visible` and carried
-// half the document between them.
-//
-// So a trace paints its LAST segments and cuts the rest behind the same rule the
-// transcript already uses for earlier turns. One press hands the whole trace back
-// through the ramp above, a chunk per frame.
+// Initially fold exceptionally long traces to their final segments; expansion feeds
+// earlier segments through the frame ramp.
 const SEGMENT_FOLD = 24;
 
-// A screen holds several traces (one per turn), and if they all ramp at once
-// every frame pays for several mounts and several forced layouts while each
-// trace's stopwatch is really timing its neighbours — so all of them read "too
-// expensive" and shrink to the minimum, which is the stutter. Exactly one trace
-// backfills at a time, and it is the LAST one mounted: the turn at the bottom,
-// where the reader is.
+// Only the bottom-most expanding trace ramps at once, avoiding competing layout work.
 const rampQueue: symbol[] = [];
 
 /** True when this trace is the bottom-most one still ramping. */
@@ -2460,19 +2366,9 @@ function releaseRamp(id: symbol): void {
   if (at >= 0) rampQueue.splice(at, 1);
 }
 
-/**
- * The element the reader's eye is on: whatever sits at the top edge of the
- * scroller, plus where that edge is right now. Putting THIS element back after
- * a mutation is the only correction that survives content which shrinks as well
- * as grows, and it self-corrects against any other corrector that moved the
- * scroller in the same layout pass — the drift it measures is already zero.
- */
+/** Capture and restore the element crossing the scroller's top edge. */
 
-/**
- * Trimmed Markdown of every PROSE block in a settled answer, plus the answer
- * `fallbackAnswer` PROMOTES out of the last iteration when the row carries no
- * content blocks — exactly the strings the answer band under the trace paints.
- */
+/** Settled prose strings that are actually painted as the answer. */
 export function answeredProse(
   blocks: readonly ContentBlock[] | undefined,
   promoted = "",
@@ -2585,19 +2481,8 @@ function buildSegments(
   return segments;
 }
 
-// A segment renders ONCE and then holds still. The ramp below bumps a counter on
-// this component's parent every frame, so without a memo boundary here every
-// frame would re-render every segment already on screen -- quadratic over a
-// transcript, and measurably so: a 400-call session spent 1.8 s of main thread
-// re-rendering settled cards.
-//
-// Identity alone is not that boundary while a turn STREAMS. One delta hands the
-// screen a new `iterations` array (`reduceRunningTurnEvent` rebuilds it to grow the
-// tail), `buildSegments` runs again, and every segment it returns is a fresh
-// object — so a `memo` comparing identity re-rendered the whole trace on every
-// flush, ~7 times a second, for a turn whose settled iterations cannot change.
-// The entries are pure derivations of the iteration objects and THOSE keep
-// their identity across a flush, so the entries are what to compare.
+// Memoize segments by their stable iteration entries, not rebuilt segment wrappers, so
+// streaming and ramp counters do not re-render settled cards.
 type TraceSegmentProps = {
   segment: TraceSegmentData;
   live: boolean;
@@ -2741,20 +2626,7 @@ export const IterationTrace = memo(function IterationTrace({
   /** Prose the ANSWER band already paints — see `answeredProse`. */
   answered?: ReadonlySet<string>;
   live?: boolean;
-  /**
-   * Mount every segment in the FIRST paint and ramp nothing.
-   *
-   * The ramp below buys a short frame when a trace arrives on a screen that has
-   * none of it yet. A trace that REPLACES one already painted has no such frame
-   * to protect — the running-turn bubble drew these very segments a moment ago — and
-   * ramping again is pure subtraction: the transcript drops back to
-   * `SEGMENT_FIRST_PAINT` segments for a frame and grows the rest back over the
-   * next few. Measured on the live-to-settled handover of a short turn, 102 DOM
-   * nodes and 378 px left the scroller and returned 8 ms later, which the
-   * reader sees as the whole conversation jerking down and back; on a long
-   * answer the collapse is most of the transcript, so the screen empties, the
-   * answer leaves the fold, and the corrector chases it back to the bottom.
-   */
+  /** Preserve all segments when a settled trace replaces the live rendering. */
   whole?: boolean;
   client?: GatewayClient;
   sid?: string;
@@ -3472,27 +3344,11 @@ function TurnPhaseLine({
 // a 24-turn transcript that really stands 443 315 px measured 100 701 px.
 const PAINT_SKIP_QUIET_MS = 400;
 
-// How far outside the scroller a turn still counts as the reader's own, and on
-// top of it the turn on either SIDE of anything inside that band is kept warm
-// too (see `Neighbourhood`).
-//
-// A skipped subtree is not laid out at all, so the frame that reveals it pays
-// for its layout AND its rasterization at once — reported as the request and
-// response before the current one appearing to load themselves in, with a
-// flash on the way up. `IntersectionObserver` answers proximity off the scroll
-// path, since a rect read per turn per frame is the forced layout this file
-// exists to avoid. Beyond the neighbourhood the transcript is skipped exactly
-// as it was.
+// Keep the observed turn and one neighbor on each side warm; IntersectionObserver avoids
+// forced layout on the scroll path.
 const PAINT_SKIP_NEAR_MARGIN = "100%";
 
-/**
- * The scroller a turn hangs in, and it has to be the OBSERVER'S ROOT: a root
- * margin only ever expands the ROOT's own rect, so a band measured against the
- * window is still clipped by this scroller and would buy nothing at all. Every
- * turn hangs in its own wrapper, so the walk — `getComputedStyle` up four or
- * five ancestors — is cached against that wrapper, which is what a turn that
- * stops streaming and re-runs this effect asks against.
- */
+/** Find and cache the transcript scroller used as the observer root. */
 const boxScrollers = new WeakMap<Element, Element | null>();
 
 function scrollerOf(box: Element): Element | null {
@@ -3517,19 +3373,7 @@ function scrollerOf(box: Element): Element | null {
   return scroller;
 }
 
-/**
- * The neighbourhood of one scroller: its turns, whether the band can see each
- * one, and what each was last told.
- *
- * Warmth is not the band alone. Measured in the browser on a 30-turn session,
- * a turn of this transcript stands 16 000 to 22 000 px in a 708 px viewport —
- * so the turn BEFORE the one being read has its near edge a whole screen away
- * while the reader is one flick from its body, which is exactly the report
- * this answers. The turn on either SIDE of a turn the band can see is
- * therefore warm as well, however tall it is: the reader always holds one
- * whole turn in each direction. Dropping a skip and laying that turn out
- * measured 2-54 ms per turn, and it is spent where nobody is looking.
- */
+/** Track visibility and warm neighbors for all turns sharing one scroller. */
 type Neighbourhood = {
   observer: IntersectionObserver;
   /** Every turn of this scroller, and whether the band can see it. */
@@ -3616,37 +3460,9 @@ function observeNear(
   };
 }
 /**
- * Lets WebKit skip a finished turn it is not painting, at that turn's OWN size.
- *
- * The skip is only ever armed from a MEASUREMENT: never during the commit that
- * created the turn (a read there would force one full transcript layout per
- * turn), never while the turn is streaming (its height is still moving, and it
- * is the row being read), and never before the size has been the same for
- * `PAINT_SKIP_QUIET_MS`.
- *
- * Armed, the turn goes blind — a skipped subtree is not laid out, so no resize
- * can report what changed inside it. So anything that CAN change it drops the
- * skip first and measures again from scratch: the width (a rotation or a split
- * view), a DOM mutation anywhere under it, a picture that finishes loading, and
- * a size that no longer matches when the turn is rendered again. That is the
- * whole difference from the `contain-intrinsic-size` guess this replaced: the
- * engine is never handed a height that nobody measured.
- *
- * The box has to be its own formatting context BEFORE it is armed — `flow-root`
- * on the turn's `<article>`. `content-visibility:auto` implies `contain:layout`,
- * which makes it one, and a box that was not one already GROWS by its last
- * child's bottom margin the moment it is armed: a turn ending in the notice card
- * that a failed, interrupted or cancelled turn carries measured 7 620.06 px
- * armed against 7 612.06 px unarmed. Those 8 px read as content landing, so the
- * skip drops, the box shrinks back, and one quiet period later it arms again —
- * measured in WebKit, everything below that turn stepped 8 px every ~533 ms for
- * as long as the turn stayed on screen.
- *
- * The turn beside the viewport is never armed, and one that WAS armed drops the
- * skip a screenful before the reader reaches it (`PAINT_SKIP_NEAR_MARGIN`): a
- * reveal must never be the frame that lays a turn out.
- *
- * See the note at the top of this file for what the guess did instead.
+ * Arm paint skipping only for a stable, measured, finished turn. Width, mutations, media
+ * loads or size mismatches disarm it before remeasurement. `flow-root` keeps geometry
+ * identical across the switch, and nearby turns remain warm before reveal.
  */
 function useMeasuredPaintSkip(live: boolean) {
   const ref = useRef<HTMLElement | null>(null);

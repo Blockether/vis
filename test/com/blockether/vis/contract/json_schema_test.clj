@@ -2,7 +2,6 @@
   "The published contract has one language-neutral representation: JSON documents validated by JSON Schema."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.contract.config :as config-contract]
             [com.blockether.vis.contract.document :as document]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -28,6 +27,10 @@
   (it "ships no EDN contract documents"
       (expect (empty? (filter #(str/ends-with? (.getName ^java.io.File %) ".edn")
                               (files-under contract-root)))))
+  (it "checks in no generated aggregate"
+      (expect (every? #(not (.exists (io/file %)))
+                      ["packages/vis-contract/contract.json"
+                       "packages/vis-contract/python/src/vis_contract/contract.json"])))
   (it "has one schema for every contract document"
       (let [documents
             (json-names contract-root)
@@ -39,7 +42,7 @@
         (expect (= documents schemas))
         (expect (every? #(map? (document/load! %)) documents))))
   (it "keeps API-style spellings in the JSON document and schema aligned"
-      (expect (= (set (keys (get (config-contract/package-document) "api_style_aliases")))
+      (expect (= (set (keys (get (document/load! "config") "api_style_aliases")))
                  (set (get-in (document/schema-document "config") ["$defs" "apiStyle" "enum"])))))
   (it "does not mirror the configuration schema in engine predicates"
       (expect (nil? (re-find #"\(def(?:n)?\s+[^\s]+-schema\b"

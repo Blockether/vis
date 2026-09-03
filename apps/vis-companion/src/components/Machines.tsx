@@ -457,53 +457,9 @@ function AddressMenu({
   );
 }
 /**
- * THE PAIRED MACHINES, one pressable row each: what it is called, where it
- * answers, how fast, and whether this device is using it right now.
- *
- * A MACHINE'S OWN SETTINGS STAND UNDER ITS OWN ROW. Hand the list `renderPanel` and
- * every row becomes a DISCLOSURE — a chevron, `aria-expanded`, one press that opens
- * or closes THIS machine — with `openUrl` naming the one that is open. Those settings
- * used to be a single column body under the WHOLE list, painted for whichever row was
- * pressed last, so pressing a machine opened nothing: it REPLACED the settings already
- * on screen with another machine's, which is the report this shape answers. And
- * `renderPanel` is called for the open row and for no other, so a machine's panels
- * never mount — and never poll its gateway — until its own row asks for them.
- *
- * `selectedUrl` is only "you are here" paint, for a list whose rows are places to GO
- * (`ConnectScreen`); a list that discloses paints the row it has open instead.
- *
- * A MACHINE'S OWN VERBS WAIT UNDER ITS OWN ROW, and a slide is what reaches
- * them. They were a `Saved connection` panel under the list first — a name field,
- * `Make primary` and `Forget this machine` standing permanently open, three
- * controls for ONE machine, acting on whichever row the column happened to be
- * reading rather than on the row under the thumb. Then a left swipe with a `⋯`
- * beside it, and the mark is what was reported: it says nothing and opens a menu
- * holding exactly what the gesture already holds. Then a strip of full-width
- * WORDS under the one row being read — a second list, not a row's verbs — and
- * then marks painted permanently in every row's trailing cell, which took the
- * width the machine's own name and address came for. The slide is the part the
- * reports kept asking for: `SwipeActions`, the same strip a session row carries,
- * with nothing standing beside it. Rename still edits IN the row and Forget still
- * asks IN it, so neither verb opens a surface over the list it acts on.
- *
- * A ROW IS ONE LINE. The address had a second line under it — the URL, its
- * failure reason, `Pinned`, and a chevron that opened the address dropdown — and
- * it repeated the name above it, because an unnamed machine already wears its
- * own host. Where a route can be CHOSEN, that choice is now the row's `Address`
- * verb in the same slide the other verbs live in; the pin is a mark beside
- * `Primary` and `Current`, and why a machine is not answering rides the verdict
- * cell it belongs to.
- *
- * A RANK MARK EXISTS ONLY WHERE THERE IS A FLEET TO RANK, and `Primary` is the only
- * rank: it names the machine the app opens on, and a verb in this very row sets it.
- * `Current` — the machine the app happened to be talking to — was reported as the
- * part of this design that says nothing a reader can act on: it wore the same box as
- * a rank nobody chose, it was lit for ever on a solo fleet, and on the primary's own
- * row it only repeated `Primary`. The paper says which machine is open now, so the
- * word is gone and so is the `activeUrl` that fed it.
- *
- * A verb exists here only when its handler does, so `ConnectScreen`'s list —
- * where a row is a place to GO, not a thing to manage — stays exactly as it was.
+ * Paired machines render as one-line rows. Optional settings disclose beneath only the
+ * owning row; management verbs live in that row's `SwipeActions` and mount only when
+ * handlers exist. Selection paint is reserved for navigational lists.
  */
 export function MachineRows({
   conns,

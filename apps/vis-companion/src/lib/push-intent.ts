@@ -1,26 +1,6 @@
-// Opening the session a tapped notification is about.
-//
-// A tap is a HANDOFF across a cold start, not an event the app can handle where
-// it arrives. Capacitor RETAINS `pushNotificationActionPerformed` until the
-// first listener consumes it (`retainUntilConsumed` on iOS,
-// `notifyListeners(..., true)` on Android), so a tap that launched the app is
-// replayed into the listener that attaches on the first render — before the
-// saved machines have been read back off the bridge, and before the launch
-// route has been applied. Reading the active gateway right there finds `null`,
-// and returning CONSUMES the tap: the app opens on the session list and the
-// notification silently does nothing.
-//
-// So the tap is parked as an intent and drained once there is something to open
-// it with. The gateway is resolved at DRAIN time for the same reason — it does
-// not exist yet at tap time.
-//
-// WHICH gateway matters as soon as the phone is paired with more than one. A
-// session id is minted by one gateway and means nothing on any other, so the
-// payload names its sender (`gateway_id`, see `gateway/push.clj`) and a named
-// gateway is matched by id — never "whichever one is active", which would open
-// the wrong machine's session, or a 404 where that id does not exist. An alert
-// from a gateway this phone no longer has is dropped rather than opened
-// somewhere wrong; ids that have not been read back yet only mean "not yet".
+// Park notification taps until paired gateways and launch routing are ready. Resolve the
+// sender by `gateway_id` at drain time; never route a session through whichever machine
+// happens to be active, and drop senders no longer paired.
 
 import type { GatewayConn } from './types';
 import type { PushTap } from './push';

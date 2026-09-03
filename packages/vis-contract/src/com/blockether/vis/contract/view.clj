@@ -82,7 +82,6 @@
    :secret-handle-prefix (:secret-handle-prefix @document)
    :live (:live @document)})
 
-(defn package-document "The validated language-neutral View document." [] @source)
 
 ;; The executable View shapes
 

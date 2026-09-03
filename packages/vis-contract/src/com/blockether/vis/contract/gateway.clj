@@ -172,7 +172,6 @@
   []
   (set (keys route-operations)))
 
-(defn package-document "The validated language-neutral gateway document." [] @source)
 
 (defn session-event-type?
   "True when `event-type` belongs to the closed session-stream vocabulary."

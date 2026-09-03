@@ -1,7 +1,5 @@
-# Published Python reader for the validated Vis JSON contract.
-# `src/vis_contract/contract.json` is generated and pinned byte-for-byte to the
-# repository aggregate. `version` mirrors the repo-root `VIS_VERSION`.
-# The reader intentionally has no runtime dependencies.
+# Published Python reader for the canonical Vis JSON documents.
+# `version` mirrors the repo-root `VIS_VERSION`.
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -11,10 +9,10 @@ build-backend = "hatchling.build"
 name = "vis-contract"
 version = "0.1.41"
 description = "The Vis contract — View, gateway, and host semantics as portable data."
-readme = "README.md"
+readme = "python/README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["python/LICENSE"]
 authors = [{ name = "Blockether" }]
 keywords = ["vis", "agent", "extension", "contract", "protocol"]
 classifiers = [
@@ -31,7 +29,16 @@ Source = "https://github.com/Blockether/vis"
 Issues = "https://github.com/Blockether/vis/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/vis_contract"]
+packages = ["python/src/vis_contract"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"resources/vis-contract" = "vis_contract/data"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/vis_contract", "tests", "README.md", "LICENSE"]
+include = [
+  "resources/vis-contract",
+  "python/src/vis_contract",
+  "python/tests",
+  "python/README.md",
+  "python/LICENSE",
+]

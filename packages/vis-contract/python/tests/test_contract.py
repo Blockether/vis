@@ -1,11 +1,4 @@
-"""The declaration against itself.
-
-`contract.json` is generated, so these tests do not re-state it — they check that
-it is INTERNALLY consistent and that the hand-written parts of this package (the
-`Host` protocol, `check_host`) still describe the document that ships beside them.
-The engine's own suite (`python_package_test`) is what pins the document to the
-repository it was rendered from.
-"""
+"""Contract document and host protocol checks."""
 
 import inspect
 import json
@@ -36,17 +29,31 @@ def complete_host():
     return Host()
 
 
-def test_the_document_is_the_file_shipped_beside_the_module():
-    on_disk = json.loads(
-        (Path(vis_contract.__file__).with_name("contract.json")).read_text(
-            encoding="utf-8"
+def test_the_contract_is_read_from_canonical_documents():
+    assert not (Path(vis_contract.__file__).with_name("contract.json")).exists()
+    for name, key in {
+        "gateway": "gateway",
+        "view": "view",
+        "content": "content",
+        "config": "config",
+        "toggle": "toggle",
+        "provider": "provider",
+        "surface": "surface",
+        "test-runner": "test_runner",
+    }.items():
+        document = json.loads(
+            (vis_contract._DATA / f"{name}.json").read_text(encoding="utf-8")
         )
+        assert vis_contract.CONTRACT[key] == document
+
+    host = json.loads(
+        (vis_contract._DATA / "python-host.json").read_text(encoding="utf-8")
     )
-    assert on_disk == vis_contract.CONTRACT
-    assert vis_contract.VERSION == on_disk["version"]
+    assert vis_contract.VERSION == host["version"]
+    assert list(vis_contract.OPS.values()) == host["ops"]
 
 
-def test_gateway_contract_is_generated_whole():
+def test_gateway_contract_is_whole():
     gateway = vis_contract.GATEWAY
     operations = [
         operation
@@ -109,7 +116,6 @@ def test_a_refusal_is_written_exactly_where_an_op_refuses():
         assert refuses == ("refusal" in op)
         assert refuses == (vis_contract.refusal(name) is not None)
         if refuses:
-            # The traceback an author reads names the call they made.
             assert f"vis.{name}" in op["refusal"]
 
 
@@ -125,7 +131,6 @@ def test_the_protocol_takes_the_arguments_the_document_counts():
             if parameter.kind
             in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
         ]
-        # `self` is not an argument the engine passes.
         assert len(positional) - 1 == vis_contract.OPS[name]["arity"], name
 
 

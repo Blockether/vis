@@ -1,28 +1,6 @@
-// Which paired machines may buzz this device.
-//
-// A push token belongs to the DEVICE, but a registration belongs to ONE gateway:
-// every machine keeps its own device list and pushes from its own turns. So the
-// app cannot treat notifications as a single app-wide switch — it has to bring
-// EVERY paired gateway in line with the switch in that gateway's own settings.
-// That switch starts at NO (`getGatewayNotify`): pairing a machine is not asking
-// it to wake this device, so the sweep registers nothing until that machine's
-// own Connect has been pressed — and unregisters a machine that has not been.
-//
-// The sweep runs on launch (and whenever the paired set changes) because both
-// halves drift: the OS rotates the push token, so a gateway that should notify
-// goes quiet holding a stale one, and a "stop notifying" that was made while the
-// machine was unreachable never landed.
-//
-// It costs each machine ONE request. Reported as: four or five requests fly at
-// every paired machine before a single row is painted. So the sweep ASKS first —
-// one `GET /v1/devices`, which is also what the notifications row and the push
-// banners are painted from — and writes only to a machine that disagrees with
-// this device's switch. A fleet that already agrees is swept without a single
-// write, and a panel opened on top of that read asks nothing at all.
-//
-// Forgetting a machine takes it out of the sweep for good, so the revocation it
-// is owed cannot live in the paired set: it is stored by `removeConnection` and
-// drained here by `drainPushRevocations`.
+// Notification consent is per paired gateway, though the push token belongs to this
+// device. Reconcile on launch and fleet changes, reading device state before writing
+// only disagreements. Pending revocations outlive removal of a machine.
 
 import {
   clearRevocation,

@@ -1,26 +1,7 @@
 /**
- * THE ARTIFACT CACHE — a produced picture is downloaded ONCE, ever.
- *
- * An attachment is append-only and content-addressed by (gateway, session,
- * iteration, index): its URL IS its identity and its bytes can never change.
- * That is exactly the thing a cache is allowed to keep forever — and the app
- * was not keeping it at all. The client held a bounded map of `blob:` URLs in
- * MEMORY, so re-entering a session, re-opening the app, or simply scrolling far
- * enough re-downloaded the same figures over the same phone connection. On a
- * train that is a spinner where a picture used to be.
- *
- * So bytes land in the platform's own persistent store (`CacheStorage`), keyed
- * by the absolute attachment URL, and the network is asked only for artifacts
- * this device has never seen. Everything is best-effort: a browser with no
- * `caches`, a private window, a full disk — every failure path here degrades to
- * "fetch it again", never to a broken tile.
- *
- * A cache with no ceiling is a leak with good manners, and a phone answers a
- * leak by killing the webview. So both tiers — the object URLs in memory and
- * the bytes on disk — are bounded by SIZE and by NUMBER through the one pure
- * policy below, and the same policy is what the paging in the UI keeps in
- * budget. One artifact bigger than `maxEntryBytes` is never stored at all: a
- * 200 MB clip must not evict a whole session's figures on its way through.
+ * Cache immutable attachment URLs persistently and best-effort. Both memory object URLs
+ * and CacheStorage bytes are bounded by count and size; oversized entries bypass cache,
+ * and storage failures fall back to fetching.
  */
 
 /** What a tier may hold. Bytes AND count, because either one alone lies. */

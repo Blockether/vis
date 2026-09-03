@@ -1,31 +1,7 @@
 /**
- * The icon badge — how many alerts you have not dealt with.
- *
- * iOS paints the badge from ONE number, `aps.badge`, and it is ABSOLUTE: APNs
- * never increments anything. That is why no gateway can supply it. This phone
- * is paired with several, each one knowing only its own sessions, so the last
- * push to arrive would overwrite every other machine's count and the number
- * would mean nothing.
- *
- * Two halves that can see the whole device own it instead:
- *
- *   - `VisNotify` (`scripts/ios-prepare.mjs` stamps
- *     `ios/App/VisNotify/NotificationService.swift`) runs inside every arriving
- *     alert and counts the alerts still waiting in Notification Center, plus
- *     the one being delivered;
- *   - this module writes what that tray holds once the app has tidied it: the
- *     alerts of sessions the reader has since dealt with are removed, and what
- *     is left IS the number.
- *
- * Both halves therefore count one set — the notifications still waiting — so
- * the number never jumps when one writes after the other. The list's own unread
- * marks decide what counts as dealt with.
- *
- * Android has no icon number at all: the launcher dots the icon while a
- * notification of ours sits in the tray, so there the same tidy IS the badge —
- * the dot goes out with the last alert of a session already read. The gateway
- * tags every Android alert with its session id because that tag is the only
- * identity a delivered notification keeps.
+ * The device owns its absolute badge count across all gateways. iOS reconciles unread
+ * sessions with delivered notifications; Android removes tagged notifications so its
+ * launcher dot reflects the same remaining set.
  */
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import type { FleetMachine } from './fleet';

@@ -1,31 +1,8 @@
 /**
- * A grant is not a database key. It IS the record.
- *
- * The relay used to keep a D1 row per grant — device token, platform,
- * environment — and hand out a random string that pointed at it. That table
- * was the single most valuable thing this service owned: every user's push
- * token, at rest, in one file, forever. Deleting the table deletes the breach.
- *
- * So the grant carries its own contents, sealed with AES-256-GCM under a key
- * that exists only as a Worker secret:
- *
- *   vg1.<base64url( iv(12) || AES-GCM(device token, platform, env, expiry) )>
- *
- * The consequences are the whole security argument of the relay:
- *
- *   * the gateway holding the grant cannot read the device token out of it —
- *     it is ciphertext, not an encoding;
- *   * a grant cannot be forged, retargeted at another device, or given a later
- *     expiry: GCM authenticates every byte, `additionalData` pins the version;
- *   * a grant expires by itself, because the expiry travels inside it and the
- *     relay needs no calendar and no sweeper to enforce it;
- *   * there is nothing to dump, nothing to back up, nothing to migrate, and no
- *     row anyone can exhaust by signing up a million times.
- *
- * What is given up: per-grant revocation, which needed the row. Revocation is
- * now expiry (`GRANT_TTL_DAYS`, refreshed whenever the app registers) and, for
- * "everything, now", rotating `RELAY_SEAL_KEY` — with the outgoing key kept in
- * `RELAY_SEAL_KEY_PREVIOUS` for as long as the rollover needs.
+ * Grants carry their own AES-256-GCM-sealed device, platform, environment and expiry.
+ * Gateways cannot read or forge them, expiry needs no storage or sweeper, and the relay
+ * holds no token database. Revocation is expiry or key rotation; the previous key may
+ * remain configured only during rollover.
  */
 
 import { base64url } from "./jwt";

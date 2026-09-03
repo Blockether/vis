@@ -1,25 +1,4 @@
-"""The Vis extension contract, as data — and the host protocol it declares.
-
-Vis runs an extension's Python inside its own sandbox, with the host seeded into
-the module the extension imports. This package is the DECLARATION of that
-boundary, published on its own so it can be read where Vis is not: gateway
-routes and events, the ops a host answers, shell/View/content/toggle/provider-limits
-vocabularies, and [[Host]], the protocol an implementation is checked against.
-
-`contract.json` beside this file is the validated portable contract aggregate.
-Its source JSON documents and JSON Schemas live in the `vis-contract` artifact.
-
-Read the ops:
-
-    import vis_contract
-
-    for name, op in vis_contract.OPS.items():
-        print(name, op["arity"], op["outside"])
-
-Check a host you built:
-
-    vis_contract.check_host(my_host)   # raises TypeError naming what is missing
-"""
+"""The canonical Vis contract documents and extension host protocol."""
 
 import json
 from collections.abc import Callable, Mapping
@@ -47,13 +26,36 @@ __all__ = [
 ]
 
 
-def _load_contract():
-    with open(Path(__file__).with_name("contract.json"), encoding="utf-8") as fh:
-        return json.load(fh)
+_DATA = Path(__file__).with_name("data")
+if not _DATA.is_dir():
+    _DATA = Path(__file__).resolve().parents[3] / "resources" / "vis-contract"
 
 
-CONTRACT = _load_contract()
-"""The whole rendered document: gateway, host ops and portable vocabularies."""
+def _load_document(name):
+    return json.loads((_DATA / f"{name}.json").read_text(encoding="utf-8"))
+
+
+_host = _load_document("python-host")
+CONTRACT = {
+    "version": _host["version"],
+    "ops": _host["ops"],
+    "shell": _host["shell"],
+    "live": _host["live"],
+    **{
+        name.replace("-", "_"): _load_document(name)
+        for name in (
+            "gateway",
+            "view",
+            "content",
+            "config",
+            "toggle",
+            "provider",
+            "surface",
+            "test-runner",
+        )
+    },
+}
+"""All canonical contract documents, keyed as the public Python API expects."""
 
 GATEWAY = CONTRACT["gateway"]
 """Canonical routes, headers, events, envelopes and replay semantics."""
@@ -98,27 +100,13 @@ def op(name):
 
 
 def refusal(name):
-    """What an op that cannot be served outside a Vis process says when it refuses.
-
-    None for every op that has an honest local meaning — the contract only writes a
-    refusal for the ops it declares `outside == "refuse"`.
-    """
+    """The refusal message for an op unavailable outside Vis, if any."""
     return OPS.get(name, {}).get("refusal")
 
 
 @runtime_checkable
 class Host(Protocol):
-    """The whole boundary between the `vis` module and whatever is hosting it.
-
-    Inside Vis the engine seeds an object with these calls bound to the live agent;
-    installed from PyPI, `vis-agent`'s `_outside` answers the same names the way
-    each op's `outside` says it behaves with no agent in the room. A third host —
-    a test double, another editor, a CI harness — is a class with these methods and
-    nothing else, and [[check_host]] is how it proves it.
-
-    The method list is the document's, not this file's: `test_contract.py` fails
-    when a name, an arity or an op stops matching `contract.json`.
-    """
+    """Operations every injected or outside `vis` host must implement."""
 
     def state_get(self, key: str) -> Any:
         """Read one value out of the extension's durable state."""

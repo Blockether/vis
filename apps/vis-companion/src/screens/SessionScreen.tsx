@@ -214,17 +214,8 @@ const SETTLE_RETRY_MS = [70, 150, 300, 600];
 // directly. Long enough that a healthy terminal frame always wins the race.
 const TURN_LIVENESS_IDLE_MS = 10000;
 const TURN_LIVENESS_PROBE_INTERVAL_MS = 5000;
-// A working turn can be SILENT for a very long time: one `shell` or
-// `python_execution` call blocks its iteration until the command returns, and
-// nothing is emitted meanwhile. Quiet is therefore NOT evidence of a broken
-// stream while the registry still confirms the turn — reconnecting on every
-// quiet tick tore the multiplexed SSE connection down every 10s for the whole
-// length of a long command, which flapped the header to "Reconnecting" and
-// replaced the "Vis is running: …" ticker with a reconnect notice. Only silence
-// past this bound is treated as a frozen transport. 30s sits just under the
-// gateway's own 15s heartbeat doubled, so a genuinely frozen socket is caught
-// within two missed beats instead of four, and then at most one reconnect per
-// window.
+// Long tool calls can be silent. Reconnect only after two missed gateway heartbeats,
+// and at most once per timeout window.
 const TURN_STREAM_STALL_MS = 30_000;
 // …and never on a SINGLE verdict. One probe can be wrong in both directions (a
 // heartbeat racing the read, a registry row not yet visible), and every wrong
@@ -276,15 +267,7 @@ const IN_FLIGHT_ROW_STATUSES = new Set([
   "pending",
 ]);
 
-/**
- * Did the gateway QUEUE this submission behind a running turn instead of starting
- * it? `POST /v1/sessions/:sid/turns` answers with the turn record itself
- * (`submit-turn!` in gateway/state.clj): an enqueued one carries `status:
- * "queued"` and a `queued_at` stamp, a started one `status: "running"` and
- * `started_at`. THAT answer — never the local `running` flag, which can lag the
- * gateway in both directions — decides who owns the message: the live rail or the
- * queue tray.
- */
+/** Decide queue ownership from the returned turn status, never lagging local state. */
 function isQueuedSubmission(turn: SubmittedTurn): boolean {
   const status = String(turn.status ?? "");
   if (status) return status === "queued";
@@ -526,18 +509,8 @@ function LoadingSession({ ready, total }: { ready: number; total: number }) {
 
 
 /**
- * The running-turn bubble to paint on the FIRST frame of a session, from memory.
- *
- * Re-entering a streaming session used to start with `runningTurn = null`: the
- * screen painted the previous turn's ending, and the in-flight answer only
- * reappeared once the hub replayed its buffer or `adoptRunningTurn` finished a
- * round trip. The bubble is cached on every delta (see the effect that calls
- * `rememberRunningTurn`), so re-entry can start exactly where it left off and take
- * only NEW frames on top.
- *
- * A remembered bubble remains authoritative until the settled transcript row with
- * the same canonical id replaces it. If the terminal frame arrived while this
- * screen was away, retain the painted output until that row lands.
+ * Restore the cached running bubble on first paint and retain it until the matching
+ * persisted turn replaces it.
  */
 
 function runningTurnCarriesOutput(turn: RunningTurn | null): boolean {
@@ -610,17 +583,8 @@ function seedRunningTurn(
 
   if (cached.turn.status === "running") {
     if (!subscriptions.hasEndedTurn(sid)) return cached;
-    // The hub observed the terminal frame while this screen was away. Its buffer
-    // intentionally discards finished turns, but the transcript cache may still
-    // contain only the running placeholder. Keep the last painted bubble and
-    // settle it locally; otherwise switching back replaces a complete answer
-    // with "waiting for an update" (or nothing) until the transcript refetch.
-    //
-    // Only while there is something to keep. A bubble that painted NOTHING — the
-    // optimistic one a submit puts up before its first frame — becomes a
-    // `completed` turn with no content, and that renders as a bare "Vis": no
-    // phase, no clock, no answer, for the whole turn. The transcript row and
-    // `adoptRunningTurn` can both describe that turn properly, so let them.
+    // If a terminal frame arrived off-screen, retain and settle painted content until
+    // persistence catches up; discard an optimistic bubble that never painted anything.
     if (!runningTurnCarriesOutput(cached.turn)) return null;
     return {
       seq: cached.seq,
@@ -744,15 +708,8 @@ export function SessionScreen({
   const [queued, setQueued] = useState<QueuedTurn[]>(
     () => client.cachedQueuedTurns(sid) ?? [],
   );
-  // Queue truth arrives on TWO streams that can cross: live `turn.queued*` frames
-  // and the `?status=queued` re-reads done on open and on every wake tick. The
-  // removals exist only on the live stream (the gateway appends
-  // `turn.queued.drained`/`.deleted` with `:store? false`), so a read that left
-  // the gateway BEFORE the head drained answers with a row the drain frame has
-  // already cleared here — and, landing later, puts it back for good. That is the
-  // tray showing "Queued · 1" for the very message whose answer is streaming
-  // above it. Every live delta is stamped, and a backlog read is trusted only for
-  // rows whose last delta is OLDER than the read itself.
+  // Queue reads can race newer live removals. Accept a row only when its last live
+  // delta predates the read that returned it.
   const queueDeltasRef = useRef(new Map<string, QueueDelta>());
   const noteQueueDelta = useCallback(
     (tid: string, row: QueuedTurn | null) => {
@@ -788,21 +745,8 @@ export function SessionScreen({
   // `visibleTurnCount` off the critical path; never shrinks the window itself,
   // so the "load earlier" affordance and its counts stay stable while it fills.
   const [hydratedTurnCount, setHydratedTurnCount] = useState(FIRST_PAINT_TURNS);
-  // Reading IS being here. While this transcript is on screen its FINISHED turns
-  // count as read, so an answer that lands while you watch never raises a badge
-  // in the session list — but one that lands with the screen backgrounded does.
-  // Both halves must count answers only: `turn_count` includes the turn that is
-  // running right now (the gateway persists it at submit), and marking that as
-  // read would pre-read the answer before it exists.
-  //
-  // The terminal event settles the running-turn bubble before its transcript row has been
-  // persisted. That visible bubble is already read, so count it during that gap;
-  // `settle` batches the persisted row and bubble removal into one render, which
-  // keeps the same answer from being counted twice.
-  // This can be a much larger held history than the eight mounted rows after the
-  // reader pages upward. Keep the completed-turn scan off the composer render path:
-  // keystrokes do not change `turns`, and the read marker only needs to move when
-  // the transcript, its meta row, or the running-turn bubble changes.
+  // Finished turns visible on this screen count as read, including a terminal bubble
+  // awaiting persistence. Never pre-read the running turn.
   const readTurns = useMemo(
     () => visibleAnsweredTurnCount(session, turns, runningTurn?.status),
     [session, turns, runningTurn],
@@ -1102,15 +1046,8 @@ export function SessionScreen({
     client.rememberSentAttachments(sid, turnId, sent);
   };
   const runningRef = useRef(false);
-  // How many submits are ON THE WIRE. The reconcile below asks the registry
-  // whether this session is running a turn, and a POST that has not been
-  // answered yet has not made it run one: "idle" from a read that overlapped a
-  // submit describes the session as it was BEFORE the message was sent.
-  // Retiring the bubble on that verdict paints a turn about to start as one
-  // already finished — and a retired bubble with nothing in it is a bare "Vis",
-  // no phase, no clock, no trace, until the screen is reopened. The first turn
-  // of a new session is the slowest POST this screen ever makes, which is where
-  // it was reported from.
+  // Do not retire an optimistic bubble while its submit request is still in flight;
+  // an overlapping registry read describes the state before that submission.
   const submitsInFlightRef = useRef(0);
   const turnsRef = useRef<TranscriptTurn[]>([]);
   const cancelRef = useRef<() => void>(() => undefined);
@@ -1694,28 +1631,9 @@ export function SessionScreen({
     [client, sid],
   );
 
-  // ADOPT a turn that was ALREADY RUNNING before this screen started listening.
-  //
-  // The running-turn bubble is seeded by exactly one frame, `turn.started`, and
-  // `reduceRunningTurnEvent` drops every delta while it is null. The hub subscribes
-  // LIVE-ONLY, so that frame is never replayed: anyone who was not listening at
-  // the instant it was emitted gets a perfectly healthy stream pouring into
-  // nothing.
-  //
-  // That is the "left the app mid-stream, came back, it never resumed" bug. On a
-  // long background iOS kills the WKWebView WebContent process (Capacitor
-  // ionic-team/capacitor#7810, #7905); the webview reloads the page from scratch
-  // on return, so React state — including the running-turn bubble — is gone, while the
-  // gateway happily keeps working. Reconnecting the socket cannot fix it, and
-  // neither can any transport-level retry: the seed frame is in the past.
-  // Opening a session that is already streaming from another client is the same
-  // hole, cold.
-  //
-  // So ask for the state instead of waiting for an event that will not come:
-  // the session row says what is running, and the turn trace returns the
-  // iterations the gateway has already persisted for it — the same source the
-  // TUI resumes from. The bubble comes back with the work done while we were
-  // away, and every subsequent delta now has somewhere to land.
+  // A live-only subscription cannot replay `turn.started`. When opening an already
+  // running session, seed its bubble from persisted session and trace state before
+  // applying new deltas.
   const adoptRunningTurn = useCallback(
     async (
       row: Session | null,
@@ -1828,16 +1746,8 @@ export function SessionScreen({
     let inflightSince: number | null = null;
     const reconcileOnce = async () => {
       if (document.visibilityState === "hidden") return;
-      // Liveness is sampled HERE but only acted on after two more round-trips
-      // (transcript + queue) below. On wake we resync the stream and reconcile at
-      // exactly the moment the gateway drains a queued row, so `turn.started` can
-      // land INSIDE that window: the verdict in hand then says "idle" about a
-      // session that has since started a turn. Snapshot the work that exists NOW —
-      // anything newer than this read is not what `gatewayRunning` described, and
-      // clearing it killed the running turn the drained queue row had just started.
-      // `reduceRunningTurnEvent` drops every delta while the running turn is null,
-      // so the answer never streamed: the queue emptied and the bubble stayed blank until
-      // the whole turn persisted.
+      // Reconciliation uses the running-turn snapshot taken before later transcript and
+      // queue reads, so a newly started turn cannot be cleared by an older verdict.
       const runningTurnBefore = runningTurnRef.current;
       const runningTurnIdBefore = runningTurnBefore?.id ?? "";
       const runningBefore = runningRef.current;
@@ -2012,27 +1922,9 @@ export function SessionScreen({
       }
       void reconcile();
     });
-    // Coming back from an outage, the frame that ended this turn may simply be
-    // gone: the gateway's replay ring is process memory, so a cursor the server
-    // accepts still replays nothing after a daemon restart. The server closes
-    // that hole itself — every (re)subscribe opens with `subscription.ready`,
-    // which names the turn the daemon is running for this session RIGHT NOW.
-    //
-    // So this is a verdict, not a timer: if the daemon's turn matches the one
-    // being painted, the bubble is genuinely live and nothing is fetched. If it
-    // disagrees — a different turn, or none at all — the gap is proven and one
-    // reconcile settles it, instead of waiting out the 5 s tick (or up to
-    // STALE_RECONCILE_MS, when a request that died with the old socket still
-    // holds the latch). The TUI's `:sync-gateway-ready`, from the other side.
-    //
-    // `replay: false`: the buffered backlog is for reopening a screen mid-turn;
-    // this listener only ever wants live control frames.
-    // The ready frame is only as rare as the transport is stable: a gateway in a
-    // reconnect-backoff loop emits one per attempt, and this handler drops the
-    // in-flight latch, so with no floor of its own a flapping socket would drive
-    // reconciles as fast as it can reconnect. Throttled on its OWN stamp (the TUI
-    // does the same with `:gateway-resynced-at-ms`) at the poll's own period, so
-    // the worst case degrades to the 5 s tick instead of a request storm.
+    // `subscription.ready` proves whether the painted turn is still live after reconnect.
+    // Reconcile only on disagreement, consume live control frames, and throttle repeated
+    // ready events independently of the polling latch.
     const READY_RECONCILE_MIN_MS = 5000;
     let lastReadyReconcileAt = 0;
     const stopReady = subscriptions.subscribeSession(
@@ -2228,20 +2120,8 @@ export function SessionScreen({
     voiceSupported,
   ]);
 
-  // A dictation of any length overflows the 80px composer, and a PROGRAMMATIC
-  // value change never scrolls a textarea to its caret (only real user input
-  // does) — so the box keeps showing the FIRST lines of what was just said while
-  // the end, the part you are about to keep typing after, sits below the fold.
-  // Park the caret at the end and scroll there ourselves, one frame later so the
-  // autosize effect has already committed the new height.
-  //
-  // It does NOT focus. Taking focus after a dictation raises the on-screen
-  // keyboard on iOS/Android, which is a decision only the reader can make: a
-  // transcript that came out right is meant to be SENT, not edited, and the
-  // keyboard then covers half the transcript for nothing. Whatever had focus
-  // when the words landed keeps it — so a composer that was already focused
-  // (desktop, or a keyboard the user deliberately kept up) stays focused and
-  // the caret still lands at the end.
+  // After programmatic dictation, place and reveal the caret only after autosizing.
+  // Preserve focus so mobile keyboards appear only when the user requested one.
   const revealComposerEnd = useCallback(() => {
     requestAnimationFrame(() => {
       const textarea = composerRef.current;
@@ -2363,21 +2243,9 @@ export function SessionScreen({
     finishVoiceRef.current = finishVoice;
   });
 
-  // Leaving the foreground is NOT the end of a dictation. It takes TWO things to
-  // keep capture alive on iOS, and only both together: the `audio` entry in
-  // `UIBackgroundModes` (ios/App/App/Info.plist), which stops WebKit from muting
-  // the microphone track, and the `play-and-record` audio session every
-  // dictation claims (src/lib/voice.ts), which stops WebKit from interrupting
-  // the AudioContext — and with it `onaudioprocess` — the instant the app
-  // backgrounds. With both in place capture survives backgrounding, the screen
-  // locking, and the phone going to sleep. So we let it run.
-  //
-  // Two nets remain. `pagehide` means the page itself is going away (web build,
-  // or a webview the OS tears down) — nothing survives that, so settle what was
-  // said into the composer draft, which IS persisted. And on the way back to the
-  // foreground we ask the recorder whether capture actually survived: if the OS
-  // took the mic anyway (a call, another app, an older iOS), finish here, in the
-  // foreground, where the transcription request can complete.
+  // iOS background dictation requires both audio background mode and a play-and-record
+  // session. Settle on page teardown, and verify capture on foreground return in case the
+  // OS interrupted it.
   useEffect(() => {
     if (voicePhase !== "recording") return;
     const finish = (notice: string) => {
@@ -2454,16 +2322,8 @@ export function SessionScreen({
   useEffect(() => {
     async function settle(event: SseEvent) {
       const type = event.type;
-      // WHICH turn this terminal is about, decided BEFORE any await. The gateway
-      // drains the queue the instant a turn ends, so `turn.started` for the next
-      // (auto-sent) row can land inside every gap below — and this function used
-      // to settle whatever bubble it happened to find: it stamped the NEW turn
-      // `completed` (so `reduceRunningTurnEvent`'s "a settled bubble never re-animates"
-      // guard then dropped every one of its deltas) and deleted it outright as
-      // soon as the PREVIOUS turn showed up in the transcript. The queued turn ran
-      // to completion into a bubble nobody was painting: an empty "Vis" until the
-      // whole thing persisted. This is the same rule the reconcile tick already
-      // applies before it clears a bubble.
+      // Capture the terminal turn ID before awaiting persistence; queue draining may start
+      // another turn meanwhile, which must not be settled by this callback.
       const finishedId = eventString(event, "turn_id");
       if (!finishedId) return;
       const ownsTerminal = (turn: RunningTurn | null) => turn?.id === finishedId;
@@ -2570,18 +2430,8 @@ export function SessionScreen({
       }
       const coveringRow = (turns: TranscriptTurn[] | null) =>
         settledTurnRow(turns, finishedId);
-      // The persisted row lags the terminal frame by however long the engine's
-      // write takes. Poll for it on a short escalating backoff instead of
-      // sleeping one flat 300 ms and asking once: the common case (the row is
-      // already there a few tens of ms later) swaps the bubble for the real row
-      // ~4x sooner, and a slow write now gets four chances over a longer window
-      // instead of one, so the bubble is handed over on THIS path rather than by
-      // a reconcile tick up to 5 s later.
-      //
-      // A THROWN fetch keeps `next` null, and that must NOT end the loop: a
-      // single offline blip on the first read used to abort settle outright and
-      // leave the finished turn missing from the transcript until a reconcile
-      // tick. Only an answer that actually covers this turn stops the polling.
+      // Poll with short backoff until the terminal turn is persisted. Fetch errors do not
+      // end the attempts; only a response containing this turn does.
       for (const wait of SETTLE_RETRY_MS) {
         if (next && coveringRow(next)) break;
         await new Promise((resolve) => window.setTimeout(resolve, wait));
@@ -3067,17 +2917,8 @@ export function SessionScreen({
     shellHeightRef.current = shellViewportHeight();
 
     const observer = new ResizeObserver(() => {
-      // A composer that grows or shrinks a line takes those pixels from the
-      // scroller's BOTTOM edge only: every line already on screen keeps its exact
-      // y, so the still-looking thing to do is NOTHING. Touching `scrollTop` at
-      // all — re-anchoring a mid-history reader or re-following the end — is what
-      // slides the answer bubble up and down as the input stretches while you
-      // type. A shell-height change is the other story: the keyboard really does
-      // eat the bottom of the conversation, so that case keeps its compensation.
-      // A rotation resizes both observed boxes several times before the layout
-      // settles. Those measurements belong to different geometries, so this
-      // keyboard-only compensation must not issue a competing scroll write. The
-      // rotation transaction restores its snapshot once after the final paint.
+      // Composer-only height changes consume the scroller bottom and need no correction.
+      // Shell/keyboard resizing and rotation retain their separate snapshot handling.
       if (isViewportRotating() || rotationRestorePendingRef.current) {
         const box = scrollRef.current;
         if (box) viewportHeightRef.current = box.clientHeight;
@@ -3193,19 +3034,8 @@ export function SessionScreen({
       return;
     }
     if (!remeasure || !textarea.style.height) return;
-    // The text got shorter, or the box got wider, while grown: remeasure from
-    // the natural height so the box shrinks back. Only this rare path pays the
-    // full reset + reflow.
-    //
-    // `height: auto` collapses the composer to ONE row for the duration of that
-    // measurement, and the transcript scroller grows by the whole difference in
-    // the same synchronous layout. A reader pinned to the end is past the new
-    // (smaller) maximum, so the browser CLAMPS `scrollTop` down — and the clamp
-    // is not undone when the height is written back a statement later. Deleting
-    // a single character therefore walked the transcript down by up to a full
-    // composer's worth of pixels. Undo the transient clamp here: same scroller
-    // geometry before and after means the only thing that moved was the browser's
-    // clamp.
+    // Natural-height measurement can transiently clamp a bottom-pinned scroller. Restore
+    // its prior position after writing the final composer height.
     const box = scrollRef.current;
     const parkedTop = box ? box.scrollTop : 0;
     const parkedHeight = box ? box.clientHeight : 0;
@@ -3226,16 +3056,8 @@ export function SessionScreen({
     fitComposer(shrunk);
   }, [fitComposer, prompt]);
 
-  // Typing is not the only thing that puts a word on the next line: the box's
-  // own WIDTH moves under text that never changed — a rotation or a split view,
-  // a desktop window, the transcript's scrollbar arriving mid-turn, the mic
-  // button mounting with the capabilities answer — and each of those rewraps a
-  // line the effect above will never look at again. The composer then stood ONE
-  // line tall around two lines of text until the next keystroke happened to
-  // grow it, showing the line just typed cut in half inside its own padding.
-  // A `ResizeObserver` still runs before the browser paints, so the refit lands
-  // in the very frame the width changed. Width is the only trigger: reacting to
-  // the height WE write here would be a feedback loop.
+  // Width changes can rewrap unchanged text, so refit through `ResizeObserver`. Ignore
+  // height writes to avoid feedback.
   useEffect(() => {
     const textarea = composerRef.current;
     if (!textarea || typeof ResizeObserver === "undefined") return;
@@ -3298,16 +3120,8 @@ export function SessionScreen({
     });
   }, [draftMessageReady, draftMessageId, prompt, pastes, attachments]);
 
-  // Take what the system share sheet, an Android SEND or a Shortcuts run
-  // dropped on us. AFTER the draft message hydrates: the restore above adopts
-  // stored text only while the composer is untouched, so a share pasted first
-  // would be thrown away by it — and the recorder above only persists once
-  // `draftMessageReady` is set, which is what puts the share on disk too.
-  //
-  // APPENDS, never replaces: dumping five links in a row is the point, and a
-  // half-written prompt must survive the interruption. The store hands the
-  // payload over exactly once, so a re-render or a session switch cannot paste
-  // the same link twice.
+  // Consume shared input after draft hydration, append it to existing text, and persist
+  // the one-time handoff.
   useEffect(() => {
     if (!draftMessageReady) return;
     let cancelled = false;
@@ -3750,16 +3564,8 @@ export function SessionScreen({
       return;
     }
 
-    // A turn is already running: the gateway enqueues this behind it and mirrors
-    // it back as `turn.queued`, which fills the tray. Keep the composer live.
-    //
-    // `runningTurn` is part of the test, not just `running`: a turn whose stream we
-    // joined late (started from the TUI, adopted on wake, replayed without a
-    // `turn.started` frame) streams into the running-turn bubble with `running` still
-    // false. Testing only `running` then took the FRESH-submit path — it painted
-    // an optimistic bubble OVER the answer the user was watching (the live view
-    // "reset") while the gateway queued that very message, so the same text also
-    // appeared in the tray.
+    // A locally or remotely observed running bubble means submit should enqueue without
+    // replacing the answer currently streaming.
     if (running || runningTurn || queued.length) {
       const pendingAttachments = attachments;
       const pendingPastes = pastes;
@@ -4001,23 +3807,8 @@ export function SessionScreen({
     });
   }
 
-  // Tapping the composer must not move the conversation. The keyboard slides up
-  // over ~300ms and the shell shrinks with it, so the scroller loses height in
-  // several steps while the transcript keeps its own — the reader who was parked
-  // at the end ends up looking at the middle. Worse, the first shrink can be
-  // observed as a large distance-to-bottom and clear `followingRef`, which then
-  // vetoes the catch-up. Re-pin instead, on the same settle schedule the session
-  // opens with, but ONLY for a reader who was already at the bottom: someone
-  // reading history and tapping reply keeps their place.
-  //
-  // Ask the SCROLLER, not the memory. Being at the end IS following — the same
-  // reading `handleScroll` takes through `arrivedAtEnd` — and `followingRef` can
-  // be false with the newest turn right there: one nudge inside the 64 px slack
-  // drops it, and it never re-arms while the reader sits still. Remembering
-  // instead of measuring is what put "↓ Latest" over the composer of someone who
-  // had just tapped it to write: nothing scrolled, the keyboard simply took
-  // 274 px of a 568 px screen (measured, iPhone 17 Pro) off the bottom, and the
-  // newest turn became 274 px of "distance" nobody chose.
+  // Opening the keyboard re-pins only a reader who was measured at the end before the
+  // shell shrank. A reader in history keeps their position.
   function handleComposerFocus() {
     const viewport = scrollRef.current;
     if (!viewport) return;

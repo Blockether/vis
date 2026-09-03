@@ -2918,26 +2918,8 @@
                     (assistant-message-compatible-with-replay-target? target assistant-message)))
       (or trailer-iters []))))
 
-;; Frozen result messages — prefix-cache-friendly form-result history.
-;;
-;; Form results used to render inside the regenerated `<context>` user message
-;; at the end of every provider call. Because the prefix cache ends at the first
-;; changed byte, the accumulated results were re-billed uncached on every
-;; iteration. The fix: each result renders ONCE into a permanent `<results>` user
-;; message, interleaved chronologically with assistant replays, so the
-;; conversation grows APPEND-ONLY:
-;; assistant replays, so the conversation grows APPEND-ONLY:
-;;
-;;   [system, user_initial,
-;;    <pre-turn pins>,
-;;    asst_iter1, <results t/i1>,
-;;    asst_iter2, <results t/i2>,
-;;    ...,
-;;    <mutable context tail>]
-;;
-;; Compaction (`fold_session`) REWRITES pins → the frozen
-;; messages change → one deliberate cache bust, paid only under window
-;; pressure instead of on every call.
+;; Freeze each iteration result as an append-only message so the prefix cache remains
+;; reusable. A semantic fold deliberately rewrites those messages once under pressure.
 
 (defn- iter-of-scope
   "Form scope `\"t1/i2/f3\"` → its iteration scope `\"t1/i2\"` (drops the `/fN`).
@@ -3087,23 +3069,8 @@
                   (>= t 1000) (str (long (Math/round (/ (double t) 1000.0))) "k")
                   :else (str t))))
 
-        ;; Human-facing enrichment for the fold card: how much wire THIS fold
-        ;; reclaims — in ~tokens (summed from `engine_iter_weights`) AND as a
-        ;; fraction of the OPERATING ceiling (`~P% of budget`): `auto_compress_above`
-        ;; (the 200k soft compaction guardrail), or the live handled context when a
-        ;; bigger task has already floated above it. That figure
-        ;; is deliberately the fold's OWN contribution (a REDUCTION), never a
-        ;; derived "how full am I" level: `last_request_tokens` grows with every
-        ;; new tool result, so a PROJECTED level would RISE across iterations
-        ;; even when the fold helped (issue #27's scary regression: a
-        ;; moving-for-the-wrong-reason figure beside `saved ~Nk` reads as the
-        ;; fold's result). Alongside it we ALSO surface the live window fullness
-        ;; as `context <U>%` — but taken straight from the provider's
-        ;; authoritative `saturation` (last-request / model-input-limit), the
-        ;; SAME number `session["utilization"]["now"]` shows and clearly a
-        ;; separate, absolute reading — so it can't be misread as the fold's own
-        ;; reduction. Best-effort — any hiccup degrades to no suffix rather than
-        ;; breaking the card.
+        ;; Report this fold's reclaimed tokens and budget share beside the provider's absolute
+        ;; saturation. Enrichment is best-effort and must not break the receipt.
         priced
         (fn [base]
           (try
@@ -3234,26 +3201,9 @@
                         ;; to the bare confirmation and the recorded intent carries no `note`.
                         :else "")
 
-                  ;; Even a fold that reclaims no NEW wire (every covered scope
-                  ;; already collapsed on a prior turn — a whole-session
-                  ;; `{"through" "tN"}` re-fold) should still tell the human where
-                  ;; the window stands, so the card is never a bare `folded …`.
-                  ;; `context <U>%` is the provider's authoritative saturation — but
-                  ;; it is stamped by the LAST request, so on a card printed the
-                  ;; instant a fold lands it is strictly the PRE-fold reading:
-                  ;; nothing has been sent since. Alone next to `saved ~188k` that
-                  ;; reads as "the fold changed nothing" (the number even looks
-                  ;; frozen across consecutive folds), which is exactly the display
-                  ;; bug humans report. So when this fold DOES reclaim wire we render
-                  ;; the transition `44%→~31%`: the projection is anchored to the
-                  ;; SAME `last_request_tokens` and only SUBTRACTS the residence this
-                  ;; fold removes, so unlike issue #27's estimate — which baselined
-                  ;; on a growing request and therefore climbed after a successful
-                  ;; fold — it is monotonically ≤ the current reading and can only
-                  ;; move for the fold's own reason. With nothing reclaimed the
-                  ;; absolute reading stands unchanged. The arrow is deliberately
-                  ;; UNSPACED: a receipt's gist is split off at the FIRST " → ", so a
-                  ;; spaced arrow here would swallow the whole tail into the gist.
+                  ;; Show the provider's authoritative pre-fold saturation and project a post-fold
+                  ;; value only when this fold reclaims wire. The unspaced arrow avoids the receipt
+                  ;; parser's gist delimiter.
                   ctx-pct
                   (when (and sat (pos? (long sat)))
                     (let [lrt
@@ -4197,22 +4147,8 @@
                        (distinct))
                  trailer-iters)
 
-           ;; Keep the raw scope identity, but price the corresponding visible record.
-           ;; `apply-summaries` preserves trailer order while replacing collapsed forms
-           ;; with a zero-weight breadcrumb, so an already-folded scope cannot reclaim
-           ;; its historical raw payload again on a later, broader fold.
-           ;;
-           ;; A cross-turn seed carried from a turn that COMPLETED normally is worth
-           ;; ZERO for the same reason: `conversation-suffix`'s
-           ;; `:preserved-thinking/replay? false` branch emits no assistant message and
-           ;; no results for it (the outcome already rides in the prior-turn recap), so
-           ;; its payload does not reside on the wire at all. Pricing it anyway let any
-           ;; selector reaching back over a turn boundary (a `-tN/iK` fold early
-           ;; in a new turn) bill the FULL historical payload of every prior-turn
-           ;; iteration that was never explicitly folded — cards claiming to reclaim
-           ;; more than the entire request they folded, and phantom tokens accumulating
-           ;; toward the session-rebase threshold. Seeds from terminal INCOMPLETE turns
-           ;; do replay their settled results as plain text, so they keep their weight.
+           ;; Price the visible projection: already-folded and completed off-wire seeds weigh zero;
+           ;; incomplete seeds retain weight because their settled results replay.
            off-wire-seed?
            (fn [rec]
              (and (false? (:preserved-thinking/replay? rec))
@@ -4439,21 +4375,9 @@
   (mapv #(update % :input normalize-tool-input) (vec tool-calls)))
 
 
-;; Prompt-cache breakpoints (Anthropic `cache_control`; OpenAI-style strips the
-;; marker, except GPT-5.6 Responses which reads it back as
-;; `prompt_cache_breakpoint`). Anthropic allows FOUR per call and each one caches
-;; the request UP TO and INCLUDING its block, so all four are spent:
-;;   1. the last SYSTEM message — the FROZEN `session={…}` prefix (long-lived,
-;;      stable across turns thanks to :standing-ctx-atom). It is the one anchor a
-;;      fold cannot invalidate, so the rewrite a fold forces still reads it.
-;;   2-4. the last THREE transcript messages. One iteration appends the assistant
-;;      message and its tool result, so the third-from-last IS the previous
-;;      request's write anchor: each call reads back exactly where its
-;;      predecessor wrote instead of trusting the provider's implicit look-back,
-;;      and the nearer two keep the tail warm across a turn boundary that appends
-;;      the human's next message.
-;; Manual placement makes svar skip its auto-cache-last-system-block, so we own
-;; every slot.
+;; Use Anthropic's four cache breakpoints on the final system message and last three
+;; transcript messages. This keeps the standing context and prior write anchors reusable;
+;; explicit placement disables svar's automatic marker.
 (def ^:private TRANSCRIPT_CACHE_BREAKPOINTS
   "Trailing transcript messages that carry a breakpoint. Anthropic's cap is four
    per call and the frozen system prefix always takes the first slot."
@@ -5128,34 +5052,8 @@
           ;; turn-state-atom. finalize-answer! sets :answer during eval (an
           ;; answer reply); the FINAL path reads it back after all forms run.
           _ (swap! turn-state-atom assoc :answer nil :form-idx nil)
-          ;; Stream reasoning chunks to the TUI while the LLM is
-          ;; thinking. Every chunk carries `:phase` - consumers
-          ;; dispatch on it. Phases:
-          ;;   :reasoning       - LLM streaming reasoning text
-          ;;   :form-start      - the block started evaluating
-          ;;   :form-activity   - one running or settled Activity replacement
-          ;;   :form-result     - the block finished evaluating
-          ;;   :iteration-final - iteration complete (final-result
-          ;;                      or normal end-of-iteration marker)
-          ;;
-          ;; Reasoning DELTA contract: providers (via svar) emit `:reasoning`
-          ;; as the FULL accumulated reasoning text on every SSE tick.
-          ;; Forwarding that verbatim makes append-only consumers (CLI
-          ;; trace, JSON/EDN trace streams) re-emit the entire growing
-          ;; block on every tick — the screenshotted "sending and sending"
-          ;; bug. We close that here at the producer: remember the cumulative
-          ;; text already forwarded, compute `:delta` (just the new tail) and
-          ;; ship it alongside `:thinking` (still the full accumulated text
-          ;; for redraw-style consumers like the TUI timeline). Consumers
-          ;; that want append-only streaming append `:delta`; the others
-          ;; ignore it and read `:thinking` as before.
-          ;;
-          ;; Remember the TEXT, not its length. A producer that REWRITES the
-          ;; cumulative — Codex streamed two reasoning summary parts glued and
-          ;; re-joined them with a blank line when the item closed — makes a
-          ;; slice at the previous LENGTH hand append-only consumers a mid-word
-          ;; tail like `on**`. A rewrite carries no increment: report none and
-          ;; let the corrected cumulative riding alongside repaint.
+          ;; Stream chunks by phase. Reasoning carries both the corrected cumulative text
+          ;; and an append-only delta; if a provider rewrites its cumulative text, emit no delta.
           reasoning-prev-volatile (volatile! "")
           content-prev-volatile (volatile! "")
           reset-stream-state! (fn []
@@ -5251,19 +5149,8 @@
                                              provider-started-at-ms
                                              provider-watchdog-timeouts)))
           provider-start-ns (System/nanoTime)
-          ;; Phase C: per-session cache-key for OpenAI / Codex / Z.ai
-          ;; sticky routing. svar 0.6.x auto-generates a key from the
-          ;; system-prompt SHA1 prefix when caller omits this, but
-          ;; passing the session-soul-id explicitly is better:
-          ;; (1) sticky AT SESSION GRANULARITY across system-prompt
-          ;;     micro-changes (e.g. extension reload, AGENTS.md edit)
-          ;;     so the inference engine stays warm even when the
-          ;;     auto-hash would otherwise rotate.
-          ;; (2) cross-turn cache reuse within the same session (auto-
-          ;;     hash regenerates if any system byte changed; explicit
-          ;;     session-id pins routing regardless).
-          ;; (3) Anthropic wire strips the field at body-build time so
-          ;;     it's a no-op there — cheap to set unconditionally.
+          ;; An explicit session cache key preserves sticky routing across prompt changes.
+          ;; Anthropic ignores the field, so setting it unconditionally is harmless.
           session-cache-key (some-> (:session-id environment)
                                     str)
           ;; Phase E: sticky routing default. Cross-provider fallback
@@ -5597,19 +5484,7 @@
                         ;; replacements, but is durable. Output remains output.
                         (emit-activity! (:activity execution*) true))]
 
-                ;; Per-block streaming chunk (:phase
-                ;; :form-result). Fires the moment a
-                ;; block lands so the channel can render
-                ;; results incrementally instead
-                ;; of waiting for the whole batch. Same
-                ;; envelope on success and error -
-                ;; consumers branch on `:error nil?`,
-                ;; not on shape.
-                ;;
-                ;; Preflight rejections are MODEL-FACING only: they teach the model
-                ;; to correct its next iteration, but the user does not need the
-                ;; synthetic error box. Suppress the live chunk when execution stopped
-                ;; at the preflight gate (mirrors `suppress-form-start?`).
+                ;; Stream each block result immediately, except model-facing preflight rejections.
                 (when (and on-chunk (not preflight-error))
                   (on-chunk {:phase :form-result
                              :iteration iteration-position
@@ -5710,19 +5585,8 @@
                   form-tool-names))]
 
       (if-let [{value :value} (:answer @turn-state-atom)]
-        ;; FINAL path: a plain-text answer reply (svar `:stop-reason :end`),
-        ;; already finalized above by `finalize-answer!`. An answer is plain
-        ;; prose with no tool calls, so there is no form to gate, elide, or
-        ;; attach a post-hoc error to (`:position` is always nil now). The only
-        ;; veto is an extension `:turn.answer/validate` hook via
-        ;; `final-answer-gate-error`.
-        ;;
-        ;; `value` is already canonical `[:ast & nodes]` (or a needs-input map):
-        ;; the engine boundary ran `render/->ast`. Persist the IR as-is; channels
-        ;; render at their boundary via `:channel/messages-renderer-fn`.
-        ;; `resolved-model` is a MAP `{:name :provider :reasoning?}` — surface
-        ;; `:name`/`:provider` separately so the `iteration.llm_model` column
-        ;; stays clean (a stringified map would leak in otherwise).
+        ;; A plain end reply was already finalized; only the extension answer gate can veto it.
+        ;; Persist canonical IR and the resolved model/provider fields separately.
         (let [validation-error (final-answer-gate-error environment
                                                         iteration-position
                                                         blocks
@@ -8058,25 +7922,8 @@
         initial-messages
         (:messages @message-base-atom)
 
-        ;; The cumulative `:input-tokens` field sums canonical input tokens
-        ;; from every iteration in this turn — useful for billing /
-        ;; budget accounting but MUST NOT be passed to the
-        ;; context-pressure hint, which compares against the model's
-        ;; per-call context window. Cumulative input can cross the 50%
-        ;; threshold after many iterations even when each individual
-        ;; request stays small, producing fake context-pressure warnings.
-        ;;
-        ;; `:last-iter-input` carries the most recent SINGLE-CALL
-        ;; request input tokens, which is the right proxy for \"what the next
-        ;; request will look like\". Reasoning tokens from a preserved-
-        ;; thinking-enabled provider already flow into the next iter's
-        ;; input-token count server-side, so a single last-iter snapshot
-        ;; already captures that growth without us re-computing it.
-        ;;
-        ;; Iter 1 of a new user turn has no live provider usage yet. Keep
-        ;; billing fields zeroed, but seed the utilization/hint proxy from
-        ;; latest persisted request in the session so the model still sees
-        ;; `:session/utilization` immediately.
+        ;; Context pressure uses the latest single-call input, not cumulative turn billing. On
+        ;; the first iteration, seed it from the session's latest persisted request.
         usage-atom
         (atom {:input-tokens 0
                :output-tokens 0
@@ -8175,19 +8022,8 @@
                                                                                :cache-write])
                                                                       0))
 
-                                                            ;; svar's `estimate-cost` returns a MAP
-                                                            ;; keyed map; `wire/canonical` re-keys it to
-                                                            ;; canonical snake strings at this boundary.
-                                                            ;; Pull `"total_cost"` out; nil pricing
-                                                            ;; (e.g. unknown model) leaves the
-                                                            ;; column NULL on disk, which the read
-                                                            ;; side defaults to 0.0.
-                                                            ;; Price by the model that ACTUALLY served
-                                                            ;; the call (svar mid-turn fallback / the
-                                                            ;; health gate make selected≠actual); the
-                                                            ;; pre-resolved root model is the fallback
-                                                            ;; pricing key only when routing metadata
-                                                            ;; is absent (e.g. error before a response).
+                                                            ;; Canonicalize `estimate-cost`, persist `total_cost`, and price the model
+                                                            ;; that actually served the call. Use the resolved model only when routing data is absent.
                                                             served-provider
                                                             (or actual-provider
                                                                 (:llm-provider api-usage)
@@ -8298,23 +8134,8 @@
                               ;; FORCING plan-gate: distinct files mutated THIS turn (reset each turn).
                               ;; The 2nd distinct file without an approved plan arms the gate.
                               :files-mutated #{})
-    ;; Hot symbol archival runs only after a final successful answer.
-    ;; Failed/cancelled turns keep their live scratch symbols for
-    ;; recovery. This is sandbox namespace pruning — unrelated to CTX
-    ;; trailer state (which only summarises, never compacts).
-    ;; Cross-turn carry: seed `trailer-iters` with persisted iterations
-    ;; of the current session (across every prior turn) so a
-    ;; follow-up turn opens with prior context. Rendering trims by token
-    ;; budget, so carry is not capped by iteration count. Each entry is
-    ;; `[iter-position {:thinking :blocks}]` matching the in-memory shape
-    ;; the renderer expects. Failures degrade silently to an empty seed.
-    ;;
-    ;; IMPORTANT: cross-turn entries feed the TRAILER ONLY. Do not replay
-    ;; their provider-native preserved-thinking assistant messages into the
-    ;; new user turn — replaying prior-turn preserved thinking makes some
-    ;; providers treat the answer as already accepted and burn input tokens.
-    ;; Durable cross-turn memory must flow through persisted iterations,
-    ;; not hidden reasoning state.
+    ;; Archive hot symbols only after a successful answer. Seed the trailer from prior turns,
+    ;; but never replay their provider-native reasoning into a new user turn.
     (let [seeded-trailer-iters
           (try
             (when-let [session-id (:session-id environment)]
@@ -8454,33 +8275,9 @@
                                                        effective-context-limit
                                                        (:input-tokens u)
                                                        effective-fold-budget))))
-                 ;; Standing context render + budget guard.
-                 ;;
-                 ;; Canonical history stays intact. The model owns semantic folds;
-                 ;; emergency rescue may compact only the provider-facing projection.
-                 ;; This turn's append-only suffix: [assistant-replay,
-                 ;; <results>] pairs per prior iteration, so the model sees
-                 ;; both its reasoning AND what its code returned.
-                 ;; Standing session context lives ONCE in the cached system
-                 ;; prompt; any mid-turn change rides INSIDE the causing
-                 ;; iteration's <results> message (see iteration-results-message
-                 ;; / the iter-ctx-diff capture). So the wire is strictly
-                 ;; append-only with no trailing context churn:
-                 ;;
-                 ;;   [system (+ <context>), user_initial,
-                 ;;    asst_1, <results 1>,
-                 ;;    asst_2, <results 2 (+ <context> diff if iter-2 changed it)>,
-                 ;;    ...
-                 ;;    asst_(n-1), <results n-1>]
-                 ;;
-                 ;; The original user_initial stays as the ONE user-role anchor
-                 ;; near the start (placed by `assemble-initial-messages`); we
-                 ;; never repeat it. Matches z.ai's canonical preserved-thinking
-                 ;; shape (user → asst → user → asst → user).
-                 ;; First stamp the universe from the canonical raw trailer; then
-                 ;; apply folds and re-stamp token weights from exactly the
-                 ;; provider-visible projection. Raw universe/NTR recovery stays
-                 ;; intact, while an already-collapsed payload is never priced twice.
+                 ;; Canonical history stays intact; folds affect only the provider projection. Each
+                 ;; iteration appends its assistant replay and result, including any context change. Stamp
+                 ;; the raw universe before applying folds, then price the visible projection.
                  _raw-iter-state (stamp-iter-universe! (:ctx-atom environment) trailer-iters)
                  replay-target (replay-context pre-resolved-model)
                  summaries (current-session-summaries environment)
@@ -8772,31 +8569,8 @@
                           (iteration-error-feedback iteration iteration-error-data user-request)
                           trace-entry
                           {:iteration iteration :error iteration-error-data :final? false}
-                          ;; Preserve forensic evidence on every error
-                          ;; path, not just `:empty-content`. Pre-fix
-                          ;; only empty-content carried `:reasoning`
-                          ;; into the DB row; `:max-tokens-exceeded`
-                          ;; (svar.llm) and any other generate-time
-                          ;; failure had their reasoning silently
-                          ;; dropped: the model can emit reasoning
-                          ;; tokens before a cap-truncation, but the
-                          ;; persisted row had `:thinking nil` so the
-                          ;; transcript could not show what the model
-                          ;; was actually thinking about.
-                          ;;
-                          ;; INTEGRITY NOTE: `err-data` is the raw
-                          ;; `ex-data` of svar's thrown exception (see
-                          ;; `exception->iteration-error-data` →
-                          ;; `format-exception` which just attaches
-                          ;; `(ex-data t)` verbatim). `:reasoning` /
-                          ;; `:content` / `:partial-content` /
-                          ;; `:api-usage` are produced by svar's
-                          ;; `envelope-data` (`internal/llm.clj`) which
-                          ;; only `assoc`s the SSE-accumulator values
-                          ;; — NO transformation, no synthesis. The
-                          ;; same `reasoning` variable feeds the
-                          ;; success path's `:thinking` column. We
-                          ;; never invent reasoning text here.
+                          ;; Preserve the provider's raw reasoning, content and usage on every failure
+                          ;; path. The same reasoning value populates `:thinking` after success.
                           err-data (:data iteration-error-data)
                           err-reasoning (:reasoning err-data)
                           err-partial-content (or (:content err-data) (:partial-content err-data))
@@ -8926,28 +8700,9 @@
                         cursor {:turn (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
                                 :iter (or (:iteration (ctx-loop/read-turn-state environment))
                                           (inc (long (or iteration 0))))}
-                        ;; One block = one python_execution call = one form. Each block
-                        ;; already carries its stdout/error facts and Activity snapshot, so
-                        ;; `blocks->forms` projects it directly with no statement splitting.
-                        ;; Tag resolver: lift extension-declared
-                        ;; observation/mutation tag into `classify-form-tag`
-                        ;; so extension tools (`db_commit`,
-                        ;; `db_push`, …) classify correctly without the
-                        ;; engine hard-coding their head symbol.
-                        ;;
-                        ;; The HEAD `classify-form-tag` reads off the model's
-                        ;; source is the snake_case Python CALL name
-                        ;; (`db_push`), but `extension/op-tag` is keyed by
-                        ;; canonical op keywords (`:db/push!`). The old
-                        ;; `(keyword "db_push")` lookup never hit `:db/push!`,
-                        ;; so EVERY extension mutation fell through to
-                        ;; `:observation`. `ctx-renderer/fold-op-index` is
-                        ;; the ONE memoized fold to sandbox call names (the
-                        ;; same fold the globals bind under) — shared with the
-                        ;; trailer's model-render lookup, and no longer rebuilt
-                        ;; on every iteration. Unregistered heads miss the
-                        ;; map and fall through to the engine's core mutation
-                        ;; set inside `classify-form-tag`.
+                        ;; One block is one form with its own result and Activity snapshot. Resolve
+                        ;; extension tags through the shared Python-name index; unknown heads fall back to
+                        ;; the engine's core mutation classifier.
                         py-name->tag (ctx-renderer/fold-op-index (extension/op-tag-index))
                         head-tag-resolver (fn [head-sym]
                                             (when head-sym (get py-name->tag (str head-sym))))
@@ -10933,23 +10688,8 @@
             ;; newly reclaimed wire crosses the threshold, rebase the standing session
             ;; snapshot too instead of retaining an unbounded chain of historical deltas.
             session-rebase-atom (atom {:reclaimed-tokens 0 :pending? false})
-            ;; ONE model-driven context-compaction verb, recording a
-            ;; `:session/summaries` intent the wire applies via `apply-summaries`:
-            ;;
-            ;;   fold_session("tN/iM", "what this step established")  — the KEY names
-            ;;     the step, the GIST keeps its conclusion: the step collapses into
-            ;;     that one distilled line.
-            ;;   fold_session("tN/i1-i56", "…")  — ONE key string folds a whole window
-            ;;     (`-tN/iM` everything through it, `tN/iM-` everything since it, `tN`
-            ;;     a whole turn, commas union several). See `ctx-engine/fold-key` for
-            ;;     the grammar.
-            ;;   fold_session("tN/iM")  — omit the optional gist to discard the
-            ;;     step outright when even a summary would mislead.
-            ;;
-            ;; It records a `:session/summaries` intent the wire applies via
-            ;; apply-summaries, and RETURNS a visible confirmation (not the silent
-            ;; sentinel) so the fold shows in the Python result. See
-            ;; `compaction-verbs` for the intent shape + range handling.
+            ;; `fold_session` records a summary or discard intent using the key grammar in
+            ;; `ctx-engine/fold-key`, and returns a visible receipt.
             compaction (compaction-verbs ctx-atom session-rebase-atom)
             ;; Build the ctx-loop env subset used by the engine bindings + helpers.
             ;; Just the cursor counters + the single ctx-atom. Warnings

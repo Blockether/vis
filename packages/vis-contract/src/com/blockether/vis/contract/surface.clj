@@ -2,10 +2,6 @@
   "JSON Schema contract for language-tool results."
   (:require [com.blockether.vis.contract.document :as document]))
 
-(def ^:private contract (delay (document/load! "surface")))
-
-(defn package-document "The validated language-neutral surface document." [] @contract)
-
 (def capability->definition
   "Language-tool capability to its JSON Schema definition."
   {:format-fn "format_result" :lint-fn "lint_result" :test-fn "test_result"})

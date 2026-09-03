@@ -54,44 +54,9 @@ let openDrawer: (() => void) | null = null;
 const OPEN_PAST_PX = 8;
 
 /**
- * A LIST ROW'S OWN VERBS, WAITING UNDER ITS RIGHT EDGE UNTIL THE ROW IS SLID —
- * the app's one row-verb surface, and there is only one of it.
- *
- * Star, rename and delete on a session; make primary, rename and forget on a
- * machine. Every arrangement other than this slide was reported: the `⋯` beside
- * it said nothing and opened a menu holding exactly what the gesture already
- * held; a strip of full-width WORDS under the one row a column happened to be
- * reading was a second list, not a row's verbs; and marks standing permanently
- * in every row's trailing cell took 92px of a 320px row from the name the reader
- * came for, on all 85 pages of them. The slide is what stays, with the `⋯` gone
- * and nothing standing in its place: the row is its own full width, and the
- * verbs are under its trailing edge for the thumb that wants them.
- *
- * The drawer is a horizontal SCROLL-SNAP track, not a transform driven by
- * pointer maths: the platform then owns the gesture (momentum, rubber banding,
- * axis locking against the vertical list, VoiceOver focus scrolling), and the
- * component stays free of inline style objects. Panel one is the row at full
- * width, panel two is the action strip, `snap-end`, so a slide that stops
- * halfway lands on one of the two and never at a third of a verb. A pointer
- * needs no gesture and gets no mark: the strip's buttons are in the tab order,
- * and focusing one scrolls the drawer open by itself.
- *
- * A MOUSE NEVER SLIDES. On `mouse:` (>= 40rem and `pointer: fine`) the track
- * stops being one: the row panel is the whole width, the strip leaves the flow
- * for the trailing edge, and it fades in on hover or focus-within. A pointer
- * has no swipe, so all the horizontal scroll left it was a two-finger trackpad
- * drag or shift+wheel — every row of the list answering a sideways gesture the
- * reader did not aim at it by sliding a delete button under the cursor, and the
- * list scrolling sideways as a whole. The switch is the variant alone: no
- * pointer media query is read at runtime, so a touched hybrid keeps its slide.
- *
- * A STRIP THAT STANDS OVER THE ROW OWNS THOSE PIXELS WHOLE. Out of the flow it
- * lands on the row's own trailing columns — the status chip and the timestamp —
- * and a cell tinted `accent/15` let both read THROUGH it, the star's caption
- * printed over an `IDLE` that was still there. So the strip carries its own
- * opaque slab, and while it is invisible it takes no pointer either: an
- * `opacity-0` strip with `pointer-events` left on is four unseeable buttons
- * covering the date every row in the list ends with.
+ * Shared row-action drawer. Touch uses a two-panel scroll-snap track; fine pointers place
+ * an opaque action strip over the trailing edge on hover/focus. Hidden actions cannot
+ * intercept input, and hybrid devices retain the touch behavior.
  */
 export function SwipeActions({
   actions,

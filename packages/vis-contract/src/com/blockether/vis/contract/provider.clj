@@ -26,4 +26,3 @@
   "True when `value` satisfies the provider limit-row schema."
   [value]
   (document/valid? "provider" "limit_row" value))
-(defn package-document "The validated language-neutral provider document." [] @contract)

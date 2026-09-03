@@ -143,14 +143,8 @@ const SEARCH_HYDRATE_MAX = 40;
 // re-rank and re-count the screen does — a keystroke costs the field alone.
 const SEARCH_DEBOUNCE_MS = 200;
 
-// A SEARCH IS A GESTURE, and a fleet is only ever as quiet as its quietest machine. The
-// transport gives every request 30s (`REQUEST_TIMEOUT_MS`) — the right budget for a list
-// read that pages, the wrong one for a question somebody is watching: a paired laptop
-// that is asleep TAKES the socket without refusing it, so one dark machine held
-// `searching 1 of 3 machines...` on screen for half a minute and then filed itself as
-// having found nothing. A ranked FTS query over a 2.2 GB store answers in ~230ms, so
-// silence this long is not slowness, it is absence — and absence is reported, not waited
-// out.
+// Search has an interactive timeout shorter than the general transport budget, so one
+// sleeping machine is reported rather than holding the whole fleet.
 const SEARCH_REACH_MS = 8_000;
 
 // ONE machine's answer to the live query: the ranked hits it found, the sessions those
@@ -207,53 +201,26 @@ function clientFor(conn: GatewayConn): GatewayClient {
   return client;
 }
 
-// MACHINES THIS DEVICE HAS ALREADY FOUND DARK. A machine that is not answering is drained
-// out of `All` (`scopedMachines`) — but the fleet was rebuilt from nothing on every mount, and
-// opening a session unmounts this screen, so a laptop that was asleep came back as a machine
-// nobody had tried yet: its last known rows took a band, a rail and a section in the middle of
-// the working fleet, and the probe behind them spent the transport's whole budget confirming
-// what this device already knew before that section vanished under the reader.
-//
-// The verdict outlives the screen that reached it AND the run that measured it — it is SAVED
-// (`lib/fleet-outage`), because the OS kills this webview whenever it feels like it and a
-// machine that was off all night is not a machine nobody has met. A machine known to be dark
-// starts drained, and walks back into the fleet when it ANSWERS — never because it is being
-// asked again.
+// Persist known outages across remounts and start those machines drained until they
+// answer again.
 
-// ONE MISSED READ IS NOT AN OUTAGE, and this counts the failures nothing has confirmed
-// yet.
-//
-// A machine that has been answering is a machine that is THERE: a phone hands its radio
-// between cells, a Wi-Fi roam drops the socket mid-flight, and the read that runs the
-// instant a session is left lands in exactly that gap. Publishing that one failure
-// declared the machine dark — which drains it out of `All` AND drops the reader's scope
-// back to the whole fleet (`resolveScope`), so leaving a transcript flipped the screen
-// from the one machine being read to every machine, and back again a poll later. The
-// darkness has to be CONFIRMED: a machine that has spoken to this device keeps its rows,
-// its section and the scope through a single failed read, and the next read decides. A
-// machine that has NOT spoken has nothing on screen to protect and goes dark on the
-// first failure, exactly as before.
+// Confirm an outage after two misses for a machine that previously answered; a cold
+// machine with no rows can fail immediately.
 const fleetMisses = new Map<string, number>();
 
-// Two failed reads in a row is the confirmation. The poll behind the first one is ten
-// seconds away, so a gateway that really is gone still drains within a cycle.
+// Two consecutive failed reads confirm an outage.
 const OUTAGE_CONFIRMING_MISSES = 2;
 
-// Rebuild the fleet from the paired machines, painting each new one from its own
-// last known list so a machine that was on screen a second ago comes back with
-// rows instead of a skeleton — drained from the first frame when it is known dark.
+// Reconcile paired machines with cached rows and remembered outage state.
 function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetMachine[] {
   return reconcileMachines(conns, previous).map((machine) => {
     if (machine.error !== null) return machine;
     const outage = machineOutage(machineKey(machine.conn));
-    // Cached rows are what to paint WHEN it answers — never a claim that it has.
-    // A verdict this run has not measured is REMEMBERED: it drains the machine exactly as a
-    // fresh failure does, but it is not this device WATCHING the fleet go dark (`fleetError`).
+    // Cached rows are paint data, not proof of current reachability.
     if (machine.sessions !== null)
       return outage ? { ...machine, error: outage, isRemembered: true } : machine;
     const api = clientFor(machine.conn);
-    // The header row's numbers come back with the machine, in the FIRST frame: a
-    // gateway returned to must not re-tally itself out of session windows.
+    // Seed machine-wide totals alongside cached rows.
     const overview = machine.overview ?? api.cachedProjectsOverview();
     const cached = api.cachedSessions();
     if (!cached && !outage) return overview ? { ...machine, overview } : machine;
@@ -261,62 +228,25 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
   });
 }
 
-// The scope strip's tabs live in `MachineSwitcher`/`MachineTab` (`components/ui`):
-// one track, one raised tile for the machine you are on, no per-tab borders.
 
 
 /**
- * The list's geometry in px, read off the live screen (dev server, Chromium, one
- * machine whose top project holds 102 pages of sessions):
- *
- *   - a session row is 48px with a 1px rule under it, and 32px + 1px under
- *     `mouse:`, where the density follows the pointer (`index.css`);
- *   - the first row of a project starts at y=211 on a phone, at y=149 under a
- *     pointer and at y=138 on a desk — the app bar, the filter row, the scope strip,
- *     the project's own band and the shelf carrying its pager, all of which a page
- *     pays for before its first row. Twelve of those pixels arrived late: the band is
- *     48px under a pointer rather than 36, because the path moved under the name and
- *     36 left the stack no air at all (`HEADER_BAND` in `components/ui`). The desk
- *     used to pay 215 for the same bands because the page's top inset was spelled
- *     TWICE, once on the section and once on the scope strip standing inside it;
- *   - FOOT is the gap the panel keeps under itself once it detaches from the
- *     glass (`sm:py-4`), and it is the same gap it keeps ABOVE itself: 16 over the
- *     card against 24 under it hung the whole list one step high in its own
- *     window. A phone is full bleed and pays none;
- *   - PEEK is what a fitted page leaves UNDER its last row, so the next
- *     project's band shows and the list never ends flush with the bottom of the screen.
- *
- * Touch keeps at least fifteen rows per project. A short landscape phone therefore
- * scrolls through useful history instead of paying a project header and pager every
- * three sessions. Pointer layouts retain the three-row emergency floor.
+ * Derive project page size from measured screen geometry. Touch retains useful row
+ * density; pointer layouts keep a smaller emergency floor, and each layout reserves a
+ * peek at the following project.
  */
 const LIST_PEEK = 40;
 const LIST_FOOT = 16;
-/**
- * The lane the scrollbar travels in — and, being padding on the scroller, the air the
- * project sheets stand inside on a desk. The bar itself paints no track any more
- * (`index.css`), so without this the thumb would ride the sheets' own edge.
- */
+/** Space for the scrollbar thumb and desktop sheet inset. */
 const LIST_LANE = 12;
 const LIST_GEOMETRY = {
   touch: { row: 49, chrome: 211 + LIST_PEEK, min: 15 },
   mouse: { row: 33, chrome: 149 + LIST_FOOT + LIST_PEEK, min: 3 },
-  // A DESK SPENDS ITS CHROME SIDEWAYS. The machine strip that stands above the list
-  // at every other size is the rail here, so those 40px go back to the rows and the
-  // fleet footer under the list takes 29 of them again.
+  // On desktop the machine rail replaces the top strip but adds its own footer.
   desk: { row: 33, chrome: 138 + LIST_FOOT + LIST_LANE + LIST_PEEK, min: 3 },
 } as const;
 
-/**
- * How many sessions one project's page holds — the SCREEN's answer, not a
- * setting's.
- *
- * `vis.sessionsPerProject` (5/10/15) sized this page for a device it never
- * measured; the panel, the key and the hook that read it are gone. It is the
- * number the GATEWAY is asked for (`limit`, see `GatewayClient.listProjectPage`),
- * so rotating the device asks for the page the new screen holds instead of
- * recutting rows this app downloaded to hide most of.
- */
+/** Page size sent to the gateway for the current measured layout. */
 function useSessionsPerPage(): number {
   const isMouse = useMouseDensity();
   const isDesk = useDeskRail();
@@ -410,15 +340,8 @@ export function SessionsScreen({
     if (primaryKey) setScopePick(primaryKey);
   }, [primaryKey]);
   const scope = resolveScope(machines, scopePick);
-  // THE FIELD IS IMMEDIATE; THE SEARCH IS A GESTURE THAT ENDS. `query` is what the
-  // reader is typing, `searchNeedle` is what typing RESTED on — and every answer, every
-  // count and every filtered row on this screen belongs to the second one. The pause
-  // used to live inside the network effect alone, so while it slept the screen still
-  // re-filtered, re-ranked, threw away the transcript hits it had and re-drew the
-  // header ON EVERY CHARACTER: the list jumped under the thumb a letter at a time and
-  // the count flickered between an answer and nothing. Downstream of one settled
-  // needle, a keystroke costs the field and nothing else, and what is on screen is
-  // always a whole answer to a whole word.
+  // Keep raw field input separate from the settled search needle; filtering, ranking
+  // and network work update only once typing pauses.
   const [searchNeedle, setSearchNeedle] = useState(() => query.trim());
   useEffect(() => {
     const next = query.trim();
@@ -530,18 +453,8 @@ export function SessionsScreen({
   }, [machines, readMarks]);
   useEffect(() => onWake(() => void reassertBadge()), []);
 
-  // EVERY change to a machine's rows is anchored first.
-  //
-  // A cold fleet does not arrive at once and cannot: each gateway is its own round
-  // trip. Every patch inserts rows ABOVE the sections below it — with two gateways
-  // paired, the first machine's answer pushes the whole second machine down under a
-  // reader who is looking at it, which is the list "jumping by itself" while its
-  // projects load in. A failure does the same in reverse: a machine that stops
-  // answering is dropped out of `All`, and its section leaves a hole.
-  //
-  // So the anchor belongs to the MUTATION, not to one caller: the top visible row
-  // is measured here, and the layout effect below puts it back under the top edge.
-  // It no-ops at the top of the list, so a first paint is unaffected.
+  // Anchor the top visible row around every asynchronous fleet mutation so staggered
+  // machine responses cannot move content under the reader.
   const patchMachine = useCallback(
     (key: string, update: (machine: FleetMachine) => FleetMachine) => {
       refreshAnchorRef.current = topVisibleRow(listRef.current);
@@ -658,16 +571,7 @@ export function SessionsScreen({
     [patchMachine],
   );
 
-  // The star belongs to the GATEWAY, and this is the one place that asks it to move.
-  // The row is repainted first so the mark lands in the SAME commit as the tap, the
-  // PATCH follows, and the row the gateway echoes replaces the guess. A star this
-  // device could not deliver goes back: a screen must never keep saying something
-  // the machine never heard.
-  //
-  // WHERE the row then belongs is not this device's arithmetic. A star bands its row
-  // to the top of the list, and the list is the gateway's — so the mark is echoed
-  // here and the ORDER is read back from whoever owns it, one read, right away
-  // instead of at the next poll.
+  // Optimistically update the star, revert on failure, then reload gateway-owned order.
   const toggleStar = useCallback(
     (session: Session, conn: GatewayConn) => {
       const key = machineKey(conn);
@@ -691,9 +595,7 @@ export function SessionsScreen({
         .then(async (row) => {
           patchMachine(key, withRank(favoriteRank(row)));
           await loadMachine(conn);
-          // The order is taken only once the list that OWNS it has answered. Adopting
-          // on the tap froze the order the star was tapped IN, and the promotion the
-          // gateway then sent waited behind the pill (see `lib/order-epoch`).
+          // Adopt order only after the gateway-owned list returns.
           adoptRef.current();
         })
         .catch(() => patchMachine(key, withRank(before)));
@@ -701,14 +603,7 @@ export function SessionsScreen({
     [loadMachine, patchMachine],
   );
 
-  // WHAT A RETRY IS DOING, on the tile that asked for it.
-  //
-  // A machine that is not answering is drained out of the switch and dropped from
-  // `All`, and the one thing it can still do is come back — so its tile IS the retry
-  // (see `MachineTab`). The press has to answer: `reconnecting...` while the probe is
-  // in flight, `Unable to connect` in error ink when it came back dead, and nothing at
-  // all before the first press, because a fleet's dead machines are quiet until they
-  // are asked. A machine that answers loses its note along with its drained face.
+  // A down machine tile retries in place and reports only active progress or failure.
   const [retries, setRetries] = useState<ReadonlyMap<string, 'busy' | 'failed'>>(
     () => new Map(),
   );
@@ -770,15 +665,8 @@ export function SessionsScreen({
     [loadMachine],
   );
 
-  // RECONNECTING A DARK MACHINE IS BACKGROUND WORK, and it is silent.
-  //
-  // It cannot ride the fleet load: a closed laptop TAKES the socket without refusing it,
-  // so awaiting it made every poll as slow as the machine that is not there — and
-  // `STALE_POLL_MS` then dropped the tick queued behind it, which is how one dead gateway
-  // halved the refresh of every machine that was answering. It must not be painted
-  // either: the reader is told about a machine coming BACK, never about this device
-  // asking. So it runs beside the load, at most one probe per machine at a time, and the
-  // only thing it can put on screen is an answer (see `loadMachine`).
+  // Probe down machines independently and at most once each; never let an absent
+  // gateway delay polling machines that answer.
   const reconnecting = useRef(new Map<string, () => void>());
   useEffect(
     () => () => {
@@ -831,14 +719,8 @@ export function SessionsScreen({
     [loadMachine, reconnectMachine],
   );
 
-  // WORDS THIS DEVICE IS HOLDING ARE PART OF THE QUESTION IT ASKS.
-  //
-  // The overlay a list read carries (`dirty=`) is the one fact about the order
-  // only this device knows, so the moment it changes the answer on screen is
-  // stale — a session that was hidden at the bottom of its project now belongs
-  // in the dirty band. The read is awaited first and the order adopted after it
-  // lands: the reader WROTE those words, so the move is their own action, not
-  // the surprise the pill exists for (see `lib/order-epoch`).
+  // Draft presence changes list ordering, so reload and explicitly adopt the resulting
+  // order as a reader-authored mutation.
   const dirtyOverlay = useMemo(
     () =>
       Object.entries(draftMessages)
@@ -857,17 +739,8 @@ export function SessionsScreen({
     return () => controller.abort();
   }, [dirtyOverlay, load]);
 
-  // A machine's NAME is not its transport, so renaming it must not refetch a thing —
-  // but the banner reads that name off `machine.conn`, and `fleetKey` deliberately
-  // ignores it, so an in-place rename saved to storage and then painted the old name
-  // until the next pairing change. Re-hydrating keeps every row (`reconcileMachines`
-  // hands the surviving machine its new connection) and reloads nothing.
-  //
-  // The same holds for the FACTS this screen never paints but the rest of the app reads
-  // off `machine.conn`: the machine `id` backfilled after pairing and the `alts` learned
-  // by address recovery. A row hands its OWN conn to `onOpen`, which becomes the active
-  // connection and later the machine Settings opens on — so a fleet still holding the
-  // pre-backfill conn opened Settings on an id-less machine and its panels never came.
+  // Rehydrate connection metadata without refetching rows when labels, IDs or recovered
+  // addresses change.
   const fleetFacts = conns
     .map(
       (conn) =>
@@ -883,19 +756,8 @@ export function SessionsScreen({
     setMachines((current) => hydrateMachines(connsRef.current, current));
   }, [fleetKey]);
 
-  // THE LIST BEHIND AN OPEN TRANSCRIPT IS ALREADY LOADED, or leaving that transcript is
-  // a flicker.
-  //
-  // Coming back to a killed app is normally coming back INTO a session: the OS drops a
-  // backgrounded webview, the restored hash mounts the transcript, and this screen is
-  // parked behind it holding nothing but its skeleton. Gating the fleet's FIRST read on
-  // being visible then began that read on the very frame the reader pressed Back on —
-  // measured against a gateway on localhost, eight frames of skeleton before the rows
-  // replaced it, and a phone reaching a laptop over Wi-Fi pays the whole round trip in
-  // that same place. So the read that gives this list its rows AT ALL happens wherever
-  // the reader is. It is ONE read: it stands down the moment there is something to paint
-  // (a cached fleet already is), and the five-second poll below stays the business of the
-  // screen that is on the glass.
+  // Prime the list behind an open transcript once, using cached rows when available;
+  // visible polling remains separate.
   const hasRows = machines.some((machine) => machine.sessions !== null);
   useEffect(() => {
     if (isVisible || hasRows) return;
@@ -926,14 +788,8 @@ export function SessionsScreen({
 
     void load(controller.signal);
     lastWindowReadAt.current = Date.now();
-    // The session-list head is already the reachability check and carries live/idle
-    // totals, so do not add a second health request. Five seconds bounds how long a
-    // machine can still look active after it stops answering. Cheap on BOTH ends — an
-    // unchanged fleet comes back as a 304 with no body (see `GatewayClient.listSessions`),
-    // and `load(_, true)` drops a tick that fires while the previous one is still in
-    // flight instead of queueing it. A frozen webview runs no timers. Do not trust
-    // `document.visibilityState` here: a resumed Capacitor webview can keep reporting
-    // `hidden` while this screen is on the glass.
+    // The session-list request is also the reachability check. Drop overlapping polls
+    // and do not trust mobile `visibilityState` as the sole visibility signal.
     const timer = window.setInterval(refreshLiveStates, 5_000);
     // Waking is the one moment the rows are guaranteed stale, and a suspended
     // poll may still be latched: drop the latch, then refresh.
@@ -1086,22 +942,8 @@ export function SessionsScreen({
   // reading this list has a gesture for it, and every native list answers it.
   usePullToSearch(listRef, hintRef, setPullPhase, onSearch);
 
-  // Transcript + title search runs server-side and RANKED (see `rank` below), and
-  // it is a fleet ROUND TRIP per machine over a whole transcript store — hundreds
-  // of milliseconds, not a keystroke. This effect only asks, and it is handed the
-  // needle typing already RESTED on (`searchNeedle`), so it asks once per pause. A
-  // superseded query is cancelled twice over: the pause upstream never files a needle
-  // nobody stopped on, and a request already in flight is aborted here.
-  // What decides what is on SCREEN is neither: an answer is filed under the needle
-  // it was asked for, so a late reply to an abandoned query is ignored by
-  // construction rather than by luck.
-  //
-  // Every machine paints the MOMENT IT ANSWERS, and its matches paint one round
-  // trip before its hydrated rows. Waiting on the whole fleet made every search as
-  // slow as its slowest machine, and holding the hits back until up to
-  // `SEARCH_HYDRATE_MAX` per-session fetches had all landed spent another round
-  // trip hiding matches the gateway had already found — a long silent wait, which
-  // is exactly what the search was reported for.
+  // Search once per settled needle, abort superseded requests, ignore late answers by
+  // key, and paint each machine as soon as its ranked hits arrive.
   useEffect(() => {
     const needle = searchNeedle;
     if (!needle) return;
@@ -1300,18 +1142,8 @@ export function SessionsScreen({
         (session) =>
           !needle || titleHit(session) || metaHit(session) || matches?.has(session.id) === true,
       );
-      // A query RE-ORDERS what it matched and the GATEWAY decides how: the
-      // search answer arrives running-sessions-first, then FRESHEST first — the
-      // very order the gateway lists sessions in — so a query narrows the list
-      // instead of reshuffling it, and the dates down the rows only ever fall.
-      // Painting the band instead (`SessionMatch.rank`: title, then the user's
-      // words, then the assistant's) buried this morning's session under every
-      // year-old title holding the word. Rows the gateway did not place — an
-      // unsent draft in this device's composer, local metadata — fall in behind.
-      // A SEARCH is the one answer this device still bands for itself: it is a
-      // COMPLETE match set, so lifting starred and unsent rows inside it can move
-      // nothing out of a page. The unqueried list is the gateway's own, banded there,
-      // and is handed on exactly as it arrived.
+      // Preserve gateway search order, then band complete local-only matches behind it.
+      // Unqueried lists pass through in gateway order.
       if (!needle) return { machine, sessions };
       return {
         machine,
@@ -1326,27 +1158,9 @@ export function SessionsScreen({
     });
   }, [inScope, searchNeedle, matches, searchPlaces, searchHits, draftMessages]);
 
-  // NOTHING MOVES WHILE THE READER IS LOOKING AT IT (see `lib/order-epoch`).
-  //
-  // The gateway's key is content time only now, and no band lifts a running or
-  // parked session over the rest, so nothing this device does can move a row.
-  // One mover is left and it cannot be removed: another machine — or another
-  // turn on this one — writing content while this list is on screen. The answer
-  // that arrives is correct and the rows still slide under the thumb, which was
-  // the whole report. So the order is HELD as of the last moment the reader
-  // agreed to it: polls repaint those rows IN PLACE, arrivals deeper than
-  // everything held append (that is paging), and a promotion waits behind the
-  // count above the list.
-  //
-  // The view key is the QUESTION the rows answer: scoping to another machine or
-  // typing a query is a different answer, with no reading position to protect.
-  //
-  // A FLEET STILL ANSWERING IS NOT AN ORDER: machines land one by one and a query
-  // is served by a round trip per gateway, so an epoch taken mid-arrival would
-  // park the machine that answered second behind the pill. Until every machine in
-  // scope has spoken — and while a query is live at all, because a search is the
-  // reader's own question and the gateway's answer to it IS the order — the rows
-  // are painted exactly as they came.
+  // Hold row order while the reader looks, except while fleet/search answers are still
+  // arriving. Scope or query changes create a new epoch; later promotions wait for
+  // explicit adoption.
   const naturalIds = useMemo(
     () => filtered.flatMap((entry) => entry.sessions.map((session) => session.id)),
     [filtered],
@@ -1720,32 +1534,20 @@ export function SessionsScreen({
 
   const pageSize = useSessionsPerPage();
 
-  // Machine → project → sessions. The machine is the organizer, so its sections
-  // are built from ITS rows only.
-  // Machine → project → sessions. The machine is the organizer, so its sections are
-  // built from ITS projects only.
-  //
-  // Unfiltered, those projects are the GATEWAY's (`/v1/projects/overview`): every
-  // project it holds, with its own counts, whether or not a row of it is in the window
-  // this device read. They used to be a grouping of downloaded rows, so a project only
-  // existed once its rows had drained in and its header counted the window. A QUERY is
-  // the one answer this device holds complete, and its groups are the rows that
-  // matched, grouped here.
+  // Build unfiltered groups from gateway project overviews and queried groups from the
+  // complete local match set, always within their owning machine.
   const sections = useMemo(
     () =>
       heldRows.map((entry) => ({
         machine: entry.machine,
-        // Carried beside the machine because every project group holds a page of its
-        // own now, under the same agreement this screen made (`lib/order-epoch`).
+        // Carry page agreement with each machine entry.
         reading: {
           pageSize,
           epoch,
           admitted: entry.admitted,
           isVisible,
         },
-        // Group identity and every create action keep the gateway's canonical path.
-        // Home-shortening is paint only; feeding `~/vis` back as an API root is how an
-        // older gateway produced the impossible `/…/vis/~/vis` directory.
+        // Keep canonical gateway paths for identity and creation; shorten only for paint.
         groups: searching
           ? searchGroups(entry.rows, (session) => unreadTurnCount(session) > 0)
           : projectGroups(
@@ -1757,10 +1559,7 @@ export function SessionsScreen({
     [heldRows, searching, readMarks, pageSize, epoch, isVisible],
   );
 
-  // The projects the "remove sessions" step offers are the ones this machine HAS, as
-  // its gateway counted them — the same rows and the same numbers as the headers in
-  // the list, so a row that promises to remove 975 transcripts under a header reading
-  // 712 is impossible by construction.
+  // Project management uses gateway overview counts, matching the visible headers.
   const managedProjects = useCallback(
     (machine: FleetMachine): ManagedProject[] =>
       projectGroups(machine.overview, machine.sessions ?? []).map((group) => ({
@@ -1773,18 +1572,8 @@ export function SessionsScreen({
     [],
   );
 
-  // A dead gateway is not a sessions problem: there is nothing to navigate, so the
-  // shell drops us on the Machines screen instead of rendering a session list
-  // shaped like an error. Reporting it is this screen's only job here.
-  //
-  // Only TRANSITIONS are reported. A fresh mount starts with `loadError === null`,
-  // and announcing "reachable" before the first request has answered is how this
-  // screen used to un-gate the shell, get itself re-mounted, fail again, and gate
-  // the shell again — a mount/fail/unmount loop that hammered the dead gateway
-  // with thousands of requests per second instead of resting on Machines.
-  //
-  // With several machines paired only a TOTAL blackout is an error: one machine
-  // asleep is a degraded section inside a list that still works.
+  // Report only reachability transitions, and only a total fleet outage. This prevents
+  // a dead-gateway mount loop while allowing degraded multi-machine lists.
   const loadError = fleetError(machines);
   const reportedError = useRef<string | null | undefined>(undefined);
   useEffect(() => {
@@ -1799,10 +1588,7 @@ export function SessionsScreen({
 
   const isDesk = useDeskRail();
 
-  // A rail row is an INDEX ENTRY: it takes the list to a band and changes nothing
-  // else — not the scope, not the page, not the fold. `scrollIntoView` would walk
-  // every scrollable ancestor to get there and can take the whole page with it; the
-  // list has exactly one scroller, and this moves that one.
+  // Move only the list scroller to a rail entry; preserve scope, page and folds.
   const jumpToProject = useCallback((machine: string, root: string) => {
     const list = listRef.current;
     const band = Array.from(
@@ -1812,20 +1598,11 @@ export function SessionsScreen({
     list.scrollTop += band.getBoundingClientRect().top - list.getBoundingClientRect().top;
   }, []);
 
-  // A RAIL IS FOR A FLEET, AND ONE MACHINE IS NOT ONE. Measured at 1280x800 against a
-  // gateway with a single machine paired: 236px — 18% of the window — spent on one
-  // machine row and three project rows whose own bands stand on the list two pixels
-  // to the right of them. It earns that column the moment there is a second machine
-  // to choose between; until then the projects verb it hosts stands in the footer.
-  // A MACHINE'S HUE IS A COMPARISON TOO, and after two reports (paraphrased: no left
-  // rail on the phone either — and then, with three machines on screen: bin that rail
-  // on the left) nothing in the list wears it at all: a machine's block is separated
-  // by the trough it opens on and named by its own landmark.
+  // Show the desktop rail only for a fleet; a single machine needs no comparison
+  // column or machine hue rail.
   const isFleet = machines.length > 1;
   const showRail = isDesk && isFleet;
-  // THE RAIL IS BUILT FROM WHAT THE LIST IS ALREADY HOLDING, and only on a desk,
-  // because only a desk paints it: one row per machine in the switcher's own order,
-  // one per project band on screen.
+  // Build desktop rail entries from the list's current machine/project order.
   const railMachines = useMemo(
     () =>
       showRail
@@ -2386,14 +2163,7 @@ export function SessionsScreen({
 /** How many rows one purge walk asks for at a time — a read nobody is watching. */
 const PURGE_WALK = 200;
 
-/**
- * Every session id in one project, read the way the list reads its pages.
- *
- * A group with no saved project row can only be purged session by session, and this
- * device holds a window of the MACHINE, never the project — so the ids are walked from
- * the gateway at the moment the purge is confirmed, and the fan-out is over what the
- * gateway says the root holds instead of over what happened to be on screen.
- */
+/** Walk gateway project pages to collect the complete session ID set for purge. */
 async function projectSessionIds(api: GatewayClient, root: string): Promise<string[]> {
   const pins: ProjectWindows = new Map();
   const ids: string[] = [];

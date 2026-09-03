@@ -1,58 +1,8 @@
 /**
- * THE ICON SET — every mark the app draws, in one grammar, from one library.
- *
- * The marks are LUCIDE (`lucide-react`, ISC). It is the set this file spent
- * twenty-seven functions re-inventing by hand: the same 24-unit grid, `none`
- * fill, `currentColor` stroke, rounded caps and joins — drawn and maintained by
- * the people who ship 1 700 of them, one ES module per icon so the bundle
- * carries only what is imported, under a licence that asks for no attribution
- * in the UI and no NOTICE file. NOT SF Symbols: those are the native marks on
- * Apple platforms and licensed for Apple platforms alone, so the Android and web
- * builds could never draw them — one set that renders identically on all three
- * beats a set that is legal on one.
- *
- * What this file owns is the VOCABULARY, and that is the whole reason it still
- * exists: the app's NAME for each mark (`ClipIcon`, not `Paperclip`), the size
- * floor, and the states a mark has — a chevron that turns, a star that fills, a
- * sort that points. A screen names the job; the library draws it. Nothing else
- * in `src/**` imports `lucide-react`, and nothing else draws an `<svg>`;
- * `icons.test.tsx` reads the shipped source and fails.
- *
- * The app used to say "icon" with characters it borrowed from the terminal:
- * `✕` for close, `▾`/`▸` for a disclosure, `▶` for a video, `↓` for "load more",
- * `↗` for a link. A glyph is TYPE, not an icon — it is whatever weight, cap
- * height and side bearing the font happens to ship, it does not align to the
- * label beside it, it does not scale with the control, it cannot take a stroke,
- * and on a phone it renders in whatever fallback face the OS picked. Nothing in
- * `src/**` paints a glyph as a control mark.
- *
- * ONE BOX, AND THE TYPE DECIDES IT. Inter and JetBrains Mono measure the same
- * here (cap 0.719em, stem 0.0875em), so one table serves both: `text-head` 17px
- * takes an 18px mark, `text-title` 13px takes `size-3.5` (14px), `text-ui` 11px
- * and `text-chip` 9px take `size-3` (12px). Lucide's stroke of 2 lands at
- * 1.50 / 1.17 / 1.00px in those boxes — within 4% of the stem of the type beside
- * it at every step. So the BOX is what scales and the stroke is never touched;
- * the hand-drawn set's 1.8 read 8% lighter than its own labels.
- *
- * That size is a FLOOR, not a default argument: `className` carries colour,
- * spacing and motion far more often than a size, and a default parameter is
- * REPLACED by whatever the caller passes — which is how the transcript's paste
- * disclosure shipped an `<svg>` with no width at all and grew to the width of
- * the bubble. `size-3.5` is applied unless the caller's own classes name a size.
- *
- * ONE COLUMN, ONE SHAPE. Where marks stack — the live view's status column —
- * they are one 20-unit ring with a different interior (`circle-check`,
- * `circle-x`, `circle-dot`, `circle-dashed`, `circle-slash`, `circle-alert`), so
- * fifty rows keep one rhythm and no row's mark outweighs its neighbour's. Ink is
- * what the eye measures, not the box: `check` is 16 × 11 of it and
- * `circle-dashed` is 20 × 20, and a column that mixes them looks ragged at the
- * same `size-3`.
- *
- * Deliberately NOT here: `●`/`○`/`[✓]`, which are the cross-channel choice
- * marks the TUI paints too (see `HUMAN_INPUT_CHOICE_MARKS`), and the TEXT spinner's
- * Braille cadence. Those stay characters because a terminal cell holds a character. A
- * graphical control waiting on a phone instead uses `LoadingIcon`: an open ring that
- * unmistakably turns rather than terminal punctuation that can read as three dots.
+ * App icon vocabulary backed only by Lucide. Screens import these semantic names,
+ * never `lucide-react`, raw SVGs or font glyphs as controls. Icon boxes scale with
+ * adjacent type while Lucide stroke width stays unchanged; status columns use the
+ * shared circular family. Terminal choice marks and the text spinner remain text.
  */
 import {
   AlignLeft,

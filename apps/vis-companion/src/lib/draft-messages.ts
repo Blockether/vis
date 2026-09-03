@@ -1,31 +1,7 @@
-// Unsent composer text, per session, kept across screens and app restarts.
-//
-// Named DRAFT MESSAGE, never just "draft": this is unsent human text, not an
-// internal isolated-workspace record.
-//
-// What you typed is YOURS: leaving the session for the list, backgrounding the
-// app, or killing it outright must never eat it. React state alone dies with the
-// screen, so the composer mirrors into an in-memory store that is written
-// through to persistent storage.
-//
-// The memory mirror is the read path, which is what makes restore synchronous
-// after the first hydrate: reopening a session must paint the draft message on
-// the FIRST frame, not flash an empty box and fill it a tick later. Writes are
-// debounced (typing must not hit the disk per keystroke) and flushed on every
-// way out of the app — visibility change, pagehide, unload.
-//
-// A reader OUTSIDE the composer — the sessions list, which stays mounted behind
-// the open transcript — is woken when a session STARTS or STOPS holding unsent
-// work, and again whenever the words are persisted (every pause in typing, and
-// every way out of the screen). It is never woken per keystroke: its answer is
-// fleet-wide, so a character re-ran the filter and the sort of every machine
-// and re-rendered every project group for a screen nobody is looking at.
-//
-// The staged BYTES are a SECOND key, written only when the staged set itself
-// changes. A photo is megabytes of base64; re-serializing it into localStorage
-// and across the native bridge into UserDefaults every time typing paused stalled
-// the composer for seconds on iOS, to store a payload identical to the one
-// already there.
+// Durable unsent composer state, keyed by session. Memory provides synchronous restore;
+// debounced persistence survives navigation and process death, with exit-time flushing.
+// Notify the fleet only when draft presence or persisted content changes, never per key.
+// Store staged attachment bytes separately so typing cannot rewrite large payloads.
 
 import { useEffect, useSyncExternalStore } from 'react';
 import { Preferences } from '@capacitor/preferences';

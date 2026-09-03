@@ -1,32 +1,11 @@
 import { App } from '@capacitor/app';
 
 /**
- * One wake bus for the whole app.
- *
- * "Wake" is the moment the app becomes live again after the OS froze it:
- * returning from the background, a tab switch, a bfcache restore, a network
- * coming back. Every screen needs the same reaction (re-poll, reconnect the
- * SSE stream, re-measure), and every screen used to wire its own subset of
- * `visibilitychange` / `pageshow` / `online` handlers.
- *
- * Two reasons that failed and left the UI frozen until a full app restart:
- *
- * 1. A Capacitor iOS webview can resume without firing ANY DOM wake event.
- *    Only the native `App` plugin (`resume` / `appStateChange`) is reliable,
- *    and a screen that listened to DOM events alone simply never heard about
- *    the resume — stale list, dead stream, no error anywhere.
- * 2. When the events do fire they arrive in a burst (three or four in one
- *    tick), so each listener re-ran its work several times over.
- *
- * So: subscribe to every signal exactly once, coalesce the burst, and fan a
- * single `wake` out to subscribers.
+ * Coalesce native resume, DOM visibility/pageshow and network recovery into one app-wide
+ * wake event; native webviews do not reliably emit every DOM signal.
  */
 
-/**
- * How long the app was frozen before this wake. Screens use it to tell a glance
- * at a notification (come back exactly where you were) from a real absence
- * (come back to what is current).
- */
+/** Time since the app last became inactive. */
 export type WakeInfo = { awayMs: number };
 
 type WakeListener = (info: WakeInfo) => void;

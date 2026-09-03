@@ -1,28 +1,8 @@
 /**
- * The order the reader is LOOKING at, held still while they look at it.
- *
- * The gateway's key is now content time only (`modified_at`, never the touch
- * clock) and no band lifts a running session over the rest, so nothing this
- * device does moves a row any more. One mover is left and it cannot be removed:
- * ANOTHER machine, or another turn, writing content while the reader reads. The
- * answer that arrives is correct and the list still moves under the thumb —
- * which is the whole complaint ("the list jumps around like mad").
- *
- * So a view holds an EPOCH: the sequence of ids as of the last moment the reader
- * agreed to it. Every poll after that updates the CONTENT of those rows in place
- * — title, tally, the live dot — and never their positions. A row the epoch does
- * not know is either DEEPER than everything held (the next page: it can only
- * append, so it lands where it belongs) or FRESHER than the oldest held row (a
- * promotion: it waits, counted, behind one tap).
- *
- * The epoch is renewed only by a READER: the tap on that pill, an action that
- * moves a row on purpose (starring one pins it), coming back to the app after a
- * real absence (`EPOCH_STALE_AWAY_MS`), and asking a different question — a
- * query, another machine — which is a new epoch by definition (`useOrderEpoch`'s
- * `viewKey`). What is deliberately NOT a trigger is "the list is at the top and
- * idle": the rows a reader at the top is reading are exactly the rows an
- * insertion above them pushes down, so adopting under a still thumb is the jump
- * this module exists to stop, and the pill is one tap away.
+ * Hold visible session IDs in their accepted order while refreshing row content in
+ * place. Promotions wait behind an explicit reader action; deeper pages append. Renew
+ * the epoch only when the reader changes scope/order, accepts updates, or returns after
+ * a real absence.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

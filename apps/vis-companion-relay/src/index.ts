@@ -1,30 +1,8 @@
 /**
- * vis-companion-relay — the smallest thing that lets a gateway you do NOT run
- * wake a phone running a companion you DID sign.
- *
- * APNs binds a topic to the Apple team that owns it, so the signing key can
- * only ever live on infrastructure the app's publisher controls. This Worker
- * is that infrastructure, and it is deliberately the least of it:
- *
- *   app     -> POST /v1/grants   {device_token}      => an opaque grant
- *   app     -> hands the grant to a gateway when the user says "notify me"
- *   gateway -> POST /v1/push     Bearer <grant>      => the relay signs + sends
- *
- * What the relay therefore is NOT: it holds no user account, no session, no
- * transcript, no gateway credential — and, since the grant carries its own
- * sealed contents (`seal.ts`), no database either. The gateway never learns the
- * device token; the relay never learns which gateway pushed, only that a grant
- * did. Encrypt the alert body app-side and the relay cannot read it either.
- *
- * Abuse budget. Every route is public — nobody authenticates to ASK for a
- * grant, and a gateway only ever proves it holds one — so the question is never
- * "is this caller allowed" but "what does an unwelcome caller cost". A body too
- * big is refused by Content-Length before it is parsed; minting and pushing are
- * both metered per client address by a Cloudflare rate limiting binding, whose
- * counters live at the edge, so a flood is refused without a single storage
- * operation; and pushes are metered per DEVICE, not per grant, so minting a
- * thousand grants for one phone still buys the same one phone's worth of noise.
- * Nothing accumulates anywhere, so nothing has to be swept.
+ * Stateless APNs/FCM relay: apps mint sealed grants and gateways use them to push. It
+ * holds no accounts, sessions, gateway credentials or device database. Public routes
+ * reject oversized bodies and are edge-rate-limited by caller and by destination
+ * device so minting more grants cannot increase one phone's abuse budget.
  */
 
 import { APNS_DEAD_REASONS, APNS_MAX_PAYLOAD_BYTES, apnsConfig, apnsPayload, sendApns } from "./apns";

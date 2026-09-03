@@ -37,11 +37,9 @@ class MyHost:
 vis_contract.check_host(MyHost())  # TypeError names every op you did not answer
 ```
 
-`vis_contract.Host` is a `typing.Protocol`: the calls, their arities and
-their doc lines are the document's, and the package's own suite fails when the
-protocol and `contract.json` stop agreeing.
-
-The wheel-local `contract.json` is a byte-identical copy of the repository's portable aggregate. Its source documents and JSON Schemas live under [`resources/vis-contract/`](https://github.com/Blockether/vis/tree/main/packages/vis-contract/resources/vis-contract), and Skjema validates every source document before generation.
+`vis_contract.Host` is a `typing.Protocol` checked against the canonical documents.
+The wheel packages the JSON documents and schemas directly from
+[`resources/vis-contract/`](https://github.com/Blockether/vis/tree/main/packages/vis-contract/resources/vis-contract).
 
 ## License
 

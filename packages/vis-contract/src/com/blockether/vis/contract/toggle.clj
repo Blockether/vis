@@ -56,4 +56,3 @@
   "JSON Schema errors for an invalid toggle contribution, or nil."
   [value]
   (document/explain "toggle" "contribution" value))
-(defn package-document "The validated language-neutral toggle document." [] @contract)

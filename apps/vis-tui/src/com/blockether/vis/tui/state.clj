@@ -47,19 +47,9 @@
 
 (defonce ^:private fx-registry (atom {}))
 
-;;; Render thread coordination.
-;;
-;; The TUI runs a dedicated render thread (see `screen/start-render-thread!`).
-;; It sleeps on `render-monitor.wait` and wakes whenever a state-mutating
-;; event is dispatched. `:render-version` on app-db is the dirty counter:
-;; render thread compares it against the version of the last frame it drew
-;; and skips work entirely if nothing changed. That's why the input thread
-;; can poll at 16ms without the box-drawing CPU melting.
-;;
-;; Some events are pure side-projections back from the render thread
-;; (`:set-layout`) and must NOT bump the version, otherwise we'd
-;; livelock: render writes layout -> version bumps -> render wakes -> same
-;; layout -> same version bump -> ...
+;;; Render coordination
+;; The render thread wakes on `:render-version`; side projections such as
+;; `:set-layout` must not increment it or they create a render loop.
 (defonce ^Object render-monitor
   ^{:doc
     "Monitor object the render thread .waits on. Notify-all on every
@@ -330,36 +320,6 @@
       (when @bumped? (notify-render!)))
     (throw (ex-info (str "No handler registered for event: " id) {:event event-vec}))))
 
-;;; ── State shape ────────────────────────────────────────────────────────────
-;;
-;; {:config     nil              ;; provider config map or nil
-;;  :session nil            ;; {:id session-id} or nil - handle to the shared sessions cache
-;;  :messages   []               ;; [{:role :user|:assistant :text str :timestamp #inst}]
-;;  :scroll {:mode :follow}      ;; scroll variant (see scroll.clj): :follow|:at
-;;  :input      {:lines [""] :crow 0 :ccol 0}
-;;  :input-history []            ;; persisted user queries for this session
-;;  :input-history-index nil     ;; nil = editing live draft, 0 = newest history entry
-;;  :input-history-draft nil     ;; unsent draft preserved while browsing history
-;;  :submitted-input nil         ;; prompt/paste snapshot for restoring cancelled turns
-;;  :loading?   false            ;; true while RLM is working
-;;  :cancel-token nil            ;; channels.cancellation token for the
-;;                               ;; in-flight turn (nil when idle). Holds
-;;                               ;; the cooperative flag + the worker
-;;                               ;; future so :cancel-turn can hit both.
-;;  :cancelling? false           ;; true once Esc was pressed; cleared when the
-;;                               ;; local worker reports :message-received OR
-;;                               ;; when the gateway reports that the attached
-;;                               ;; turn is already terminal/missing (for
-;;                               ;; orphan sweeps and restart repair paths).
-;;  :progress   nil              ;; live per-iteration timeline while loading:
-;;                               ;;   {:iterations [{:iteration int
-;;                               ;;                  :thinking  str-or-nil
-;;                               ;;                  :code      [str]       ;; latest streamed forms
-;;                               ;;                  :final?    bool}]}
-;;  :settings  {:show-thinking true :show-iterations true}
-;;  :channel-status {}           ;; extension/channel status banners keyed by id
-;;  :dialog-open? false}         ;; dialog singleton guard
-;;
 (def ^:private settings-notification-ttl-ms 1500)
 
 (def ^:private cancel-notification-ttl-ms 2500)
@@ -739,26 +699,8 @@
   ([dispatch-fn] (make-progress-render-updater dispatch-fn #(System/currentTimeMillis) nil))
   ([dispatch-fn now-ms-fn] (make-progress-render-updater dispatch-fn now-ms-fn nil))
   ([dispatch-fn now-ms-fn schedule-fn]
-   ;; Rate-limit live-progress redraws WITHOUT ever painting a stale frame.
-   ;;
-   ;; ONE source of truth for WHAT to paint: `latest`, overwritten by every
-   ;; chunk. The timeline is cumulative/monotonic (each chunk is a SUPERSET of
-   ;; the last — more reasoning, a new form, a form result), so the only correct
-   ;; thing to ever paint is the latest timeline. EVERY dispatch — immediate,
-   ;; throttled-due, or trailing-edge flush — paints `@latest`. This is what
-   ;; fixes the "I see thinking but no code" bug: the old design stashed a
-   ;; per-phase timeline SNAPSHOT, and a late `:reasoning` flush re-painted that
-   ;; pre-forms snapshot AFTER the code had arrived, wiping it. Painting
-   ;; `@latest` makes a stale frame impossible — a late flush merely repaints
-   ;; the current state (a harmless duplicate the render loop coalesces).
-   ;;
-   ;; WHEN to paint is throttled PER-PHASE: `:reasoning` and `:content` each
-   ;; redraw at most once per `live-progress-render-interval-ms` on their OWN
-   ;; clock, so a fast content stream can't starve reasoning frames (or vice
-   ;; versa). Lifecycle chunks (`:form-start` / `:form-result` /
-   ;; `:iteration-final` / …) bypass the throttle and paint immediately so
-   ;; block boundaries never wait; they also cancel any pending flush (which
-   ;; would only repaint the same @latest).
+   ;; Throttle reasoning and content independently, but always dispatch the newest
+   ;; cumulative timeline. Lifecycle boundaries paint immediately and cancel stale flushes.
    (let [latest
          (atom nil)
 
@@ -1356,35 +1298,11 @@
               ;; `render-neutral-toggle-ids`. Omitted id = unknown flip = bust
               ;; everything, the old conservative behaviour.
               (fn [db [_ toggle-id]]
-                ;; Drop BOTH render caches. A registry toggle changes what a
-                ;; bubble paints, but the projected lines live in
-                ;; `render/fmt-cache` (keyed on message identity, NOT toggle
-                ;; value) and the row count lives in the `virtual` height
-                ;; cache (its `settings-fingerprint` only tracks the keys
-                ;; mirrored into `:settings` — registry-only toggles like
-                ;; `:vis/show-thinking` aren't in
-                ;; it). Without this bust the flip resolved live in the
-                ;; registry but the painter kept handing back stale cached
-                ;; lines/heights, so the new value only appeared after a
-                ;; restart cleared the process caches. The local-settings
-                ;; path already busts fmt-cache via `apply-settings-update!`;
-                ;; the registry path needs the same on both caches.
                 (let [render-neutral? (contains? render-neutral-toggle-ids
                                                  (some-> toggle-id
                                                          name))]
-                  ;; Drop BOTH render caches. A registry toggle changes what a
-                  ;; bubble paints, but the projected lines live in
-                  ;; `render/fmt-cache` (keyed on message identity, NOT toggle
-                  ;; value) and the row count lives in the `virtual` height
-                  ;; cache (its `settings-fingerprint` only tracks the keys
-                  ;; mirrored into `:settings` — registry-only toggles like
-                  ;; `:vis/show-thinking` aren't in
-                  ;; it). Without this bust the flip resolved live in the
-                  ;; registry but the painter kept handing back stale cached
-                  ;; lines/heights, so the new value only appeared after a
-                  ;; restart cleared the process caches. The local-settings
-                  ;; path already busts fmt-cache via `apply-settings-update!`;
-                  ;; the registry path needs the same on both caches.
+                  ;; Registry-driven paint changes invalidate both formatted rows and
+                  ;; virtual heights unless the toggle is render-neutral.
                   (when-not (or render-neutral?
                                 (= "codex_fast_mode"
                                    (some-> toggle-id
@@ -1419,16 +1337,8 @@
                   {:db db
                    :fx [[:notify "Reasoning effort is not configurable for this model" :warn
                          settings-notification-ttl-ms]]}
-                  ;; The flip is an EFFECT, never an in-swap mutation.
-                  ;; `dispatch` runs a :fx handler's FUNCTION inside `swap!
-                  ;; app-db` and only its returned effects afterwards. Calling
-                  ;; `vis/toggle-cycle-value!` in the function body ran the
-                  ;; registry listener synchronously, which re-entrantly
-                  ;; dispatched :resync-toggle-settings; that inner swap
-                  ;; committed, the outer CAS failed, the handler retried and
-                  ;; cycled the level AGAIN — every retry guaranteeing the next
-                  ;; one. That livelock is why Ctrl+X r span through reasoning
-                  ;; levels forever instead of advancing by one.
+                  ;; Cycle the registry as an effect, never inside `swap!`; its synchronous
+                  ;; listener dispatches again and would make CAS retries repeat the action.
                   {:db db :fx [[:cycle-toggle "reasoning_level" "Reasoning"]]})))
 
 (reg-event-fx :cycle-verbosity
@@ -1752,17 +1662,8 @@
 
 (reg-event-fx
   :close-tab
-  ;; Close one tab (default: the active tab). Removes it from `:tabs`,
-  ;; drops its `:tab-locals` snapshot, and — if it was active — activates
-  ;; the neighbor (same index, clamped). Refuses to close the last tab.
-  ;;
-  ;; RESOURCE RELEASE: when the closed tab was the LAST open view of an
-  ;; IDLE session (no running turn, no queued/pending sends, and the sid
-  ;; is not still open in another tab) we emit `:release-session-listener`
-  ;; (drop the SSE title-listener) + `:release-session-runtime` (tell the
-  ;; daemon to stop that session's background `shell` children / REPLs and drop its
-  ;; live runtime). A session with a running or queued turn is LEFT alone —
-  ;; it stays resumable and keeps streaming; only process exit force-stops.
+  ;; Close the tab and activate its neighbor, but retain the last tab. Release an idle
+  ;; session only when no other tab, running turn or queued send still owns it.
   (fn [db [_ tab-id keep-project?]]
     (let [db
           (-> db
@@ -1913,21 +1814,8 @@
                 (assoc db :shutdown? true)))
 
 (reg-event-db :set-workspace
-              ;; Replace the session's current workspace record after a turn that may
-              ;; have changed it (`/cd`, or a future model-managed isolation action).
-              ;; Keep the denormalized root in lockstep; the footer reads it first.
-              ;;
-              ;; `workspace-id` = the tab whose session this workspace belongs to. A
-              ;; BACKGROUND (sibling) session can complete a turn while another tab is
-              ;; active; routing through `update-tab` writes the root into THAT tab (its
-              ;; `:tab-locals`) instead of stomping the active tab's footer with the
-              ;; wrong repo. Nil `workspace-id` (e.g. the /cd picker on the active
-              ;; session) targets the active tab, as before.
-              ;; A nil/blank workspace (a transient gateway miss on the picker-close
-              ;; re-sync, or a caught error yielding nil) must NEVER stomp a good root:
-              ;; nulling `:workspace/root` flips the footer's git chip to the vis process
-              ;; cwd (the ENGINE's own repo) for a frame — the visible "flicker". Keep the
-              ;; last-known-good workspace when the incoming one carries no root.
+              ;; Route workspace updates to the owning tab, preserve the denormalized root,
+              ;; and ignore blank replacements so transient misses cannot corrupt the footer.
               (fn [db [_ ws workspace-id]]
                 (if-not (get ws "root")
                   db
@@ -2051,25 +1939,15 @@
 
 (reg-event-fx
   :open-session-tab
-  ;; Open `session` (with its `history` + pinned `workspace` record) in a TAB
-  ;; WITHOUT disturbing the active tab. If a tab is already bound to this
-  ;; session, focus it; otherwise mint a new tab and bind it. This is what
-  ;; makes sessions run concurrently: opening/switching never resets the
-  ;; running tab — its turn keeps streaming into its own `:tab-locals`.
-  ;;
-  ;; A PENDING pre-allocated tab (name-only, minted by
-  ;; `:preallocate-project-tabs`) matches `existing` through its entry
-  ;; `:session-id`: that is its FIRST real open, so the freshly loaded
-  ;; session + transcript BIND into it in place (keeping its position and
-  ;; title), it gains focus, and anything queued while it hydrated drains.
+  ;; Open or focus the session without resetting another tab. A pending project tab is
+  ;; bound in place on first hydration.
   (fn [db [_ session history workspace]]
     (let [sid
           (some-> session
                   :id
                   str)
 
-          ;; Freeze the current tab (incl. any in-flight turn) into its locals
-          ;; before we change focus, so its streaming worker keeps updating it.
+          ;; Snapshot the active tab before changing focus.
           db
           (-> db
               ensure-tabs
@@ -2081,19 +1959,8 @@
           existing
           (when sid (some #(when (= sid (tab-session-id db (:id %))) %) entries))
 
-          ;; W3 reopen seed: populate the F2 ctx cache immediately from the full
-          ;; persisted ctx history so live + ARCHIVED tasks render the instant the
-          ;; tab opens — for BOTH a freshly minted tab AND an already-open one.
-          ;; Hoisted out of the `new tab` branch so a restored/restarted session
-          ;; (which hits `existing` → activate-tab) no longer shows an empty F2
-          ;; until its first turn end. Keyed by the raw session UUID (what screen.clj reads via
-          ;; [:session :id]). One DB read; tolerate failure.
-          ;; LATEST ctx only — the old merge-across-ALL-turn-snapshots seed
-          ;; resurrected dropped plan steps into the TASKS section as if live.
-          ;; History now has dedicated surfaces: :archived (GC'd entities,
-          ;; rides the latest snapshot) and :timeline (plan generations from
-          ;; the append-only task ledger, PLAN HISTORY section).
-          ;; F2 panel no longer seeds tasks/facts/archived/timeline — gone.
+          ;; Seed the context cache from the latest persisted snapshot only; merging old
+          ;; snapshots can resurrect retired tasks.
           ctx-panel
           nil
 
@@ -2315,21 +2182,8 @@
                  (conj [:dispatch [:drain-pending tab-id]]))})))))
 
 (reg-event-db :preallocate-project-tabs
-              ;; Pre-allocate NAME-ONLY tabs for `specs` — [{:session-id .. :label ..
-              ;; :root ..} …], the launch project's member sessions in tab order —
-              ;; WITHOUT loading any transcript and WITHOUT moving focus. Each minted
-              ;; entry is `:pending? true` and carries its `:session-id`; the
-              ;; transcript loads lazily on FIRST focus (screen.clj's
-              ;; hydrate-pending-tab! resumes it and `:open-session-tab` binds it).
-              ;; Sessions already open in a tab are skipped. NOT capped by
-              ;; `max-tabs`: a project's member list IS the tab set that was open
-              ;; last time (closing a tab unassigns the session from the project,
-              ;; see `:unassign-session-project`), so capping here silently DROPPED
-              ;; every tab past the 8th on relaunch — and the follow-up
-              ;; `persist-tabs!` then rewrote `project_position` from the truncated
-              ;; strip. `max-tabs` guards MANUAL tab creation only (`:create-tab`).
-              ;; Locals seed with an empty view so an early switch paints a
-              ;; blank transcript instead of ghosting the previous tab.
+              ;; Preallocate name-only project tabs and hydrate each on first focus. Existing
+              ;; tabs are skipped; the restored project set is not subject to manual-tab limits.
               (fn [db [_ specs]]
                 (let [db (-> db
                              ensure-tabs
@@ -3292,21 +3146,9 @@
               (fn [db [_ id]]
                 (update db :pastes dissoc id)))
 
-;; -- Messages-area scroll ---------------------------------------------------
-;;
-;; All scroll state is ONE workspace-local tagged value, `:scroll` (see
-;; `scroll.clj` for the variant + transition algebra). These events are
-;; thin wrappers: each REPLACES `:scroll` with the next variant, so nothing
-;; can dangle across frames. The render loop reads it back via
-;; `scroll/layout-offset` (what row to paint) and drives the animation with
-;; `:ease-scroll`.
-;; Scroll-transition diagnostic (`:debug`, silent under the default
-;; `:info` file handler — flip min-level to investigate the "jump to
-;; bottom fighting" symptom). `scroll-pre!` snapshots the PRE-transition
-;; `:scroll`; `log-scroll!` emits the transition and flags a `:at→:follow`
-;; re-arm — the prime suspect for the bounce: a scroll-down landing in the
-;; slack band re-arms FOLLOW and snaps back to bottom, then the next ease
-;; pushes down again. Grep the log for `scroll-transition` / `rearm? true`.
+;; Message scrolling
+;; `:scroll` is the sole tagged state; transitions replace it atomically. Debug logs
+;; expose accidental `:at` to `:follow` re-arming.
 (defn- scroll-snapshot [sc] {:mode (str (:mode sc)) :offset (long (or (:offset sc) 0))})
 
 (defn- scroll-pre! [db] (scroll-snapshot (:scroll db)))
@@ -3474,19 +3316,8 @@
                   ;; settled zeros every frame).
                   (when (or (not= (:mode pre) (:mode post)) (not= (:offset pre) (:offset post)))
                     (log-scroll! :ease-scroll pre post {:max-s max-s}))
-                  ;; Preserve `:scroll` IDENTITY when the ease produced an EQUAL
-                  ;; value. `scroll/ease` re-`assoc`s `:pos` every tick (a freshly
-                  ;; boxed row), so its result is `=` but never `identical?` to the
-                  ;; current scroll even when the view sits settled at the follow
-                  ;; bottom. `:ease-scroll` pulses on every ~80ms streaming tick, so
-                  ;; that churn silently rewrote app-db's `:scroll` to a new object
-                  ;; each tick. The render loop's fast-path predicates
-                  ;; (`live-progress-only-change?` / `scroll-only-change?`) diff db
-                  ;; by `identical?` per key, so a churning-but-unchanged `:scroll`
-                  ;; demoted EVERY progress-driven repaint to a FULL frame
-                  ;; (100-280ms on a long transcript) instead of the cheap
-                  ;; partial-live band. Return db untouched when nothing moved so the
-                  ;; identity — and the fast path — survive.
+                  ;; Preserve object identity when easing makes no semantic change; partial-frame
+                  ;; detection relies on unchanged values remaining identical.
                   (if (= sc cur) db (assoc db :scroll sc)))))
 
 (reg-event-db :terminal-resized
@@ -3808,18 +3639,8 @@
         last-row
         (peek (vec (or (:pending-sends source-db) [])))
 
-        ;; DOUBLE-SUBMIT GUARD, deliberately NARROW. Enter paints the row into
-        ;; `:pending-sends` BEFORE the gateway round-trip, so all that is left to catch is
-        ;; the MACHINE-fast repeat that once registered the same text as two queued turns
-        ;; 7 ms apart (key repeat, or a terminal delivering CR and LF): identical to the
-        ;; LAST row while that row is still mid-round-trip, or within
-        ;; `duplicate-submit-window-ms` of it.
-        ;;
-        ;; Anything slower is a HUMAN repeating themselves on purpose — "continue",
-        ;; "yes", the same nudge twice — with the first row visible on screen while they
-        ;; do it. The caller clears the editor on Enter unconditionally, so swallowing a
-        ;; deliberate repeat DELETES the user's text with nothing on screen to say so:
-        ;; the same invisibility bug this guard exists to prevent, pointed the other way.
+        ;; Reject only a machine-fast duplicate of the last in-flight submission. Slower
+        ;; identical prompts are deliberate user input and must remain visible.
         dup?
         (and (= text (:text last-row))
              (or (boolean (:awaiting-ack? last-row))
@@ -4376,24 +4197,9 @@
 
 (reg-event-fx
   :sync-queued-turn
-  ;; THE ONE WRITER of gateway-owned queue rows. Every add carries gateway truth -
-  ;; either the `turn.queued` / `.updated` / `.deleted` / `.drained` broadcast
-  ;; (forwarded as a :queue-sync chunk by the sync/attach subscriptions) or the ack
-  ;; of this tab's own `:gateway-enqueue`, which has the same shape and the same
-  ;; key. So a row ALWAYS has the gateway turn id, nothing is matched by request
-  ;; text, and whichever of ack/broadcast arrives first wins (the other no-ops):
-  ;;   :add    - no-op when the turn id is already mirrored, otherwise append.
-  ;;   :update - rewrite the entry's text (queued-prompt edit anywhere).
-  ;;   :delete - drop the entry (cleared / pulled back / drained anywhere).
-  ;; A turn that is (or just became) this tab's LIVE turn collapses EVERY op to
-  ;; "ensure it is not mirrored": a late, replayed or out-of-order queue event must
-  ;; not resurrect a running turn as a "Queued" row.
-  ;;
-  ;; A RETRACTED submission collapses the same way, and this is the ONLY place that
-  ;; rule lives. The ack of our own enqueue is not the only thing that names a turn the
-  ;; user took back mid-flight: the gateway broadcasts `turn.queued` for it too, and that
-  ;; broadcast used to append the cancelled message straight back as a "Queued" row whose
-  ;; turn then ran. Suppress the row and retract the gateway record instead.
+  ;; Reconcile queue mirrors by gateway turn ID. Adds are idempotent, updates rewrite
+  ;; text, deletes remove rows, and live or retracted turns can never be resurrected
+  ;; by late events.
   (fn [db
        [_ workspace-id {:keys [op turn-id client-id text preview-text reason] mine-hint? :mine?}]]
     (let [workspace-id (or workspace-id (current-tab-id db))]
@@ -4434,23 +4240,8 @@
                            ;; it, which is what keeps one submission at exactly one row.
                            mirrored (first (filter #(same-submission? % turn-id client-id)
                                                    (:pending-sends w)))
-                           ;; A USER CANCEL drops the ENTIRE pre-cancel backlog server-side
-                           ;; and broadcasts one `turn.queued.deleted` per row carrying
-                           ;; `reason "cancelled"` and the row's text (gateway
-                           ;; `drop-cancelled-backlog!`). Stop means stop - but the words the
-                           ;; user already wrote are theirs, so every dropped row comes back
-                           ;; into THIS tab's editor as a draft.
-                           ;;
-                           ;; Authorship is deliberately NOT consulted: whoever queued the
-                           ;; message and whichever channel pressed stop, a mirror that just
-                           ;; vanishes is exactly the silent loss this exists to prevent. It
-                           ;; lands in the tab that owns the SESSION, not the focused one, so
-                           ;; a cancel while looking at another session still restores.
-                           ;;
-                           ;; A plain `:delete` (user cleared the row) and a `.drained`
-                           ;; (gateway started it) carry no reason and restore nothing, and a
-                           ;; row already pulled back locally is no longer mirrored - which is
-                           ;; what keeps the text from landing twice.
+                           ;; Cancellation restores every dropped queued prompt to its session tab.
+                           ;; Ordinary deletes and drains restore nothing, preventing duplicates.
                            restore?
                            (and (= op :delete) (= reason "cancelled") (some? mirrored) (not live?))
                            w' (update w
@@ -4632,18 +4423,8 @@
 
 (reg-event-fx
   :attach-running-turn
-  ;; Subscribe to a turn ALREADY running for `session` (started in THIS TUI,
-  ;; the web, or a sibling process) the moment its tab opens/resumes, so it
-  ;; STREAMS live into the tab instead of showing frozen history until it
-  ;; lands in the DB. `session` carries :id, :status/:current-turn-id and the
-  ;; in-flight turn's `:running-request` text + its canonical gateway
-  ;; `:running-started-at` (from `chat/resume-session`). The elapsed
-  ;; clock seeds from that gateway timestamp — NOT this process's
-  ;; attach time — so every attached TUI shows the same elapsed.
-  ;; No-op unless the session is genuinely running AND the target tab isn't
-  ;; already attached (guards against double-attaching an already-live tab).
-  ;; Mirrors `:drain-pending`'s busy-time attach: seed the user + pending
-  ;; assistant bubbles, arm the turn state, then hand off to `:session-attach`.
+  ;; Attach once to an already-running turn, seeded with its canonical gateway start
+  ;; time, then stream it into the owning tab.
   (fn [db [_ workspace-id session]]
     (let [workspace-id
           (or workspace-id (current-tab-id db))
@@ -4826,19 +4607,8 @@
                       pending
                       (vec (or (:pending-sends source-db) []))
 
-                      ;; OWNERSHIP: only rows THIS tab submitted (`:mine?` - stamped when the
-                      ;; gateway echoed back a correlation id this tab minted, or when the
-                      ;; submission never reached the gateway at all) come back to the
-                      ;; editor. Rows queued by a sibling TUI / the web are the sibling's
-                      ;; text, so they are never pulled into OUR composer.
-                      ;;
-                      ;; We no longer have to police the server records: a user cancel
-                      ;; drops the whole pre-cancel backlog server-side in one swap and
-                      ;; broadcasts `turn.queued.deleted` (gateway `drop-cancelled-backlog!`),
-                      ;; which removes every mirror — ours and the sibling's — and settles
-                      ;; any client blocked on such a turn. The per-tid deletes below are
-                      ;; now only a fast local echo, reconciled from gateway truth when the
-                      ;; delete does not land (see the `:gateway-delete-queued` fx).
+                      ;; Restore only prompts submitted by this tab; gateway broadcasts remain the
+                      ;; source of truth for removing all queue mirrors.
                       mine
                       (vec (filter :mine? pending))
 
@@ -5083,17 +4853,8 @@
                     (long turn-liveness-probe-interval-ms)))))
 
 (reg-event-fx :turn-liveness-tick
-              ;; Render-loop heartbeat safety net for a turn the GATEWAY already settled
-              ;; while the client still shows it live — the terminal `turn.completed` never
-              ;; landed (mux SSE reconnect gap, a wedged blocking attach worker, a client
-              ;; that started before the fix). Without it the last thinking block keeps
-              ;; breathing and the spinner counts past a turn that finished minutes ago.
-              ;;
-              ;; Transport-INDEPENDENT by design: it asks the gateway's turn registry (the
-              ;; one source of truth) instead of waiting on the event stream, and feeds the
-              ;; answer through the SAME `:sync-turn-terminal` writer the real event uses,
-              ;; so settling stays byte-identical (grace period, trace, prose fallback).
-              ;; Pure over an injected `now-ms` (tests pass it; the render loop omits it).
+              ;; If stream completion is missed, query gateway truth and settle through the
+              ;; normal writer. This heartbeat is a transport-independent last resort.
               (fn [db [_ now-ms]]
                 (let [now
                       (or now-ms (System/currentTimeMillis))
@@ -5139,27 +4900,9 @@
 
 (reg-event-fx
   :sync-gateway-ready
-  ;; Inversion of control for the reconnect gap. The server emits
-  ;; `subscription.ready` for every session on every (re)subscribe, BEFORE
-  ;; the replay, and it now carries the daemon's own view: `current_turn_id`
-  ;; plus `is_live`. So the client is TOLD "the turn you are painting is not
-  ;; the one I am running" instead of discovering it on a timer.
-  ;;
-  ;; A probe fires only on DISAGREEMENT — the tab paints a live turn and the
-  ;; daemon reports a different one, or none. Agreement is a positive verdict
-  ;; from the source of truth and costs zero round-trips, which is what lets
-  ;; the render heartbeat stay a slow last resort.
-  ;;
-  ;; An OLD daemon omits the state (`:is-state-known` false); then the frame
-  ;; degrades to the previous behaviour — reconnect probes unconditionally,
-  ;; which is merely one extra read.
-  ;;
-  ;; Throttled on its own `:gateway-resynced-at-ms` stamp, never the
-  ;; heartbeat's: a probe issued while the socket was down asked over a
-  ;; failing connection, so its silence proves nothing and must not suppress
-  ;; the one probe that can finally answer. The stamp still collapses the N
-  ;; copies of one broadcast (the mux delivers a ready frame per open session
-  ;; tab) into a single round.
+  ;; On subscription readiness, probe only when the daemon and tab disagree about the
+  ;; live turn. Old daemons without state still probe; throttle reconnect probes on their
+  ;; own stamp so failed attempts do not suppress recovery.
   (fn [db [_ tab-id chunk now-ms]]
     (let [now
           (or now-ms (System/currentTimeMillis))

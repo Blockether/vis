@@ -181,7 +181,7 @@ consumption graph. Architecture policy must describe the destination without pre
 contract.*                    → Clojure/JDK/leaf libraries only
 internal.core.*               → contract.* + internal Core leaf utilities
 internal.gateway.server.*     → contract.* + internal.core.* + server children
-Clojure/Python/JavaScript SDK → generated contract + language runtime/transport only
+Clojure/Python/JavaScript SDK → canonical contract documents + language runtime/transport only
 TUI, Companion, extensions    → their language SDK + own code + UI/runtime libraries
 ```
 
@@ -227,7 +227,7 @@ language one protocol source.
 | `wire-key`, `engine-key`, `->wire`, `->engine`, `canonical`, `json-str`, `parse-json` | `com.blockether.vis.contract.wire` |
 | terminal/queue event sets, protocol version, headers, pure compatibility verdict | `com.blockether.vis.contract.gateway` |
 | routes, request/response envelopes, journal envelope and event vocabulary | `resources/vis-contract/gateway.json` + `schema/gateway.json` |
-| generated route/event/key constants | each SDK's generated contract module |
+| route/event/key readers | each SDK's contract module |
 | `sse-frame`, `job-sse-frame` | `internal.gateway.server.transport.sse` |
 | bounded diagnostics | the one internal caller or a genuine internal leaf utility |
 | release/build identity, checkout inspection, daemon staleness and messages | `internal.gateway.runtime` |
@@ -242,7 +242,7 @@ language one protocol source.
   replay rule and terminal semantic; `schema/gateway.json` validates every shape.
 - Routes intended only for administration or one host are marked explicitly rather than omitted.
 - SSE byte framing, Ring and concrete HTTP remain implementation; the contract owns semantics only.
-- Portable copies are rendered only from JSON documents already validated by Skjema.
+- SDK artifacts package or read the canonical JSON documents directly; no aggregate is generated.
 - `vis-contract` retains zero engine, SDK, filesystem, network, process or daemon dependencies.
 
 **Unknowns.** Which `/v1/admin/*` routes are intentionally public to SDK clients. Classify every live
@@ -274,8 +274,8 @@ handles are not contract data; their owning namespaces use local predicates.
   surfaces and test-runner results are sourced from JSON documents rather than Clojure literals.
 - Raw contract validators reject keyword keys, lists, non-finite numbers and other values that cannot
   cross a JSON boundary.
-- `contract.json` and the Python wheel copy are generated only from validated contract documents and
-  remain byte-identical.
+- No generated `contract.json` aggregate is checked in; the Python wheel packages the canonical documents
+  and schemas directly.
 - Private implementation shapes remain local predicates instead of expanding the public schema set.
 - Obsolete host-boundary inventories, forwarding namespaces and migration exception ledgers are
   deleted rather than represented in the new contract.
@@ -312,7 +312,7 @@ imports `contract.*`, and no SDK invents a second spelling for a contract vocabu
 
 **Acceptance criteria.**
 
-- Each SDK depends on generated `vis-contract` data and ordinary language libraries only; building
+- Each SDK depends on canonical `vis-contract` data and ordinary language libraries only; building
   any SDK with the engine, TUI and Companion absent succeeds.
 - Clojure and Python extension modules receive a contract-declared Host object/adapter from the
   engine and have deterministic outside/test hosts. They never resolve engine Vars or import
@@ -376,7 +376,7 @@ moves to that channel rather than being hidden in Environment.
 - Environment owns creation, workspace context, tool capability assembly, cancellation attachment,
   sandbox handles and disposal. Session/Turn code uses its operations without importing concrete
   tool children.
-- Contracts and generated SDK declarations leave the old directory first. Environment retains no
+- Contracts and SDK contract readers leave the old directory first. Environment retains no
   public facade or transport protocol ownership.
 - Language packs replace direct `foundation.environment.languages` and `foundation.editing.parse`
   imports with SDK operations/types or extension-local behavior; the shared language-surface result
@@ -563,7 +563,7 @@ calls to HTTP/SSE. Shared executable transport code is neither required nor desi
 - Core performs no HTTP. Clojure SDK calls use the canonical `babashka.http-client`; server code owns
   Ring and SSE framing.
 - Delete old monolithic client/server namespaces when empty; no route string or protocol header is
-  copied outside generated SDK modules.
+  duplicated outside contract-backed SDK modules.
 
 **Unknowns.** Local daemon discovery/start is meaningful for Clojure and Python desktop clients but
 not a browser. The contract capability matrix marks it unavailable in browser JavaScript rather
@@ -705,7 +705,7 @@ remain diagnostics.
   `base-tooling`, architectural `spi`, implementation-owned `spec`, broad `com.blockether.vis.core`
   facade, internal gateway client or duplicated route/event vocabulary.
 - Update owning docstrings, the `AGENTS.md` ownership table and release rule, docs catalog, examples,
-  generated artifacts and the release audit to final package and namespace names; the version-sync
+  package artifacts and the release audit to final package and namespace names; the version-sync
   command owns every manifest and lock it writes, and the release commit's file set matches it. Do not
   add migration aliases for removed APIs.
 - Finish each slice with its smallest tests and the plan with relevant full JVM tests, `lint_code`,
@@ -731,9 +731,10 @@ limits, language surfaces and test-runner results. The superseded source formats
 language-specific validation declarations were removed rather than forwarded. Engine-facing namespaces derive
 keyword views from validated JSON or keep genuinely private runtime checks as local predicates.
 
-The portable root `contract.json` and Python wheel copy are generated from those validated documents
-and remain byte-identical. Existing View, Human Input, Activity, cancellation and cross-session permit
-suites preserve behavior while the remaining contract areas and SDK consumers migrate.
+The generated aggregate has been removed. The Python wheel packages the canonical JSON documents and
+schemas directly, while its module assembles the existing convenience view in memory. Existing View,
+Human Input, Activity, cancellation and cross-session permit suites preserve behavior while the remaining
+contract areas and SDK consumers migrate.
 
 Work already available as foundations:
 

@@ -1,36 +1,9 @@
-"""The host the `vis` module finds when there is no Vis in the room.
+"""The host used when `vis` runs outside the engine.
 
-`vis/__init__.py` is the extension API and nothing else: every call it makes goes
-through `_host`, the dict of callables the engine seeds before it execs the module
-inside an extension context. Installed from PyPI there is no engine, so this
-module answers the same names the contract declares — and it answers them the way the
-`vis-contract` package says each one behaves outside the sandbox, never by guessing:
-  outside == "local"   the op has an honest local meaning, so do it locally:
-                       state is a JSON file, `log`/`notify` are stderr lines,
-                       `shell` is a real subprocess, secrets live in a vault that
-                       dies with the process.
-  outside == "prompt"  there is no dialog surface, so ASK THE TERMINAL. `vis.ask`
-                       prints the same field tree and collects the same values,
-                       runs the extension's own validators, and hands back the
-                       same answer shape a mounted surface would.
-  outside == "refuse"  nothing out here can enforce what the op promises (a jail
-                       is a property of the agent's process boundary), so the op
-                       raises the refusal the CONTRACT states, by name.
-
-The contract is the document, this file is one implementation of it: an op added
-to `packages/vis-contract/resources/vis-contract/python-host.edn` and left
-unimplemented here fails at import with the op named, rather than at the call site
-inside somebody's extension. That is the whole point of keeping the two apart.
-
-Priming an answer instead of typing it (unit tests, CI):
-
-    import vis
-    vis.outside.answer_with({"env": "staging", "token": "hunter2"})
-    assert vis.ask("Deploy", [vis.select("env", ["staging", "prod"])])["env"] == "staging"
-
-`VIS_OUTSIDE_ANSWERS` (a JSON object) does the same from the environment, and
-`VIS_OUTSIDE_NONINTERACTIVE=1` makes every ask answer `undeliverable` the way a
-session with no surface mounted does.
+Operations follow `python-host.json`: local operations run locally, prompts use
+the terminal, and operations requiring an engine-enforced jail refuse by name.
+`VIS_OUTSIDE_ANSWERS` primes prompt values; `VIS_OUTSIDE_NONINTERACTIVE=1`
+returns `undeliverable` instead of blocking.
 """
 
 from __future__ import annotations

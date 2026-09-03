@@ -1,6 +1,7 @@
 (ns com.blockether.vis.contract.gateway-test
   "Characterization gates for the gateway surface before its implementation owners move."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as contract]
             com.blockether.vis.internal.gateway.server
             [lazytest.core :refer [defdescribe expect it]]
@@ -38,9 +39,9 @@
     (expect (= ["model" "provider" "llm_selected" "llm_actual" "is_llm_fallback" "llm_routing_trace"
                 "tokens" "cost" "confidence" "eval" "duration_ms" "utilization"]
                contract/turn-meta-keys)))
-  (it "renders deterministic language-neutral gateway data"
+  (it "reads deterministic language-neutral gateway data"
       (let [gateway
-            (contract/package-document)
+            (document/load! "gateway")
 
             devices
             (first (filter #(= "/v1/devices" (get % "path")) (get gateway "routes")))]

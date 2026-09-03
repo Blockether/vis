@@ -36,10 +36,9 @@ vis.extension(
 
 ## One file, two hosts
 
-Everything the module does, it does through the host ops declared as data in
-[`packages/vis-contract/resources/vis-contract/python-host.edn`](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/python-host.edn)
-and installed alongside as `vis-contract`, which ships that declaration as
-`vis_contract/contract.json` and the `Host` protocol this package is written against.
+Host operations are declared in
+[`python-host.json`](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/python-host.json)
+and installed with the other canonical documents in `vis-contract`.
 
 Inside a Vis session the engine seeds those ops and they reach the live agent:
 state is the extension's durable state, `vis.ask` opens a dialog on whichever

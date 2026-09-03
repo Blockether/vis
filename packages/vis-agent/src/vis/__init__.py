@@ -1,18 +1,7 @@
-"""The Vis extension API — everything an extension file reaches for.
+"""The Vis extension API.
 
-`import vis` inside a Vis extension gets this module FROM THE HOST: the engine
-builds it, seeds `_host` with an object whose attributes are the ops named by
-`packages/vis-contract/resources/vis-contract/python-host.edn` — the `Host`
-protocol `vis-contract` declares — execs this source into it and registers it in
-`sys.modules`, so every call below reaches the live agent.
-
-Installed from PyPI (`pip install vis-agent`) there is no Vis process to seed
-anything, so `vis._outside` answers each op the way the contract document says it
-behaves outside the sandbox: durable state becomes a JSON file, `log`/`notify`
-become stderr lines, `ask` becomes a terminal prompt, `shell` becomes a
-local subprocess, and the two jailed shells refuse by name because nothing out
-here can enforce a jail. That is what makes an extension importable, unit-testable
-and runnable with no agent in the room — the same file, one host or the other.
+The engine injects the host declared by `vis-contract`; an installed wheel uses
+`vis._outside` for local behavior, terminal prompts, and explicit jail refusals.
 """
 
 try:

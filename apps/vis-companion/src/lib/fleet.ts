@@ -3,15 +3,8 @@ import { homeifyPath } from './path';
 import type { GatewayConn, GatewayOverview, Session } from './types';
 
 /**
- * The fleet model behind the sessions list.
- *
- * A machine OWNS its projects: every session on screen belongs to exactly one
- * paired gateway, and a project only exists inside the machine it lives on. Two
- * machines checked out of the same repo are two different projects — the folder
- * name is not an identity across machines, so it is never used to merge rows.
- *
- * The screen keeps one of these per paired connection and renders them in the
- * order the machines were paired; the scope chip narrows to one of them.
+ * Fleet rows belong to one paired machine; projects with the same path on different
+ * machines remain distinct. Machine order follows pairing order.
  */
 export interface FleetMachine {
   conn: GatewayConn;

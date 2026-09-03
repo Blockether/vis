@@ -1,32 +1,7 @@
 /**
- * A machine is a COLOUR, not only a name.
- *
- * The sessions list is a fleet: machine → project → session. A name has to be
- * read, and on a phone it scrolls away; a colour is recognised before anything
- * is read, which is exactly what a boundary between two computers needs. Every
- * paired machine takes one hue from this palette and wears it in three places —
- * the rail down the left of everything it owns, the block in its banner, and the
- * block in its scope chip — so the chip you tapped and the rows you got back are
- * the same colour.
- *
- * The palette is 16 hues at ONE lightness (oklch L 0.62), which is what makes it
- * theme-proof: every entry clears 3:1 against the light page (#faf3eb) and 4.7:1
- * against the dark one (#0f1117), so a single hex per machine paints correctly on
- * paper AND on ink — no per-theme fork, no `light-dark()`, nothing for a gateway
- * palette to override. The green window (hue 130°–168°) is deliberately EMPTY:
- * green means LIVE on this screen, and a machine that happened to hash into green
- * would have been reporting a status it does not have.
- *
- * The palette is a RAMP around the wheel, so two entries beside each other —
- * coral #d95445 and orange #d26004 — read as one red. A fleet therefore never
- * takes neighbours: `assignMachineColors` spends the whole wheel on the machines
- * you actually have, so two paired gateways sit opposite each other and three
- * sit on thirds.
- *
- * Colour is redundancy, never the only cue: the machine's name is always next to
- * its block, and a machine that is not answering keeps its hue drained to an
- * outline — with the name, and the transport's own reason, in the tile's label and
- * title, where a 6px block cannot speak.
+ * Stable, contrast-safe machine colours connect scope controls to owned rows. The
+ * palette reserves green for live status and distributes active machines around the
+ * hue wheel; names and outage treatment remain redundant non-colour cues.
  */
 
 export interface MachineColor {

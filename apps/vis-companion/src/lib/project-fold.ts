@@ -1,28 +1,6 @@
 /**
- * WHICH PROJECTS ARE OPEN — the one thing this list remembers for a reader.
- *
- * A machine paints every project it has ever worked in, so a phone showing four
- * checkouts is a scroll through three of them to reach the one in hand. The list
- * therefore opens exactly ONE project by itself: the one its own order puts on top
- * of each machine, which is where the work that moved last already is. Every other
- * project starts folded, and a fold is one tap away from being undone.
- *
- * The reader's own folds outrank that default and OUTLIVE the screen. Component
- * state does not: the sessions list is torn down and rebuilt (a relaunch, a webview
- * the OS reclaimed behind an open transcript, a fleet re-paired under it), and every
- * project the reader had folded came back open. That was the report this module
- * answers.
- *
- * `localStorage`, not the `sessionStorage` of `lib/parked`: that one parks WHERE a
- * reader was, which is only true of this visit. A fold is a PREFERENCE, and one that
- * dies with the webview is not remembered.
- *
- * Nothing here is cached in memory. A fold is read once per project MOUNT and
- * written once per TAP, so the store is always the truth — the per-frame write that
- * forced `lib/parked` to coalesce cannot happen here.
- *
- * Every access is guarded: private mode, a disabled store and a non-browser (node
- * tests) all mean "no fold remembered", never a thrown screen.
+ * Persist explicit project folds in guarded localStorage. Otherwise only each machine's
+ * leading project starts open; folds are preferences that outlive a screen or webview.
  */
 
 /** Where the folds live: one entry per project a reader has ever folded. */

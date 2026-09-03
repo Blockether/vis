@@ -1,28 +1,6 @@
-// Durable mirror of the gateway client's per-session snapshot cache.
-//
-// `gateway.ts` keeps the last payload it saw per gateway+resource in a plain
-// in-memory Map, so a screen that REMOUNTS repaints instantly. That cache dies
-// with the JavaScript context — and on iOS/Android the OS kills a backgrounded
-// webview routinely, so "open the app" is almost always a COLD start: no rows,
-// the loading veil, and a full transcript page pulled over the phone's network
-// before anything is on screen.
-//
-// This module writes the same snapshots through to `localStorage` (the only
-// storage a React initializer can read SYNCHRONOUSLY — Capacitor Preferences is
-// async, and an async read cannot seed a first frame). A cold start then paints
-// the last known transcript immediately and revalidates underneath: the meta row
-// is one tiny request, and `transcriptIfMoved` downloads NOTHING when no turn
-// was persisted since.
-//
-// What is deliberately NOT persisted:
-//   • the queued backlog — a queue row that drained while the app was dead would
-//     come back from disk as a ghost;
-//   • live SSE frames — the in-flight turn is replayed by the gateway from its
-//     `turn.started`, which is exactly the "only the newest stuff" a cold client
-//     is missing.
-// Small machine-wide facts — settings, capabilities, engines and model picks —
-// do survive. They seed the first frame and their owning TTL decides when one
-// shared refresh is due.
+// Synchronous localStorage mirror of durable gateway snapshots for cold first paint.
+// Persist settled transcript windows and small machine facts, then revalidate. Queued
+// backlog and live SSE frames stay transient so stale rows cannot return after restart.
 
 /** How much of a session's history one snapshot holds (mirrors gateway.ts). */
 export interface HeldWindow {

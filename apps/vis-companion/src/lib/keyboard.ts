@@ -4,27 +4,8 @@ import { hasHardwarePointer } from './pointer';
 import { isAppForeground, isSoftKeyboardUp } from './viewport';
 
 /**
- * Keeping the software keyboard across a native sheet.
- *
- * Opening the photo/video picker or the camera hands first responder to a native
- * view controller, and the software keyboard goes down with it. The composer never
- * lost DOM focus, so the webview sees no focus change and has no reason to raise the
- * keyboard again: the user is left mid-sentence staring at a keyboard-less screen.
- *
- * Leaving the composer focused across the sheet and repairing afterwards is exactly
- * what does NOT work. When the sheet DELIVERED media, UIKit hands first responder
- * back and raises the keyboard by itself, and Capacitor's `keyboardWillShow` only
- * reaches JS after that keyboard is already moving (see `useVisualViewportShell`) —
- * so a repair timed against `isSoftKeyboardUp` can fire underneath a keyboard on its
- * way up. The blur drives it back down and the focus drags it up again: the
- * down/up/down/up flicker reported after attaching a photo to a half-written
- * message.
- *
- * So the keyboard is taken down on OUR terms instead. Blurring the composer BEFORE
- * the sheet opens leaves UIKit nothing to restore — the sheet's own presentation
- * covers that hide — and the way back is one deliberate focus. One down, one up,
- * identical whether the sheet delivered a photo or was cancelled, and never a race
- * against a platform that answers late.
+ * Blur before opening a native media sheet and restore focus once after dismissal. This
+ * prevents UIKit's own responder restoration from racing a JavaScript repair.
  */
 
 /** The sheet is still dismissing when the plugin promise settles; a focus landed

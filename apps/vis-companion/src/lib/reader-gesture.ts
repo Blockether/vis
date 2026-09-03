@@ -1,37 +1,10 @@
 /**
- * Who owns the scroll position right now: the reader's hand, or the code that
- * keeps a live transcript pinned to its end?
- *
- * The transcript scroller is moved by several independent catch-ups, each
- * written for a scroller nobody is touching:
- *
- *   - opening a session pins to the end on a settle schedule (`SessionScreen`),
- *   - the turn backfill re-pins after every chunk it hydrates — one per frame,
- *   - a resizing composer or keyboard re-pins a reader who was at the end,
- *   - `ChatContent`'s segment ramp holds the reader's line while segments mount
- *     above them, and pins to the end when they were already there.
- *
- * Under a finger they compound, and they do not merely cost a frame of the
- * drag. `scrollToEnd` re-asserts "this reader is following the end", and the
- * scroll event its correction emits measures distance-to-bottom 0 — so the next
- * chunk is just as certain it is helping, and there is a chunk every frame.
- * That loop is why dragging up during the first second of a large session did
- * nothing at all: the drag moved the scroller, the next frame put it back. The
- * ramp's own hold had the mirror-image bug for a slow drag, which moves less
- * than the "still at the end" tolerance within a single frame.
- *
- * So the fact lives in one place. While the reader is working the scroller —
- * and for a short grace afterwards, because whether they are still at the end
- * is only measured a frame later — every automatic scroll stands down and lets
- * the position that the gesture produced be the one that gets measured.
+ * While the reader manipulates the transcript, automatic pinning and anchoring stand
+ * down through a short post-gesture grace period so the resulting position can be
+ * measured without a correction loop.
  */
 
-/**
- * How long after the last movement the reader keeps the scroller. It only has
- * to outlive the `requestAnimationFrame` in which the screen measures where the
- * gesture left them; momentum past that is judged on distance-to-bottom, like
- * any other scroll.
- */
+/** Grace long enough to outlive the next animation-frame measurement. */
 const GESTURE_GRACE_MS = 300;
 
 let lastGestureAt = Number.NEGATIVE_INFINITY;

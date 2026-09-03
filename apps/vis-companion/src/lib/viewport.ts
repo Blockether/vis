@@ -411,36 +411,12 @@ export function useIsViewportRotating(): boolean {
 }
 
 /**
- * Pins the app shell to the *visual* viewport.
- *
- * Focusing the composer shrinks the visual viewport — the software keyboard, or
- * with a hardware keyboard just the form accessory bar — and iOS then slides
- * that visual viewport down over the unchanged layout viewport instead of
- * resizing it. A plain `100dvh` shell keeps its layout-viewport box, so the
- * header rides up under the status bar / Dynamic Island and its
- * `env(safe-area-inset-top)` padding goes off-screen with it.
- *
- * The hook writes the exact visible height directly onto the shell element and
- * shifts it back onto the visual viewport, so the header stays put and the
- * composer sits directly on the keyboard. It removes those inline properties
- * whenever the visual viewport matches the layout one, leaving desktop and idle
- * mobile on the plain `h-full` box without a transform containing block.
- *
- * Backgrounding the app freezes those metrics: iOS suspends the webview mid
- * keyboard-teardown and, on resume, neither `resize` nor `scroll` fires. The
- * shell would stay pinned to a viewport that no longer exists — header under
- * the status bar, tab bar pushed off the bottom, nothing tappable. So every
- * wake signal re-measures, and a hidden document never records a box at all.
- *
- * It also publishes `--safe-bottom` through `useSafeBottomStyle`: the real
- * bottom inset normally, `0px` while the keyboard covers the home indicator, so
- * a footer does not reserve a dead band above the keyboard.
+ * Pin the shell to iOS's visual viewport while its keyboard offsets the unchanged
+ * layout viewport. Re-measure on every wake, clear styles when layouts match, and publish
+ * a zero safe-bottom while the keyboard covers the home indicator.
  */
-// The height the shell is currently pinned to, or null when it fills the page
-// root normally. With the native keyboard driver the webview is NOT resized
-// (`resize: 'none'`), so `visualViewport.height` no longer reports the
-// keyboard: anything that needs to know "did the shell just change size?" has
-// to ask here instead of measuring the visual viewport.
+// Height currently forced onto the shell; native keyboard mode cannot be inferred from
+// `visualViewport.height` alone.
 let pinnedShellHeight: number | null = null;
 
 // Whether the software keyboard is on screen, maintained by the native keyboard

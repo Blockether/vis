@@ -18,51 +18,12 @@ function moreCount(n: number, noun: string) {
 }
 
 /**
- * ACTIVITY, PAINTED WHERE IT BELONGS — inside the form that produced it.
- *
- * This is NOT a Live View, and it is a separate component for the same reason
- * it is a separate wire shape: a Live View is a surface a run OPENS, addressed
- * by its own id, closed when the run ends; Activity is a field OF one form,
- * replaced whole while the form runs and settled with it. They share a
- * transport and nothing else, so they change on their own schedules.
- *
- * The panel takes the projection itself, never a view: protocol 7 stopped
- * shipping Activity as a classified view addressed from a distance by an
- * anchor, so there is no record to unwrap and no classification to branch on.
- * One slot paints both states — the same component under the same key while the
- * form runs and once it has landed — which is what stops the transcript from
- * swapping a live surface for an artifact under the reader.
- *
- * ONE SPINE, NOT TWO. The chronology hangs on the TURN's own line — the same
- * hairline the invocation's ring stands on — and every step reaches it with a
- * tick of its own: the line is TIME, a mark on it is the moment the call
- * happened, and the tick is the step arriving. A second rail beside that one, or
- * a bracket closing the group, is a second border repeating what the named row
- * above it already said.
- *
- * A STEP IS INERT. Its mark is a 9px ring on the branch — never an icon, never
- * a state colour — because the run's states are already in the words, and a
- * column of glyphs is what made the old rail read as a list of unrelated chips.
- * The one colour on this axis is the red of a failure. A step says its verb in
- * the app's own voice, keeps its object in hint ink beside it with no separator
- * between them, and prints its duration in the machine's hand at the right
- * margin, so the eye reads WHAT HAPPENED down one column and HOW LONG down
- * another.
- *
- * What a step LEFT sits under it in the machine's own hand: the paths it read,
- * the card of what it changed, the head of the error that stopped it. Only the
- * patch itself opens, because only the patch is long.
+ * Activity is an inline, whole-replaced field of one form, distinct from an
+ * independently addressed live view. Its inert steps share the turn spine, state their
+ * verb/object/duration once, and leave produced paths, patches or errors below.
  */
 
-/**
- * THE VERB A STEP WEARS, one for each state a reader can tell apart.
- *
- * A settled verb over a step that FAILED is a lie printed in bold: the row said
- * "Patched" directly above its own evidence saying the patch was refused. So an
- * operation carries three words — what it is doing, what it did, and what it
- * failed to do. A cancelled step keeps the first: the act was under way and
- * never landed, which is exactly what the running word says.
- */
+/** Select the verb from running, settled, failed or cancelled state. */
 const ACTIVITY_VERBS: Record<
   string,
   readonly [running: string, settled: string, failed: string]
@@ -585,31 +546,8 @@ function countsVisibleFiles(summary: string, shown: number): boolean {
   return match !== null && shown > 0 && Number(match[1]) === shown;
 }
 
-/**
- * ONE STEP ON THE AXIS: a verb, its object, and how long it took.
- *
- * Nothing here is a control. The row states what the engine did and leaves what
- * it produced underneath it, so once the invocation is open there is no second
- * thing to go and find: the program, the bytes it printed and this chronology
- * are all one chevron down from the band's counters.
- *
- * And it says each of those things ONCE. "Read 4 files" over four visible paths
- * counts a list the eye is already on, so a summary that is nothing but that
- * count gives way to the paths themselves. A running step prints no elapsed
- * time because this wire carries none — only a duration once the call lands —
- * so its column says "still counting" rather than standing empty, which reads
- * as a number that went missing.
- */
-/**
- * A ROW'S OWN WORDS, READ THE WAY THE ENGINE DECLARED THEM.
- *
- * Text on this axis is LITERAL unless its producer marked it, because most of what a
- * step says is a path, a glob or a command: `probe_1.json` italicised at its
- * underscores, or a glob set in bold from its stars, is the panel corrupting the fact
- * it was handed. So the format travels per field, is never sniffed from the
- * characters, and the renderer is the transcript's own — one markdown vocabulary on
- * this surface, never a second one grown inside this panel.
- */
+/** One inert activity step: verb, object, duration and any produced evidence. */
+/** Render fields literally unless their producer explicitly marks Markdown. */
 function ActivityText({
   text,
   format,

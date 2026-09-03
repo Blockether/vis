@@ -44,5 +44,3 @@
   "True when raw JSON-shaped data satisfies one configuration definition."
   [definition value]
   (document/valid-json? "config" definition value))
-
-(defn package-document "The validated language-neutral configuration document." [] @contract)

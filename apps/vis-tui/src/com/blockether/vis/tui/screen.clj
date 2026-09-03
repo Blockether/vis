@@ -51,24 +51,9 @@
            [java.util.concurrent.locks ReentrantLock]
            [sun.misc Signal SignalHandler]))
 
-;;; ── Threading model ─────────────────────────────────────────────────────────────
-;;
-;; The TUI now runs two threads against the Lanterna screen:
-;;
-;;   1. Input thread (the original main loop): polls keys, dispatches
-;;      events into app-db, opens modal dialogs. Never draws the chat
-;;      view itself - just mutates state.
-;;
-;;   2. Render thread: sleeps on `state/render-monitor`, wakes on
-;;      every dispatched event, and only repaints if `:render-version`
-;;      moved or the terminal got resized. While a dialog is up the
-;;      input thread holds `draw-lock` for the dialog's whole session
-;;      so the render thread cannot scribble underneath it.
-;;
-;; `screen-size`/`doResizeIfNecessary`, `setCharacter`, `refresh`, and
-;; `setCursorPosition` are owned EXCLUSIVELY by the holder of
-;; `draw-lock`. `pollInput` lives on its own input queue inside
-;; Lanterna and is safe to call concurrently from the input thread.
+;;; Threading
+;; Input mutates state; render owns paint. All screen mutation runs under `draw-lock`,
+;; which dialogs hold for their lifetime.
 (defonce ^:private ^ReentrantLock draw-lock
   ^{:doc
     "Single screen-mutation lock. Held by the render thread for the
@@ -1426,18 +1411,8 @@
 
                     projected
                     (cond
-                      ;; A VISIBLE bubble's live paint (`:projected` from the layout)
-                      ;; is the authoritative on-screen content, and its line count
-                      ;; is exactly what sized this bubble's document row span — so
-                      ;; `content-top + line-idx` aligns perfectly. Use it directly.
-                      ;; This is the ONLY correct source for the LIVE / loading bubble:
-                      ;; while a turn streams, `layout` renders the compact progress
-                      ;; view (spinner + current activity), which is SHORTER than the
-                      ;; message's full transcript projection. Re-projecting the full
-                      ;; body here would overflow the compressed span and copy
-                      ;; misaligned head rows instead of what the user actually sees.
-                      ;; Streaming and completed trace bubbles keep `:lines-window`
-                      ;; nil, so their full-body paint is used verbatim too.
+                      ;; Copy from the projected visible rows; a live bubble is shorter than its
+                      ;; full transcript and must retain the layout that sized it.
                       (and visible-projected (nil? (:lines-window visible-projected)))
                       visible-projected
                       ;; A WINDOWED paint holds only a mid-scroll slice of a taller
@@ -1785,15 +1760,8 @@
 (defonce ^:private active-html-terminal (atom nil))
 
 (defonce ^:private kitty-image-state
-  ;; Transmit-once bookkeeping for the Kitty graphics protocol. Each unique image
-  ;; (keyed by path + transmitted box) uploads its PNG ONCE under a client image id;
-  ;; every later frame RE-PLACES it (`a=p`) instead of re-transmitting the whole PNG
-  ;; and deleting every image (`a=T` + `d=A`). That removes the upload gap that made
-  ;; scrolling flicker AND makes the cheap scroll fast-path affordable for image
-  ;; sessions. Shape: {:transmits {[path cols rows] {:id :img-w :img-h}}
-  ;;                   :order [key…] (insertion order for eviction)
-  ;;                   :placed #{id…} (ids with a live placement)
-  ;;                   :next-id n}.
+  ;; Kitty images upload once per path and box, then use cheap placements. Track
+  ;; insertion order for eviction and the IDs currently on screen.
   (atom {:transmits {} :order [] :placed #{} :next-id 1}))
 
 (def ^:private kitty-max-transmits
@@ -2677,19 +2645,8 @@
     ;; `paint-phase-detail`) so a stutter warning names the pass that regressed
     ;; instead of one lumped paint number (issue #24 lived in `messages`).
     (let [;; Messages area draws FIRST. It opens a new click-region staging
-          ;; pass via `HitRegionMap.beginFrame` and registers every painted chrome
-          ;; row (links, image markers, file links). The header then
-          ;; registers its :copy-id region. The published click-region
-          ;; registry is unchanged until `HitRegionMap.commitFrame` runs at the end
-          ;; of this fn - so the input thread can `HitRegionMap.lookup` at any time
-          ;; during the paint and still get a complete previous frame back
-          ;; instead of a half-filled buffer (the bug that made the header
-          ;; copy-id button feel "sometimes broken" when the spinner was
-          ;; ticking).
-          ;;
-          ;; #24's copy-region storm lived in `draw-messages-area!`; bracket it
-          ;; with its own timestamps so a regression there reads `messages`, not
-          ;; `paint`.
+          ;; Stage click regions and publish them only after the whole frame is painted, so
+          ;; input always sees one complete frame. Time message-region work separately.
           cursor-position
           (volatile! nil)
 
@@ -2745,23 +2702,8 @@
             (.setCursorPosition screen nil)
             (.setCursorPosition screen ^TerminalPosition @cursor-position))
 
-          ;; Atomically publish every chrome region painted above. Until this swap runs the input
-          ;; thread sees the PREVIOUS frame's regions, which is the correct fallback - the previous
-          ;; frame matches what's actually still on the user's screen up to this instant.
-          ;; capture-screen-cells walks cols×rows of the back buffer and allocates a 2D string vec.
-          ;; On a 200×50 terminal that's 10000 .getBackCharacter calls + ~10000 string allocations
-          ;; per frame. The cells are ONLY consumed by the mouse-selection clipboard copy path - we
-          ;; read `(:screen-cells (:layout db))` to extract the text under the user's drag. When no
-          ;; selection is active, nothing reads them. Skip the capture in that case.
-          ;;
-          ;; Safety: when a fresh selection starts (mouse press), the next
-          ;; full render is dispatched (the input handler bumps
-          ;; render-version on every mouse event); :mouse-selection becomes
-          ;; non-nil in db, so we DO capture this frame. Selection content
-          ;; uses these cells. The only edge case is a press+release within
-          ;; the SAME render frame, which can't happen because each event
-          ;; bumps version and the render loop processes one version at a
-          ;; time. See autoresearch A11.
+          ;; Publish chrome regions atomically. Capture screen cells only during selection;
+          ;; mouse events force a fresh frame before those cells are consumed.
           overlay-geom
           (when (:tasks-open? db)
             (components/context-overlay! g
@@ -3251,19 +3193,8 @@
         {:keys [^long text-rows ^long input-top ^long rail-top ^long echo-row]}
         (composer-geometry db cols rows)
 
-        ;; Geometry MUST match `render-frame!` exactly. The full path
-        ;; reserves one empty terminal row between the header band and
-        ;; the first transcript bubble via `(inc (header/header-rows db))`.
-        ;; Dropping the `inc` here shifts the live bubble + scrollbar
-        ;; track + inner-h by one row vs the previous full frame, which
-        ;; (a) leaves a stale row of bubble border under the header on
-        ;; every live↔full flip (the `[]` artifacts visible when a turn
-        ;; ends), (b) changes inner-h so the virtual layout clamps
-        ;; `eff-scroll` against a different ceiling — content visibly
-        ;; jumps down when new iterations arrive mid-scroll, and
-        ;; (c) misaligns click regions published by the prior full frame
-        ;; with the partial-live re-paint, so a second click on a
-        ;; collapsible disclosure misses its toggle target.
+        ;; Keep partial-frame geometry identical to `render-frame!`; even a one-row
+        ;; mismatch shifts content, scroll bounds and click targets.
         messages-top
         (inc (long (header/header-rows db)))
 
@@ -3402,35 +3333,12 @@
                                        :height
                                        long)
                         :messages-scroll messages-scroll}}))
-    ;; ── Click-region republish (live-aware) ────────────────────
-    ;; The previous frame's `regions-atom` is used by `HitRegionMap.lookup` while
-    ;; partial frames tick. That works for STABLE bubbles (their pixels
-    ;; aren't repainted, so old regions still match what's on screen),
-    ;; but the LIVE bubble grows: every new iteration shifts its
-    ;; toggle-details / link rows down, so a region registered at the
-    ;; previous full frame ends up pointing at the wrong row. The user
-    ;; clicks the disclosure they SEE and nothing happens.
-    ;;
-    ;; Fix: stage a fresh frame. Carry over every region NOT painted
-    ;; by something we're about to repaint (header chrome + the live
-    ;; bubble's previous row range). Then re-paint live bubble + header
-    ;; and commit. Stable transcript bubbles keep their previous-frame
-    ;; regions verbatim ONLY while the view didn't scroll; when auto-bottom
-    ;; follow shifts `eff-scroll` the branch below repaints the whole
-    ;; messages band so their regions track the new rows.
+    ;; Rebuild click regions for the growing live bubble while retaining unchanged
+    ;; regions only when the transcript has not shifted.
     (let [prev-live-entry old-entry]
       (if transcript-shifted?
-        ;; ── FOLLOW-mode transcript shift ─────────────────────────────
-        ;; Auto-bottom follow just moved `eff-scroll`, so EVERY stable
-        ;; transcript bubble slid on screen (its `:top` drops one row per
-        ;; row the live bubble grew). Carrying their old click regions
-        ;; verbatim (the cheap path below) leaves each toggle region
-        ;; pointing at a row the disclosure no longer occupies — the user
-        ;; clicks the fold they SEE mid-stream and nothing opens.
-        ;; Repaint the whole messages band like `render-scroll-frame!`:
-        ;; `draw-messages-area!` re-lays the pixels AND re-registers every
-        ;; transcript + live click region at its NEW row. Fires only on
-        ;; height-change ticks; spinner-only ticks keep the cheap path.
+        ;; Follow mode shifts every bubble, so repaint the message band and republish
+        ;; all click regions at their new rows.
         (do (binding [render/*image-placements* image-sink]
               (render/draw-messages-area! g layout messages-top messages-bottom cols))
             ;; Carry only chrome regions OUTSIDE the messages band; the
@@ -4210,15 +4118,8 @@
 (defn- active-provider-id
   []
   (or
-    ;; Resolve the provider EXACTLY like the footer does
-    ;; (`footer/session-effective-provider`): the local per-session pick in
-    ;; app-db FIRST, then the gateway's stored session model, then the router
-    ;; default. Reading the gateway first made the poller fetch limits for a
-    ;; DIFFERENT provider than the one the footer renders (the gateway still
-    ;; said claude while the just-cycled session pref said openai-codex), and
-    ;; `report-for-current-provider` drops a report stamped with another
-    ;; provider — so the usage row sat on "limits: loading…" forever while the
-    ;; poller happily refreshed the wrong plan.
+    ;; Use the same provider precedence as the footer: session override, stored model,
+    ;; then router default.
     (some-> (:session-model-pref @state/app-db)
             :provider
             not-empty
@@ -4297,41 +4198,33 @@
    Dispatches only when the `:git` fact actually changes, so an idle session costs
    one cheap gateway read per tick and never churns the render loop."
   ^Thread []
-  (let [t (Thread.
-            ^Runnable
-            (fn []
-              (loop [last-key ::init]
-                (when-not (:shutdown? @state/app-db)
-                  (let [sid (get-in @state/app-db [:session :id])
-                        ws (try (when sid
-                                  (when-let [ws (vis/gateway-session-workspace sid)]
-                                    (when (get ws "root") ws)))
-                                (catch Throwable t
-                                  (tel/log! {:level :warn
-                                             :id ::workspace-refresh-failed
-                                             :data {:error (or (ex-message t) (str t))}
-                                             :msg "Workspace refresh failed"})
-                                  nil))
-                        ;; Dedup key includes the session id, NOT just the
-                        ;; `:git` fact. `:set-workspace` (nil workspace-id) writes
-                        ;; the ACTIVE tab, and the active session changes on a tab
-                        ;; switch / background turn. Keying on git alone means a
-                        ;; switch to a session whose changed-file count coincides
-                        ;; with the previously-active one's suppresses the
-                        ;; dispatch, leaving the now-active tab frozen at its
-                        ;; stale turn-start snapshot (two sessions on the SAME dir
-                        ;; then show different counts). Re-dispatch on any sid OR
-                        ;; git change so the footer always tracks the active tab.
-                        next-key (if ws
-                                   (let [k [sid (get ws "git")]]
-                                     (when (not= k last-key) (state/dispatch [:set-workspace ws]))
-                                     k)
-                                   last-key)]
+  (let [t (Thread. ^Runnable
+                   (fn []
+                     (loop [last-key ::init]
+                       (when-not (:shutdown? @state/app-db)
+                         (let [sid (get-in @state/app-db [:session :id])
+                               ws (try (when sid
+                                         (when-let [ws (vis/gateway-session-workspace sid)]
+                                           (when (get ws "root") ws)))
+                                       (catch Throwable t
+                                         (tel/log! {:level :warn
+                                                    :id ::workspace-refresh-failed
+                                                    :data {:error (or (ex-message t) (str t))}
+                                                    :msg "Workspace refresh failed"})
+                                         nil))
+                               ;; Include session ID in the dedup key so equal git summaries on two
+                               ;; tabs cannot suppress a required update.
+                               next-key (if ws
+                                          (let [k [sid (get ws "git")]]
+                                            (when (not= k last-key)
+                                              (state/dispatch [:set-workspace ws]))
+                                            k)
+                                          last-key)]
 
-                    (try (Thread/sleep (long workspace-refresh-ms))
-                         (catch InterruptedException _ nil))
-                    (recur next-key)))))
-            "vis-tui-workspace-refresh")]
+                           (try (Thread/sleep (long workspace-refresh-ms))
+                                (catch InterruptedException _ nil))
+                           (recur next-key)))))
+                   "vis-tui-workspace-refresh")]
     (.setDaemon t true)
     (.start t)
     t))
@@ -5070,15 +4963,8 @@
      ;; Load persisted config
      (let [c (vis/load-config)]
        (state/dispatch [:set-config c]))
-     ;; Hydrate feature toggles (`:toggles` slot in ~/.vis/config.edn).
-     ;; Runs AFTER `vis/load-config` and before the input loop; the
-     ;; render pipeline reads toggles per-paint, so the first frame
-     ;; already reflects persisted overrides instead of falling back
-     ;; to registry defaults for one tick. We also install a listener
-     ;; that auto-persists every change — toggles flipped from a future
-     ;; settings dialog land in config.edn without any per-callsite
-     ;; save plumbing. The listener bumps `:render-version` so the
-     ;; bubble repaints with the new value on the same tick.
+     ;; Hydrate toggles before first paint, persist later changes, and wake render on
+     ;; each update.
      (try (vis/toggles-hydrate-from-config! (or (vis/load-config-raw) {}))
           ;; `state/init!` (above) already projected registry DEFAULTS into
           ;; `:settings`, and hydration mutates the toggles AFTER that and
@@ -5263,26 +5149,8 @@
            ;; and Python rows are fetched only after the startup session binds.
            (future (try (slash-suggestions-for-input screen (input-state-from-text "/"))
                         (catch Throwable _ nil)))
-           ;; Local UI state that lives only in the input thread.
-           ;;
-           ;; `scrollbar-drag-offset` is `nil` when no drag is in
-           ;; progress; otherwise it carries the integer row offset
-           ;; between the click row and the TOP of the thumb captured
-           ;; at CLICK_DOWN time (i.e. "how many rows from the top of
-           ;; the thumb did the user grab?").
-           ;;
-           ;; Drag math then becomes `new-thumb-top = my - offset`,
-           ;; which keeps the grip-point fixed under the cursor for
-           ;; the entire drag - same contract every GUI scroll thumb
-           ;; honours. A simple boolean would force the thumb to snap
-           ;; its TOP to the cursor on the first DRAG event, which is
-           ;; what made the previous implementation "jump" the moment
-           ;; the user started moving.
-           ;;
-           ;; Clicks anywhere outside the thumb itself - the messages area, the track
-           ;; above/below the thumb, the right gutter columns - are deliberately ignored (no
-           ;; jump-to-position). Lanterna owns bracketed paste, mouse protocols, and
-           ;; line-discipline input lifecycle; Vis only applies the themed window rim.
+           ;; Store the row where the thumb was grabbed so dragging preserves that offset.
+           ;; Clicks outside the thumb do not jump the scrollbar.
            (enable-terminal-state! opts)
            (let [scrollbar-drag-offset (volatile! nil)
                  ;; `click-action-fired?` is set to true when the
@@ -5977,24 +5845,8 @@
                                           (get [_] (.readInput ^TerminalScreen screen))))
                        (Thread/sleep 16))
                      (recur))
-                   ;; ── Bracketed paste ───────────────────────────────────────────────────
-                   ;; Three-state machine sitting BEFORE the regular key dispatch:
-                   ;;
-                   ;;   START arrives  -> open a new StringBuilder,
-                   ;;                     swallow the key.
-                   ;;   any key while open -> append its char into the
-                   ;;                     buffer, swallow.
-                   ;;   END arrives    -> flush the buffered text into
-                   ;;                     the input via `paste-text`,
-                   ;;                     close the buffer.
-                   ;;
-                   ;; Mouse events are excluded from the paste
-                   ;; state machine below - they take a separate cond
-                   ;; branch that fires BEFORE this one (see the
-                   ;; `(instance? MouseAction key)` clause). A stuck
-                   ;; paste buffer therefore can't silently swallow
-                   ;; clicks on the header copy affordance or the
-                   ;; scrollbar.
+                   ;; Bracketed paste buffers characters from START through END before normal
+                   ;; key dispatch; mouse events bypass this state machine.
                    (= KeyType/PasteStart (.getKeyType ^KeyStroke key))
                    (do (vreset! paste-buffer (StringBuilder.)) (recur))
                    (= KeyType/PasteEnd (.getKeyType ^KeyStroke key))
@@ -6038,18 +5890,7 @@
                          my (.getRow pos)
                          _ (when-not (or (= atype MouseActionType/MOVE)
                                          (= atype MouseActionType/DRAG))
-                             ;; MOVE/DRAG fire dozens of times per
-                             ;; second; CLICK_*/SCROLL_* can still
-                             ;; spew tens of events per second
-                             ;; while the user scroll-wheels through
-                             ;; a long bubble — enough to make the
-                             ;; file handler's IO the dominant cost.
-                             ;; Keep the diagnostic ("my click did
-                             ;; nothing" reports), but emit at
-                             ;; `:debug` so the default `:info`-min
-                             ;; file handler drops the line. Flip
-                             ;; min-level to `:debug` (or attach a
-                             ;; console handler) to get it back.
+                             ;; Mouse motion is high-volume diagnostic data; keep it at debug level.
                              (try (let [hit-kind (some-> (.lookup interactions/hit-map mx my)
                                                          :kind)]
                                     (tel/log!
@@ -6362,17 +6203,8 @@
 
                                  nil))))
                          (recur))
-                       ;; CLICK_RELEASE - ends a drag, and serves as
-                       ;; a FALLBACK click trigger for terminals that
-                       ;; deliver clicks as a single CLICK_RELEASE
-                       ;; (X10 mouse mode, some SSH-tunnelled
-                       ;; sessions) instead of the standard
-                       ;; CLICK_DOWN/CLICK_RELEASE pair. The fallback
-                       ;; is gated on (a) no drag in progress, and
-                       ;; (b) the corresponding CLICK_DOWN didn't
-                       ;; already handle the same region - otherwise
-                       ;; a normal terminal would double-fire (copy
-                       ;; the id twice, open the link twice).
+                       ;; Treat release as a fallback click only when no drag or matching handled
+                       ;; press exists, avoiding double actions on normal terminals.
                        (= atype MouseActionType/CLICK_RELEASE)
                        (let [was-dragging? (some? @scrollbar-drag-offset)
                              already-handled? @click-action-fired?
@@ -6590,16 +6422,7 @@
                                (vreset! last-selection-click nil)
                                (vreset! mouse-selection-line? false)
                                (case (:kind hit)
-                                 ;; Header copy-id affordance: drop the
-                                 ;; FULL UUID onto the system clipboard,
-                                 ;; then push a host notification - the
-                                 ;; header band's LEFT slot subscribes to
-                                 ;; `vis.core/notifications` and surfaces
-                                 ;; `✓ Copied session ID` for ~1.5s
-                                 ;; before the entry expires. No
-                                 ;; TUI-specific flash state; the
-                                 ;; cross-channel notifications system
-                                 ;; carries the feedback.
+                                 ;; Copy the full session ID and report success through shared notifications.
                                  :attachment-remove
                                  (state/dispatch [:remove-attachment (:attachment-id hit)])
 
@@ -6769,19 +6592,8 @@
                    (some? @paste-buffer) (do (when-let [text (.getText ^KeyStroke key)]
                                                (.append ^StringBuilder @paste-buffer ^String text))
                                              (recur))
-                   ;; Placeholder smart-delete: a single
-                   ;; Backspace right after the closing `]` of a
-                   ;; `[Pasted #N: ...]` token nukes the WHOLE token in
-                   ;; one keystroke, and drops the matching entry from
-                   ;; `:pastes` so memory tracks what the user can
-                   ;; still see in their input. Without this, the user
-                   ;; would have to mash Backspace 27+ times to remove
-                   ;; one placeholder - the visual unit-of-edit is the
-                   ;; whole token, not its individual characters.
-                   ;; In-session search owns the keyboard while active: typing
-                   ;; edits the query (incremental), F3/Shift+F3 walk matches,
-                   ;; Enter = next, Esc closes. Sits above the placeholder/slash
-                   ;; branches so Backspace + chars reach the query, not the draft.
+                   ;; Backspace after a paste placeholder removes the whole token and payload.
+                   ;; Active in-session search receives keys before draft editing.
                    (and (instance? KeyStroke key) (get-in db [:search :active?]))
                    (let [ks ^KeyStroke key
                          ktype (.getKeyType ks)
@@ -6923,16 +6735,8 @@
                      ;; :reset-input, so nothing is lost by skipping it here.
                      (when-not (= action :clear-input) (state/dispatch [:update-input state]))
                      (let [run-command!
-                           ;; The extension-contributed `:tui.slot/commands` slot is GONE;
-                           ;; dispatchable command maps are either built-in palette ids
-                           ;; (`:new-session`, `:fork-session`, ...) or typed
-                           ;; slash suggestions from `vis/registered-slashes`.
-                           ;; Slash entries carry a dotted `:id` (path)
-                           ;; + `:slash/text`; we detect them by `:slash/text`
-                           ;; and resubmit as a user message so
-                           ;; `run-turn!` handles them through canonical
-                           ;; `slash/dispatch`. Ctrl+K no longer includes those
-                           ;; slash roots by default.
+                           ;; Palette maps are built-ins; typed slash suggestions return through the
+                           ;; canonical slash dispatcher.
                            (fn [cmd & [args]]
                              (let [cmd-id (if (map? cmd) (:id cmd) cmd)
                                    args (or args (:slash/args cmd) "")
@@ -6985,17 +6789,8 @@
                                      :switch-session
                                      (show-sessions!)
 
-                                     ;; :search-in-session removed from
-                                     ;; the command palette — the in-session
-                                     ;; search lives in the upper bar (above
-                                     ;; messages) and is triggered by F3 /
-                                     ;; Shift+F3 / its in-place input field. The
-                                     ;; previous palette entry was a duplicate
-                                     ;; entry point for the same action.
-                                     ;; Providers live INSIDE Settings now: one row
-                                     ;; per provider (auth state + model) opening
-                                     ;; that provider's own menu, with the full
-                                     ;; manager one row below them.
+                                     ;; In-session search owns F3 and its upper bar; provider choices live
+                                     ;; under Settings.
                                      :providers
                                      (with-dialog-lock #(open-settings-modal! screen "Providers"))
 
@@ -7169,16 +6964,8 @@
 
                          :show-palette
                          (do (when-not (:dialog-open? @state/app-db)
-                               ;; One invocation, one command. Reopening here
-                               ;; caused a modal loop: after choosing any
-                               ;; command the palette immediately appeared
-                               ;; again until Esc. Ctrl+K should close after
-                               ;; execution; users can press Ctrl+K again for
-                               ;; another command. `command-palette!`
-                               ;; re-concats `dlg/palette-commands` internally.
-                               ;; Keep extension slash roots out of. Ctrl+K;
-                               ;; typed `/` suggestion owns those. The ctx drops
-                               ;; turnless-illegal verbs (fork) from the list.
+                               ;; A palette invocation executes one command and closes. Slash roots remain
+                               ;; in typed suggestions, and illegal context actions are omitted.
                                (when-let [cmd (with-dialog-lock
                                                 #(dlg/command-palette!
                                                    screen

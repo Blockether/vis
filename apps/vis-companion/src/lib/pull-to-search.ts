@@ -1,35 +1,7 @@
 /**
- * PULL THE LIST DOWN AND THE SEARCH ARRIVES.
- *
- * The fleet-wide search is a PAGE and the app bar is its door (`Header` in
- * `App.tsx`): one magnifying glass in the far top corner of a 390px phone, which
- * is the corner a thumb reading the list cannot reach. Every native list that
- * reader uses answers the same question with the same gesture — pull a list that
- * is already at its top and the search comes down over it. This module is that
- * gesture, and it opens the very door the glass opens; nothing else about the
- * screen changes.
- *
- * Three facts decide whether a finger is asking for it:
- *
- *   - the list must ALREADY be at the top. A pull anywhere else is scrolling,
- *     and a screen that answered it with a search page would be unreadable.
- *   - the drag must be DOWNWARD and roughly straight. A session row is a
- *     horizontal swipe of its own (`components/SwipeActions`), so a gesture that
- *     commits sideways belongs to the row it started on and is dropped here.
- *   - it commits on the LIFT, never on the pixel that crosses the threshold.
- *     That is what makes it cancellable — drag back up and the hint stands down
- *     with nothing opened — and it is the ordering that raises a phone keyboard:
- *     the caret is put in the field from `touchend`, the discrete event React
- *     flushes inside the gesture itself, exactly as a press on the glass does it.
- *
- * The gesture REPORTS ITSELF WHILE IT HAPPENS (`PullToSearchHint`), and it
- * reports by FOLLOWING THE FINGER: the band comes down the exact fraction of
- * the way the pull has come, so the hand is moving the band rather than
- * tripping a switch that then plays a canned slide of its own. Past the
- * threshold the band gives only a third of what the finger asks for, and that
- * resistance is the detent this app has no haptics to tick. The screen is the
- * only confirmation there is, and a pull that showed nothing until the finger
- * lifted would be a gesture nobody could learn and nobody could trust.
+ * Pulling down from the top opens fleet search on touch devices. The gesture must stay
+ * predominantly vertical, yields to row swipes, remains cancellable, and commits on
+ * release so focus is granted from the user event. The hint follows the drag.
  */
 
 import { useEffect, useRef, type RefObject } from 'react';
