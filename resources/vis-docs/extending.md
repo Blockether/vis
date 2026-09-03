@@ -30,7 +30,8 @@ Everything on this page, by what you are trying to do:
 
 | I want to… | Python | Clojure |
 | --- | --- | --- |
-| add a tool the model can call | [Tools](#tools) | [Tools: symbols](#tools-symbols) |
+| add a tool the model can call | [Tools](#tools), [Object-first tools](#object-first-tools) | [Tools: symbols](#tools-symbols) |
+| return typed results, not strings or dicts | [Object-first tools](#object-first-tools) | — |
 | add a `/command` for the user | [Slash commands](#slash-commands) | [Slash commands (Clojure)](#slash-commands-clojure) |
 | ask the human something mid-turn | [Asking the human](#asking-the-human) | [Asking the human (Clojure)](#asking-the-human-clojure) |
 | show live progress while work runs | [Showing the human live work](#showing-the-human-live-work) | — |
@@ -311,7 +312,8 @@ order; properties, data attributes, and names beginning with `_` never cross the
 boundary. `vis.method(...)` overrides `tag` or `is_hidden` for one method; otherwise
 the enclosing `vis.symbol(...)` defaults apply. Each method keeps its own signature
 and docstring in `apropos`/`doc`, runs through the same deferred worker and result
-envelope as a flat tool, and may return a custom typed object without flattening it.
+envelope as a flat tool, and may return a custom typed object without flattening it
+([Object-first tools](#object-first-tools) below is the full pattern).
 
 **A tool is a Python callable, never a provider tool.** `python_execution` is the
 only thing a model is handed a schema for; every symbol an extension registers is
@@ -334,6 +336,67 @@ def todo_toggle(id):
             ...
     raise ValueError(f"no todo with id {id}; call todo_list() to see ids")
 ```
+
+### Object-first tools
+
+A tool's return value crosses into the sandbox as a real Python value, so give
+it a real Python type. The pattern that holds up past a handful of operations
+is **object-first**: operations return ordinary, precisely typed domain
+objects, and rendering and serialization live at explicit boundaries.
+
+- **Annotate every parameter and every return.** The annotations are part of
+  the contract the model reads next to the docstring.
+- **Return a concrete domain type** — never a formatted string, a JSON blob, a
+  shapeless `dict`, or `Any`. A consumer forced to parse your text back into
+  structure will parse it wrong, and a consumer of `dict`/`Any` cannot tell
+  what changed when the tool grows.
+- **Public result types are immutable**: `@dataclass(frozen=True)`.
+- **A type docstring says what the object *is*** — which real thing it
+  represents, its invariants, its non-obvious states — not a restatement of the
+  class name. Field-level meaning (units, when a field is `None`, sentinels,
+  ordering, ownership) belongs in that same docstring.
+- **A flat `dict` of scalars stays fine for a trivial result**
+  (`{"greeting": "hello vis"}`). The moment a result grows a second consumer,
+  a non-obvious field, or a `None` that means something, it becomes a
+  dataclass.
+- **Serialize at real boundaries only** — persistence, a wire — and say so
+  where it happens. A CLI may render the object once for a human; the sandbox
+  receives the object itself.
+
+```python
+@dataclass(frozen=True)
+class CommandResult:
+    """Outcome of one command executed on the remote server.
+
+    `exit_code` is None exactly when the command was killed locally after
+    `timeout_s`; the remote side may still be running it. `stdout`/`stderr`
+    are decoded UTF-8 and capped at 256 KiB; `is_truncated` says the cap
+    cut something off. `duration_ms` measures the local wait for ssh, not
+    the command's own runtime.
+    """
+
+    command: str
+    exit_code: int | None
+    stdout: str
+    stderr: str
+    duration_ms: int
+    is_timed_out: bool
+    is_truncated: bool
+```
+
+The key boundary is the call, not the rendering:
+
+```python
+result = remote_sandboxed_server.run("systemctl is-active visgw")  # CommandResult
+```
+
+A complete shipped example — `run`, `service`, `health`, `info`, `put` and
+`get` against one administered server over one ssh door, every result a
+frozen dataclass, credentials through a keychain-backed `environment:`
+source — lives at
+`resources/examples/python-extensions/remote_sandboxed_server.py`. Basic
+annotations and docstrings can be validated mechanically later; the contract
+comes first.
 
 Dict keys pass through as written — use snake_case.
 
