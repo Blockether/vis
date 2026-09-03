@@ -787,7 +787,8 @@
                    (expect (str/includes? text "cat(path, start, end)"))
                    (expect (str/includes? text "patch(path, edits)"))
                    (expect (str/includes? text "\"replace\""))
-                   (expect (str/includes? text "line:hash"))))
+                   (expect (str/includes? text "line:hash"))
+                   (expect (str/includes? text "Exact lines only — never relocate"))))
              (it "never tells the model to write a text EDIT in plain Python"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (not (str/includes? text "CHANGING the tree is plain Python")))

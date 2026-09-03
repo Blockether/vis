@@ -3478,23 +3478,25 @@
 ;;   `patch` SPENDS that address: it names a span and the new text, and NEVER
 ;;           restates the text being replaced.
 ;;
-;; The read is forgiving (a stale anchor falls back to its line number); the
-;; WRITE is verified and refuses — a stale or misplaced anchor, or an edit that
-;; would not parse, writes nothing and hands back the anchor that fixes it.
+;; The read is forgiving; the WRITE is exact. Every endpoint's line and hash must
+;; still agree, or the entire batch is refused with the current anchor. A parse
+;; break is refused too, and neither failure writes anything.
 
 ;; The refusal payload crosses the boundary as ex-data -> tool failure -> wire.
 (s/def :ext.editing.patch/reason
-  #{:anchor-malformed :anchor-line-out-of-range :anchor-not-found :anchor-misplaced
-    :anchor-range-inverted :replacement-missing :replacement-is-anchor :parse-broken :file-not-found
-    :path-is-dir :path-escape})
+  #{:anchor-malformed :anchor-line-out-of-range :anchor-mismatch :anchor-range-inverted
+    :replacement-missing :replacement-is-anchor :parse-broken :file-not-found :path-is-dir
+    :path-escape})
 (s/def :ext.editing.patch/current-anchor :ext.editing.hashline/anchor)
+(s/def :ext.editing.patch/current-from-anchor :ext.editing.hashline/anchor)
+(s/def :ext.editing.patch/current-to-anchor :ext.editing.hashline/anchor)
 (s/def :ext.editing.patch/stated-line pos-int?)
-(s/def :ext.editing.patch/found-lines (s/coll-of pos-int? :kind vector?))
 (s/def :ext.editing.patch/error-line pos-int?)
 (s/def :ext.editing.patch/refusal
   (s/keys :req-un [:ext.editing.patch/reason]
-          :opt-un [:ext.editing.patch/current-anchor :ext.editing.patch/stated-line
-                   :ext.editing.patch/found-lines :ext.editing.patch/error-line]))
+          :opt-un [:ext.editing.patch/current-anchor :ext.editing.patch/current-from-anchor
+                   :ext.editing.patch/current-to-anchor :ext.editing.patch/stated-line
+                   :ext.editing.patch/error-line]))
 
 (defn- positional-only!
   "Refuse an options MAP in a slot that takes a positional argument. `cat` and
@@ -3744,12 +3746,11 @@
 
 (defn- anchor-refusal!
   "Turn a `hashline` resolution error into the patch refusal the model reads.
-   Each shape names WHAT disagreed and hands back the one-step recovery: the
-   anchor that is really there, or the window to re-read — and, since the batch is
-   atomic, WHICH edit of the call disagreed."
+   Each shape names WHAT disagreed and hands back the exact current anchor or
+   range for a one-step retry; atomically, it also names WHICH edit failed."
   [rel
-   {:keys [reason which hash stated-line found-lines current-anchor current-text line lines
-           from-line to-line anchor edit-index edit-count]}]
+   {:keys [reason which hash stated-line current-anchor current-from-anchor current-to-anchor
+           current-text line lines from-line to-line anchor edit-index edit-count]}]
   (let [slot
         (if (= :to which) "to" "from")
 
@@ -3758,11 +3759,14 @@
           stated-line
           (assoc :stated-line stated-line)
 
-          (seq found-lines)
-          (assoc :found-lines (vec found-lines))
-
           current-anchor
           (assoc :current-anchor current-anchor)
+
+          current-from-anchor
+          (assoc :current-from-anchor current-from-anchor)
+
+          current-to-anchor
+          (assoc :current-to-anchor current-to-anchor)
 
           edit-index
           (assoc :edit-index edit-index))]
@@ -3779,42 +3783,24 @@
         :anchor-line-out-of-range
         [(str "  " rel "  " slot " names line " line) (str "  the file has " lines " lines.")]
 
-        :anchor-not-found
+        :anchor-mismatch
         [(str "  " rel "  " slot " " stated-line ":" hash)
          (str "  line "
               stated-line
               " now hashes "
               (hashline/line-hash current-text)
-              ", and no line within "
-              hashline/hash-line-drift-tolerance
-              " lines carries "
-              hash
-              ".")
-         (str "  current anchor at "
-              stated-line
-              " →  "
-              current-anchor
-              hashline/hashline-gutter
-              current-text)
-         (str "  retry with that anchor, or re-read: " (anchor-window-hint rel stated-line))]
-
-        :anchor-misplaced
-        [(str "  " rel "  " slot " " stated-line ":" hash)
-         (str "  "
-              hash
-              " is not at line "
-              stated-line
-              "; it is at "
-              (if (= 1 (count found-lines))
-                (str "line " (first found-lines))
-                (str "lines " (str/join ", " found-lines)))
-              ", beyond the "
-              hashline/hash-line-drift-tolerance
-              "-line drift window.")
-         (if current-anchor
-           (str "  current anchor →  " current-anchor)
-           (str "  re-read before retrying: " (anchor-window-hint rel (first found-lines))))
-         "  the anchor is stale or belongs to another region; confirm with cat before retrying."]
+              "; patch requires the hash to match that exact line.")
+         "  patch never relocates a write by searching for the hash on another line."
+         (if (and current-from-anchor current-to-anchor)
+           (str "  current range →  " current-from-anchor " .. " current-to-anchor)
+           (str "  current anchor at "
+                stated-line
+                " →  "
+                current-anchor
+                hashline/hashline-gutter
+                current-text))
+         (str "  retry with that " (if (and current-from-anchor current-to-anchor) "range" "anchor")
+              ", or re-read: " (anchor-window-hint rel stated-line))]
 
         :anchor-range-inverted
         [(str "  " rel "  `from` resolves to line " from-line ", after `to`'s line " to-line ".")
@@ -4272,12 +4258,13 @@
      patch(path, [{\"from\": a, \"to\": b, \"replace\": new}])        a span
      patch(path, [{\"from\": anchor, \"replace\": \"\"}])               delete
 
-   `to` defaults to `from`; `replace` is required — an absent one is refused, never
-   read as a deletion. Every anchor resolves against ONE read, so the edits may be
-   listed in ANY order and no anchor from the caller's own read goes stale
-   mid-batch; two edits over the same line are refused. The anchors are the ones
-   `cat` and `grep` print; a bare line number is refused on purpose — the hash is
-   what makes a wrong-line write impossible. One file per call: a refusal writes
+   A span is the canonical input; `to` defaults to `from` only for one line.
+   `replace` is required — an absent one is refused, never read as a deletion.
+   Every endpoint must match its exact current `<line>:<hash>` pair; patch never
+   searches for that hash on another line. Every anchor resolves against ONE read,
+   so edits may be listed in ANY order and no endpoint drifts mid-batch; overlapping
+   edits are refused. Success returns a fresh output range, abbreviated to one
+   anchor when the replacement has one line. One file per call; a refusal writes
    NOTHING."
   [path edits]
   (patch-file! path edits))
@@ -4311,19 +4298,22 @@
      :result
      (str
        "A plain string: one status line — path, edit count, lines before → after, parse verdict — "
-       "then one row per edit with the anchors that are LIVE AFTER the write, so the next patch needs no cat.")
+       "then one row per edit with its fresh output range, abbreviated to one anchor for one line. "
+       "Those anchors are LIVE AFTER the write, so the next patch needs no cat.")
      :description
      (str
        "Apply EVERY anchored edit for one file in one atomic write — replace lines, rewrite a docstring in "
        "place, swap a function body, rename an identifier through a file, edit a config file without retyping "
        "it, in prose, code or any language: "
-       "`patch(path, [{\"from\": a, \"replace\": new}, {\"from\": b, \"to\": c, \"replace\": \"\"}])`. `to` "
-       "defaults to `from`, `replace: \"\"` deletes, and the edits may be listed in ANY order because every "
-       "anchor resolves against ONE read. NEVER restate the text you are replacing. Atomic: a stale anchor, "
-       "an overlap or a syntax-breaking write refuses the WHOLE batch and writes NOTHING, naming the edit "
-       "and carrying the correct anchor. A delimiter you OMITTED is put back where the text you replaced "
-       "had it — mid-line, or a lost opening `(` — and the line it produced is named; one you WROTE is never "
-       "deleted or retyped, so a closer too many, or `(` typed where `]` belongs, is refused instead of guessed at.")
+       "`patch(path, [{\"from\": a, \"replace\": new}, {\"from\": b, \"to\": c, \"replace\": \"\"}])`. A "
+       "range is canonical; `to` defaults to `from` only for one line, and `replace: \"\"` deletes. Every "
+       "endpoint must match its exact current `line:hash`; a mismatch is refused, never relocated by hash. "
+       "The edits may be listed in ANY order because all resolve against ONE read. NEVER restate the text you "
+       "are replacing. Atomic: a stale anchor, an overlap or a syntax-breaking write refuses the WHOLE batch "
+       "and writes NOTHING, naming the edit and carrying the current anchor or range. A delimiter you OMITTED is put "
+       "back where the text you replaced had it — mid-line, or a lost opening `(` — and the line it produced "
+       "is named; one you WROTE is never deleted or retyped, so a closer too many, or `(` typed where `]` "
+       "belongs, is refused instead of guessed at.")
      :call {:pos ["path" "edits"]}
      :before-fn (plan-gated-before-fn :patch :file read-arg-paths)
      :tag :mutation

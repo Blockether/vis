@@ -4,9 +4,9 @@
 
    An anchor is `<1-based line>:<3-hex content hash>` (Can Bölük's original
    hashline shape). The LINE NUMBER locates the line; the CONTENT HASH verifies
-   it. Two coordinates, so a stale or reused anchor can no longer silently land
-   an edit on the wrong line: when the content sits far from the stated line the
-   write is REFUSED (`:anchor-misplaced`) instead of corrupting the file.
+   it. A write requires BOTH coordinates to match exactly: any contradiction is
+   REFUSED (`:anchor-mismatch`) instead of relocating the edit. Only the
+   non-destructive read path may follow matching content through small line drift.
 
    This namespace is pure — no IO, no tool wiring, no extension envelope. Every
    surface that addresses a line routes here so the scheme is never recomputed:
@@ -16,8 +16,8 @@
      render-hashline-block                       [[ln text]…] -> gutter text
      anchor-token / parse-anchor                 rendered line -> bare anchor
      indices-matching-hash                       content-only hash lookup
-     resolve-one-anchor / resolve-anchor-range   anchor -> live line, or refusal
-     resolve-anchor-range-read                   the READ-tolerant twin
+     resolve-one-anchor / resolve-anchor-range   exact write resolution
+     resolve-anchor-range-read                   tolerant read resolution
      resolve-anchor-edit-span                    anchor span -> char span"
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]))
@@ -27,9 +27,9 @@
 ;; The anchor token — the ONE string that crosses Clojure -> CPython -> the model
 
 (def hash-width
-  "Hex chars in a line's content hash. The line number locates; this hash
-   verifies within `hash-line-drift-tolerance`. Three hex chars keep an anchor
-   at 4-7 characters while the line coordinate disambiguates collisions."
+  "Hex chars in a line's content hash. The line number locates; this hash verifies
+   the exact line for writes. Three hex chars keep an anchor at 4-7 characters;
+   the line coordinate, not a file-wide hash search, disambiguates collisions."
   3)
 
 (def ^:const hashline-anchor-sep
@@ -116,10 +116,9 @@
 
 (defn line-anchor
   "The editable anchor for a line: `<line-number>:<content-hash>` (e.g.
-   `4439:a80`). The line number LOCATES the line, the hash VERIFIES its content.
-   `patch` parses this back through `resolve-anchor-range` and refuses when the
-   hash no longer agrees (the line changed) or when that content now lives far
-   from the stated line (a stale / misattributed anchor)."
+   `4439:a80`). The line number LOCATES the line and the hash VERIFIES its exact
+   current content. `patch` refuses any mismatch instead of following the hash
+   to another line."
   [ln text]
   (str ln hashline-anchor-sep (line-hash text)))
 
@@ -214,9 +213,8 @@
 ;; Resolving an anchor against LIVE content
 
 (defn indices-matching-hash
-  "0-based indices of `lines` whose `line-hash` equals the bare hash `h`. Pure
-   content match — the line-number coordinate is applied separately by
-   `resolve-one-anchor`, so this only answers \"which lines carry this content\"."
+  "0-based indices of `lines` whose `line-hash` equals the bare hash `h`. This is
+   only for tolerant READ resolution; writes verify the hash at the named line."
   [lines h]
   (let [h (str h)]
     (into []
@@ -225,14 +223,9 @@
           lines)))
 
 (def hash-line-drift-tolerance
-  "How far (in lines) a content hash may sit from its stated line number before
-   `resolve-one-anchor` calls the anchor MISPLACED and refuses. The common path
-   never needs it: an anchor spent right after the `cat`/`grep` that minted it
-   resolves exactly. This window only forgives small drift when anchors are
-   reused across edits without re-reading; anything larger — the ~200-line gap
-   of a genuinely wrong or stale anchor, the corruption this whole scheme exists
-   to stop — is refused so the caller re-reads. Deliberately tight: a false
-   refuse costs one re-read, a false accept corrupts the file."
+  "How far `resolve-anchor-range-read` may follow content from its stated line.
+   Reads are non-destructive, so following one nearby hash match is useful; writes
+   never use this window and require an exact line/hash pair."
   40)
 
 (defn parse-anchor
@@ -259,24 +252,10 @@
       {:malformed true :raw s})))
 
 (defn resolve-one-anchor
-  "Resolve a single PARSED `{:line :hash}` anchor to a 0-based index in `lines`,
-   or `{:error {:reason KW …}}`. The LINE locates; the hash VERIFIES — but a
-   NON-UNIQUE hash never blocks a well-located edit:
-     1. exact     - the stated line still hashes to `hash`            -> use it.
-     2. drifted   - the line moved a little and `hash` sits at EXACTLY one line
-                    within `hash-line-drift-tolerance`                -> follow it.
-     3. line wins - `hash` is AMBIGUOUS (several lines, at least one near the
-                    stated line): the hash cannot choose, but the caller named an
-                    EXPLICIT line, so use it. Duplicate hashes do NOT make a
-                    `line:hash` anchor ambiguous.
-     4. misplaced - `hash` matches only line(s) FAR from the stated line: a
-                    strong line-vs-content contradiction -> REFUSE. This is the
-                    WRONG-LINE guard that stops an edit landing off target.
-     5. not-found - `hash` matches no live line (the content is gone) -> REFUSE,
-                    handing back the anchor that IS at the stated line so the
-                    caller recovers in ONE call instead of a second read.
-   Plus: a malformed anchor (no `<line>:` prefix) or a line outside the file is
-   refused — those genuinely cannot be located."
+  "Resolve one PARSED `{:line :hash}` write anchor to a 0-based index in `lines`,
+   or `{:error {:reason KW …}}`. The line LOCATES and the hash VERIFIES that exact
+   line. A mismatch is never relocated, even when the same hash occurs nearby;
+   its error carries the current anchor at the stated line for one-step recovery."
   [lines which {:keys [line hash malformed raw]}]
   (if malformed
     {:error {:reason :anchor-malformed :which which :anchor raw}}
@@ -288,57 +267,41 @@
 
       (cond (or (neg? idx0) (>= idx0 n))
             {:error {:reason :anchor-line-out-of-range :which which :line line :lines n}}
-            ;; 1. exact — content at the stated line verifies the hash
             (= hash (line-hash (nth lines idx0))) {:index idx0}
-            :else (let [matches (indices-matching-hash lines hash)]
-                    (if (empty? matches)
-                      ;; 5. the content is gone — refuse and re-read, but carry the CURRENT
-                      ;;    anchor at the stated line so the common stale-after-edit case
-                      ;;    recovers in ONE step instead of a separate read.
-                      {:error {:reason :anchor-not-found
-                               :which which
-                               :hash hash
-                               :stated-line line
-                               :current-anchor (line-anchor line (nth lines idx0))
-                               :current-text (nth lines idx0)}}
-                      (let [tol (long hash-line-drift-tolerance)
-                            in-win (filterv (fn [i]
-                                              (<= (Math/abs (- (inc (long i)) (long line))) tol))
-                                     matches)]
+            :else (let [current-text (nth lines idx0)]
+                    {:error {:reason :anchor-mismatch
+                             :which which
+                             :hash hash
+                             :stated-line line
+                             :current-anchor (line-anchor line current-text)
+                             :current-text current-text}})))))
 
-                        (cond
-                          ;; 2. drifted — one nearby match, follow the content
-                          (= 1 (long (count in-win))) {:index (first in-win)}
-                          ;; 4. the hash matches only FAR from the stated line — WRONG-LINE guard.
-                          ;;    Refuse (three hex chars make "unique in file" weak evidence), but
-                          ;;    when it now sits at EXACTLY ONE line the correct anchor is that
-                          ;;    line plus this same hash — hand it back for a one-step recovery.
-                          (empty? in-win) {:error
-                                           (cond-> {:reason :anchor-misplaced
-                                                    :which which
-                                                    :hash hash
-                                                    :stated-line line
-                                                    :found-lines (mapv #(inc (long %)) matches)}
-                                             (= 1 (count matches))
-                                             (assoc :current-anchor
-                                               (line-anchor (inc (long (first matches)))
-                                                            (nth lines (long (first matches))))))}
-                          ;; 3. several nearby matches — the hash cannot disambiguate, so the
-                          ;;    explicit line wins (the duplicate-line case)
-                          :else {:index idx0}))))))))
+(defn- resolve-one-anchor-read
+  "Resolve one read anchor exactly when possible, otherwise follow its hash only
+   when exactly one matching line is nearby. Other in-range mismatches return the
+   exact-write refusal so `resolve-anchor-range-read` can fall back to the named
+   line and mark the read stale."
+  [lines which {:keys [line hash] :as anchor}]
+  (let [exact (resolve-one-anchor lines which anchor)]
+    (if (not= :anchor-mismatch (get-in exact [:error :reason]))
+      exact
+      (let [tol (long hash-line-drift-tolerance)
+            in-window (filterv (fn [i]
+                                 (<= (Math/abs (- (inc (long i)) (long line))) tol))
+                        (indices-matching-hash lines hash))]
+
+        (if (= 1 (long (count in-window))) {:index (first in-window)} exact)))))
 
 (defn resolve-anchor-range
-  "Resolve `from-anchor` (and `to-anchor`, defaulting to `from-anchor` for a
-   single line) against LIVE `current`. Each is a `<line>:<hash>` anchor: the
-   line number LOCATES it, the hash VERIFIES the content still matches AND still
-   sits near the stated line (else `:anchor-misplaced` — the wrong-line guard).
-   BOTH coordinates are required; a bare hash with no line number is refused
-   (`:anchor-malformed`). Returns `{:from-line N :to-line N}` (1-based,
-   INCLUSIVE) or `{:error {:reason KW …}}`.
+  "Resolve `from-anchor` and `to-anchor` against LIVE `current`; `to` defaults to
+   `from` for a single-line edit. Every endpoint is a `<line>:<hash>` pair whose
+   hash must match that exact line. A mismatch is refused (`:anchor-mismatch`),
+   never relocated. Returns `{:from-line N :to-line N}` (1-based, INCLUSIVE) or
+   `{:error {:reason KW …}}`; a range mismatch carries the fresh anchors for both
+   endpoints.
 
-   The WRITE side of the contract. `resolve-anchor-range-read` is its tolerant
-   twin, so a read and a write address lines identically but only the write
-   refuses."
+   The WRITE side of the contract. `resolve-anchor-range-read` is its tolerant,
+   non-destructive twin."
   [^String current from-anchor to-anchor]
   (let [lines
         (split-content-lines current)
@@ -346,36 +309,59 @@
         from-a
         (parse-anchor from-anchor)
 
+        single-line?
+        (or (nil? to-anchor) (= (str to-anchor) (str from-anchor)))
+
         to-a
-        (if (or (nil? to-anchor) (= (str to-anchor) (str from-anchor)))
-          from-a
-          (parse-anchor to-anchor))
+        (if single-line? from-a (parse-anchor to-anchor))
 
         fr
-        (resolve-one-anchor lines :from from-a)]
+        (resolve-one-anchor lines :from from-a)
 
-    (if (:error fr)
-      fr
-      (let [tr (if (identical? from-a to-a) fr (resolve-one-anchor lines :to to-a))]
-        (if (:error tr)
-          tr
-          (let [fi (long (:index fr))
-                ti (long (:index tr))]
+        tr
+        (if single-line? fr (resolve-one-anchor lines :to to-a))
 
-            (if (< ti fi)
-              {:error {:reason :anchor-range-inverted :from-line (inc fi) :to-line (inc ti)}}
-              {:from-line (inc fi) :to-line (inc ti)})))))))
+        current-anchor-for
+        (fn [resolved]
+          (or (get-in resolved [:error :current-anchor])
+              (when-let [i (:index resolved)]
+                (line-anchor (inc (long i)) (nth lines (long i))))))
+
+        current-from-anchor
+        (current-anchor-for fr)
+
+        current-to-anchor
+        (current-anchor-for tr)
+
+        error
+        (or (:error fr) (:error tr))]
+
+    (if error
+      {:error (cond-> error
+                (and (= :anchor-mismatch (:reason error))
+                     (not single-line?)
+                     current-from-anchor
+                     current-to-anchor)
+                (assoc :current-from-anchor
+                  current-from-anchor :current-to-anchor
+                  current-to-anchor))}
+      (let [fi
+            (long (:index fr))
+
+            ti
+            (long (:index tr))]
+
+        (if (< ti fi)
+          {:error {:reason :anchor-range-inverted :from-line (inc fi) :to-line (inc ti)}}
+          {:from-line (inc fi) :to-line (inc ti)})))))
 
 (defn resolve-anchor-range-read
   "READ-tolerant twin of `resolve-anchor-range`, for `cat`. A read is
-   NON-DESTRUCTIVE, so a stale hash must not block the look the way it
-   (correctly) blocks a write. Each anchor still resolves by CONTENT first —
-   following small drift exactly like the write path — but when its hash matches
-   no live line the anchor's LINE NUMBER is the fallback: a read can safely show
-   whatever now sits there. Returns `{:from-line N :to-line N :stale? BOOL}`
-   (1-based, INCLUSIVE; the window never inverts) — or `{:error …}` ONLY for a
-   genuinely unlocatable anchor (`:anchor-malformed`, no line number, or
-   `:anchor-line-out-of-range`, a line outside the file)."
+   NON-DESTRUCTIVE, so one nearby hash match may be followed; otherwise an
+   in-range stale anchor falls back to its stated LINE NUMBER. Returns
+   `{:from-line N :to-line N :stale? BOOL}` (1-based, INCLUSIVE; the window never
+   inverts), or `{:error …}` only for a genuinely unlocatable anchor
+   (`:anchor-malformed` or `:anchor-line-out-of-range`)."
   [^String current from-anchor to-anchor]
   (let [lines
         (split-content-lines current)
@@ -389,14 +375,12 @@
                 (parse-anchor anchor)
 
                 r
-                (resolve-one-anchor lines which a)]
+                (resolve-one-anchor-read lines which a)]
 
             (cond (:index r) (assoc r :stale? false)
-                  ;; The hash is gone (the content changed) or matches only far lines,
-                  ;; but the anchor still names an in-range line — show that line.
+                  ;; No unambiguous nearby content match: safely show the stated line.
                   (and (:line a)
-                       (contains? #{:anchor-not-found :anchor-misplaced}
-                                  (get-in r [:error :reason]))
+                       (= :anchor-mismatch (get-in r [:error :reason]))
                        (<= 1 (long (:line a)) n))
                   {:index (dec (long (:line a))) :stale? true}
                   :else r)))
@@ -444,11 +428,10 @@
     [char-start char-end]))
 
 (defn resolve-anchor-edit-span
-  "Resolve an anchored line range to a CHAR SPAN against `current`, WITHOUT
+  "Resolve an exact anchored line range to a CHAR SPAN against `current`, WITHOUT
    building new content: `{:start S :end E :replacement R :from-line N :to-line N}`
    or `{:error {:reason KW …}}`. `to-anchor` defaults to `from-anchor` (a single
-   line). The stated line is tried first and only then small drift, so duplicate
-   hashes elsewhere never make an exact `line:hash` anchor ambiguous.
+   line); every supplied endpoint must match its exact current line.
 
    Newline semantics: a replacement need NOT end in `\\n` — the matched region's
    terminator is preserved (`\\r\\n` stays `\\r\\n` on a CRLF file) — and one that

@@ -60,7 +60,7 @@ patched src/…/editing/core.clj  1 edit  5182 → 5182 lines  parse: clean
   1  4439..4439  → 1 line  4439:b16
 ```
 
-`patch(path, edits)` carries EVERY edit for that file in ONE atomic write — `[{"from": a, "to": b, "replace": text}]`, `to` defaults to `from`, `replace: ""` deletes — and the answer is one FRESH anchor per edit, so a follow-up edit needs no second `cat`. The edits may be listed in any order (they all resolve against the one read) and two edits over the same line are refused. Only a new file or a genuine wholesale replacement is a `python_execution` write (`Path.write_text`) — the same filesystem gate applies.
+`patch(path, edits)` carries EVERY edit for that file in ONE atomic write. A range is canonical — `[{"from": a, "to": b, "replace": text}]` — while `to` defaults to `from` only for a one-line edit and `replace: ""` deletes. Every endpoint must match its exact current `line:hash`; `patch` never relocates a write by searching for the hash elsewhere. The answer returns one fresh output range per edit, abbreviated to one anchor for one line, so a follow-up needs no second `cat`. Edits may be listed in any order because they all resolve against one read; two edits over the same line are refused. Only a new file or a genuine wholesale replacement is a `python_execution` write (`Path.write_text`) — the same filesystem gate applies.
 
 ## Keep intermediate data in Python
 

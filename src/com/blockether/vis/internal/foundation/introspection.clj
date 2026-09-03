@@ -323,13 +323,12 @@
           (and (str/includes? tool-name "patch")
                (str/includes? lower-message "unmatched delimiter"))
           :patch-unbalanced-replacement
-          ;; A refused ANCHOR is its own loop: the anchor drifted or was reused
-          ;; after an edit, and the refusal already carries the fresh one. Left
-          ;; generic it would only ever be counted, never explained.
+          ;; A refused ANCHOR is its own loop: the exact line/hash pair no longer
+          ;; agrees, and the refusal already carries the fresh anchor. Left generic
+          ;; it would only ever be counted, never explained.
           (and (str/includes? tool-name "patch")
                (or (str/includes? lower-message "patch refused")
-                   (str/includes? lower-message "carries")
-                   (str/includes? lower-message "drift window")))
+                   (str/includes? lower-message "carries")))
           :patch-stale-anchor
           (str/includes? lower-message "unable to resolve symbol") :unresolved-symbol
           :else :code-execution-error)))

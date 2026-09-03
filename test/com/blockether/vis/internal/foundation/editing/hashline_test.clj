@@ -65,38 +65,45 @@
 
 
 (defdescribe
-  resolve-one-anchor-five-outcomes-test
-  ;; The five outcomes ARE the contract: two resolve, one prefers the stated
-  ;; line, and two refuse — the refusals being the whole reason the hash exists.
-  (it "1. exact — the stated line still hashes to the anchor"
+  resolve-one-anchor-write-contract-test
+  ;; Regression (session 633cdc58): a line number from one line and a nearby hash
+  ;; from another were silently recombined, so patch wrote to the hash's line.
+  (it "an exact line and hash resolve"
       (expect (= {:from-line 2 :to-line 2}
                  (hashline/resolve-anchor-range content (anchor-of 2) nil))))
-  (it "2. drifted — the content moved a little, so follow it"
-      (let [shifted (str "inserted\n" content)]
-        (expect (= {:from-line 3 :to-line 3}
-                   (hashline/resolve-anchor-range shifted (anchor-of 2) nil)))))
-  (it "3. line wins — a duplicate hash cannot make an explicit line ambiguous"
+  (it "a hash found one line away is still a mismatch"
+      (let [shifted
+            (str "inserted\n" content)
+
+            r
+            (hashline/resolve-anchor-range shifted (anchor-of 2) nil)]
+
+        (expect (= :anchor-mismatch (get-in r [:error :reason])))
+        (expect (= (hashline/line-anchor 2 "alpha") (get-in r [:error :current-anchor])))))
+  (it "both endpoints of a range must match their exact lines"
+      (let [mixed-to
+            (str "4:" (hashline/line-hash "delta"))
+
+            r
+            (hashline/resolve-anchor-range content (anchor-of 2) mixed-to)]
+
+        (expect (= :anchor-mismatch (get-in r [:error :reason])))
+        (expect (= :to (get-in r [:error :which])))
+        (expect (= (hashline/line-anchor 4 "gamma") (get-in r [:error :current-anchor])))
+        (expect (= (hashline/line-anchor 2 "beta") (get-in r [:error :current-from-anchor])))
+        (expect (= (hashline/line-anchor 4 "gamma") (get-in r [:error :current-to-anchor])))))
+  (it "a duplicate hash resolves only when it matches the stated line"
       (let [dupes "same\nsame\nsame\n"]
         (expect (= {:from-line 2 :to-line 2}
                    (hashline/resolve-anchor-range dupes (hashline/line-anchor 2 "same") nil)))))
-  (it "4. misplaced — the content sits far from the stated line, so REFUSE"
-      (let [far
-            (string/join "\n" (concat ["needle"] (map #(str "filler " %) (range 1 200))))
-
-            r
-            (hashline/resolve-anchor-range far (str "160:" (hashline/line-hash "needle")) nil)]
-
-        (expect (= :anchor-misplaced (get-in r [:error :reason])))
-        ;; It hands back the anchor that IS there, so recovery is one call.
-        (expect (= (str "1:" (hashline/line-hash "needle")) (get-in r [:error :current-anchor])))))
-  (it "5. not-found — the content is gone, so REFUSE with the current anchor"
+  (it "changed content is a mismatch with the current anchor attached"
       (let [edited
             "alpha\nBETA\n\ngamma\ndelta\n"
 
             r
             (hashline/resolve-anchor-range edited (anchor-of 2) nil)]
 
-        (expect (= :anchor-not-found (get-in r [:error :reason])))
+        (expect (= :anchor-mismatch (get-in r [:error :reason])))
         (expect (= (hashline/line-anchor 2 "BETA") (get-in r [:error :current-anchor])))))
   (it "a malformed anchor and an out-of-range line are refused on their own terms"
       (expect (= :anchor-malformed
@@ -112,6 +119,15 @@
 (defdescribe read-tolerant-resolution-test
              ;; A READ is non-destructive, so a stale hash must not block the look the way
              ;; it (correctly) blocks a write.
+             (it "a nearby moved hash follows its content for a read"
+                 (let [shifted
+                       (str "inserted\n" content)
+
+                       r
+                       (hashline/resolve-anchor-range-read shifted (anchor-of 2) nil)]
+
+                   (expect (= 3 (:from-line r)))
+                   (expect (not (:stale? r)))))
              (it "a stale hash falls back to its line number and says it was stale"
                  (let [edited
                        "alpha\nBETA\n\ngamma\ndelta\n"

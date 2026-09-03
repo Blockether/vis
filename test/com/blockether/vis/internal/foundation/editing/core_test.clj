@@ -1389,28 +1389,51 @@
             (try (patch-span rel stale stale "again") nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (some? thrown))
-        (expect (= :anchor-not-found (:reason (ex-data thrown))))
+        (expect (= :anchor-mismatch (:reason (ex-data thrown))))
         (expect (string/starts-with? (ex-message thrown)
                                      "patch refused at edit 1 of 1 — nothing was written."))
         ;; The recovery is IN the refusal: one retry, not a re-read.
         (expect (string/includes? (ex-message thrown) "current anchor at 2 →"))
         (expect (string/includes? (ex-message thrown) (hashline/line-anchor 2 "BETA")))
         (expect (= before (slurp rel)))))
-  (it "an anchor whose content moved far away is refused as misplaced"
+  ;; Regression (session 633cdc58): a nearby line/hash contradiction relocated
+  ;; the write to the hash's line instead of refusing the mixed anchor.
+  (it "a nearby range mismatch is refused instead of relocating the write"
       (let [rel
-            (write-temp! "patch/misplaced.txt"
+            (write-temp! "patch/nearby-mismatch.txt" "alpha\nbeta\ngamma\n")
+
+            mixed
+            (str "2:" (hashline/line-hash "alpha"))
+
+            before
+            (slurp rel)
+
+            thrown
+            (try (patch-span rel mixed (hashline/line-anchor 3 "gamma") "wrong target")
+                 nil
+                 (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (some? thrown))
+        (expect (= :anchor-mismatch (:reason (ex-data thrown))))
+        (expect (string/includes? (ex-message thrown) "current range →"))
+        (expect (= (hashline/line-anchor 2 "beta") (:current-from-anchor (ex-data thrown))))
+        (expect (= (hashline/line-anchor 3 "gamma") (:current-to-anchor (ex-data thrown))))
+        (expect (= before (slurp rel)))))
+  (it "distance never changes the exact mismatch contract"
+      (let [rel
+            (write-temp! "patch/distant-mismatch.txt"
                          (string/join "\n"
                                       (concat ["needle"] (map #(str "filler " %) (range 1 200)))))
 
-            moved
+            mixed
             (str "160:" (hashline/line-hash "needle"))
 
             thrown
-            (try (patch-span rel moved moved "x") nil (catch clojure.lang.ExceptionInfo e e))]
+            (try (patch-span rel mixed nil "x") nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (some? thrown))
-        (expect (= :anchor-misplaced (:reason (ex-data thrown))))
-        (expect (string/includes? (ex-message thrown) "drift window"))))
+        (expect (= :anchor-mismatch (:reason (ex-data thrown))))
+        (expect (string/includes? (ex-message thrown) "never relocates a write"))))
   (it "a bare line number is refused — patch verifies, it does not guess"
       (let [rel
             (write-temp! "patch/bare.txt" "alpha\nbeta\n")
@@ -1725,7 +1748,10 @@
                                  [{"from" (hashline/line-anchor 1 "one") "replace" "ONE\n\n"}]))]
 
         (expect (= "ONE\n\ntwo\n" (slurp rel)))
-        (expect (string/includes? out "2 lines")))))
+        (expect (string/includes? out "2 lines"))
+        (expect (string/includes?
+                  out
+                  (str (hashline/line-anchor 1 "ONE") " .. " (hashline/line-anchor 2 "")))))))
 
 
 (defdescribe
@@ -1871,7 +1897,7 @@
                  (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (some? thrown))
-        (expect (= :anchor-not-found (:reason (ex-data thrown))))
+        (expect (= :anchor-mismatch (:reason (ex-data thrown))))
         (expect (= 1 (:edit-index (ex-data thrown))))
         (expect (string/starts-with? (ex-message thrown) "patch refused at edit 2 of 3"))
         ;; Atomic for the FILE: the two GOOD edits are not written either.
