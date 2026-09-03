@@ -49,6 +49,14 @@
         (expect (ifn? (:provider/auth-fn business)))
         (expect (ifn? (:provider/get-token-fn business)))
         (expect (ifn? (:provider/limits-fn business)))))
+  (it "requests Copilot policy access for Claude Fable 5.1"
+      (let [requested (atom #{})]
+        (with-redefs-fn {#'sut/enable-copilot-model! (fn [_ _ model]
+                                                       (swap! requested conj model)
+                                                       true)}
+          (fn []
+            (#'sut/enable-known-copilot-models! "token" "https://api.githubcopilot.com")
+            (expect (contains? @requested "claude-fable-5.1"))))))
   (describe "active-tier-detect"
             (it "surfaces credentials for ONLY the active Copilot tier (issue #48)"
                 (require 'com.blockether.vis.ext.provider-github-copilot :reload)
