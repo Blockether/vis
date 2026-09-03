@@ -904,7 +904,7 @@
 ;; Provider-specific request identity enters through the extension lifecycle; the
 ;; engine only applies the generic provider/header contribution it receives.
 (defdescribe
-  session-start-provider-headers-test
+  session-provider-kickoff-headers-test
   (it "keeps session headers local and stable across conversation environments"
       (let [shared-router
             {:providers [{:id :opencode-go :llm-headers {"existing" "kept"}} {:id :anthropic}]}
@@ -938,6 +938,38 @@
                                        {:id :anthropic}]}
                           shared-router)))
              (finally (lp/dispose-environment! first-env) (lp/dispose-environment! second-env))))))
+(defdescribe
+  session-provider-kickoff-router-refresh-test
+  (it "kicks off a provider added to a live session router"
+      (let [initial-router
+            {:providers [{:id :anthropic}]}
+
+            refreshed-router
+            {:providers [{:id :opencode-go :llm-headers {"existing" "kept"}} {:id :anthropic}]}
+
+            environment
+            (lp/create-environment initial-router {:db :memory})
+
+            local-cache
+            (atom {(:session-id environment) {:environment environment}})]
+
+        (try (with-redefs-fn {#'lp/cache local-cache}
+               (fn []
+                 (lp/refresh-cached-routers! refreshed-router)))
+             (let [refreshed-environment
+                   (get-in @local-cache [(:session-id environment) :environment])
+
+                   session-id
+                   (str (:session-id environment))]
+
+               (expect (= {"existing" "kept" "x-opencode-session" session-id}
+                          (get-in refreshed-environment [:router :providers 0 :llm-headers])))
+               (expect (= {"x-opencode-session" session-id}
+                          (get-in refreshed-environment [:session-llm-headers :opencode-go])))
+               (expect (= refreshed-router
+                          {:providers [{:id :opencode-go :llm-headers {"existing" "kept"}}
+                                       {:id :anthropic}]})))
+             (finally (lp/dispose-environment! environment))))))
 (defdescribe
   codex-stateful-session-test
   (it

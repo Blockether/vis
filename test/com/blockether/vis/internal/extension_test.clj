@@ -45,7 +45,7 @@
                    (expect (= root (get-in ctx [:project :cwd]))))))
 
 (defdescribe
-  session-start-hooks-test
+  session-provider-kickoff-hooks-test
   (it
     "merges provider headers in registry order under extension context"
     (let [root
@@ -56,6 +56,9 @@
            :workspace/root root
            :router {:providers [{:id :alpha} {:id :beta}]}}
 
+          provider
+          {:id :alpha}
+
           observed
           (atom [])
 
@@ -64,53 +67,56 @@
             {:ext/name ext-name
              :ext/hooks [{:id :test/session-headers
                           :doc "Contribute test session headers."
-                          :phase :session/start
+                          :phase :session_provider_kickoff
                           :fn (fn [ctx]
                                 (swap! observed conj
                                   [(extension/current-extension-id)
                                    (= environment extension/*current-environment*)
                                    workspace/*workspace-root* (:phase ctx)
-                                   (= environment (:environment ctx))])
-                                {:provider-id :alpha :llm-headers headers})}]})
+                                   (= environment (:environment ctx)) (= provider (:provider ctx))])
+                                {:llm-headers headers})}]})
 
           headers
-          (extension/session-start-llm-headers
+          (extension/session-provider-kickoff-llm-headers
             environment
             [(hook-ext "test.session-first" {"first" "one" "shared" "first"})
-             (hook-ext "test.session-second" {"second" "two" "shared" "second"})])]
+             (hook-ext "test.session-second" {"second" "two" "shared" "second"})]
+            provider)]
 
-      (expect (= {:alpha {"first" "one" "second" "two" "shared" "second"}} headers))
-      (expect (= [["test.session-first" true root :session/start true]
-                  ["test.session-second" true root :session/start true]]
+      (expect (= {"first" "one" "second" "two" "shared" "second"} headers))
+      (expect (= [["test.session-first" true root :session_provider_kickoff true true]
+                  ["test.session-second" true root :session_provider_kickoff true true]]
                  @observed))))
-  (it "rejects malformed session header contributions"
-      (let [failure (try (extension/session-start-llm-headers
+  (it "rejects malformed provider kickoff header contributions"
+      (let [failure (try (extension/session-provider-kickoff-llm-headers
                            {:router {:providers [{:id :alpha}]}}
                            [{:ext/name "test.session-invalid"
                              :ext/hooks [{:id :test/session-headers
                                           :doc "Return malformed test session headers."
-                                          :phase :session/start
+                                          :phase :session_provider_kickoff
                                           :fn (fn [_]
-                                                {:provider-id :alpha
-                                                 :llm-headers {"empty" ""}})}]}])
+                                                {:llm-headers {"empty" ""}})}]}]
+                           {:id :alpha})
                          nil
                          (catch clojure.lang.ExceptionInfo e (ex-data e)))]
-        (expect (= :extension/invalid-session-start-hook-return (:type failure)))))
-  (it "adds hook identity when a session-start callback throws"
-      (let [failure (try (extension/session-start-llm-headers
+        (expect (= :extension/invalid-session-provider-kickoff-hook-return (:type failure)))))
+  (it "adds hook and provider identity when a provider kickoff callback throws"
+      (let [failure (try (extension/session-provider-kickoff-llm-headers
                            {:router {:providers [{:id :alpha}]}}
                            [{:ext/name "test.session-throws"
                              :ext/hooks [{:id :test/session-headers
                                           :doc "Throw while building test session headers."
-                                          :phase :session/start
+                                          :phase :session_provider_kickoff
                                           :fn (fn [_]
-                                                (throw (ex-info "callback failed" {})))}]}])
+                                                (throw (ex-info "callback failed" {})))}]}]
+                           {:id :alpha})
                          nil
                          (catch clojure.lang.ExceptionInfo e (ex-data e)))]
-        (expect (= {:type :extension/session-start-hook-failed
+        (expect (= {:type :extension/session-provider-kickoff-hook-failed
                     :extension "test.session-throws"
                     :hook :test/session-headers
-                    :phase :session/start}
+                    :phase :session_provider_kickoff
+                    :provider-id :alpha}
                    failure)))))
 
 (defdescribe

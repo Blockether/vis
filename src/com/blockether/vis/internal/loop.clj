@@ -6852,8 +6852,8 @@
 
 (defn- with-session-llm-headers
   "Decorate one immutable router snapshot with session-scoped provider headers.
-   Configured and credential-derived headers are retained; a session hook owns any
-   same-named key it contributes. The shared process router is never mutated."
+   Configured and credential-derived headers are retained; a provider kickoff hook
+   owns any same-named key it contributes. The shared process router is never mutated."
   [router headers-by-provider]
   (if (empty? headers-by-provider)
     router
@@ -6865,6 +6865,30 @@
                         (update provider :llm-headers #(merge (or % {}) headers))
                         provider))
                     providers)))))
+
+(defn- kickoff-session-providers
+  "Run provider kickoff hooks against every provider in this session's router.
+
+   Preparing the whole fleet before Svar sees it covers internal fallbacks as well
+   as the selected root. The result is recomputed whenever a router is seated, so
+   providers added or reconfigured during a live session receive current metadata."
+  [environment]
+  (let [active-extensions
+        (prompt/active-extensions environment)
+
+        headers-by-provider
+        (into {}
+              (keep (fn [{:keys [id] :as provider}]
+                      (when-let [headers (not-empty (extension/session-provider-kickoff-llm-headers
+                                                      environment
+                                                      active-extensions
+                                                      provider))]
+                        [id headers])))
+              (get-in environment [:router :providers]))]
+
+    (-> environment
+        (assoc :session-llm-headers headers-by-provider)
+        (update :router with-session-llm-headers headers-by-provider))))
 
 (defn- hydrate-environment-router
   "Hydrate only the router snapshot used by this provider attempt. The two-arity
@@ -11149,12 +11173,7 @@
         ;; this process's own start and `/reload` may pick an edit up.
         (python-extensions/ensure-python-extensions-loaded!)
         (extension/register-extensions! env install-extension!)
-        (let [session-llm-headers
-              (extension/session-start-llm-headers env (prompt/active-extensions env))
-              final-env (-> env
-                            (assoc :session-llm-headers session-llm-headers)
-                            (update :router with-session-llm-headers session-llm-headers))]
-
+        (let [final-env (kickoff-session-providers env)]
           ;; Callbacks installed above closed over `environment-atom`; publish the
           ;; fully decorated session before create-environment returns.
           (reset! environment-atom final-env)
@@ -11690,22 +11709,26 @@
 (defn refresh-cached-routers!
   "Reseat `:router` on every cached env's environment map.
 
-  `create-environment` snapshots the router into
-  `(:router env)` at construction time, and the iteration loop calls
-  `(svar/ask-code! (:router environment) ...)` - not the global
-  `router-atom`. So when a frontend changes provider
-  config and rebuilds the global router, every long-lived env in the
-  cache (TUI keeps one for the whole session) keeps talking to the
-  *previous* model until disposed.
+   `create-environment` snapshots the router into
+   `(:router env)` at construction time, and the iteration loop calls
+   `(svar/ask-code! (:router environment) ...)` - not the global
+   `router-atom`. So when a frontend changes provider
+   config and rebuilds the global router, every long-lived env in the
+   cache (TUI keeps one for the whole session) keeps talking to the
+   *previous* model until disposed.
 
-  Call this immediately after `rebuild-router!` so the
-  next `send!` on any cached session picks up the new router."
+   Provider kickoff hooks run against each session before its new snapshot is
+   seated, covering providers added or reconfigured while that session is live.
+   A failed kickoff aborts the reseat instead of installing incomplete metadata.
+   Call this immediately after `rebuild-router!` so the next `send!` on any cached
+   session picks up the new router."
   [router]
   (when router
     (swap! cache (fn [m]
                    (reduce-kv (fn [acc id {:keys [environment] :as entry}]
-                                (assoc acc
-                                  id (assoc entry :environment (assoc environment :router router))))
+                                (let [refreshed-environment (kickoff-session-providers
+                                                              (assoc environment :router router))]
+                                  (assoc acc id (assoc entry :environment refreshed-environment))))
                               {}
                               m))))
   nil)

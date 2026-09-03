@@ -30,29 +30,28 @@
                    (expect (ifn? (:provider/get-token-fn provider)))
                    (expect (ifn? (:provider/auth-prompt-fn provider)))
                    (expect (ifn? (:provider/limits-fn provider))))))
-(defdescribe
-  session-start-hook-test
-  ;; Session identity is transport metadata owned by this provider extension,
-  ;; not a provider-id branch in the engine loop.
-  (it "contributes its conversation header through the session-start hook"
-      (reload!)
-      (let [ext
-            (some #(when (= "provider-opencode-go" (:ext/name %)) %) (vis/registered-extensions))
+(defdescribe session-provider-kickoff-hook-test
+             ;; Session identity is transport metadata owned by this provider extension,
+             ;; not a provider-id branch in the engine loop.
+             (it "contributes its conversation header through the provider kickoff hook"
+                 (reload!)
+                 (let [ext
+                       (some #(when (= "provider-opencode-go" (:ext/name %)) %)
+                             (vis/registered-extensions))
 
-            hook
-            (some #(when (= :session/start (:phase %)) %) (:ext/hooks ext))]
+                       hook
+                       (some #(when (= :session_provider_kickoff (:phase %)) %) (:ext/hooks ext))]
 
-        (expect (some? hook))
-        (when hook
-          (let [invoke (:fn hook)]
-            (expect (= {:provider-id :opencode-go
-                        :llm-headers {"x-opencode-session" "conversation-1"}}
-                       (invoke {:phase :session/start
-                                :environment {:session-id "conversation-1"
-                                              :router {:providers [{:id :opencode-go}]}}})))
-            (expect (nil? (invoke {:phase :session/start
-                                   :environment {:session-id "conversation-1"
-                                                 :router {:providers [{:id :anthropic}]}}}))))))))
+                   (expect (some? hook))
+                   (when hook
+                     (let [invoke (:fn hook)]
+                       (expect (= {:llm-headers {"x-opencode-session" "conversation-1"}}
+                                  (invoke {:phase :session_provider_kickoff
+                                           :environment {:session-id "conversation-1"}
+                                           :provider {:id :opencode-go}})))
+                       (expect (nil? (invoke {:phase :session_provider_kickoff
+                                              :environment {:session-id "conversation-1"}
+                                              :provider {:id :anthropic}}))))))))
 
 (defdescribe per-model-wire-routing-test
              (it "declares OpenAI-wire models as bare strings (svar default chat wire)"
