@@ -32,7 +32,6 @@
    "vis-persistance-sqlite" "_Durable session store (SQLite + Flyway migrations)._"
    "vis-language-clojure" "_Clojure language pack (format/lint/tests/REPL)._"
    "vis-language-python" "_Python language pack._"
-   "vis-foundation-search" "_Web/code/paper search tool surface._"
    "vis-channel-tui" "_Terminal UI (Lanterna)._"})
 
 ;; Licenses that POMs express oddly / not at all — pin them explicitly so the

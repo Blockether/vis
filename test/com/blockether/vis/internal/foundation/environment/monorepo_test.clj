@@ -29,7 +29,7 @@
         (try (spit-rel root "deps.edn" "{:deps {}}")
              (spit-rel root "packages/foo/deps.edn" "{:deps {}}")
              (spit-rel root "packages/bar/deps.edn" "{:deps {}}")
-             (spit-rel root "extensions/common/baz/deps.edn" "{:deps {}}")
+             (spit-rel root "extensions/providers/baz/deps.edn" "{:deps {}}")
              (let [snap (monorepo/snapshot root)]
                (expect (= "polylith" (:shape snap)))
                (expect (= 3 (long (get-in snap [:totals :clojure])))))

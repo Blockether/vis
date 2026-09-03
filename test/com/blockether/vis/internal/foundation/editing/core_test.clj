@@ -3544,7 +3544,7 @@
               (relevance "lmstudio" "a/b/provider_lmstudio.clj")
 
               noise
-              (relevance "lmstudio" "extensions/common/foundation_git/src/merge_ops.clj")]
+              (relevance "lmstudio" "plugins/foundation_git/src/merge_ops.clj")]
 
           (expect (>= genuine min-score))
           (expect (< noise min-score))

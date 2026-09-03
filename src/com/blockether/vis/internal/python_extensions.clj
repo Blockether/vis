@@ -2131,9 +2131,8 @@
         ;; Feature toggles live in the `toggles:` slot of the merged YAML and are
         ;; otherwise hydrated ONLY at process start (gateway
         ;; `install-toggle-persistence!`, TUI `screen/run-chat!`). Without this the
-        ;; in-memory registry keeps the pre-edit value, so turning a capability off
-        ;; in `vis.yml` (e.g. `web_search: false`) had no effect until a full
-        ;; restart — `/reload` said "Reloaded" while the tool stayed live. Re-hydrate
+        ;; in `vis.yml` (e.g. `shell: false`) had no effect until a full restart —
+        ;; `/reload` said "Reloaded" while the tool stayed live. Re-hydrate
         ;; from the freshly re-read raw config so YAML is the source of truth again;
         ;; ids absent from the file keep their current in-memory value.
         _toggles

@@ -278,8 +278,8 @@
   "Clojure tool/binding symbol -> a Python-LEGAL global name. Purely mechanical:
    `/` and `-` fold to `_` (alias fold + kebab->snake); a trailing `!` (mutation
    marker) is dropped; a trailing `?` (predicate) becomes an `is_` prefix. So
-   `git/status` -> `git_status`, `git/commit!` -> `git_commit`, `search/web` ->
-   `search_web`, `file-exists` -> `file_exists`. FULL SNAKE:
+   `git/status` -> `git_status`, `git/commit!` -> `git_commit`, and `file-exists` ->
+   `file_exists`. FULL SNAKE:
    this is how the agent reaches the tools — `git_status()` calls `git/status`.
 
    A tiny compatibility alias layer may additionally expose selected historical

@@ -15,7 +15,6 @@
  {;; The extension contract is published separately so extensions and tools can read
   ;; its validated JSON documents without depending on the engine.
   com.blockether/vis-contract {:local/root "packages/vis-contract"}
-  com.blockether/vis-foundation-search {:local/root "extensions/common/vis-foundation-search"}
   com.blockether/vis-language-clojure {:local/root "extensions/languages/vis-language-clojure"}
   com.blockether/vis-language-python {:local/root "extensions/languages/vis-language-python"}
   com.blockether/vis-persistance-sqlite {:local/root
@@ -147,8 +146,8 @@
   :test
   {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
    :extra-paths
-   ["test" "dev" "extensions/common/vis-foundation-search/test"
-    "extensions/languages/vis-language-clojure/test" "extensions/languages/vis-language-python/test"
+   ["test" "dev" "extensions/languages/vis-language-clojure/test"
+    "extensions/languages/vis-language-python/test"
     "extensions/persistance/vis-persistance-sqlite/test"
     "extensions/providers/vis-provider-alibaba/test"
     "extensions/providers/vis-provider-anthropic/test"
@@ -164,8 +163,7 @@
    ;; com.blockether.vis.test-network-guard.
    :main-opts
    ["-m" "lazytest.main" "--hook" "com.blockether.vis.test-network-guard/no-network" "test"
-    "extensions/common/vis-foundation-search/test" "extensions/languages/vis-language-clojure/test"
-    "extensions/languages/vis-language-python/test"
+    "extensions/languages/vis-language-clojure/test" "extensions/languages/vis-language-python/test"
     "extensions/persistance/vis-persistance-sqlite/test"
     "extensions/providers/vis-provider-alibaba/test"
     "extensions/providers/vis-provider-anthropic/test"

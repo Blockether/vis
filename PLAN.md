@@ -381,8 +381,8 @@ moves to that channel rather than being hidden in Environment.
 - Language packs replace direct `foundation.environment.languages` and `foundation.editing.parse`
   imports with SDK operations/types or extension-local behavior; the shared language-surface result
   contract already moved to `contract.surface` in Phase 3.
-- Rename optional artifacts and namespaces from `vis-foundation-search`/`voice` to
-  `vis-search`/`vis-voice`; they remain extensions using the SDK and are not Environment children.
+- Delete the optional search extension rather than renaming or carrying it through the SDK migration. Rename
+  the gateway speech subsystem consistently; neither concern belongs under Environment.
 - A tree gate rejects `foundation` and `base-tooling` in production paths, namespace symbols,
   coordinates, manifest entries and active product copy. Historical release prose is not rewritten.
 - Lifecycle tests prove a cancelled/condemned Environment cannot be reused, resources are disposed
@@ -744,6 +744,7 @@ Work already available as foundations:
 - The Companion's private client and the Clojure gateway client provide characterized behavior to
   extract rather than redesign.
 - Gateway startup deferral and first-frame work prove selective loading is feasible.
+- The obsolete search extension and its entire `extensions/common` category have been removed.
 - Issue #161 regressions pin stale-context retirement, abandoned-worker capacity reclamation and
   cross-session cancellation isolation.
 - JSON Schema conformance tests enforce document/schema parity, JSON-domain values and Skjema loading.
