@@ -2,6 +2,19 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (5275) — 2026-09-03
+<!-- commit: b15d795974db4d0d3eb6c6a382c7697249616d59 -->
+
+- Record release entries for builds 5209-5232
+- Revert(repo): take somebody else's working tree back out of my commit
+- Make the python child a worker, one per key
+- Keep stop control circular
+- Balance project header controls
+- Circle queued and send controls
+- Align thinking with user prose
+- Strengthen TokyoNight companion contrast
+- Add all TokyoNight styles
+
 ## 0.1.41 (5232) — 2026-09-02
 <!-- commit: c6d3317b25cb8a9eb36b6f2a8439c7ae41e81ab1 -->
 
