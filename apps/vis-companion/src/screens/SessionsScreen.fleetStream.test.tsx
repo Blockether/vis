@@ -145,6 +145,36 @@ describe("a session list carried by the fleet stream", () => {
     expect(listReads(view.requests)).toBe(read);
   });
 
+  // Regression, Vis session 27689168-9320-46fa-b015-8dce5a2c80c8: a title event
+  // copied into every watched session's replay ring temporarily gave those sibling
+  // rows the renamed session's title because `session_id` names the ring, not the subject.
+  it("takes a copied title frame's subject from titled_session_id", async () => {
+    const fleet = fleetHub();
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          sessions: [
+            listSession({ id: "s1", title: "First" }),
+            listSession({ id: "s2", title: "Second" }),
+          ],
+        },
+      ],
+      subscriptions: fleet.hub as never,
+    });
+    restore = view.restore;
+    await settle(50);
+
+    await fleet.emit({
+      type: "session.title_updated",
+      session_id: "s2",
+      titled_session_id: "s1",
+      title: "First renamed",
+    });
+
+    expect(screen.getByText("First renamed")).toBeTruthy();
+    expect(screen.getByText("Second")).toBeTruthy();
+  });
+
   // A frame about a session this window does not hold is news about MEMBERSHIP, and
   // where that row belongs is the gateway's arithmetic, never this device's.
   it("re-reads the window for a session it does not hold", async () => {

@@ -959,12 +959,16 @@ export function SessionsScreen({
   // finished row. False also covers membership news for a row this window does not hold.
   const applyFleetFrame = useCallback(
     (event: SseEvent): boolean => {
+      // A copied title frame lives in every watched session's replay ring. Its
+      // `session_id` names that ring; `titled_session_id` names the row that changed.
       const sid =
-        typeof event.session_id === 'string'
-          ? event.session_id
-          : typeof event.sid === 'string'
-            ? event.sid
-            : '';
+        typeof event.titled_session_id === 'string'
+          ? event.titled_session_id
+          : typeof event.session_id === 'string'
+            ? event.session_id
+            : typeof event.sid === 'string'
+              ? event.sid
+              : '';
       if (!sid) return false;
       let update: Partial<Session>;
       if (event.type === 'session.status') {
