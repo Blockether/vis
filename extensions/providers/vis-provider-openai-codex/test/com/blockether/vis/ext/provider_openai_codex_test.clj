@@ -243,6 +243,7 @@
 
 (defdescribe provider-registration-test
              (it "registers the OpenAI Codex auth provider"
+                 (codex/register!)
                  (let [provider (vis/provider-by-id :openai-codex)]
                    (expect (= :openai-codex (:provider/id provider)))
                    (expect (= "OpenAI Codex (ChatGPT OAuth)" (:provider/label provider)))
@@ -255,6 +256,8 @@
                                        defaults)]
 
                      ;; svar-catalog models ride as bare strings.
+                     (expect (= "gpt-6-astra" (config/model-name (first defaults))))
+                     (expect (string? (get by-name "gpt-6-astra")))
                      (expect (contains? by-name "gpt-5.6-luna"))
                      (expect (contains? by-name "gpt-5.6-sol"))
                      ;; gpt-5.6-terra rides as a bare name; svar's catalog
@@ -289,6 +292,7 @@
                    (expect (true? (:persist? spec)))
                    (expect (false? (:settings? spec)))))
              (it "does not declare legacy TUI settings metadata"
+                 (codex/register!)
                  (let [ext (first (filter #(= "provider-openai-codex" (:ext/name %))
                                           (vis/registered-extensions)))]
                    (expect (= [] (:ext/settings ext))))))
