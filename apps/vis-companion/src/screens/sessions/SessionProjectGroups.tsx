@@ -9,6 +9,14 @@ import {
   useState,
 } from "react";
 
+import { ConfirmRow } from "../../components/ui";
+import { SwipeActions } from "../../components/SwipeActions";
+import { TrashIcon } from "../../components/icons";
+import type {
+  ManagedProject,
+  ProjectRemovalProgress,
+} from "../../components/ManageProjectsSheet";
+
 import {
   SessionRow,
   type SessionListActions,
@@ -75,6 +83,13 @@ export type ProjectCreation = {
   start: (conn: GatewayConn, root: string) => Promise<void>;
 };
 
+/** Remove one project from the machine that owns it while its band reports progress. */
+export type ProjectRemoval = (
+  project: ManagedProject,
+  conn: GatewayConn,
+  onProgress: (progress: ProjectRemovalProgress) => void,
+) => void | Promise<void>;
+
 // A page whose read has not answered yet paints nothing rather than rows from
 // another place in the project (`ProjectGroup`).
 const NO_ROWS: Session[] = [];
@@ -90,6 +105,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   context,
   reading,
   creation,
+  onRemove,
   initiallyOpen,
 }: {
   /** Canonical gateway-owned project identity, counts, and held preview rows. */
@@ -99,10 +115,11 @@ export const ProjectGroup = memo(function ProjectGroup({
   context: SessionRowsContext;
   reading: ProjectGroupReading;
   creation: ProjectCreation;
+  onRemove: ProjectRemoval;
   /** Only the first project in the machine's own order opens by default. */
   initiallyOpen: boolean;
 }) {
-  const { label: project, root, sessions, tally } = group;
+  const { label: project, root, projectId, sessions, tally } = group;
   const { conn, sessions: list } = machine;
   const { getClient, drafts, matches, needle, actions: rowActions } = context;
   const { pageSize, epoch, admitted, isVisible } = reading;
@@ -113,6 +130,37 @@ export const ProjectGroup = memo(function ProjectGroup({
     machineKey(rowActions.deletion.target.conn) === machineKey(conn)
       ? rowActions.deletion.target.session.id
       : null;
+
+  const managedProject: ManagedProject = {
+    name: project,
+    root,
+    projectId,
+    count: tally.count,
+    live: tally.live,
+  };
+  const [removal, setRemoval] = useState<{
+    busy: boolean;
+    error: string | null;
+    progress: ProjectRemovalProgress | null;
+  } | null>(null);
+
+  async function commitRemove() {
+    if (!removal || removal.busy) return;
+    setRemoval({ busy: true, error: null, progress: null });
+    try {
+      await onRemove(managedProject, conn, (progress) =>
+        setRemoval((current) => (current ? { ...current, progress } : current)),
+      );
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : "Project could not be deleted.";
+      setRemoval((current) =>
+        current
+          ? { ...current, busy: false, error: message, progress: null }
+          : current,
+      );
+    }
+  }
 
   // A PROJECT'S PAGE IS CUT BY WHOEVER OWNS THE LIST.
   //
@@ -436,76 +484,111 @@ export const ProjectGroup = memo(function ProjectGroup({
         data-machine={machineKey(conn)}
         data-project-root={root}
       >
-        {/* The band's edge comes IN, over the name, and belongs to the band. The 2px
-          accent line that used to close this header was the fourth yellow on a screen the
-          contract gives one to, and it drew the boundary at the wrong end: under a name is
-          where the rows it heads begin. */}
-        <SectionHeader>
-          {/* The leading half NAMES the project and FOLDS it: folder name, the path that
-            tells two `vis` checkouts apart UNDER it, and a chevron in the mark column
-            the band already reserves, so the name keeps the list's one leading edge
-            and the path gets the whole column instead of the crumbs of one. Paging
-            walks a project's history; the fold decides whether it is on screen at
-            all, which is what a reader with four checkouts on one machine needs. */}
-          <ProjectCrumb
-            name={project}
-            qualifier={
-              // The path says WHICH checkout this is, the count says how much of it
-              // there is: one quiet line under the name, in the hint ink both already
-              // wear. The count had a shelf of its own under this band until the pager
-              // took the band's trailing column and left it nothing to stand on.
-              <span className="flex max-w-full min-w-0 items-center gap-2">
-                {qualifierPath && (
-                  <>
-                    <span className="min-w-0 truncate">{qualifierPath}</span>
-                    <span aria-hidden>·</span>
-                  </>
-                )}
-                <span className="flex shrink-0 items-center gap-2">
-                  <HeaderTally count={tally.count} unit="session" />
-                  <ProjectStatusCounts
-                    live={tally.live}
-                    awaiting={tally.awaiting}
-                    unread={tally.unread}
-                  />
-                </span>
-              </span>
-            }
-            qualifierTitle={root}
-            disclosure={
-              hasSessions
-                ? {
-                    isOpen: isShowing,
-                    onToggle: () => fold(!isShowing),
-                    label: `${isShowing ? "Collapse" : "Expand"} ${project}`,
-                  }
-                : null
-            }
-          />
-          {/* The trailing cluster holds how this group is WALKED and what it OFFERS:
-            the project's pages, then its one verb. The pager rode on a shelf hung
-            under this band — a second paper, a second hairline and a second sticky
-            layer for one heading, 40px of the screen taken under the band for the
-            whole of a project. What the group REPORTS cannot come up here with it:
-            measured on a 320px screen, the count, the live pulse and the yellow verb
-            take this cluster's width first and leave the project name 24px. */}
-          <HeaderActions align="center">
-            {isShowing && (
-              <Pager
-                page={shownPage}
-                pageCount={pageCount}
-                onPage={goToPage}
-                label={`${project} sessions`}
-              />
-            )}
-            <NewSessionButton
-              machine={machineLabel(conn)}
-              where={project}
-              isBusy={creating?.at === `${base}\u0000${root}`}
-              onPress={() => void onNewSession(conn, root)}
+        {/* The whole drawer sticks. Its SectionHeader must stop forming a second sticky
+          layer, or that layer paints over the action cell after the band slides open. */}
+        <div className="sticky top-0 z-10 [&_header]:static [&_header]:z-auto">
+          {removal ? (
+            <ConfirmRow
+              question={`Delete ${project}?`}
+              cost={removal.error ? `Could not delete: ${removal.error}` : undefined}
+              confirmLabel={
+                removal.busy
+                  ? removal.progress
+                    ? `Deleting ${removal.progress.done} of ${removal.progress.total}...`
+                    : "Deleting..."
+                  : "Yes, delete"
+              }
+              isBusy={removal.busy}
+              onKeep={() => setRemoval(null)}
+              onConfirm={() => void commitRemove()}
             />
-          </HeaderActions>
-        </SectionHeader>
+          ) : (
+            <SwipeActions
+              label={project}
+              actions={[
+                {
+                  key: "delete",
+                  label: "Delete",
+                  icon: <TrashIcon className="size-4" />,
+                  tone: "danger",
+                  onSelect: () =>
+                    setRemoval({ busy: false, error: null, progress: null }),
+                },
+              ]}
+            >
+              {/* The band's edge comes IN, over the name, and belongs to the band. The 2px
+                accent line that used to close this header was the fourth yellow on a screen the
+                contract gives one to, and it drew the boundary at the wrong end: under a name is
+                where the rows it heads begin. */}
+              <SectionHeader>
+                {/* The leading half NAMES the project and FOLDS it: folder name, the path that
+                  tells two `vis` checkouts apart UNDER it, and a chevron in the mark column
+                  the band already reserves, so the name keeps the list's one leading edge
+                  and the path gets the whole column instead of the crumbs of one. Paging
+                  walks a project's history; the fold decides whether it is on screen at
+                  all, which is what a reader with four checkouts on one machine needs. */}
+                <ProjectCrumb
+                  name={project}
+                  qualifier={
+                    // The path says WHICH checkout this is, the count says how much of it
+                    // there is: one quiet line under the name, in the hint ink both already
+                    // wear. The count had a shelf of its own under this band until the pager
+                    // took the band's trailing column and left it nothing to stand on.
+                    <span className="flex max-w-full min-w-0 items-center gap-2">
+                      {qualifierPath && (
+                        <>
+                          <span className="min-w-0 truncate">{qualifierPath}</span>
+                          <span aria-hidden>·</span>
+                        </>
+                      )}
+                      <span className="flex shrink-0 items-center gap-2">
+                        <HeaderTally count={tally.count} unit="session" />
+                        <ProjectStatusCounts
+                          live={tally.live}
+                          awaiting={tally.awaiting}
+                          unread={tally.unread}
+                        />
+                      </span>
+                    </span>
+                  }
+                  qualifierTitle={root}
+                  disclosure={
+                    hasSessions
+                      ? {
+                          isOpen: isShowing,
+                          onToggle: () => fold(!isShowing),
+                          label: `${isShowing ? "Collapse" : "Expand"} ${project}`,
+                        }
+                      : null
+                  }
+                />
+                {/* The trailing cluster holds how this group is WALKED and what it OFFERS:
+                  the project's pages, then its one verb. The pager rode on a shelf hung
+                  under this band — a second paper, a second hairline and a second sticky
+                  layer for one heading, 40px of the screen taken under the band for the
+                  whole of a project. What the group REPORTS cannot come up here with it:
+                  measured on a 320px screen, the count, the live pulse and the yellow verb
+                  take this cluster's width first and leave the project name 24px. */}
+                <HeaderActions align="center">
+                  {isShowing && (
+                    <Pager
+                      page={shownPage}
+                      pageCount={pageCount}
+                      onPage={goToPage}
+                      label={`${project} sessions`}
+                    />
+                  )}
+                  <NewSessionButton
+                    machine={machineLabel(conn)}
+                    where={project}
+                    isBusy={creating?.at === `${base}\u0000${root}`}
+                    onPress={() => void onNewSession(conn, root)}
+                  />
+                </HeaderActions>
+              </SectionHeader>
+            </SwipeActions>
+          )}
+        </div>
         {/* The rows carry no bottom rule of their own: the next project's incoming edge,
           or the final machine edge around the whole passage, closes the group. */}
         {isShowing && rows.length > 0 && (

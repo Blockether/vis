@@ -86,6 +86,42 @@ describe("deleting one session confirms inside its own row", () => {
   });
 });
 
+// Regression, user request: project bands had no swipe drawer, so their destructive
+// verb was missing from the working list where the project and its sessions live.
+describe("deleting a project from its list band", () => {
+  it("uses the row drawer, confirms in place, and removes the project", async () => {
+    const view = renderSessionsScreen({ machines: machines() });
+    restore = view.restore;
+    await screen.findByText("First");
+    view.requests.length = 0;
+
+    const actions = screen.getByRole("group", { name: "project actions" });
+    expect(actions.closest("[data-swipe-track]")).not.toBeNull();
+    fireEvent.click(actions.querySelector("button[aria-label='Delete']")!);
+
+    expect(await screen.findByRole("group", { name: "Delete project?" })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("First")).toBeTruthy();
+    expect(view.requests.some((request) => request.method === "DELETE")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "No, keep" }));
+    const restored = await screen.findByRole("group", { name: "project actions" });
+    fireEvent.click(restored.querySelector("button[aria-label='Delete']")!);
+    fireEvent.click(await screen.findByRole("button", { name: "Yes, delete" }));
+
+    await waitFor(() =>
+      expect(
+        view.requests.some(
+          (request) => request.method === "DELETE" && request.path === "/v1/sessions/a1",
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(screen.queryByLabelText("project sessions")).toBeNull(),
+    );
+  });
+});
+
 // Regression, user report: project trash left its inventory row and opened a second
 // dialog. The project manager must ask and commit in that exact row, like a session does.
 describe("deleting a project confirms inside its inventory row", () => {
