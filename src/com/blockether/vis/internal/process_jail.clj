@@ -49,6 +49,7 @@
         are denied and every binary aborts before `main`."
   (:require [clojure.string :as str]
             [com.blockether.vis-python-runtime :as python-runtime]
+            [com.blockether.vis.internal.python-runtime :as vis-python-runtime]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
@@ -700,7 +701,17 @@
                            {:type ::jail-unavailable})))
 
          compiled
-         (when confined? (compile-policy policy))]
+         (when confined? (compile-policy policy))
+
+         ;; The spawn itself is the runtime library's (`Jail/spawn`), so the
+         ;; cdylib has to be resolvable HERE — in the process doing the spawning,
+         ;; which is not necessarily one that ever started an interpreter. It used
+         ;; to be resolved as a side effect of building a session's Python; a
+         ;; session with a worker of its own starts no interpreter in this
+         ;; process, and `shell` began answering "No vis-python runtime library"
+         ;; in a live gateway. Ensuring is a no-op once it resolves.
+         _
+         (try (vis-python-runtime/ensure-library!) (catch Throwable _ nil))]
 
      (python-runtime/spawn-process!
        (mapv str argv)
