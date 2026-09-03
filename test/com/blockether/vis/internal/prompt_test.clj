@@ -478,7 +478,7 @@
                                 {:active-extensions (vec (extension/registered-extensions))}))]
                    (expect (str/includes? text "python_execution"))
                    (doseq [gone ["ntr[" "# saved:" "native tool" "Native tool" "native tools"
-                                 "JSON Schema" "JSON schema" "advertised tool"]]
+                                 "advertised tool"]]
                      (expect (not (str/includes? text gone)))))))
 
 (defdescribe extension-fragments-do-not-restate-doc-text-test

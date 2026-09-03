@@ -1451,13 +1451,13 @@ export const STORY_FLEET_PROJECTS: StoryProject[] = [
     ],
   },
   {
-    root: '~/work/tools/spel',
-    name: 'spel',
-    projectId: 'project-spel',
+    root: '~/work/tools/reviewer',
+    name: 'reviewer',
+    projectId: 'project-reviewer',
     rows: [
-      fleetRow('~/work/tools/spel', '4a7c9d63', 'Content boundaries in the snapshot output', 155, 14),
-      fleetRow('~/work/tools/spel', '17e6b02f', 'Wait for copy the story owns, never the shell', 480, 9),
-      fleetRow('~/work/tools/spel', 'ba3f5e41', 'Device emulation before the first navigation', 1_320, 3),
+      fleetRow('~/work/tools/reviewer', '4a7c9d63', 'Content boundaries in the snapshot output', 155, 14),
+      fleetRow('~/work/tools/reviewer', '17e6b02f', 'Wait for copy the story owns, never the shell', 480, 9),
+      fleetRow('~/work/tools/reviewer', 'ba3f5e41', 'Device emulation before the first navigation', 1_320, 3),
     ],
   },
   {
