@@ -556,6 +556,47 @@ function runningTurnCarriesOutput(turn: RunningTurn | null): boolean {
   );
 }
 
+/** Keep the streamed tail that cancellation deliberately leaves out of persistence. */
+function cancelledTurnWithStreamedOutput(
+  row: TranscriptTurn,
+  streamed: RunningTurn,
+): TranscriptTurn {
+  const durablePositions = new Set(
+    (row.iterations ?? []).map((iteration) => iteration.position),
+  );
+  const streamedTail = streamed.iterations.filter(
+    (iteration) => !durablePositions.has(iteration.position),
+  );
+  const streamedContent = streamed.content?.length
+    ? streamed.content
+    : streamed.answer
+      ? [
+          {
+            id: `cancelled-answer-${row.turn_id}`,
+            type: "prose" as const,
+            markdown: streamed.answer,
+          },
+        ]
+      : [];
+
+  return {
+    ...row,
+    content: row.content?.length ? row.content : streamedContent,
+    iterations: [...(row.iterations ?? []), ...streamedTail],
+  };
+}
+
+function cancelledTurnSeed(
+  client: GatewayClient,
+  sid: string,
+): ReadonlyMap<string, RunningTurn> {
+  const cached = client.cachedRunningTurn<RunningTurn>(sid)?.turn;
+  return cached?.id &&
+    cached.status === "cancelled" &&
+    runningTurnCarriesOutput(cached)
+    ? new Map([[cached.id, cached]])
+    : new Map();
+}
 function seedRunningTurn(
   client: GatewayClient,
   subscriptions: SessionSubscriptionHub,
@@ -697,6 +738,9 @@ export function SessionScreen({
   const [runningTurn, setRunningTurn] = useState<RunningTurn | null>(
     runningTurnSeed?.turn ?? null,
   );
+  const [cancelledTurnSnapshots, setCancelledTurnSnapshots] = useState<
+    ReadonlyMap<string, RunningTurn>
+  >(() => cancelledTurnSeed(client, sid));
   const [queued, setQueued] = useState<QueuedTurn[]>(
     () => client.cachedQueuedTurns(sid) ?? [],
   );
@@ -1119,6 +1163,7 @@ export function SessionScreen({
     const seed = seedRunningTurn(client, subscriptions, sid);
     setRunningTurn(seed?.turn ?? null);
     setRunning(seed?.turn.status === "running");
+    setCancelledTurnSnapshots(cancelledTurnSeed(client, sid));
     setQueued(client.cachedQueuedTurns(sid) ?? []);
     setQueuePaused(null);
     runningTurnRef.current = seed?.turn ?? null;
@@ -2422,6 +2467,20 @@ export function SessionScreen({
       const finishedId = eventString(event, "turn_id");
       if (!finishedId) return;
       const ownsTerminal = (turn: RunningTurn | null) => turn?.id === finishedId;
+      const streamedTurn = runningTurnRef.current;
+      if (
+        type === "turn.cancelled" &&
+        streamedTurn !== null &&
+        ownsTerminal(streamedTurn) &&
+        runningTurnCarriesOutput(streamedTurn)
+      ) {
+        const cancelledTurn = streamedTurn;
+        setCancelledTurnSnapshots((current) => {
+          const next = new Map(current);
+          next.set(finishedId, cancelledTurn);
+          return next;
+        });
+      }
       const terminalBlocks = Array.isArray(event.content)
         ? (event.content as ContentBlock[])
         : undefined;
@@ -4164,9 +4223,17 @@ export function SessionScreen({
   // seconds after send: the oldest turn on screen was unmounted, its markdown and
   // highlighting thrown away, and the transcript lost that turn's pixels under a
   // reader pinned to the end. That read as the whole screen flashing mid-send.
+  const preservedTurns = useMemo(
+    () =>
+      turns.map((turn) => {
+        const streamed = cancelledTurnSnapshots.get(turn.turn_id);
+        return streamed ? cancelledTurnWithStreamedOutput(turn, streamed) : turn;
+      }),
+    [turns, cancelledTurnSnapshots],
+  );
   const paintableTurns = useMemo(
     () =>
-      turns.filter((turn) => {
+      preservedTurns.filter((turn) => {
         // A persisted 'running' row is a placeholder, not a result. Painted from
         // the cache — reopening a session you already left — it resurrects the
         // working spinner and its elapsed clock for a turn that has since been
@@ -4179,7 +4246,7 @@ export function SessionScreen({
         if (isRunningRow(turn)) return false;
         return true;
       }),
-    [turns, runningTurn, runningTurnId, turnsFresh],
+    [preservedTurns, runningTurn, runningTurnId, turnsFresh],
   );
   const visibleStart = Math.max(0, paintableTurns.length - visibleTurnCount);
   // What is mounted this frame: the window, clamped by the hydration ramp.

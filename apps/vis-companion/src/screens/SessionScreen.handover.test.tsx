@@ -169,6 +169,50 @@ describe("a turn cancelled from this screen", () => {
     );
     expect(cancelledRow.querySelector(".bg-answer")?.textContent).toBe("");
   });
+  // Regression, reported from the app: cancelling after output started replaced
+  // the streamed trace with an emptier durable row, so work vanished and the rail jumped.
+  it("keeps partial agent work when the cancelled row lands", async () => {
+    const events = subscriptionHub();
+    const partial = {
+      id: "gw-partial-cancel",
+      request: "inspect the failure",
+      answer: "",
+      iterations: [{ position: 0, thinking: "PARTIAL AGENT WORK" }],
+      startedAt: Date.now(),
+      status: "running" as const,
+    };
+    const cancelled = {
+      turn_id: "gw-partial-cancel",
+      request: "inspect the failure",
+      status: "cancelled",
+      created_at: Date.now(),
+      content: [],
+      iterations: [],
+    };
+
+    renderSessionScreen({
+      client: {
+        cachedRunningTurn: () => ({ turn: partial, seq: 5 }),
+        cachedTranscript: () => [],
+        transcript: () => Promise.resolve([cancelled]),
+      },
+      subscriptions: { subscribeSession: events.subscribeSession },
+    });
+
+    expect(await screen.findByText("PARTIAL AGENT WORK")).toBeInTheDocument();
+    events.emit({
+      type: "turn.cancelled",
+      turn_id: "gw-partial-cancel",
+      seq: 6,
+      status: "cancelled",
+    } as unknown as SseEvent);
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-live="true"]')).toBeNull(),
+    );
+    expect(screen.getByText("PARTIAL AGENT WORK")).toBeInTheDocument();
+    expect(screen.getAllByText("inspect the failure")).toHaveLength(1);
+  });
 });
 // Regression, reported from an iPhone: "the stream finished, the answer is
 // ready, but it is not showing — I have to go back to the session list and
