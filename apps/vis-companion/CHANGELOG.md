@@ -2,54 +2,6 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
-## 0.1.41 (5232) — 2026-09-02
-<!-- commit: c6d3317b25cb8a9eb36b6f2a8439c7ae41e81ab1 -->
-
-- Close session list with final edge
-- Reserve project header controls
-- Stabilize audio attachment transcription
-- Simplify settings add actions
-- Recover paused queues after request failures
-- Remove gaps between project bands
-
-## 0.1.41 (5222) — 2026-09-02
-<!-- commit: 10538feb57ba876e43e4499047b13d9f9d4da842 -->
-
-- Give each project a band, drop the needs-you group
-- Keep our own clock when turn.started lands
-- Keep the running placeholder out of the render window
-- Pin the halted step's struck-through ring
-- Fold a long turn's trace instead of painting it whole
-- The ring says how a step ended, the row says what it called
-- The thread runs through the middle of every mark
-- Run the turn's thread under its step marks
-- Clear the trace marks in the transcript's own paper
-- Stand the user bubble on the turn's own thread
-
-## 0.1.41 (5209) — 2026-09-01
-<!-- commit: 8de68974ed6b7c5e9fb8bc610176929d64d0f854 -->
-
-- Size the error trace as meta, not a chip
-- Measure quiet ink on the paper it touches
-- Say a receipt's elapsed once and keep the program as written
-- Make the queued tray a scrollable labelled region
-- Name the calls on the receipt, not the state word
-- Show every patch and refusal line whole
-- Draw every show-more as one rule on both surfaces
-- Say a step's state in the mark's colour
-- Stop a story fixture doubling a diff sign
-- One diff per changed file, paths as ~/
-- Group a block's own file changes under one row
-- Accept exported gzip diagnostics
-- Distinguish bundled pages from TUI exports
-- Make os.link reach its destination and report it
-- Remove redundant failure labels
-- Use circular session create spinner
-- Keep session create button compact
-- Preserve provider failure facts
-- Avoid touch rename selection handles
-- Hang the activity fold in the paths' own column
-
 ## 0.1.41 (5118) — 2026-08-31
 <!-- commit: 0005909e61bdfd8d8fa006eda5f3a6667c235f4a -->
 
