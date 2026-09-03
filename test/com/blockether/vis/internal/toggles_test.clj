@@ -40,11 +40,11 @@
                      (expect (= "updated" (:description (t/toggle-spec "test_beta"))))
                      ;; Live override survived the re-register.
                      (expect (true? (t/enabled? "test_beta"))))))
-             (it "rejects invalid specs with :vis.toggles/invalid-spec"
+             (it "rejects invalid contributions with :vis.toggles/invalid-contribution"
                  (let [thrown? (try (t/register-toggle! {:label "no-id"})
                                     false
                                     (catch clojure.lang.ExceptionInfo e
-                                      (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
+                                      (= :vis.toggles/invalid-contribution (:type (ex-data e)))))]
                    (expect thrown?)))
              (it "rejects every non-string or non-snake_case id shape"
                  (doseq [id [:ns/kw "ns/name" "kebab-case" "UPPER_CASE" "_leading" "trailing_"
@@ -52,7 +52,7 @@
                    (let [thrown? (try (t/register-toggle! {:id id :label "bad" :default false})
                                       false
                                       (catch clojure.lang.ExceptionInfo e
-                                        (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
+                                        (= :vis.toggles/invalid-contribution (:type (ex-data e)))))]
                      (expect thrown?)))))
 
 (defdescribe
@@ -257,7 +257,7 @@
                             (apply str (repeat (inc toggle-contract/max-description-length) "x"))})
                          false
                          (catch clojure.lang.ExceptionInfo e
-                           (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
+                           (= :vis.toggles/invalid-contribution (:type (ex-data e)))))]
         (expect (true? thrown?))
         (expect (nil? (t/toggle-spec "test_wordy")))))
   (it "every registered toggle's description fits a settings row"

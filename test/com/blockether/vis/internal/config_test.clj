@@ -7,7 +7,7 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.config-spec :as config-spec]
+            [com.blockether.vis.internal.config-validation :as config-validation]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.registry :as registry]
             [lazytest.core :refer [defdescribe it expect]]
@@ -65,7 +65,7 @@
                        runtime
                        (config/runtime-config wire)]
 
-                   (expect (config-spec/providers-valid? (get wire "providers")))
+                   (expect (config-validation/providers-valid? (get wire "providers")))
                    (expect (= {:timeout-ms 1800000
                                :first-byte-timeout-ms 600000
                                :idle-timeout-ms 600000
@@ -73,7 +73,7 @@
                               (get-in runtime [:providers 0 :network])))
                    (expect (= (get-in wire ["providers" 0 "network"])
                               (get-in (#'config/->yaml-safe runtime) ["providers" 0 "network"]))))
-                 (expect (not (config-spec/providers-valid?
+                 (expect (not (config-validation/providers-valid?
                                 [{"id" "local" "network" {"first_byte_timeout_ms" -1}}])))))
 
 (defdescribe
@@ -132,32 +132,28 @@
   (it "does not stamp a broad Z.ai reasoning override in Vis"
       (expect (= {:name "glm-5.2"} (config/->svar-model :zai-coding-plan {:name "glm-5.2"})))))
 
-(defdescribe
-  display-label-casing-test
-  "A `vis.yml` provider entry has NO `label` key (see `config-spec/provider-keys`),
-   so its `id` is the only casing signal its author has — `display-label` must echo
-   that id verbatim. The old `str/capitalize` fallback force-uppercased the first
-   letter AND lowercased the rest, so an authored `openAI` surfaced as `Openai` in
-   the TUI, in the gateway `/v1/providers` label, and in the companion."
-  (it "echoes an unregistered vis.yml id verbatim, whatever its casing"
-      (with-redefs [registry/provider-by-id (constantly nil)]
-        (expect (= "openAI" (config/display-label :openAI)))
-        (expect (= "ACME" (config/display-label :ACME)))
-        (expect (= "GPT4All" (config/display-label :GPT4All)))
-        (expect (= "my-custom-llm" (config/display-label :my-custom-llm)))
-        (expect (= "ollama" (config/display-label :ollama)))))
-  (it "changes no character of the id — never capitalizes, never lowercases"
-      (with-redefs [registry/provider-by-id (constantly nil)]
-        (doseq [id [:openAI :zAI-coding :OpenRouter :lmStudio :ACME :x]]
-          (expect (= (name id) (config/display-label id))))))
-  (it "a registered provider extension still owns its own branding"
-      (with-redefs [registry/provider-by-id (fn [pid]
-                                              (when (= pid :openai)
-                                                {:provider/id pid :provider/label "OpenAI"}))]
-        (expect (= "OpenAI" (config/display-label :openai)))))
-  (it "falls back to `Provider` only when there is no id at all"
-      (with-redefs [registry/provider-by-id (constantly nil)]
-        (expect (= "Provider" (config/display-label nil))))))
+(defdescribe display-label-casing-test
+             "A provider without registered metadata uses its authored id as the display label."
+             (it "echoes an unregistered vis.yml id verbatim, whatever its casing"
+                 (with-redefs [registry/provider-by-id (constantly nil)]
+                   (expect (= "openAI" (config/display-label :openAI)))
+                   (expect (= "ACME" (config/display-label :ACME)))
+                   (expect (= "GPT4All" (config/display-label :GPT4All)))
+                   (expect (= "my-custom-llm" (config/display-label :my-custom-llm)))
+                   (expect (= "ollama" (config/display-label :ollama)))))
+             (it "changes no character of the id — never capitalizes, never lowercases"
+                 (with-redefs [registry/provider-by-id (constantly nil)]
+                   (doseq [id [:openAI :zAI-coding :OpenRouter :lmStudio :ACME :x]]
+                     (expect (= (name id) (config/display-label id))))))
+             (it "a registered provider extension still owns its own branding"
+                 (with-redefs [registry/provider-by-id (fn [pid]
+                                                         (when (= pid :openai)
+                                                           {:provider/id pid
+                                                            :provider/label "OpenAI"}))]
+                   (expect (= "OpenAI" (config/display-label :openai)))))
+             (it "falls back to `Provider` only when there is no id at all"
+                 (with-redefs [registry/provider-by-id (constantly nil)]
+                   (expect (= "Provider" (config/display-label nil))))))
 
 (defn- rm-rf! [^java.io.File f] (when (.exists f) (run! rm-rf! (.listFiles f)) (.delete f)))
 
@@ -926,11 +922,8 @@
 
 (defdescribe
   provider-compatibility-test
-  "`compatibility:` is the user-facing wire dialect and `api_style:` the same
-   value under svar's own name. ONE forgiving vocabulary
-   (`config-spec/api-style-aliases`) resolves both onto the `:api-style` svar
-   dispatches on; anything outside it is refused by config validation rather
-   than silently meaning chat completions."
+  "`compatibility:` and `api_style:` use the exact spellings declared by the contract.
+   Each resolves to the `:api-style` value used by svar."
   ;; Regression, issue #152: an unknown-to-svar spelling (`openai_responses`,
   ;; `responses`, `openai`) was keywordized verbatim and svar's `case` fell
   ;; through to `/chat/completions`, so an endpoint declared as Responses was
@@ -941,14 +934,14 @@
       (expect (= :openai-compatible-responses (config/compatibility-api-style :openai-responses)))
       (expect (= :openai-compatible-responses (config/compatibility-api-style :openai_responses))
               "underscore spelling from YAML keywordization resolves identically"))
-  (it "resolves every documented alias, whatever the spelling"
+  (it "resolves every alias declared by the contract"
       (expect (= [:anthropic :anthropic :anthropic]
-                 (mapv config/compatibility-api-style ["anthropic" "Claude" :anthropic-messages])))
+                 (mapv config/compatibility-api-style ["anthropic" "claude" :anthropic-messages])))
       (expect (= [:openai-compatible-chat :openai-compatible-chat :openai-compatible-chat]
                  (mapv config/compatibility-api-style
                        ["openai" "chat_completions" :openai-compatible-chat])))
       (expect (= [:openai-compatible-responses :openai-compatible-responses]
-                 (mapv config/compatibility-api-style ["responses" " OpenAI_Responses "])))
+                 (mapv config/compatibility-api-style ["responses" "openai_responses"])))
       (expect (= :gemini (config/compatibility-api-style "google-gemini"))))
   (it "returns nil for absent or unnameable values"
       (expect (nil? (config/compatibility-api-style nil)))
@@ -1173,29 +1166,30 @@
   "`environment:` says WHERE each variable's value comes from, and every surface
    resolves it through `extension-env-status`. Every declaration names its source explicitly."
   (it "requires exactly one named source and refuses a bare literal"
-      (expect (config-spec/environment-valid? {"A" {"env" "B"}}))
-      (expect (config-spec/environment-valid? {"A" {"dotenv" "A"}}))
-      (expect (config-spec/environment-valid? {"A" {"keychain" "vis-exa" "account" "alice"}}))
-      (expect (config-spec/environment-valid? {"A" {"command" ["gh" "auth" "token"]}}))
+      (expect (config-validation/environment-valid? {"A" {"env" "B"}}))
+      (expect (config-validation/environment-valid? {"A" {"dotenv" "A"}}))
+      (expect (config-validation/environment-valid? {"A" {"keychain" "vis-exa" "account" "alice"}}))
+      (expect (config-validation/environment-valid? {"A" {"command" ["gh" "auth" "token"]}}))
       ;; Issue #156: a non-secret marker had no spelling at all, so a project had to
       ;; put a Vis-owned variable into its own `.env`.
-      (expect (config-spec/environment-valid? {"VIS_MANAGED" {"literal" "true"}}))
-      (expect (config-spec/environment-valid? {"VIS_MANAGED" {"literal" true}}))
-      (expect (config-spec/environment-valid? {"VIS_PORT" {"literal" 8080}}))
-      (expect (not (config-spec/environment-valid? {"A" "a-literal-value"})))
-      (expect (not (config-spec/environment-valid? {"A" "${B}"})))
-      (expect (not (config-spec/environment-valid? {"A" {}})))
-      (expect (not (config-spec/environment-valid? {"A" {"literal" ""}})))
-      (expect (not (config-spec/environment-valid? {"A" {"literal" "x" "env" "B"}})))
+      (expect (config-validation/environment-valid? {"VIS_MANAGED" {"literal" "true"}}))
+      (expect (config-validation/environment-valid? {"VIS_MANAGED" {"literal" true}}))
+      (expect (config-validation/environment-valid? {"VIS_PORT" {"literal" 8080}}))
+      (expect (not (config-validation/environment-valid? {"A" "a-literal-value"})))
+      (expect (not (config-validation/environment-valid? {"A" "${B}"})))
+      (expect (not (config-validation/environment-valid? {"A" {}})))
+      (expect (not (config-validation/environment-valid? {"A" {"literal" ""}})))
+      (expect (not (config-validation/environment-valid? {"A" {"literal" "x" "env" "B"}})))
       ;; The wrapper is for what is NOT a secret: a credential-looking name still
       ;; has to say where its value comes from.
-      (expect (not (config-spec/environment-valid? {"OPENAI_API_KEY" {"literal" "sk-live"}})))
-      (expect (not (config-spec/environment-valid? {"GITHUB_TOKEN" {"literal" "ghp-1"}})))
-      (expect (not (config-spec/environment-valid? {"DB_PASSWORD" {"literal" "hunter2"}})))
-      (expect (not (config-spec/environment-valid? {"A" {"env" "B" "dotenv" "B"}})))
-      (expect (not (config-spec/environment-valid? {"A" {"keychain" "k" "command" ["x"]}})))
-      (expect (not (config-spec/environment-valid? {"A" {"command" ["x"] "account" "alice"}})))
-      (expect (not (config-spec/environment-valid? {"9BAD" {"env" "B"}}))))
+      (expect (not (config-validation/environment-valid? {"OPENAI_API_KEY" {"literal" "sk-live"}})))
+      (expect (not (config-validation/environment-valid? {"GITHUB_TOKEN" {"literal" "ghp-1"}})))
+      (expect (not (config-validation/environment-valid? {"DB_PASSWORD" {"literal" "hunter2"}})))
+      (expect (not (config-validation/environment-valid? {"A" {"env" "B" "dotenv" "B"}})))
+      (expect (not (config-validation/environment-valid? {"A" {"keychain" "k" "command" ["x"]}})))
+      (expect (not (config-validation/environment-valid? {"A" {"command" ["x"]
+                                                               "account" "alice"}})))
+      (expect (not (config-validation/environment-valid? {"9BAD" {"env" "B"}}))))
   (it "`env:` passes an outer variable through under a new name"
       (binding [config/*extension-getenv* {"WORK_OPENAI_KEY" "outer" "VIS_TEST_BLANK_OUTER" ""}]
         (with-declared-environment {"OPENAI_API_KEY" {"env" "WORK_OPENAI_KEY"}

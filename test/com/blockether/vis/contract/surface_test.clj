@@ -108,8 +108,8 @@
   (it "passes a capability with no registered spec straight through"
       (expect (contract/valid? :repl-eval-fn {:anything :goes}))
       (expect (= :untouched (contract/check :repl-eval-fn :untouched))))
-  (it "capability->spec is the single source of truth for format + lint + test"
-      (expect (= #{:format-fn :lint-fn :test-fn} (set (keys contract/capability->spec)))))
+  (it "capability->definition is the single source for format, lint, and test results"
+      (expect (= #{:format-fn :lint-fn :test-fn} (set (keys contract/capability->definition)))))
   (it "completes an error-branch test result onto the TOTAL key set"
       ;; The reported crash: a run that errored out returned NO "failures" key, so
       ;; `r["failures"][:3]` in ordinary model Python blew up on None.

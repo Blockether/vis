@@ -749,8 +749,7 @@
         "transport": {
           "enum": [
             "stdio",
-            "streamable_http",
-            "http"
+            "streamable_http"
           ]
         },
         "command": {
@@ -800,22 +799,40 @@
       "additionalProperties": false,
       "oneOf": [
         {
+          "properties": {
+            "transport": {
+              "const": "stdio"
+            }
+          },
           "required": [
+            "transport",
             "command"
           ],
           "not": {
-            "required": [
-              "url"
+            "anyOf": [
+              { "required": ["url"] },
+              { "required": ["headers"] },
+              { "required": ["listen"] },
+              { "required": ["auth"] }
             ]
           }
         },
         {
+          "properties": {
+            "transport": {
+              "const": "streamable_http"
+            }
+          },
           "required": [
+            "transport",
             "url"
           ],
           "not": {
-            "required": [
-              "command"
+            "anyOf": [
+              { "required": ["command"] },
+              { "required": ["args"] },
+              { "required": ["cwd"] },
+              { "required": ["env"] }
             ]
           }
         }
@@ -1203,6 +1220,20 @@
         "type": "string"
       }
     },
+    "api_style_aliases": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/apiStyle"
+      },
+      "additionalProperties": {
+        "enum": [
+          "anthropic",
+          "openai-compatible-chat",
+          "openai-compatible-responses",
+          "gemini"
+        ]
+      }
+    },
     "workspace_access_values": {
       "type": "array",
       "items": {
@@ -1236,6 +1267,7 @@
   },
   "required": [
     "api_style_values",
+    "api_style_aliases",
     "workspace_access_values",
     "workspace_draft_values",
     "workspace_os_values",

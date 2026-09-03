@@ -28,6 +28,11 @@
         (swap! schemas assoc document-name value)
         value)))
 
+(defn schema-document
+  "The parsed JSON Schema document named `document-name`."
+  [document-name]
+  (schema document-name))
+
 (defn- compiled-schema
   [document-name definition]
   (let [cache-key [document-name definition]]

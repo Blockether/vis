@@ -2,6 +2,7 @@
   "The published contract has one language-neutral representation: JSON documents validated by JSON Schema."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.config :as config-contract]
             [com.blockether.vis.contract.document :as document]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -22,34 +23,42 @@
                 (str/replace (.getName ^java.io.File file) #"\.json$" "")))
          set)))
 
-(defdescribe json-schema-only-contract-test
-             (it "ships no EDN contract documents"
-                 (expect (empty? (filter #(str/ends-with? (.getName ^java.io.File %) ".edn")
-                                         (files-under contract-root)))))
-             (it "has one schema for every contract document"
-                 (let [documents
-                       (json-names contract-root)
+(defdescribe
+  json-schema-only-contract-test
+  (it "ships no EDN contract documents"
+      (expect (empty? (filter #(str/ends-with? (.getName ^java.io.File %) ".edn")
+                              (files-under contract-root)))))
+  (it "has one schema for every contract document"
+      (let [documents
+            (json-names contract-root)
 
-                       schemas
-                       (disj (json-names (io/file contract-root "schema")) "common")]
+            schemas
+            (disj (json-names (io/file contract-root "schema")) "common")]
 
-                   (expect (seq documents))
-                   (expect (= documents schemas))
-                   (expect (every? #(map? (document/load! %)) documents))))
-             (it "has no Clojure Spec dependency in repository code"
-                 (let [dependency-name
-                       (str "clojure." "spec.alpha")
+        (expect (seq documents))
+        (expect (= documents schemas))
+        (expect (every? #(map? (document/load! %)) documents))))
+  (it "keeps API-style spellings in the JSON document and schema aligned"
+      (expect (= (set (keys (get (config-contract/package-document) "api_style_aliases")))
+                 (set (get-in (document/schema-document "config") ["$defs" "apiStyle" "enum"])))))
+  (it "does not mirror the configuration schema in engine predicates"
+      (expect (nil? (re-find #"\(def(?:n)?\s+[^\s]+-schema\b"
+                             (slurp "src/com/blockether/vis/internal/config_validation.clj")))))
+  (it "has no Clojure Spec dependency in repository code"
+      (let [dependency-name
+            (str "clojure." "spec.alpha")
 
-                       offenders
-                       (->> ["src" "test" "apps" "extensions" "packages"]
-                            (mapcat files-under)
-                            (remove (fn [file]
-                                      (some #{"target"}
-                                            (str/split (.getPath ^java.io.File file) #"[\\/]"))))
-                            (filter #(re-find #"\.clj[cs]?$" (.getName ^java.io.File %)))
-                            (filter #(str/includes? (slurp %) dependency-name))
-                            (map #(.getPath ^java.io.File %))
-                            sort
-                            vec)]
+            offenders
+            (->> (cons (io/file "deps.edn")
+                       (mapcat files-under ["src" "test" "apps" "extensions" "packages"]))
+                 (remove (fn [file]
+                           (some #{"target"} (str/split (.getPath ^java.io.File file) #"[\/]"))))
+                 (filter #(let [name (.getName ^java.io.File %)] (or (= "deps.edn" name)
+                                                                     (re-find #"\.clj[cs]?$"
+                                                                              name))))
+                 (filter #(str/includes? (slurp %) dependency-name))
+                 (map #(.getPath ^java.io.File %))
+                 sort
+                 vec)]
 
-                   (expect (= [] offenders) (pr-str offenders)))))
+        (expect (= [] offenders) (pr-str offenders)))))

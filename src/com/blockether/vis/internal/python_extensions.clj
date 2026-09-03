@@ -41,7 +41,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.agents :as agents]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.config-spec :as config-spec]
+            [com.blockether.vis.internal.config-validation :as config-validation]
             [com.blockether.vis.internal.egress-proxy :as egress]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.extension-aggregate :as aggregate]
@@ -1256,7 +1256,7 @@
 (defn- as-api-style
   "A provider's wire dialect - in a `preset`, or in the credential a
    `get_token_fn` issues - resolved through the ONE vocabulary
-   (`config-spec/api-style-aliases`) and REFUSED when it names no dialect.
+   (`config-validation/api-style-aliases`) and REFUSED when it names no dialect.
 
    svar `case`s the api-style and every value it does not recognise falls
    through to `/chat/completions`, so keywordizing the author's string verbatim
@@ -1266,11 +1266,11 @@
   [v]
   (when (some? v)
     (let [raw (str v)]
-      (or (config-spec/normalize-api-style raw)
+      (or (config-validation/normalize-api-style raw)
           (throw (ex-info (str "provider api_style " (pr-str raw)
                                " names no wire dialect - use one of "
-                               (str/join ", " config-spec/api-style-values))
-                          {:api-style raw :accepted config-spec/api-style-values}))))))
+                               (str/join ", " config-validation/api-style-values))
+                          {:api-style raw :accepted config-validation/api-style-values}))))))
 
 (def ^:private token-fields
   "`get_token_fn` / `refresh_token_fn` / `detect_fn` -> the credential map

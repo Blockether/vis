@@ -5,7 +5,7 @@
    child environments, and replaced only by an explicit environment rebuild.
    Enforcement and context both derive from this value."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.config-spec :as config-spec]
+            [com.blockether.vis.internal.config-validation :as config-validation]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
   (:import [java.nio.file Files LinkOption Path Paths]))
@@ -81,12 +81,12 @@
   ([config
     {:keys [base-dir home]
      :or {base-dir (System/getProperty "user.dir") home (System/getProperty "user.home")}}]
-   (config-spec/assert-config! config)
+   (config-validation/assert-config! config)
    (let [jail
-         (config-spec/process-jail-config config)
+         (config-validation/process-jail-config config)
 
          network
-         (config-spec/network-config config)
+         (config-validation/network-config config)
 
          path-keys
          [:allow-read-write :allow-read :allow-write :deny-read :deny-write :no-search]
@@ -117,7 +117,7 @@
                (keep (fn [[path policy]]
                        (when-let [rp (nearest-real-path path base-dir home)]
                          [rp policy])))
-               (config-spec/workspace-draft-policies config))
+               (config-validation/workspace-draft-policies config))
 
          policy
          {:jail-enabled (not= false (get-in config ["jail" "enabled"]))

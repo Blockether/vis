@@ -147,16 +147,16 @@
                       (.delete pid-file)))))))
 
 (defdescribe mcp-transport-normalization-test
-             (it "accepts the string transport values that YAML configuration supplies"
+             (it "accepts canonical external transport values and their internal keyword form"
                  (let [transport-of (ns-resolve 'com.blockether.vis.internal.foundation.mcp.client
                                                 'transport-of)]
                    (expect (= :stdio (transport-of {:transport "stdio"})))
                    (expect (= :streamable-http (transport-of {:transport "streamable_http"})))
-                   ;; Pre-canonical state keeps loading, but all new saves use the
-                   ;; standard Streamable HTTP spelling.
-                   (expect (= :streamable-http (transport-of {:transport "http"})))
-                   (expect (= :streamable-http
-                              (transport-of {:url "https://mcp.example.test/mcp"}))))))
+                   (expect (= :streamable-http (transport-of {:transport :streamable-http})))
+                   (doseq [spec [{:transport "http"} {:url "https://mcp.example.test/mcp"}]]
+                     (expect
+                       (= "Unsupported MCP transport"
+                          (try (transport-of spec) nil (catch Exception e (ex-message e)))))))))
 
 (defdescribe mcp-json-encoding-total-test
              (it "encodes ANY tool argument instead of throwing inside the JSON-RPC write"

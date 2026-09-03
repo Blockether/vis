@@ -26,7 +26,7 @@
 
 (def ^:private http-server
   {"name" "notion"
-   "transport" "http"
+   "transport" "streamable_http"
    "url" "https://mcp.example.com/sse"
    "enabled" true
    "is_connected" false

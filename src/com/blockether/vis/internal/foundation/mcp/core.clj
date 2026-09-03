@@ -47,18 +47,17 @@
 ;; Config — declared servers from ~/.vis/state.yml :mcp :servers
 
 (defn- transport-of
-  "Canonical internal transport. `http` is accepted only as a legacy persisted
-   spelling; new gateway saves write the standard `streamable_http` form."
   [spec]
-  (case (some-> (:transport spec)
-                name)
-    ("streamable_http" "streamable-http" "http")
-    :streamable-http
+  (let [transport (:transport spec)]
+    (case (some-> transport
+                  name)
+      ("streamable_http" "streamable-http")
+      :streamable-http
 
-    "stdio"
-    :stdio
+      "stdio"
+      :stdio
 
-    (if (:url spec) :streamable-http :stdio)))
+      (throw (ex-info "Unsupported MCP transport" {:transport transport})))))
 
 (defn- wire-transport
   "The transport as every wire surface spells it: snake_case, matching what a
@@ -72,14 +71,6 @@
 
     "stdio"))
 
-(defn- canonicalize-server-spec
-  "Persist the standard external spelling while retaining legacy read support."
-  [spec]
-  (case (get spec "transport")
-    ("http" "streamable-http")
-    (assoc spec "transport" "streamable_http")
-
-    spec))
 
 (defn- interpolate-env
   "Substitute `${VAR}` in `s` from the host environment; leave unknowns intact.
@@ -489,7 +480,6 @@
                       (map (fn [[k v]]
                              (let [nm (server-name k)
                                    spec (->> (dissoc v "name")
-                                             canonicalize-server-spec
                                              config/runtime-config
                                              (->client-spec nm))]
 
@@ -631,9 +621,7 @@
         (server-name name)
 
         raw-spec
-        (-> raw-spec
-            (dissoc "name")
-            canonicalize-server-spec)]
+        (dissoc raw-spec "name")]
 
     (ensure-managed! name)
     (let [spec (volatile! nil)]
@@ -820,7 +808,6 @@
 
         spec
         (->> (dissoc raw-spec "name")
-             canonicalize-server-spec
              config/runtime-config
              (->client-spec name))
 

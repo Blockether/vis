@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.security-policy-test
-  (:require [com.blockether.vis.internal.config-spec :as config-spec]
+  (:require [com.blockether.vis.internal.config-validation :as config-validation]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.security-policy :as policy]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -57,7 +57,7 @@
       (expect (= ["~/.m2" "~/.vis"] (get-in view ["filesystem" "no_search"])))
       (expect (= {"~/demo" "Sibling repo"
                   "~/.m2" "Maven cache"
-                  "~/.vis" (get config-spec/vis-home-entry "description")}
+                  "~/.vis" (get config-validation/vis-home-entry "description")}
                  (get-in view ["filesystem" "descriptions"])))
       ;; Only roots that opt OUT of the default `shared` isolation are named.
       (expect (= {"~/demo" "copy-and-apply" "~/read-only" "not-allowed"}

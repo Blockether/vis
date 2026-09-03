@@ -23,7 +23,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.internal.router :as svar-router]
-            [com.blockether.vis.internal.config-spec :as config-spec]
+            [com.blockether.vis.internal.config-validation :as config-validation]
             [com.blockether.vis.internal.credential-command :as cred]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.registry :as registry]
@@ -363,12 +363,8 @@
    as `providers: - id: …` in `vis.yml` — that id IS the author's chosen
    spelling, so it is echoed VERBATIM.
 
-   Never `str/capitalize` here: it force-uppercases the first letter AND
-   lowercases the rest, so an authored `openAI` rendered as `Openai`, `ACME` as
-   `Acme`, and `GPT4All` as `Gpt4all`. A provider entry has no `label` key
-   (see `config-spec/provider-keys`), so the id is the only casing signal the
-   author has — mangling it means the TUI, the gateway `/v1/providers` label,
-   and the companion all disagree with the file on disk."
+   Provider ids are authored display values. Return them verbatim when no registered
+   metadata supplies a label."
   [pid]
   (or (:label (registered-provider-metadata pid))
       (some-> pid
@@ -410,10 +406,10 @@
 
 (defn compatibility-api-style
   "`:api-style` implied by a provider's `compatibility` value, resolved through
-   the ONE dialect vocabulary (`config-spec/api-style-aliases`). nil when absent
+   the ONE dialect vocabulary (`config-validation/api-style-aliases`). nil when absent
    or unnameable - config validation rejects an unknown value long before this."
   [compatibility]
-  (config-spec/normalize-api-style compatibility))
+  (config-validation/normalize-api-style compatibility))
 
 (defn provider-api-style
   "Effective `:api-style` for a provider map: explicit `api_style` first, then the
@@ -423,7 +419,7 @@
    value it does not know silently means `/chat/completions`."
   ([provider] (provider-api-style provider (provider-template (:id provider))))
   ([provider template]
-   (or (config-spec/normalize-api-style (:api-style provider))
+   (or (config-validation/normalize-api-style (:api-style provider))
        (compatibility-api-style (:compatibility provider))
        (:api-style template))))
 
@@ -439,7 +435,7 @@
    tool-call id replayed onto `/chat/completions` and rejected upstream."
   [{:keys [declared runtime template responses-path]}]
   (or declared
-      (config-spec/normalize-api-style runtime)
+      (config-validation/normalize-api-style runtime)
       template
       (when-not (str/blank? responses-path) :openai-compatible-responses)))
 (defn provider-base-url
@@ -491,7 +487,7 @@
          ;; the normalization a near-miss spelling silently means chat.
          (some? (:api-style m))
          (assoc :api-style
-           (or (config-spec/normalize-api-style (:api-style m)) (:api-style m))))))))
+           (or (config-validation/normalize-api-style (:api-style m)) (:api-style m))))))))
 
 (def ^:private boot-token-timeout-ms
   "Upper bound on a synchronous boot-time token fetch (OAuth `get-token-fn`).
@@ -659,7 +655,7 @@
         ;; What the CONFIG declares, kept apart from the template so a dialect the
         ;; provider's own extension answers at runtime can sit between them.
         declared-api-style
-        (or (config-spec/normalize-api-style (:api-style provider))
+        (or (config-validation/normalize-api-style (:api-style provider))
             (compatibility-api-style (:compatibility provider)))
 
         explicit-headers
@@ -1075,7 +1071,7 @@
    Absent, malformed, and non-map documents return nil; invalid maps throw."
   [path]
   (when-let [normalized (parse-yaml-config-map path)]
-    (config-spec/assert-config! normalized path)))
+    (config-validation/assert-config! normalized path)))
 
 (defn- read-yaml-config-map-lenient
   "Like `read-yaml-config-map` but never lets an invalid config FILE crash the
@@ -1133,7 +1129,7 @@
    hand-written YAML merge so the RMW cycle never clobbers user files.
 
    A DERIVED block the contract rejects is dropped here rather than handed on
-   (`config-spec/without-invalid-derived`): every writer read-modify-writes this
+   (`config-validation/without-invalid-derived`): every writer read-modify-writes this
    whole map, so a malformed row in a cache Vis wrote itself would otherwise
    refuse the person's own next write and leave the store read-only.
 
@@ -1146,10 +1142,10 @@
         (read-yaml-config-map-lenient (state-path))
 
         [config dropped]
-        (config-spec/without-invalid-derived raw)
+        (config-validation/without-invalid-derived raw)
 
         [config project-scoped]
-        (config-spec/without-project-scoped config)]
+        (config-validation/without-project-scoped config)]
 
     (when (seq dropped)
       (tel/log! {:level :warn
@@ -1303,11 +1299,11 @@
 
 (defn config-problems
   "Model-readable, per-top-level-key reasons the currently merged live config
-   fails the contract (`config-spec/explain-problems` over `load-config-raw`),
+   fails the contract (`config-validation/explain-problems` over `load-config-raw`),
    or [] when it is valid. Loads leniently so this never throws even while the
    config on disk is broken — it is the diagnostic surfaced as `config_error`."
   []
-  (config-spec/explain-problems (load-config-raw)))
+  (config-validation/explain-problems (load-config-raw)))
 
 (def default-search-always-exclude
   "Default `:grep :always-exclude` patterns (`.gitignore` syntax) guarding
@@ -1522,9 +1518,9 @@
    ;; The machine store is the PERSON's tier and merges over the project's own
    ;; files, so a caller that built this map from the MERGED config would copy a
    ;; repository's grants in here and make them global. Drop those keys.
-   (let [wire-config (first (config-spec/without-project-scoped (restore-env-refs (->yaml-safe
-                                                                                    config))))]
-     (config-spec/assert-config! wire-config (state-path))
+   (let [wire-config (first (config-validation/without-project-scoped (restore-env-refs
+                                                                        (->yaml-safe config))))]
+     (config-validation/assert-config! wire-config (state-path))
      (let [previous-provider (some-> (active-provider-entry (load-global-config-raw))
                                      runtime-config)
            selected-provider (some-> (active-provider-entry wire-config)
@@ -1969,12 +1965,8 @@
 ;;      RENAME), the OS keychain, a helper command — or, for a value that is not a
 ;;      secret at all, the value itself under `literal:`.
 ;;
-;; Only `literal:` carries a value, and it is written that way so it cannot be a
-;; slip: `config-spec/::environment` refuses a bare scalar and refuses a literal
-;; under a credential-looking name. So the block exists for what `.env` cannot say
-;; — a rename, a keychain item, a helper command, a marker that belongs to Vis'
-;; configuration rather than to the project's file, or re-admitting an ambient host
-;; variable into a CONFINED child.
+;; `literal:` carries non-secret scalar values explicitly; the contract schema refuses
+;; credential-looking names and source declarations with more than one source.
 ;;
 ;; `extension-env-status` is the ONE funnel — the extension host, the TUI's
 ;; env-var settings row and every builtin that reads a key go through it, so a
@@ -2012,7 +2004,7 @@
    A vector, never a shell string — `credential-command` execs it verbatim, so a
    service name with spaces or quotes cannot become command injection."
   [service account]
-  (if (= "macos" (config-spec/host-os))
+  (if (= "macos" (config-validation/host-os))
     (into ["security" "find-generic-password" "-w" "-s" service] (when account ["-a" account]))
     (into ["secret-tool" "lookup" "service" service] (when account ["account" account]))))
 

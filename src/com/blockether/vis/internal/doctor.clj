@@ -18,7 +18,7 @@
        :error); 2 if any :error.
      - TTY-detected ANSI colors. UTF-8 icons by default."
   (:require [clojure.string :as string]
-            [com.blockether.vis.internal.config-spec :as config-spec]
+            [com.blockether.vis.internal.config-validation :as config-validation]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.speech.cli :as speech-cli]
             [com.blockether.vis.internal.format :as fmt]
@@ -268,7 +268,7 @@
     (mapv #(assoc (select-keys % [:level :message :remediation])
              :ext "vis"
              :check-id ::mounts)
-          (try (when config (config-spec/workspace-mount-diagnostics config))
+          (try (when config (config-validation/workspace-mount-diagnostics config))
                (catch Throwable _ nil)))))
 
 (defn- resolve-fn

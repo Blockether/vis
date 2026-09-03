@@ -1080,9 +1080,8 @@
   ext)
 
 (defn validate!
-  "Normalize and assert that an extension map conforms to ::extension.
-   Normalizes `:ext/prompt-fn` (string -> fn) before checking the spec
-   when the key is present. Throws with spec explain-data on violation."
+  "Normalize and validate an extension declaration.
+   String prompt contributions become functions before ordinary predicate validation."
   [ext]
   (when (contains? ext :ext/environment-prompt-fn)
     (throw

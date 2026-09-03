@@ -142,15 +142,15 @@
 
    Re-registering the same `:id` is idempotent: metadata MERGES, the
    live VALUE in `state` is preserved (user overrides survive reload).
-   Returns the canonical registered spec."
-  [spec]
-  (when-not (toggle-contract/spec-valid? spec)
-    (throw (ex-info "Invalid toggle spec"
-                    {:type :vis.toggles/invalid-spec
-                     :spec spec
-                     :explain (toggle-contract/explain-spec spec)})))
+   Returns the normalized contribution."
+  [contribution]
+  (when-not (toggle-contract/contribution-valid? contribution)
+    (throw (ex-info "Invalid toggle contribution"
+                    {:type :vis.toggles/invalid-contribution
+                     :contribution contribution
+                     :explain (toggle-contract/explain-contribution contribution)})))
   (let [normalized
-        (normalize-spec spec)
+        (normalize-spec contribution)
 
         id
         (:id normalized)]
@@ -294,7 +294,8 @@
       (throw (ex-info "cycle-value! requires an :enum toggle"
                       {:type :vis.toggles/wrong-kind :id id :got-type (:type spec)})))
     (when-not (seq choices)
-      (throw (ex-info "Enum toggle has no choices" {:type :vis.toggles/invalid-spec :id id})))
+      (throw (ex-info "Enum toggle has no choices"
+                      {:type :vis.toggles/invalid-contribution :id id})))
     (let [current
           (value-of id)
 
@@ -510,20 +511,6 @@
     :clj-kondo/ignore [:clojure-lsp/unused-public-var :unused-private-var]}
   host-toggles-installed?
   (do
-    ;; NOTE: `:vis/show-raw-code` was retired — the TUI now renders the model's
-    ;; raw `:code` unconditionally, the SAME canonical contract as web's
-    ;; `block-code`. There is no longer a gate that can hide the source rail.
-    ;; --- TUI display toggles (migrated from `:tui-settings`) -------------
-    ;; NOTE: the display gates `:vis/show-thinking`, `:vis/show-iterations`,
-    ;; `:vis/show-silent`, and `:vis/show-timestamps` were retired — thinking,
-    ;; the full execution trace, silent system calls, and timestamps are now
-    ;; ALWAYS shown in both channels (same call as `:vis/show-raw-code`: the
-    ;; trace IS the transcript, nothing to hide). The settings projection and
-    ;; web `role-time` hardcode these on.
-    ;; NOTE: there is intentionally NO `:network/enabled` toggle. The Python sandbox
-    ;; + shell/subprocess/managed children ALWAYS have host sockets; containment is the
-    ;; OS process jail + gateway egress proxy, turned off as a whole by `jail.enabled: false`
-    ;; in vis.yml. Per-host/verb policy lives under vis.yml `network:` (see below).
     (register-toggle! {:id "reasoning_level"
                        :label "Reasoning effort"
                        :description "Reasoning budget hint passed to reasoning-capable models."

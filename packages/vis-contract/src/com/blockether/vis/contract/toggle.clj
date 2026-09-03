@@ -48,11 +48,11 @@
 
          false)))
 
-(defn spec-valid?
+(defn contribution-valid?
   "True when `value` satisfies the toggle contribution schema and callback semantics."
   [value]
   (and (document/valid? "toggle" "contribution" value) (semantic-contribution? value)))
-(defn explain-spec
+(defn explain-contribution
   "JSON Schema errors for an invalid toggle contribution, or nil."
   [value]
   (document/explain "toggle" "contribution" value))

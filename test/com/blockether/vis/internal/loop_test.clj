@@ -1438,7 +1438,7 @@
 (defdescribe
   permission-config-snapshot-test
   (it "keeps every process-jail and network grant immutable until environment rebuild"
-      (require 'com.blockether.vis.internal.config-spec :reload)
+      (require 'com.blockether.vis.internal.config-validation :reload)
       (require 'com.blockether.vis.internal.loop :reload)
       (let [cfg
             (atom

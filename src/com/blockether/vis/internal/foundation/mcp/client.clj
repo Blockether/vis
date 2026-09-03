@@ -473,16 +473,16 @@
 ;; Public client surface
 
 (defn- transport-of
-  [{:keys [transport url]}]
+  [{:keys [transport]}]
   (case (some-> transport
                 name)
-    ("streamable_http" "streamable-http" "http")
+    ("streamable_http" "streamable-http")
     :streamable-http
 
     "stdio"
     :stdio
 
-    (if url :streamable-http :stdio)))
+    (throw (ex-info "Unsupported MCP transport" {:transport transport}))))
 
 (defn connect
   "Connect to MCP server `name` per its `spec` and run the `initialize`

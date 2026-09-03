@@ -7,6 +7,17 @@
 (def ^:private contract (delay (document/load! "config")))
 
 (def api-style-values "Documented provider API styles." (vec (get @contract "api_style_values")))
+(def api-style-aliases
+  "Accepted provider API-style spelling to normalized runtime spelling."
+  (get @contract "api_style_aliases"))
+
+(defn definition-property-names
+  "Property names declared by one object definition in config.json."
+  [definition]
+  (some-> (document/schema-document "config")
+          (get-in ["$defs" definition "properties"])
+          keys
+          set))
 (def workspace-access-values
   "Accepted workspace access spellings."
   (set (get @contract "workspace_access_values")))

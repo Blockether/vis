@@ -6,28 +6,28 @@
 
 (defn package-document "The validated language-neutral surface document." [] @contract)
 
-(def capability->spec
+(def capability->definition
   "Language-tool capability to its JSON Schema definition."
   {:format-fn "format_result" :lint-fn "lint_result" :test-fn "test_result"})
 
 (defn valid?
   "True when `result` satisfies the capability schema, or no schema is registered."
   [capability result]
-  (if-let [definition (get capability->spec capability)]
+  (if-let [definition (get capability->definition capability)]
     (document/valid? "surface" definition result)
     true))
 
 (defn explain
   "A readable JSON Schema explanation for an invalid result, or nil."
   [capability result]
-  (when-let [definition (get capability->spec capability)]
+  (when-let [definition (get capability->definition capability)]
     (some-> (document/explain "surface" definition result)
             pr-str)))
 
 (defn check
   "Return a conforming result unchanged and refuse a malformed registered result."
   [capability result]
-  (if-let [definition (get capability->spec capability)]
+  (if-let [definition (get capability->definition capability)]
     (if-let [errors (document/explain "surface" definition result)]
       (throw (ex-info
                (str "language-surface contract violation for " capability)

@@ -139,7 +139,7 @@
 ;; ships the image variant it was missing must not stay blind on this machine forever.
 
 (def ^:private MEMORY_KEY
-  "Top-level `state.yml` key holding these registries (`config-spec/vision-memory-schema`)."
+  "Top-level machine-state key for learned vision availability."
   "vision_memory")
 
 (def ^:private MEMORY_TTL_MS

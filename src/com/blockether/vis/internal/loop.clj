@@ -11070,7 +11070,7 @@
                                      (gateway-sandbox/register-session! repl-sandbox-token
                                                                         (constantly
                                                                           compiled-network-policy)))
-            ;; The user-controlled keys come only from config-spec/process-jail-config.
+            ;; The user-controlled keys come only from config-validation/process-jail-config.
             ;; Per-spawn evaluation retains live workspace roots, lazy proxy startup and
             ;; the resolved `environment:` declarations; nothing else re-reads config.
             jail-policy-fn
