@@ -677,12 +677,11 @@
         (promise)
 
         probe
-        ;; The production ceiling is 5s, and proving a wedged callback is walled off
-        ;; costs that ceiling in wall-clock — twice, once per callback kind. The
-        ;; contract under test is the WALL, not its length, so shrink it: 10s of
-        ;; sleeping became 2s.
+        ;; The contract is the wall, not its production length. A promise keeps the
+        ;; callback provably wedged, so 100ms exercises the same timeout without
+        ;; adding two seconds to every suite run.
         (fn [provider]
-          (with-redefs [providers/probe-timeout-ms 1000]
+          (with-redefs [providers/probe-timeout-ms 100]
             (deref (cancel/worker-future "provider-probe-test"
                                          #(providers/safe-provider-status provider))
                    8000
@@ -714,15 +713,13 @@
 ;; app's own 30s request bound aborted it, so changing the model in a session took
 ;; minutes and often just failed.
 (deftest provider-limits-probe-never-runs-unbounded-test
-  (let [;; The contract under test is the WALL, not its length, so shrink the
-        ;; production ceiling instead of sleeping through it. The stand-in still
-        ;; outlives that ceiling by an order of magnitude, which is what an
-        ;; unbounded probe used to hand straight to the client.
+  (let [;; The contract is the wall, not its production length. The stand-in
+        ;; outlives the test ceiling fivefold without parking the suite for seconds.
         outcome
-        (with-redefs [providers/limits-probe-timeout-ms 250
+        (with-redefs [providers/limits-probe-timeout-ms 100
                       provider-limits/provider-limits
                       (fn [provider-id]
-                        (Thread/sleep 3000)
+                        (Thread/sleep 500)
                         {:provider-id provider-id :status :ok :static {} :dynamic {:limits []}})]
 
           (let [started (System/nanoTime)
@@ -732,7 +729,7 @@
     (is (= :error (:status (:value outcome))))
     (is (str/includes? (str (get-in outcome [:value :error :message])) "timed out"))
     (is (= [] (get-in outcome [:value :dynamic :limits])))
-    (is (< (long (:elapsed-ms outcome)) 2000))))
+    (is (< (long (:elapsed-ms outcome)) 1000))))
 
 ;; Regression, issue #113: bounding the probe moved the callback onto a bare
 ;; worker thread with no binding conveyance, so a provider callback invoked from

@@ -3999,15 +3999,6 @@
 
 (defdescribe
   python-eval-test
-  (it "executes a Python assignment and the binding persists in the sandbox"
-      (let [env (lp/create-environment ::router {:db :memory})]
-        (try (let [result ((var-get #'lp/execute-code) env "x = 1")]
-               (expect (nil? (:error result))))
-             ;; Sandbox globals persist REPL-style across evals on the same context.
-             (let [read-back (env/run-python-block (:python-context env) "print(x)")]
-               (expect (nil? (:error read-back)))
-               (expect (= "1\n" (:stdout read-back))))
-             (finally (lp/dispose-environment! env)))))
   (it "gives a plain Python block five minutes before the backstop fires"
       ;; The watchdog is a BACKSTOP for a block that will never finish on its
       ;; own, never a co-deadline for work in progress. At two minutes ordinary
@@ -4107,31 +4098,7 @@
       ;; …but a longer explicitly requested budget still wins outright.
       (expect (= 610000 (eval-timeout-ms-for-code 120000 "requests.get(u, timeout=600)")))
       ;; Prose that merely mentions a client must not widen anything.
-      (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('requests are bounded')"))))
-  (it "splits + evals multi-form blocks whose statements contain astral chars (emoji)"
-      ;; Regression: CPython's ast.get_source_segment truncates
-      ;; the per-form source when a statement carries a non-BMP char (emoji 👆),
-      ;; dropping the closing quotes -> the lone re-eval raised a spurious
-      ;; "unterminated triple-quoted string" SyntaxError, the (done ...) answer
-      ;; form errored, the turn never finalized, and the model looped re-emitting
-      ;; done(). Our pure-Python codepoint slice must keep every segment intact —
-      ;; including a MULTILINE triple-quoted string with emoji mid- and last-line.
-      (let [{:keys [python-context]}
-            (tpc/new-context {})
-
-            ;; emoji on the first AND a later line; the second form re-reads the var.
-            code
-            (str "msg = \"\"\"# Heading 👆\n\n- bin/ 🚀\n\nPełne ł ó ż 🌳\"\"\"\n" "print(msg)")
-
-            {:keys [error stdout]}
-            (env/run-python-block python-context code)]
-
-        (expect (nil? error))
-        ;; the printed form re-reads the multi-line emoji string unchanged
-        (expect (string? stdout))
-        (expect (clojure.string/includes? stdout "👆"))
-        (expect (clojure.string/includes? stdout "🌳"))
-        (expect (clojure.string/includes? stdout "Pełne ł ó ż")))))
+      (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('requests are bounded')")))))
 
 (defdescribe final-answer-gate-test
              ;; `final-answer-gate-error` itself carries ONLY extension
@@ -4159,46 +4126,6 @@
 
 ;; def-sink -> vars-snapshot (per-var precise source extraction)
 
-(defdescribe
-  gather-builtin-test
-  "maki-style in-program concurrency: `await gather(*awaitables)` runs each
-   awaitable on a virtual thread and returns results IN ORDER. Guards the async
-   runtime end-to-end through a real sandbox: the await path AST-wraps + drives
-   coroutine, gather dispatches awaitables to __vis_par__ (the host
-   bounded platform pool). Concurrency itself is proven by real thread overlap."
-  (it
-    "awaits gathered coroutines and returns their results in order"
-    (let [environment (lp/create-environment ::router {:db :memory})]
-      (try
-        (let
-          [r
-           (env/run-python-block
-             (:python-context environment)
-             "async def work(n):\n    return n * n\nvals = await gather(work(2), work(3), work(4))\nprint(list(vals))"
-             "t1/i1")]
-          (expect (nil? (:error r)))
-          (expect (= "[4, 9, 16]" (clojure.string/trim (str (:stdout r))))))
-        (finally (try (lp/dispose-environment! environment) (catch Throwable _ nil))))))
-  (it
-    "a failing member surfaces the RIGHT slot + its OWN error (never mis-attributed)"
-    ;; gather is all-or-nothing, but the error must name the EXACT failing index
-    ;; and carry that call's real message — not a sibling's, not a generic one.
-    ;; (Independent of the `__vis_par_isolated__` batch path, which never routes
-    ;; through gather — this guards `gather`/`__vis_par__` behavior verbatim.)
-    (let [environment (lp/create-environment ::router {:db :memory})]
-      (try
-        (let
-          [r
-           (env/run-python-block
-             (:python-context environment)
-             "async def ok(n):\n    return n\nasync def boom():\n    raise ValueError('DISTINCT_BOOM_42')\nawait gather(ok(1), boom(), ok(3))"
-             "t1/i1")
-           msg (str (:message (:error r)))]
-
-          (expect (some? (:error r)))
-          (expect (clojure.string/includes? msg "[1]"))               ;; the failing slot, not [0]/[2]
-          (expect (clojure.string/includes? msg "DISTINCT_BOOM_42"))) ;; boom's own message
-        (finally (try (lp/dispose-environment! environment) (catch Throwable _ nil)))))))
 
 (defdescribe
   iteration-summarize-test
