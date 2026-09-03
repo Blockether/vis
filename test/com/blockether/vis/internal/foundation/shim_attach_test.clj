@@ -51,7 +51,8 @@
   [root]
   (:python-context (tpc/new-context {}
                                     (fn []
-                                      [root]))))
+                                      [root])
+                                    {:enabled? false :jail-enabled? true})))
 
 (defn- block
   "Run `code` as ONE driven block and return the flat outcome (so the per-block

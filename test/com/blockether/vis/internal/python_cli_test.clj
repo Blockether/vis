@@ -111,13 +111,14 @@
         ;; jailed contract, which is the one that means something.
         (tpc/with-own [jailed {} (constantly [(System/getProperty "user.dir")])
                        {:jail-enabled? true :enabled? false}]
-          (let [{:keys [exit out]} (run-src jailed
-                                            (str "import socket\n" "try:\n"
-                                                 "    socket.gethostbyname('example.com')\n"
-                                                 "    print('resolved')\n"
-                                                 "except Exception:\n" "    print('blocked')"))]
-            (expect (= 0 exit))
-            (expect (re-find #"blocked" out)))))
+                      (let [{:keys [exit out]}
+                            (run-src jailed
+                                     (str "import socket\n" "try:\n"
+                                          "    socket.gethostbyname('example.com')\n"
+                                          "    print('resolved')\n"
+                                          "except Exception:\n" "    print('blocked')"))]
+                        (expect (= 0 exit))
+                        (expect (re-find #"blocked" out)))))
     (it "a network-enabled context builds without error"
         (expect (some? (python-cli-context {:network? true}))))))
 

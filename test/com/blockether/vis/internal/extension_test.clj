@@ -851,7 +851,7 @@
             (atom [])
 
             path
-            (str "/Users/example/workspace/vis/extensions/channels/vis-channel-tui/"
+            (str "/Users/example/workspace/vis/apps/vis-tui/"
                  "src/com/example/a_long_but_visible_file.clj")
 
             sym

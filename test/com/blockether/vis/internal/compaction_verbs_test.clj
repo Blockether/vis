@@ -16,6 +16,7 @@
         via `ctx-engine/folds-view` → `ctx-renderer/render-ctx-delta`."
   (:require [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.ctx-renderer :as cr]
+            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.loop :as lp]
             [clojure.string :as str]
             [com.blockether.vis.test-python-context :as tpc]
@@ -959,6 +960,143 @@
           (stamp a nil)
           (expect (= urgent (get @a "engine_utilization")))))))
 
+;; ── layer 5b: what a fold is WORTH — the per-iteration wire residence ────────
+
+(def ^:private form-wire-chars (var-get #'lp/form-wire-chars))
+
+(def ^:private stamp-iter-universe! (var-get #'lp/stamp-iter-universe!))
+
+(defn- filler "`n` characters of wire text." [n] (apply str (repeat n "x")))
+
+(defn- weight-of
+  "The `engine_iter_weights` entry a live send stamps for ONE iteration: `raw` is
+   the canonical record, `wire` the provider-visible projection `apply-summaries`
+   hands back (they differ once a fold collapsed the step)."
+  ([raw] (weight-of raw raw))
+  ([raw wire]
+   (let [a (atom {})]
+     (stamp-iter-universe! a [[1 raw]] [[1 wire]])
+     (get (get @a "engine_iter_weights") "t1/i1"))))
+
+(defdescribe
+  fold-wire-residence-test
+  ;; Observed failure: a fold that removed ~131k tokens of wire announced `saved ~46k`.
+  ;; The weight behind that card counted ONLY stdout, at 4 chars per token, so the
+  ;; model's own code and thinking rode the wire for free and dense tool output was
+  ;; billed at half rate — the card read as if folding barely helped.
+  (it "counts the code the model sent, not only what the program printed"
+      (expect (= 1300 (form-wire-chars {:code (filler 300) :stdout (filler 1000)}))))
+  (it "keeps the runaway-output ceiling and still counts the code"
+      (expect (= (+ 65536 10) (form-wire-chars {:code (filler 10) :stdout (filler 200000)}))))
+  (it "prices an error as that form's output"
+      (expect (= 16 (form-wire-chars {:code (filler 10) :error "boom!!"}))))
+  (it "a fold breadcrumb costs the iteration nothing"
+      (expect (zero? (form-wire-chars {:summary? true :summary-gist (filler 400)}))))
+  (it "an iteration is worth its thinking, its code and its results"
+      ;; 250 + 400 + 4000 chars at the measured ~3.25 chars per token, plus the one
+      ;; message frame the assistant/tool_result pair costs whatever it carried.
+      (expect (= 1680
+                 (weight-of {:thinking (filler 250)
+                             :forms-vec
+                             [{:scope "t1/i1/f1" :code (filler 400) :stdout (filler 4000)}]}))))
+  (it "costs its message frame even when the step printed almost nothing"
+      (expect (= 253 (weight-of {:forms-vec [{:scope "t1/i1/f1" :code (filler 10)}]}))))
+  (it "an already collapsed iteration is worth nothing"
+      (let [raw {:thinking (filler 250)
+                 :forms-vec [{:scope "t1/i1/f1" :code (filler 400) :stdout (filler 4000)}]}]
+        (expect (zero? (weight-of raw
+                                  (assoc raw
+                                    :collapsed? true
+                                    :forms-vec []))))))
+  (it "a collapsed iteration keeping its gist breadcrumb is still worth nothing"
+      ;; `apply-summaries` anchors the breadcrumb ON a collapsed record, so the
+      ;; assistant message is gone even though a summary form remains.
+      (let [raw {:thinking (filler 250)
+                 :forms-vec [{:scope "t1/i1/f1" :code (filler 400) :stdout (filler 4000)}]}]
+        (expect (zero? (weight-of raw
+                                  (assoc raw
+                                    :collapsed? true
+                                    :forms-vec
+                                    [{:scope :summary :summary? true :summary-gist "g"}])))))))
+
+;; ── layer 5c: the same residence, tokenized instead of character-priced ──────
+
+(def ^:private conversation-suffix (var-get #'lp/conversation-suffix))
+
+
+(def ^:private messages-wire-tokens (var-get #'lp/messages-wire-tokens))
+
+(def ^:private priced-model
+  "Any model svar resolves an encoding for; the pricing path needs nothing else."
+  "gpt-4o")
+
+(def ^:private priced-target {:provider :openai :model priced-model})
+
+(defn- tool-iter
+  "One trailer entry as a live send records it: the assistant message carrying the
+   `tool_use`, and the form whose stdout answers it."
+  [out]
+  [1
+   {:assistant-message
+    {:role "assistant"
+     :content
+     [{:type "text" :text "reading the tree"}
+      {:type "tool_use" :id "tc-1" :name "python_execution" :input {"code" "print(ls('src'))"}}]}
+    :llm-provider :openai
+    :llm-model priced-model
+    :preserved-thinking/replay? true
+    :tool-calls [{:id "tc-1" :name "python_execution" :input {"code" "print(ls('src'))"}}]
+    :forms-vec [{:scope "t1/i1" :svar/tool-call-id "tc-1" :code "print(ls('src'))" :stdout out}]}])
+
+(defn- suffix-tokens
+  "What the messages of ONE iteration cost inside a larger request, taken from
+   `conversation-suffix` so the assertion pins the ATTRIBUTION independently of the
+   grouping production prices from."
+  [entry]
+  (messages-wire-tokens priced-model (conversation-suffix [entry] priced-target)))
+
+(defn- measured-weight-of
+  "The tokenized `engine_iter_weights` entry for one iteration."
+  [entry]
+  (let [a (atom {})]
+    (stamp-iter-universe! a [entry] [entry] {:model priced-model :replay-target priced-target})
+    (get (get @a "engine_iter_weights") "t1/i1")))
+
+(defdescribe fold-tokenized-residence-test
+             ;; Observed failure: character/rule-of-thumb weights were off by 24% on
+             ;; the folds they were fitted to. The resolved-model path now tokenizes
+             ;; the canonical messages the request will carry.
+             (it "renders the iteration as the assistant/tool_result PAIR it prices"
+                 (expect
+                   (= 2 (count (conversation-suffix [(tool-iter (filler 4000))] priced-target)))))
+             (it "prices an iteration with the tokenizer over the messages it will send"
+                 (let [entry (tool-iter (filler 4000))]
+                   (expect (pos? (long (measured-weight-of entry))))
+                   (expect (= (suffix-tokens entry) (measured-weight-of entry)))))
+             (it "a bigger result costs more than a small one"
+                 (expect (< (long (measured-weight-of (tool-iter "ok")))
+                            (long (measured-weight-of (tool-iter (filler 4000)))))))
+             (it "an already collapsed iteration is worth nothing, gist render and all"
+                 (let [[pos rec]
+                       (tool-iter (filler 4000))
+
+                       collapsed
+                       [pos
+                        (assoc rec
+                          :collapsed? true
+                          :tool-calls nil
+                          :forms-vec [{:scope :summary :summary? true :summary-gist "g"}])]
+
+                       a
+                       (atom {})]
+
+                   (stamp-iter-universe! a
+                                         [(tool-iter (filler 4000))]
+                                         [collapsed]
+                                         {:model priced-model :replay-target priced-target})
+                   (expect (zero? (long (get (get @a "engine_iter_weights") "t1/i1")))))))
+
+
 ;; ── layer 6: the human-facing fold CARD (tokens saved + context level) ───────
 
 (defn- priced-ctx
@@ -1253,3 +1391,47 @@
         (expect (= "folded t1/i1 → g" out))
         (expect (not (str/includes? out "ntr")))
         (expect (not (str/includes? out "more results"))))))
+
+ ;; ── layer 5d: Svar's canonical structured-message counter ──────────────────
+
+(defdescribe
+  wire-counter-integration-test
+  ;; Observed failure: the dependency's counter read an agent iteration as about
+  ;; 13 tokens because it ignored tool calls, tool results and preserved thinking.
+  (let [code
+        (filler 4000)
+
+        assistant
+        {:role "assistant"
+         :content [{:type "tool_use" :id "tc-1" :name "python_execution" :input {"code" code}}]}
+
+        results
+        {:role "user"
+         :content [{:type "tool_result" :tool_use_id "tc-1" :content [{:type "text" :text code}]}]}]
+
+    (it "counts the CODE the model sent inside its tool_use"
+        (expect (< 500 (long (messages-wire-tokens priced-model [assistant])))))
+    (it "counts the OUTPUT that answered it inside the tool_result"
+        (expect (< 500 (long (messages-wire-tokens priced-model [results])))))
+    (it "delegates the whole structured-message count to Svar"
+        (expect (= (long (messages-wire-tokens priced-model [assistant results]))
+                   (- (long (svar-router/count-messages priced-model [assistant results]))
+                      (long (svar-router/count-messages priced-model []))))))
+    (it "counts a replayed thinking chain and its signature"
+        (expect (< 500
+                   (long (messages-wire-tokens priced-model
+                                               [{:role "assistant"
+                                                 :content [{:type "thinking"
+                                                            :thinking code
+                                                            :thinking-signature "sig"}]}])))))
+    (it "prices an image by its geometry, never by tokenizing its base64"
+        (let [data-url (str "data:image/png;base64," (filler 40000))]
+          (expect (> 3000
+                     (long (messages-wire-tokens priced-model
+                                                 [{:role "user"
+                                                   :content [{:type "image_url"
+                                                              :image_url {:url data-url}}]}]))))))
+    (it "a group of messages sums to the same count as the messages one by one"
+        (expect (= (long (messages-wire-tokens priced-model [assistant results]))
+                   (+ (long (messages-wire-tokens priced-model [assistant]))
+                      (long (messages-wire-tokens priced-model [results]))))))))

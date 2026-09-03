@@ -12,90 +12,61 @@
  ["apps/vis-companion/src/lib/gateway.ts" "apps/vis-companion/src/lib/compat.ts"
   "apps/vis-companion/src/lib/endpoints.ts" "apps/vis-companion/src/lib/types.ts"]
  :contract/internal-debt {:debt/production
-                          {com.blockether.vis.contract.surface 3
-                           com.blockether.vis.contract.test-runner 2
-                           com.blockether.vis.contract.view 2
-                           com.blockether.vis.core 41
-                           com.blockether.vis.internal.attachments 6
-                           com.blockether.vis.internal.cancellation 2
-                           com.blockether.vis.internal.config 3
-                           com.blockether.vis.internal.extension 5
-                           com.blockether.vis.internal.external-opener 5
-                           com.blockether.vis.internal.file-picker 2
-                           com.blockether.vis.internal.format 7
-                           com.blockether.vis.internal.foundation.editing.parse 1
-                           com.blockether.vis.internal.foundation.environment.languages 1
-                           com.blockether.vis.internal.header 4
-                           com.blockether.vis.internal.iteration 1
-                           com.blockether.vis.internal.limits-format 1
-                           com.blockether.vis.internal.oauth 3
-                           com.blockether.vis.internal.paths 8
-                           com.blockether.vis.internal.prompt-templates 1
-                           com.blockether.vis.internal.provider-error 1
-                           com.blockether.vis.internal.python-project 1
-                           com.blockether.vis.internal.python-test-runner 1
-                           com.blockether.vis.internal.render 2
-                           com.blockether.vis.internal.runtime-settings 2
-                           com.blockether.vis.internal.theme 3
-                           com.blockether.vis.internal.view 1
-                           com.blockether.vis.internal.view.materializer 1
-                           com.blockether.vis.internal.voice 4
-                           com.blockether.vis.internal.workspace 4}
-                          :debt/test {com.blockether.vis.contract.surface 3
-                                      com.blockether.vis.contract.view 2
-                                      com.blockether.vis.core 32
-                                      com.blockether.vis.internal.attachments 2
-                                      com.blockether.vis.internal.config 2
-                                      com.blockether.vis.internal.env-python 1
-                                      com.blockether.vis.internal.extension 1
-                                      com.blockether.vis.internal.external-opener 3
-                                      com.blockether.vis.internal.file-picker 1
-                                      com.blockether.vis.internal.form 1
-                                      com.blockether.vis.internal.foundation.editing.parse 1
-                                      com.blockether.vis.internal.foundation.gif 1
-                                      com.blockether.vis.internal.foundation.shell 1
-                                      com.blockether.vis.internal.gateway.state 1
-                                      com.blockether.vis.internal.gateway.view 1
-                                      com.blockether.vis.internal.header 1
-                                      com.blockether.vis.internal.iteration 3
-                                      com.blockether.vis.internal.loop 1
-                                      com.blockether.vis.internal.persistance 2
-                                      com.blockether.vis.internal.process-jail 3
-                                      com.blockether.vis.internal.progress 2
-                                      com.blockether.vis.internal.provider-limits 2
-                                      com.blockether.vis.internal.providers 2
-                                      com.blockether.vis.internal.python-project 1
-                                      com.blockether.vis.internal.render 1
-                                      com.blockether.vis.internal.runtime-settings 1
-                                      com.blockether.vis.internal.theme 1
-                                      com.blockether.vis.internal.view 3
-                                      com.blockether.vis.internal.view.materializer 1
-                                      com.blockether.vis.internal.voice 1
-                                      com.blockether.vis.view 1}
-                          ;; Final-layer violations outside consumers. Contract and future Core/SDK namespaces
-                          ;; are already clean; today's gateway server is the only active owner with debt.
-                          :debt/layers {com.blockether.vis.internal.attachments 1
-                                        com.blockether.vis.internal.config 1
-                                        com.blockether.vis.internal.docs 1
-                                        com.blockether.vis.internal.extension 1
-                                        com.blockether.vis.internal.file-picker 1
-                                        com.blockether.vis.internal.gateway-sandbox 1
-                                        com.blockether.vis.internal.gateway.discovery 1
-                                        com.blockether.vis.internal.gateway.pairing 1
-                                        com.blockether.vis.internal.gateway.push 1
-                                        com.blockether.vis.internal.gateway.runtime 1
-                                        com.blockether.vis.internal.gateway.state 1
-                                        com.blockether.vis.internal.gateway.view 1
-                                        com.blockether.vis.internal.loop 1
-                                        com.blockether.vis.internal.provider-auth 1
-                                        com.blockether.vis.internal.provider-limits 1
-                                        com.blockether.vis.internal.providers 1
-                                        com.blockether.vis.internal.python-extensions 1
-                                        com.blockether.vis.internal.registry 1
-                                        com.blockether.vis.internal.resources 1
-                                        com.blockether.vis.internal.slash 1
-                                        com.blockether.vis.internal.toggles 1
-                                        com.blockether.vis.internal.voice 1}}
+                           {com.blockether.vis.contract.surface 3
+                            com.blockether.vis.contract.test-runner 2
+                            com.blockether.vis.core 17
+                            com.blockether.vis.internal.attachments 1
+                            com.blockether.vis.internal.cancellation 2
+                            com.blockether.vis.internal.config 1
+                            com.blockether.vis.internal.extension 5
+                            com.blockether.vis.internal.external-opener 2
+                            com.blockether.vis.internal.foundation.editing.parse 1
+                            com.blockether.vis.internal.foundation.environment.languages 1
+                            com.blockether.vis.internal.oauth 3
+                            com.blockether.vis.internal.paths 4
+                            com.blockether.vis.internal.python-project 1
+                            com.blockether.vis.internal.python-test-runner 1
+                            com.blockether.vis.internal.runtime-settings 2
+                            com.blockether.vis.internal.workspace 1}
+                           :debt/test {com.blockether.vis.contract.surface 3
+                                       com.blockether.vis.core 17
+                                       com.blockether.vis.internal.attachments 1
+                                       com.blockether.vis.internal.config 2
+                                       com.blockether.vis.internal.env-python 1
+                                       com.blockether.vis.internal.extension 1
+                                       com.blockether.vis.internal.external-opener 1
+                                       com.blockether.vis.internal.foundation.editing.parse 1
+                                       com.blockether.vis.internal.persistance 2
+                                       com.blockether.vis.internal.process-jail 3
+                                       com.blockether.vis.internal.provider-limits 1
+                                       com.blockether.vis.internal.providers 1
+                                       com.blockether.vis.internal.python-project 1
+                                       com.blockether.vis.internal.runtime-settings 1}
+                           ;; Final-layer violations outside consumers. Contract and future Core/SDK namespaces
+                           ;; are already clean; today's gateway server is the only active owner with debt.
+                           :debt/layers {com.blockether.vis.internal.attachments 1
+                                         com.blockether.vis.internal.audio-transcribe 1
+                                         com.blockether.vis.internal.config 1
+                                         com.blockether.vis.internal.docs 1
+                                         com.blockether.vis.internal.extension 1
+                                         com.blockether.vis.internal.file-picker 1
+                                         com.blockether.vis.internal.gateway-sandbox 1
+                                         com.blockether.vis.internal.gateway.discovery 1
+                                         com.blockether.vis.internal.gateway.pairing 1
+                                         com.blockether.vis.internal.gateway.push 1
+                                         com.blockether.vis.internal.gateway.runtime 1
+                                         com.blockether.vis.internal.gateway.state 1
+                                         com.blockether.vis.internal.gateway.view 1
+                                         com.blockether.vis.internal.loop 1
+                                         com.blockether.vis.internal.provider-auth 1
+                                         com.blockether.vis.internal.provider-limits 1
+                                         com.blockether.vis.internal.providers 1
+                                         com.blockether.vis.internal.python-extensions 1
+                                         com.blockether.vis.internal.registry 1
+                                         com.blockether.vis.internal.resources 1
+                                         com.blockether.vis.internal.slash 1
+                                         com.blockether.vis.internal.speech 1
+                                         com.blockether.vis.internal.toggles 1}}
  :contract/wire-debt
  {:debt/javascript
   {[:event "block.activity"] 1
@@ -116,10 +87,6 @@
    [:header "x-vis-protocol"] 1
    [:protocol "APP_PROTOCOL=12"] 1
    [:route "/healthz"] 3
-   [:route "/tui/embed?bridge=${encodeURIComponent(bridgeId)}"] 1
-   [:route "/tui/events"] 1
-   [:route "/tui/input"] 1
-   [:route "/tui/resize"] 1
    [:route "/v1/admin/status"] 1
    [:route "/v1/capabilities"] 2
    [:route "/v1/devices"] 1

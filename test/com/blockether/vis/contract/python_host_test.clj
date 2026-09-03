@@ -148,7 +148,8 @@
         (let [sess (pyx/build-context "python-contract-bind-test")]
           (try (pyx/bind-host! sess "python-contract-bind-test")
                (expect (= ""
-                          (pyext/eval-str pyext/shared-key sess
+                          (pyext/eval-str pyext/shared-key
+                                          sess
                                           (str "','.join(n for n in ["
                                                (str/join ", " (map pr-str (contract/host-globals)))
                                                "] if n not in globals())"))))

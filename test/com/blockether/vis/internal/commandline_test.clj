@@ -49,7 +49,7 @@
    :cmd/subcommands
    [{:cmd/name "list" :cmd/doc "List every registered extension." :cmd/internal? true}
     {:cmd/name "inspect" :cmd/doc "Inspect extension metadata." :cmd/internal? true}
-    {:cmd/name "voice" :cmd/doc "Voice extension commands."}
+    {:cmd/name "search" :cmd/doc "Search extension commands."}
     {:cmd/name "audit" :cmd/doc "Audit extension commands."}]
    :cmd/extra-sections [{:title "INSTALLED EXTENSIONS"
                          :body
@@ -64,12 +64,12 @@
           (expect (str/includes? out "EXTENSION COMMANDS"))
           (expect (str/includes? out "list"))
           (expect (str/includes? out "inspect"))
-          (expect (str/includes? out "voice"))
+          (expect (str/includes? out "search"))
           (expect (str/includes? out "audit"))
           (expect (not (str/includes? out "---- extensions ----")))
           ;; Internal block must appear before the extension block.
           (let [a (.indexOf ^String out "list")
-                b (.indexOf ^String out "voice")]
+                b (.indexOf ^String out "search")]
 
             (expect (and (pos? a) (pos? b) (< a b)))))))
   (it "renders :cmd/extra-sections after the subcommand block"

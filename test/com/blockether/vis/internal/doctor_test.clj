@@ -4,6 +4,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.speech.cli :as speech-cli]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -32,15 +33,21 @@
 
 (defdescribe doctor-run-checks-test
              (it "emits host system messages under vis before extension messages"
-                 (with-redefs [extension/registered-extensions
+                 (with-redefs [speech-cli/doctor-fn
+                               (fn [_]
+                                 [{:level :info :check-id ::voice :message "ready"}])
+
+                               extension/registered-extensions
                                (fn []
                                  [{:ext/name "sample"
                                    :ext/doctor-fn
                                    (fn [_]
                                      [{:level :info :check-id ::sample :message "ok"}])}])]
+
                    (let [msgs (doctor/run-checks {:db-info {:path "/tmp/test.db"}})]
                      (expect (= "vis" (:ext (first msgs))))
                      (expect (= ::doctor/system (:check-id (first msgs))))
+                     (expect (= "vis" (:ext (first (filter #(= ::voice (:check-id %)) msgs)))))
                      (expect (= "sample" (:ext (last msgs))))
                      (expect (= ::sample (:check-id (last msgs))))))))
 

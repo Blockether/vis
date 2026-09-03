@@ -723,8 +723,8 @@
               wire, so folded scopes that already scrolled off the trailer never
               inflate it) is folded away, priced BOTH in scopes (`<C>/<T>`) AND —
               when `weights` are stamped — in reclaimed context (`~<toks> tok`,
-              summed from `engine_iter_weights` with the SAME estimator the
-              `fold_session` card and the over-budget nudge use, PLUS the Q/A
+               summed from `engine_iter_weights`, which a live send MEASURES with
+               the tokenizer over the very messages it sends, PLUS the Q/A
               recaps of explicitly whole-turn-folded turns priced from
               `turn-weights` / `engine_turn_weights`); and `live` the
               compressed scopes STILL on the wire (accounting only; current-turn

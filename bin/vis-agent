@@ -76,8 +76,8 @@ managed_ref_file="$vis_install_dir/ref"
 # published nothing) belongs to no track at all, and is replaced by rebuilding
 # it rather than by updating. Remembered here so `update` never jumps tracks on
 # its own — only an explicit `--track` moves it.
-# Deliberately NOT called a channel: in Vis a channel is a user interface an
-# extension registers (TUI, web, Telegram).
+# Deliberately not called a channel: UI clients such as `vis-tui` consume the
+# gateway protocol and are independent of the engine's release track.
 vis_track_file="$vis_install_dir/track"
 
 say()  { printf 'vis-agent: %s\n' "$*"; }

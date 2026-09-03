@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Stage one standalone terminal client archive. The TUI is deliberately separate
+# from the vis-agent bundle: it is a gateway consumer, not an engine component.
+#
+#   bin/stage-tui-release apps/vis-tui/target/vis-tui vis-tui-linux-arm64.tar.gz
+#
+# Archive layout:
+#   vis-tui    standalone native executable
+set -euo pipefail
+
+die() { printf 'stage-tui-release: %s\n' "$@" >&2; exit 1; }
+
+repo_root="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+bundle="${VIS_TUI_BUNDLE_DIR:-$repo_root/target/tui-release-bundle}"
+binary="${1:-}"
+asset="${2:-}"
+
+[[ -n "$binary" && -n "$asset" && $# -eq 2 ]] ||   die "usage: stage-tui-release <vis-tui-binary> <asset.tar.gz>"
+[[ -f "$binary" ]] || die "missing vis-tui binary: $binary"
+[[ -x "$binary" ]] || die "vis-tui binary is not executable: $binary"
+[[ "$asset" == *.tar.gz ]] || die "asset must end in .tar.gz: $asset"
+
+rm -rf "$bundle"
+mkdir -p "$bundle"
+cp "$binary" "$bundle/vis-tui"
+chmod 755 "$bundle/vis-tui"
+rm -f "$asset"
+tar -C "$bundle" -czf "$asset" vis-tui
+printf 'stage-tui-release: %s (%s)\n' "$asset" "$(du -sh "$asset" | cut -f1)"

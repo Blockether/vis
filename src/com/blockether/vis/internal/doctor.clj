@@ -20,6 +20,7 @@
   (:require [clojure.string :as string]
             [com.blockether.vis.internal.config-spec :as config-spec]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.speech.cli :as speech-cli]
             [com.blockether.vis.internal.format :as fmt]
             [taoensso.telemere :as tel]))
 
@@ -221,12 +222,10 @@
         (assoc :level level
                :message message))))
 
-(defn- run-one-extension
-  "Run ONE extension's `:ext/doctor-fn`. Each emitted message
-   gets `:ext` (the namespace) auto-injected; `:check-id` is left to
-   the extension to stamp. Throwables become a single :error message
-   describing the throw."
-  [ext-ns doctor-fn environment]
+(defn- run-doctor-fn
+  "Run one doctor function under `owner`. Returned messages are normalized and
+   attributed to that output section; throwables become one error message."
+  [owner doctor-fn environment]
   (try (let [returned
              (doctor-fn environment)
 
@@ -235,18 +234,18 @@
                    (map? returned) [returned]
                    (sequential? returned) (vec returned)
                    :else [{:level :error
-                           :message (str ":ext/doctor-fn returned non-message value: "
+                           :message (str "Doctor check returned a non-message value: "
                                          (pr-str returned))}])]
 
          (mapv (fn [m]
                  (-> (coerce-message m)
-                     (assoc :ext ext-ns)))
+                     (assoc :ext owner)))
                msgs))
        (catch Throwable t
-         (tel/log! {:level :error :id ::check-threw :data {:ext ext-ns :error (ex-message t)}})
+         (tel/log! {:level :error :id ::check-threw :data {:owner owner :error (ex-message t)}})
          [{:level :error
-           :message (str ":ext/doctor-fn threw: " (or (ex-message t) (str t)))
-           :ext ext-ns}])))
+           :message (str "Doctor check threw: " (or (ex-message t) (str t)))
+           :ext owner}])))
 
 (defn- live-config
   "The merged live config a mount check reads: whatever the caller handed in, else
@@ -415,21 +414,16 @@
                 "fallback_model"]])))))
 
 (defn run-checks
-  "Walk every registered extension, invoke its `:ext/doctor-fn`,
-   return a vec of message maps with `:ext` auto-injected. The
-   extension's fn is responsible for stamping `:check-id` on each
-   message when it wants per-section grouping in the formatter.
-
-   Plan §10: extensions in registration order; messages in fn-return
-   order. Activation-fn ignored: every registered extension's fn runs."
+  "Run host-owned diagnostics, including speech, then every registered extension's checks."
   [environment]
   (vec (concat (host-system-messages environment)
                (workspace-mount-messages environment)
                (provider-selection-messages environment)
                (sandbox-shim-messages environment)
+               (run-doctor-fn "vis" speech-cli/doctor-fn environment)
                (mapcat (fn [ext]
                          (when-let [doctor-fn (:ext/doctor-fn ext)]
-                           (run-one-extension (:ext/name ext) doctor-fn environment)))
+                           (run-doctor-fn (:ext/name ext) doctor-fn environment)))
                        (extension/registered-extensions)))))
 
 (defn exit-code

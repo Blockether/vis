@@ -1,0 +1,25 @@
+{:paths ["src" "resources"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.5"}
+        com.blockether/vis-contract {:local/root "../../packages/vis-contract"}
+        org.babashka/http-client {:mvn/version "0.4.24"}
+        babashka/process {:mvn/version "0.6.25"}
+        com.cnuernber/charred {:mvn/version "1.041"}
+        io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
+        org.commonmark/commonmark {:mvn/version "0.29.0"}
+        org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
+        org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
+        com.taoensso/telemere {:mvn/version "1.2.1"}
+        com.blockether/fff {:mvn/version "0.12.6"}
+        com.blockether/imaging {:mvn/version "0.1.10"}
+        com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.49"}}
+ :aliases
+  {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}}
+           :extra-paths ["build"]
+           :ns-default vis-tui.build}
+  :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}
+  :run {:main-opts ["-m" "com.blockether.vis.tui.main"]}
+  :test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
+                      org.jcodec/jcodec {:mvn/version "0.2.5"}}
+         :extra-paths ["test"]
+         :main-opts ["-m" "lazytest.main" "test"]}}}

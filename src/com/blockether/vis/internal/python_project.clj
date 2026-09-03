@@ -91,13 +91,15 @@
   [^String session ^String dir]
   (let [entry "__vis_project_config__"]
     (try (pyext/exec! pyext/shared-key session @project-config-src)
-         (let [res (json/read-json (pyext/run pyext/shared-key session (str entry "(" (pr-str dir) ")"))
-                                   :key-fn
-                                   identity)]
+         (let [res (json/read-json
+                     (pyext/run pyext/shared-key session (str entry "(" (pr-str dir) ")"))
+                     :key-fn
+                     identity)]
            {:import-roots (mapv str (nth res 0 [])) :testpaths (mapv str (nth res 1 []))})
          (catch Throwable t {:import-roots [] :testpaths [] :error (throwable-msg t)})
          ;; The CLI interpreter is the human's own scope -- leave nothing behind.
-         (finally (try (pyext/exec! pyext/shared-key session (str "del " entry)) (catch Throwable _ nil))))))
+         (finally (try (pyext/exec! pyext/shared-key session (str "del " entry))
+                       (catch Throwable _ nil))))))
 
 (defn- configured-import-roots
   "Import roots the user declared in merged config as `python.source_paths` --

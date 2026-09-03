@@ -26,28 +26,6 @@
             [com.blockether.vis.internal.header :as header]
             [com.blockether.vis.internal.util :as util]))
 
-;; ---------------------------------------------------------------------------
-;; Channels we know how to enumerate. Derived from the global channel
-;; registry (`vis/registered-channels`) so any third-party channel jar
-;; on the classpath surfaces in the inspect session index automatically -
-;; no edits to this file when a new front-end ships.
-;;
-;; `:cli` is added unconditionally because the CLI agent uses `:cli` as
-;; its sessions-channel namespace WITHOUT registering a channel
-;; descriptor (the `vis` dispatcher itself is the surface; there is no
-;; `vis-agent channels cli` sub-command, so it has no `:channel/cmd`). Every
-;; other channel id comes from the registry.
-;; ---------------------------------------------------------------------------
-
-(defn- known-channels
-  "Vec of sessions-channel keywords known to this process. Derived
-   from the global channel registry plus the implicit `:cli` namespace."
-  []
-  (->> (vis/registered-channels)
-       (map :channel/id)
-       (cons :cli)
-       distinct
-       vec))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers - derive ids, deref atoms, normalize sym args.
@@ -521,12 +499,6 @@
           :else 0)
     0))
 
-(defn- channel-session-rows
-  "Index rows for every session of one channel. `[]` on any failure."
-  [env channel]
-  (if-let [db (:db-info env)]
-    (try (mapv #(session-index-row db %) (vis/db-list-sessions db channel)) (catch Throwable _ []))
-    []))
 
 (defn- search-tags
   "The where-it-hit half of a search row, in the same vocabulary the gateway
@@ -562,14 +534,18 @@
     []))
 
 (defn- foundation-sessions-data
-  "List every session the DB knows about, newest-first, scanning every channel
-   surfaced by `known-channels`. With a non-blank `search` the SERVER's ranked
-   answer replaces that order (see `search-session-rows`); a blank search is the
-   plain index. Returns `[]` (never nil) when the env is missing a `:db-info`
-   handle so callers can chain seq operations safely."
+  "List every session the DB knows about, newest-first. With a non-blank
+   `search` the SERVER's ranked answer replaces that order (see
+   `search-session-rows`); a blank search is the plain index. Returns `[]`
+   (never nil) when the env is missing a `:db-info` handle so callers can
+   chain seq operations safely."
   ([env]
-   (if (:db-info env)
-     (vec (sort-by recency-key (mapcat #(channel-session-rows env %) (known-channels))))
+   (if-let [db (:db-info env)]
+     (try (->> (vis/db-list-sessions db :all)
+               (map #(session-index-row db %))
+               (sort-by recency-key)
+               vec)
+          (catch Throwable _ []))
      []))
   ([env search]
    (if-let [q (some-> search

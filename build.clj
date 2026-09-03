@@ -14,9 +14,9 @@
      clojure -T:build deploy           # build + deploy all to Clojars
      clojure -T:build clean            # delete target/
 
-     clojure -T:build jar     :package vis-channel-tui    # one only
-     clojure -T:build install :package vis-channel-tui
-     clojure -T:build deploy  :package vis-channel-tui
+     clojure -T:build jar     :package vis-provider-anthropic    # one only
+     clojure -T:build install :package vis-provider-anthropic
+     clojure -T:build deploy  :package vis-provider-anthropic
 
    The `:package` selector matches `:lib` short name (after the slash)."
   (:require [clojure.java.io :as io]
@@ -182,7 +182,6 @@
   {'com.blockether/vis "vis - single-namespace SDK + iteration runtime + binary entry point."
    'com.blockether/vis-persistance-sqlite "SQLite backend for the vis persistence facade."
    'com.blockether/vis-provider-github-copilot "GitHub Copilot OAuth device-flow provider."
-   'com.blockether/vis-channel-tui "Lanterna-based TUI channel."
    'com.blockether/vis-foundation-exa "Exa MCP web/code search tools for the Vis SCI sandbox."})
 
 (defn- build-pom-data
@@ -583,13 +582,11 @@
                 {:expected want :actual got :task task}))))))))
 
 ;; ── Distribution: community, and only community ─────────────────────────────
-;; There is ONE distribution and it bundles EVERYTHING: every channel, every
-;; provider/language extension, voice ASR, the web `search` extension. Nothing
-;; is ever dropped from the classpath, so there is nothing to select — the old
-;; :tui / :cross / :voice cuts are gone. They existed only to shed
-;; com.blockether/vis-foundation-voice (the ONLY route by which the
-;; sherpa-onnx/onnxruntime JNI libs reach the classpath), i.e. to ship a
-;; voiceless vis — not a product we ship.
+ ;; There is ONE agent distribution. It bundles every gateway provider/language
+ ;; extension, built-in speech ASR/TTS, and the web `search` extension. The
+ ;; standalone `vis-tui` application is a separate executable and release asset;
+ ;; it talks to this distribution over the gateway protocol. The old :tui / :cross /
+ ;; :voice build cuts are gone because they mixed client packaging with engine deps.
 ;; `:profile :community` is still ACCEPTED on `native` / `uber` (the Dockerfile
 ;; and the release workflow pass it); anything else is a hard error.
 ;; The parakeet ASR model is NEVER embedded in the binary: it is distributed
@@ -941,11 +938,11 @@
     (println "->" python-sidecar-dir)))
 (defn- sherpa-native-jars
   "The BUILD HOST's sherpa-onnx native jar, at the version `basis` pins for the
-   API jar. The voice extension depends on that 187 KB API jar ALONE — its five
-   platform jars are 51 MB and a machine loads exactly one of them, which
-   `sherpa.clj` downloads on demand — so the image build is where the host pair
-   has to come back: `-H:IncludeResources` bakes in this jar's one directory and
-   sherpa's loader then finds the libraries as resources, with nothing to fetch.
+   API jar. Core depends on that 187 KB API jar ALONE — its five platform jars
+   are 51 MB and a machine loads exactly one of them, which `sherpa.clj`
+   downloads on demand — so the image build is where the host pair has to come
+   back: `-H:IncludeResources` bakes in this jar's one directory and sherpa's
+   loader then finds the libraries as resources, with nothing to fetch.
 
    Native images cannot use the runtime tools.deps downloader, so a missing
    artifact is a hard build failure, never a warning."
@@ -1031,8 +1028,8 @@
 (defn- native-image-args
   "native-image CLI args. Config travels INSIDE the classpath jars
    (META-INF/native-image/…); here we add only classpath/main/output, the
-   manifest/docs/db resource includes, and the build-host voice native libs
-   (sherpa-onnx's JNI plus the ONNX Runtime it links) so voice ASR works in the binary.
+   manifest/docs/db resource includes, and the build-host speech native libs
+   (sherpa-onnx's JNI plus the ONNX Runtime it links) so speech ASR works in the binary.
    The ~465 MB parakeet model is NEVER embedded — it ships separately."
   [basis]
   (let [tok
@@ -1102,11 +1099,9 @@
         (mapv #(str "-J" %) (truststore-properties nil))]
 
     (cond-> ["-cp" (native-classpath basis) "-o" native-bin
-             ;; Restricted native access (java.lang.foreign): rift's downcalls and
-             ;; the embedded CPython bridge need it, and lanterna's TTYDeviceControl
-             ;; probes for it before degrading to forking /bin/stty. Without this the
-             ;; JDK prints a 4-line "restricted method" warning on the first paint —
-             ;; and a future JDK blocks the call outright.
+             ;; Restricted native access (java.lang.foreign): rift and the embedded
+             ;; CPython bridge both use downcalls. A future JDK blocks them unless the
+             ;; application opts in explicitly.
              "--enable-native-access=ALL-UNNAMED"
              ;; ── Manifest reachability ───────────────────────────────────────
              ;; The engine resolves every manifest entrypoint dynamically, so a
@@ -1117,18 +1112,6 @@
              ;; the explicit form of what used to happen by accident, through a
              ;; dependency's build-time preload chain.
              "--initialize-at-build-time=com.blockether.vis.internal.native_preload__init"
-             ;; …and that class must decide IN THE BINARY. Its <clinit> builds the
-             ;; termios/ioctl MethodHandles; graal-build-time initializes it inside the
-             ;; BUILDER JVM, where java.lang.foreign simply works, so the image
-             ;; inherited SUPPORTED=true together with handles whose downcall stubs the
-             ;; image never generated. The Linux binary then SIGSEGV'd inside
-             ;; `DowncallStubsHolder` the first time the TUI opened /dev/tty — measured
-             ;; on v0.1.33-v0.1.35 and again on the 2026-08-13 dry run, in
-             ;; `native-binary-paints-the-tui-test`, on x64 and arm64 alike. Initialized
-             ;; at RUN time it decides for itself, and since the image registers no FFM
-             ;; downcall descriptors that decision is lanterna's own catch-and-degrade
-             ;; to forking /bin/stty.
-             "--initialize-at-run-time=com.googlecode.lanterna.terminal.ansi.TTYDeviceControl"
              "-H:IncludeResources=META-INF/vis/.*" "-H:IncludeResources=.*\\.edn$"
              ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
              "-H:IncludeResources=vis/VERSION"
@@ -1143,9 +1126,8 @@
              ;; read a page), so without this pattern the corpus holds zero pages in
              ;; the native binary.
              "-H:IncludeResources=vis-docs/.*"
-             ;; The four host doors (resources/vis-shims/*.py), slurped at session
-             ;; creation via io/resource. Without this pattern `attach`, `ls`,
-             ;; `nippy` and `ruff` are missing in the native binary.
+             ;; The two host doors (resources/vis-shims/*.py), slurped at session
+             ;; creation via io/resource: `attach` and `ls`.
              "-H:IncludeResources=vis-shims/.*"
              ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/vis/*.py, on
              ;; :paths as a resource root): the body every extension context execs, and
@@ -1244,9 +1226,9 @@
    `bin/vis-agent` together with the native runtime.
 
    Options:
-     :profile :community — the ONE distribution and the default: every extension
-                           (all channels, voice ASR, web `search`). Accepted for
-                           compatibility; there is nothing else to pick.
+     :profile :community — the one agent distribution and default: every engine
+                           extension, built-in speech ASR and web `search`. The
+                           standalone TUI is not part of this image.
      :auto-install-graalvm false — keep a missing GraalVM CE a hard error instead of
                            installing the pin (VIS_AUTO_INSTALL_GRAALVM=0 does the same).
                            By default a missing pin is downloaded + installed, and an

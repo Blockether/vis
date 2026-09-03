@@ -119,7 +119,7 @@
                    (expect (= 1 @calls))))
              (it "keeps a failure the machine did not cause out of the record"
                  (let [id (keyword "vis.capability-test" (str (gensym "ordinary")))]
-                   (capability/fail! id (ex-info "no such voice" {:type :voice-tts/unknown-voice}))
+                   (capability/fail! id (ex-info "no such voice" {:type :speech-tts/unknown-voice}))
                    (expect (nil? (capability/verdict id)))))
              (it "holds nothing a native image could bake in"
                  ;; `graal-build-time` initializes this namespace inside the BUILDER, so a

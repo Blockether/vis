@@ -20,9 +20,10 @@
    Public surface used by the loop:
 
      create-python-context / dispose-python-context! / retire-python-context! /
-     interrupt-guest! / python-worker-pids / set-python-binding! / bind-and-bump! /
-     count-top-level-forms / validate-no-banned-defs! / run-python-block /
-     persist-session-defs! / restore-session-defs! / forget-session-defs! /
+     interrupt-guest! / take-partial-block-stdout! / python-worker-pids /
+     set-python-binding! / bind-and-bump! / count-top-level-forms /
+     validate-no-banned-defs! / run-python-block / persist-session-defs! /
+     restore-session-defs! / forget-session-defs! /
      SYSTEM_VAR_NAMES / system-var-sym? / boundary-view / ctx->python-str / bind-ctx!"
   (:require [charred.api :as json]
             [clojure.edn :as edn]
@@ -57,6 +58,27 @@
           nothing."}
   session-workers
   (atom {}))
+
+(defonce ^:private partial-block-stdout (atom {}))
+
+(defn- begin-block-stdout! [session] (swap! partial-block-stdout assoc session []))
+
+(defn- append-block-stdout!
+  [session chunk]
+  (swap! partial-block-stdout update session (fnil conj []) (str chunk))
+  nil)
+
+(defn- discard-block-stdout! [session] (swap! partial-block-stdout dissoc session) nil)
+
+(defn take-partial-block-stdout!
+  "Drain what `session` printed while its current block was running.
+
+   The runtime mirrors writes here because code parked inside C may have to be
+   killed before its ordinary block outcome can return."
+  [session]
+  (let [chunks (get @partial-block-stdout session)]
+    (discard-block-stdout! session)
+    (when (seq chunks) (apply str chunks))))
 
 (defn- worker-of [session] (get @session-workers session))
 
@@ -105,6 +127,12 @@
   (if-let [k (worker-of session)]
     (pyext/install-tool! k session tool)
     (runtime/install-tool! session tool)))
+
+(defn- py-install-sync-tool!
+  [session tool]
+  (if-let [k (worker-of session)]
+    (pyext/install-sync-tool! k session tool)
+    (runtime/install-sync-tool! session tool)))
 
 (defn- py-confine!
   [session read write refusal]
@@ -1173,6 +1201,12 @@
     (confine! session roots-fn (:jail-enabled? network-opts))
     (py-stdin! session (guest-stdin-text stdin))
     (py-install-runtime! session)
+    ;; Mirror stdout across the process boundary as it is written. A cancelled
+    ;; block parked inside C may be killed before its StringIO outcome returns.
+    (python-host/install-sync-tools! session
+                                     {"__vis_capture_stdout__" (partial append-block-stdout!
+                                                                        session)}
+                                     (partial py-install-sync-tool!))
     ;; `println` is the sandbox's historical second spelling of Python `print`, not a
     ;; host tool that callers must remember to inject. Seed it before protected-name
     ;; discovery so a block may shadow it locally but can never replace it for the session.
@@ -1249,6 +1283,7 @@
   [session]
   (when session
     (swap! disposed-sessions conj session)
+    (discard-block-stdout! session)
     (python-host/forget-session! session)
     ;; A gateway worker also holds this session's trusted extension namespaces.
     ;; Close those while the process is still alive; the registry itself remains
@@ -1726,8 +1761,9 @@
   (when (contains? @disposed-sessions session)
     (throw (ex-info (str "python session " session " was disposed")
                     {:type :vis/session-disposed :session session})))
+  (begin-block-stdout! session)
   (if-let [err (empty-block-error session code)]
-    {:forms [{:source code :error err}] :error err}
+    (do (discard-block-stdout! session) {:forms [{:source code :error err}] :error err})
     (let [sink (atom [])
           outbox-seen (atom #{})]
 
@@ -1738,6 +1774,7 @@
         ;; travel to them explicitly - see `python-host/conveying`.
         (python-host/conveying session
                                (let [outcome (or (read-json (py-run-block session code)) {})
+                                     _ (discard-block-stdout! session)
                                      out (not-empty (str/trim-newline (str (:stdout outcome))))
                                      raised (:error outcome)
                                      attachments (mpl-capture/drain sink)]

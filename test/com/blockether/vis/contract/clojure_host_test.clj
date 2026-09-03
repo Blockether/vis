@@ -71,10 +71,11 @@
   (it "attributes an extension edge to the source file that writes it"
       (when-let [root (repo-root)]
         (let [paths (get-in (contract/dependency-violations root)
-                            [:debt/production 'com.blockether.vis.internal.theme])]
+                            [:debt/production 'com.blockether.vis.internal.workspace])]
           (expect (seq paths))
-          (expect (some #(str/includes? % "vis-channel-tui") paths)
-                  (str "the TUI requires internal.theme; the scanner saw " paths)))))
+          (expect (some #(str/includes? % "vis-foundation-search") paths)
+                  (str "the search extension requires internal.workspace; the scanner saw "
+                       paths)))))
   (it "applies the final layer rule before namespaces are moved"
       (when-let [root (repo-root)]
         (let [paths (get-in (contract/dependency-violations root)

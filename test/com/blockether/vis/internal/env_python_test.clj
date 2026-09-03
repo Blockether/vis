@@ -126,6 +126,27 @@
                    (expect (= "grep ['a']\ngrep ['x']\n" (:stdout result))))))
 
 (defdescribe
+  gathered-grep-options-test
+  ;; Regression, issue #166: a grep dispatched by `gather` lost its session on
+  ;; the pool worker, so `is_regex` never reached the host tool.
+  (it "carries is_regex through direct and helper-wrapped gathered calls"
+      (let [seen (atom [])]
+        (tpc/with-own
+          [ctx
+           {'grep (fn [& args]
+                    (swap! seen conj (vec args))
+                    {"op" "grep"})}]
+          (let [result (ep/run-python-block ctx
+                                            (str "async def call(options):\n"
+                                                 "    return (await grep(options))['op']\n"
+                                                 "print(await gather("
+                                                 "grep({'query': 'a.*b', 'is_regex': True}), "
+                                                 "call({'query': 'c.+d', 'is_regex': True})))"))]
+            (expect (= "[{'op': 'grep'}, 'grep']\n" (:stdout result)))
+            (expect (= #{[{"query" "a.*b" "is_regex" true}] [{"query" "c.+d" "is_regex" true}]}
+                       (set @seen))))))))
+
+(defdescribe
   proxy-and-capture-test
   (let [env
         (tpc/new-context {})
@@ -588,8 +609,7 @@
    and throws. Pure `boundary-view`, no context needed."
   (it "every key stays a verbatim string — paths, line numbers, option keys alike"
       (let [raw
-            {"matches" {"extensions/channels/vis-channel-tui/src/a.clj" {"2361" "x"}
-                        "src/com/foo-bar.clj" {"44" "y"}}
+            {"matches" {"apps/vis-tui/src/a.clj" {"2361" "x"} "src/com/foo-bar.clj" {"44" "y"}}
              "hit_count" 2
              "files" ["a-b/c.clj"]}
 
@@ -1516,31 +1536,52 @@ Follow every fixture step without truncation."}]))
 
 (defdescribe
   ensure-interpreter-second-caller-test
-  (it
-    "makes a caller that arrives mid-start WAIT for the interpreter"
-    ;; The flag used to be set before the start finished, so the second caller
-    ;; returned to an interpreter still inside `Py_Initialize` and confined it —
-    ;; the audit hook then refused the interpreter's OWN startup (`getpath`
-    ;; raising OSError) and every session after it failed in `vispython_exec`.
-    ;; Measured on a gateway prewarming its api and tui sessions together.
-    (let [entered (java.util.concurrent.CountDownLatch. 1)
-          release (java.util.concurrent.CountDownLatch. 1)
-          second-returned (java.util.concurrent.CountDownLatch. 1)
-          flag #'ep/interpreter-started
-          was @@flag]
-      (with-redefs [python-runtime/ensure-library! (fn [] nil)
-                    runtime/initialize! (fn [_] (.countDown entered) (.await release) nil)
-                    runtime/logs! (fn [_] nil)]
-        (reset! @flag false)
-        (try (let [starter (future (ep/ensure-interpreter!))]
-               (.await entered)
-               (future (ep/ensure-interpreter!) (.countDown second-returned))
-               (expect (false? (.await second-returned 300 java.util.concurrent.TimeUnit/MILLISECONDS))
-                       "a second caller returned while the interpreter was still starting")
-               (.countDown release)
-               @starter
-               (expect (.await second-returned 10 java.util.concurrent.TimeUnit/SECONDS)))
-             (finally (.countDown release) (reset! @flag was)))))))
+  (it "makes a caller that arrives mid-start WAIT for the interpreter"
+      ;; The flag used to be set before the start finished, so the second caller
+      ;; returned to an interpreter still inside `Py_Initialize` and confined it —
+      ;; the audit hook then refused the interpreter's OWN startup (`getpath`
+      ;; raising OSError) and every session after it failed in `vispython_exec`.
+      ;; Measured on a gateway prewarming its api and tui sessions together.
+      (let [entered
+            (java.util.concurrent.CountDownLatch. 1)
+
+            release
+            (java.util.concurrent.CountDownLatch. 1)
+
+            second-returned
+            (java.util.concurrent.CountDownLatch. 1)
+
+            flag
+            #'ep/interpreter-started
+
+            was
+            @@flag]
+
+        (with-redefs [python-runtime/ensure-library!
+                      (fn []
+                        nil)
+
+                      runtime/initialize!
+                      (fn [_]
+                        (.countDown entered)
+                        (.await release)
+                        nil)
+
+                      runtime/logs!
+                      (fn [_]
+                        nil)]
+
+          (reset! @flag false)
+          (try (let [starter (future (ep/ensure-interpreter!))]
+                 (.await entered)
+                 (future (ep/ensure-interpreter!) (.countDown second-returned))
+                 (expect (false?
+                           (.await second-returned 300 java.util.concurrent.TimeUnit/MILLISECONDS))
+                         "a second caller returned while the interpreter was still starting")
+                 (.countDown release)
+                 @starter
+                 (expect (.await second-returned 10 java.util.concurrent.TimeUnit/SECONDS)))
+               (finally (.countDown release) (reset! @flag was)))))))
 
 (defdescribe
   jail-decides-confinement-test
@@ -1552,12 +1593,13 @@ Follow every fixture step without truncation."}]))
   ;; `jailed_shell`.
   (it "confines the guest to the session's roots when the session has a jail"
       (tpc/with-own [ctx {} (constantly [(System/getProperty "user.dir")]) {:jail-enabled? true}]
-        (let [answer (ep/run-python-block ctx "print(open('/etc/hosts').read()[:1])")]
-          (expect (some? (:error answer)))
-          (expect (str/includes? (str (get-in answer [:error :message]))
-                                 "outside approved filesystem roots")))))
+                    (let [answer (ep/run-python-block ctx "print(open('/etc/hosts').read()[:1])")]
+                      (expect (some? (:error answer)))
+                      (expect (str/includes? (str (get-in answer [:error :message]))
+                                             "outside approved filesystem roots")))))
   (it "leaves the guest unconfined when the session has no jail"
       (tpc/with-own [ctx {} (constantly [(System/getProperty "user.dir")]) {:jail-enabled? false}]
-        (let [answer (ep/run-python-block ctx "print(len(open('/etc/hosts').read()) > 0)")]
-          (expect (nil? (:error answer)))
-          (expect (str/includes? (str (:stdout answer)) "True"))))))
+                    (let [answer (ep/run-python-block ctx
+                                                      "print(len(open('/etc/hosts').read()) > 0)")]
+                      (expect (nil? (:error answer)))
+                      (expect (str/includes? (str (:stdout answer)) "True"))))))

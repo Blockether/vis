@@ -35,8 +35,8 @@ vulnerable, and what does it do with data.*
 - **How it ships.** One public **`vis-agent` Bash wrapper** with two runtime
   choices: live JVM source, or a private self-contained GraalVM native-image
   sidecar. The native executable is never installed as the public command.
-  Optional `extensions/*` add channels (TUI), languages, persistence, voice and
-  search; each is a droppable classpath module.
+  Optional `extensions/*` add channels (TUI), languages, persistence and search;
+  each is a droppable classpath module. Speech is part of the core gateway.
 - **Where it runs.** Locally, on a developer machine or CI runner. It reaches
   an LLM provider only for inference; everything else is on-box (§9).
 
@@ -44,7 +44,7 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 60 unique, across 16 `deps.edn` modules (root + extensions).
+- **Direct dependency coordinates:** 60 unique, across 15 `deps.edn` modules (root + extensions).
 - **Declared jar footprint (direct coords):** ~38 MB; concentrated in the embedded CPython runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
@@ -126,17 +126,16 @@ agent's sandboxed Python substrate; it is mandatory for the core binary. The
 bridge is **MIT**, CPython and its standard library are **PSF-2.0**. Both are
 permissive and cleared for commercial redistribution.
 
-The optional **`vis-foundation-voice`** extension runs local speech through
-upstream **`sherpa-onnx`** (Apache-2.0). Only its 187 KB API jar is a declared
+The built-in speech subsystem runs local speech through upstream
+**`sherpa-onnx`** (Apache-2.0). Only its 187 KB API jar is a declared
 dependency: sherpa's JNI library and the **ONNX Runtime** (MIT) it is linked
 against travel together in one native jar PER PLATFORM, and exactly one of them
 is ever present — fetched on demand into `~/.vis` on a plain JVM, or embedded
 for the BUILD HOST alone in the native image. That native library also carries
 **espeak-ng** (**GPL-3.0**), which serves only sherpa's text-to-speech path —
-never reached by this extension, which calls the ASR path alone; a native built
-with `SHERPA_ONNX_ENABLE_TTS=OFF` drops it outright. Speech runs **fully
-on-device** — no cloud speech service — and
-ships only when that extension is included. No proprietary model weights are
+never reached by Vis, which uses Pocket TTS; a native built with
+`SHERPA_ONNX_ENABLE_TTS=OFF` drops it outright. Speech runs **fully on-device** —
+no cloud speech service — and ships with Vis. No proprietary model weights are
 redistributed by vis; LLM inference is delegated to a provider chosen by the
 operator (§9). Every embedded/optional model component is under a permissive
 license (see §5–§6).
@@ -195,11 +194,12 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/parinferish` | `0.1.2` | MIT | 34 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.152` | Apache-2.0 | 613 KB | Blockether (in-house) |
+| `com.blockether/svar` | `0.7.154` | Apache-2.0 | 613 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.39` | MIT | 175 KB | Blockether (in-house) |
-| `com.blockether/vis-python-runtime` | `git:39c34b12a6e6a3b20b5dca1f2a86db85aba819f8` | MIT | source checkout | Blockether (in-house) |
+| `com.blockether/vis-python-runtime` | `git:ac8d2fd2aa9692ed0fc2d266c63a24f77435417c` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
+| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm` | `v1.13.5` | Apache-2.0 | 183 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
 | `com.google.zxing/core` | `3.5.4` | Apache-2.0 | 596 KB | 3rd-party |
 | `com.taoensso/telemere` | `1.2.1` | EPL-1.0 | 59 KB | 3rd-party |
@@ -224,26 +224,16 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `org.commonmark/commonmark-ext-gfm-strikethrough` | `0.29.0` | BSD-2-Clause | 13 KB | 3rd-party |
 | `org.commonmark/commonmark-ext-gfm-tables` | `0.29.0` | BSD-2-Clause | 23 KB | 3rd-party |
 | `org.flatland/ordered` | `1.15.12` | EPL-1.0 | 14 KB | 3rd-party |
-| `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 | `org.yamlstar/yamlstar` | `0.1.17` | MIT | 15 KB | 3rd-party |
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
 | `slipset/deps-deploy` | `0.2.5` | EPL-1.0 | 8 KB | 3rd-party |
 
-### `vis-channel-tui` extension
-
-_Terminal UI (Lanterna)._
+### `vis-tui` extension
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
 | `com.blockether/lanterna` | `3.1.5-vis.49` | LGPL-3.0 | 601 KB | Blockether (in-house) |
-
-### `vis-foundation-voice` extension
-
-_Local speech (upstream sherpa-onnx; ONNX Runtime rides inside its native jar)._
-
-| Dependency | Version | License | Jar size | Ownership |
-|---|---|---|---|---|
-| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm` | `v1.13.5` | Apache-2.0 | 183 KB | 3rd-party |
+| `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 
 ### `vis-language-clojure` extension
 
@@ -391,11 +381,10 @@ Notes:
 - The **CPython** interpreter (`com.blockether/vis-python-runtime`, ~69 MB
   unpacked) is the agent's sandboxed Python substrate — mandatory for the core
   binary (§4.2).
-- The **voice** stack (`sherpa-onnx`) ships only with the optional
-  `vis-foundation-voice` extension. Its per-platform native jar — the JNI plus
-  the ONNX Runtime inside it — is not a declared dependency at all, so it is
-  absent from the table above: one platform's copy is fetched at runtime or
-  embedded for the build host (§4.2).
+- The built-in **speech** stack uses `sherpa-onnx`. Its per-platform native jar —
+  the JNI plus the ONNX Runtime inside it — is not a declared dependency at all,
+  so it is absent from the table above: one platform's copy is fetched at
+  runtime or embedded for the build host (§4.2).
 - `sqlite-jdbc` is bundled by the optional `vis-persistance-sqlite` extension.
 - The final GraalVM **native binary** is larger than any single jar because it
   statically links the JDK; the Python interpreter travels beside it as the

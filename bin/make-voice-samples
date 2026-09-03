@@ -191,7 +191,7 @@ cat <<EOF
     sha256  $(digest_of "$pack")
 
 Upload it beside the models it previews, then move those two numbers into the
-\`voice-samples\` entry of extensions/common/vis-foundation-voice/resources/vis-models/manifest.edn:
+\`voice-samples\` entry of resources/vis-models/manifest.edn:
 
     gh release upload voice-assets-pack ${pack}
 EOF

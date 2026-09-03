@@ -68,7 +68,7 @@ ARG PARAKEET_RELEASE=asr-models
 
 # The container ships the same public wrapper as every other distribution and
 # runs the same native runtime a release publishes (see the runtime stage), with
-# all channels and voice ASR. There is no leaner feature profile to select, so
+# all channels and speech ASR. There is no leaner feature profile to select, so
 # nothing to configure. These two knobs tune the native build the image runs.
 ARG VIS_ORACLE_NATIVE_IMAGE=false
 ARG VIS_NATIVE_EXTRA_ARGS=
@@ -196,7 +196,7 @@ COPY --from=builder /build/bin/install-vis-agent /install-vis-agent
 # ── Stage: model ─────────────────────────────────────────────────────────────
 # The Parakeet ASR model. Published on the k2-fsa/sherpa-onnx `asr-models`
 # release — NOT Hugging Face — and it must stay the exact model
-# extensions/common/vis-foundation-voice/asr.clj resolves.
+# src/com/blockether/vis/internal/speech/asr.clj resolves.
 #
 # Baked into the image as its own layer. The model is ALWAYS distributed
 # separately from the binary (nothing embeds it any more), so fetching it once
@@ -385,7 +385,7 @@ ENV HOME=/home/vis \
 # Prove, at build time, that the assembled image is what it claims to be: the
 # toolchain resolves, the runtime that will serve is the native one, its Python
 # stdlib loads THROUGH the staged interpreter (without it every Python
-# tool dies with "No module named 'ast'"), and the voice extension can actually
+# tool dies with "No module named 'ast'"), and the built-in speech runtime can
 # SEE the model.
 RUN set -eux; \
     java -version; clojure --version; mvn -v | head -1; \
@@ -396,18 +396,15 @@ RUN set -eux; \
     test -x /opt/vis/agent/vis-agent-native; \
     test -d /opt/vis/agent/vis-agent-python; \
     vis-agent python -c "import ast, json, os; print('py-ok')" | grep -qx 'py-ok'; \
-    vis-agent extension voice models status; \
+    vis-agent speech models status; \
     test ! -e /root/.vis; \
     test -d /home/vis/.vis/logs; \
     test "$(stat -c '%U %a' /home/vis/.ssh)" = 'vis 700'; \
     test "$(stat -c '%U' /home/vis/.config)" = 'vis'
 
-# Proving the binary RUNS is not this file's job. The TUI's first frame and a
-# whole one-shot agent turn against a keyless provider the suite invents belong
-# to the ARTIFACT, not to one packaging of it, so they are proven against
-# `target/vis` itself — see `test-native/` (com.blockether.vis.native-binary-test,
-# `clojure -M:test-native`). A build-time RUN could only prove them for whoever
-# builds an image, and only ever on Linux.
+# Proving the engine binary runs belongs to the artifact, not one container
+# packaging of it. `test-native/` drives `target/vis`; the standalone terminal
+# client is built and tested from `apps/vis-tui`.
 
 EXPOSE 7890
 

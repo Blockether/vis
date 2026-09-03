@@ -1,21 +1,14 @@
 name: Native Release
 
-# Companion to release.yml (which cuts the GitHub Release + Clojars deploy of the
-# libraries/extensions). A dispatch can build one native distribution per
-# requested platform. Linux uses free GitHub runners; the macOS ARM64 image is
-# built on our own Apple-silicon runner, documented below. Every build is the
-# community distribution; there is no air-gapped/"corporate" variant:
-#   vis-agent-<os>-<arch>-community.tar.gz — the full distribution: the
-#                         `vis-agent` Bash wrapper plus its private native
-#                         runtime, with every UI channel (TUI + web + Telegram),
-#                         voice ASR, and the web/network `search` extension.
-#                         The ~465 MB Parakeet voice model is not embedded; it
-#                         downloads on first use, so the runtime stays lean.
-# Each runtime carries only its build host's native libraries.
+# Companion to release.yml (which cuts the GitHub Release + Clojars deploy). A
+# dispatch can build native engine and terminal-client artifacts per platform.
+# Linux uses free GitHub runners; macOS ARM64 uses our Apple-silicon runner.
 #
-# The wrapper bundle is the distributed application artifact; there is no JVM
-# uberjar release asset. Libraries/extensions still publish to Clojars from
-# release.yml for people writing extensions.
+#   vis-agent-<os>-<arch>-community.tar.gz — engine wrapper, native runtime and CPython
+#   vis-tui-<os>-<arch>.tar.gz              — standalone HTTP/SSE terminal client
+#
+# Speech models download on first use. Each artifact carries only its build host's
+# native libraries. No JVM uberjar is published; libraries still go to Clojars.
 #
 # TAG PUBLISHING IS OFF — releases are JVM-only for now. v0.1.39 and v0.1.40 both
 # shipped with NO native asset at all: hosted macOS never finished the image
@@ -121,8 +114,8 @@ jobs:
           # There is no flag left to win with: the next time this cliff is hit the
           # fix is a BIGGER BUILDER (an 8-core/32 GB larger runner, or a
           # self-hosted 32 GB box), or less reachable code — not more tuning.
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64-community.tar.gz, tui_asset: vis-tui-linux-x64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64-community.tar.gz, tui_asset: vis-tui-linux-arm64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           # macOS arm64 is NOT in this matrix: it needs its own heap sizing and
           # its own runner, so it is the SEPARATE `macos` job below, on our own
           # labelled Apple-silicon builder. Every hosted macOS class GitHub
@@ -180,7 +173,7 @@ jobs:
             ~/.gitlibs
             ~/.clojure/.cpcache
             ~/.vis/build-cache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       # community: full agent, model downloads on first use (lean binary).
       # GitHub's Linux runner ships ~4 GB of swap; back the 12-14 GB builder heap
@@ -229,13 +222,8 @@ jobs:
           set -euo pipefail
           out="$(target/release-bundle/vis-agent python -c "import ast; print('py-ok')")"
           [ "$out" = "py-ok" ] || { echo '::error::the staged interpreter does not load'; exit 1; }
-      # Deeper smoke: boot the gateway. A client command auto-spawns the DETACHED
-      # gateway daemon, which builds the FULL reitit router from EVERY channel's
-      # route contributions and does a real HTTP round-trip. A broken/conflicting
-      # route table makes the daemon exit on startup and the client prints
-      # "gateway daemon did not become ready" — a class of failure `help`
-      # (in-process, no router) can never catch. Fail HERE rather than ship a
-      # binary whose gateway (and thus every agent turn) can't run.
+      # Deeper smoke: boot the gateway and build its complete HTTP route table. A
+      # broken route makes the detached daemon exit before the client round-trip.
       - name: Smoke-test the gateway
         shell: bash
         run: |
@@ -247,20 +235,28 @@ jobs:
             exit 1
           fi
           target/release-bundle/vis-agent gateway stop >/dev/null 2>&1 || true
-      # The binary's OWN suite (test-native/): the TUI's first frame on a pty and a
-      # whole one-shot agent turn against a keyless loopback provider the suite
-      # invents. Those paths exist only once native-image has linked the file, so
-      # this is the only place they run.
+      # The engine binary's own suite. Terminal rendering belongs to the standalone
+      # client suite and artifact smoke below, not to this image.
       - name: Test the native binary
         shell: bash
         env:
           VIS_NATIVE_BIN: ${{ matrix.bin }}
         run: clojure -M:test-native
+      - name: Build and stage standalone TUI
+        run: |
+          cd apps/vis-tui
+          clojure -T:build native
+          cd ../..
+          bin/stage-tui-release apps/vis-tui/target/vis-tui "${{ matrix.tui_asset }}"
+          target/tui-release-bundle/vis-tui --version
+          target/tui-release-bundle/vis-tui --help >/dev/null
       - name: Attach to release
         if: steps.target.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ matrix.asset }}
+          files: |
+            ${{ matrix.asset }}
+            ${{ matrix.tui_asset }}
           # A dispatched rebuild must land on the tag it was asked for, not on
           # the branch ref the dispatch ran from.
           tag_name: ${{ inputs.tag || github.ref_name }}
@@ -303,6 +299,7 @@ jobs:
     timeout-minutes: 120
     env:
       VIS_ASSET: vis-agent-macos-arm64-community.tar.gz
+      VIS_TUI_ASSET: vis-tui-macos-arm64.tar.gz
     steps:
       # The self-hosted runner's HOME is a person's real home, and this job caches
       # ~/.m2 and ~/.vis/build-cache and then RUNS the built binary. Give it a
@@ -393,7 +390,7 @@ jobs:
             ~/.gitlibs
             ~/.clojure/.cpcache
             ~/.vis/build-cache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       - name: Build native image
         env:
@@ -417,12 +414,7 @@ jobs:
           set -euo pipefail
           out="$(target/release-bundle/vis-agent python -c "import ast; print('py-ok')")"
           [ "$out" = "py-ok" ] || { echo '::error::the staged interpreter does not load'; exit 1; }
-      # The binary's OWN suite (test-native/): the TUI's first frame on a pty and a
-      # whole one-shot agent turn against a keyless loopback provider the suite
-      # invents. Those paths exist only once native-image has linked the file, so
-      # this is the only place they run.
-      # Same deeper smoke as the matrix job: boot the DETACHED gateway daemon so a
-      # broken/conflicting route table fails here instead of shipping.
+      # Same deeper smoke as the matrix job: boot the detached gateway daemon.
       - name: Smoke-test the gateway
         shell: bash
         run: |
@@ -439,11 +431,21 @@ jobs:
         env:
           VIS_NATIVE_BIN: target/vis
         run: clojure -M:test-native
+      - name: Build and stage standalone TUI
+        run: |
+          cd apps/vis-tui
+          clojure -T:build native
+          cd ../..
+          bin/stage-tui-release apps/vis-tui/target/vis-tui "$VIS_TUI_ASSET"
+          target/tui-release-bundle/vis-tui --version
+          target/tui-release-bundle/vis-tui --help >/dev/null
       - name: Attach to release
         if: steps.target.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ env.VIS_ASSET }}
+          files: |
+            ${{ env.VIS_ASSET }}
+            ${{ env.VIS_TUI_ASSET }}
           tag_name: ${{ inputs.tag || github.ref_name }}
           fail_on_unmatched_files: true
 

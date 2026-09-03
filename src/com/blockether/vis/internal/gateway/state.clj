@@ -1955,15 +1955,16 @@
          wire/canonical)))
 
 (defn- with-display-iteration
-  "Normalize reasoning and attach the display projections the store does not
-   keep: the same cached ruff-formatted Python the local TUI paints, and the
-   rendered result BODY, re-derived from the result the row DID keep. The wire
-   therefore remains identical after reconnects."
+  "Attach channel display projections absent from the durable store."
   [iteration]
   (cond-> (-> iteration
               (update :thinking util/settled-thinking-text))
     (seq (:forms iteration))
-    (update :forms #(mapv form/with-display %))))
+    (update :forms #(mapv form/with-display %))
+
+    (map? (:error iteration))
+    (update :error assoc
+            :provider-error-info (provider-error/provider-error-info (:error iteration)))))
 
 (def ^:private in-flight-turn-statuses
   "Persisted turn statuses that mean the turn has NOT finished. The engine writes

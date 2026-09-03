@@ -3,7 +3,7 @@
 {:paths ["src" "resources"]
  ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
  ;; :local/root dep's deps.edn, so resolving this extension alone needs vis' JitPack
- ;; repo (com.blockether/vis -> the voice extension -> com.github.k2-fsa.sherpa-onnx).
+ ;; repo (com.blockether/vis -> com.github.k2-fsa.sherpa-onnx).
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps {com.blockether/vis {:local/root "../../.."}}
  :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}

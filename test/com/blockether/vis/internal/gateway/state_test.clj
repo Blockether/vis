@@ -4678,3 +4678,22 @@
         (expect (= " …[truncated]" (bounded-str "abc" -1)))
         (expect (= "abc" (bounded-str "abc" 10)))
         (expect (= "\"abc\"" (bounded-pr "abc" 10))))))
+
+(defdescribe provider-error-wire-projection-test
+             (it "attaches the gateway-owned provider presentation to durable iteration errors"
+                 (let [project
+                       (var-get (ns-resolve 'com.blockether.vis.internal.gateway.state
+                                            'with-display-iteration))
+
+                       error
+                       {:type :svar.core/http-error
+                        :message "Exceptional status code: 429"
+                        :data {:status 429 :body "rate limit"}}
+
+                       info
+                       (get-in (project {:thinking nil :error error})
+                               [:error :provider-error-info])]
+
+                   (expect (= :rate-limit (:kind info)))
+                   (expect (str/includes? (:explanation info) "rate-limited"))
+                   (expect (some #{["HTTP" "429"]} (:facts info))))))

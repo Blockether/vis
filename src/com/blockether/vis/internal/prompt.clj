@@ -659,12 +659,11 @@
    globals come from their explicit metadata so an id such as `attach` is never
    presented as a module.
 
-   NAMES are a trap in BOTH directions. The sandbox is a real CPython with pip,
-   so `numpy` is numpy and the model should write against the upstream library —
-   but a name Vis publishes ITSELF (`ruff`, the attachment globals)
-   reaches the host, not PyPI, and a model that assumes the package from the
-   index writes against an API that was never there. So one line per door, keyed
-   by the very names advertised above it, carrying the surface and the refusals —
+   The sandbox is a real CPython with pip, so third-party imports are always the
+   upstream packages the user installed. Vis publishes only the attachment and
+   controlled-listing globals named by active shims. Keep one line per host door,
+   keyed by the exact globals advertised above it, carrying the surface and the
+   refusals —
    and nothing else. The rest of a door's contract is PULLED: `:shim/docs`
    answers `doc(name)`, and costs no request that never calls it.
 

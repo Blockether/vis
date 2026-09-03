@@ -81,7 +81,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       # Several unit tests resolve the provider router. Seed the machine-owned
       # YAML state store with a minimal provider; transport-facing tests mock IO.
@@ -128,19 +128,18 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
           bwrap --unshare-all --ro-bind / / /bin/true
-      # The voice tests link sherpa-onnx's JNI, and the suite-wide network guard
-      # refuses the JitPack download that would fetch it — so a runner without the
-      # native fails every ASR/TTS test. Provision it in a JVM of its own first,
-      # cached, and the suite then finds it on disk with no network at all.
+      # Speech tests link sherpa-onnx JNI, while the suite-wide network guard
+      # refuses the JitPack download that supplies it. Provision the native once,
+      # before the guarded suite, and cache it for subsequent runs.
       - uses: actions/cache@v6
         with:
           path: ~/.vis/native
-          key: vis-native-${{ runner.os }}-${{ hashFiles('extensions/common/vis-foundation-voice/src/com/blockether/vis/ext/foundation_voice/sherpa.clj') }}
+          key: vis-native-${{ runner.os }}-${{ hashFiles('src/com/blockether/vis/internal/speech/sherpa.clj') }}
           restore-keys: vis-native-${{ runner.os }}-
       - name: Prepare git dependencies and provision sherpa-onnx
         run: |
           clojure -J-Duser.home="$HOME" -X:deps prep
-          clojure -J-Duser.home="$HOME" -M -e "(require '[com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]) (prn (sherpa/ensure-native!))"
+          clojure -J-Duser.home="$HOME" -M -e "(require '[com.blockether.vis.internal.speech.sherpa :as sherpa]) (prn (sherpa/ensure-native!))"
       - name: Run test suite
         env:
           # These are hard CI contracts, not best-effort coverage: macOS must
@@ -152,6 +151,9 @@ jobs:
           # less memory than Linux, whose default quarter-RAM heap also exhausted.
           # Our own Apple-silicon runner has 36 GiB, so it takes the Linux size.
           JAVA_TOOL_OPTIONS: ${{ (runner.os == 'macOS' && runner.environment == 'github-hosted') && '-Xmx5g' || '-Xmx10g' }}
+        run: clojure -J-Duser.home="$HOME" -M:test
+      - name: Run standalone TUI suite
+        working-directory: apps/vis-tui
         run: clojure -J-Duser.home="$HOME" -M:test
 
   # Every extension must resolve its own deps.edn cleanly — catches stale
@@ -171,9 +173,8 @@ jobs:
           - extensions/providers/vis-provider-zai
           - extensions/providers/vis-provider-openrouter
           - extensions/providers/vis-provider-standard
-          - extensions/channels/vis-channel-tui
+          - apps/vis-tui
           - extensions/common/vis-foundation-search
-          - extensions/common/vis-foundation-voice
           - extensions/languages/vis-language-clojure
     steps:
       - uses: actions/checkout@v7
@@ -189,7 +190,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       - name: Resolve ${{ matrix.path }} classpath
         run: cd ${{ matrix.path }} && clojure -X:deps prep && clojure -Spath > /dev/null
@@ -213,7 +214,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       - name: Lint the whole tree
         run: clojure -X:deps prep && clojure -M:lint
@@ -240,7 +241,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       - name: AOT-compile all namespaces, refusing reflection or boxed math
         env:

@@ -19,6 +19,8 @@
         (expect (s/valid? ::manifest/manifest m) (pr-str (s/explain-data ::manifest/manifest m)))
         (expect (= #{:initialization} (set (keys m))))
         (expect (seq (:initialization m)))))
+  (it "keeps gateway voice out of the extension manifest"
+      (expect (not-any? #(re-find #"voice" (str %)) (manifest/initializers))))
   (it "answers exactly one manifest on the classpath"
       ;; The whole point of naming resources explicitly: two manifests would
       ;; mean one silently shadows the other, which is what ambient discovery did.

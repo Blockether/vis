@@ -162,7 +162,10 @@
              [gateway-resource-logs gateway-client/resource-logs]
              [gateway-iteration-attachment-bytes gateway-client/iteration-attachment-bytes]
              [gateway-capabilities gateway-client/capabilities]
-             [gateway-session-artifacts gateway-client/session-artifacts])
+             [gateway-session-artifacts gateway-client/session-artifacts]
+             [gateway-prepare-speech-model! gateway-client/prepare-speech-model!]
+             [gateway-transcribe-audio! gateway-client/transcribe-audio!]
+             [gateway-synthesize-speech! gateway-client/synthesize-speech!])
 
 ;; A staged recording's WORDS. A channel calls the first the moment a file is
 ;; attached and paints the second on every frame, so the transcript is made while

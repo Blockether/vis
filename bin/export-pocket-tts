@@ -325,7 +325,7 @@ Done.
   sha256 ${digest}
   bytes  ${bytes}
 
-Paste into extensions/common/vis-foundation-voice/resources/vis-models/manifest.edn:
+Paste into resources/vis-models/manifest.edn:
 
    :sha256 "${digest}"
    :bytes ${bytes}

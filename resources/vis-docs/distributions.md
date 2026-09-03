@@ -1,16 +1,16 @@
 # Runtime distributions
 
-`vis-agent` is the whole product surface: one Bash command on PATH that does
-two things and nothing else.
+Vis ships two native executables with separate responsibilities:
 
-1. run Vis,
-2. update Vis, and the command with it — `vis-agent update`.
+- `vis-agent` owns the engine, gateway, tools and embedded CPython runtime.
+- `vis-tui` is an optional terminal client that talks to a running gateway over HTTP/SSE.
 
-There is no second command to learn, and no runtime to choose: what is
-installed is what runs, and `vis-agent runtime` reports it. The native image is
-a private sidecar called `vis-agent-native` that lives beside the wrapper; it is
-never installed as `vis` (Linux already has an unrelated `vis`) and never
-invoked directly. `target/vis.jar` is a build artifact, not a runtime.
+`vis-agent` remains one Bash command on PATH for running and updating the engine.
+Its native image is a private sidecar called `vis-agent-native`; it is never
+installed as `vis` (Linux already has an unrelated `vis`) or invoked directly.
+`target/vis.jar` is a build artifact, not a runtime. The TUI is deliberately not
+inside that image: a terminal client does not need the engine classpath, CPython,
+providers or speech runtime.
 
 ## Two runtimes, and no selector
 
@@ -81,8 +81,7 @@ update never changes track on its own, or a beta tester silently falls back to
 stable and files bugs against a build that was never running. Naming a version
 is a one-off and leaves the remembered track where it was.
 
-A track is not a channel: in Vis a channel is a user interface an extension
-registers (TUI, web, Telegram).
+A track is not a UI surface: `vis-tui` is a separately released gateway client.
 
 A target that is not a released version is refused: Vis installs what is
 published, never source nobody published.
@@ -160,8 +159,8 @@ above) when no native sidecar is installed. Everything below describes that bund
 when it is rebuilt, and `bin/release-native --tag vX.Y.Z --upload` still attaches one
 to an existing release from a 32 GB machine.
 
-Native-image output is platform-specific, so a native release publishes exactly one
-archive per platform:
+Native-image output is platform-specific. Each supported platform can publish two
+independent archives:
 
 ```text
 vis-agent-<os>-<arch>-community.tar.gz
@@ -169,23 +168,25 @@ vis-agent-<os>-<arch>-community.tar.gz
 ├── vis-agent-native      # private GraalVM native-image runtime
 ├── vis-agent-python/     # embedded CPython: cdylib + vendored interpreter
 └── install-vis-agent     # installer for the source runtime
+
+vis-tui-<os>-<arch>.tar.gz
+└── vis-tui               # standalone terminal gateway client
 ```
 
-All of it travels together — `vis-agent update` replaces the wrapper, the
-runtime and the interpreter directory in one step — so the launcher, the runtime and
-the Python stdlib can never drift across versions. The interpreter directory is not
-optional: it is tens of megabytes the build deliberately stages beside the image
-instead of embedding (see [JVM & native-image](jvm-native-image.md)), and the
-wrapper points `VIS_PYTHON_NATIVE_PATH` at it.
+The agent bundle travels together — `vis-agent update` replaces the wrapper, the
+runtime and interpreter directory in one step — so those pieces cannot drift. The
+TUI archive is separate because it has its own process and dependency graph; it can
+be installed or upgraded without replacing the gateway. Its protocol headers make
+an incompatible gateway fail explicitly rather than misrender.
 
-`bin/stage-release-bundle` is the single definition of that layout, used by both
-release CI and local builds, so a hand-built asset and a CI asset are identical.
+`bin/stage-release-bundle` defines the agent layout. `bin/stage-tui-release` defines
+the TUI archive.
 
-| Platform | Bundle | Built by |
+| Platform | Agent bundle | TUI archive |
 |---|---|---|
-| Linux x86-64 | `vis-agent-linux-x64-community.tar.gz` | release CI, or a local container build (Rosetta-emulated on Apple silicon) |
-| Linux ARM64 | `vis-agent-linux-arm64-community.tar.gz` | release CI, or a local container build |
-| macOS ARM64 | `vis-agent-macos-arm64-community.tar.gz` | release CI on the repository's own Apple-silicon runner (label `vis-macos-arm64`), any Apple-silicon machine with 32 GB, or a cloud Apple-silicon runner with at least 16 GiB (repository variable `VIS_MACOS_ARM64_RUNNER`) — no GitHub-hosted macOS runner can finish this image |
+| Linux x86-64 | `vis-agent-linux-x64-community.tar.gz` | `vis-tui-linux-x64.tar.gz` |
+| Linux ARM64 | `vis-agent-linux-arm64-community.tar.gz` | `vis-tui-linux-arm64.tar.gz` |
+| macOS ARM64 | `vis-agent-macos-arm64-community.tar.gz` | `vis-tui-macos-arm64.tar.gz` |
 
 Building the image needs two things exactly:
 

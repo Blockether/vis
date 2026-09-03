@@ -1,8 +1,8 @@
 # Extending Vis
 
-Vis is a small core plus **extensions**. Everything beyond the engine loop ships
-that way: the git surface, the TUI, the Clojure and Python
-language packs are all extensions. Your own follow the same recipes.
+Vis is a small core plus **extensions**. Engine integrations such as providers,
+language packs and search ship that way. The standalone `vis-tui` application is
+a gateway client, not an extension. Your own extensions follow these recipes.
 
 There are two flavors, and this page is the whole story for both:
 
@@ -11,7 +11,7 @@ There are two flavors, and this page is the whole story for both:
 | Ship | drop a file | build into the binary |
 | Reload | `/reload`, in place | rebuild + restart (native) |
 | Scope | per project or per user | every install of the distribution |
-| Can contribute | tools, prompts, slash commands, op hooks, network filters, session context, durable state, LLM providers | everything (channels, persistence backends, TUI, CLI, themes, sandbox shims, …) |
+| Can contribute | tools, prompts, slash commands, op hooks, network filters, session context, durable state, LLM providers | engine integrations such as providers, persistence backends, CLI commands and sandbox shims |
 
 Reach for Python for project-specific tools and guards — Vis can write those for
 itself mid-session. Graduate to Clojure when you need deeper surfaces or want to
@@ -67,8 +67,8 @@ A Python extension can contribute:
 - **session context** — data folded into the model's `session` bag every turn
 - **LLM providers** — register an API-key provider the router can call
 
-Channels, persistence backends, sandbox shims and TUI rendering stay
-Clojure-side.
+Channels, persistence backends and sandbox shims stay Clojure-side. The separate
+`vis-tui` application consumes the public gateway protocol instead.
 
 ### Hello, extension
 

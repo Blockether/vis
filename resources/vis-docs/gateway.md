@@ -13,7 +13,7 @@ Tailscale.
 When you run a client such as:
 
 ```bash
-vis-agent tui
+vis-tui
 ```
 
 the client looks up the gateway registered for the current database
@@ -43,7 +43,7 @@ To run it detached yourself, background it explicitly:
 nohup vis-agent gateway start --host 0.0.0.0 --require-token > ~/.vis/gateway.out 2>&1 &
 
 # or let a client auto-spawn the managed background daemon for you
-vis-agent tui
+vis-tui
 ```
 
 Inspect and control the daemon:
@@ -73,40 +73,13 @@ live daemon is then older than what is on disk, and the next client spawns the
 new build. `vis-agent update --keep-gateway` opts out.
 
 
-## The complete TUI in a browser
+## Clients
 
-Every gateway mounts its Lanterna terminal at `GET /tui` through the ordinary
-extension route contribution. It is part of the same Reitit/Ring application and
-runs on the same Jetty 12 server, virtual-thread policy, authentication middleware
-and lifecycle as every other Vis route. Lanterna opens no HTTP socket and carries
-no Jetty, servlet, WebSocket or alternate Java HTTP implementation.
-
-The document is server-rendered: the first response already contains the resolved
-cell grid and media elements. Later paints arrive as rendered HTML fragments on
-`GET /tui/events` over the gateway's SSE path. The small browser script only swaps
-those fragments, forwards keyboard/pointer input to `POST /tui/input`, and reports
-viewport changes to `POST /tui/resize`; it never rebuilds a terminal frame from
-JSON or runs a second layout engine. There is no separate browser-channel process.
-
-Open `http://127.0.0.1:7890/tui` for the default local gateway. On a token-gated
-gateway, open `/tui?token=<gateway-token>` once. The gateway immediately moves the
-secret into an `HttpOnly`, `SameSite=Strict` cookie and redirects to the clean
-`/tui` URL; use HTTPS when the gateway is not loopback-bound.
-
-Inside Vis Companion, an attached Lanterna export is a marker rather than a detached
-interactive program. The app discards the attachment bytes, fetches a fresh parent-bridge
-document from `GET /tui/embed`, and carries `/tui/events`, `/tui/input` and `/tui/resize`
-through its existing authenticated `GatewayClient`. The terminal iframe keeps its opaque
-sandbox origin and receives neither the bearer, a gateway URL nor the original untrusted
-script. Ordinary HTML attachments keep the same sandbox and are never granted this bridge.
-
-One gateway process owns one TUI runtime. Multiple browser tabs therefore see and
-control the same terminal session rather than spawning divergent copies. Its SSE
-connection counts as a normal gateway client, so a managed daemon stays alive
-while the browser is open and self-reaps after the last browser and other client
-leave. Unchanged image, video and audio nodes are retained across paints, preserving
-playback position; a changed source is replaced so the new media takes effect.
-
+A gateway serves clients; it hosts no user interface of its own. `vis-tui` is the
+terminal application and Vis Companion is the phone and web app, and both are
+ordinary HTTP/SSE clients of the routes below — one gateway, many clients, all
+looking at the same sessions. `vis-agent` itself is a client too for everything
+except `gateway start`.
 ## The token model — and the `HTTP 401`
 
 Auth is gated on the **bind host**:
@@ -272,7 +245,7 @@ prints the same QR that
   because `127.0.0.1` is phone-local, and prints the exact restart to run:
   `vis-agent gateway stop` then `vis-agent gateway start --host 0.0.0.0 --require-token --pair`.
 
-So: if you only ever ran `vis-agent tui`, the daemon behind it is loopback
+So: if you only ever ran `vis-tui`, the daemon behind it is loopback
 and cannot be paired as-is — stop it and restart the gateway reachable (above).
 Once it is bound to `0.0.0.0` (or a Tailscale host), `vis-agent gateway pair` prints
 the QR on demand any time.

@@ -1,0 +1,1016 @@
+(ns com.blockether.vis.tui.footer
+  "Dedicated one-row status footer rendered below the input box.
+
+   Codex-style three-region layout:
+
+       [LEFT]                    [CENTER]                    [RIGHT]
+       glm-5.1 (balanced)              total tok 12000→800 (cached 8000)  $0.04
+
+   Each region holds a list of `{:text :fg :bold? :region :priority}`
+   spans separated by ' / ' in muted color. The full segment list is
+   built up-front and shrunk by dropping the highest `:priority`
+   number (least important) until it fits the available width.
+
+   Footer deliberately avoids transient run-state and cancellation
+   banners. Those live in the assistant bubble and host notifications;
+   this row keeps slow-changing identity + budget bits.
+
+   Run-state (spinner, iteration counter, elapsed time, current
+   phase) lives EXCLUSIVELY in the assistant bubble's `progress->text`
+   block. Putting it in the footer too was a duplicate - same
+   `\u280b 11.2s` showing twice on screen. The footer keeps slow-changing
+   identity + budget bits; the bubble keeps the live activity story
+   («Vis is thinking (iter 3)... 4.1s / Esc to cancel»).
+
+   The first footer row carries repository context on the right:
+   repo/branch, one compact changed-file count, and ahead/behind counts
+   when an upstream is configured. The second footer row carries provider
+   budgets and cumulative usage under that git context. Git status is
+   cached briefly so repainting the TUI does not shell out to git on every frame.
+
+   Every numeric format uses `Locale/ROOT` so a Polish JVM doesn't
+   produce mixed `5,8k` next to English `k`. The previous footer
+   embedded the status into the input box's bottom border via
+   `embed-in-bar`, which forced single-color rendering and was the
+   reason run-state had to live inside the assistant bubble; this
+   namespace replaces that whole path."
+  (:require [clojure.string :as str]
+            [com.blockether.vis.tui.client :as lp]
+            [com.blockether.vis.tui.limits-fmt :as lfmt]
+            [com.blockether.vis.tui.components :as components]
+            [com.blockether.vis.tui.keymap :as keymap]
+            [com.blockether.vis.tui.live-view :as lv]
+            [com.blockether.vis.tui.model-footer :as model-footer]
+            [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.markdown-layout :as layout]
+            [com.blockether.vis.tui.theme :as t]
+            [com.blockether.vis.tui.format :as fmt])
+  (:import [java.time Instant ZoneId]
+           [java.time.format DateTimeFormatter]
+           [java.util Locale]))
+
+(set! *unchecked-math* :warn-on-boxed)
+
+;;; ── Data extraction from app-db ────────────────────────────────────────────
+(def ^:private default-reasoning-level "balanced")
+
+(def ^:private default-verbosity "low")
+
+(defn- chosen-model-info
+  "Resolved model map for the configured root model, or nil."
+  []
+  (when-let [r (try (lp/get-router) (catch Throwable _ nil))]
+    (try (lp/resolve-effective-model r) (catch Throwable _ nil))))
+
+(defn- session-model-pref
+  "The SESSION's own model pick — the optimistic `:session-model-pref` this tab
+   wrote, else the gateway's persisted session model. nil when it never chose."
+  [db]
+  (or (:session-model-pref db)
+      (when-let [sid (get-in db [:session :id])]
+        (try (lp/gateway-session-model-cached sid) (catch Throwable _ nil)))))
+
+(defn- session-model-info
+  "Resolved model map for the model THIS SESSION routes to, falling back to the
+   router root when the session made no pick. Every capability chip asks THIS,
+   never `chosen-model-info`: the GLOBAL default leaks one model's knobs onto a
+   session routed elsewhere, and hides a knob the session's own model accepts."
+  [db]
+  (when-let [r (try (lp/get-router) (catch Throwable _ nil))]
+    (let [pref (session-model-pref db)]
+      (try (if (or (:provider pref) (:model pref))
+             (lp/resolve-model-info r (:provider pref) (:model pref))
+             (lp/resolve-effective-model r))
+           (catch Throwable _ nil)))))
+
+(defn- session-effective-provider
+  "Provider keyword the SESSION actually routes through — the per-session pick
+   (`:session-model-pref` / gateway session model) first, falling back to the
+   GLOBAL router default only when the session made no explicit choice. Provider
+   USAGE/limits gate on THIS; model CAPABILITY gates on `session-model-info`."
+  [db]
+  (or (some-> (session-model-pref db)
+              :provider
+              str
+              not-empty
+              keyword)
+      (some-> (chosen-model-info)
+              :provider)))
+
+(defn- reasoning-effort-configurable?
+  "True when the session's model takes a CALLER-chosen reasoning depth. svar owns
+   the answer (`:reasoning-effort?`, stamped from the wire that model rides); an
+   unresolved model fails OPEN so a transient router hiccup never hides a control
+   that works."
+  [info]
+  (or (nil? info) (lp/reasoning-effort-configurable? info)))
+
+(defn- verbosity-configurable?
+  "True when the session's model's WIRE accepts `text.verbosity` (svar's
+   `:verbosity-style`), so OpenAI Codex and GitHub Copilot's GPT tier both get
+   the chip and neither is named here. Fails CLOSED: with no resolved model,
+   advertising a knob almost every wire rejects would promise a turn nothing."
+  [info]
+  (boolean (some-> info
+                   lp/verbosity-configurable?)))
+
+(def ^:private git-label "git")
+
+(defn- git-change-bits
+  "Per-kind changed-file counts `~modified +created -deleted` (only nonzero
+   segments shown), or nil when the working tree is clean."
+  [status]
+  (let [{:strs [modified created deleted]}
+        status
+
+        m
+        (long (or modified 0))
+
+        c
+        (long (or created 0))
+
+        d
+        (long (or deleted 0))
+
+        parts
+        (cond-> []
+          (pos? m)
+          (conj (str "~" m))
+
+          (pos? c)
+          (conj (str "+" c))
+
+          (pos? d)
+          (conj (str "-" d)))]
+
+    (when (seq parts) (str/join " " parts))))
+
+(defn- git-status-bits
+  "Status fragment shown *inside* the `(branch …)` parens, codex/git-prompt
+   style: changed-file counts then `⇡ahead ⇣behind`; a branch with NO
+   upstream configured (`is_upstream` explicitly false) shows `∅` — no
+   remote to compare against, so ahead/behind are meaningless. `∅` (not a
+   warning glyph: nothing is wrong) is a bare NARROW char, safe for the
+   lanterna cell grid (VS-16 emoji are wide and desync the paint). Clean
+   *and* synced yields nil so the branch name stands alone — no glyph."
+  [{:strs [ahead behind is_upstream] :as status}]
+  (let [ahead
+        (long (or ahead 0))
+
+        behind
+        (long (or behind 0))
+
+        change
+        (git-change-bits status)
+
+        sync
+        (cond-> []
+          (pos? ahead)
+          (conj (str "⇡" ahead))
+
+          (pos? behind)
+          (conj (str "⇣" behind)))
+
+        parts
+        (cond-> []
+          change
+          (conj change)
+
+          (seq sync)
+          (conj (str/join " " sync))
+
+          (false? is_upstream)
+          (conj "∅"))]
+
+    (when (seq parts) (str/join " " parts))))
+
+(defn- git-repo-label
+  "`~/repo (branch)` when clean+synced, otherwise the status bits ride inside
+   the parens, e.g. `~/vis (main ~2 +3 -1 ⇡4)`."
+  [{:strs [repo branch] :as status}]
+  (str "~/"
+       (or repo "?")
+       " ("
+       (or branch "?")
+       (when-let [bits (git-status-bits status)]
+         (str " " bits))
+       ")"))
+
+
+(defn- git-footer-spans
+  [{:strs [is_workspace] :as status}]
+  (cond
+    is_workspace [{:text (str " " git-label " " (git-repo-label status) " ")
+                   :fg t/footer-fg-strong
+                   :bold? true
+                   :region :right
+                   :priority 2
+                   :tint :git}]
+    :else
+    [{:text (str "No " git-label) :fg t/footer-error-fg :bold? true :region :right :priority 2}]))
+
+(def ^:private session-cost-keys
+  ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost" "cache_read_cost"
+   "cache_write_cost" "output_cost" "total_cost"])
+
+(defn- add-cost-slot
+  [acc cost k]
+  (let [v (get cost k)]
+    (if (number? v) (update acc k (fnil + 0.0) (double v)) acc)))
+
+(defn- add-message-cost
+  [acc {:keys [cost]}]
+  (cond (map? cost) (reduce #(add-cost-slot %1 cost %2) acc session-cost-keys)
+        (number? cost) (update acc "total_cost" (fnil + 0.0) (double cost))
+        :else acc))
+
+(defn- session-cost
+  "Cumulative session cost across assistant turns. Preserves detailed
+   input / cached-input / output / total slots so the footer can show the
+   same split as per-bubble meta lines."
+  [messages]
+  (let [totals (reduce add-message-cost {} messages)]
+    (when (seq totals) totals)))
+
+(defn- first-token-number
+  [tokens ks]
+  (some (fn [k]
+          (let [v (get tokens k)]
+            (when (number? v) v)))
+        ks))
+
+(defn- add-token-slot
+  [acc tokens out-k aliases]
+  (if-let [v (first-token-number tokens aliases)]
+    (update acc out-k (fnil + 0) (long v))
+    acc))
+
+(defn- add-message-tokens
+  [acc {:keys [tokens]}]
+  (if (map? tokens)
+    (-> acc
+        (add-token-slot tokens "input" ["input"])
+        (add-token-slot tokens "output" ["output"])
+        (add-token-slot tokens "cached" ["cached"]))
+    acc))
+
+(defn- session-tokens
+  "Cumulative session token usage across assistant turns (canonical
+   string-keyed map). Returns nil when no message carried usage."
+  [messages]
+  (let [totals (reduce add-message-tokens {} messages)]
+    (when (seq totals) (merge {"input" 0 "output" 0 "cached" 0} totals))))
+
+(defonce ^:private usage-cache (atom {:messages nil :tokens nil :cost nil}))
+
+(defn- session-usage
+  "Cumulative session `{:tokens :cost}`, MEMOIZED by the messages vector's
+   IDENTITY. Summing tokens+cost across the whole transcript is O(messages);
+   the totals only change when a message is appended/edited — which yields a
+   NEW persistent vector — so on the common repaint (same vector reference)
+   this is an `identical?` check instead of two full folds. That keeps the
+   footer from spiking CPU on a long session: the per-turn totals are computed
+   once when the turn lands, then reused every frame until the next change."
+  [messages]
+  (let [c @usage-cache]
+    (if (identical? (:messages c) messages)
+      c
+      (let [n {:messages messages :tokens (session-tokens messages) :cost (session-cost messages)}]
+        (reset! usage-cache n)
+        n))))
+
+(def ^:private one-week-ms (* 7 24 60 60 1000))
+
+(def ^:private short-reset-formatter (DateTimeFormatter/ofPattern "EEE h:mm a" Locale/ROOT))
+
+(def ^:private long-reset-formatter (DateTimeFormatter/ofPattern "MMM d h:mm a" Locale/ROOT))
+
+(defn- format-relative-reset
+  [now-ms reset-ms]
+  (when reset-ms
+    (let [total-seconds
+          (max 0 (quot (- (long reset-ms) (long now-ms)) 1000))
+
+          days
+          (quot total-seconds 86400)
+
+          hours
+          (quot (long (mod total-seconds 86400)) 3600)
+
+          minutes
+          (quot (long (mod total-seconds 3600)) 60)]
+
+      (cond (pos? days) (str days "d" hours "h")
+            (pos? hours) (str hours "h" minutes "m")
+            (pos? minutes) (str minutes "m")
+            :else (str total-seconds "s")))))
+
+(defn- format-absolute-reset
+  [now-ms reset-ms]
+  (when reset-ms
+    (let [zoned
+          (.atZone (Instant/ofEpochMilli (long reset-ms)) (ZoneId/systemDefault))
+
+          formatter
+          (if (and (>= (- (long reset-ms) (long now-ms)) 0)
+                   (< (- (long reset-ms) (long now-ms)) (long one-week-ms)))
+            short-reset-formatter
+            long-reset-formatter)]
+
+      (.format ^DateTimeFormatter formatter zoned))))
+
+(defn- format-reset
+  [now-ms reset-ms]
+  (let [relative
+        (format-relative-reset now-ms reset-ms)
+
+        absolute
+        (format-absolute-reset now-ms reset-ms)]
+
+    (cond (and relative absolute) (str "↺" relative " @ " absolute)
+          relative (str "↺" relative)
+          absolute (str "↺" absolute)
+          :else "↺--")))
+
+(defn- report-for-current-provider
+  "Report belonging to `provider`.
+
+   The active poller slot wins when it is stamped with `provider`.
+   Otherwise fall back to the last report REMEMBERED for that provider
+   (`:provider-limits-cache`): right after a per-session model switch the
+   active slot still belongs to the previous provider and the refetch is
+   in flight, and flashing \"limits: loading…\" on every cycle is worse
+   than showing the quota we already fetched — the gateway itself serves
+   these reports from a 15s cache, so the remembered rows are what a
+   fresh request would return anyway.
+
+   nil only when this provider was never polled; callers treat that as
+   \"loading\" and the polling thread populates it on its next tick."
+  [db provider]
+  (let [provider-limits
+        (:provider-limits db)
+
+        report
+        (:report provider-limits)
+
+        report-provider
+        (or (:provider-id provider-limits) (:provider-id report))]
+
+    (if (and report (= provider report-provider))
+      report
+      (when provider (get-in db [:provider-limits-cache provider :report])))))
+
+(defn- limits-status-text
+  "Render an explicit placeholder when the report is missing or the
+   provider's `:provider/limits-fn` reported a non-ok status. The host
+   contract (`com.blockether.vis.contract.provider`) is the single owner
+   of these statuses: providers signal success/failure by returning a
+   report with `:status :ok` / `:error` / `:unauthenticated` /
+   `:unsupported` / `:unknown-provider`, so the
+   footer doesn't need a separate `notify-error!` / `notify-success!`
+   side channel — it just reads the envelope."
+  [db provider]
+  (let [report
+        (report-for-current-provider db provider)
+
+        status
+        (:status report)]
+
+    (cond
+      ;; Nothing ever polled for THIS provider (first paint after launch),
+      ;; so there is not even a remembered report to show.
+      (nil? report) "limits: loading…"
+      (= :error status) (let [msg (or (get-in report [:error :message]) "unavailable")]
+                          (str "limits: error (" msg ")"))
+      (= :unauthenticated status) "limits: sign in required"
+      ;; :unsupported / :unknown-provider / :ok with empty rows fall
+      ;; through to nil so the row stays clean for providers that
+      ;; legitimately have no quota story.
+      :else nil)))
+
+(defn- compact-reset-text
+  [s]
+  (some-> s
+          (str/replace " @ " "@")))
+
+(defn- limit-reset-text
+  [now-ms row]
+  (some->> (get-in row [:window :resets-at-ms])
+           (format-reset now-ms)
+           compact-reset-text))
+
+(def ^:private max-grouped-limit-cells
+  "Window cells shown when they share a plan name: the whole family fits
+   because the name is printed once (5h + 7d + 30d)."
+  3)
+
+(def ^:private max-standalone-limit-cells
+  "Cells shown when each carries its own label — two is all a footer line
+   affords."
+  2)
+
+(defn- format-generic-limit-rows
+  "Footer text for a provider's limit rows: the shared plan name once, a
+   `<window> <usage>` cell per window, and ONE reset stamp, on the first cell
+   that has one.
+
+   A plan name and a reset stamp per cell is what made a three-window plan
+   (OpenCode Go 5h / 7d / 30d) unreadable — and pushed the segment past the
+   footer width, where it is dropped whole."
+  [now-ms rows]
+  (let [grouped
+        (lfmt/compact-limit-cells (take max-grouped-limit-cells rows))
+
+        {:keys [prefix cells]}
+        (if (:prefix grouped)
+          grouped
+          (lfmt/compact-limit-cells (take max-standalone-limit-cells rows)))
+
+        resets
+        (mapv (fn [{:keys [row]}]
+                (limit-reset-text now-ms row))
+              cells)
+
+        stamp-index
+        (first (keep-indexed (fn [index reset]
+                               (when reset index))
+                             resets))
+
+        texts
+        (map-indexed (fn [index {:keys [text]}]
+                       (if (= index stamp-index) (str text " " (nth resets index)) text))
+                     cells)]
+
+    (str (when prefix (str prefix " ")) (str/join " / " texts))))
+
+(defn- generic-limit-sort-key
+  "Premium interactions first, then the rolling plan windows shortest-first
+   (5h before 7d for EVERY provider, derived from the window itself), then
+   rows with signal, then pressure."
+  [row]
+  [(case (:id row)
+     :premium_interactions
+     0
+
+     :premium-interactions
+     0
+
+     1) (or (lfmt/limit-window-ms row) Long/MAX_VALUE) (if (lfmt/generic-limit-has-signal? row) 0 1)
+   (lfmt/limit-row-pressure row) (or (:label row) (name (:id row)))])
+
+(defn- generic-limits-footer-text
+  "Footer-left text for the limits row. Returns either:
+     - the formatted limit rows (`:status :ok` with at least one row), or
+     - a placeholder produced by `limits-status-text` (loading / error /
+       unauthenticated), or
+     - nil when the provider legitimately has no quota story
+       (`:unsupported` / `:unknown-provider` / `:ok` with empty rows)."
+  [db provider now-ms]
+  (let [report
+        (report-for-current-provider db provider)
+
+        raw-rows
+        (get-in report [:dynamic :limits])
+
+        rows
+        (->> (or (seq (filter #(or (lfmt/generic-limit-has-signal? %)
+                                   (lfmt/account-plan-window-row? %))
+                              raw-rows))
+                 raw-rows)
+             (sort-by generic-limit-sort-key))]
+
+    (if (seq rows) (format-generic-limit-rows now-ms rows) (limits-status-text db provider))))
+
+;;; ── Segment list ───────────────────────────────────────────────────────────
+(comment
+  "Channel statuses and transient notifications render in the header; footer owns model, git, and budgets only.")
+
+
+(defn- build-segments
+  "Vector of `{:text :fg :bold? :region :priority}`.
+
+   `:priority` semantics: 1 = critical (never drop), higher = drop first
+   when the row overflows. The full priority hierarchy:
+     2  model name, provider dynamic limits
+     3  model reasoning suffix
+     4  cost
+     5  keyboard shortcut hints"
+  [db _now-ms]
+  (let [{:keys [settings]}
+        db
+
+        info
+        (session-model-info db)
+
+        reasoning?
+        (reasoning-effort-configurable? info)
+
+        reasoning-level
+        (or (:reasoning-level settings) default-reasoning-level)
+
+        ;; Verbosity is a WIRE capability, not a vendor: svar stamps
+        ;; `:verbosity-style` on every model whose wire takes `text.verbosity`, so
+        ;; Codex and Copilot's GPT tier both earn the chip and no provider is named
+        ;; here. Read the SESSION's model, never the global router default, or the
+        ;; chip leaks onto a session routed somewhere that rejects the field.
+        verbosity?
+        (verbosity-configurable? info)
+
+        verbosity
+        (or (:verbosity settings) default-verbosity)
+
+        codex-fast?
+        (and (= :openai-codex (:provider info)) (boolean (lp/toggle-value "codex_fast_mode")))
+
+        ws
+        (:workspace db)
+
+        isolated-workspace?
+        (some? (get ws "fork_ms"))
+
+        ;; Git status is a GATEWAY SESSION FACT (`:git` on the workspace record),
+        ;; resolved SERVER-SIDE by `git/workspace-status` in the daemon that owns
+        ;; the repo — the single source of truth every channel reads (web footer,
+        ;; TUI footer). NO client-side git walk here: the TUI keeps the fact
+        ;; fresh between turns via the workspace-refresh poller
+        ;; (`start-workspace-refresh-thread!`), so the count tracks reality without
+        ;; the render thread ever shelling out to git.
+        git-status
+        (get ws "git")
+
+        git-spans
+        (if isolated-workspace? [] (git-footer-spans git-status))]
+
+    (cond-> (vec git-spans)
+      ;; Response controls read reasoning → verbosity → fast, matching Companion.
+      reasoning?
+      (conj {:text (str "◇ " (name reasoning-level))
+             :fg t/footer-fg-muted
+             :bold? false
+             :region :left
+             :priority 3})
+
+      reasoning?
+      (conj {:text (str "(" (keymap/label-for :cycle-reasoning) ")")
+             :join-left? true
+             :fg t/footer-fg-muted
+             :bold? false
+             :region :left
+             :priority 5})
+
+      verbosity?
+      (conj {:text (str "≡ " (name verbosity))
+             :fg t/footer-fg-muted
+             :bold? false
+             :region :left
+             :priority 3})
+
+      verbosity?
+      (conj {:text (str "(" (keymap/label-for :cycle-verbosity) ")")
+             :join-left? true
+             :fg t/footer-fg-muted
+             :bold? false
+             :region :left
+             :priority 5})
+
+      codex-fast?
+      (conj {:text "» fast" :fg t/footer-fg-strong :bold? true :region :left :priority 2})
+
+      codex-fast?
+      (conj {:text (str "(" (keymap/label-for :toggle-codex-fast) ")")
+             :join-left? true
+             :fg t/footer-fg-muted
+             :bold? false
+             :region :left
+             :priority 5})))
+  ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
+  ;; The bubble's `progress->text` already carries live activity, and
+  ;; user-facing cancellation feedback is emitted as a host notification.
+  ;; Channel statuses (voice recording, transcription, etc.) also stay out
+  ;; of the footer. The header's left banner is their single owner.
+  ;; ── RIGHT ─────────────────────────────────────────────────────────────
+  ;; Git lives here. Provider usage moved to the second row so it sits
+  ;; directly under the repository state instead of competing with it.
+)
+
+(defn- build-usage-segments
+  "Right-side cumulative session usage. Cache reads `↺ 4.1k`, matching the
+   Companion footer; token and cost math remains canonical."
+  [{:keys [messages]}]
+  (let [{:keys [tokens cost]}
+        (session-usage messages)
+
+        toks
+        tokens
+
+        tok-text
+        (some-> (when toks (fmt/meta-tokens toks))
+                (str/replace #"\s+\(cached\s+([^)]+)\)" " ↺ $1"))
+
+        cost-text
+        (fmt/meta-cost cost)]
+
+    (cond-> []
+      tok-text
+      (conj {:text tok-text :fg t/footer-fg-muted :bold? false :region :right :priority 2})
+
+      cost-text
+      (conj {:text cost-text :fg t/footer-fg-muted :bold? false :region :right :priority 3}))))
+
+(defn- build-limits-segments
+  [db now-ms]
+  ;; Limits/usage belong to the provider the SESSION actually routes through —
+  ;; the same per-session pref the model label (builtin_hooks) and the engine
+  ;; use. Reading `chosen-model-info` here showed the GLOBAL router default
+  ;; (e.g. zai) even after the user switched the session to Claude, so the
+  ;; "request usages" row reported the wrong coding plan. Fall back to the
+  ;; router default only when the session has no explicit pick.
+  (let [provider
+        (session-effective-provider db)
+
+        text
+        (when provider (generic-limits-footer-text db provider now-ms))]
+
+    (into (cond-> []
+            text
+            (conj {:text text :fg t/footer-fg-muted :bold? false :region :left :priority 1}))
+          (build-usage-segments db))))
+
+;;; ── Echo area (which-key strip + transient messages) ────────────────
+(defn- hint-segment
+  [text priority]
+  {:text text :fg t/footer-fg-muted :bold? false :region :center :priority priority})
+
+;; The C-x prefix is no longer advertised here: pressing it opens the hydra band
+;; (`keymap/prefix-spec`), which shows every next key on the transcript itself.
+
+;;; ── Model footer segments ─────────────────────────────────────────────
+;; Model footer data uses canonical text IR plus layout hints. `:fg-role` is
+;; mapped to this surface's palette; unknown roles fall back to `:default`.
+(defn- fg-role->color
+  [role]
+  (case role
+    :muted
+    t/footer-fg-muted
+
+    :warn
+    t/footer-warning-fg
+
+    :error
+    t/footer-error-fg
+
+    :success
+    t/footer-fg-strong
+
+    t/footer-fg))
+
+(defn- ast->footer-text
+  "Walk IR to a single PLAIN-text string for the footer packer.
+
+   Footer rows are painted by `draw-spans!` via `p/put-str!`, which
+   writes characters into terminal cells verbatim — it has no
+   sentinel/block-marker decoder like the bubble painter. So we
+   must NOT route through `lines->sentinel-strings`: that prepends
+   a block-marker codepoint (e.g. `MARKER_ANSWER_TXT` = `\u206E`)
+   which would land in a real cell as a stray 1-column blank
+   (the historical \"leading space\" footer bug — session
+   39a73cfb) and also throw off `spans-width`.
+
+   Styling for footer segments comes from the seg-map's
+   `:fg-role` / `:bold?`, not from inline span sentinels, so we
+   drop those too and just concat the runs' `:text`.  Multi-line
+   IR output is joined with a single space so a misbehaving
+   multi-block IR still fits one footer row."
+  ^String [ir]
+  (let [lines
+        (layout/ast->lines ir 1024)
+
+        line-strs
+        (mapv (fn [{:keys [runs]}]
+                (apply str (map :text runs)))
+              lines)]
+
+    (str/join " " (remove str/blank? line-strs))))
+
+(defn- seg->packed
+  "Convert one extension seg-map into the internal segment shape.
+   Returns nil for invalid / out-of-row entries."
+  [seg ^long row]
+  (when (and (map? seg)
+             (= row (long (or (:row seg) 0)))
+             (vector? (:ast seg))
+             (= :ast (first (:ast seg))))
+    (let [raw
+          (ast->footer-text (:ast seg))
+
+          ;; Chip kinds render through `components/button!`, whose cap wants the
+          ;; label PRE-padded ` like this ` (the resources / dirs chips do the
+          ;; same). The IR walker trims trailing whitespace, so re-pad here
+          ;; centrally instead of relying on it surviving the IR round-trip.
+          text
+          (if (:kind seg) (str " " (str/trim raw) " ") raw)]
+
+      (when (and (string? text) (not (str/blank? text)))
+        {:text text
+         :fg (fg-role->color (or (:fg-role seg) :default))
+         :bold? (boolean (:bold? seg))
+         :region (or (:region seg) :left)
+         :priority (long (or (:priority seg) 3))
+         :join-left? (boolean (:join-left? seg))
+         :kind (:kind seg)}))))
+
+(defn- model-segments
+  [db now-ms ^long row]
+  (->> (model-footer/segments db now-ms)
+       (keep #(seg->packed % row))
+       vec))
+
+;;; ── Width fitting ──────────────────────────────────────────────────────────
+(def ^:private sep "  /  ")
+
+(def ^:private sep-narrow " / ")
+
+(defn- region-spans [segments region] (filterv #(= region (:region %)) segments))
+
+(defn- separator-before [span separator] (if (:join-left? span) " " separator))
+
+(defn- spans-width
+  [spans separator]
+  (reduce (fn [w [i span]]
+            (+ (long w)
+               (if (zero? (long i)) 0 (p/display-width (separator-before span separator)))
+               (p/display-width (:text span))))
+          0
+          (map-indexed vector spans)))
+
+(defn- total-width
+  "Width of all three regions plus mandatory inter-region gaps and edge
+   padding. Used by `shrink-to-fit` to decide whether the current
+   segment list fits `cols`."
+  [segments separator]
+  (let [l
+        (region-spans segments :left)
+
+        c
+        (region-spans segments :center)
+
+        r
+        (region-spans segments :right)
+
+        edge-pad
+        2
+
+        ;; one space on each end of the row
+        gap
+        2
+
+        ;; minimum gap between adjacent regions
+        n-gaps
+        (cond-> 0
+          (and (seq l) (or (seq c) (seq r)))
+          inc
+
+          (and (seq c) (seq r))
+          inc)]
+
+    (+ (long edge-pad)
+       (* (long gap) (long n-gaps))
+       (long (spans-width l separator))
+       (long (spans-width c separator))
+       (long (spans-width r separator)))))
+
+(defn- min-priority
+  "Smallest `:priority` NUMBER present (= the MOST important tier)."
+  [segs]
+  (apply min (map :priority segs)))
+
+(defn- truncate-widest
+  "Last resort when only the most-important segments remain and the row
+   STILL overflows: shave `over` columns off the single WIDEST text
+   segment, appending `…` to mark the cut, so critical content (model
+   chip, provider limits) COMPACTS in place instead of vanishing off a
+   narrow terminal. Returns the updated vector, or nil when nothing can
+   give up the columns (every segment already minimal)."
+  [segments ^long over]
+  (let [v
+        (vec segments)
+
+        [idx seg]
+        (->> (map-indexed vector v)
+             (apply max-key
+               (fn [[_ s]]
+                 (p/display-width (:text s)))))
+
+        cur
+        (p/display-width (:text seg))]
+
+    (when (> cur 1)
+      (let [budget
+            (max 1 (dec (- cur over)))
+
+            ; leave a column for the …
+            cut
+            (str/trimr (p/truncate-cols (:text seg) budget))
+
+            text
+            (str cut "…")]
+
+        (when (< (p/display-width text) cur) (assoc-in v [idx :text] text))))))
+
+(defn- shrink-to-fit
+  "Fit the segment row into `cols`. Tries the wide separator, then the
+   narrow one, then DROPS the least-important segments (highest
+   `:priority` NUMBER) one at a time. Once every survivor shares the
+   most-important priority tier and it STILL overflows, the widest
+   survivor is TRUNCATED with `…` rather than dropped - a compacted
+   model/limits chip beats a blank footer."
+  [segments cols]
+  (let [fit? (fn [segs sepa]
+               (<= (long (total-width segs sepa)) (long cols)))]
+    (cond (fit? segments sep) [segments sep]
+          (fit? segments sep-narrow) [segments sep-narrow]
+          :else (loop [segs segments]
+                  (cond (empty? segs) [segs sep-narrow]
+                        (fit? segs sep-narrow) [segs sep-narrow]
+                        :else (let [worst-priority (apply max (map :priority segs))
+                                    victim (some #(when (= worst-priority (:priority %)) %) segs)
+                                    dropped (vec (remove #(identical? victim %) segs))]
+
+                                (if (> (long worst-priority) (long (min-priority segs)))
+                                  ;; Still-droppable decoration present (a less-important
+                                  ;; tier than the survivors): drop one occurrence of it.
+                                  (recur dropped)
+                                  ;; Only the most-important tier is left and it overflows:
+                                  ;; compact the widest survivor in place instead of dropping.
+                                  (let [over (- (long (total-width segs sep-narrow)) (long cols))]
+                                    (if-let [smaller (truncate-widest segs over)]
+                                      (recur smaller)
+                                      (recur dropped))))))))))
+
+;;; ── Drawing ────────────────────────────────────────────────────────────────
+(defn- draw-spans!
+  "Draw spans left-to-right starting at `col`. Each span uses its own
+   fg + optional bold; separators are rendered in muted fg. Returns
+   final col after the last span."
+  [g start-col row spans separator]
+  (reduce (fn [c [i s]]
+            (let [c (if (zero? (long i))
+                      c
+                      (do (p/clear-styles! g)
+                          (p/set-colors! g t/footer-fg-muted t/terminal-bg)
+                          (let [separator (separator-before s separator)]
+                            (p/put-str! g c row separator)
+                            (+ (long c) (p/display-width separator)))))]
+              (if (:kind s)
+                ;; Real button chip via the shared `components/button!` — the SAME
+                ;; component the header right-side buttons use (filled inverted cap,
+                ;; accent on hover, click region registered under `:kind`).
+                (do
+                  (components/button! g c row (:text s) (:kind s) {:register? true :tint (:tint s)})
+                  (+ (long c) (p/display-width (:text s))))
+                (do (p/clear-styles! g)
+                    (p/set-colors! g (or (:fg s) t/footer-fg) t/terminal-bg)
+                    (when (:bold? s) (p/enable! g p/BOLD))
+                    (p/put-str! g c row (:text s))
+                    (p/clear-styles! g)
+                    (+ (long c) (p/display-width (:text s)))))))
+          start-col
+          (map-indexed vector spans)))
+
+(defn- draw-footer-row!
+  [g db row cols now-ms build-fn row-idx]
+  (let [built-in
+        (build-fn db now-ms)
+
+        all-segs
+        (into (model-segments db now-ms (long row-idx)) built-in)
+
+        [segs separator]
+        (shrink-to-fit all-segs cols)
+
+        l
+        (region-spans segs :left)
+
+        c
+        (region-spans segs :center)
+
+        r
+        (region-spans segs :right)
+
+        edge-pad
+        2
+
+        l-w
+        (spans-width l separator)
+
+        c-w
+        (spans-width c separator)
+
+        r-w
+        (spans-width r separator)
+
+        l-col
+        edge-pad
+
+        r-col
+        (max (+ (long l-col) (long l-w) 2) (- (long cols) (long edge-pad) (long r-w)))
+
+        ;; Center between L's right edge and R's left edge.
+        l-end
+        (+ (long l-col) (long l-w))
+
+        c-col
+        (max (+ (long l-end) (if (seq l) 2 0))
+             (- (quot (+ (long l-end) (long r-col)) 2) (quot (long c-w) 2)))]
+
+    (when (seq l) (draw-spans! g l-col row l separator))
+    (when (seq c) (draw-spans! g c-col row c separator))
+    (when (seq r) (draw-spans! g r-col row r separator))))
+
+(defn- live-view-hint
+  "What an open live view says on the echo row: what it is, where it got to, and —
+   because Escape hits the VIEW before the turn — that the abort key stops it.
+   `lv/footer-text` is the pane's own one-line summary and `lv/interruptible` is
+   the same judge the abort branch asks, so this row and the band can never tell
+   different stories.
+
+   While that stop is ARMED the row says the two keys that end the typing instead:
+   Escape and Enter both send it, and Backspace on an empty line is the way back."
+  [panes]
+  (let [front
+        (lv/interruptible panes)
+
+        n
+        ;; A view that has SETTLED is not open: its line is on the band to be
+        ;; reopened, and Escape has nothing left to stop on it.
+        (count (remove lv/settled? panes))]
+
+    (str/join " · "
+              (remove str/blank?
+                [(when front
+                   (if (lv/stopping front)
+                     "Esc or Enter interrupt · Backspace keeps watching"
+                     (str (keymap/abort-hint) " stop"))) (lv/footer-text front)
+                 (when (> n 1) (str n " views open"))]))))
+
+(defn- echo-segments
+  "Content for the Emacs echo-area row directly above the input box.
+
+   NORMALLY EMPTY — the row lights up only when there is something to say:
+     - startup session building → typing is live; Enter waits for readiness
+     - live turn / cancelling   → the `C-g / Esc cancel` abort hint
+     - an open live view        → what it is doing and that Esc stops IT first
+     - a transient `:echo` msg  → a one-shot message (the caller clears it)
+
+   No idle keybinding nags, and no which-key strip: C-x opens the HYDRA band
+   itself (`keymap/prefix-spec` → `dialogs/prefix-band!`), which lists the next
+   keys where they belong — over the transcript, not in a one-row strip."
+  [{:keys [loading? cancelling? echo live-views tabs active-tab-id]}]
+  (let [building? (some #(and (= active-tab-id (:id %)) (:build-id %)) tabs)]
+    (cond cancelling? [(hint-segment "Cancelling... please wait" 1)]
+          ;; A live view outranks the turn's own abort hint because ESCAPE DOES:
+          ;; while one is open the abort key stops the VIEW (screen.clj's `:cancel`
+          ;; branch), so the row advertising that key has to name what it will hit.
+          (some? (lv/interruptible live-views)) [(hint-segment (live-view-hint live-views) 1)]
+          building? [(hint-segment "Starting session… type now; Enter sends when ready" 1)]
+          loading? [(hint-segment (str (keymap/abort-hint) " cancel") 1)]
+          (not (str/blank? (str echo))) [(hint-segment (str/trim (str echo)) 1)]
+          :else [])))
+
+(defn draw-echo-area!
+  "Emacs echo area / minibuffer analogue: ONE flat row directly above the
+   input box. Terminal background, NO box and NO side rails — the input box
+   owns its own border below. Blank until `echo-segments` has something to
+   say (a chord in progress, the mid-turn cancel hint, or a transient
+   message). Left-aligned at the input's horizontal pad so it tracks the
+   prompt column."
+  [g db echo-row cols _now-ms]
+  (p/clear-styles! g)
+  (p/set-colors! g t/footer-fg t/terminal-bg)
+  (p/fill-rect! g 0 echo-row cols 1)
+  (let [[segs separator]
+        (shrink-to-fit (echo-segments db) cols)
+
+        spans
+        (region-spans segs :center)]
+
+    (when (seq spans) (draw-spans! g 2 echo-row spans separator)))
+  ;; Restore neutral state for whatever paints next.
+  (p/clear-styles! g)
+  (p/set-colors! g t/text-fg t/terminal-bg))
+
+(defn draw-footer!
+  "Paint the two footer rows starting at `footer-row`, full width `cols`. Pure draw -
+   reads `db` once, computes segments, fits to width, writes cells.
+   Safe to call every frame (cheap; no allocations on the hot path
+   beyond the spans vector)."
+  [g db footer-row cols now-ms]
+  ;; Background fill: default footer fg on terminal bg, full row.
+  (p/clear-styles! g)
+  (p/set-colors! g t/footer-fg t/terminal-bg)
+  (p/fill-rect! g 0 footer-row cols 2)
+  (draw-footer-row! g db footer-row cols now-ms build-segments 0)
+  (draw-footer-row! g db (inc (long footer-row)) cols now-ms build-limits-segments 1)
+  ;; Restore neutral state for whatever paints next.
+  (p/clear-styles! g)
+  (p/set-colors! g t/text-fg t/terminal-bg))

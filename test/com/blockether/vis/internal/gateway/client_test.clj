@@ -8,7 +8,10 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.gateway.client :as client]
-            [com.blockether.vis.internal.gateway.discovery :as discovery]))
+            [com.blockether.vis.internal.gateway.discovery :as discovery])
+  (:import [java.io ByteArrayInputStream]
+           [java.nio.charset StandardCharsets]
+           [java.nio.file Files]))
 
 (defn- rv
   "Resolve a (possibly private) var in the client namespace for with-redefs-fn."
@@ -42,6 +45,94 @@
                 [:request fake-entry "POST" "/v1/debug" {:body {:hello "world"} :timeout-ms 1200}]]
                @calls))))))
 
+(deftest binary-request-body-is-not-json-encoded
+  (let [payload
+        (byte-array [1 2 3])
+
+        sent
+        (atom nil)]
+
+    (with-redefs [http/request (fn [opts]
+                                 (reset! sent opts)
+                                 {:status 202 :body "{}"})]
+      ((rv 'gw-send!)
+        fake-entry
+        "POST"
+        "/v1/upload"
+        {:body payload :raw-body? true :headers {"Content-Type" "audio/wav"}})
+      (is (identical? payload (:body @sent)))
+      (is (= "audio/wav" (get-in @sent [:headers "Content-Type"]))))))
+
+(defn- sse-body
+  "Make a byte-live gateway SSE stream for one terminal voice job."
+  [event-json]
+  (ByteArrayInputStream. (.getBytes (str "data: " event-json "\n\n") StandardCharsets/UTF_8)))
+
+(deftest transcription-stays-in-the-gateway-and-forgets-its-job
+  (let [audio
+        (java.io.File/createTempFile "vis-client-voice" ".wav")
+
+        calls
+        (atom [])
+
+        progress
+        (atom [])]
+
+    (spit audio "RIFF")
+    (try (with-redefs
+           [client/request!
+            (fn [method path & [opts]]
+              (swap! calls conj [method path (dissoc opts :body)])
+              (cond (= path "/v1/voice/model?engine=parakeet") {:status 200
+                                                                :body "{\"status\":\"ready\"}"}
+                    (= path "/v1/sessions/session-1/voice?engine=parakeet")
+                    (do (is (= "RIFF" (slurp (:body opts))))
+                        (is (:raw-body? opts))
+                        {:status 202 :body "{\"id\":\"job-1\"}"})
+                    (= path "/v1/sessions/session-1/voice/jobs/job-1/events")
+                    {:status 200
+                     :body
+                     (sse-body
+                       "{\"phase\":\"done\",\"progress\":100,\"is_done\":true,\"text\":\"hello\"}")}
+                    (= path "/v1/sessions/session-1/voice/jobs/job-1") {:status 204 :body ""}
+                    :else (throw (ex-info "unexpected request" {:method method :path path}))))]
+           (is (= "hello"
+                  (client/transcribe-audio! "session-1"
+                                            (.getPath audio)
+                                            {:engine-id "parakeet"
+                                             :on-progress #(swap! progress conj %)})))
+           (is (= [:post :post :get :delete] (mapv first @calls)))
+           (is (true? (get (last @progress) "is_done"))))
+         (finally (.delete audio)))))
+
+(deftest asynchronous-synthesis-fetches-audio-and-forgets-its-job
+  (let [calls
+        (atom [])
+
+        wav
+        (byte-array [82 73 70 70])]
+
+    (with-redefs [client/request!
+                  (fn [method path & [opts]]
+                    (swap! calls conj [method path opts])
+                    (cond (= path "/v1/speech/model?engine=pocket&voice_id=amy")
+                          {:status 200 :body "{\"status\":\"ready\"}"}
+                          (= path "/v1/sessions/session-2/speech?engine=pocket")
+                          {:status 202
+                           :body (.getBytes "{\"id\":\"job-2\"}" StandardCharsets/UTF_8)}
+                          (= path "/v1/sessions/session-2/speech/jobs/job-2/events")
+                          {:status 200 :body (sse-body "{\"phase\":\"done\",\"is_done\":true}")}
+                          (= path "/v1/sessions/session-2/speech/jobs/job-2/audio") {:status 200
+                                                                                     :body wav}
+                          (= path "/v1/sessions/session-2/speech/jobs/job-2") {:status 204 :body ""}
+                          :else (throw (ex-info "unexpected request"
+                                                {:method method :path path}))))]
+      (let [audio
+            (client/synthesize-speech! "session-2" "hello" {:engine-id "pocket" :voice-id "amy"})]
+        (try (is (= (seq wav) (seq (Files/readAllBytes (.toPath audio)))))
+             (is (= [:post :post :get :get :delete] (mapv first @calls)))
+             (is (= {:text "hello" :voice "amy"} (get-in @calls [1 2 :body])))
+             (finally (.delete audio)))))))
 ;; Regression: the TUI spoke raw gateway HTTP for these two reads, so a channel
 ;; extension had to reach past the facade into this namespace to make either one.
 (deftest channel-reads-answer-data-or-nil-when-the-daemon-cannot

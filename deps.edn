@@ -9,8 +9,7 @@
  ;; extension context. One file, both distributions.
  :paths ["src" "resources" "packages/vis-agent/src"]
  ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
- ;; :local/root dep's deps.edn, so the JitPack repo the voice extension declares has
- ;; to be repeated here for the aggregate build to resolve com.github.k2-fsa.sherpa-onnx.
+ ;; JitPack hosts sherpa-onnx, which the built-in gateway speech subsystem uses.
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps
  {;; The extension CONTRACT, published on its own so an extension — or a tool in
@@ -18,9 +17,7 @@
   ;; the engine. It carries `resources/vis-contract/*.edn`, so the engine reads its
   ;; own contract off this dependency's classpath.
   com.blockether/vis-contract {:local/root "packages/vis-contract"}
-  com.blockether/vis-channel-tui {:local/root "extensions/channels/vis-channel-tui"}
   com.blockether/vis-foundation-search {:local/root "extensions/common/vis-foundation-search"}
-  com.blockether/vis-foundation-voice {:local/root "extensions/common/vis-foundation-voice"}
   com.blockether/vis-language-clojure {:local/root "extensions/languages/vis-language-clojure"}
   com.blockether/vis-language-python {:local/root "extensions/languages/vis-language-python"}
   com.blockether/vis-persistance-sqlite {:local/root
@@ -37,6 +34,8 @@
                                           "extensions/providers/vis-provider-openrouter"}
   com.blockether/vis-provider-standard {:local/root "extensions/providers/vis-provider-standard"}
   com.blockether/vis-provider-zai {:local/root "extensions/providers/vis-provider-zai"}
+  com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm {:mvn/version "v1.13.5"}
+  org.apache.commons/commons-compress {:mvn/version "1.28.0"}
   ;; --- third party -----------------------------------------------------------
   babashka/fs {:mvn/version "0.5.34"}
   babashka/process {:mvn/version "0.6.25"}
@@ -57,7 +56,7 @@
   com.blockether/parinferish {:mvn/version "0.1.2"}
   com.blockether/rift {:mvn/version "0.0.10-11"}
   com.blockether/ruff {:mvn/version "0.3.5"}
-  com.blockether/svar {:mvn/version "0.7.152"}
+  com.blockether/svar {:mvn/version "0.7.154"}
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
@@ -66,9 +65,9 @@
   ;; that repository's release archive, fetched once into ~/.vis/python/runtime/
   ;; (internal.python-runtime) or staged beside the native image. Git dependencies
   ;; with :deps/prep-lib require `clojure -X:deps prep` after a fresh checkout.
-  com.blockether/vis-python-runtime
-  {:git/url "https://github.com/Blockether/vis-python-runtime.git"
-   :git/sha "39c34b12a6e6a3b20b5dca1f2a86db85aba819f8"}
+  com.blockether/vis-python-runtime {:git/sha "ac8d2fd2aa9692ed0fc2d266c63a24f77435417c"
+                                     :git/url
+                                     "https://github.com/Blockether/vis-python-runtime.git"}
   com.cnuernber/charred {:mvn/version "1.041"}
   com.google.zxing/core {:mvn/version "3.5.4"}
   com.taoensso/telemere {:mvn/version "1.2.1"}
@@ -149,58 +148,49 @@
   ;; alias has to keep mainng lazytest.main — `run_tests` appends its own selector
   ;; flags (--namespace / --var) to `clojure -M:test`.
   :test
-  {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
-               ;; TEST ONLY, and only for the TUI pack's video tests, which encode the
-               ;; fixture `.mp4`s they then decode through com.blockether/imaging.
-               ;; Nothing shipped encodes video, so it stays off every runtime classpath.
-               org.jcodec/jcodec {:mvn/version "0.2.5"}}
-   :extra-paths
-   ["test" "dev" "extensions/channels/vis-channel-tui/test"
-    "extensions/common/vis-foundation-search/test" "extensions/common/vis-foundation-voice/test"
-    "extensions/languages/vis-language-clojure/test" "extensions/languages/vis-language-python/test"
-    "extensions/persistance/vis-persistance-sqlite/test"
-    "extensions/providers/vis-provider-alibaba/test"
-    "extensions/providers/vis-provider-anthropic/test"
-    "extensions/providers/vis-provider-github-copilot/test"
-    "extensions/providers/vis-provider-openai-codex/test"
-    "extensions/providers/vis-provider-opencode-go/test"
-    "extensions/providers/vis-provider-openrouter/test"
-    "extensions/providers/vis-provider-standard/test" "extensions/providers/vis-provider-zai/test"]
+{:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+    :extra-paths
+    ["test" "dev" "extensions/common/vis-foundation-search/test"
+     "extensions/languages/vis-language-clojure/test" "extensions/languages/vis-language-python/test"
+     "extensions/persistance/vis-persistance-sqlite/test"
+     "extensions/providers/vis-provider-alibaba/test"
+     "extensions/providers/vis-provider-anthropic/test"
+     "extensions/providers/vis-provider-github-copilot/test"
+     "extensions/providers/vis-provider-openai-codex/test"
+     "extensions/providers/vis-provider-opencode-go/test"
+     "extensions/providers/vis-provider-openrouter/test"
+     "extensions/providers/vis-provider-standard/test" "extensions/providers/vis-provider-zai/test"]
    :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
               "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
               "-Dvis.drafts.dir=target/vis-drafts-test"]
    ;; --hook refuses non-loopback HTTP for the whole run: see
    ;; com.blockether.vis.test-network-guard.
    :main-opts
-   ["-m" "lazytest.main" "--hook" "com.blockether.vis.test-network-guard/no-network" "test"
-    "extensions/channels/vis-channel-tui/test" "extensions/common/vis-foundation-search/test"
-    "extensions/common/vis-foundation-voice/test" "extensions/languages/vis-language-clojure/test"
-    "extensions/languages/vis-language-python/test"
-    "extensions/persistance/vis-persistance-sqlite/test"
-    "extensions/providers/vis-provider-alibaba/test"
-    "extensions/providers/vis-provider-anthropic/test"
-    "extensions/providers/vis-provider-github-copilot/test"
-    "extensions/providers/vis-provider-openai-codex/test"
-    "extensions/providers/vis-provider-opencode-go/test"
-    "extensions/providers/vis-provider-openrouter/test"
-    "extensions/providers/vis-provider-standard/test" "extensions/providers/vis-provider-zai/test"]}
-  ;; The NATIVE BINARY's own suite (test-native/): what only `target/vis` can answer
-  ;; — the TUI's first frame on a pty, a whole one-shot agent turn, the provider
-  ;; extensions linked into it. A SEPARATE alias because it needs a ~20-minute
-  ;; `clojure -T:build native` first, and because it must fail loudly when the binary
-  ;; is missing instead of skipping inside the default suite:
+["-m" "lazytest.main" "--hook" "com.blockether.vis.test-network-guard/no-network" "test"
+     "extensions/common/vis-foundation-search/test"
+     "extensions/languages/vis-language-clojure/test" "extensions/languages/vis-language-python/test"
+     "extensions/persistance/vis-persistance-sqlite/test"
+     "extensions/providers/vis-provider-alibaba/test"
+     "extensions/providers/vis-provider-anthropic/test"
+     "extensions/providers/vis-provider-github-copilot/test"
+     "extensions/providers/vis-provider-openai-codex/test"
+     "extensions/providers/vis-provider-opencode-go/test"
+     "extensions/providers/vis-provider-openrouter/test"
+     "extensions/providers/vis-provider-standard/test" "extensions/providers/vis-provider-zai/test"]}
+  ;; The ENGINE native binary's own suite: what only `target/vis` can answer — a
+  ;; whole one-shot agent turn and the provider extensions linked into the image.
+  ;; A separate alias because it needs a native build first and must fail loudly when
+  ;; the binary is missing. The standalone TUI has its own app suite and image build:
   ;;   clojure -T:build native && clojure -M:test-native
-   ;; No network hook: its only socket is the loopback provider stub it serves itself,
-   ;; and the binary under test is a separate process the hook cannot see. Its PTY is
-   ;; owned by the adjacent libvisjail runtime, so this run needs the same native-access
-   ;; grants every other Vis JVM gets.
+  ;; No network hook: its only socket is the loopback provider stub it serves itself,
+  ;; and the binary under test is a separate process the hook cannot see.
   :test-native {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
                 :extra-paths ["test-native"]
                 :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
                            "--enable-preview" "--sun-misc-unsafe-memory-access=allow"]
                 :main-opts ["-m" "lazytest.main" "test-native"]}
-  ;; The TUI/gateway JVM. Past the native-access grants every Vis JVM needs, these
-  ;; flags exist to keep IDLE RSS down: the live heap is small, but G1 over-commits
+  ;; The gateway JVM. Past the native-access grants every Vis JVM needs, these
+  ;; flags keep idle RSS down: the live heap is small, but G1 over-commits
   ;; and never hands the pages back on its own.
   ;;   periodic GC + free ratios — make G1 shrink committed toward the live set and
   ;;     uncommit to the OS; it re-commits smoothly under load. Each timer-driven

@@ -16,9 +16,8 @@
 (defn- reply
   "The reply map for one call to `tool` with `args` in `session`."
   [session tool args]
-  (json/read-json (python-host/dispatch session
-                                        tool
-                                        (json/write-json-str {"session" session "args" args}))))
+  (json/read-json
+    (python-host/dispatch session tool (json/write-json-str {"session" session "args" args}))))
 
 (defn- block-session!
   "An interpreter session equipped with the sandbox runtime and `tools`."
@@ -99,20 +98,27 @@
   ;; a block that named a neighbour's session was served the neighbour's tools —
   ;; with the neighbour's roots. The interpreter now says who called, and that is
   ;; the only thing this authorizes against.
-  (let [served (atom [])
-        victim (block-session! {"secret" (fn [] (swap! served conj :ran) "SECRET")})
-        attacker (block-session! {})]
+  (let [served
+        (atom [])
+
+        victim
+        (block-session! {"secret" (fn []
+                                    (swap! served conj :ran)
+                                    "SECRET")})
+
+        attacker
+        (block-session! {})]
+
     (testing "the session that owns the tool is served"
       (is (= "SECRET" (get (reply victim "secret" []) "value"))))
     (testing "a caller that is not that session is refused, whatever the payload claims"
-      (let [answer (json/read-json
-                     (python-host/dispatch attacker
-                                           "secret"
-                                           (json/write-json-str {"session" victim "args" []})))]
+      (let [answer (json/read-json (python-host/dispatch attacker
+                                                         "secret"
+                                                         (json/write-json-str {"session" victim
+                                                                               "args" []})))]
         (is (nil? (get answer "value")))
         (is (str/includes? (str (get answer "error")) "no vis tool named"))))
-    (testing "the tool ran only for its own session"
-      (is (= [:ran] @served)))))
+    (testing "the tool ran only for its own session" (is (= [:ran] @served)))))
 
 (deftest binding-without-an-interpreter-is-not-a-failure-test
   ;; Measured while loading a Python extension in a process that never started a
@@ -122,14 +128,16 @@
   ;; only appeared to work. Binding needs an interpreter this process may simply
   ;; not have; the extension host binds its own, in its own process.
   (let [bound (deref #'python-host/bound)]
-    (try
-      (reset! (deref #'python-host/bound) false)
-      (with-redefs [runtime/bind-host! (fn [_] (throw (ex-info "no library here" {})))]
-        (testing "a process with nothing to bind says so instead of throwing"
-          (is (false? (python-host/bind!)))))
-      (testing "and it stays retryable, so the next caller with an interpreter binds"
-        (let [handed (atom nil)]
-          (with-redefs [runtime/bind-host! (fn [f] (reset! handed f) nil)]
-            (is (true? (python-host/bind!)))
-            (is (some? @handed)))))
-      (finally (reset! (deref #'python-host/bound) bound)))))
+    (try (reset! (deref #'python-host/bound) false)
+         (with-redefs [runtime/bind-host! (fn [_]
+                                            (throw (ex-info "no library here" {})))]
+           (testing "a process with nothing to bind says so instead of throwing"
+             (is (false? (python-host/bind!)))))
+         (testing "and it stays retryable, so the next caller with an interpreter binds"
+           (let [handed (atom nil)]
+             (with-redefs [runtime/bind-host! (fn [f]
+                                                (reset! handed f)
+                                                nil)]
+               (is (true? (python-host/bind!)))
+               (is (some? @handed)))))
+         (finally (reset! (deref #'python-host/bound) bound)))))

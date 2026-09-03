@@ -52,7 +52,8 @@
        (catch Throwable _
          (let [{:keys [exit out]} (python-runtime/pip-install! ["pytest"])]
            (if (zero? (long (or exit 1)))
-             (try (pyext/exec! pyext/shared-key session
+             (try (pyext/exec! pyext/shared-key
+                               session
                                "import importlib; importlib.invalidate_caches(); import pytest")
                   nil
                   (catch Throwable t (ex-message t)))
@@ -218,7 +219,8 @@
          ;; The two inputs cross as JSON the guest PARSES: pasting JSON straight
          ;; into Python source would keep its `\\/` escapes verbatim and break
          ;; every path in it.
-         (pyext/exec! pyext/shared-key session
+         (pyext/exec! pyext/shared-key
+                      session
                       (str "__vis_test_paths__ = "
                            (env/py-json-literal (vec paths))
                            "\n"
@@ -227,7 +229,8 @@
                            "\n"))
          (pyext/exec! pyext/shared-key session run-test-src)
          (let [outcome
-               (json/read-json (pyext/run pyext/shared-key session
+               (json/read-json (pyext/run pyext/shared-key
+                                          session
                                           (str "{'report': __vis_test_report__,"
                                                " 'rc': __vis_test_rc__,"
                                                " 'output': __vis_test_output__}"))

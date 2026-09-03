@@ -12,6 +12,7 @@
    flag / `VIS_GATEWAY_URL`) — a gateway on another machine, attached to over HTTP
    and never spawned, restarted or stopped from here."
   (:require [babashka.http-client :as http]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.cancellation :as cancellation]
@@ -20,7 +21,7 @@
             [com.blockether.vis.internal.gateway.runtime :as protocol]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util])
-  (:import (java.io BufferedReader InputStream InputStreamReader)
+  (:import (java.io BufferedReader File InputStream InputStreamReader)
            (java.net URI URLEncoder)
            (java.nio.charset StandardCharsets)
            (java.util.concurrent.locks ReentrantLock)))
@@ -192,17 +193,16 @@
 (defn- gw-send!
   "Perform a babashka.http-client request against gateway `entry`. `method` is a
    verb string (\"GET\"/\"POST\"/\"PATCH\"/\"DELETE\"/…); `opts` may carry `:body`
-   (serialized to JSON) and `:as` ∈ #{:string :bytes :stream} (default :string).
-   `:throw false`, so 4xx/5xx come back as a response map (callers branch on
-   `:status`) directly. A :stream request
-   asks for `text/event-stream` with compression disabled so the SSE body stays
-   byte-live for the line reader + idle watchdog."
-  [{:keys [secret remote?] :as _entry} method path
-   {:keys [body as timeout-ms headers] :or {as :string timeout-ms 30000}}]
+   (serialized to JSON unless `:raw-body?` is true) and `:as` ∈
+   #{:string :bytes :stream} (default :string). `:throw false`, so 4xx/5xx come
+   back as a response map. A stream request asks for `text/event-stream` with
+   compression disabled so the SSE body stays byte-live."
+  [{:keys [secret remote?] :as entry} method path
+   {:keys [body as timeout-ms headers raw-body?] :or {as :string timeout-ms 30000}}]
   (http/request
     (cond-> {:client @http-client
              :method (keyword (str/lower-case method))
-             :uri (str (base-url _entry) path)
+             :uri (str (base-url entry) path)
              :timeout timeout-ms
              :throw false
              :as as
@@ -210,23 +210,12 @@
                                      headers
                                      {"Accept"
                                       (if (= as :stream) "text/event-stream" "application/json")})
-                        ;; A remote client owns no process on the gateway's machine and the
-                        ;; daemon reaps every lease whose pid is dead THERE, so a remote call
-                        ;; must not claim one (server-side `request-client-pid`).
                         (not remote?)
                         (assoc "X-Vis-Client-Pid" (str (discovery/current-pid)))
 
-                        ;; The lease this process holds. A REMOTE lease carries no pid
-                        ;; the daemon could look up, so this header is the only
-                        ;; liveness it has: without it, a client that vanished
-                        ;; mid-flight counted as a client until the daemon died.
                         (some? @client-id)
                         (assoc "X-Vis-Client-Id" (str @client-id))
 
-                        ;; One secret, both carriers: `Authorization` is what a token-gated
-                        ;; (non-loopback) gateway checks, `X-Vis-Gateway-Secret` is what
-                        ;; `/healthz` echoes back as `secret_match`. Blank means the target
-                        ;; is an auth-free loopback daemon — send neither.
                         (seq (str secret))
                         (assoc "Authorization"
                           (str "Bearer " secret) "X-Vis-Gateway-Secret"
@@ -235,8 +224,10 @@
                         (= as :stream)
                         (assoc "Accept-Encoding" "identity"))}
       (some? body)
-      (-> (assoc :body (wire/json-str body))
-          (assoc-in [:headers "Content-Type"] "application/json")))))
+      (assoc :body (if raw-body? body (wire/json-str body)))
+
+      (and (some? body) (not raw-body?))
+      (assoc-in [:headers "Content-Type"] "application/json"))))
 
 (defn- parse-json-body [^String body] (or (wire/parse-json body) {}))
 
@@ -1059,13 +1050,14 @@
 
    Resolves or starts the registered daemon for the current DB, acquires this
    process's client lease, adds protocol/authentication headers without exposing
-   the registry secret, JSON-encodes `:body`, and delegates to the same
-   babashka.http-client transport as every production client call.
+   the registry secret, and delegates to the production babashka.http-client
+   transport.
 
    `method` may be a keyword or string. `opts` accepts `:body`, `:as`,
-   `:timeout-ms`, and additional `:headers`; gateway-owned authentication and
-   protocol headers cannot be overridden. The raw non-throwing HTTP response map
-   is returned so callers can inspect `:status`, `:headers`, and `:body`."
+   `:timeout-ms`, additional `:headers`, and `:raw-body?`. A body is JSON-encoded
+   by default; `:raw-body? true` sends an InputStream or byte array unchanged for
+   binary gateway routes. Gateway-owned authentication and protocol headers cannot
+   be overridden. The raw non-throwing response map is returned."
   ([method path] (request! method path {}))
   ([method path opts]
    (when-not (and (string? path) (str/starts-with? path "/"))
@@ -2287,6 +2279,150 @@
                     (some-> ^Thread watchdog
                             .interrupt))))))
 
+(def ^:private ^:const speech-model-poll-ms 400)
+
+(defn- response-text
+  [body]
+  (cond (string? body) body
+        (bytes? body) (String. ^bytes body StandardCharsets/UTF_8)
+        :else (str body)))
+
+(defn- parsed-response!
+  [response]
+  (let [body (wire/parse-json (response-text (:body response)))]
+    (when-not (< (long (:status response)) 400)
+      (throw (ex-info (or (get body "error") (str "gateway HTTP " (:status response)))
+                      {:http-status (:status response) :body body})))
+    body))
+
+(defn- speech-query
+  [engine-id voice-id]
+  (let [parts (cond-> []
+                engine-id
+                (conj (str "engine=" (enc engine-id)))
+
+                voice-id
+                (conj (str "voice_id=" (enc voice-id))))]
+    (when (seq parts) (str "?" (str/join "&" parts)))))
+
+(defn prepare-speech-model!
+  "Prepare one gateway-owned speech engine and wait until it is ready. `direction`
+   is `:transcribe` or `:synthesize`; `on-progress` receives the gateway's
+   string-keyed model state. No model or native runtime is initialized here."
+  [direction {:keys [engine-id voice-id on-progress]}]
+  (let [kind
+        (if (= :transcribe direction) "voice" "speech")
+
+        path
+        (str "/v1/" kind "/model" (speech-query engine-id voice-id))]
+
+    (loop [method :post]
+      (let [model (parsed-response! (request! method path {:timeout-ms 120000}))
+            status (get model "status")]
+
+        (when on-progress (on-progress model))
+        (case status
+          "ready"
+          model
+
+          "failed"
+          (throw (ex-info (or (get model "error") "speech model preparation failed")
+                          {:type :gateway/speech-model-failed :model model}))
+
+          (do (Thread/sleep (long speech-model-poll-ms)) (recur :get)))))))
+
+(defn- speech-job-path
+  [sid direction job-id suffix]
+  (str "/v1/sessions/"
+       (enc sid)
+       "/"
+       (if (= :transcribe direction) "voice" "speech")
+       "/jobs/"
+       (enc job-id)
+       suffix))
+
+(defn- await-speech-job!
+  [sid direction job-id on-progress]
+  (let [response (request! :get
+                           (speech-job-path sid direction job-id "/events")
+                           {:as :stream :timeout-ms 600000})]
+    (when-not (= 200 (:status response)) (parsed-response! response))
+    (with-open [^InputStream in (:body response)]
+      (let [job (read-sse-frames! in
+                                  (fn [event]
+                                    (when on-progress (on-progress event))
+                                    (when (true? (get event "is_done")) event))
+                                  nil)]
+        (when-not (map? job)
+          (throw (ex-info "speech job stream closed before completion"
+                          {:type :gateway/speech-stream-closed :job-id job-id})))
+        (when-let [error (get job "error")]
+          (throw (ex-info error {:type :gateway/speech-job-failed :job job})))
+        job))))
+
+(defn transcribe-audio!
+  "Upload a WAV to the gateway-owned transcription engine, stream its progress,
+   and return the transcript. `audio-path` is read by this client only; Sherpa and
+   its model live solely in the gateway process."
+  [sid audio-path {:keys [engine-id on-progress]}]
+  (prepare-speech-model! :transcribe {:engine-id engine-id :on-progress on-progress})
+  (let [query
+        (speech-query engine-id nil)
+
+        path
+        (str "/v1/sessions/" (enc sid) "/voice" query)]
+
+    (with-open [in (io/input-stream (io/file (str audio-path)))]
+      (let [job (parsed-response! (request! :post
+                                            path
+                                            {:body in
+                                             :raw-body? true
+                                             :headers {"Content-Type" "audio/wav"}
+                                             :timeout-ms 120000}))
+            job-id (get job "id")]
+
+        (try (get (await-speech-job! sid :transcribe job-id on-progress) "text")
+             (finally (request! :delete (speech-job-path sid :transcribe job-id ""))))))))
+
+(defn- write-temp-audio!
+  ^File [body]
+  (let [file (File/createTempFile "vis-gateway-speech" ".wav")]
+    (with-open [out (io/output-stream file)]
+      (.write out ^bytes body))
+    file))
+
+(defn synthesize-speech!
+  "Ask the gateway-owned speech engine to synthesize `text` and return a temporary
+   WAV file owned by the caller. Progress is streamed for asynchronous jobs."
+  [sid text {:keys [engine-id voice-id on-progress]}]
+  (prepare-speech-model! :synthesize
+                         {:engine-id engine-id :voice-id voice-id :on-progress on-progress})
+  (let [query
+        (speech-query engine-id nil)
+
+        path
+        (str "/v1/sessions/" (enc sid) "/speech" query)
+
+        response
+        (request! :post
+                  path
+                  {:body (cond-> {:text text}
+                           voice-id
+                           (assoc :voice voice-id))
+                   :as :bytes
+                   :timeout-ms 600000})]
+
+    (cond (= 200 (:status response)) (write-temp-audio! (:body response))
+          (= 202 (:status response))
+          (let [job-id (get (parsed-response! response) "id")]
+            (try (await-speech-job! sid :synthesize job-id on-progress)
+                 (let [audio (request! :get
+                                       (speech-job-path sid :synthesize job-id "/audio")
+                                       {:as :bytes :timeout-ms 120000})]
+                   (when-not (= 200 (:status audio)) (parsed-response! audio))
+                   (write-temp-audio! (:body audio)))
+                 (finally (request! :delete (speech-job-path sid :synthesize job-id "")))))
+          :else (do (parsed-response! response) nil))))
 (defn- open-sse-events!
   "Open ONE SSE connection for `sid` from `cursor` and read it with
    [[read-sse-frames!]]. For each parsed event: advance `cursor*` (highest `:seq`

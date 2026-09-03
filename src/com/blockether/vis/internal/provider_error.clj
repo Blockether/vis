@@ -1094,6 +1094,7 @@
      :title (provider-error-title err)
      :explanation (provider-error-explanation err)
      :next-step (provider-error-next-step err)
+     :facts (provider-error-facts err)
      :status status
      :request-id (some-> request-id
                          str)

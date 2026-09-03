@@ -73,12 +73,11 @@
                                                  StandardCharsets/UTF_8))
    :pending (atom {})
    :seq (AtomicLong. 0)
-   :workers (Executors/newCachedThreadPool (reify
-                                             java.util.concurrent.ThreadFactory
-                                               (newThread [_ runnable]
-                                                 (doto (Thread. ^Runnable runnable
-                                                                "vis-python-worker")
-                                                   (.setDaemon true)))))})
+   :workers (Executors/newCachedThreadPool
+              (reify
+                java.util.concurrent.ThreadFactory
+                  (newThread [_ runnable]
+                    (doto (Thread. ^Runnable runnable "vis-python-worker") (.setDaemon true)))))})
 
 (defn- send-line!
   "Write one message. Synchronized because both a reply and a fresh request can
@@ -145,64 +144,63 @@
   "Run one request from the parent against this process's interpreter."
   [peer message]
   (let [{:strs [id op session code]} message]
-    (send-line! peer
-                (try {"id" id
-                      "value" (case op
-                                "install-runtime"
-                                (runtime/install-runtime! session)
+    (send-line!
+      peer
+      (try
+        {"id" id
+         "value" (case op
+                   "install-runtime"
+                   (runtime/install-runtime! session)
 
-                                "install-sync-tool"
-                                (runtime/install-sync-tool! session code)
+                   "install-sync-tool"
+                   (runtime/install-sync-tool! session code)
 
-                                "install-tool"
-                                (runtime/install-tool! session code)
+                   "install-tool"
+                   (runtime/install-tool! session code)
 
-                                "install-module"
-                                (runtime/install-module! session code)
+                   "install-module"
+                   (runtime/install-module! session code)
 
-                                "exec"
-                                (do (runtime/exec! session code) nil)
+                   "exec"
+                   (do (runtime/exec! session code) nil)
 
-                                "run"
-                                (runtime/run session code)
+                   "run"
+                   (runtime/run session code)
 
-                                "run-block"
-                                (runtime/run-block session code)
+                   "run-block"
+                   (runtime/run-block session code)
 
-                                "eval"
-                                (runtime/eval-str session code)
+                   "eval"
+                   (runtime/eval-str session code)
 
-                                ;; Policy is the PROCESS's, and this process is one
-                                ;; session's, which is the whole reason the worker
-                                ;; exists: what used to be "every session in the
-                                ;; gateway" is now exactly this session.
-                                "confine"
-                                (let [{:strs [read write refusal]} (json/read-json code
-                                                                                  :key-fn identity)]
-                                  (runtime/confine! (vec read) (vec write) (str refusal))
-                                  nil)
+                   ;; Policy is the PROCESS's, and this process is one
+                   ;; session's, which is the whole reason the worker
+                   ;; exists: what used to be "every session in the
+                   ;; gateway" is now exactly this session.
+                   "confine"
+                   (let [{:strs [read write refusal]} (json/read-json code :key-fn identity)]
+                     (runtime/confine! (vec read) (vec write) (str refusal))
+                     nil)
 
-                                "network"
-                                (let [{:strs [enabled refusal]} (json/read-json code
-                                                                                :key-fn identity)]
-                                  (runtime/network! (boolean enabled) (str refusal))
-                                  nil)
+                   "network"
+                   (let [{:strs [enabled refusal]} (json/read-json code :key-fn identity)]
+                     (runtime/network! (boolean enabled) (str refusal))
+                     nil)
 
-                                "trust"
-                                (do (runtime/trust! session (= "1" code)) nil)
+                   "trust"
+                   (do (runtime/trust! session (= "1" code)) nil)
 
-                                "stdin"
-                                (do (runtime/stdin! code) nil)
+                   "stdin"
+                   (do (runtime/stdin! code) nil)
 
-                                "interrupt"
-                                (runtime/interrupt!)
+                   "interrupt"
+                   (runtime/interrupt!)
 
-                                "close"
-                                (do (runtime/trust! session false)
-                                    (runtime/close-session! session))
+                   "close"
+                   (do (runtime/trust! session false) (runtime/close-session! session))
 
-                                (throw (ex-info (str "no worker op named " op) {:op op})))}
-                     (catch Throwable t {"id" id "error" (or (ex-message t) (str t))})))))
+                   (throw (ex-info (str "no worker op named " op) {:op op})))}
+        (catch Throwable t {"id" id "error" (or (ex-message t) (str t))})))))
 
 (defn serve!
   "BE a worker: connect back to the parent on `socket-path` and serve
@@ -227,10 +225,8 @@
     ;; authorizes against it, and a payload that names something else is the
     ;; guest's word, not the interpreter's.
     (runtime/bind-host! (fn [session tool payload]
-                          (request! peer {"op" "host"
-                                          "session" session
-                                          "tool" tool
-                                          "payload" payload})))
+                          (request! peer
+                                    {"op" "host" "session" session "tool" tool "payload" payload})))
     (pump! peer serve-op (constantly "the vis process that owns this host is gone"))
     (.close channel)))
 
@@ -245,7 +241,8 @@
 
 (defonce
   ^:private
-  ^{:doc "worker key -> {:process :peer :log}. One entry per live worker: a
+  ^{:doc
+    "worker key -> {:process :peer :log}. One entry per live worker: a
           SESSION's key gives that session its own interpreter, and the shared
           key is what everything not owned by a session runs in."}
   workers
@@ -306,9 +303,7 @@
     (try (when-let [library (python-runtime/ensure-library!)]
            (.put (.environment builder) runtime/native-path-env (str library)))
          (catch Throwable t
-           (tel/log! {:level :debug
-                      :id ::no-library-to-hand-over
-                      :data {:error (ex-message t)}})))
+           (tel/log! {:level :debug :id ::no-library-to-hand-over :data {:error (ex-message t)}})))
     (let [process
           (.start builder)
 
@@ -336,8 +331,7 @@
                                                                             (get m "tool")
                                                                             (get m "payload"))}))
                                (fn []
-                                 (str "the python worker exited; see "
-                                      (.getAbsolutePath log))))
+                                 (str "the python worker exited; see " (.getAbsolutePath log))))
                        "vis-python-extension-pump")
           (.setDaemon true)
           (.start))
@@ -406,14 +400,17 @@
    The policy is that PROCESS's, which is why one worker per session is the whole
    point: what used to be every session in the gateway is now this session."
   [k session read write refusal]
-  (ask k "confine" session (json/write-json-str {"read" (vec read)
-                                                 "write" (vec write)
-                                                 "refusal" (str refusal)})))
+  (ask k
+       "confine"
+       session
+       (json/write-json-str {"read" (vec read) "write" (vec write) "refusal" (str refusal)})))
 
 (defn network!
   [k session enabled? refusal]
-  (ask k "network" session (json/write-json-str {"enabled" (boolean enabled?)
-                                                 "refusal" (str refusal)})))
+  (ask k
+       "network"
+       session
+       (json/write-json-str {"enabled" (boolean enabled?) "refusal" (str refusal)})))
 
 (defn stop-worker!
   "Stop the worker for `k`, if there is one. Idempotent. Closing the socket
@@ -434,5 +431,6 @@
   "Stop every worker. Idempotent; each process is a daemon of this one's
    lifetime, so an unclean exit leaves nothing behind."
   []
-  (doseq [k (keys @workers)] (stop-worker! k))
+  (doseq [k (keys @workers)]
+    (stop-worker! k))
   nil)

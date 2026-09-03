@@ -45,8 +45,8 @@ import { FormLabel, SettingsPanel } from "./SettingsLayout";
  * "create a voice" is an upload and nothing else. The clip is stored on the machine that
  * imported it and every session there speaks with the same catalogue.
  *
- * A machine with no speaking engine renders NOTHING. Speech is an extension and most
- * installs do not carry it; a group explaining a feature that is not there is noise.
+ * A machine whose built-in speaking runtime is unavailable renders NOTHING. Speech is
+ * optional in use; a group explaining a capability that cannot run is noise.
  */
 export function VoicesPanel({
   client,
@@ -100,9 +100,9 @@ export function VoicesPanel({
         setErr(null);
       } catch (e) {
         if (signal?.aborted) return;
-        // 501 is a machine with no voice extension installed — the ordinary Vis. That
-        // is not a failure worth a red banner, it is a feature this machine does not
-        // have, so the whole band goes away.
+        // A 501 means this gateway's built-in speech runtime is unavailable. That
+        // is not worth a red banner because speech is not required to use Vis, so
+        // the whole band goes away.
         if (e instanceof GatewayError && e.status === 501) {
           setIsAbsent(true);
           setCatalogue(null);

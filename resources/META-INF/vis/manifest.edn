@@ -7,11 +7,7 @@
    :register com.blockether.vis.internal.foundation.shim-ls/register!}
   com.blockether.vis.internal.foundation.mcp.core/register!
   com.blockether.vis.internal.foundation.harness.core/register!
-  com.blockether.vis.ext.channel-tui.core/register!
   com.blockether.vis.ext.foundation-search.core/register!
-  {:because "sherpa-onnx ships one 8-13 MB native jar per platform and may be absent"
-   :is-optional true
-   :register com.blockether.vis.ext.foundation-voice.core/register!}
   com.blockether.vis.ext.language-clojure.core/register!
   com.blockether.vis.ext.language-python.core/register!
   com.blockether.vis.ext.persistance-sqlite.registrar/register!

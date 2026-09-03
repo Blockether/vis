@@ -339,56 +339,77 @@ vis.extension(
 
 (defdescribe
   python-extension-session-interpreter-test
-  (it "runs trusted extension namespaces beside the owning sandbox namespace"
-      (with-loaded
-        {"one_interpreter.py" one-interpreter-py}
-        (fn [_ _]
-          (let [sandbox-root (temp-dir)
-                outside-root (temp-dir)
-                outside (io/file outside-root "trusted.txt")
-                _ (spit outside "trusted")
-                ext (registered "one-interpreter")
-                registered-before ext
-                made (ep/create-python-context
-                       {}
-                       (fn [] [(.getCanonicalPath sandbox-root)])
-                       {:worker? true
-                        :jail-enabled? true
-                        :enabled? false
-                        :allowed-domains []
-                        :denied-domains []
-                        :exclude-domains []}
-                       nil
-                       nil
-                       nil)
-                ctx (:python-context made)
-                env {:python-context ctx
-                     :session-id "one-interpreter-session"
-                     :extensions (atom [ext])
-                     :active-extensions (atom [])}]
-            (try
-              (lp/sync-active-extension-symbols! env [ext])
-              (let [result
-                    (ep/run-python-block
-                      ctx
-                      (str "import os, sys, types\n"
-                           "sandbox_pid = os.getpid()\n"
-                           "sys.modules['vis_session_probe'] = types.SimpleNamespace(value=40)\n"
-                           "try:\n"
-                           "    open(" (pr-str (.getCanonicalPath outside)) ", encoding='utf-8').read()\n"
-                           "    sandbox_access = 'open'\n"
-                           "except Exception:\n"
-                           "    sandbox_access = 'refused'\n"
-                           "answer = await session_probe(" (pr-str (.getCanonicalPath outside)) ")\n"
-                           "print(sandbox_pid, answer['pid'], answer['value'], answer['text'], sandbox_access)"))
-                    words (str/split (str/trim (:stdout result)) #"\s+")]
-                (expect (= (first words) (second words)))
-                (expect (= ["42" "trusted" "refused"] (subvec (vec words) 2)))
-                (expect (identical? registered-before (registered "one-interpreter")))
-                (expect (contains? @@#'pyx/session-contexts [ctx "one-interpreter"])))
-              (finally
-                (ep/dispose-python-context! ctx)))
-            (expect (not (contains? @@#'pyx/session-contexts [ctx "one-interpreter"]))))))))
+  (it
+    "runs trusted extension namespaces beside the owning sandbox namespace"
+    (with-loaded
+      {"one_interpreter.py" one-interpreter-py}
+      (fn [_ _]
+        (let [sandbox-root
+              (temp-dir)
+
+              outside-root
+              (temp-dir)
+
+              outside
+              (io/file outside-root "trusted.txt")
+
+              _
+              (spit outside "trusted")
+
+              ext
+              (registered "one-interpreter")
+
+              registered-before
+              ext
+
+              made
+              (ep/create-python-context {}
+                                        (fn []
+                                          [(.getCanonicalPath sandbox-root)])
+                                        {:worker? true
+                                         :jail-enabled? true
+                                         :enabled? false
+                                         :allowed-domains []
+                                         :denied-domains []
+                                         :exclude-domains []}
+                                        nil
+                                        nil
+                                        nil)
+
+              ctx
+              (:python-context made)
+
+              env
+              {:python-context ctx
+               :session-id "one-interpreter-session"
+               :extensions (atom [ext])
+               :active-extensions (atom [])}]
+
+          (try
+            (lp/sync-active-extension-symbols! env [ext])
+            (let
+              [result
+               (ep/run-python-block
+                 ctx
+                 (str
+                   "import os, sys, types\n" "sandbox_pid = os.getpid()\n"
+                   "sys.modules['vis_session_probe'] = types.SimpleNamespace(value=40)\n" "try:\n"
+                   "    open(" (pr-str (.getCanonicalPath outside))
+                   ", encoding='utf-8').read()\n" "    sandbox_access = 'open'\n"
+                   "except Exception:\n" "    sandbox_access = 'refused'\n"
+                   "answer = await session_probe(" (pr-str (.getCanonicalPath outside))
+                   ")\n"
+                   "print(sandbox_pid, answer['pid'], answer['value'], answer['text'], sandbox_access)"))
+
+               words
+               (str/split (str/trim (:stdout result)) #"\s+")]
+
+              (expect (= (first words) (second words)))
+              (expect (= ["42" "trusted" "refused"] (subvec (vec words) 2)))
+              (expect (identical? registered-before (registered "one-interpreter")))
+              (expect (contains? @@#'pyx/session-contexts [ctx "one-interpreter"])))
+            (finally (ep/dispose-python-context! ctx)))
+          (expect (not (contains? @@#'pyx/session-contexts [ctx "one-interpreter"]))))))))
 
 ;; Tool adapter — envelope semantics
 
@@ -2708,11 +2729,18 @@ vis.extension(
       (with-loaded
         {"fsdoor.py" fs-door-py}
         (fn [_ _]
-          (let [outside (str (System/getProperty "java.io.tmpdir")
-                             "/vis-fs-door-" (System/nanoTime))
-                target (str outside "/note.txt")
-                ext (registered "fsdoor")
-                answer (:result ((symbol-fn ext 'fsdoor_probe) target "written by the door"))]
+          (let [outside
+                (str (System/getProperty "java.io.tmpdir") "/vis-fs-door-" (System/nanoTime))
+
+                target
+                (str outside "/note.txt")
+
+                ext
+                (registered "fsdoor")
+
+                answer
+                (:result ((symbol-fn ext 'fsdoor_probe) target "written by the door"))]
+
             (expect (= true (get answer "exists")))
             (expect (= "written by the door" (get answer "read")))
             (expect (= "written by the door" (get answer "moved")))

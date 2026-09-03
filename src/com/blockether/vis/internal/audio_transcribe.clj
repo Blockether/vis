@@ -8,7 +8,7 @@
    that decides everything about where it runs: the transcript is not a second-hand
    report bought from another provider, it is the recording's own WORDS, produced
    locally by the speech engine this build already carries
-   (`com.blockether.vis.internal.voice`, normally Parakeet on this machine). It costs
+   (`com.blockether.vis.internal.speech`, normally Parakeet on this machine). It costs
    no quota, it leaves no bytes on anybody's wire, and it is true of the file forever.
 
    WHEN it runs is the whole design. A surface that STAGES a recording — the composer
@@ -41,7 +41,7 @@
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.voice :as voice]
+            [com.blockether.vis.internal.speech :as speech]
             [taoensso.telemere :as tel])
   (:import [java.io File FileOutputStream]
            [java.nio.charset StandardCharsets]
@@ -90,10 +90,9 @@
 (defn enabled? "Whether attachment transcription may run at all." [] (toggles/enabled? TOGGLE_ID))
 
 (defn engine
-  "The transcription engine this build would use, or nil when none is registered — a
-   build without the voice extension, or one whose engine failed to load."
+  "The built-in transcription engine, or nil when its native runtime failed to load."
   []
-  (try (voice/resolve-engine :transcribe nil) (catch Throwable _ nil)))
+  (try (speech/resolve-engine :transcribe nil) (catch Throwable _ nil)))
 
 (defn available?
   "Whether a recording attached RIGHT NOW would be transcribed: the toggle is on, an
@@ -102,7 +101,7 @@
   []
   (boolean (and (enabled?)
                 (some-> (engine)
-                        voice/ready?))))
+                        speech/ready?))))
 
 (defonce ^:private work*
   ;; {content-digest {:outcome {…}}} for what is known, {content-digest {:result
@@ -242,7 +241,7 @@
                                                             :data {:filename (:filename attachment)
                                                                    :error (ex-message t)}})
                                                  nil))]
-      (try (let [text (some-> (voice/transcribe! {:audio-path (str file)})
+      (try (let [text (some-> (speech/transcribe! {:audio-path (str file)})
                               str
                               str/trim
                               not-empty)

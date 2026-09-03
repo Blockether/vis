@@ -860,22 +860,21 @@
 (defn- unwound-stdout
   "What an INTERRUPTED block printed before it was killed, or nil.
 
-   The kill is an exception INSIDE the guest, so the block still reaches its own
-   outcome: the runtime answers the captured stdout beside the
-   `KeyboardInterrupt`. That output is real work — progress lines of a fetch loop,
-   results already computed — and an envelope carrying a bare `Timeout` and
-   nothing else is unactionable, so the loop waits briefly for the unwind."
-  [exec-future]
-  (try (let [result
-             (.get ^java.util.concurrent.Future exec-future
-                   (long INTERRUPT_UNWIND_MS)
-                   java.util.concurrent.TimeUnit/MILLISECONDS)
+   A block that unwinds in Python returns its normal captured stdout. Code parked
+   inside C cannot return before its worker is retired, so the runtime also mirrors
+   each write to the host and this drains that fallback after the wait."
+  [python-context exec-future]
+  (or (try (let [result
+                 (.get ^java.util.concurrent.Future exec-future
+                       (long INTERRUPT_UNWIND_MS)
+                       java.util.concurrent.TimeUnit/MILLISECONDS)
 
-             out
-             (:stdout result)]
+                 out
+                 (:stdout result)]
 
-         (when (and (string? out) (seq out)) out))
-       (catch Throwable _ nil)))
+             (when (and (string? out) (seq out)) out))
+           (catch Throwable _ nil))
+      (env/take-partial-block-stdout! python-context)))
 
 (defn attachment-descriptor
   "One `session_attachment` row as the compact DESCRIPTOR `list_attachments()` and
@@ -1403,7 +1402,7 @@
             ;; envelope is never a bare `Timeout` and nothing else: that is
             ;; unactionable, and the model re-runs the whole block blind.
             out
-            (when landed? (unwound-stdout exec-future))
+            (when landed? (unwound-stdout python-context exec-future))
 
             envelope
             (cond-> {:lru {}
@@ -1425,15 +1424,29 @@
       (let [;; A cancel unwinds the same way a wall does. An ordinary Python
             ;; exception does NOT — `with vis.live` closes on its way out — so this
             ;; finds nothing to sweep and says nothing.
-            ;; A killed block still runs its own outcome, so the stdout it had
-            ;; already printed arrives with the error and needs no draining here.
+            ;;
+            ;; Cancellation may interrupt the host wait before the guest has returned
+            ;; its outcome. Wait for that unwind exactly as the timeout path does, or
+            ;; output printed before Cancel disappears from the transcript.
+            interrupted?
+            (= :vis/interrupted (get-in execution-result [:error :type]))
+
+            out
+            (when (and interrupted? (str/blank? (str (:stdout execution-result))))
+              (unwound-stdout python-context exec-future))
+
+            recovered-result
+            (cond-> execution-result
+              out
+              (assoc :stdout out))
+
             activity-envelope
-            (settle-activity! execution-result)
+            (settle-activity! recovered-result)
 
             swept
-            (when (:error execution-result)
+            (when (:error recovered-result)
               (sweep-abandoned! {:reason :failed
-                                 :error (or (:message (:error execution-result))
+                                 :error (or (:message (:error recovered-result))
                                             "the run that opened this view ended")}))]
 
         (envelope-with-settled-views activity-envelope swept)))))
@@ -2079,8 +2092,6 @@
 ;; and the render-time ledger (`ctx-engine/folds-view`) share ONE resolver.
 (declare iter-of-scope)
 
-(declare form-wire-chars)
-
 (defn- prior-turn-scope-index
   "Lean per-form scope index for ONE prior turn's `forms`, reshaped by the model's
    fold summaries — the cross-process RESUME view. Folds are recorded at
@@ -2275,8 +2286,9 @@
                              :forms forms
                              :iter-scopes (into #{} (keep #(iter-of-scope (:scope %))) forms)})))))
                   turns)
-            ;; Q/A recap weight per turn (~tokens, chars/4 — the SAME estimator as
-            ;; `engine_iter_weights`): stamped on the ctx so `fold_session`'s ack and
+            ;; Q/A recap weight per turn (~tokens at 4 chars/token — a recap is PROSE,
+            ;; where that rule of thumb holds; the ITERATION weights below are measured
+            ;; by the tokenizer instead): stamped on the ctx so `fold_session`'s ack and
             ;; the `now` budget can price the recap a whole-turn fold removes. Built
             ;; from the DB turn rows (not the fold ledger), so an already-folded
             ;; turn keeps a stable weight instead of dropping to zero.
@@ -2450,60 +2462,27 @@
     (swap! ctx-atom ctx-engine/stamp-served-route
       (:llm-provider iteration-result)
       (:llm-model iteration-result))))
-(defn- stamp-iter-universe!
-  "Record the raw iteration universe while pricing only `wire-iters` — the
-   CURRENT provider-visible projection. `wire-iters` defaults to
-   `trailer-iters`."
-  [ctx-atom trailer-iters & [wire-iters]]
-  (when ctx-atom
-    (let [scope-of
-          (fn [rec]
-            (some iter-of-scope (keep :scope (:forms-vec rec))))
+(defn- estimator-undercount
+  "How far the local message estimate undercounts the provider on the same request.
 
-          uni
-          (into []
-                (comp (keep (fn [[_ rec]]
-                              (scope-of rec)))
-                      (distinct))
-                trailer-iters)
+   Used only by overflow rescue to translate a provider limit into the local
+   estimator's units. nil when either side is missing; never below 1.0, because an
+   estimator that reads generous earns no licence to send more than the limit."
+  [provider-tokens local-tokens]
+  (when (and (number? provider-tokens)
+             (number? local-tokens)
+             (pos? (long provider-tokens))
+             (pos? (long local-tokens)))
+    (max 1.0 (/ (double provider-tokens) (double local-tokens)))))
 
-          ;; Keep the raw scope identity, but price the corresponding visible record.
-          ;; `apply-summaries` preserves trailer order while replacing collapsed forms
-          ;; with a zero-weight breadcrumb, so an already-folded scope cannot reclaim
-          ;; its historical raw payload again on a later, broader fold.
-          ;;
-          ;; A cross-turn seed carried from a turn that COMPLETED normally is worth
-          ;; ZERO for the same reason: `conversation-suffix`'s
-          ;; `:preserved-thinking/replay? false` branch emits no assistant message and
-          ;; no results for it (the outcome already rides in the prior-turn recap), so
-          ;; its payload does not reside on the wire at all. Pricing it anyway let any
-          ;; selector reaching back over a turn boundary (a `-tN/iK` fold early
-          ;; in a new turn) bill the FULL historical payload of every prior-turn
-          ;; iteration that was never explicitly folded — cards claiming to reclaim
-          ;; more than the entire request they folded, and phantom tokens accumulating
-          ;; toward the session-rebase threshold. Seeds from terminal INCOMPLETE turns
-          ;; do replay their settled results as plain text, so they keep their weight.
-          off-wire-seed?
-          (fn [rec]
-            (and (false? (:preserved-thinking/replay? rec))
-                 (not (terminal-incomplete-turn-status? (:cross-turn/turn-status rec)))))
-
-          weights
-          (persistent! (reduce (fn [m [[_ raw-rec] [_ wire-rec]]]
-                                 (if-let [sc (scope-of raw-rec)]
-                                   (let [chars
-                                         (if (or (off-wire-seed? raw-rec) (off-wire-seed? wire-rec))
-                                           0
-                                           (reduce +
-                                                   0
-                                                   (map form-wire-chars
-                                                        (remove :summary? (:forms-vec wire-rec)))))]
-                                     (assoc! m sc (+ (long (get m sc 0)) (quot (long chars) 4))))
-                                   m))
-                               (transient {})
-                               (map vector trailer-iters (or wire-iters trailer-iters))))]
-
-      (swap! ctx-atom assoc "engine_iter_universe" uni "engine_iter_weights" weights))))
+(defn- messages-wire-tokens
+  "Svar's tokenized marginal cost for a group of canonical messages inside a larger
+   request. `count-messages` includes the array's one reply-priming charge, so remove
+   the empty-array baseline before per-iteration groups are summed."
+  ^long [model messages]
+  (max 0
+       (- (long (svar-router/count-messages model messages))
+          (long (svar-router/count-messages model [])))))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -4017,8 +3996,9 @@
       (fn [images]
         (vision-describe/describe-images router context images preferred-provider)))))
 
-(defn- conversation-suffix
-  "Append-only conversation suffix for the current turn: each prior iteration
+(defn- conversation-suffix-groups
+  "Append-only conversation suffix for the current turn, kept as `[pos messages]`
+   GROUPS so a caller can price ONE iteration: each prior iteration
    as an `[assistant-replay, <results> user message]` PAIR, in iteration
    order — the tool-call/tool-result shape (see the wire shape documented
    above). The assistant replay carries provider-native thinking payloads
@@ -4054,7 +4034,7 @@
    become one sighted model's report, so a blind model still knows what it drew."
   ;; 2-arity: no side-channel at all — used by the emergency-fold ESTIMATOR, which
   ;; re-prices the same trailer repeatedly and must never make a network call.
-  ([trailer-iters target] (conversation-suffix trailer-iters target nil))
+  ([trailer-iters target] (conversation-suffix-groups trailer-iters target nil))
   ([trailer-iters target {:keys [describe-images]}]
    (let [iters
          (vec (or trailer-iters []))
@@ -4086,10 +4066,9 @@
          replay-descriptions
          (when describer
            (let [planned (into [] (mapcat :images) (vals image-plan))]
-             (when (seq planned) (zipmap planned (or (describer planned) (repeat nil))))))]
+             (when (seq planned) (zipmap planned (or (describer planned) (repeat nil))))))
 
-     (vec
-       (mapcat
+         group-of
          (fn [[pos iter-rec :as entry]]
            (let [results
                  (iteration-results-message iter-rec)
@@ -4150,16 +4129,143 @@
                        ;; the results to plain text.
                        (if-let [textual (iteration-results-message (dissoc iter-rec :tool-calls))]
                          (+img [textual])
-                         [])))))
-         iters)))))
+                         [])))))]
+
+     (mapv (fn [[pos :as entry]]
+             [pos (vec (group-of entry))])
+           iters))))
+
+(defn- conversation-suffix
+  "The append-only conversation suffix itself: `conversation-suffix-groups`
+   concatenated in iteration order. Callers that need to know WHICH iteration a
+   message came from (the fold estimator, which prices what one fold removes) take
+   the groups; everyone building a request takes this."
+  ([trailer-iters target] (conversation-suffix trailer-iters target nil))
+  ([trailer-iters target opts]
+   (into [] (mapcat second) (conversation-suffix-groups trailer-iters target opts))))
 
 (defn- form-wire-chars
-  "Approximate the bounded wire size one form contributes from stdout or error."
+  "Approximate the wire residence of ONE form — everything a fold of its iteration
+   actually removes: the CODE the model sent (the assistant message's `tool_use`
+   input) plus the bounded stdout/error that answered it. Output alone undercounted
+   every fold card by the model's own source, which sits on the wire for exactly as
+   long as its result does. The iteration's `ctx-diff` is deliberately NOT counted:
+   `apply-summaries` keeps it beside the breadcrumb, so a fold never frees it."
   [f]
-  (let [n (long (cond (:summary? f) 0
-                      (some? (:error f)) (count (str (:error f)))
-                      :else (count (str (:stdout f)))))]
-    (long (min n (long form/MAX_FORM_WIRE_CHARS)))))
+  (if (:summary? f)
+    0
+    (let [out (long (if (some? (:error f)) (count (str (:error f))) (count (str (:stdout f)))))]
+      (+ (min out (long form/MAX_FORM_WIRE_CHARS)) (long (count (str (:code f))))))))
+
+(def ^:private WIRE_CHARS_PER_TOKEN
+  "FALLBACK characters per token, used only while no model is resolved and the real
+   tokenizer cannot run (`estimated-iteration-tokens`). MEASURED, not the prose rule
+   of thumb of 4: a turn of agent work is source, paths, EDN/JSON and tool output,
+   which tokenizes far denser than English. Solving two measured folds of one session
+   (they reclaimed 87k and 142k provider-counted tokens) for this ratio and the frame
+   below yields 3.17 chars/token and ~277 tokens of frame; 3.25 keeps the text term on
+   the conservative side of that measurement."
+  3.25)
+
+(def ^:private MESSAGE_FRAME_TOKENS
+  "What ONE iteration costs BESIDE its text, for the same fallback: the assistant
+   message and the `tool_result` user message answering it — role envelopes, the
+   `tool_use` id and name, the per-call result header, and the assistant PROSE that
+   rides with the call. A fold removes that pair whole, so pricing text alone made a
+   sweep of many small steps look nearly free. 250 is the conservative side of the
+   ~277 the measured folds imply."
+  250)
+
+(defn- estimated-iteration-tokens
+  "Character-derived price of one visible iteration — the fallback reached only when
+   no model has been resolved. Otherwise the canonical messages use Svar's tokenized
+   estimate."
+  ^long [wire-rec]
+  (let [chars (+ (long (count (str (:thinking wire-rec))))
+                 (long
+                   (reduce + 0 (map form-wire-chars (remove :summary? (:forms-vec wire-rec))))))]
+    (+ (long MESSAGE_FRAME_TOKENS) (long (/ (double chars) (double WIRE_CHARS_PER_TOKEN))))))
+
+(defn- measured-iteration-tokens
+  "`{pos tokens}` for the visible projection, tokenized from the canonical messages
+   the next request will carry.
+
+   `conversation-suffix-groups` keeps the one render attributed by iteration, so the
+   count includes assistant thinking/prose/tool calls, matching tool results, message
+   envelopes and image geometry. The no-describer arity keeps pricing offline."
+  [model replay-target wire-iters]
+  (into {}
+        (map (fn [[pos msgs]]
+               [pos (messages-wire-tokens model msgs)]))
+        (conversation-suffix-groups wire-iters replay-target)))
+
+(defn- stamp-iter-universe!
+  "Record the raw iteration universe while pricing only `wire-iters` — the current
+   provider-visible projection. A resolved model tokenizes each iteration's rendered
+   messages; without one, weights degrade to `estimated-iteration-tokens`."
+  ([ctx-atom trailer-iters] (stamp-iter-universe! ctx-atom trailer-iters nil nil))
+  ([ctx-atom trailer-iters wire-iters] (stamp-iter-universe! ctx-atom trailer-iters wire-iters nil))
+  ([ctx-atom trailer-iters wire-iters pricing]
+   (when ctx-atom
+     (let [scope-of
+           (fn [rec]
+             (some iter-of-scope (keep :scope (:forms-vec rec))))
+
+           uni
+           (into []
+                 (comp (keep (fn [[_ rec]]
+                               (scope-of rec)))
+                       (distinct))
+                 trailer-iters)
+
+           ;; Keep the raw scope identity, but price the corresponding visible record.
+           ;; `apply-summaries` preserves trailer order while replacing collapsed forms
+           ;; with a zero-weight breadcrumb, so an already-folded scope cannot reclaim
+           ;; its historical raw payload again on a later, broader fold.
+           ;;
+           ;; A cross-turn seed carried from a turn that COMPLETED normally is worth
+           ;; ZERO for the same reason: `conversation-suffix`'s
+           ;; `:preserved-thinking/replay? false` branch emits no assistant message and
+           ;; no results for it (the outcome already rides in the prior-turn recap), so
+           ;; its payload does not reside on the wire at all. Pricing it anyway let any
+           ;; selector reaching back over a turn boundary (a `-tN/iK` fold early
+           ;; in a new turn) bill the FULL historical payload of every prior-turn
+           ;; iteration that was never explicitly folded — cards claiming to reclaim
+           ;; more than the entire request they folded, and phantom tokens accumulating
+           ;; toward the session-rebase threshold. Seeds from terminal INCOMPLETE turns
+           ;; do replay their settled results as plain text, so they keep their weight.
+           off-wire-seed?
+           (fn [rec]
+             (and (false? (:preserved-thinking/replay? rec))
+                  (not (terminal-incomplete-turn-status? (:cross-turn/turn-status rec)))))
+
+           visible
+           (or wire-iters trailer-iters)
+
+           model
+           (when (util/non-blank-string? (:model pricing)) (:model pricing))
+
+           measured
+           (when model (measured-iteration-tokens model (:replay-target pricing) visible))
+
+           ;; What a fold of this iteration REMOVES from the wire. An already-collapsed
+           ;; record has nothing left to remove — the render would still price its gist
+           ;; line — so it prices ZERO rather than recharging what an earlier fold freed.
+           weights
+           (persistent! (reduce (fn [m [[_ raw-rec] [pos wire-rec]]]
+                                  (if-let [sc (scope-of raw-rec)]
+                                    (let [toks (cond (or (:collapsed? wire-rec)
+                                                         (off-wire-seed? raw-rec)
+                                                         (off-wire-seed? wire-rec))
+                                                     0
+                                                     measured (long (get measured pos 0))
+                                                     :else (estimated-iteration-tokens wire-rec))]
+                                      (assoc! m sc (+ (long (get m sc 0)) toks)))
+                                    m))
+                                (transient {})
+                                (map vector trailer-iters visible)))]
+
+       (swap! ctx-atom assoc "engine_iter_universe" uni "engine_iter_weights" weights)))))
 
 ;; ── The model-facing surface: ONE tool ───────────────────────────────────────
 ;; `python_execution` is the only call the provider ever sees. Every capability is
@@ -7496,24 +7602,6 @@
    invented factor: the target is purely relative and escalation does the searching."
   [0.5 0.25 0.1])
 
-(defn- estimator-undercount
-  "How far the local estimator undercounts the provider ON THIS MESSAGE SET.
-
-   `provider-tokens` (the overflow's `:input-tokens`) and `local-tokens`
-   (`svar-router/count-messages`) price the SAME messages, so their ratio is a
-   measurement of the provider's tokenizer against ours rather than a constant:
-   dense tool JSON ran ~1.49x for session `cd24926e` (1,437,952 provider vs 963,503
-   local), prose runs far closer to 1.0, and another model runs somewhere else.
-
-   nil when either side is missing. Never below 1.0 — an estimator that reads
-   GENEROUS earns no licence to send more than the limit."
-  [provider-tokens local-tokens]
-  (when (and (number? provider-tokens)
-             (number? local-tokens)
-             (pos? (long provider-tokens))
-             (pos? (long local-tokens)))
-    (max 1.0 (/ (double provider-tokens) (double local-tokens)))))
-
 (defn- overflow-fold-budget
   "Local-estimator budget for the next rescue of a refused request.
 
@@ -8428,7 +8516,9 @@
                  summarized-trailer-iters (apply-summaries trailer-iters summaries)
                  _visible-iter-state (stamp-iter-universe! (:ctx-atom environment)
                                                            trailer-iters
-                                                           summarized-trailer-iters)
+                                                           summarized-trailer-iters
+                                                           {:model (:model replay-target)
+                                                            :replay-target replay-target})
                  ;; An exact carried request already contains every completed prior
                  ;; turn. Keep only live-turn growth until a fold changes the ledger;
                  ;; that one semantic rewrite switches the base to canonical recap.

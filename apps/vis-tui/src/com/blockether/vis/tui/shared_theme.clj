@@ -1,0 +1,1306 @@
+(ns com.blockether.vis.tui.shared-theme
+  "Internal, channel-agnostic Vis theme data.
+
+   Keep this namespace pure data: no Lanterna, Swing, browser, or terminal
+   backend imports. Channels adapt these tokens to their own render types."
+  (:require [clojure.spec.alpha :as s]
+            [clojure.string :as str]
+            [com.blockether.vis.tui.util :as util]))
+
+(def default-theme-id
+  "The built-in theme id used when config has no explicit theme."
+  "blockether-light")
+
+(defn- byte? [x] (and (int? x) (<= 0 x 255)))
+
+(defn rgb?
+  "True when `x` is an RGB triple `[r g b]`, each channel 0..255."
+  [x]
+  (and (vector? x) (= 3 (count x)) (every? byte? x)))
+
+(defn- theme-key? [x] (or (keyword? x) (util/non-blank-string? x)))
+
+(defn- theme-setting-value?
+  [x]
+  (or (nil? x)
+      (string? x)
+      (number? x)
+      (boolean? x)
+      (keyword? x)
+      (rgb? x)
+      (and (vector? x) (every? theme-setting-value? x))
+      (and (map? x) (every? theme-key? (keys x)) (every? theme-setting-value? (vals x)))))
+
+(s/def ::rgb rgb?)
+
+(s/def ::name util/non-blank-string?)
+
+(s/def ::display-name util/non-blank-string?)
+
+(s/def ::mode #{:light :dark})
+
+(s/def ::palette (s/and (s/map-of keyword? ::rgb) seq))
+
+(s/def ::fonts map?)
+
+(s/def ::widths map?)
+
+(s/def ::spacing map?)
+
+(s/def ::settings (s/map-of string? theme-setting-value?))
+
+(s/def ::theme
+  (s/keys :req-un [::name ::display-name ::mode ::palette ::fonts ::widths ::spacing ::settings]))
+
+(def common-fonts
+  {:mono {:family "monospace" :size "inherit" :weight "normal" :style "normal"}
+   :ui {:family "system-ui, sans-serif" :size "inherit" :weight "normal" :style "normal"}
+   :heading {:family "system-ui, sans-serif" :size "inherit" :weight "700" :style "normal"}
+   :code {:family "monospace" :size "inherit" :weight "normal" :style "normal"}})
+
+(def common-widths
+  {:dialog-width-ratio 0.90
+   :dialog-min-width 88
+   :dialog-max-width 140
+   :dialog-height-ratio 0.95
+   :dialog-min-height 30
+   :dialog-max-height 80
+   :dialog-chrome-w 4
+   :dialog-chrome-h 6
+   :settings-option-indent 2
+   :input-min-width 20
+   :chat-min-width 20})
+
+(def common-spacing
+  {:pad-x 1 :padding "0px" :gap "1ch" :bubble-padding-x "1ch" :bubble-padding-y "0"})
+
+(defn- theme-settings
+  [theme-name mode]
+  {"THEME_NAME" theme-name
+   "MODE" (name mode)
+   "PADDING" (:padding common-spacing)
+   "GAP" (:gap common-spacing)
+   "BUBBLE_PADDING_X" (:bubble-padding-x common-spacing)
+   "BUBBLE_PADDING_Y" (:bubble-padding-y common-spacing)
+   "FONT_FAMILY" (get-in common-fonts [:mono :family])
+   "UI_FONT_FAMILY" (get-in common-fonts [:ui :family])
+   "CODE_FONT_FAMILY" (get-in common-fonts [:code :family])
+   "DIALOG_MIN_WIDTH" (:dialog-min-width common-widths)
+   "DIALOG_MAX_WIDTH" (:dialog-max-width common-widths)})
+
+(def light-palette
+  {:terminal-bg [255 255 255]
+   :text-fg [30 30 30]
+   :header-fg [30 30 30]
+   :header-hover-fg [10 50 160]
+   :close-button-hover-fg [200 40 40]
+   ;; Active workspace tab in the header. A calm indigo slab with a soft
+   ;; off-white label reads as "selected" without the harsh pure black-on-
+   ;; white invert; inactive tabs stay dim+italic from `border-fg`.
+   :header-active-tab-fg [240 244 252]
+   :header-active-tab-bg [37 99 235]
+   :header-active-tab-accent [37 99 235]
+   ;; Tab index badge — soft off-white, matching the active-tab label: one
+   ;; calm indigo slab, no gold flash. (Premium restraint: the indigo IS the
+   ;; accent; everything on it stays in the same off-white family.)
+   :header-tab-number-fg [240 244 252]
+   :box-bg [255 255 255]
+   :box-fg [30 30 30]
+   :border-fg [80 80 80]
+   :dialog-bg [248 248 248]
+   :dialog-fg [30 30 30]
+   :dialog-title-fg [255 255 255]
+   :dialog-title-bg [60 60 60]
+   ;; Button chip — a SUBTLE non-white fill so a button reads as a raised
+   ;; control on white surfaces (header, find bar), not blank text.
+   :button-bg [226 232 240]
+   :button-fg [30 41 59]
+   :dialog-border [120 120 120]
+   :dialog-shadow [200 200 200]
+   :dialog-hint [97 97 97]
+   :dialog-hint-key [50 50 50]
+   :input-field-bg [255 255 252]
+   :user-bubble-bg [255 255 255]
+   :user-bubble-fg [30 30 30]
+   ;; Role labels + turn chrome: slate neutrals, not gold — chrome should
+   ;; recede; only semantic states (ok/warn/error) and the indigo accent
+   ;; carry color.
+   :user-role-fg [71 85 105]
+   :turn-separator-bg [245 247 250]
+   :turn-separator-fg [148 163 184]
+   :ai-bubble-bg [255 255 255]
+   :ai-bubble-fg [30 30 30]
+   :ai-role-fg [31 125 47]
+   :status-ok [31 125 47]
+   :status-bad [193 44 44]
+   :warning-bg [255 245 180]
+   :warning-fg [80 60 0]
+   :warning-border [142 112 30]
+   :cancelled-bg [240 240 240]
+   :cancelled-fg [97 97 97]
+   :code-block-bg [240 243 248]
+   :code-ok-bg [232 248 232]
+   :code-err-bg [253 235 235]
+   :result-bg [244 246 250]
+   ;; Filename / path chips inside a RESULT body (e.g. rg's per-file headers):
+   ;; a distinct blue band so paths read as clickable headers, not blended ink.
+   :result-path-bg [219 234 254]
+   :result-path-fg [23 45 130]
+   ;; Matched search-term highlight in rg/cat result rows (SGR 7 reverse-video).
+   ;; A highlight must POP: NOT warning-fg, whose light-theme ink is a dark olive
+   ;; that reads muddy. Violet is unmistakable and clears 6:1 on the result band.
+   :result-highlight-fg [124 40 180]
+   :code-block-fg [30 30 30]
+   :code-success-fg [31 125 47]
+   :code-error-fg [193 44 44]
+   :code-duration-fg [97 97 97]
+   ;; Result text inside code/output blocks: the REGULAR fully-visible ink
+   ;; (same as code text) — output is content the user reads, so it gets
+   ;; first-class contrast, not a highlight color (the old amber/gold read
+   ;; as an alarm) and not a dimmed gray. Solarized already does this
+   ;; (its result ink == its body ink).
+   :code-result-fg [30 30 30]
+   :code-error-result-fg [180 40 40]
+   :code-syntax-special-fg [120 70 170]
+   :code-syntax-keyword-fg [25 110 120]
+   :code-syntax-string-fg [150 80 40]
+   :code-syntax-number-fg [30 90 180]
+   :code-syntax-comment-fg [97 97 97]
+   :code-border-fg [90 95 110]
+   :iteration-header-fg [97 97 97]
+   :iteration-header-bg [244 244 244]
+   :answer-sep-fg [190 190 190]
+   :answer-sep-bg [250 250 250]
+   :answer-bg [255 255 255]
+   :answer-fg [25 25 25]
+   ;; Markdown headings: an editorial slate ladder (near-black → slate),
+   ;; weight carries the hierarchy — no gold/brown ink.
+   :md-h1-fg [15 23 42]
+   :md-h2-fg [30 41 59]
+   :md-h3-fg [51 65 85]
+   :confidence-fg [97 97 97]
+   :md-summary-bg [226 214 250]
+   :md-summary-fg [55 30 120]
+   :th-md-summary-bg [244 244 244]
+   :th-md-summary-fg [80 80 80]
+   :link-chrome-fg [30 90 200]
+   :link-chrome-arrow-fg [97 97 97]
+   :link-chrome-url-fg [90 110 140]
+   :link-chrome-hover-bg [232 240 252]
+   :link-chrome-hover-fg [10 50 160]
+   :link-chrome-blocked-fg [97 97 97]
+   :footer-fg [60 60 60]
+   :footer-fg-muted [109 109 109]
+   :footer-fg-strong [30 30 30]
+   :footer-spinner-fg [31 125 47]
+   :footer-warning-fg [142 112 30]
+   :footer-error-fg [193 44 44]})
+
+(def dark-palette
+  {:terminal-bg [12 14 18]
+   :text-fg [226 232 240]
+   :header-fg [226 232 240]
+   :header-hover-fg [125 211 252]
+   :close-button-hover-fg [248 113 113]
+   ;; Calm blue slab (see light palette) with a soft off-white label for
+   ;; the active tab — no harsh pure black/white invert; inactive tabs read
+   ;; as dim italic via `border-fg`.
+   :header-active-tab-fg [240 244 248]
+   :header-active-tab-bg [37 99 235]
+   :header-active-tab-accent [125 211 252]
+   ;; Tab index badge matches the active-tab label (see light palette) —
+   ;; the indigo slab is the accent; no gold on it.
+   :header-tab-number-fg [240 244 248]
+   :box-bg [18 22 28]
+   :box-fg [226 232 240]
+   :border-fg [100 116 139]
+   :dialog-bg [24 28 36]
+   :dialog-fg [226 232 240]
+   :dialog-title-fg [255 255 255]
+   :dialog-title-bg [51 65 85]
+   ;; Button chip — lighter than the dark dialog bg so it reads as raised.
+   :button-bg [51 65 85]
+   :button-fg [226 232 240]
+   :dialog-border [100 116 139]
+   :dialog-shadow [6 8 12]
+   :dialog-hint [160 160 160]
+   :dialog-hint-key [226 232 240]
+   :input-field-bg [15 23 42]
+   :user-bubble-bg [12 14 18]
+   :user-bubble-fg [226 232 240]
+   ;; Slate role/turn chrome (see light palette) — chrome recedes.
+   :user-role-fg [148 163 184]
+   :turn-separator-bg [20 26 36]
+   :turn-separator-fg [100 116 139]
+   :ai-bubble-bg [12 14 18]
+   :ai-bubble-fg [226 232 240]
+   :ai-role-fg [74 222 128]
+   :status-ok [74 222 128]
+   :status-bad [248 116 116]
+   :warning-bg [71 49 10]
+   :warning-fg [253 230 138]
+   :warning-border [245 158 11]
+   :cancelled-bg [31 41 55]
+   :cancelled-fg [148 163 184]
+   :code-block-bg [15 23 42]
+   :code-ok-bg [20 50 35]
+   :code-err-bg [69 26 34]
+   :result-bg [20 26 36]
+   :result-path-bg [37 51 84]
+   :result-path-fg [147 197 253]
+   ;; Search-term highlight (SGR 7). See light palette — light lavender pops on dark.
+   :result-highlight-fg [216 180 254]
+   :code-block-fg [226 232 240]
+   :code-success-fg [74 222 128]
+   :code-error-fg [248 113 113]
+   :code-duration-fg [148 163 184]
+   ;; See light palette: result text is the regular fully-visible ink in
+   ;; dark mode too — content, not a yellow alarm, not dimmed gray.
+   :code-result-fg [226 232 240]
+   :code-error-result-fg [252 165 165]
+   :code-syntax-special-fg [216 180 254]
+   :code-syntax-keyword-fg [94 234 212]
+   :code-syntax-string-fg [253 186 116]
+   :code-syntax-number-fg [147 197 253]
+   :code-syntax-comment-fg [148 163 184]
+   :code-border-fg [100 116 139]
+   :iteration-header-fg [160 160 160]
+   :iteration-header-bg [30 30 30]
+   :answer-sep-fg [100 116 139]
+   :answer-sep-bg [15 23 42]
+   :answer-bg [12 14 18]
+   :answer-fg [241 245 249]
+   ;; Editorial slate heading ladder (see light palette) — no amber ink.
+   :md-h1-fg [241 245 249]
+   :md-h2-fg [203 213 225]
+   :md-h3-fg [148 163 184]
+   :confidence-fg [160 160 160]
+   :md-summary-bg [49 46 129]
+   :md-summary-fg [237 233 254]
+   :th-md-summary-bg [30 30 30]
+   :th-md-summary-fg [180 180 180]
+   :link-chrome-fg [147 197 253]
+   :link-chrome-arrow-fg [148 163 184]
+   :link-chrome-url-fg [125 211 252]
+   :link-chrome-hover-bg [30 41 59]
+   :link-chrome-hover-fg [191 219 254]
+   :link-chrome-blocked-fg [100 116 139]
+   :footer-fg [203 213 225]
+   :footer-fg-muted [148 163 184]
+   :footer-fg-strong [241 245 249]
+   :footer-spinner-fg [74 222 128]
+   :footer-warning-fg [251 191 36]
+   :footer-error-fg [248 116 116]})
+
+(def blockether-light-palette
+  "Blockether brand light palette: warm cream ground + amber accent + brand
+   green/red/teal — the exact tokens the blockether.com site uses. A re-skin of
+   overridden (syntax + per-tool badge colours are inherited)."
+  (merge
+    light-palette
+    {:terminal-bg [250 243 235]
+     :text-fg [38 38 38]
+     :header-fg [38 38 38]
+     :header-hover-fg [180 120 0]
+     :close-button-hover-fg [200 40 40]
+     :header-active-tab-fg [38 30 0]
+     :header-active-tab-bg [255 196 32]
+     :header-active-tab-accent [240 173 0]
+     :header-tab-number-fg [38 30 0]
+     :box-bg [250 243 235]
+     :box-fg [38 38 38]
+     :border-fg [140 133 122]
+     :dialog-bg [250 243 235]
+     :dialog-fg [38 38 38]
+     ;; Cream-on-ink title header — the Blockether dialog signature: the dark
+     ;; frame ink carried across the header row with the warm cream ground as text.
+     :dialog-title-fg [250 243 235]
+     :dialog-title-bg [63 63 63]
+     :button-bg [63 63 63]
+     :button-fg [250 243 235]
+     :dialog-border [63 63 63]
+     :dialog-shadow [255 196 32]
+     :dialog-hint [98 93 87]
+     :dialog-hint-key [63 63 63]
+     :input-field-bg [255 253 248]
+     :user-bubble-bg [250 243 235]
+     :user-bubble-fg [38 38 38]
+     :user-role-fg [98 93 87]
+     :turn-separator-bg [245 238 228]
+     :turn-separator-fg [180 172 158]
+     :ai-bubble-bg [250 243 235]
+     :ai-bubble-fg [38 38 38]
+     :ai-role-fg [16 118 54]
+     :status-ok [16 118 54]
+     :status-bad [191 32 32]
+     :warning-bg [242 221 160]
+     :warning-fg [122 74 0]
+     :warning-border [165 91 5]
+     :cancelled-bg [242 235 223]
+     :cancelled-fg [98 93 87]
+     :code-block-bg [242 235 223]
+     :code-ok-bg [223 240 224]
+     :code-err-bg [250 226 226]
+     :result-bg [242 235 223]
+     ;; Blue inline-code chips stay distinct from the amber summary headline.
+     :result-path-bg [219 234 254]
+     :result-path-fg [23 45 130]
+     :code-block-fg [38 38 38]
+     :code-success-fg [16 118 54]
+     :code-error-fg [193 33 33]
+     :code-duration-fg [98 93 87]
+     :code-result-fg [38 38 38]
+     :code-error-result-fg [180 40 40]
+     :code-border-fg [140 133 122]
+     :iteration-header-fg [98 93 87]
+     :iteration-header-bg [245 238 228]
+     :answer-sep-fg [200 191 176]
+     :answer-sep-bg [250 243 235]
+     :answer-bg [250 243 235]
+     :answer-fg [38 38 38]
+     :md-h1-fg [38 38 38]
+     :md-h2-fg [63 63 63]
+     :md-h3-fg [90 84 74]
+     :confidence-fg [98 93 87]
+     :md-summary-bg [250 236 197]
+     :md-summary-fg [122 74 0]
+     :th-md-summary-bg [245 238 228]
+     :th-md-summary-fg [63 63 63]
+     :link-chrome-fg [8 145 178]
+     :link-chrome-arrow-fg [98 93 87]
+     :link-chrome-url-fg [120 110 95]
+     :link-chrome-hover-bg [250 236 197]
+     :link-chrome-hover-fg [180 120 0]
+     :link-chrome-blocked-fg [98 93 87]
+     :footer-fg [63 63 63]
+     :footer-fg-muted [98 93 87]
+     :footer-fg-strong [38 38 38]
+     :footer-spinner-fg [16 118 54]
+     :footer-warning-fg [165 91 5]
+     :footer-error-fg [191 32 32]}))
+
+(def blockether-dark-palette
+  "Blockether brand dark palette: deep slate ground + amber accent + brand
+   green/red/teal — matching the blockether.com dark theme.
+   A re-skin of `dark-palette`; syntax + per-tool badge colours are inherited."
+  (merge
+    dark-palette
+    {:terminal-bg [15 17 23]
+     :text-fg [243 244 246]
+     :header-fg [243 244 246]
+     :header-hover-fg [255 196 32]
+     :close-button-hover-fg [248 113 113]
+     :header-active-tab-fg [15 17 23]
+     :header-active-tab-bg [255 196 32]
+     :header-active-tab-accent [255 196 32]
+     :header-tab-number-fg [15 17 23]
+     :box-bg [22 24 32]
+     :box-fg [243 244 246]
+     :border-fg [70 74 84]
+     :dialog-bg [22 24 32]
+     :dialog-fg [243 244 246]
+     ;; Amber accent title stripe with dark ink — brand signature on dark.
+     :dialog-title-fg [15 17 23]
+     :dialog-title-bg [255 196 32]
+     :button-bg [40 43 54]
+     :button-fg [243 244 246]
+     :dialog-border [70 74 84]
+     :dialog-shadow [4 5 8]
+     :dialog-hint [156 163 175]
+     :dialog-hint-key [243 244 246]
+     :input-field-bg [12 14 18]
+     :user-bubble-bg [15 17 23]
+     :user-bubble-fg [243 244 246]
+     :user-role-fg [156 163 175]
+     :turn-separator-bg [20 22 30]
+     :turn-separator-fg [70 74 84]
+     :ai-bubble-bg [15 17 23]
+     :ai-bubble-fg [243 244 246]
+     :ai-role-fg [74 222 128]
+     :status-ok [74 222 128]
+     :status-bad [248 113 113]
+     :warning-bg [60 46 8]
+     :warning-fg [251 220 130]
+     :warning-border [251 191 36]
+     :cancelled-bg [30 32 40]
+     :cancelled-fg [156 163 175]
+     :code-block-bg [30 32 40]
+     :code-ok-bg [20 50 35]
+     :code-err-bg [69 26 34]
+     :result-bg [22 24 32]
+     ;; Blue inline-code chips stay distinct from the amber summary headline.
+     :result-path-bg [37 51 84]
+     :result-path-fg [147 197 253]
+     :code-block-fg [243 244 246]
+     :code-success-fg [74 222 128]
+     :code-error-fg [248 113 113]
+     :code-duration-fg [156 163 175]
+     :code-result-fg [243 244 246]
+     :code-error-result-fg [252 165 165]
+     :code-border-fg [70 74 84]
+     :iteration-header-fg [120 120 120]
+     :iteration-header-bg [22 24 32]
+     :answer-sep-fg [70 74 84]
+     :answer-sep-bg [15 17 23]
+     :answer-bg [15 17 23]
+     :answer-fg [243 244 246]
+     :md-h1-fg [243 244 246]
+     :md-h2-fg [209 213 219]
+     :md-h3-fg [156 163 175]
+     :confidence-fg [156 163 175]
+     :md-summary-bg [60 46 8]
+     :md-summary-fg [255 220 150]
+     :th-md-summary-bg [22 24 32]
+     :th-md-summary-fg [180 180 180]
+     :link-chrome-fg [34 211 238]
+     :link-chrome-arrow-fg [156 163 175]
+     :link-chrome-url-fg [130 200 220]
+     :link-chrome-hover-bg [30 40 50]
+     :link-chrome-hover-fg [140 230 250]
+     :link-chrome-blocked-fg [70 74 84]
+     :footer-fg [209 213 219]
+     :footer-fg-muted [156 163 175]
+     :footer-fg-strong [243 244 246]
+     :footer-spinner-fg [74 222 128]
+     :footer-warning-fg [251 191 36]
+     :footer-error-fg [248 113 113]}))
+
+(def solarized-light-palette
+  ;; Solarized Light's hues, moved only along lightness where needed so every
+  ;; semantic ink clears 4.5:1 on the paper it actually occupies.
+  {:terminal-bg [253 246 227]
+   :text-fg [62 76 81]
+   :header-fg [76 95 102]
+   :header-hover-fg [29 107 162]
+   :close-button-hover-fg [177 40 38]
+   :header-active-tab-fg [0 31 39]
+   :header-active-tab-bg [38 139 210]
+   :header-active-tab-accent [38 139 210]
+   ;; Badge sits on the blue active-tab slab; match the base3 tab label —
+   ;; one calm slab, no gold flash.
+   :header-tab-number-fg [0 31 39]
+   :box-bg [253 246 227]
+   :box-fg [62 76 81]
+   :border-fg [147 161 161]
+   :dialog-bg [238 232 213]
+   :dialog-fg [62 76 81]
+   :dialog-title-fg [253 246 227]
+   :dialog-title-bg [88 110 117]
+   :button-bg [222 216 197]
+   :button-fg [76 95 102]
+   :dialog-border [147 161 161]
+   :dialog-shadow [213 206 189]
+   :dialog-hint [87 95 95]
+   :dialog-hint-key [84 105 112]
+   :input-field-bg [253 246 227]
+   :user-bubble-bg [253 246 227]
+   :user-bubble-fg [62 76 81]
+   ;; Chrome recedes: base01/base1 ink for role labels + separators
+   ;; (the yellow accent stays for genuinely semantic uses only).
+   :user-role-fg [76 95 102]
+   :turn-separator-bg [238 232 213]
+   :turn-separator-fg [147 161 161]
+   :ai-bubble-bg [253 246 227]
+   :ai-bubble-fg [62 76 81]
+   :ai-role-fg [93 109 0]
+   :status-ok [93 109 0]
+   :status-bad [177 40 38]
+   :warning-bg [245 234 193]
+   :warning-fg [88 66 0]
+   :warning-border [129 98 0]
+   :cancelled-bg [238 232 213]
+   :cancelled-fg [87 95 95]
+   :code-block-bg [238 232 213]
+   :code-ok-bg [231 235 203]
+   :code-err-bg [247 224 219]
+   :result-bg [245 236 210]
+   ;; Path chips inside a RESULT body must read as a distinct BLUE header band
+   ;; (like `light-palette`), not blend into the warm cream. The old olive band
+   ;; ([223 226 197]) shared the cream's hue and only reached 2.77:1 ink
+   ;; contrast — a cool pale-blue slab with darkened Solarized-blue ink (6.1:1)
+   ;; restores the clickable-header read.
+   :result-path-bg [213 227 245]
+   :result-path-fg [24 84 130]
+   :result-highlight-fg [124 40 180]
+   :code-block-fg [76 95 102]
+   :code-success-fg [93 109 0]
+   :code-error-fg [177 40 38]
+   :code-duration-fg [87 95 95]
+   :code-result-fg [76 95 102]
+   :code-error-result-fg [178 66 19]
+   :code-syntax-special-fg [92 96 166]
+   :code-syntax-keyword-fg [30 114 108]
+   :code-syntax-string-fg [178 66 19]
+   :code-syntax-number-fg [29 107 162]
+   :code-syntax-comment-fg [87 95 95]
+   :code-border-fg [147 161 161]
+   :iteration-header-fg [87 95 95]
+   :iteration-header-bg [238 232 213]
+   :answer-sep-fg [147 161 161]
+   :answer-sep-bg [253 246 227]
+   :answer-bg [253 246 227]
+   :answer-fg [62 76 81]
+   :md-h1-fg [129 98 0]
+   :md-h2-fg [178 66 19]
+   :md-h3-fg [92 96 166]
+   :confidence-fg [87 95 95]
+   :md-summary-bg [230 228 244]
+   :md-summary-fg [73 78 150]
+   :th-md-summary-bg [238 232 213]
+   :th-md-summary-fg [62 76 81]
+   :link-chrome-fg [29 107 162]
+   :link-chrome-arrow-fg [87 95 95]
+   :link-chrome-url-fg [30 114 108]
+   :link-chrome-hover-bg [238 232 213]
+   :link-chrome-hover-fg [29 107 162]
+   :link-chrome-blocked-fg [87 95 95]
+   :footer-fg [76 95 102]
+   :footer-fg-muted [87 95 95]
+   :footer-fg-strong [7 54 66]
+   :footer-spinner-fg [93 109 0]
+   :footer-warning-fg [129 98 0]
+   :footer-error-fg [177 40 38]})
+
+(def solarized-dark-palette
+  ;; Solarized Dark's hues, moved only along lightness where needed so every
+  ;; semantic ink clears 4.5:1 on the paper it actually occupies.
+  {:terminal-bg [0 43 54]
+   :text-fg [207 214 214]
+   :header-fg [207 214 214]
+   :header-hover-fg [80 162 219]
+   :close-button-hover-fg [239 136 134]
+   :header-active-tab-fg [0 31 39]
+   :header-active-tab-bg [38 139 210]
+   :header-active-tab-accent [42 161 152]
+   ;; Match the base3 tab label on the blue slab (see solarized-light).
+   :header-tab-number-fg [0 31 39]
+   :box-bg [0 43 54]
+   :box-fg [207 214 214]
+   :border-fg [88 110 117]
+   :dialog-bg [7 54 66]
+   :dialog-fg [207 214 214]
+   :dialog-title-fg [253 246 227]
+   :dialog-title-bg [88 110 117]
+   :button-bg [88 110 117]
+   :button-fg [253 246 227]
+   :dialog-border [88 110 117]
+   :dialog-shadow [0 30 38]
+   :dialog-hint [158 171 177]
+   :dialog-hint-key [147 161 161]
+   :input-field-bg [7 54 66]
+   :user-bubble-bg [0 43 54]
+   :user-bubble-fg [207 214 214]
+   ;; Chrome recedes (see solarized-light): base1/base01 ink.
+   :user-role-fg [147 161 161]
+   :turn-separator-bg [7 54 66]
+   :turn-separator-fg [88 110 117]
+   :ai-bubble-bg [0 43 54]
+   :ai-bubble-fg [207 214 214]
+   :ai-role-fg [144 163 24]
+   :status-ok [144 163 24]
+   :status-bad [239 136 134]
+   :warning-bg [51 44 7]
+   :warning-fg [222 188 80]
+   :warning-border [189 150 27]
+   :cancelled-bg [7 54 66]
+   :cancelled-fg [143 157 162]
+   :code-block-bg [7 54 66]
+   :code-ok-bg [12 56 38]
+   :code-err-bg [62 32 36]
+   :result-bg [9 49 52]
+   :result-path-bg [17 62 71]
+   :result-path-fg [97 171 222]
+   :result-highlight-fg [216 180 254]
+   :code-block-fg [147 161 161]
+   :code-success-fg [144 163 24]
+   :code-error-fg [239 136 134]
+   :code-duration-fg [143 157 162]
+   :code-result-fg [147 161 161]
+   :code-error-result-fg [220 132 96]
+   :code-syntax-special-fg [146 150 211]
+   :code-syntax-keyword-fg [64 171 163]
+   :code-syntax-string-fg [220 132 96]
+   :code-syntax-number-fg [80 162 219]
+   :code-syntax-comment-fg [143 157 162]
+   :code-border-fg [88 110 117]
+   :iteration-header-fg [143 157 162]
+   :iteration-header-bg [7 54 66]
+   :answer-sep-fg [88 110 117]
+   :answer-sep-bg [7 54 66]
+   :answer-bg [0 43 54]
+   :answer-fg [147 161 161]
+   :md-h1-fg [189 150 27]
+   :md-h2-fg [220 132 96]
+   :md-h3-fg [146 150 211]
+   :confidence-fg [143 157 162]
+   :md-summary-bg [35 38 80]
+   :md-summary-fg [191 193 235]
+   :th-md-summary-bg [7 54 66]
+   :th-md-summary-fg [158 171 177]
+   :link-chrome-fg [80 162 219]
+   :link-chrome-arrow-fg [143 157 162]
+   :link-chrome-url-fg [64 171 163]
+   :link-chrome-hover-bg [7 54 66]
+   :link-chrome-hover-fg [80 162 219]
+   :link-chrome-blocked-fg [143 157 162]
+   :footer-fg [158 171 177]
+   :footer-fg-muted [143 157 162]
+   :footer-fg-strong [238 232 213]
+   :footer-spinner-fg [144 163 24]
+   :footer-warning-fg [189 150 27]
+   :footer-error-fg [239 136 134]})
+
+(def tokyonight-storm-colors
+  "Canonical tokyonight.nvim Storm colours (upstream 4.14.1)."
+  {:bg [36 40 59]
+   :bg-dark [31 35 53]
+   :bg-dark1 [27 30 45]
+   :bg-highlight [41 46 66]
+   :blue [122 162 247]
+   :blue0 [61 89 161]
+   :blue5 [137 221 255]
+   :blue7 [57 75 112]
+   :cyan [125 207 255]
+   :dark5 [115 122 162]
+   :fg [192 202 245]
+   :fg-dark [169 177 214]
+   :green [158 206 106]
+   :magenta [187 154 247]
+   :orange [255 158 100]
+   :purple [157 124 216]
+   :red [247 118 142]
+   :red1 [219 75 75]
+   :yellow [224 175 104]})
+
+(def tokyonight-night-colors
+  "Canonical tokyonight.nvim Night colours: Storm with its three darker grounds."
+  (merge tokyonight-storm-colors {:bg [26 27 38] :bg-dark [22 22 30] :bg-dark1 [12 14 20]}))
+
+(def tokyonight-moon-colors
+  "tokyonight.nvim Moon colours; its muted ink is lifted only enough for AA on raised bands."
+  {:bg [34 36 54]
+   :bg-dark [30 32 48]
+   :bg-dark1 [25 27 41]
+   :bg-highlight [47 51 77]
+   :blue [130 170 255]
+   :blue0 [62 104 215]
+   :blue5 [137 221 255]
+   :blue7 [57 75 112]
+   :cyan [134 225 252]
+   :dark5 [115 122 162]
+   :fg [200 211 245]
+   :fg-dark [169 177 214]
+   :green [195 232 141]
+   :magenta [192 153 255]
+   :orange [255 150 108]
+   :purple [252 167 234]
+   :red [255 117 127]
+   :red1 [197 59 83]
+   :yellow [255 199 119]})
+
+(def tokyonight-day-colors
+  "tokyonight.nvim Day colours, with small-text inks moved only darker for AA."
+  {:bg [225 226 231]
+   :bg-dark [208 213 227]
+   :bg-dark1 [205 211 225]
+   :bg-highlight [196 200 218]
+   :blue [46 125 233]
+   :blue0 [120 144 221]
+   :blue5 [46 88 87]
+   :blue7 [180 194 240]
+   :cyan [0 113 151]
+   :dark5 [104 112 154]
+   ;; Body copy needs more than a technical AA pass on Tokyo Day's cool grey paper.
+   ;; Keep the canonical blue hue, but separate primary and quiet ink at 8.3:1 / 6.0:1.
+   :fg [36 59 115]
+   :fg-dark [45 79 157]
+   :green [88 117 57]
+   :magenta [152 84 241]
+   :orange [177 92 0]
+   :purple [120 71 189]
+   :red [245 42 101]
+   :red1 [198 67 67]
+   :yellow [140 108 62]
+   ;; TokyoNight Day's vivid terminal colours are marks, not readable small text.
+   ;; These keep each hue while clearing 4.5:1 on its canonical #e1e2e7 paper.
+   :cyan-ink [0 98 127]
+   :green-ink [70 97 34]
+   :orange-ink [143 72 0]
+   :red-ink [145 48 63]
+   :yellow-ink [100 70 30]})
+
+(defn- tokyonight-palette
+  "Adapt one canonical tokyonight.nvim colour set to Vis' semantic palette."
+  [mode colors]
+  (let [{:keys [bg bg-dark bg-dark1 bg-highlight blue blue5 blue7 cyan dark5 fg fg-dark green
+                magenta orange purple red yellow cyan-ink green-ink orange-ink red-ink yellow-ink]}
+        colors
+
+        dark?
+        (= :dark mode)
+
+        surface
+        (if dark? bg-dark1 bg-dark)
+
+        field
+        bg-dark1
+
+        subtle-bg
+        bg-highlight
+
+        active-bg
+        (if dark? blue7 fg)
+
+        active-fg
+        (if dark? fg bg)
+
+        muted
+        fg-dark
+
+        border
+        (if dark? dark5 fg-dark)
+
+        cyan-text
+        (or cyan-ink cyan)
+
+        green-text
+        (or green-ink green)
+
+        orange-text
+        (or orange-ink orange)
+
+        red-text
+        (or red-ink red)
+
+        yellow-text
+        (or yellow-ink yellow)]
+
+    (merge
+      (if dark? dark-palette light-palette)
+      {:terminal-bg bg
+       :text-fg fg
+       :header-fg fg
+       :header-hover-fg cyan-text
+       :close-button-hover-fg red-text
+       :header-active-tab-fg active-fg
+       :header-active-tab-bg active-bg
+       :header-active-tab-accent blue
+       :header-tab-number-fg active-fg
+       :box-bg bg
+       :box-fg fg
+       :border-fg border
+       :dialog-bg surface
+       :dialog-fg fg
+       :dialog-title-fg active-fg
+       :dialog-title-bg active-bg
+       :button-bg active-bg
+       :button-fg active-fg
+       :dialog-border border
+       :dialog-shadow (if dark? bg-dark1 bg-highlight)
+       :dialog-hint muted
+       :dialog-hint-key fg
+       :input-field-bg field
+       :user-bubble-bg bg
+       :user-bubble-fg fg
+       :user-role-fg muted
+       :turn-separator-bg subtle-bg
+       :turn-separator-fg border
+       :ai-bubble-bg bg
+       :ai-bubble-fg fg
+       :ai-role-fg green-text
+       :status-ok green-text
+       :status-bad red-text
+       :warning-bg subtle-bg
+       :warning-fg yellow-text
+       :warning-border orange-text
+       :cancelled-bg subtle-bg
+       :cancelled-fg muted
+       :code-block-bg surface
+       :code-ok-bg subtle-bg
+       :code-err-bg subtle-bg
+       :result-bg surface
+       :result-path-bg (if dark? blue7 bg)
+       :result-path-fg cyan-text
+       :result-highlight-fg purple
+       :code-block-fg fg
+       :code-success-fg green-text
+       :code-error-fg red-text
+       :code-duration-fg muted
+       :code-result-fg fg
+       :code-error-result-fg red-text
+       :code-syntax-special-fg purple
+       :code-syntax-keyword-fg cyan-text
+       :code-syntax-string-fg orange-text
+       :code-syntax-number-fg (if dark? blue5 fg)
+       :code-syntax-comment-fg muted
+       :code-border-fg border
+       :iteration-header-fg muted
+       :iteration-header-bg subtle-bg
+       :answer-sep-fg border
+       :answer-sep-bg bg
+       :answer-bg bg
+       :answer-fg fg
+       :md-h1-fg fg
+       :md-h2-fg (if dark? blue5 purple)
+       :md-h3-fg (if dark? magenta green-text)
+       :confidence-fg muted
+       :md-summary-bg (if dark? blue7 bg)
+       :md-summary-fg fg
+       :th-md-summary-bg subtle-bg
+       :th-md-summary-fg muted
+       :link-chrome-fg cyan-text
+       :link-chrome-arrow-fg muted
+       :link-chrome-url-fg cyan-text
+       :link-chrome-hover-bg subtle-bg
+       :link-chrome-hover-fg cyan-text
+       :link-chrome-blocked-fg muted
+       :footer-fg fg
+       :footer-fg-muted muted
+       :footer-fg-strong fg
+       :footer-spinner-fg green-text
+       :footer-warning-fg yellow-text
+       :footer-error-fg red-text})))
+
+(def tokyonight-storm-palette (tokyonight-palette :dark tokyonight-storm-colors))
+
+(def tokyonight-night-palette (tokyonight-palette :dark tokyonight-night-colors))
+
+(def tokyonight-moon-palette (tokyonight-palette :dark tokyonight-moon-colors))
+
+(def tokyonight-day-palette (tokyonight-palette :light tokyonight-day-colors))
+(defn- make-theme
+  [id display-name mode palette]
+  {:name id
+   :display-name display-name
+   :mode mode
+   :palette palette
+   :fonts common-fonts
+   :widths common-widths
+   :spacing common-spacing
+   :settings (theme-settings id mode)})
+
+(def vis-light "Default Vis light theme." (make-theme "vis-light" "Vis Light" :light light-palette))
+
+(def vis-dark "Default Vis dark theme." (make-theme "vis-dark" "Vis Dark" :dark dark-palette))
+
+(def solarized-light
+  "Solarized Light theme."
+  (make-theme "solarized-light" "Solarized Light" :light solarized-light-palette))
+
+(def solarized-dark
+  "Solarized Dark theme."
+  (make-theme "solarized-dark" "Solarized Dark" :dark solarized-dark-palette))
+
+(def blockether-light
+  "Blockether brand light theme — warm cream + amber, matching blockether.com."
+  (make-theme "blockether-light" "Blockether Light" :light blockether-light-palette))
+
+(def blockether-dark
+  "Blockether brand dark theme — matching blockether.com."
+  (make-theme "blockether-dark" "Blockether Dark" :dark blockether-dark-palette))
+
+(def tokyonight-day
+  "tokyonight.nvim Day theme."
+  (make-theme "tokyonight-day" "Tokyo Day" :light tokyonight-day-palette))
+
+(def tokyonight-moon
+  "tokyonight.nvim Moon theme."
+  (make-theme "tokyonight-moon" "Tokyo Moon" :dark tokyonight-moon-palette))
+
+(def tokyonight-night
+  "tokyonight.nvim Night theme."
+  (make-theme "tokyonight-night" "Tokyo Night" :dark tokyonight-night-palette))
+
+(def tokyonight-storm
+  "tokyonight.nvim Storm theme."
+  (make-theme "tokyonight-storm" "Tokyo Storm" :dark tokyonight-storm-palette))
+(def default-theme blockether-light)
+
+(def built-in-themes
+  {"blockether-light" blockether-light
+   "blockether-dark" blockether-dark
+   "vis-light" vis-light
+   "vis-dark" vis-dark
+   "solarized-light" solarized-light
+   "solarized-dark" solarized-dark
+   "tokyonight-day" tokyonight-day
+   "tokyonight-moon" tokyonight-moon
+   "tokyonight-night" tokyonight-night
+   "tokyonight-storm" tokyonight-storm})
+
+(defonce themes
+  ;; Process theme registry atom, keyed by string theme id.
+  ;;
+  ;; Built-ins live here, and extensions can add more through
+  ;; `register-theme!`, `register-themes!`, or `:ext/theme` registration.
+  ;;
+  ;; `defonce`, NOT `def`: extension themes are registered as a
+  ;; `register-extension!` side effect that `require` won't re-fire, so a
+  ;; plain `def` would drop every extension-contributed theme on each
+  ;; `:reload`. Tradeoff: editing the `built-in-themes` literal no longer
+  ;; takes effect on a bare reload — call `(reset! themes built-in-themes)`
+  ;; (as `unregister-themes!` does) or reboot to refresh built-ins.
+  ;; (`defonce` takes no docstring — hence the `;;` comment.)
+  (atom built-in-themes))
+
+(def palette
+  "Default palette. Kept as a named var for channels that only need colours."
+  (:palette default-theme))
+
+(def pallete
+  "Deprecated misspelling retained as an alias for callers/searches using
+   'pallete'. Prefer `palette`."
+  palette)
+
+(defn valid-theme? [x] (s/valid? ::theme x))
+
+(defn explain-theme [x] (s/explain-data ::theme x))
+
+(defn- normalize-theme-id
+  [id]
+  (cond (keyword? id) (name id)
+        (string? id) (let [s (str/trim id)]
+                       (when-not (str/blank? s) s))
+        :else nil))
+
+(defn- assert-theme!
+  [theme-map]
+  (when-not (valid-theme? theme-map)
+    (throw (ex-info "Invalid theme"
+                    {:type :vis.internal.theme/invalid-theme
+                     :theme theme-map
+                     :explain (explain-theme theme-map)})))
+  theme-map)
+
+(defn theme-registry "Return current immutable theme registry map." [] @themes)
+
+(defn theme
+  "Return registered theme by id (string or keyword). Unknown ids fall back to
+   `default-theme`."
+  [id]
+  (or (some->> id
+               normalize-theme-id
+               (get @themes))
+      default-theme))
+
+(defn color
+  "Return RGB vector for palette token `k` in `theme-map` (or selected/default theme)."
+  ([k] (color default-theme k))
+  ([theme-map k] (get-in theme-map [:palette k])))
+
+(defn- settings->theme
+  [id settings]
+  (let [mode (case (some-> (get settings "MODE")
+                           str
+                           str/lower-case)
+               "dark"
+               :dark
+
+               "light"
+               :light
+
+               (:mode default-theme))]
+    (-> (if (= :dark mode) vis-dark vis-light)
+        (assoc :name id
+               :display-name id
+               :mode mode)
+        (update :settings merge settings {"THEME_NAME" id "MODE" (name mode)}))))
+
+(defn- theme-entry
+  [id entry]
+  (let [id (or (normalize-theme-id id) (normalize-theme-id (:name entry)))]
+    (cond (and id (valid-theme? entry)) [id (assert-theme! (assoc entry :name id))]
+          (and id (map? entry)) [id (settings->theme id entry)]
+          :else (throw (ex-info
+                         "Invalid theme registry entry"
+                         {:type :vis.internal.theme/invalid-theme-entry :id id :entry entry})))))
+
+(defn register-theme!
+  "Add or replace one theme in the process registry.
+
+   Arity 1 expects a full theme map with `:name`. Arity 2 accepts either a
+   full theme map or a compact settings map such as `{\"PADDING\" \"0px\"}`."
+  ([theme-map]
+   (let [[id theme-map] (theme-entry (:name theme-map) theme-map)]
+     (swap! themes assoc id theme-map)
+     theme-map))
+  ([id theme-map]
+   (let [[id theme-map] (theme-entry id theme-map)]
+     (swap! themes assoc id theme-map)
+     theme-map)))
+
+(defn register-themes!
+  "Add every entry from an extension-style theme map.
+
+     {\"THEME_NAME\" {\"PADDING\" \"0px\"}}
+
+   Values may be compact settings maps or full theme maps."
+  [theme-map]
+  (doseq [[id entry] (or theme-map {})]
+    (register-theme! id entry))
+  @themes)
+
+(defn unregister-theme!
+  "Remove a theme id. Built-ins reset to their built-in value instead of being
+   removed, so the registry always keeps light and dark available."
+  [id]
+  (when-let [id (normalize-theme-id id)]
+    (if-let [built-in (get built-in-themes id)]
+      (swap! themes assoc id built-in)
+      (swap! themes dissoc id)))
+  @themes)
+
+(defn unregister-themes!
+  [ids]
+  (doseq [id ids]
+    (unregister-theme! id))
+  @themes)
+
+(defn reset-themes!
+  "Reset process registry to built-in themes. Test/dev helper."
+  []
+  (reset! themes built-in-themes))
+
+(defn extension-theme-map?
+  "True for extension `:ext/theme` declarations.
+
+   Shape is intentionally plain EDN for third-party packages:
+
+     {:ext/theme {\"THEME_NAME\" {\"PADDING\" \"0px\"}}}
+
+   Theme names may be strings or keywords. Values may be compact setting maps
+   or full theme maps."
+  [x]
+  (and (map? x)
+       (every? theme-key? (keys x))
+       (every? #(and (map? %) (every? theme-key? (keys %)) (every? theme-setting-value? (vals %)))
+               (vals x))))
+
+(defn extension-theme-settings
+  "Return a registry in extension `:ext/theme` compact settings shape."
+  ([] (extension-theme-settings @themes))
+  ([theme-registry]
+   (into {}
+         (map (fn [[id theme-map]]
+                [id (:settings theme-map)]))
+         (if (instance? clojure.lang.IDeref theme-registry) @theme-registry theme-registry))))
+
+(defn extension-themes
+  "Merge `:ext/theme` maps from registered extension descriptors.
+   Later extensions override earlier themes with the same name."
+  [extensions]
+  (reduce (fn [acc ext]
+            (merge acc (:ext/theme ext)))
+          {}
+          (or extensions [])))
+
+(def ^:private theme-id-priority
+  "Ids pinned to the TOP of `available-theme-ids` (and thus every theme
+   picker), in this order. Everything else follows alphabetically."
+  ["vis-light" "vis-dark"])
+
+(defn available-theme-ids
+  "Theme ids from the process registry plus optional unregistered extension
+   descriptor maps. Normally extensions are already installed into `themes`
+   by `register-extension!`; the argument remains for pure tests/previews.
+
+   `vis-light`/`vis-dark` are pinned to the top (see `theme-id-priority`);
+   all other ids follow, sorted alphabetically."
+  ([] (available-theme-ids nil))
+  ([extensions]
+   (let [rank
+         (into {}
+               (map-indexed (fn [i n]
+                              [n i])
+                            theme-id-priority))
+
+         floor
+         (count theme-id-priority)]
+
+     (->> (merge @themes
+                 (into {}
+                       (map (fn [[id entry]]
+                              (theme-entry id entry)))
+                       (extension-themes extensions)))
+          keys
+          (map name)
+          distinct
+          (sort-by (juxt #(rank % floor) identity))
+          vec))))
+
+(defn- mix-rgb
+  "Linear mix of two RGB triples: `t` 0.0 -> all `a`, 1.0 -> all `b`."
+  [a b ^double t]
+  (mapv (fn [x y]
+          (let [x
+                (double x)
+
+                y
+                (double y)]
+
+            (int (Math/round (+ x (* t (- y x)))))))
+        a
+        b))
+
+(defn rgb->css
+  "Hex CSS color (\"#rrggbb\") for an RGB triple."
+  [[r g b]]
+  (format "#%02x%02x%02x" r g b))
+
+(defn- rel-luminance
+  "Rec. 709 relative luminance of an RGB triple (0-255 scale)."
+  ^double [[r g b]]
+  (+ (* 0.2126 (double r)) (* 0.7152 (double g)) (* 0.0722 (double b))))
+
+(defn- mix-to-luminance-delta
+  "Mix `bg` toward `target`, but only as far as needed to land a luminance
+   distance of `delta` from `bg` (clamped to fully `target`). Keeps every
+   theme's hairlines at EQUAL perceptual weight regardless of how close the
+   palette's border color sits to its ground — fixing washed-out, near-white
+   borders on low-contrast palettes (e.g. Solarized Light)."
+  [bg target ^double delta]
+  (let [dl
+        (Math/abs (- (rel-luminance target) (rel-luminance bg)))
+
+        t
+        (if (> dl 1.0) (min 1.0 (/ delta dl)) 1.0)]
+
+    (mix-rgb bg target t)))
+
+(def web-css-palette-tokens
+  "The shared TUI/HTML theme contract: CSS custom property -> palette token.
+   Browser channels consume exact semantic colors instead of approximating them
+   with opacity or brightness filters."
+  {"--bg" :terminal-bg
+   "--fg" :text-fg
+   "--box-bg" :box-bg
+   "--box-fg" :box-fg
+   "--surface" :dialog-bg
+   "--panel2" :dialog-bg
+   "--dialog-fg" :dialog-fg
+   "--dialog-title-bg" :dialog-title-bg
+   "--dialog-title-fg" :dialog-title-fg
+   "--dialog-border" :dialog-border
+   "--dialog-shadow" :dialog-shadow
+   "--dialog-hint" :dialog-hint
+   "--dim" :dialog-hint
+   "--dialog-hint-key" :dialog-hint-key
+   "--input-field-bg" :input-field-bg
+   "--button-bg" :button-bg
+   "--button-fg" :button-fg
+   "--user-bubble-bg" :user-bubble-bg
+   "--user-bubble-fg" :user-bubble-fg
+   "--user-role-fg" :user-role-fg
+   "--turn-separator-bg" :turn-separator-bg
+   "--turn-separator-fg" :turn-separator-fg
+   "--ai-bubble-bg" :ai-bubble-bg
+   "--ai-bubble-fg" :ai-bubble-fg
+   "--ai-role-fg" :ai-role-fg
+   "--iteration-header-fg" :iteration-header-fg
+   "--iteration-header-bg" :iteration-header-bg
+   "--answer-bg" :answer-bg
+   "--answer-fg" :answer-fg
+   "--answer-sep-bg" :answer-sep-bg
+   "--answer-sep-fg" :answer-sep-fg
+   "--md-h1-fg" :md-h1-fg
+   "--md-h2-fg" :md-h2-fg
+   "--md-h3-fg" :md-h3-fg
+   "--md-summary-bg" :md-summary-bg
+   "--md-summary-fg" :md-summary-fg
+   "--code-bg" :code-block-bg
+   "--code-fg" :code-block-fg
+   "--code-ok-bg" :code-ok-bg
+   "--code-err-bg" :code-err-bg
+   "--code-success" :code-success-fg
+   "--code-error" :code-error-fg
+   "--code-syntax-keyword" :code-syntax-keyword-fg
+   "--code-syntax-special" :code-syntax-special-fg
+   "--code-syntax-string" :code-syntax-string-fg
+   "--code-syntax-number" :code-syntax-number-fg
+   "--code-syntax-comment" :code-syntax-comment-fg
+   "--code-border" :code-border-fg
+   "--code-duration" :code-duration-fg
+   "--code-result" :code-result-fg
+   "--code-error-result" :code-error-result-fg
+   "--result-bg" :result-bg
+   "--result-path-bg" :result-path-bg
+   "--result-path-fg" :result-path-fg
+   "--result-highlight-fg" :result-highlight-fg
+   "--warning" :warning-fg
+   "--warning-bg" :warning-bg
+   "--warning-border" :warning-border
+   "--cancelled-bg" :cancelled-bg
+   "--cancelled-fg" :cancelled-fg
+   "--ok" :status-ok
+   "--err" :status-bad
+   "--primary" :header-active-tab-bg
+   "--primary-fg" :header-active-tab-fg
+   "--accent" :header-active-tab-accent
+   "--secondary" :code-result-fg
+   "--link-fg" :link-chrome-fg
+   "--link-arrow-fg" :link-chrome-arrow-fg
+   "--link-url-fg" :link-chrome-url-fg
+   "--link-hover-bg" :link-chrome-hover-bg
+   "--link-hover-fg" :link-chrome-hover-fg
+   "--footer-fg" :footer-fg
+   "--footer-muted" :footer-fg-muted
+   "--footer-strong" :footer-fg-strong
+   "--footer-spinner" :footer-spinner-fg
+   "--footer-warning" :footer-warning-fg
+   "--footer-error" :footer-error-fg})
+
+(def web-css-derived-tokens
+  "CSS vars derived from the ground. Hover is paint; quiet text is the palette's
+   contrast-checked `:dialog-hint`, mapped in `web-css-palette-tokens`."
+  {"--hover" 0.05})
+
+(def web-css-border-tokens
+  "Hairline border vars keyed to a TARGET luminance delta from the ground (NOT
+   a raw mix ratio): each is mixed from `--bg` toward the palette's `:border-fg`
+   just far enough to hit that delta. Borders then read with equal weight on
+   EVERY theme — the same presence vis-light's hairline carries — even where a
+   palette's own border color sits close to its background (Solarized), instead
+   of washing out to near-white."
+  {"--line" 18.0 "--line2" 34.0})
+
+(defn theme->web-css-vars
+  "CSS custom-property map (\"--bg\" -> \"#rrggbb\") for a theme map -
+   the palette-named tokens, the derived bg/fg mixes, and the
+   luminance-delta-normalized border hairlines."
+  [{:keys [palette]}]
+  (let [bg
+        (:terminal-bg palette)
+
+        fg
+        (:text-fg palette)
+
+        border
+        (:border-fg palette)]
+
+    (merge (into (sorted-map)
+                 (map (fn [[css-var palette-key]]
+                        [css-var (rgb->css (get palette palette-key))]))
+                 web-css-palette-tokens)
+           (into (sorted-map)
+                 (map (fn [[css-var ratio]]
+                        [css-var (rgb->css (mix-rgb bg fg ratio))]))
+                 web-css-derived-tokens)
+           (into (sorted-map)
+                 (map (fn [[css-var delta]]
+                        [css-var (rgb->css (mix-to-luminance-delta bg border delta))]))
+                 web-css-border-tokens))))
+
+(defn web-css-root
+  "A `:root{...}` CSS block for a theme id (or theme map): every shared
+   var from `theme->web-css-vars` plus `color-scheme`, ready to serve
+   AFTER the static stylesheet so it overrides the baked-in defaults."
+  [theme-or-id]
+  (let [theme-map (if (map? theme-or-id) theme-or-id (theme theme-or-id))]
+    (str ":root{"
+         (->> (theme->web-css-vars theme-map)
+              (map (fn [[k v]]
+                     (str k ":" v)))
+              (str/join ";"))
+         ";color-scheme:"
+         (name (:mode theme-map :light))
+         "}")))

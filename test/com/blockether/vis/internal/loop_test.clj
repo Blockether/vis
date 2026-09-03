@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.loop-test
-  (:require [com.blockether.vis.test-python-context :as tpc]
+  (:require [com.blockether.vis-python-runtime :as python-runtime]
+            [com.blockether.vis.test-python-context :as tpc]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
@@ -12,6 +13,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.python-host :as python-host]
+            [com.blockether.vis.internal.python-worker :as python-worker]
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.titling :as titling]
@@ -2553,9 +2555,9 @@
 
           (stamp-iter-universe! ca trailer wire)
           ;; A collapsed iteration keeps its identity in the universe but no longer
-          ;; contributes its historical 1k-token raw weight to a later broad fold.
+          ;; contributes its historical raw weight to a later broad fold.
           (expect (= ["t1/i1" "t1/i2"] (get @ca "engine_iter_universe")))
-          (expect (= {"t1/i1" 0 "t1/i2" 100} (get @ca "engine_iter_weights")))
+          (expect (= {"t1/i1" 0 "t1/i2" 373} (get @ca "engine_iter_weights")))
           (expect (nil? (get @ca "engine_iter_ntr")))))
     ;; Phantom-reclaim regression (session 881eb071…): the FIRST `{"through" …}`
     ;; fold of a new turn sweeps in every prior-turn seed iteration that was never
@@ -2584,7 +2586,7 @@
               (atom {})]
 
           (stamp-iter-universe! ca trailer)
-          (expect (= {"t1/i1" 0 "t2/i1" 1000 "t3/i1" 1000} (get @ca "engine_iter_weights")))))
+          (expect (= {"t1/i1" 0 "t2/i1" 1480 "t3/i1" 1480} (get @ca "engine_iter_weights")))))
     ;; Frozen-prompt regression (session 0cfd25a7…): a fold recorded under an
     ;; EARLIER/foreign turn numbering kept re-resolving its range cursor against
     ;; every later live turn, collapsing the whole trailer. The model then never
@@ -5028,56 +5030,56 @@
           (expect (not (str/includes? m ";;")))))))
 
 
-(defdescribe
-  only-python-execution-is-advertised-test
-  ;; ONE tool reaches the provider. Every other capability is already a bare Python
-  ;; name inside that sandbox — found with `apropos(pattern)`, read with `doc(name)`,
-  ;; called from inside a block — so a second JSON schema advertises a door the
-  ;; model can open anyway and charges for it on every single request.
-  (it
-    "advertises exactly one tool, and it is python_execution"
-    (let [tools
-          (@#'lp/model-facing-tools nil)
+(defdescribe only-python-execution-is-advertised-test
+             ;; ONE tool reaches the provider. Every other capability is already a bare Python
+             ;; name inside that sandbox — found with `apropos(pattern)`, read with `doc(name)`,
+             ;; called from inside a block — so a second JSON schema advertises a door the
+             ;; model can open anyway and charges for it on every single request.
+             (it
+               "advertises exactly one tool, and it is python_execution"
+               (let [tools
+                     (@#'lp/model-facing-tools nil)
 
-          tool
-          (first tools)]
+                     tool
+                     (first tools)]
 
-      (expect (= ["python_execution"] (mapv :name tools)))
-      ;; No extension can add a tool: `model-facing-tools` does not take extensions
-      ;; at all any more, which is the proof rather than an assertion about them.
-      (expect (= 1 (count tools)))
-      ;; Regression: `github-copilot`/`gpt-5.6-terra` 400ed the WHOLE request over a
-      ;; `:strict true` flag Vis derived from Anthropic's own grammar subset, so every
-      ;; turn failed before a token. The one tool is advertised unconstrained.
-      (expect (not-any? :strict tools))
-      ;; The raw-result contract is FOLDED into the description exactly once, and the
-      ;; separate `:result` key never reaches a provider.
-      (expect (= 1 (count (re-seq #"Raw result:" (:description tool)))))
-      (expect (not (contains? tool :result)))
-      ;; One tool, one argument: the whole model-facing schema surface.
-      (expect (= {:type "object"
-                  :properties {"code" {:type "string" :description "Python source."}}
-                  :required ["code"]
-                  :additionalProperties false}
-                 (:schema tool)))
-      (doseq [fact
-              ["project packages need a project REPL" "plain Python" "errors surface"
-               ;; The sandbox has ONE success channel. The runtime used to hand a
-               ;; bare trailing expression's value back as a second result, so the
-               ;; one tool the model is given has to say that print is all there is.
-               "`print(...)` is the ONLY channel back" "a bare trailing expression is never echoed"
-               ;; With no result store left, the description states the one rule that
-               ;; replaces it: what you did not print is gone when the block ends.
-               "gone from the transcript once the block ends"
-               ;; The sleep/poll prohibition lives HERE and nowhere else: the core
-               ;; prompt deliberately dropped its duplicate copy.
-               "`sh.logs()`" "no tool waits for you"
-               ;; Dropping a handle closes it — that is the interpreter's job, not
-               ;; ours. What still bites is what the block HOLDS: the descriptor
-               ;; table is the whole process's, and filling it stops `shell` from
-               ;; spawning at all, so the ceiling and its escape hatch are named.
-               "close what you KEEP" "VIS_PY_MAX_OPEN_FILES"]]
-        (expect (str/includes? (:description tool) fact))))))
+                 (expect (= ["python_execution"] (mapv :name tools)))
+                 ;; No extension can add a tool: `model-facing-tools` does not take extensions
+                 ;; at all any more, which is the proof rather than an assertion about them.
+                 (expect (= 1 (count tools)))
+                 ;; Regression: `github-copilot`/`gpt-5.6-terra` 400ed the WHOLE request over a
+                 ;; `:strict true` flag Vis derived from Anthropic's own grammar subset, so every
+                 ;; turn failed before a token. The one tool is advertised unconstrained.
+                 (expect (not-any? :strict tools))
+                 ;; The raw-result contract is FOLDED into the description exactly once, and the
+                 ;; separate `:result` key never reaches a provider.
+                 (expect (= 1 (count (re-seq #"Raw result:" (:description tool)))))
+                 (expect (not (contains? tool :result)))
+                 ;; One tool, one argument: the whole model-facing schema surface.
+                 (expect (= {:type "object"
+                             :properties {"code" {:type "string" :description "Python source."}}
+                             :required ["code"]
+                             :additionalProperties false}
+                            (:schema tool)))
+                 (doseq [fact ["project packages need a project REPL" "plain Python"
+                               "errors surface"
+                               ;; The sandbox has ONE success channel. The runtime used to hand a
+                               ;; bare trailing expression's value back as a second result, so the
+                               ;; one tool the model is given has to say that print is all there is.
+                               "`print(...)` is the ONLY channel back"
+                               "a bare trailing expression is never echoed"
+                               ;; With no result store left, the description states the one rule that
+                               ;; replaces it: what you did not print is gone when the block ends.
+                               "gone from the transcript once the block ends"
+                               ;; The sleep/poll prohibition lives HERE and nowhere else: the core
+                               ;; prompt deliberately dropped its duplicate copy.
+                               "`sh.logs()`" "no tool waits for you"
+                               ;; Dropping a handle closes it — that is the interpreter's job, not
+                               ;; ours. What still bites is what the block HOLDS: the descriptor
+                               ;; table is the whole process's, and filling it stops `shell` from
+                               ;; spawning at all, so the ceiling and its escape hatch are named.
+                               "close what you KEEP" "VIS_PY_MAX_OPEN_FILES"]]
+                   (expect (str/includes? (:description tool) fact))))))
 
 
 ;; ── post-refresh propagation backoff (gateway-wide OAuth-401 storm guard) ──
@@ -6589,6 +6591,30 @@
         (expect (some #(re-find #"Emergency transport fold" (str (:content %)))
                       (:messages recovery)))
         (expect (some #(re-find #"1 tool call" (str (:content %))) (:messages recovery)))))
+    (it "treats tool-only payloads as foldable context"
+        ;; Boundary contract: Svar owns canonical structured-message token counting;
+        ;; overflow rescue must inherit that count instead of treating tool payloads as free.
+        (let [large
+              (apply str (repeat 8000 "x"))
+
+              content
+              [{:type "tool_use" :id "tc" :name "python_execution" :input {"code" large}}]
+
+              trailer
+              [(stub-tool-iter {:id 1 :content content}) (stub-tool-iter {:id 2 :content content})]
+
+              recovery
+              (emergency-fold-projection []
+                                         trailer
+                                         []
+                                         {:provider :openai :model "gpt-4o"}
+                                         "gpt-4o"
+                                         (fn [n]
+                                           (- (long n) 100)))]
+
+          (expect (some? recovery))
+          (expect (< 1000 (long (:before-tokens recovery))))
+          (expect (pos? (long (:saved-tokens recovery))))))
     (it "measures the estimator's undercount from the refused request, never a constant"
         (let [;; Session cd24926e: the provider priced the very same 132-iteration seed at
               ;; 1,437,952 where the local estimator read 963,503.
@@ -7237,10 +7263,14 @@
 
    `python-extensions/bind-host!` binds the whole extension surface in the
    unconfined CHILD process, which is not where a sandbox block runs."
-  [pc]
-  (python-host/install-sync-tools! pc
-                                   {"__vis_host_live__" (fn [envelope]
-                                                          (hi/live-json! envelope))}))
+  ([pc] (bind-live-door! pc nil))
+  ([pc installer]
+   (python-host/install-sync-tools! pc
+                                    {"__vis_host_live__" (fn [envelope]
+                                                           (hi/live-json! envelope))}
+                                    (or installer
+                                        (fn [session name]
+                                          (python-runtime/install-sync-tool! session name))))))
 
 (defn- open-a-view
   "Guest code opening a live view through the host bridge an extension crosses,
@@ -7288,9 +7318,16 @@
                                                              (str "vis-views-" (random-uuid))))}
     (fn []
       (tpc/with-own
-        [pc {}]
+        [pc {} nil
+         {:worker? true
+          :jail-enabled? false
+          :enabled? false
+          :allowed-domains []
+          :denied-domains []}]
         (let [_
-              (bind-live-door! pc)
+              (bind-live-door! pc
+                               (fn [session name]
+                                 (python-worker/install-sync-tool! session session name)))
 
               before
               (hi/open-live-ids)

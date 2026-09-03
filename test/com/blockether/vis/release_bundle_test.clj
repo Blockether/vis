@@ -265,6 +265,42 @@
                (expect (.canExecute (io/file bundle-dir entry)) entry)))
            (finally (delete-tree! root))))))
 
+(defdescribe
+  stage-tui-release-test
+  (it
+    "packs only the standalone executable and rejects a missing binary"
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-tui-release-test-" (make-array FileAttribute 0)))
+
+          binary
+          (io/file root "vis-tui")
+
+          bundle-dir
+          (io/file root "bundle")
+
+          asset
+          (io/file root "vis-tui-linux-arm64.tar.gz")
+
+          stage!
+          (fn []
+            (run-bash ["bash" "bin/stage-tui-release" (.getAbsolutePath binary)
+                       (.getAbsolutePath asset)]
+                      {"VIS_TUI_BUNDLE_DIR" (.getAbsolutePath bundle-dir)}))]
+
+      (try (let [{:keys [exit output]} (stage!)]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "missing vis-tui binary") output))
+           (write-executable! binary "#!/usr/bin/env bash\nexit 0\n")
+           (let [{:keys [exit output]} (stage!)]
+             (expect (= 0 exit) output)
+             (expect (.isFile asset) output)
+             (expect (.canExecute (io/file bundle-dir "vis-tui")) output)
+             (expect (= #{"vis-tui"}
+                        (->> (.listFiles bundle-dir)
+                             (map #(.getName ^java.io.File %))
+                             set))))
+           (finally (delete-tree! root))))))
+
 ;; Regression, issue #148: `vis-agent runtime` printed the SOURCE pin beside a
 ;; native runtime built from an entirely different commit, so a binary from
 ;; before a fix looked like the pinned one and its crash was filed all over

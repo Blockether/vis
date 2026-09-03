@@ -3,7 +3,7 @@
   (:require [com.blockether.vis.internal.audio-transcribe :as at]
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.toggles :as toggles]
-            [com.blockether.vis.internal.voice :as voice]
+            [com.blockether.vis.internal.speech :as speech]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]])
   (:import [java.util Base64]))
 
@@ -14,28 +14,31 @@
    done once."
   (atom []))
 
+(def ^:private fake-engine* (atom nil))
+
 (defn- register-fake!
-  "A transcription engine that answers `answer` (or throws it, when it is a
-   Throwable) for whatever file it is given, after `hold` — when one is given —
-   is delivered."
+  "Set the fake transcription answer used by this test."
   ([answer] (register-fake! answer nil))
   ([answer hold]
-   (voice/register-engine! :transcribe
-                           {:id engine-id
-                            :label "test"
-                            :transcribe (fn [{:keys [audio-path]}]
-                                          (swap! calls conj (str audio-path))
-                                          (when hold (deref hold 10000 nil))
-                                          (if (instance? Throwable answer) (throw answer) answer))})
-   (voice/set-default-engine! :transcribe engine-id)))
+   (reset! fake-engine* {:id engine-id
+                         :label "test"
+                         :transcribe (fn [{:keys [audio-path]}]
+                                       (swap! calls conj (str audio-path))
+                                       (when hold (deref hold 10000 nil))
+                                       (if (instance? Throwable answer) (throw answer) answer))})))
 
 (set-ns-context! [(around-each [f]
                                (reset! calls [])
+                               (reset! fake-engine* nil)
                                (at/clear-cache!)
-                               (try (f)
-                                    (finally (voice/set-default-engine! :transcribe nil)
-                                             (voice/unregister-engine! :transcribe engine-id)
-                                             (at/clear-cache!))))])
+                               (with-redefs-fn {#'speech/engines
+                                                (fn [direction]
+                                                  (if (and (= direction :transcribe) @fake-engine*)
+                                                    [@fake-engine*]
+                                                    []))
+                                                #'speech/env-engine-id (constantly nil)}
+                                 (fn []
+                                   (try (f) (finally (at/clear-cache!))))))])
 
 (defn- b64 [^String s] (.encodeToString (Base64/getEncoder) (.getBytes s "UTF-8")))
 
@@ -116,8 +119,8 @@
   (it "says UNAVAILABLE when this build carries no speech engine"
       ;; No extension loaded, or its engine failed to load: `resolve-engine` THROWS,
       ;; and that throw must never reach the turn.
-      (with-redefs [voice/resolve-engine (fn [& _]
-                                           (throw (ex-info "none registered" {})))]
+      (with-redefs [speech/resolve-engine (fn [& _]
+                                            (throw (ex-info "none registered" {})))]
         (expect (false? (at/available?)))
         (expect (= at/UNAVAILABLE
                    (:transcription-status (first (at/transcribe-attachments [(memo)])))))))

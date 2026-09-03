@@ -1,0 +1,616 @@
+(ns com.blockether.vis.tui.toggles
+  "Process-wide feature-toggle registry.
+
+   Replaces the two parallel toggle plumbings we had drifting apart:
+     - hard-coded TUI booleans (`:show-thinking`, `:show-iterations`,
+       `:show-silent`) wired into `state/default-settings`,
+     - per-render `if (some-flag …) … else …` checks scattered through
+       `internal/render.clj` and channel-tui's render layer.
+
+   A toggle has stable metadata (`id`, label, description, default,
+   owner) and a current ON/OFF value. Anyone — internal modules,
+   extensions, channels — registers their toggles into the same
+   registry; any caller flips a toggle through the same `set!`. The
+   TUI settings dialog walks the registry to render the list, so
+   adding a new toggle from an extension shows up in the user's UI
+   without any TUI patch.
+
+   Persistence is opt-in: `register-toggle!` accepts `:persist? true`
+   and on `set!` the wrapper writes `{:toggles {id value}}` into the
+   machine store `~/.vis/state.yml` via `vis.config/save-config!`.
+   Hand-authored `vis.yml` / `config.yml` may ALSO declare a `toggles:`
+   block. Ids are plain snake_case strings there (`reasoning_level: deep`),
+   identical to the registered id. `coerce-config-value` maps YAML strings
+   onto each toggle's type, so a config-declared toggle behaves exactly like
+   a UI flip. Hydration happens at process start (call
+   `hydrate-from-config!` once after `config/load-config-raw`) and again on
+   `/reload`, so editing the YAML applies without a restart.
+
+   Contract:
+     - Toggle ids are non-blank snake_case strings (`reasoning_level`,
+       `shell`, ...) — no keywords, namespaces, slashes, or kebab-case.
+       YAML config uses the same string verbatim (`reasoning_level: deep`).
+     - A `:description` is ONE line within the portable bound owned by
+       `com.blockether.vis.contract.toggle` — the settings row is a label
+       plus a single sentence of help in every channel; longer rationale
+       lives in the owning namespace's docstring.
+     - `enabled?` is cheap (single atom deref + string lookup), called
+       per-paint per-row by the render layer; do not turn it into a
+       function-call indirection.
+     - Defaults are immutable once registered. Re-registering the
+       same id is allowed (idempotent boot path) and merges over
+       prior metadata; the live VALUE in `state` is left alone so a
+       user override survives a reload."
+  (:require [clojure.string :as str]
+            [com.blockether.vis.contract.toggle :as toggle-contract]))
+
+;; Registries
+
+(defonce
+  ^:private
+  ^{:doc
+    "id -> normalized spec map. Keyed by `:id` so re-register
+          (defonce reload, channel-restart, ext reload) is idempotent."}
+  registry
+  (atom {}))
+
+(defonce
+  ^:private
+  ^{:doc
+    "id -> current value (boolean). When an id is ABSENT from
+          this map the resolver falls back to the registered default.
+          That distinction matters for the `reset-to-default!` op:
+          dissoc'ing here is NOT the same as `(set! id false)`."}
+  state
+  (atom {}))
+
+(defonce
+  ^:private
+  ^{:doc
+    "Vec of listener fns `(fn [{:id :old :new}])`. Each `set!`
+          / `reset-to-default!` fans out so the TUI render thread,
+          channels, and any background consumer can react. Listeners
+          run on the calling thread; they MUST be cheap."}
+  listeners
+  (atom []))
+
+;; Registry ops
+
+(defn- ->str-choice
+  "Canonicalise one enum choice / default to a plain lower-case string:
+   a keyword sheds its colon (:deep becomes the string deep), a string
+   passes through. Enum toggle VALUES are strings end-to-end, the same rule
+   as toggle ids, so nothing keyword-shaped reaches the wire, YAML, or a row."
+  [v]
+  (cond (keyword? v) (name v)
+        (nil? v) v
+        :else (str v)))
+
+(defn- normalize-spec
+  "Coerce a caller spec into the canonical registry shape. Drops
+   unknown keys so a future field added here doesn't bleed into
+   listeners; missing optional fields get sane defaults.
+
+   Two kinds of toggles share the same registry:
+     `:boolean` (default) -- simple ON/OFF.
+     `:enum`              -- a closed set of named values
+                             (e.g. `reasoning_level` cycles
+                             `:quick -> :balanced -> :deep`).
+   `:type` and `:choices` ride on the normalized spec so the dialog
+   row can pick its rendering strategy (toggle vs. cycle) without
+   re-deriving anything."
+  [{:keys [id label default description owner since persist? group type choices visible-fn channels
+           settings?]}]
+  (let [t (or type :boolean)]
+    (cond-> {:id id
+             :label (str label)
+             :type t
+             :default (case t
+                        :boolean
+                        (boolean default)
+
+                        :enum
+                        (->str-choice default))
+             :owner (or owner :vis)
+             :persist? (boolean persist?)
+             ;; `:settings? false` keeps a toggle registered/persisted but OUT
+             ;; of every channel's Settings dialog (it has its own control,
+             ;; e.g. reasoning-effort on Ctrl+R). Default true = shown.
+             :settings? (not (false? settings?))}
+      description
+      (assoc :description description)
+
+      since
+      (assoc :since since)
+
+      group
+      (assoc :group group)
+
+      visible-fn
+      (assoc :visible-fn visible-fn)
+
+      ;; `:channels` (set of channel keywords) scopes a toggle to specific
+      ;; channels' settings UIs. Absent = channel-neutral (shown everywhere).
+      (seq channels)
+      (assoc :channels (set channels))
+
+      (= :enum t)
+      (assoc :choices (mapv ->str-choice choices)))))
+
+(defn register-toggle!
+  "Register one toggle that satisfies the contract-owned contribution shape.
+
+   Re-registering the same `:id` is idempotent: metadata MERGES, the
+   live VALUE in `state` is preserved (user overrides survive reload).
+   Returns the canonical registered spec."
+  [spec]
+  (when-not (toggle-contract/spec-valid? spec)
+    (throw (ex-info "Invalid toggle spec"
+                    {:type :vis.toggles/invalid-spec
+                     :spec spec
+                     :explain (toggle-contract/explain-spec spec)})))
+  (let [normalized
+        (normalize-spec spec)
+
+        id
+        (:id normalized)]
+
+    (swap! registry assoc id normalized)
+    normalized))
+
+(defn register-toggles!
+  "Convenience: register a sequence of specs in order, returns the
+   vec of canonical specs."
+  [specs]
+  (mapv register-toggle! specs))
+
+(defn registered-toggles
+  "Vec of every registered toggle's normalized spec, in registration
+   insertion order. Stable for the TUI settings dialog."
+  []
+  (vec (vals @registry)))
+
+(defn toggle-visible?
+  "True when a toggle should appear in a settings UI: no `:visible-fn`
+   means always visible; a throwing predicate fails OPEN (shown) so a
+   broken predicate can never hide a control the user needs."
+  [spec]
+  (if-let [f (:visible-fn spec)]
+    (try (boolean (f)) (catch Throwable _ true))
+    true))
+
+(defn visible-toggles
+  "`registered-toggles` filtered to what settings UIs should SHOW —
+   provider-specific knobs declare a `:visible-fn` so a knob only appears when
+   the provider that owns it is actually configured, and `:settings? false`
+   toggles (e.g. reasoning-effort and verbosity, which have their own Ctrl+R /
+   Ctrl+X controls) stay out of the Settings dialog entirely.
+   State ops always work on the FULL registry; visibility is a presentation
+   concern only."
+  []
+  (filterv #(and (not (false? (:settings? %))) (toggle-visible? %)) (registered-toggles)))
+
+(defn toggle-for-channel?
+  "True when a toggle should appear in `channel`'s settings UI. A toggle
+   with no `:channels` set is channel-neutral (shown everywhere); one with
+   a `:channels` set shows only in the listed channels. Keeps a channel's
+   Settings free of OTHER channels' controls (e.g. the web has no use for
+   the TUI's mouse-selection-copy or transcript-display toggles)."
+  [channel spec]
+  (let [chans (:channels spec)]
+    (or (nil? chans) (contains? chans channel))))
+
+(defn toggles-for-channel
+  "`visible-toggles` further scoped to `channel` via `toggle-for-channel?`.
+   Channels render THIS instead of `visible-toggles` so each Settings UI
+   only shows controls it actually honours."
+  [channel]
+  (filterv #(toggle-for-channel? channel %) (visible-toggles)))
+
+(defn toggle-spec "Lookup the registered spec for `id`, or nil." [id] (get @registry id))
+
+;; State ops
+
+(defn- notify!
+  [event]
+  (doseq [f @listeners]
+    (try (f event) (catch Throwable _ nil))))
+
+(defn value-of
+  "Resolve the live value for `id`. Lookup order:
+     1. live override in `state`,
+     2. registered default,
+     3. `nil` if the toggle isn't registered.
+
+   Returns the raw value (boolean for `:boolean` toggles, any value
+   from `:choices` for `:enum` toggles). `enabled?` is the
+   boolean-cast convenience for the common boolean path."
+  [id]
+  (let [s @state]
+    (if (contains? s id) (get s id) (:default (get @registry id)))))
+
+(defn enabled?
+  "Boolean cast of `(value-of id)`. Fail-closed: returns `false` when `id` is not
+   registered. Hot-path — one atom deref."
+  [id]
+  (boolean (value-of id)))
+
+(defn choices-of
+  "Vec of legal choices for an `:enum` toggle. Empty when `id` is
+   unregistered or registered as `:boolean`."
+  [id]
+  (or (:choices (get @registry id)) []))
+
+(defn type-of "`:boolean` / `:enum` / nil for unknown." [id] (:type (get @registry id)))
+
+(defn set-value!
+  "Set `id` to `value` and notify listeners. Returns the new value.
+   Validation matches the registered `:type`:
+     `:boolean` — must already BE a boolean; anything else throws, so a
+                  truthy string can never mean its own opposite. `set-enabled!`
+                  casts, `coerce-config-value` and `wire-value` parse.
+     `:enum`    — must be one of `:choices`; otherwise throws
+                   `:vis.toggles/invalid-value` so the bug surfaces
+                   at the call site instead of later in render."
+  [id value]
+  (let [spec
+        (get @registry id)
+
+        v
+        (case (or (:type spec) :boolean)
+          :boolean
+          (if (boolean? value)
+            value
+            (throw (ex-info "Toggle value is not a boolean"
+                            {:type :vis.toggles/invalid-value :id id :value value})))
+
+          :enum
+          (let [allowed (set (:choices spec))]
+            (when-not (contains? allowed value)
+              (throw
+                (ex-info
+                  "Toggle value is not one of the registered :choices"
+                  {:type :vis.toggles/invalid-value :id id :value value :choices (:choices spec)})))
+            value))
+
+        old
+        (value-of id)]
+
+    (swap! state assoc id v)
+    (when (not= old v) (notify! {:id id :old old :new v}))
+    v))
+
+(defn cycle-value!
+  "Advance an `:enum` toggle one step through its registered
+   `:choices`. Wraps at the end. Throws on boolean toggles."
+  [id]
+  (let [spec
+        (get @registry id)
+
+        choices
+        (vec (:choices spec))]
+
+    (when-not (and spec (= :enum (:type spec)))
+      (throw (ex-info "cycle-value! requires an :enum toggle"
+                      {:type :vis.toggles/wrong-kind :id id :got-type (:type spec)})))
+    (when-not (seq choices)
+      (throw (ex-info "Enum toggle has no choices" {:type :vis.toggles/invalid-spec :id id})))
+    (let [current
+          (value-of id)
+
+          idx
+          (.indexOf ^java.util.List choices current)
+
+          next-v
+          (let [idx
+                (long idx)
+
+                n
+                (long (count choices))]
+
+            (nth choices (mod (inc (if (neg? idx) -1 idx)) n)))]
+
+      (set-value! id next-v))))
+
+(defn set-enabled!
+  "Boolean alias of `set-value!` for the TUI dialog — keeps the
+   common toggle-flip call sites readable. Refuses `:enum` toggles
+   so an accidental boolean-flip on a multi-value toggle surfaces
+   loudly; use `cycle-value!` / `set-value!` for those."
+  [id value]
+  (let [spec (get @registry id)]
+    (when (and spec (= :enum (:type spec)))
+      (throw (ex-info "set-enabled! is boolean-only; use cycle-value! / set-value! for enum toggles"
+                      {:type :vis.toggles/wrong-kind :id id :got-type (:type spec)}))))
+  (set-value! id (boolean value)))
+
+(defn reset-to-default!
+  "Drop the user override for `id` so resolution falls back to the
+   registered default. Notifies listeners when the effective value
+   changes."
+  [id]
+  (let [old (value-of id)]
+    (swap! state dissoc id)
+    (let [new (value-of id)]
+      (when (not= old new) (notify! {:id id :old old :new new}))
+      new)))
+
+(defn snapshot
+  "Return a map `{id value}` of EVERY persistable toggle's effective
+   value, intended for serialisation. Skips toggles whose
+   `:persist?` is false. Boolean toggles are coerced to boolean;
+   enum toggles surface their raw choice value. Orphans from a
+   previously-installed extension are dropped. Keys are SORTED so the
+   serialised block is stable and diff-friendly, never a hash jumble."
+  []
+  (let [reg
+        @registry
+
+        s
+        @state]
+
+    (reduce-kv (fn [acc id spec]
+                 (if (:persist? spec)
+                   (let [v
+                         (if (contains? s id) (get s id) (:default spec))
+
+                         v
+                         (case (:type spec)
+                           :boolean
+                           (boolean v)
+
+                           :enum
+                           v
+
+                           (boolean v))]
+
+                     (assoc acc id v))
+                   acc))
+               (sorted-map)
+               reg)))
+
+(defn has-orphan-keys?
+  "True when a persisted, string-keyed `toggles` map carries ids that are no
+   longer registered — the signature of stale cruft from an earlier build
+   (e.g. the keyword-id era, when `:shell/enabled` serialised to the bare
+   `enabled`). Callers rewrite a fresh `snapshot` to converge state.yml."
+  [persisted]
+  (and (map? persisted)
+       (let [reg @registry]
+         (boolean (some (fn [[id _]]
+                          (not (contains? reg id)))
+                        persisted)))))
+
+(defn coerce-config-value
+  "Coerce a raw config value (from hand-written `vis.yml`, where YAML has no
+   keyword literal, or from the machine `state.yml` round-trip) onto the
+   REGISTERED toggle's type so a config-declared toggle behaves like a UI flip:
+     `:boolean` — real booleans pass through; strings map by truthy token
+                  (`true`/`1`/`yes`/`on` → true, anything else → false).
+     `:enum`    — a string matches the choice whose `name` equals it,
+                  case-insensitively (`reasoning_level: deep` → `:deep`); an
+                  already-legal value passes through unchanged.
+   Unregistered / untyped ids return the value unchanged (hydrate then drops
+   the orphan)."
+  [id v]
+  (let [spec (get @registry id)]
+    (case (:type spec)
+      :boolean
+      (cond (boolean? v) v
+            (string? v) (contains? toggle-contract/config-truthy-tokens
+                                   (str/lower-case (str/trim v)))
+            :else (boolean v))
+
+      :enum
+      (let [target (some-> (cond (keyword? v) (name v)
+                                 (string? v) v
+                                 :else nil)
+                           str/trim
+                           str/lower-case)]
+        (or (some (fn [c]
+                    (when (and target (= target (str/lower-case c))) c))
+                  (:choices spec))
+            v))
+
+      v)))
+
+(defn wire-value
+  "Coerce ONE value that arrived over the wire (`POST /v1/settings`) onto the
+   REGISTERED type of `id`, using the vocabulary the CLI's `--toggles` already
+   accepts: `true`/`on`/`yes`/`1` and `false`/`off`/`no`/`0` for a `:boolean`, the
+   name of a registered choice (case-insensitive) for an `:enum`.
+
+   Answers `{:value v}` — a one-entry map, because the legal value `false` is
+   itself falsey — or nil when the wire named nothing legal. Deliberately
+   STRICTER than [[coerce-config-value]]: a hand-written YAML line may degrade to
+   `false`, but a client asking for `\"maybe\"` deserves a refusal, not a
+   coin-flip stored as its choice."
+  [id v]
+  (case (type-of id)
+    :boolean
+    (cond (boolean? v) {:value v}
+          (string? v) (let [token (str/lower-case (str/trim v))]
+                        (cond (contains? toggle-contract/boolean-true-tokens token) {:value true}
+                              (contains? toggle-contract/boolean-false-tokens token) {:value
+                                                                                      false})))
+
+    :enum
+    (let [target (some-> (cond (keyword? v) (name v)
+                               (string? v) v)
+                         str/trim
+                         str/lower-case)]
+      (some (fn [c]
+              (when (and target (= target (str/lower-case (name c)))) {:value c}))
+            (choices-of id)))
+
+    nil))
+(defn hydrate-from-config!
+  "Bulk-apply values from the string-keyed YAML `toggles` map. Keyword-keyed
+   internal maps remain accepted for callers that do not originate at YAML."
+  [config-map]
+  (let [persisted (or (get config-map "toggles") (:toggles config-map))]
+    (when (map? persisted)
+      (let [reg @registry]
+        (doseq [[id v] persisted
+                :when (and (string? id) (contains? reg id))]
+
+          (try (set-value! id (coerce-config-value id v))
+               (catch clojure.lang.ExceptionInfo _ nil)))))))
+
+;; Listener ops
+
+(defn add-listener!
+  "Register a no-arg-or-event listener fn. Returns a `dispose!` thunk
+   the caller invokes when their consumer goes away (channel close,
+   extension reload, ...)."
+  [f]
+  (when (fn? f)
+    (let [key
+          (Object.)
+
+          entry
+          (with-meta f {::key key})]
+
+      (swap! listeners conj entry)
+      (fn dispose! []
+        (swap! listeners (fn [xs]
+                           (vec (remove #(identical? key
+                                                     (-> %
+                                                         meta
+                                                         ::key))
+                                  xs))))))))
+
+;; Reset (dev / test helper)
+
+(defn clear-state!
+  "Wipe live overrides so every id resolves to its registered default.
+   Registry AND listeners are untouched: a registry listener is process
+   infrastructure (the engine refreshes every cached session's tool
+   bindings from one), so a test helper that dropped them silently
+   disabled that fan-out for the rest of the JVM. A caller that adds a
+   listener detaches it with the `dispose!` thunk `add-listener!`
+   returns. Used by tests; production callers should prefer
+   `reset-to-default!`."
+  []
+  (reset! state {})
+  nil)
+
+;; Host-owned canonical toggles
+;;
+;; Internal toggles ship registered at load time so the TUI settings
+;; dialog never paints "the host has nothing to flip" before an
+;; extension lands its own toggles. `defonce` keeps re-loads (clj-reload
+;; / `:reload`) idempotent: the live registry stays intact and any
+;; user override in `state` survives.
+
+(defonce
+  ^{:doc
+    "Sentinel that records whether the canonical internal toggles
+          have been installed (idempotent)."
+    :clj-kondo/ignore [:clojure-lsp/unused-public-var :unused-private-var]}
+  host-toggles-installed?
+  (do
+    ;; NOTE: `:vis/show-raw-code` was retired — the TUI now renders the model's
+    ;; raw `:code` unconditionally, the SAME canonical contract as web's
+    ;; `block-code`. There is no longer a gate that can hide the source rail.
+    ;; --- TUI display toggles (migrated from `:tui-settings`) -------------
+    ;; NOTE: the display gates `:vis/show-thinking`, `:vis/show-iterations`,
+    ;; `:vis/show-silent`, and `:vis/show-timestamps` were retired — thinking,
+    ;; the full execution trace, silent system calls, and timestamps are now
+    ;; ALWAYS shown in both channels (same call as `:vis/show-raw-code`: the
+    ;; trace IS the transcript, nothing to hide). The settings projection and
+    ;; web `role-time` hardcode these on.
+    ;; NOTE: there is intentionally NO `:network/enabled` toggle. The Python sandbox
+    ;; + shell/subprocess/managed children ALWAYS have host sockets; containment is the
+    ;; OS process jail + gateway egress proxy, turned off as a whole by `jail.enabled: false`
+    ;; in vis.yml. Per-host/verb policy lives under vis.yml `network:` (see below).
+    (register-toggle! {:id "reasoning_level"
+                       :label "Reasoning effort"
+                       :description "Reasoning budget hint passed to reasoning-capable models."
+                       :type :enum
+                       :choices ["quick" "balanced" "deep"]
+                       ;; Lives on its OWN control (TUI Ctrl+R, footer), not the Settings
+                       ;; dialog — `:settings? false` keeps it registered + persisted but out
+                       ;; of every channel's Settings list.
+                       :settings? false
+                       :default "balanced"
+                       :owner :vis
+                       :group :provider
+                       :persist? true})
+    ;; Verbosity is a WIRE knob (`text.verbosity` on the OpenAI Responses
+    ;; endpoint), not a vendor's: OpenAI Codex and GitHub Copilot's GPT tier
+    ;; both accept it, so it is registered once HERE rather than by one
+    ;; provider extension. Channels offer it only when svar stamped
+    ;; `:verbosity-style` on the model the session routes to
+    ;; (`loop/verbosity-configurable?`) — never when a provider id matches.
+    (register-toggle! {:id "verbosity"
+                       :label "Verbosity"
+                       :description "Answer-length hint passed to models whose wire accepts one."
+                       :type :enum
+                       :choices ["low" "medium" "high"]
+                       ;; Own control (TUI Ctrl+X l, footer), like reasoning_level.
+                       :settings? false
+                       :default "low"
+                       :owner :vis
+                       :group :provider
+                       :persist? true})
+    ;; A session routes to ONE model, and a coding plan's model often has no
+    ;; vision. Rather than dropping the pixels and telling the agent to open a
+    ;; screenshot with PIL (which yields size and mode, never meaning), one cheap
+    ;; side-channel ask! on the cheapest sighted model in the SAME fleet turns each
+    ;; image into text. Off means today's behaviour; there is nothing to pay when
+    ;; the fleet has no vision model at all, so this defaults ON.
+    (register-toggle!
+      {:id "vision_fallback_describe"
+       :label "Describe images for blind models"
+       :description "Describe attached images with a vision model when the active model cannot see."
+       :type :boolean
+       :default true
+       :owner :vis
+       :group :provider
+       :persist? true})
+    ;; No provider wire carries audio, so a voice memo is stored, played for the
+    ;; human and merely NAMED to the model. The speech engine this build already
+    ;; carries turns it into its own words locally - no quota, no bytes on anybody
+    ;; else's wire - and the transcript rides the manifest where the recording
+    ;; cannot. Off means today's behaviour; a build with no engine pays nothing
+    ;; either way, so this defaults ON.
+    (register-toggle! {:id "audio_transcribe_attachments"
+                       :label "Transcribe attached recordings"
+                       :description
+                       "Transcribe attached voice recordings locally and give the model the words."
+                       :type :boolean
+                       :default true
+                       :owner :vis
+                       :group :provider
+                       :persist? true})
+    ;; Automatic fallback is a COST decision the human owns: a rescue on another
+    ;; provider answers in a model they did not pick and starts that provider's
+    ;; prompt cache from cold (~4x input spend for the rest of the session,
+    ;; issue #154). ON keeps today's rescue; OFF makes the pick a contract and
+    ;; surfaces the provider's own failure instead of quietly re-routing.
+    (register-toggle!
+      {:id "provider_fallback"
+       :label "Automatic provider fallback"
+       :description
+       "Rescue a failed turn on another provider or model. Off keeps the session on the picked one."
+       :type :boolean
+       :default true
+       :owner :vis
+       :group :provider
+       :persist? true})
+    ;; A refusal is Anthropic's safety classifier declining THIS request with HTTP 200:
+    ;; the credential, the provider and the wire are healthy, and an identical retry
+    ;; earns an identical decline, so the documented recovery is a sibling model of the
+    ;; SAME provider. That is a different decision from paying for a peer credential,
+    ;; which is why it is a different switch. ON keeps the documented recovery.
+    (register-toggle! {:id "refusal_fallback"
+                       :label "Automatic refusal fallback"
+                       :description
+                       "Re-ask a declined request on a sibling model of the same provider."
+                       :type :boolean
+                       :default true
+                       :owner :vis
+                       :group :provider
+                       :persist? true})
+    true))

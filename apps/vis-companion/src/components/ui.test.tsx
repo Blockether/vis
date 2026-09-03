@@ -3501,12 +3501,11 @@ describe("the machine's voices", () => {
     settingsSource.indexOf("function FormLabel"),
   );
 
-  it("is a band on the machine's column and disappears where speech is not installed", () => {
+  it("is a band on the machine's column and disappears when speech is unavailable", () => {
     expect(settingsSource).toContain("<VoicesPanel");
     expect(settingsSource).toContain("prefs={speechPrefs}");
-    // 501 is a Vis with no voice extension — the ordinary one. Speech is not required
-    // to run Vis, so the band goes away entirely instead of explaining a feature this
-    // machine does not have, or worse, painting a red banner about it.
+    // A 501 means this gateway's built-in speech runtime is unavailable. Speech is
+    // not required to use Vis, so the band disappears instead of painting a failure.
     expect(panel).toContain("e.status === 501");
     expect(panel).toContain("if (isAbsent) return null;");
   });

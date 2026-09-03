@@ -1031,8 +1031,8 @@ export class GatewayClient {
         }
       }
       if (!res.ok) {
-        // The gateway writes its refusal as a SENTENCE (`{error: "no voice transcription
-        // engine is registered - …"}`); reading only `error.message` turned every one of
+        // The gateway writes its refusal as a SENTENCE (`{error: "no speech transcription
+        // engine is available"}`); reading only `error.message` turned every one of
         // them into "HTTP 501" on screen, which told the reader nothing they could act on.
         const problem = parsed as {
           error?: string | { message?: string };
@@ -2735,10 +2735,10 @@ export class GatewayClient {
     if (inflight) return inflight;
     const pending = (async () => {
       const metadataOnly = refresh && !!cached?.length;
-      const suffix = metadataOnly ? "?transcription_only=true" : "";
+      const path = `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments`;
       const res = await this.request<{ attachments?: GatewayAttachment[] }>(
         "GET",
-        `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments${suffix}`,
+        metadataOnly ? `${path}?transcription_only=true` : path,
         undefined,
         signal,
       );

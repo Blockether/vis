@@ -6,7 +6,7 @@
 {:paths ["src" "resources"]
  ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
  ;; :local/root dep's deps.edn, so resolving this extension alone needs vis' JitPack
- ;; repo (com.blockether/vis -> the voice extension -> com.github.k2-fsa.sherpa-onnx).
+ ;; repo (com.blockether/vis -> com.github.k2-fsa.sherpa-onnx).
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         ;; vis owns the extension/provider registries.

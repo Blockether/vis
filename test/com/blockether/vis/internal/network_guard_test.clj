@@ -52,9 +52,14 @@
        "    finally:\n" "        s.close()\n"))
 
 (defn- sandbox
-  "A sandbox with `network-opts`, its probes already defined."
+  "A jailed sandbox with `network-opts`, its probes already defined."
   [network-opts]
-  (let [env (tpc/new-context {} nil network-opts)]
+  (let [network-opts
+        (merge {:enabled? false :jail-enabled? true} network-opts)
+
+        env
+        (tpc/new-context {} nil network-opts)]
+
     (tpc/ev (:python-context env) probes)
     env))
 

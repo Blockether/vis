@@ -68,21 +68,22 @@
         (expect (.contains help "CONFIGURATION"))
         (expect (.contains help "~/.vis/config.yml"))
         (expect (.contains help "<project>/vis.yml"))))
-  (it "documents the flags that pick WHICH gateway does the work, TUI included"
+  (it "documents the flags that pick WHICH gateway does the work"
       (let [^String help (commandline/render-tree (#'main/root-command))]
         (expect (.contains help "GATEWAY (WHICH DAEMON RUNS THE WORK)"))
         (expect (.contains help "--gateway HOST[:PORT]|URL"))
         (expect (.contains help "--gateway-token TOKEN"))
         (expect (.contains help "VIS_GATEWAY_URL"))
         (expect (.contains help "VIS_GATEWAY_TOKEN"))
-        (expect (.contains help "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN tui")))))
+        (expect (.contains help
+                           "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN sessions list")))))
 
-;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: the TUI client
+;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: a client
 ;; synchronously initialized CPython before dispatch, then its gateway did it again.
 (defdescribe
   dispatch-extension-initialization-test
-  (it "defers Python initialization for clients and the gateway daemon"
-      (doseq [args [["channels" "tui" "--continue"] ["gateway" "start"]]]
+  (it "defers Python initialization for the gateway daemon"
+      (doseq [args [["gateway" "start"]]]
         (let [calls (atom [])]
           (with-redefs [manifest/initialize! #(swap! calls conj :clojure)
                         python-extensions/load-python-extensions! #(swap! calls conj :python)]
@@ -176,8 +177,7 @@
       (expect (throws? clojure.lang.ExceptionInfo #(#'main/connect-gateway! {:token "t"})))))
 
 (defdescribe log-role-for-args-test
-             (it "labels only the long-lived TUI and gateway server processes"
-                 (expect (= "tui" (#'main/log-role-for-args ["channels" "tui"])))
+             (it "labels only the long-lived gateway server process"
                  (expect (= "gateway" (#'main/log-role-for-args ["gateway" "start"])))
                  (expect (= "vis" (#'main/log-role-for-args ["gateway" "status"])))
                  (expect (= "vis" (#'main/log-role-for-args ["python" "-c" "print(1)"])))))

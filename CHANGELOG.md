@@ -1118,10 +1118,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 
 ### Added
-- Credit every model the voice extension can install in `THIRD_PARTY_MODELS.md`, generated from the manifest
+- Credit every model the built-in voice service can install in `THIRD_PARTY_MODELS.md`, generated from the manifest
 - Choose where a reply is spoken — this device or the machine that answered — and in which voice, with the phone falling back to its own voice when the machine cannot speak
 - Settings reports whether this machine can listen and speak: how far a model download has got, which engine is answering, why one is missing, and one button that retries
-- `vis-agent extension voice say "<text>"` and `vis-agent extension voice transcribe <clip.wav>` — the two one-line checks that a machine's voice works
+- `vis-agent speech say "<text>"` and `vis-agent speech transcribe <clip.wav>` — the two one-line checks that a machine's voice works
 - LJ (en-US), a fourth voice Vis fetches by itself, trained from scratch on public-domain recordings
 - A session that stopped to ask you something says so where you are looking: the fleet list flags it `INPUT NEEDED` and floats it to the top, the terminal tints that tab and its row amber, and the phone gets the notification
 - Hold a spoken conversation in the terminal, as on the phone: `C-x b` arms it for the tab you are on, every answer that lands there is read aloud, and what you dictate sends itself — reaching for the microphone silences whatever is being spoken

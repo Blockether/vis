@@ -379,10 +379,10 @@ describe("the speech-engines band", () => {
     expect(asked.filter((one) => one.startsWith("tts:") && one.endsWith(":start"))).toHaveLength(0);
   });
 
-  it("keeps both disclosures useful when the machine has no voice extension", async () => {
+  it("keeps both disclosures useful when the machine's voice runtime is unavailable", async () => {
     const { client } = machine(
-      absent("no voice transcription engine is registered", [
-        "foundation voice could not load its native library",
+      absent("no speech transcription engine is available", [
+        "the built-in speech runtime could not load its native library",
       ]),
       absent("no speech synthesis engine is registered"),
       { hasAsr: false, hasTts: false },

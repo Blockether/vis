@@ -19,7 +19,7 @@
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.toggles :as toggles]
-            [com.blockether.vis.internal.voice :as voice]
+            [com.blockether.vis.internal.speech :as speech]
             [com.blockether.vis.internal.loop :as lp]
             [reitit.ring :as rr]
             [ring.adapter.jetty9 :as jetty]
@@ -823,18 +823,17 @@
                                                (is (zero? @stops)))))))))
 
 (defn- with-only-direction-engine!
-  "Run `f` with EXACTLY `engine` registered in `direction` (nil = a gateway with no engine
-   in that direction at all), then put the registry back."
+  "Run `f` with exactly `engine` in one direction, without a mutable production registry."
   [direction engine f]
-  (let [before (voice/engines direction)]
-    (doseq [e before]
-      (voice/unregister-engine! direction (:id e)))
-    (try (when engine (voice/register-engine! direction engine))
-         (f)
-         (finally (doseq [e (voice/engines direction)]
-                    (voice/unregister-engine! direction (:id e)))
-                  (doseq [e before]
-                    (voice/register-engine! direction e))))))
+  (let [built-ins speech/engines]
+    (with-redefs-fn {#'speech/engines (fn [d]
+                                        (if (= d direction)
+                                          (cond-> []
+                                            engine
+                                            (conj engine))
+                                          (built-ins d)))
+                     #'speech/env-engine-id (constantly nil)}
+      f)))
 
 (defn- with-only-engine! [engine f] (with-only-direction-engine! :transcribe engine f))
 
@@ -921,7 +920,7 @@
 
     (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
       (fn []
-        (voice/reset-jobs!)
+        (speech/reset-jobs!)
         (with-only-engine!
           {:id :slow
            :label "Slow"
@@ -990,7 +989,7 @@
 
     (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
       (fn []
-        (voice/reset-jobs!)
+        (speech/reset-jobs!)
         (with-only-engine!
           {:id :slow
            :label "Slow"
@@ -1249,7 +1248,7 @@
 
     (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
       (fn []
-        (voice/reset-jobs!)
+        (speech/reset-jobs!)
         (with-only-speech-engine!
           (speaking-engine release)
           (fn []
@@ -1320,7 +1319,7 @@
                     (is (= "audio/wav" (get-in audio [:headers "Content-Type"])))
                     (is (java.util.Arrays/equals (body-bytes (:body audio)) (spoken-wav line)))))
                 (testing "forgetting the job takes its file with it - one WAV per reply is a leak"
-                  (let [path (voice/job-audio-path job-id)]
+                  (let [path (speech/job-audio-path job-id)]
                     (is (.isFile (io/file path)))
                     (is (= 200
                            (:status ((rv 'speech-job-handler)
@@ -1339,7 +1338,7 @@
   (let [sid (str (random-uuid))]
     (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
       (fn []
-        (voice/reset-jobs!)
+        (speech/reset-jobs!)
         (with-only-engine! {:id :fake-engine
                             :label "Fake"
                             :transcribe (constantly "hi")
@@ -1359,7 +1358,7 @@
                                (is (= 404 (speech 'speech-job-audio-handler :get)))
                                (is (= 404 (speech 'speech-job-handler :delete)))
                                (testing "and the job is still there, on its own route"
-                                 (is (some? (voice/job job-id)))
+                                 (is (some? (speech/job job-id)))
                                  (is (= 200
                                         (:status ((rv 'voice-job-handler)
                                                    {:request-method :get
@@ -3476,6 +3475,16 @@
             (is (str/includes? (get (wire/parse-json (:body response)) "error")
                                "cannot learn a voice"))))))))
 
+(deftest speech-tts-refusals-are-client-errors
+  (let [response
+        ((rv 'voice-import-failure)
+          (ex-info "That file is not a recording" {:type :speech-tts/clip-not-wav}))
+
+        body
+        (wire/parse-json (:body response))]
+
+    (is (= 400 (:status response)))
+    (is (= "clip-not-wav" (get body "reason")))))
 (deftest voices-hang-off-the-machine-not-off-a-session
   ;; An imported clip is stored on the machine and every session on it speaks with the
   ;; same catalogue, so the one screen that manages voices - settings, which is looking
@@ -3538,12 +3547,7 @@
                                   (is (= "downloading" (get body "status")))
                                   (is (= {:voice-id "ryan" :is-license-accepted true} @seen)))))))
 
-(deftest neither-speaking-nor-listening-is-required-to-run-vis
-  ;; Vis is an agent that CAN speak, not one that needs to. Speech and transcription are
-  ;; extensions, so a machine with neither installed is the ordinary one: the gateway
-  ;; still starts, chat still works, and every route in both directions answers the one
-  ;; refusal a client can read - 501, "no ... engine is registered". None of it may be a
-  ;; 500, and none of it may throw.
+(deftest voice-routes-report-an-unavailable-engine-consistently
   (let [sid
         (str (random-uuid))
 
@@ -3569,36 +3573,19 @@
               :transcribe
               nil
               (fn []
-                (testing "the gateway answers, and says plainly what it cannot do"
-                  (let [features (-> ((rv 'capabilities-handler) {})
-                                     :body
-                                     wire/parse-json
-                                     (get "features"))]
-                    (is (true? (get-in features ["chat" "enabled"])))
-                    (is (false? (get-in features ["voice" "enabled"])))
-                    (is (false? (get-in features ["speech" "is_enabled"])))))
-                (testing "every voice route refuses the same readable way, in both directions"
-                  (doseq [[handler request] refusals]
-                    (let [response ((rv handler) request)]
-                      (is (= 501 (:status response)) (str handler))
-                      (is (str/includes? (get (wire/parse-json (:body response)) "error")
-                                         "engine is registered")
-                          (str handler)))))
-                (testing "and a builtin engine that FAILED to load is named, not hidden"
-                  ;; "None is registered" is a fact about the process; "the runtime could not be
-                  ;; linked" is something a human can act on. A build that CARRIES an engine
-                  ;; which failed is not the same machine as one that carries none.
-                  (with-redefs-fn {#'voice/builtin-load-failures
-                                   (constantly {"com.example.engine"
-                                                "libsherpa-onnx-jni.dylib is not on this machine"})}
-                    (fn []
-                      (let [body (wire/parse-json (:body ((rv 'voice-model-handler)
-                                                           {:request-method :get})))]
-                        (is (= ["libsherpa-onnx-jni.dylib is not on this machine"]
-                               (get body "reasons")))
-                        (is (str/includes?
-                              (get body "error")
-                              "libsherpa-onnx-jni.dylib is not on this machine"))))))))))))))
+                (let [features (-> ((rv 'capabilities-handler) {})
+                                   :body
+                                   wire/parse-json
+                                   (get "features"))]
+                  (is (true? (get-in features ["chat" "enabled"])))
+                  (is (false? (get-in features ["voice" "enabled"])))
+                  (is (false? (get-in features ["speech" "is_enabled"]))))
+                (doseq [[handler request] refusals]
+                  (let [response ((rv handler) request)]
+                    (is (= 501 (:status response)) (str handler))
+                    (is (str/includes? (get (wire/parse-json (:body response)) "error")
+                                       "engine is available")
+                        (str handler))))))))))))
 
 ;; Regression, user report: the star was kept in each DEVICE's own storage, so one
 ;; screen showed a session starred while another showed it plain, and no answer from

@@ -190,8 +190,7 @@
       ;; promotion threshold; promoting them to :code blocks silently drops
       ;; the path-chip styling in every channel. Path-like literals (no
       ;; whitespace, has `/`, no URL scheme) stay inline however long.
-      (let [path
-            "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/screen.clj"]
+      (let [path "apps/vis-tui/src/com/blockether/vis/tui/screen.clj"]
         (expect (= [:ast {} [:p {} [:c {} path]]] (render/markdown->ast (str "`" path "`"))))))
   (it "still promotes a long URL code span (scheme prefix = not a path)"
       (let [url "https://example.com/some/very/long/path/that/exceeds/the/threshold"]

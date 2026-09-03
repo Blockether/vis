@@ -9,8 +9,7 @@
    JSON fixture the companion's own suite parses is the engine's own projection.
 
    The matching TUI half — one request driving the terminal dialog and this
-   bridge at the same time — is
-   `com.blockether.vis.ext.channel-tui.view-cross-channel-test`."
+   bridge at the same time — is the standalone app suite under `apps/vis-tui/test`."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]

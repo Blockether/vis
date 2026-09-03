@@ -22,7 +22,6 @@
      vis-agent sessions      - list persisted sessions
      vis-agent projects           - list projects, or delete one with its sessions
      vis-agent extension list     - list registered extensions
-     vis-agent tui                - interactive terminal UI (alias for `channels tui`)
      vis-agent channels <name>    - auto-mounted via the channel registry
 
    `vis-agent doctor` is host-owned. Extensions plug diagnostics into it
@@ -39,6 +38,7 @@
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.doctor :as doctor]
+            [com.blockether.vis.internal.speech.cli :as speech-cli]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis-python-runtime :as pyrt]
             [com.blockether.vis.internal.env-python :as env]
@@ -1712,8 +1712,8 @@
   "Fork a session by id. Creates a new `session_state` row
    that points at the latest state as its parent, optionally with a
    user-supplied title. Prints the new state UUID; the session
-   id (soul-id) stays the same so `vis-agent channels tui --session-id
-   <ID>` keeps working and now resumes from the fork."
+   id (soul-id) stays the same so `vis-tui --session-id <ID>` keeps
+   working and now resumes from the fork."
   [cid-input title]
   (let [d
         (lp/db-info)
@@ -1727,33 +1727,33 @@
                               (stdout! "  vis-agent sessions")
                               (shutdown-agents)
                               (System/exit 1))
-          :else
-          (let [;; Fork = new session_state = new workspace pin (1:1).
-                ;; Mint a fresh isolated workspace for the fork.
-                ws-id
-                (:id (workspace/ensure-workspace! d {}))
+          :else (let [;; Fork = new session_state = new workspace pin (1:1).
+                      ;; Mint a fresh isolated workspace for the fork.
+                      ws-id
+                      (:id (workspace/ensure-workspace! d {}))
 
-                opts
-                (cond-> {:workspace-id ws-id}
-                  (and title (not (str/blank? title)))
-                  (assoc :title title))
+                      opts
+                      (cond-> {:workspace-id ws-id}
+                        (and title (not (str/blank? title)))
+                        (assoc :title title))
 
-                new-state
-                (persistance/db-fork-session! d resolved opts)]
+                      new-state
+                      (persistance/db-fork-session! d resolved opts)]
 
-            (if new-state
-              (do (stdout! "")
-                  (stdout! (str "  Forked session " resolved))
-                  (when title (stdout! (str "  Title:        " title)))
-                  (stdout! (str "  New state-id: " new-state))
-                  (stdout! "")
-                  (stdout! (str "  Resume with: vis-agent channels tui --session-id " resolved))
-                  (stdout! ""))
-              (do (stdout!
-                    (str "Failed to fork session " resolved "; no existing state to fork from."))
-                  (shutdown-agents)
-                  (System/exit 1)))
-            (shutdown-agents)))))
+                  (if new-state
+                    (do (stdout! "")
+                        (stdout! (str "  Forked session " resolved))
+                        (when title (stdout! (str "  Title:        " title)))
+                        (stdout! (str "  New state-id: " new-state))
+                        (stdout! "")
+                        (stdout! (str "  Resume with: vis-tui --session-id " resolved))
+                        (stdout! ""))
+                    (do (stdout! (str "Failed to fork session "
+                                      resolved
+                                      "; no existing state to fork from."))
+                        (shutdown-agents)
+                        (System/exit 1)))
+                  (shutdown-agents)))))
 
 (defn- session-sort-key
   [{:keys [last-turn-at created-at id]}]
@@ -1826,9 +1826,9 @@
                        {:key :created :label "Created" :width 16 :align :left}]
                       rows)
         (stdout! (str "\n  " (count rows) " session(s)\n"))
-        (stdout! "  Resume with: vis-agent channels tui --session-id <ID>  (full or short)")
-        (stdout! "  Pick latest: vis-agent channels tui --continue")
-        (stdout! "  Browse:      vis-agent channels tui --resume")
+        (stdout! "  Resume with: vis-tui --session-id <ID>  (full or short)")
+        (stdout! "  Pick latest: vis-tui --continue")
+        (stdout! "  Browse:      vis-tui --resume")
         (stdout! "  Show:        vis-agent sessions show <ID>")
         (stdout! "  Fork:        vis-agent sessions fork <ID> [--title TITLE]")
         (stdout! "  Export:      vis-agent sessions export <ID> --md"))))
@@ -1916,7 +1916,7 @@
                              :created (or (fmt/format-date (:created-at state)) "-")})
                           states)))
     (stdout! "")
-    (stdout! (str "  Resume:  vis-agent channels tui --session-id " (:id session)))
+    (stdout! (str "  Resume:  vis-tui --session-id " (:id session)))
     (stdout! (str "  Export:  vis-agent sessions export " (subs (str (:id session)) 0 8) " --md"))
     (stdout! "")
     (shutdown-agents)))
@@ -3326,12 +3326,8 @@
 
 ;;; ── Top-level binary built-ins (registry/register-cmd! direct) ─────────
 ;;
-;; `providers`, `sessions`, `doctor`, `runtime`, `update`, and `ext` are the
-;; binary's own parent commands. They live at the top of the command
-;; tree -- `vis-agent providers ...`, NOT `vis-agent extension providers ...` -- so they
-;; bypass `:ext/cli` (the `vis-agent extension` subcommand slot). Direct
-;; `register-cmd!` is the right plumbing here; vis-runtime is the host,
-;; not an extension contributing to `vis-agent extension`.
+;; These are the binary's own parent commands. They live at the top of the command
+;; tree and bypass extension-contributed CLI registration.
 
 (doseq
   [spec
@@ -3371,7 +3367,7 @@
                 {:name "days" :kind :flag :type :int :doc "Staleness cutoff in days (default 14)."}]
      :cmd/examples ["vis-agent doctor" "vis-agent doctor --purge --dry-run"
                     "vis-agent doctor --purge --days 30"]
-     :cmd/run-fn cli-doctor!}
+     :cmd/run-fn cli-doctor!} speech-cli/command
     {:cmd/name "extension"
      :cmd/doc "Inspect or run an extension-contributed CLI command."
      :cmd/usage "vis-agent extension <list|...> [args...]"
@@ -3844,12 +3840,10 @@
 (defn- log-file-path [] (config/log-path))
 
 (defn- log-role-for-args
-  "Classify only the two long-lived process surfaces. Embedded Python executes
+  "Classify the one long-lived process surface. Embedded Python executes
    inside gateway; every short-lived command keeps the neutral `vis` role."
   [args]
-  (cond (= ["channels" "tui"] (vec (take 2 args))) "tui"
-        (= ["gateway" "start"] (vec (take 2 args))) "gateway"
-        :else "vis"))
+  (if (= ["gateway" "start"] (vec (take 2 args))) "gateway" "vis"))
 
 (defn- configure-logging!
   "Route Telemere signals: file handler always on, persistence-backed
@@ -3896,7 +3890,7 @@
 (defn- deferred-python-dispatch?
   "True for long-lived processes that load Python only at the gateway execution boundary."
   [args]
-  (contains? #{["channels" "tui"] ["gateway" "start"]} (vec (take 2 args))))
+  (= ["gateway" "start"] (vec (take 2 args))))
 
 ;; Root command
 ;;
@@ -3947,8 +3941,7 @@
      (help-row "--debug, --verbose, -v" "Enable verbose debug logging.")
      (help-row "--" "End flags: every later word is prompt text.")
      (help-row "--help, -h" "Show help.") "" "GATEWAY (WHICH DAEMON RUNS THE WORK)"
-     (help-row "--gateway HOST[:PORT]|URL"
-               "Drive another machine's gateway, TUI included (VIS_GATEWAY_URL).")
+     (help-row "--gateway HOST[:PORT]|URL" "Drive another machine's gateway (VIS_GATEWAY_URL).")
      (help-row "--gateway-token TOKEN" "Bearer token that gateway requires (VIS_GATEWAY_TOKEN).") ""
      "RUNTIME (WHAT RUNS)"
      (help-row "vis-agent runtime" "Name the runtime installed, and where it lives.")
@@ -3961,7 +3954,8 @@
      "vis-agent --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"task\""
      "vis-agent --toggles reasoning_level=deep \"refactor carefully\""
      "vis-agent --full-trace-json-stream --db :memory \"debug startup\""
-     "vis-agent sessions search sqlite" "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN tui"]))
+     "vis-agent sessions search sqlite"
+     "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN sessions list"]))
 
 (defn root-command
   "Build the root `vis-agent` command tree. Subcommands are pulled fresh on
@@ -4219,27 +4213,6 @@
                     {:vis/user-error true})))
   (gateway-client/connect-remote! {:url url :token token}))
 
-(def ^:private session-shortcut-flags
-  ;; Top-level `vis-agent --resume` / `vis-agent --continue` (pi-parity) are
-  ;; ergonomic aliases for the `channels tui` session flags.
-  {"--resume" "--resume" "-r" "--resume" "--continue" "--continue" "-c" "--continue"})
-
-(defn- rewrite-session-shortcuts
-  "Rewrite a leading `--resume`/`-r`/`--continue`/`-c` into
-   `channels tui <flag>` so the session shortcuts work at the root.
-   Only fires when the shortcut is the FIRST token, so flag-shaped
-   one-shot prompts (e.g. `vis-agent --json \"...\"`) are untouched."
-  [args]
-  (if-let [canon (get session-shortcut-flags (first args))]
-    (into ["channels" "tui" canon] (rest args))
-    (vec args)))
-
-(defn- rewrite-tui-shortcut
-  "Rewrite a leading `tui` into `channels tui` so the terminal UI is a
-   first-class top-level command (`vis-agent tui`) that boots the channels TUI.
-   Only fires when `tui` is the FIRST token, so it never shadows a prompt."
-  [args]
-  (if (= "tui" (first args)) (into ["channels" "tui"] (rest args)) (vec args)))
 
 (defn- rewrite-ext-alias
   "Back-compat: rewrite a leading `ext` into the canonical `extension`
@@ -4342,10 +4315,7 @@
         (split-gateway-flags (strip-global-args raw-args))
 
         args
-        (-> stripped
-            rewrite-session-shortcuts
-            rewrite-tui-shortcut
-            rewrite-ext-alias)]
+        (rewrite-ext-alias stripped)]
 
     (paths/set-log-role! (log-role-for-args args))
     (when measure? (System/setProperty "vis.measure" "1"))

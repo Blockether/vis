@@ -212,23 +212,6 @@
                                 (pr-str missing))))))
 
 
-;; Regression: the v0.1.33-v0.1.35 binaries — and the 2026-08-13 dry run — died in
-;; `native-binary-paints-the-tui-test` with a SIGSEGV inside the generated downcall
-;; stub, on x64 and arm64 alike, the first time the TUI opened /dev/tty. Lanterna's
-;; `TTYDeviceControl` <clinit> builds its termios/ioctl MethodHandles; initialized
-;; in the BUILDER JVM (where java.lang.foreign works) the image inherited
-;; SUPPORTED=true and handles with no stubs behind them. It has to decide in the
-;; BINARY instead.
-(defdescribe
-  tty-device-control-initializes-at-run-time-test
-  (it "keeps lanterna's TTY control out of build-time initialization"
-      (let [src (slurp (io/file "build.clj"))]
-        (expect (str/includes?
-                  src
-                  "--initialize-at-run-time=com.googlecode.lanterna.terminal.ansi.TTYDeviceControl")
-                (str "build.clj must initialize TTYDeviceControl at RUN time, or the "
-                     "binary segfaults on its first TUI frame")))))
-
 
 ;; Regression, v0.1.39: the released binary was DEAD — every command aborted with
 ;; "Could not locate com/blockether/vis/core__init.class ... on classpath", and

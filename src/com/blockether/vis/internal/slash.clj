@@ -122,10 +122,8 @@
 
 (defn- index-by-path
   "Build `{path-vec [slash-spec ...]}` from a vec of slash specs.
-   Multiple specs may share a path when their availability-fn
-   predicates partition the channel set (e.g. TUI `/voice` and a
-   non-TUI `/voice` registered by separate extensions). Per-path
-   vec is in registration order."
+   Multiple specs may share a path when their availability predicates partition the
+   channel set. The per-path vec preserves registration order."
   [slashes]
   (reduce (fn [acc s]
             (update acc (extension/slash-path s) (fnil conj []) s))

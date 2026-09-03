@@ -604,39 +604,35 @@ calls to HTTP/SSE. Shared executable transport code is neither required nor desi
 not a browser. The contract capability matrix marks it unavailable in browser JavaScript rather
 than pretending parity.
 
-## Phase 10 — Put the TUI on the Clojure SDK
+## Phase 10 — Extract the TUI as a standalone gateway client
 
-**Rationale.** The TUI is the largest in-process consumer and the proof that the Clojure SDK can serve
-a same-process channel rather than only a remote client. It pierces the facade in 21 engine namespaces
-today, so it is the conformance application that makes a leak impossible to merge.
+**Rationale.** A terminal UI needs process isolation and terminal libraries, but it does not need a
+second copy of the engine, providers, persistence, speech runtime or embedded CPython. Keeping the
+TUI inside the engine image made a renderer pull the whole host classpath into every invocation.
+The durable boundary is the same one the Companion uses: HTTP/SSE plus the versioned gateway
+contract.
 
-**Data.** The measured TUI debt is 21 engine namespaces:
-
-```text
-attachments · config · extension · external-opener · file-picker · format · gateway.wire · header
-iteration · limits-format · paths · prompt-templates · provider-error · provider-limits · providers
-render · theme · view · view.materializer · view.spec · workspace
-```
-
-Each resolves one of three ways: an SDK operation, a contract type re-exported by the SDK, or a
-TUI-owned implementation when only the TUI needs it.
+**Data.** `apps/vis-tui` owns the Lanterna application and depends on `vis-contract`, HTTP/JSON and
+rendering libraries only. `com.blockether.vis.tui.client` is its transport adapter. Gateway state
+projects provider errors, session state, artifacts, Human Input and live View data before they cross
+the wire; the app never imports `com.blockether.vis.core` or `com.blockether.vis.internal.*`.
 
 **Acceptance criteria.**
 
-- Change `extensions/channels/vis-channel-tui/deps.edn:10-12` from the whole engine to
-  `com.blockether/vis-sdk`. Production TUI code has zero imports, dynamic resolves or doc references to
-  `com.blockether.vis.core`, `com.blockether.vis.internal.*` or `com.blockether.vis.contract.*`.
-- The TUI registers and receives channel callbacks through the SDK's in-process host adapter; its
-  manifest entry and the CLI's `requiring-resolve` of `channel-tui.screen/run-chat!` keep working.
-- Visible rendering policy stays in the TUI. Paint contracts, Lanterna work and the screenshot API do
-  not migrate into the SDK, and no SDK operation exists only to satisfy one renderer.
-- The TUI suite, its terminal-grid assertions and the PNG capture path stay green; a native build and
-  `-M:test-native` prove the binary still starts the chat screen.
-- `:debt/production` loses every TUI entry in the same slices.
+- `apps/vis-tui/deps.edn` has no dependency on the Vis engine, provider packs, persistence, speech,
+  Svar or embedded CPython; `tui_app_boundary_test.clj` rejects regressions.
+- The root manifest and aggregate classpath contain no TUI extension entry. `vis-agent` owns the
+  gateway; `vis-tui` connects as a leased protocol client and never starts an in-process engine.
+- Visible rendering policy, Lanterna work and screenshot capture remain in `apps/vis-tui`; the app
+  suite keeps its terminal-grid and deterministic rendering assertions.
+- `clojure -T:build native` under `apps/vis-tui` produces a standalone executable. Releases publish
+  `vis-tui-<os>-<arch>.tar.gz` separately from `vis-agent-<os>-<arch>-community.tar.gz`.
+- The engine native image carries no Lanterna reachability metadata or PTY first-frame test; the TUI
+  executable is smoke-tested through `--version` and `--help` in its own artifact path.
 
-**Unknowns.** Some formatting, file-picker and path helpers may be pure UI utilities rather than Vis
-APIs. They move into the TUI when only the TUI uses them; only cross-consumer semantics earn an SDK
-operation.
+**Unknowns.** Automatic installation and update UX for the optional TUI can be added after native
+artifacts are shipping reliably. It must remain a client install concern, not re-enter the agent
+bundle.
 
 ## Phase 11 — Put Companion transport on the JavaScript SDK
 
@@ -815,8 +811,9 @@ The prior plan's contract, wire, View, Activity, gateway and loading work remain
 of scope: Clojure, JavaScript and Python SDK artifacts are Phase 4, clients are Phase 9, and
 first-party SDK-only consumption is Phases 10-12.
 
-TODO, in order: 2 canonical wire/gateway contract · 3 all executable contracts · 4 three SDK
-artifacts · 5 Core Environment and Foundation deletion · 6 Core View · 7 Core execution and Tool
-Activity · 8 gateway state owners · 9 internal server/public SDK clients · 10 TUI on the Clojure SDK
-· 11 Companion transport on the JavaScript SDK · 12 Companion View, extensions and facade deletion
-· 13 manifest, release, budgets and final gates.
+TODO, in order: finish 2 canonical wire/gateway contract · 3 all executable contracts · 4 three
+SDK artifacts · 5 Core Environment and Foundation deletion · 6 Core View · 7 Core execution and Tool
+Activity · 8 gateway state owners · 9 internal server/public SDK clients · 11 Companion transport on
+the JavaScript SDK · 12 Companion View, extensions and facade deletion · 13 manifest, release,
+budgets and final gates. Phase 10 is implemented as the standalone `apps/vis-tui` gateway client,
+with an independent native artifact; it intentionally no longer targets an in-process Clojure SDK.

@@ -148,8 +148,8 @@ jobs:
           # The same two FREE runners, the same measured heap settings as
           # native-release.yml — a beta must be built exactly the way the stable
           # asset is, or it stops predicting anything about the release.
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64-community.tar.gz, tui_asset: vis-tui-linux-x64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64-community.tar.gz, tui_asset: vis-tui-linux-arm64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
     steps:
       - uses: actions/checkout@v7
         with:
@@ -165,7 +165,7 @@ jobs:
             ~/.gitlibs
             ~/.clojure/.cpcache
             ~/.vis/build-cache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       # GitHub's Linux runner ships ~4 GB of swap; back the 14 GB builder heap
       # with a real swapfile instead of letting the JVM die on GC overhead.
@@ -215,10 +215,20 @@ jobs:
         env:
           VIS_NATIVE_BIN: ${{ matrix.bin }}
         run: clojure -M:test-native
+      - name: Build and stage standalone TUI
+        run: |
+          cd apps/vis-tui
+          clojure -T:build native
+          cd ../..
+          bin/stage-tui-release apps/vis-tui/target/vis-tui "${{ matrix.tui_asset }}"
+          target/tui-release-bundle/vis-tui --version
+          target/tui-release-bundle/vis-tui --help >/dev/null
       - name: Attach to the beta prerelease
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ matrix.asset }}
+          files: |
+            ${{ matrix.asset }}
+            ${{ matrix.tui_asset }}
           tag_name: ${{ env.VIS_BETA_TAG }}
           prerelease: true
           make_latest: false

@@ -3,8 +3,8 @@
 
    `container-image-test` reads the Dockerfile and the unit suite runs on the
    JVM, so neither can see the failures native-image actually produces: a
-   missing reachability entry that compiles cleanly and dies on the first frame,
-   an agent path that never boots, an HTTP transport that cannot reach a model.
+   missing reachability entry that compiles cleanly and dies at runtime, an agent
+   path that never boots, or an HTTP transport that cannot reach a model.
    Those exist only once `clojure -T:build native` has linked `target/vis`, so
    they are proven HERE — by RUNNING that file — and nowhere else. Proving them
    inside a `docker build` instead made the answer cost a container build and
@@ -34,11 +34,9 @@
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
-            [com.blockether.vis-python-runtime :as python-runtime]
-            [com.blockether.vis.internal.foundation.pty :as pty]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (com.sun.net.httpserver HttpExchange HttpHandler HttpServer)
-           (java.io File InputStream)
+           (java.io File)
            (java.lang ProcessBuilder$Redirect)
            (java.net InetSocketAddress)
            (java.nio.charset StandardCharsets)
@@ -141,68 +139,6 @@
      :exit (when finished? (.exitValue process))
      :output (if (.exists log) (slurp log) "")}))
 
-(defn- pty-text
-  "Reads a pseudo-terminal until `enough?` likes what it has seen, or the deadline
-   passes; everything read either way.
-
-   `.available` rather than a blocking read: a TUI that never writes another byte
-   must not hold the suite until the pipe closes."
-  [^InputStream in ^long deadline-ms enough?]
-  (let [buffer
-        (byte-array 8192)
-
-        stop-at
-        (+ (System/currentTimeMillis) deadline-ms)]
-
-    (loop [seen ""]
-      (cond (enough? seen) seen
-            (> (System/currentTimeMillis) stop-at) seen
-            (pos? (.available in))
-            (let [n (.read in buffer)]
-              (recur (if (pos? n) (str seen (String. buffer 0 n StandardCharsets/UTF_8)) seen)))
-            :else (do (Thread/sleep 50) (recur seen))))))
-
-(defn- with-a-controlling-terminal
-  "`argv` wrapped in `script(1)`, which is the only portable way to hand a child a
-   CONTROLLING terminal.
-
-   A pty alone is not enough: `posix_spawn` with SETSID (what
-   `internal.foundation.pty` does for background shells) leaves the child in a new
-   session with no controlling tty, and the binary opens /dev/tty on its way up —
-   MEASURED: `vis-agent: fatal error - /dev/tty (Device not configured)`, twice,
-   and then no frame ever. `script` does the setsid + TIOCSCTTY dance itself, and
-   it needs a terminal of its own to do it, which is what the pty below is for.
-   BSD and util-linux disagree about how the command is passed."
-  [argv]
-  (if (str/starts-with? (System/getProperty "os.name") "Mac")
-    (into ["/usr/bin/script" "-q" "/dev/null"] argv)
-    ["/usr/bin/script" "-qec" (str/join " " argv) "/dev/null"]))
-
-(defn- run-on-a-pty
-  "Spawns `argv` on a REAL pseudo-terminal — `isatty` true, `$TERM` honoured, a
-   size the child can ask for — and reads what it paints.
-
-   The pty is Vis' own `internal.foundation.pty`, parent-side JVM code: nothing
-   about the binary under test is mocked by using it."
-  [^File dir argv deadline-ms enough?]
-  (when-let [library (python-library (native-binary))]
-    (python-runtime/use-library! (.getAbsolutePath library)))
-  (let [handle
-        (pty/spawn!
-          {:command (with-a-controlling-terminal argv)
-           :dir (.getAbsolutePath dir)
-           :env (merge (into {} (System/getenv)) (native-environment) {"TERM" "xterm-256color"})
-           :cols 120
-           :rows 40})
-
-        painted
-        (pty-text (:in handle) deadline-ms enough?)
-
-        alive?
-        ((:alive? handle))]
-
-    ((:destroy handle) true)
-    {:painted painted :alive? alive?}))
 
 ;; ── a provider that answers on loopback ──────────────────────────────────────
 
@@ -325,38 +261,6 @@
                         (expect (re-find #"(?m)^vis-agent\s+\S+" output) output)
                         (finally (delete-tree! dir))))))
 
-(defdescribe
-  native-binary-paints-the-tui-test
-  ;; Lanterna reaches the terminal through JNI and reflection: a reachability
-  ;; entry missing from the image compiles fine and dies on the FIRST FRAME, so
-  ;; the only proof is a running TUI. A painted alternate screen plus a process
-  ;; still alive behind it is that proof — anything else is a TUI that left.
-  (it
-    "paints a first frame and is still running behind it"
-    (let [dir
-          (temp-dir "vis-native-tui")
-
-          ;; Entering the alternate screen is the first thing a live frame does.
-          alt-screen
-          "\u001b[?1049h"
-
-          {:keys [painted alive?]}
-          (run-on-a-pty dir
-                        [(.getAbsolutePath (require-binary)) "channels" "tui"]
-                        20000
-                        #(str/includes? % alt-screen))]
-
-      (try
-        (expect (str/includes? painted alt-screen)
-                (str "no alternate-screen frame reached the pty:\n" painted))
-        (expect alive? (str "the native TUI left on its own:\n" painted))
-        (expect
-          (nil?
-            (re-find
-              #"ClassNotFoundException|NoClassDefFoundError|UnsatisfiedLinkError|NoSuchMethodError"
-              painted))
-          painted)
-        (finally (delete-tree! dir))))))
 
 (defdescribe native-binary-runs-a-whole-agent-turn-test
              ;; The one-shot entrypoint boots the session store, the tool registry, config
@@ -494,9 +398,7 @@
           (.getAbsolutePath (require-binary))
 
           said
-          (run-binary dir
-                      [bin "extension" "voice" "say" spoken-sentence "--out" (.getAbsolutePath wav)]
-                      900)]
+          (run-binary dir [bin "speech" "say" spoken-sentence "--out" (.getAbsolutePath wav)] 900)]
 
       (try
         (expect (= 0 (:exit said)) (:output said))
@@ -512,8 +414,7 @@
                   (str "implausible sample rate: " facts))
           (expect (> (long (:bytes facts)) 20000)
                   (str "the binary wrote a WAV with nothing in it: " facts)))
-        (let [heard
-              (run-binary dir [bin "extension" "voice" "transcribe" (.getAbsolutePath wav)] 900)]
+        (let [heard (run-binary dir [bin "speech" "transcribe" (.getAbsolutePath wav)] 900)]
           (expect (= 0 (:exit heard)) (:output heard))
           (expect (heard-most-words? (:output heard) spoken-sentence)
                   (str "the binary did not hear what it had just said:\n" (:output heard))))
@@ -530,7 +431,7 @@
 
             said
             (run-binary dir
-                        [(.getAbsolutePath (require-binary)) "extension" "voice" "say"
+                        [(.getAbsolutePath (require-binary)) "speech" "say"
                          "The bundle we ship is the ONNX export itself." "--pocket-tts" "--out"
                          (.getAbsolutePath wav)]
                         900)]
@@ -541,18 +442,17 @@
                (expect (= 24000 (long (:sample-rate facts)))
                        (str "pocket-tts speaks at 24 kHz; got " facts)))
              (finally (delete-tree! dir)))))
-  (it
-    "lists the voices this machine can speak in without loading a model"
-    (let [dir
-          (temp-dir "vis-native-voices")
+  (it "lists the voices this machine can speak in without loading a model"
+      (let [dir
+            (temp-dir "vis-native-voices")
 
-          {:keys [exit output]}
-          (run-binary dir [(.getAbsolutePath (require-binary)) "extension" "voice" "voices"] 120)]
+            {:keys [exit output]}
+            (run-binary dir [(.getAbsolutePath (require-binary)) "speech" "voices"] 120)]
 
-      (try (expect (= 0 exit) output)
-           (expect (str/includes? output "piper") output)
-           (expect (str/includes? output "pocket-tts") output)
-           (finally (delete-tree! dir))))))
+        (try (expect (= 0 exit) output)
+             (expect (str/includes? output "piper") output)
+             (expect (str/includes? output "pocket-tts") output)
+             (finally (delete-tree! dir))))))
 
 
 ;; ── the embedded CPython, inside the linked image ────────────────────────────
