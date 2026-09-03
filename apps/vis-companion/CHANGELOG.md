@@ -2,6 +2,25 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (5306) — 2026-09-03
+<!-- commit: 22cf694c3c0c39111ac1e42a37b3f3910ab76f8a -->
+
+- Stop blurring the composer as the app backgrounds
+- Ship standalone app with built-in speech
+- Set diagnostics facts at the dialog detail size
+- Fold the diagnostics panel behind its band
+- State the diagnostics panel as facts, not prose
+- Add project swipe deletion
+- Fold the application column behind its band chevron
+- Remove divider before project plus
+- Compact project creation and deletion
+- Target copied session title events
+- Move pull-to-search prompt into app bar
+- Move favorites to row lead
+- Restore queued action gutter
+- Preserve partial output after cancellation
+- Record release entry for build 5275
+
 ## 0.1.41 (5275) — 2026-09-03
 <!-- commit: b15d795974db4d0d3eb6c6a382c7697249616d59 -->
 
