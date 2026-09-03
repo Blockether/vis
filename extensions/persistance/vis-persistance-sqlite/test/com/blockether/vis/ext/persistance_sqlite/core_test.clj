@@ -2666,15 +2666,6 @@
         (expect (= "(+ 1 1)" (:code iteration)))
         (expect (= "2\n" (:stdout form)))))))
 
-;; Answer lifecycle (placeholder; live behaviour exercised in loop tests)
-
-(defdescribe answer-lifecycle-test
-             ;; Removed: "session_turn_state stores answer on update" and
-             ;; "SESSION_PREVIOUS_ANSWER var tracks across turns". Live behaviour
-             ;; is exercised by the iteration loop tests rather than persisted-shape
-             ;; probes here. The answer column is the dedicated `answer` BLOB.
-             (it "placeholder — answer lifecycle assertions migrated to the loop suite"
-                 (expect true)))
 
 (defdescribe
   log-test

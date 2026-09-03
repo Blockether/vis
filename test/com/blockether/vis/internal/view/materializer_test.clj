@@ -15,7 +15,7 @@
                      :nodes (vec nodes)
                      :timeout-ms 0
                      :seq 0
-                     :created-at "2026-08-17T19:52:46Z"}))
+                     :created-at 1}))
 
 (defn- patched
   "`v` after one patch carrying `ops`. Every patch advances `:seq`, exactly as
@@ -180,15 +180,15 @@
       (expect (str/includes? why "`log`"))
       (expect (str/includes? why "t"))
       (expect (= 8 (count (:rows (node v "t")))))))
-  (it "refuses one over-full patch with `split it` rather than a bound on the node"
+  (it "refuses a patch over the contract line limit"
       (let [why (refusal #(patched (view (log-node 100000))
                                    {:op :append
                                     :node-id "log"
                                     :lines (mapv str
                                                  (range (inc (long (:max-patch-lines
                                                                      hs/log-defaults)))))}))]
-        (expect (str/includes? why "one patch carries at most"))
-        (expect (str/includes? why "split it"))))
+        (expect (str/includes? why "maxItems"))
+        (expect (str/includes? why "500"))))
   ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a cleared log kept counting the
   ;; lines it had dropped, so a surface offered to load earlier lines the RECORD no longer
   ;; serves — `live-sink/log-range` starts its own count again at every `clear`.

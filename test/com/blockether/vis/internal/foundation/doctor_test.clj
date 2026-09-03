@@ -1,22 +1,7 @@
 (ns com.blockether.vis.internal.foundation.doctor-test
-  "Unit tests for foundation's `:ext/doctor-fn` sections:
-   ::agents-md and ::housekeeping.
-
-   Plan §6: each section returns expected message shapes for every
-   input scenario; the composite `doctor-fn` stamps the right
-   `:check-id` on every message."
+  "Contract tests for foundation's `:ext/doctor-fn` contribution."
   (:require [com.blockether.vis.internal.foundation.doctor :as doctor]
             [lazytest.core :refer [defdescribe expect it]]))
-
-;; ::agents-md
-
-(defdescribe agents-md-check-test
-             ;; Removed: "emits one :info message when AGENTS.md found". The AGENTS.md
-             ;; scanner now emits a different message shape (count and/or text)
-             ;; depending on repo layout; cwd-cached behaviour is exercised by
-             ;; the agents scanner tests directly.
-             (it "placeholder — AGENTS.md doctor message covered by agents scanner tests"
-                 (expect true)))
 
 ;; Composite doctor-fn shape
 

@@ -12,7 +12,7 @@
  ;; JitPack hosts sherpa-onnx, which the built-in gateway speech subsystem uses.
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps
-{;; The extension contract is published separately so extensions and tools can read
+ {;; The extension contract is published separately so extensions and tools can read
   ;; its validated JSON documents without depending on the engine.
   com.blockether/vis-contract {:local/root "packages/vis-contract"}
   com.blockether/vis-foundation-search {:local/root "extensions/common/vis-foundation-search"}
@@ -145,35 +145,35 @@
   ;; alias has to keep mainng lazytest.main — `run_tests` appends its own selector
   ;; flags (--namespace / --var) to `clojure -M:test`.
   :test
-{:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
-    :extra-paths
-    ["test" "dev" "extensions/common/vis-foundation-search/test"
-     "extensions/languages/vis-language-clojure/test" "extensions/languages/vis-language-python/test"
-     "extensions/persistance/vis-persistance-sqlite/test"
-     "extensions/providers/vis-provider-alibaba/test"
-     "extensions/providers/vis-provider-anthropic/test"
-     "extensions/providers/vis-provider-github-copilot/test"
-     "extensions/providers/vis-provider-openai-codex/test"
-     "extensions/providers/vis-provider-opencode-go/test"
-     "extensions/providers/vis-provider-openrouter/test"
-     "extensions/providers/vis-provider-standard/test" "extensions/providers/vis-provider-zai/test"]
-   :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
+  {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :extra-paths
+   ["test" "dev" "extensions/common/vis-foundation-search/test"
+    "extensions/languages/vis-language-clojure/test" "extensions/languages/vis-language-python/test"
+    "extensions/persistance/vis-persistance-sqlite/test"
+    "extensions/providers/vis-provider-alibaba/test"
+    "extensions/providers/vis-provider-anthropic/test"
+    "extensions/providers/vis-provider-github-copilot/test"
+    "extensions/providers/vis-provider-openai-codex/test"
+    "extensions/providers/vis-provider-opencode-go/test"
+    "extensions/providers/vis-provider-openrouter/test"
+    "extensions/providers/vis-provider-standard/test" "extensions/providers/vis-provider-zai/test"]
+   :jvm-opts ["-Xmx2g" "-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
               "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
               "-Dvis.drafts.dir=target/vis-drafts-test"]
    ;; --hook refuses non-loopback HTTP for the whole run: see
    ;; com.blockether.vis.test-network-guard.
    :main-opts
-["-m" "lazytest.main" "--hook" "com.blockether.vis.test-network-guard/no-network" "test"
-     "extensions/common/vis-foundation-search/test"
-     "extensions/languages/vis-language-clojure/test" "extensions/languages/vis-language-python/test"
-     "extensions/persistance/vis-persistance-sqlite/test"
-     "extensions/providers/vis-provider-alibaba/test"
-     "extensions/providers/vis-provider-anthropic/test"
-     "extensions/providers/vis-provider-github-copilot/test"
-     "extensions/providers/vis-provider-openai-codex/test"
-     "extensions/providers/vis-provider-opencode-go/test"
-     "extensions/providers/vis-provider-openrouter/test"
-     "extensions/providers/vis-provider-standard/test" "extensions/providers/vis-provider-zai/test"]}
+   ["-m" "lazytest.main" "--hook" "com.blockether.vis.test-network-guard/no-network" "test"
+    "extensions/common/vis-foundation-search/test" "extensions/languages/vis-language-clojure/test"
+    "extensions/languages/vis-language-python/test"
+    "extensions/persistance/vis-persistance-sqlite/test"
+    "extensions/providers/vis-provider-alibaba/test"
+    "extensions/providers/vis-provider-anthropic/test"
+    "extensions/providers/vis-provider-github-copilot/test"
+    "extensions/providers/vis-provider-openai-codex/test"
+    "extensions/providers/vis-provider-opencode-go/test"
+    "extensions/providers/vis-provider-openrouter/test"
+    "extensions/providers/vis-provider-standard/test" "extensions/providers/vis-provider-zai/test"]}
   ;; The ENGINE native binary's own suite: what only `target/vis` can answer — a
   ;; whole one-shot agent turn and the provider extensions linked into the image.
   ;; A separate alias because it needs a native build first and must fail loudly when

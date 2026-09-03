@@ -15,15 +15,13 @@
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defn- vis-jvm-opts
-  "The `:vis` alias `:jvm-opts` from the root deps.edn — the options every
-   `clojure -M:vis` process (TUI and `gateway start`) runs with."
-  []
-  (get-in (edn/read-string (slurp (io/file "deps.edn"))) [:aliases :vis :jvm-opts]))
+(defn- alias-jvm-opts
+  [alias]
+  (get-in (edn/read-string (slurp (io/file "deps.edn"))) [:aliases alias :jvm-opts]))
 
 (defdescribe vis-alias-heap-ceiling-test
              (it "pins an explicit 5 GiB ceiling instead of a share of host RAM"
-                 (let [opts (vis-jvm-opts)]
+                 (let [opts (alias-jvm-opts :vis)]
                    (expect (seq opts))
                    (expect (some #{"-Xmx5g"} opts)
                            (str "expected an explicit -Xmx5g, got " (pr-str opts)))
@@ -35,7 +33,11 @@
              (it "keeps the uncommit flags that make the ceiling shrinkable"
                  ;; -Xmx alone caps growth; it never hands pages back. The periodic
                  ;; concurrent cycle plus the free ratios are what return them to the OS.
-                 (let [opts (set (vis-jvm-opts))]
+                 (let [opts (set (alias-jvm-opts :vis))]
                    (expect (contains? opts "-XX:+G1PeriodicGCInvokesConcurrent"))
                    (expect (contains? opts "-XX:MinHeapFreeRatio=10"))
-                   (expect (contains? opts "-XX:MaxHeapFreeRatio=25")))))
+                   (expect (contains? opts "-XX:MaxHeapFreeRatio=25"))))
+             (it "caps the test runner at 2 GiB independently of host RAM"
+                 (let [opts (alias-jvm-opts :test)]
+                   (expect (some #{"-Xmx2g"} opts))
+                   (expect (not-any? #(str/includes? % "MaxRAM") opts)))))

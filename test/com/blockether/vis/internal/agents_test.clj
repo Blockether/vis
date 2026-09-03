@@ -1,14 +1,10 @@
 (ns com.blockether.vis.internal.agents-test
-  "Smoke tests for the internal AGENTS.md / CLAUDE.md reader.
-
-   The exhaustive truncation / fallback / cache coverage lives in the
-   foundation-core test (it predates the move and exercises the same
-   logic via the shim). This namespace pins the internal entry points
-   so a future shim removal can lean on a direct test surface."
+  "Contract tests for the core project-guidance reader."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [com.blockether.vis.internal.agents :as agents]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-tmp-root*
@@ -35,7 +31,35 @@
                  (with-tmp-root* (fn [^java.io.File root]
                                    (let [{:keys [result warnings]} (agents/scan-in root)]
                                      (expect (false? (:found? result)))
-                                     (expect (empty? warnings)))))))
+                                     (expect (empty? warnings))))))
+             (it "inlines large guidance verbatim"
+                 (with-tmp-root* (fn [^java.io.File root]
+                                   (let [n
+                                         (* 64 1024)
+
+                                         file
+                                         (java.io.File. root "AGENTS.md")]
+
+                                     (spit file (apply str (repeat n \a)))
+                                     (let [result (:result (agents/scan-in root))]
+                                       (expect (= n (:bytes result)))
+                                       (expect (= n (count (:content result))))
+                                       (expect (not (contains? result :truncated?))))))))
+             (it "reload caches until the active workspace guidance changes"
+                 (with-tmp-root* (fn [^java.io.File root]
+                                   (let [file (java.io.File. root "AGENTS.md")]
+                                     (spit file "# first\n")
+                                     (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+                                       (let [first-result (:result (agents/reload!))
+                                             cached-result (:result (agents/reload!))]
+
+                                         (expect (= "# first\n" (:content first-result)))
+                                         (expect (identical? first-result cached-result)))
+                                       (spit file "# second\n")
+                                       (let [changed-result (:result (agents/reload!))]
+                                         (expect (= "# second\n" (:content changed-result)))))
+                                     (binding [workspace/*workspace-root* nil]
+                                       (agents/reload!)))))))
 
 (defdescribe scan-roots-test
              (it
