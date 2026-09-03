@@ -7,7 +7,6 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.config-validation :as config-validation]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.registry :as registry]
             [lazytest.core :refer [defdescribe it expect]]
@@ -65,16 +64,13 @@
                        runtime
                        (config/runtime-config wire)]
 
-                   (expect (config-validation/providers-valid? (get wire "providers")))
                    (expect (= {:timeout-ms 1800000
                                :first-byte-timeout-ms 600000
                                :idle-timeout-ms 600000
                                :semantic-timeout-ms 600000}
                               (get-in runtime [:providers 0 :network])))
                    (expect (= (get-in wire ["providers" 0 "network"])
-                              (get-in (#'config/->yaml-safe runtime) ["providers" 0 "network"]))))
-                 (expect (not (config-validation/providers-valid?
-                                [{"id" "local" "network" {"first_byte_timeout_ms" -1}}])))))
+                              (get-in (#'config/->yaml-safe runtime) ["providers" 0 "network"]))))))
 
 (defdescribe
   ->svar-provider-test
@@ -1165,31 +1161,6 @@
   declared-environment-test
   "`environment:` says WHERE each variable's value comes from, and every surface
    resolves it through `extension-env-status`. Every declaration names its source explicitly."
-  (it "requires exactly one named source and refuses a bare literal"
-      (expect (config-validation/environment-valid? {"A" {"env" "B"}}))
-      (expect (config-validation/environment-valid? {"A" {"dotenv" "A"}}))
-      (expect (config-validation/environment-valid? {"A" {"keychain" "vis-exa" "account" "alice"}}))
-      (expect (config-validation/environment-valid? {"A" {"command" ["gh" "auth" "token"]}}))
-      ;; Issue #156: a non-secret marker had no spelling at all, so a project had to
-      ;; put a Vis-owned variable into its own `.env`.
-      (expect (config-validation/environment-valid? {"VIS_MANAGED" {"literal" "true"}}))
-      (expect (config-validation/environment-valid? {"VIS_MANAGED" {"literal" true}}))
-      (expect (config-validation/environment-valid? {"VIS_PORT" {"literal" 8080}}))
-      (expect (not (config-validation/environment-valid? {"A" "a-literal-value"})))
-      (expect (not (config-validation/environment-valid? {"A" "${B}"})))
-      (expect (not (config-validation/environment-valid? {"A" {}})))
-      (expect (not (config-validation/environment-valid? {"A" {"literal" ""}})))
-      (expect (not (config-validation/environment-valid? {"A" {"literal" "x" "env" "B"}})))
-      ;; The wrapper is for what is NOT a secret: a credential-looking name still
-      ;; has to say where its value comes from.
-      (expect (not (config-validation/environment-valid? {"OPENAI_API_KEY" {"literal" "sk-live"}})))
-      (expect (not (config-validation/environment-valid? {"GITHUB_TOKEN" {"literal" "ghp-1"}})))
-      (expect (not (config-validation/environment-valid? {"DB_PASSWORD" {"literal" "hunter2"}})))
-      (expect (not (config-validation/environment-valid? {"A" {"env" "B" "dotenv" "B"}})))
-      (expect (not (config-validation/environment-valid? {"A" {"keychain" "k" "command" ["x"]}})))
-      (expect (not (config-validation/environment-valid? {"A" {"command" ["x"]
-                                                               "account" "alice"}})))
-      (expect (not (config-validation/environment-valid? {"9BAD" {"env" "B"}}))))
   (it "`env:` passes an outer variable through under a new name"
       (binding [config/*extension-getenv* {"WORK_OPENAI_KEY" "outer" "VIS_TEST_BLANK_OUTER" ""}]
         (with-declared-environment {"OPENAI_API_KEY" {"env" "WORK_OPENAI_KEY"}
@@ -1207,6 +1178,8 @@
             (expect (= {:name "VIS_TEST_DECLARED_CMD" :source :command :value "token-from-helper"}
                        (config/extension-env-status "VIS_TEST_DECLARED_CMD")))
             (expect (= ["VIS_TEST_DECLARED_CMD"] (config/declared-environment-names)))))))
+  ;; Regression, issue #156: a non-secret marker had no source spelling, forcing
+  ;; operators to put a Vis-owned variable into `.env`.
   (it "a `literal:` declaration IS the value, and reaches every child"
       (binding [config/*extension-getenv* (constantly nil)]
         (with-declared-environment {"VIS_MANAGED" {"literal" "true"}

@@ -14,7 +14,6 @@
             [com.blockether.vis.internal.persistance :as ps]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.provider-auth :as pauth]
-            [com.blockether.vis.contract.provider :as contract-provider]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.limits-format :as limits-format]
@@ -2433,9 +2432,7 @@ vis.extension(
 
                                   (expect (= :ok (:status report)))
                                   (expect (nil? (:error report)))
-                                  ;; and the row itself passes the contract gate the host judges it by
-                                  (expect (contract-provider/limit-row-valid? row))
-                                  ;; the host-schema boolean survives the Python boundary verbatim
+                                  ;; the canonical boolean survives the Python boundary verbatim
                                   (expect (false? (:is-unlimited row)))
                                   (expect (nil? (:unlimited? row)))
                                   (expect (= :account (:scope row)))

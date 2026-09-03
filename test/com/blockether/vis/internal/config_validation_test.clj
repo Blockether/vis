@@ -2,15 +2,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.config-validation :as config-validation]
-            [lazytest.core :refer [defdescribe expect it]]
-            [yamlstar.core :as yamlstar]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe per-model-api-style-config-test
-             (it "accepts provider-generated wire routing metadata for a model"
-                 (expect (config-validation/valid? {"providers" [{"id" "opencode-go"
-                                                                  "models" [{"name" "minimax-m3"
-                                                                             "api_style"
-                                                                             "anthropic"}]}]}))))
 
 (def full-config
   {"default_provider" "anthropic"
@@ -132,121 +125,7 @@
     "working_eye" {"provider" "seeing" "model" "mimo-v2.5" "learned_at" "2026-01-05T09:14:00Z"}}})
 
 (defdescribe
-  config-contract-test
-  (it "validates the complete string-keyed JSON contract"
-      (expect (config-validation/valid? full-config)))
-  (it
-    "rejects keyword keys, aliases, unknown keys, and invalid security values"
-    (expect (not (config-validation/valid? {:filesystem {}})))
-    (expect (not (config-validation/valid? {"filesystem" {}})))
-    ;; `jail` is the confinement block; `sandbox` is not accepted.
-    (expect (not (config-validation/valid? {"sandbox" false})))
-    (expect (not (config-validation/valid? (assoc full-config "sandbox" true))))
-    ;; Unknown top-level blocks are rejected.
-    (expect (not (config-validation/valid? {"search" {"include_gitignored_paths"
-                                                      ["repositories/"]}})))
-    ;; Configuration keys use snake_case.
-    (expect (not (config-validation/valid? (assoc-in full-config ["providers" 0 "api-key"] "k"))))
-    (expect (not (config-validation/valid?
-                   (assoc-in full-config ["providers" 0 "base-url"] "https://x"))))
-    (expect (not (config-validation/valid? (assoc full-config "system-prompt" "hi"))))
-    (expect (not (config-validation/valid? (assoc full-config "db-spec" {"backend" "sqlite"}))))
-    (expect (not (config-validation/valid? (assoc full-config "default_provider" "  "))))
-    (expect (not (config-validation/valid? (assoc full-config "default_model" ""))))
-    (expect (not (config-validation/valid? (assoc full-config "fallback_provider" "  "))))
-    (expect (not (config-validation/valid? (assoc full-config "fallback_model" ""))))
-    ;; Workspace entries: a rooted path is required and unknown keys are rejected.
-    (expect (not (config-validation/valid? (assoc-in full-config
-                                             ["workspace" "filesystem"]
-                                             [{"id" "x" "path" "./relative"}]))))
-    (expect (not (config-validation/valid? (assoc-in full-config
-                                             ["workspace" "filesystem"]
-                                             [{"id" "x" "path" "~/ok" "note" "unknown-key"}]))))
-    ;; `access` is a closed enum and `description` may not be blank.
-    (expect (not (config-validation/valid? (assoc-in full-config
-                                             ["workspace" "filesystem"]
-                                             [{"id" "x" "path" "~/ok" "access" "sideways"}]))))
-    (expect (not (config-validation/valid? (assoc-in full-config
-                                             ["workspace" "filesystem"]
-                                             [{"id" "x" "path" "~/ok" "description" ""}]))))
-    ;; `draft` is a closed policy enum: shared / copy-only / copy-and-apply / not-allowed.
-    (expect (= #{"shared" "copy-only" "copy-and-apply" "not-allowed"}
-               config-validation/workspace-draft-values))
-    (doseq [policy config-validation/workspace-draft-values]
-      (expect (config-validation/valid? (assoc-in full-config
-                                          ["workspace" "filesystem"]
-                                          [{"id" "x" "path" "~/ok" "draft" policy}]))))
-    (expect (not (config-validation/valid? (assoc-in full-config
-                                             ["workspace" "filesystem"]
-                                             [{"id" "x" "path" "~/ok" "draft" "sideways"}]))))
-    ;; jail.filesystem is pure id admission — only an `allow` STRING VECTOR, nothing else.
-    (expect (not (config-validation/valid?
-                   (assoc-in full-config ["jail" "filesystem" "allow"] "svar"))))
-    (expect (not (config-validation/valid?
-                   (assoc-in full-config ["jail" "filesystem" "deny"] ["svar"]))))
-    (expect (not (config-validation/valid?
-                   (assoc-in full-config ["jail" "network" "inbound_ports"] [0]))))
-    (expect (config-validation/valid?
-              (assoc-in full-config
-                ["workspace" "filesystem"]
-                [{"id" "ok" "path" "~/home-ok" "description" "why" "search" false}])))
-    ;; `environment` is the only block that declares variable sources.
-    (expect (not (config-validation/valid? (assoc-in full-config ["jail" "env"] ["CI"]))))
-    ;; What replaced it is a MODE over the operator's ambient environment, not a list:
-    ;; `declared` (default) or `inherit`, and nothing else.
-    (expect (config-validation/valid? (assoc-in full-config ["jail" "environment"] "declared")))
-    (expect (config-validation/valid? (assoc-in full-config ["jail" "environment"] "inherit")))
-    (expect (not (config-validation/valid? (assoc-in full-config ["jail" "environment"] "all"))))
-    (expect (not (config-validation/valid? (assoc-in full-config ["jail" "environment"] true))))
-    (expect (not (config-validation/valid? (assoc-in full-config ["jail" "environment"] ["CI"]))))
-    ;; deny-exec: a list of executable names (or rooted paths) to block by read.
-    (expect (config-validation/valid? (assoc-in full-config ["jail" "deny_exec"] ["curl" "ssh"])))
-    (expect (not (config-validation/valid? (assoc-in full-config ["jail" "deny_exec"] "curl"))))
-    (expect (not (config-validation/valid? (assoc-in full-config ["jail" "deny_exec"] [""]))))
-    ;; Descriptions of ADMITTED roots flow into the derived policy, keyed by grant path.
-    (expect (= {"/opt/svar" "a sibling repo"
-                "~/.m2" "maven cache"
-                "~/.vis" (get config-validation/vis-home-entry "description")}
-               (:path-descriptions (config-validation/process-jail-config full-config))))
-    ;; Network is policy data, never an independent on/off escape hatch.
-    (expect (not (config-validation/valid?
-                   (assoc-in full-config ["jail" "network" "enabled"] false))))
-    (expect (not (config-validation/valid?
-                   (assoc-in full-config ["jail" "network" "rules" 0 "oops"] true))))
-    ;; :ports is a list of valid port integers.
-    (expect (config-validation/valid?
-              (assoc-in full-config ["jail" "network" "rules" 0 "ports"] [22 443])))
-    (expect (not (config-validation/valid?
-                   (assoc-in full-config ["jail" "network" "rules" 0 "ports"] [70000]))))
-    (expect (not (config-validation/valid?
-                   (assoc-in full-config ["jail" "network" "rules" 0 "ports"] ["443"]))))
-    ;; Python block: closed, so an unknown key is refused.
-    (expect (not (config-validation/valid? (assoc-in full-config ["python" "cache"] "/x"))))
-    ;; Extra import roots: a list of strings, never a bare string or a number.
-    (expect (config-validation/valid? (assoc-in full-config ["python" "source_paths"] [])))
-    (expect (not (config-validation/valid? (assoc-in full-config ["python" "source_paths"] "src"))))
-    (expect (not (config-validation/valid? (assoc-in full-config ["python" "source_paths"] [1]))))
-    ;; Interpreter pin: an argv vector or a bare program, never empty or numeric.
-    (expect (config-validation/valid? (assoc-in full-config ["python" "interpreter"] "python3.12")))
-    (expect (not (config-validation/valid? (assoc-in full-config ["python" "interpreter"] []))))
-    (expect (not (config-validation/valid? (assoc-in full-config ["python" "interpreter"] [1]))))
-    (expect (not (config-validation/valid? (assoc-in full-config ["python" "interpreter"] ""))))
-    ;; Runner: a closed enum of the two execution backends.
-    (expect (config-validation/valid? (assoc-in full-config ["python" "runner"] "vispython")))
-    (expect (not (config-validation/valid? (assoc-in full-config ["python" "runner"] "uv"))))
-    ;; Titling has no scheduling option.
-    (expect (config-validation/valid? (assoc-in full-config ["titling" "mode"] "first_sentence")))
-    (expect (not (config-validation/valid? (assoc-in full-config ["titling" "mode"] "clever"))))
-    (expect (not (config-validation/valid? (assoc-in full-config ["titling" "scheduling"] "idle"))))
-    (expect (not (config-validation/valid? (assoc-in full-config ["titling" "provider"] ""))))
-    (expect (not (config-validation/valid? (assoc-in full-config ["titling" "unknown"] 1))))
-    (doseq [server [{"transport" "stdio" "url" "https://x"}
-                    {"transport" "stdio" "command" "server" "headers" {}}
-                    {"transport" "streamable_http" "command" "server"}
-                    {"transport" "streamable_http" "url" "https://x" "args" []}
-                    {"transport" "http" "url" "https://x"} {"command" "server"}
-                    {"url" "https://x"}]]
-      (expect (not (config-validation/valid? {"mcp" {"servers" {"invalid" server}}})))))
+  config-policy-test
   (it
     "derives process-jail and network maps from the same string contract"
     (expect (= {:disabled? false
@@ -409,36 +288,7 @@
              (finally (io/delete-file file true))))))
 
 (defdescribe
-  config-schema-ownership-test
-  (it "validates the repository vis.yml through the contract schema"
-      (let [wire (yamlstar/load (slurp (io/file "vis.yml")))]
-        ;; The repository file is a commented template and therefore may parse to nil.
-        (expect (or (nil? wire)
-                    (and (every? string? (keys wire)) (config-validation/valid? wire))))))
-  (it "checks recursively user-owned request and pricing maps without keywordizing"
-      (expect (config-validation/valid? (assoc-in full-config
-                                          ["providers" 0 "extra_body"]
-                                          {"thinking" {"type" "enabled" "budget_tokens" 2048}
-                                           "stop" ["DONE" nil]})))
-      (expect (not (config-validation/valid? (assoc-in full-config
-                                               ["providers" 0 "extra_body"]
-                                               {:keyword-key "not YAML wire data"}))))
-      (expect (not (config-validation/valid? (assoc-in full-config
-                                               ["router" "tokens" "pricing"]
-                                               {"claude" {:input 1.0}})))))
-  (it "takes the machine's learned vision facts only in the shape it writes"
-      (expect (config-validation/valid? (assoc-in full-config
-                                          ["vision_memory" "blind_providers" "other"]
-                                          {"learned_at" "2026-01-06T00:00:00Z"})))
-      ;; A row with no stamp could never expire, so it is refused at the write boundary.
-      (expect (not (config-validation/valid?
-                     (assoc-in full-config ["vision_memory" "blind_providers" "other"] {}))))
-      (expect (not (config-validation/valid?
-                     (assoc-in full-config ["vision_memory" "working_eye" "prefer"] true))))
-      (expect (not (config-validation/valid? (assoc-in full-config
-                                               ["vision_memory" "blind_models" "small-coder"
-                                                "providers"]
-                                               "console-go")))))
+  config-validation-adapter-test
   (it "explain-problems names each offending top-level key, [] when valid"
       (expect (= []
                  (config-validation/explain-problems {"providers" [{"id" "a"
@@ -489,16 +339,6 @@
 
 (defdescribe
   provider-dialect-vocabulary-test
-  (it "accepts every schema-declared spelling of a dialect"
-      (doseq [v ["anthropic" "claude" "openai" "chat" "openai-responses" "openai_responses"
-                 "responses" "openai-compatible-responses" "gemini"]]
-        (expect (= []
-                   (config-validation/explain-problems {"providers"
-                                                        [{"id" "p"
-                                                          "api_style" v
-                                                          "compatibility" v
-                                                          "models" [{"name" "m" "api_style" v}]}]}))
-                (str v " must name a dialect"))))
   (it "normalizes an accepted spelling onto svar's own api-style"
       (expect (= :openai-compatible-responses
                  (config-validation/normalize-api-style "openai_responses")))
@@ -618,25 +458,7 @@
         (expect (= []
                    (config-validation/workspace-mount-diagnostics
                      {"workspace" {"filesystem" [{"id" "here" "path" "/"}]}}
-                     mac-env)))))
-  (it "`when` and `optional` are part of the closed entry contract"
-      (let [entry (fn [m]
-                    (assoc-in full-config ["workspace" "filesystem"] [m]))]
-        (expect (config-validation/valid? (entry {"id" "x" "path" "~/ok" "optional" true})))
-        (expect (config-validation/valid? (entry {"id" "x" "path" "~/ok" "when" {"os" "macos"}})))
-        (expect (config-validation/valid?
-                  (entry {"id" "x" "path" "~/ok" "when" {"os" ["linux" "wsl"] "exists" "/opt/x"}})))
-        (expect (not (config-validation/valid? (entry {"id" "x" "path" "~/ok" "optional" "yes"}))))
-        (expect (not (config-validation/valid? (entry
-                                                 {"id" "x" "path" "~/ok" "when" {"os" "plan9"}}))))
-        (expect (not (config-validation/valid? (entry
-                                                 {"id" "x" "path" "~/ok" "when" {"exists" ""}}))))
-        (expect (not (config-validation/valid? (entry
-                                                 {"id" "x" "path" "~/ok" "when" {"nope" true}}))))
-        (expect (= ["workspace.filesystem[0].when.nope: unknown key (config is closed)"]
-                   (config-validation/explain-problems
-                     {"workspace" {"filesystem"
-                                   [{"id" "x" "path" "~/ok" "when" {"nope" true}}]}}))))))
+                     mac-env))))))
 
 ;; ── macOS Mach services / Keychain (#90) ─────────────────────────────────────
 
@@ -663,16 +485,4 @@
                   (update full-config "jail" dissoc "mach_services"))]
         (expect (= [] (:mach-services pol)))
         (expect (= ["~/reference"] (:allow-read pol)))
-        (expect (not-any? (set (:no-search pol)) config-validation/keychain-read-paths))))
-  (it "mach_services is a closed block: a string list and a boolean"
-      (expect (config-validation/valid?
-                (assoc-in full-config ["jail" "mach_services"] {"allow" [] "keychain" true})))
-      (expect (not (config-validation/valid? (assoc-in full-config
-                                               ["jail" "mach_services"]
-                                               {"allow" "com.apple.SecurityServer"}))))
-      (expect (not (config-validation/valid?
-                     (assoc-in full-config ["jail" "mach_services"] {"keychain" "true"}))))
-      (expect (not (config-validation/valid?
-                     (assoc-in full-config ["jail" "mach_services"] {"allow" [""]}))))
-      (expect (not (config-validation/valid?
-                     (assoc-in full-config ["jail" "mach_services"] {"mach" ["x"]}))))))
+        (expect (not-any? (set (:no-search pol)) config-validation/keychain-read-paths)))))

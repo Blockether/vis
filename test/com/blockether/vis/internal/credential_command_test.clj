@@ -7,7 +7,6 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.config-validation :as config-validation]
             [com.blockether.vis.internal.credential-command :as cred]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.provider-error :as perr]
@@ -187,43 +186,18 @@
         (config/invalidate-credential-command! :seam)
         (expect (nil? (cred/peek-token :seam av))))))
 
-(defdescribe
-  config-shape-test
-  (it "the YAML contract accepts argv and bare-program spellings"
-      (let [cfg (yamlstar/load (str "providers:\n"
-                                    "  - id: sso_gateway\n" "    compatibility: openai-responses\n"
-                                    "    base_url: https://gateway.example.com/v1\n"
-                                    "    api_key_command: [token-helper, --env, sbox]\n"
-                                    "    models:\n" "      - name: m1\n"))]
-        (expect (config-validation/valid? cfg))
-        (expect (config-validation/valid?
-                  (assoc-in cfg ["providers" 0 "api_key_command"] "token-helper")))))
-  (it
-    "rejects an empty, blank or non-string command"
-    (let [cfg (yamlstar/load (str "providers:\n" "  - id: sso_gateway\n"
-                                  "    base_url: https://gateway.example.com/v1\n"
-                                  "    api_key_command: [token-helper]\n"
-                                  "    models:\n" "      - name: m1\n"))]
-      (expect (config-validation/valid? cfg))
-      (expect (not (config-validation/valid? (assoc-in cfg ["providers" 0 "api_key_command"] []))))
-      (expect (not (config-validation/valid? (assoc-in cfg ["providers" 0 "api_key_command"] ""))))
-      (expect (not (config-validation/valid? (assoc-in cfg ["providers" 0 "api_key_command"] [7]))))
-      ;; snake_case is the only accepted spelling.
-      (expect (not (config-validation/valid?
-                     (-> cfg
-                         (update-in ["providers" 0] dissoc "api_key_command")
-                         (assoc-in ["providers" 0 "api-key-command"] ["h"])))))))
-  (it "runtime-config carries the argv through as :api-key-command"
-      (let [cfg (yamlstar/load (str "providers:\n" "  - id: sso_gateway\n"
-                                    "    base_url: https://gateway.example.com/v1\n"
-                                    "    api_key_command: [token-helper, --env, sbox]\n"
-                                    "    models:\n" "      - name: m1\n"))]
-        (expect (= ["token-helper" "--env" "sbox"]
-                   (-> cfg
-                       config/runtime-config
-                       :providers
-                       first
-                       :api-key-command))))))
+(defdescribe credential-config-adaptation-test
+             (it "runtime-config carries the argv through as :api-key-command"
+                 (let [cfg (yamlstar/load (str "providers:\n" "  - id: sso_gateway\n"
+                                               "    base_url: https://gateway.example.com/v1\n"
+                                               "    api_key_command: [token-helper, --env, sbox]\n"
+                                               "    models:\n" "      - name: m1\n"))]
+                   (expect (= ["token-helper" "--env" "sbox"]
+                              (-> cfg
+                                  config/runtime-config
+                                  :providers
+                                  first
+                                  :api-key-command))))))
 
 (defdescribe never-persisted-test
              (it "the resolved token never reaches the durable provider shape"

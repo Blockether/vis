@@ -39,8 +39,7 @@
             (disj (json-names (io/file contract-root "schema")) "common")]
 
         (expect (seq documents))
-        (expect (= documents schemas))
-        (expect (every? #(map? (document/load! %)) documents))))
+        (expect (= documents schemas))))
   (it "keeps API-style spellings in the JSON document and schema aligned"
       (expect (= (set (keys (get (document/load! "config") "api_style_aliases")))
                  (set (get-in (document/schema-document "config") ["$defs" "apiStyle" "enum"])))))

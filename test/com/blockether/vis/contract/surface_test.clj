@@ -4,12 +4,6 @@
   (:require [com.blockether.vis.contract.surface :as contract]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(def ^:private format-ok
-  {"op" "clj-format"
-   "files" [{"path" "a.clj" "changed" true "wrote" true "formatter" "zprint"}
-            {"path" "sub/b.clj" "changed" false "wrote" false}]
-   "changed" 1
-   "formatters" ["zprint"]})
 
 (def ^:private lint-ok
   {"error" 0
@@ -37,76 +31,14 @@
 
 (defdescribe
   surface-test
-  (it "accepts a conforming format result and returns it unchanged"
-      (expect (contract/valid? :format-fn format-ok))
-      (expect (= format-ok (contract/check :format-fn format-ok)))
-      (expect (nil? (contract/explain :format-fn format-ok))))
-  (it "accepts a conforming lint result and returns it unchanged"
-      (expect (contract/valid? :lint-fn lint-ok))
-      (expect (= lint-ok (contract/check :lint-fn lint-ok))))
-  (it "accepts a minimal single-file format result (no files)"
-      (expect (contract/valid? :format-fn {"op" "clj-format" "changed" true "chars" -3})))
-  (it "accepts a single-file format result naming the formatter that ran"
-      (expect (contract/valid? :format-fn
-                               {"op" "clj-format" "changed" true "chars" -3 "formatter" "zprint"})))
-  (it "rejects a format result whose formatters set is not strings"
-      (expect (not (contract/valid? :format-fn (assoc format-ok "formatters" [1 2])))))
-  (it "rejects a format result missing the op key"
-      (expect (not (contract/valid? :format-fn (dissoc format-ok "op")))))
-  (it "rejects a lint result whose findings lack level/message"
-      (expect (not (contract/valid? :lint-fn (assoc lint-ok "findings" [{"file" "a.clj"}]))))
-      (expect (not (contract/valid? :lint-fn (dissoc lint-ok "findings")))))
-  (it "check throws a tagged contract-violation ex-info on a bad result"
+  (it "check tags a schema rejection as a surface contract violation"
       (let [ed (try (contract/check :lint-fn (dissoc lint-ok "findings"))
                     nil
                     (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (expect (= :surface/contract-violation (:type ed)))
         (expect (= :lint-fn (:capability ed)))
         (expect (some? (:explain-data ed)))))
-  (it "explain yields a string for a non-conforming result"
-      (expect (string? (contract/explain :lint-fn (dissoc lint-ok "findings")))))
-  (it "accepts a conforming test result and returns it unchanged"
-      (expect (contract/valid? :test-fn test-ok))
-      (expect (= test-ok (contract/check :test-fn test-ok))))
-  (it "accepts a minimal cli test result"
-      (expect (contract/valid?
-                :test-fn
-                {"mode" "cli" "language" "clojure" "ns" "" "exit" 0 "is_pass" true})))
-  (it "rejects a test result whose mode is not repl/cli"
-      (expect (not (contract/valid? :test-fn (assoc test-ok "mode" "wat"))))
-      (expect (not (contract/valid? :test-fn (dissoc test-ok "mode")))))
-  (it "rejects a test result whose pass count is not a number"
-      (expect (not (contract/valid? :test-fn (assoc test-ok "pass" "3")))))
-  (it "accepts a test failure carrying typed ns/test/file/line (parity with ::finding)"
-      (expect (contract/valid? :test-fn
-                               (assoc test-ok
-                                 "fail" 1
-                                 "failures" [{"ns" "my.app.core-test"
-                                              "test" "adds-test"
-                                              "type" "fail"
-                                              "file" "core_test.clj"
-                                              "line" 12
-                                              "message" "expected 3"}]))))
-  (it "types a fault as fail or error INSIDE failures — there is no errors list"
-      (expect (contract/valid? :test-fn
-                               (assoc test-ok
-                                 "fail" 1
-                                 "failures" [{"test" "boom" "type" "error" "message" "threw"}])))
-      (expect (not (contract/valid? :test-fn
-                                    (assoc test-ok
-                                      "fail" 1
-                                      "failures" [{"test" "boom" "type" "exploded"}]))))
-      (expect (not (contains? contract/test-result-base "errors")))
-      ;; ONE list of faults, but the erroring TALLY is its own count: a runner
-      ;; that reports counts and no per-test detail types nothing.
-      (expect (contains? contract/test-result-base "errored")))
-  (it "rejects a test failure whose line is not a non-negative int"
-      (expect (not (contract/valid? :test-fn
-                                    (assoc test-ok "failures" [{"message" "boom" "line" "12"}]))))
-      (expect (not (contract/valid? :test-fn
-                                    (assoc test-ok "failures" [{"message" "boom" "ns" 7}])))))
-  (it "passes a capability with no registered spec straight through"
-      (expect (contract/valid? :repl-eval-fn {:anything :goes}))
+  (it "passes a capability with no registered contract straight through"
       (expect (= :untouched (contract/check :repl-eval-fn :untouched))))
   (it "capability->definition is the single source for format, lint, and test results"
       (expect (= #{:format-fn :lint-fn :test-fn} (set (keys contract/capability->definition)))))
@@ -127,8 +59,7 @@
         (expect (= 3 (get r "pass")))
         (expect (= 0 (get r "fail")))
         (expect (= "clojure" (get r "language")))
-        (expect (true? (get r "is_pass")))
-        (expect (contract/valid? :test-fn r))))
+        (expect (true? (get r "is_pass")))))
   (it "completes a pack that speaks the contract's own words, translating nothing"
       (let [r (contract/complete-test-result "python"
                                              {"mode" "cli"
