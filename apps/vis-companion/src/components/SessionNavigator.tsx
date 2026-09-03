@@ -39,7 +39,7 @@ const HEADER_TYPE = 'text-title';
 const HEADER_BAND =
   'flex min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 border-t border-dialog-edge bg-level-project';
 
-/** The session list's pull gesture reports the action a release would take. */
+/** The session list's pull gesture takes over the app bar with the action a release would take. */
 export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<HTMLDivElement> }) {
   const isShown = phase !== 'none';
   const isArmed = phase === 'armed';
@@ -47,7 +47,7 @@ export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<H
     <div
       ref={ref}
       aria-hidden="true"
-      className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex min-h-13 items-center justify-center gap-2 border-b border-dialog-edge font-mono text-meta transition-[translate] duration-150 motion-reduce:transition-none mouse:min-h-12 ${
+      className={`pointer-events-none fixed inset-x-0 top-[env(safe-area-inset-top)] z-40 flex min-h-12 items-center justify-center gap-2 border-b border-dialog-edge font-mono text-meta transition-[translate] duration-150 motion-reduce:transition-none ${
         isShown ? 'translate-y-0' : '-translate-y-full'
       } ${isArmed ? 'bg-accent-surface text-accent-ink' : 'bg-level-project text-dialog-hint'}`}
     >

@@ -741,7 +741,7 @@ export const Gestures: Story = {
     <Sheet>
       {(['none', 'pulling', 'armed'] as const).map((phase) => (
         <Group key={phase} of={`PullToSearchHint — ${phase}`}>
-          <div className="relative h-16 w-full overflow-hidden bg-level-project">
+          <div className="relative h-16 w-full transform-gpu overflow-hidden bg-level-project">
             <PullToSearchHint phase={phase} />
           </div>
         </Group>

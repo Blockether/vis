@@ -45,17 +45,21 @@ describe("pulling the sessions list down", () => {
     }
   });
 
+  // Regression, Vis session 88262267-29ea-4c77-917f-daac097c1a7a: the pull prompt
+  // painted between the machine strip and list instead of taking over the app bar at the top.
   it("says what the lift will do while the finger is still down", async () => {
     const view = fleet(() => {});
     try {
       const list = await listOf(view);
-      const hint = () => view.container.querySelector<HTMLElement>(".pointer-events-none.absolute")!;
+      const hint = () => view.container.querySelector<HTMLElement>(".pointer-events-none")!;
 
       act(() => {
         fireTouch(list, "touchstart", [AT]);
         fireTouch(list, "touchmove", [down(20)]);
       });
       expect(hint().textContent).toBe("Pull to search");
+      expect(hint().className).toContain("fixed");
+      expect(hint().className).toContain("top-[env(safe-area-inset-top)]");
       act(() => fireTouch(list, "touchmove", [down(PULL_OPEN_PX)]));
       expect(hint().textContent).toBe("Release to search");
       expect(hint().className).not.toMatch(/(?:^|\s)text-accent(?:\s|$)/);
@@ -71,7 +75,7 @@ describe("pulling the sessions list down", () => {
     const view = fleet(() => {});
     try {
       const list = await listOf(view);
-      const hint = () => view.container.querySelector<HTMLElement>(".pointer-events-none.absolute")!;
+      const hint = () => view.container.querySelector<HTMLElement>(".pointer-events-none")!;
 
       act(() => {
         fireTouch(list, "touchstart", [AT]);

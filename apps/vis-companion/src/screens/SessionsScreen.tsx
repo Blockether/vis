@@ -2150,8 +2150,8 @@ export function SessionsScreen({
             the same paper, so the projects were square on the glass and sheets on the
             desk for no reason a reader could see. */}
         <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-t border-dialog-edge bg-page sm:max-h-full sm:border-0">
-        {/* The pull reports itself while it happens: the card clips the band until a
-            finger brings it down over the list's first header. */}
+        {/* The pull reports itself where the search door lives: it takes over the app bar
+            until the finger releases, instead of inserting a new band above the list. */}
         <PullToSearchHint phase={pullPhase} ref={hintRef} />
         {/* A create that failed has no button left to speak from once the order's own
             popover is gone, so the word lands on the paper the list is about to fill. */}
