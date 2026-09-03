@@ -30,6 +30,8 @@ describe('application diagnostics settings', () => {
   // panel stood permanently open at the foot of the Application column — six
   // rows and an export verb always painted for a task this device performs a
   // few times a year. The band folds now, and hidden is hidden.
+  // Regression, issue #1169050b-3dc3-4e21-ad3d-03098d149d2f: pressing the named
+  // Diagnostics band did nothing; only its trailing chevron opened the panel.
   it('keeps every fact off the page until the band is pressed', async () => {
     render(<Harness />);
 
@@ -40,7 +42,7 @@ describe('application diagnostics settings', () => {
       screen.queryByRole('button', { name: 'Export app logs' }),
     ).not.toBeInTheDocument();
 
-    await userEvent.click(fold);
+    await userEvent.click(screen.getByRole('heading', { name: 'Diagnostics' }));
 
     expect(fold).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText(APP_VERSION)).toBeInTheDocument();

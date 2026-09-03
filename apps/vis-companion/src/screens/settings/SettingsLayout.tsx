@@ -1,7 +1,7 @@
 import { useSyncExternalStore, type ReactNode } from "react";
 
 import { ChevronIcon } from "../../components/icons";
-import { IconButton } from "../../components/ui";
+import { IconButton, ListRow } from "../../components/ui";
 export function FormLabel({
   label,
   hint,
@@ -151,14 +151,44 @@ export function SettingsPanel({
   title,
   meta,
   action,
+  disclosure,
   children,
 }: {
   title: string;
   meta?: ReactNode;
   /** One bare verb for the whole band, aligned to its physical trailing edge. */
   action?: ReactNode;
+  /** Makes the whole named band the disclosure target; the caller owns its state. */
+  disclosure?: {
+    isOpen: boolean;
+    onToggle: () => void;
+    label: string;
+  };
   children: ReactNode;
 }) {
+  const TitleContainer = disclosure ? "span" : "div";
+  const TitleHeading = disclosure ? "span" : "h3";
+  const titleBlock = (
+    <TitleContainer
+      className={`flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1 ${
+        disclosure ? "sm:ms-1" : ""
+      }`}
+    >
+      <TitleHeading
+        role="heading"
+        aria-level={3}
+        className="min-w-0 flex-auto truncate font-mono text-chip font-bold uppercase tracking-[0.14em] text-dialog-hint"
+      >
+        {title}
+      </TitleHeading>
+      {meta && (
+        <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
+          {meta}
+        </span>
+      )}
+    </TitleContainer>
+  );
+
   return (
     // A BAND, not a card. This section used to carry its own frame inside the
     // dialog's frame, so every settings group sat in a box inside a box — two
@@ -176,26 +206,34 @@ export function SettingsPanel({
           instead — the name is measured at its own width so a status that does
           not fit beside it drops to its own line. */}
       {/* A NESTED BAND IS NOT A COLUMN BAND. It keeps the smaller hint-colour title
-          but shares the column band's height and gutter. Its action occupies the
-          trailing edge as hit area while the visible plus remains bare, so an action
-          neither changes the band's height nor introduces a floating object. */}
-      <header className="flex min-h-9 min-w-0 items-center gap-3 border-b border-dialog-edge px-3 py-0.5 sm:px-4 mouse:min-h-8">
-        <div className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h3 className="min-w-0 flex-auto truncate font-mono text-chip font-bold uppercase tracking-[0.14em] text-dialog-hint">
-            {title}
-          </h3>
-          {meta && (
-            <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
-              {meta}
+          but shares the column band's height and gutter. A disclosure IS the band,
+          so its whole named row responds instead of leaving inert copy beside a
+          tiny trailing target. An ordinary action still occupies only the edge. */}
+      {disclosure ? (
+        <header className="border-b border-dialog-edge">
+          <ListRow
+            density="compact"
+            aria-label={disclosure.label}
+            aria-expanded={disclosure.isOpen}
+            onClick={disclosure.onToggle}
+          >
+            {titleBlock}
+            <ChevronIcon
+              open={disclosure.isOpen}
+              className="size-4 shrink-0 sm:me-1"
+            />
+          </ListRow>
+        </header>
+      ) : (
+        <header className="flex min-h-9 min-w-0 items-center gap-3 border-b border-dialog-edge px-3 py-0.5 sm:px-4 mouse:min-h-8">
+          {titleBlock}
+          {action && (
+            <span className="flex shrink-0 items-center empty:hidden">
+              {action}
             </span>
           )}
-        </div>
-        {action && (
-          <span className="flex shrink-0 items-center empty:hidden">
-            {action}
-          </span>
-        )}
-      </header>
+        </header>
+      )}
       {/* A PANEL BODY DIVIDES ITS OWN PARTS. `divide-y` draws only BETWEEN
           siblings, so a panel holding one list is unchanged, and a panel whose
           last child is a verb gets the hairline that verb needs to be a row. */}

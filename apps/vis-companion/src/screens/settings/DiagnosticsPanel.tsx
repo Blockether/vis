@@ -7,8 +7,7 @@ import {
   APP_VERSION,
 } from "../../lib/compat";
 import { RETAINED_LOG_POLICY, exportDiagnostics } from "../../lib/diagnostics";
-import { ChevronIcon } from "../../components/icons";
-import { Banner, Button, IconButton } from "../../components/ui";
+import { Banner, Button } from "../../components/ui";
 import { SettingsPanel } from "./SettingsLayout";
 
 /** ONE FACT ROW, and the answer is the fact. The label is the same word in every
@@ -42,14 +41,11 @@ function DiagnosticFact({ label, value }: { label: string; value: string }) {
 /** Source identity, wire compatibility and the one deliberate way out for
  *  app-private logs — one band that opens, and nothing painted until it does.
  *
- *  Reported over a desktop screenshot of this dialog: the panel's six rows and
- *  its export verb stood permanently open at the foot of the Application
- *  column, always painted for a task this device performs a few times a year.
- *  The band keeps its name, drops the `app logs` meta that restated it, and
- *  takes the chevron the column above it already opens with; the caller owns
- *  the open state, exactly as it owns the column fold's and a machine row's.
- *  Hidden is HIDDEN — the facts, the trust sentence and the verb are not on
- *  the page at all until the band is pressed. */
+ *  The whole named band is the control. A trailing chevron turns to confirm the
+ *  state, but it is not a tiny separate target beside inert copy. Reported in the
+ *  app: pressing Diagnostics itself did nothing even though the neighbouring
+ *  Application band opened as expected. Hidden remains HIDDEN — the facts, the
+ *  trust sentence and the verb are not on the page until the band is pressed. */
 export function DiagnosticsPanel({
   isOpen,
   onToggle,
@@ -83,21 +79,7 @@ export function DiagnosticsPanel({
   return (
     <SettingsPanel
       title="Diagnostics"
-      action={
-        /* THE FOLD IS THE BAND'S OWN MARK, the same bare chevron that turns on
-           the Application column above it and on a machine's row beside it:
-           one mark for "there is more here", pressed at the trailing edge. */
-        <IconButton
-          variant="quiet"
-          edge
-          label={foldLabel}
-          title={foldLabel}
-          aria-expanded={isOpen}
-          onClick={onToggle}
-        >
-          <ChevronIcon open={isOpen} className="size-4" />
-        </IconButton>
-      }
+      disclosure={{ isOpen, onToggle, label: foldLabel }}
     >
       {/* THE PANEL'S FACTS ARE ROWS, NOT A PARAGRAPH UNDER THEM. This band never
           explained itself with prose — retention, cap, what the export button
