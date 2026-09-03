@@ -12,6 +12,7 @@ that the engine would refuse turns a Clojure test red rather than failing in fro
 
 import json
 import pathlib
+from dataclasses import FrozenInstanceError
 
 import gh
 import pytest
@@ -198,7 +199,7 @@ def test_the_head_says_when_the_run_began(monkeypatch):
 
     monkeypatch.setattr(gh, "watch", capture)
 
-    assert gh.gh_watch_run(run=32146686161) == "watched"
+    assert gh.gh.watch(run=32146686161) == "watched"
 
     # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a live run showed progress
     # and elapsed durations but never the calendar date and time it began, so a run opened
@@ -387,7 +388,7 @@ def test_the_settled_pane_is_one_photograph(watched):
     added = [op for op in recorder.patched() if op.get("op") == "add-node"]
     assert [op["node_spec"]["id"] for op in added] == ["output"]
     assert added[0]["after"] == "run"
-    assert json.loads(result)["run"]["conclusion"] == "failure"
+    assert result.conclusion == "failure"
     assert ("95742028770", gh.LOG_TAIL_LINES) in recorder.asked
     snapshots = recorder.said[-1]["ending"]["selection_snapshots"]
     assert [one["selected_ids"] for one in snapshots] == [
@@ -468,7 +469,7 @@ def test_a_human_selection_is_read_back_and_kept_across_the_next_poll(recorder):
         if op.get("node_id") == "jobs" and "selected_ids" in op
     ]
     assert selection_ops[-1]["selected_ids"] == [selected]
-    assert json.loads(result)["run"]["conclusion"] == "failure"
+    assert result.conclusion == "failure"
     assert node(recorder.picture(), "output")["lines"] == [f"log for {selected}"]
     assert asked[0] == (selected, gh.LOG_TAIL_LINES)
     assert {job_id for job_id, _lines in asked} == {
@@ -546,52 +547,51 @@ def test_a_selection_change_refreshes_details_even_while_github_is_unavailable(
     )
 
     assert recorder.node("jobs")["selected_ids"] == [selected]
-    assert json.loads(result)["ending"]["reason"] == "poll_failure"
+    assert result.ending == "poll_failure"
+    assert "GitHub unavailable in regression fixture" in result.error
     assert node(recorder.picture(), "steps")["steps"][0]["label"] == "Set up job"
     assert node(recorder.picture(), "output")["lines"] == [f"log for {selected}"]
 
 
-def test_the_model_gets_one_deduplicated_diagnostic_string(watched):
+def test_the_model_gets_one_deduplicated_diagnostic_object(watched):
     recorder, result = watched
     payload = fixture("run-final.json")
 
     # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: the compact result omitted
     # the job inventory, stable ids, timing, steps, and the failed job's actionable error.
-    assert isinstance(result, str)
-    report = json.loads(result)
-    assert report["run"] == {
-        "id": 32146686161,
-        "workflow": "CI",
-        "branch": "main",
-        "status": "completed",
-        "conclusion": "failure",
-        "url": "https://github.com/Blockether/vis/actions/runs/32146686161",
-    }
-    assert report["job_fields"] == [
-        "id",
-        "name",
-        "conclusion",
-        "started_at",
-        "completed_at",
-        "steps",
-    ]
-    assert report["step_fields"] == ["id", "conclusion", "name"]
-    assert report["jobs"] == [
-        [
-            job["databaseId"],
-            job["name"],
-            job["conclusion"],
-            job["startedAt"],
-            job["completedAt"],
-            [
-                [step["number"], step["conclusion"], step["name"]]
+    assert isinstance(result, gh.WatchOutcome)
+    assert (result.run_id, result.workflow, result.branch) == (
+        32146686161,
+        "CI",
+        "main",
+    )
+    assert (result.status, result.conclusion, result.ending) == (
+        "completed",
+        "failure",
+        "completed",
+    )
+    assert result.url == "https://github.com/Blockether/vis/actions/runs/32146686161"
+    assert result.error is None
+    assert result.jobs == tuple(
+        gh.JobOutcome(
+            job_id=job["databaseId"],
+            name=job["name"],
+            conclusion=job["conclusion"],
+            started_at=job["startedAt"],
+            completed_at=job["completedAt"],
+            steps=tuple(
+                gh.StepOutcome(
+                    number=step["number"],
+                    conclusion=step["conclusion"],
+                    name=step["name"],
+                )
                 for step in job["steps"]
-            ],
-        ]
+            ),
+        )
         for job in payload["jobs"]
-    ]
-    assert list(report["failed_logs"]) == ["95742028770"]
-    failed_log = report["failed_logs"]["95742028770"]
+    )
+    assert [one.job_id for one in result.failed_logs] == ["95742028770"]
+    failed_log = result.failed_logs[0].lines
     assert sum("1 failed, 58 passed in 0.72s" in line for line in failed_log) == 1
     assert (
         sum(
@@ -601,7 +601,8 @@ def test_the_model_gets_one_deduplicated_diagnostic_string(watched):
         == 1
     )
     assert not any("Terminate orphan process" in line for line in failed_log)
-    assert result == json.dumps(report, ensure_ascii=False, separators=(",", ":"))
+    with pytest.raises(FrozenInstanceError):
+        result.conclusion = "success"
     assert_tree(recorder.picture(), golden("view.json", recorder.picture()))
 
 
@@ -633,13 +634,14 @@ def test_a_stop_answers_the_picture_the_human_left(recorder):
     )
 
     # Whatever ended it, the model is answered the same shape — here, the run half-done.
-    assert verdict["reason"] == "interrupted"
-    assert verdict["is_completed"] is False
+    assert verdict.ending == "interrupted"
+    assert verdict.status == "in_progress"
+    picture = stopping.picture()
     assert (
-        node(verdict["view"], "run")["text"]
+        node(picture, "run")["text"]
         == "tests · vis-agent + vis-contract (PyPI packages) failed"
     )
-    assert node(verdict["view"], "progress")["done"] == 31
+    assert node(picture, "progress")["done"] == 31
 
 
 def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
@@ -661,7 +663,8 @@ def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
     result = gh.watch(TITLE, DESCRIPTION, poll, superseded_by=lambda: newer)
 
     assert len(polls) == 1
-    assert json.loads(result)["ending"]["replacement_run_id"] == 32146699999
+    assert result.ending == "superseded"
+    assert result.replacement_run_id == 32146699999
     picture = recorder.picture()
     assert node(picture, "run")["text"] == "Superseded by newer run 32146699999"
     assert node(picture, "run")["tone"] == "idle"
@@ -701,7 +704,7 @@ def test_a_transient_github_failure_keeps_the_watch_alive(recorder):
     # was still alive. GitHub outages are state too: retain the last picture and retry.
     result = gh.watch(TITLE, DESCRIPTION, poll)
 
-    assert json.loads(result)["run"]["conclusion"] == "failure"
+    assert result.conclusion == "failure"
     assert not polls
     picture = recorder.picture()
     assert all(one["id"] != "activity" for one in picture["nodes"])
@@ -723,7 +726,8 @@ def test_a_permanently_unavailable_run_stops_after_bounded_retries(recorder):
     result = gh.watch(TITLE, DESCRIPTION, poll)
 
     assert len(attempts) == gh.MAX_CONSECUTIVE_POLL_FAILURES + 1
-    assert json.loads(result)["ending"]["reason"] == "poll_failure"
+    assert result.ending == "poll_failure"
+    assert "run was deleted" in result.error
     assert node(recorder.picture(), "run")["tone"] == "error"
 
 
@@ -752,8 +756,8 @@ def test_a_watch_has_no_clock_of_its_own(recorder, monkeypatch):
     # Hours passed with the run still going and nothing here counted them.
     assert seen[-1] - seen[0] > 3 * 3600
     assert len(polls) >= 6
-    assert verdict["reason"] == "interrupted"
-    assert verdict["is_completed"] is False
+    assert verdict.ending == "interrupted"
+    assert verdict.status == "in_progress"
 
 
 def test_a_newer_run_is_matched_to_the_same_workflow_branch_and_event(monkeypatch):
@@ -802,7 +806,7 @@ def test_an_explicit_running_run_still_yields_to_its_replacement(monkeypatch):
 
     monkeypatch.setattr(gh, "watch", capture_watch)
 
-    assert gh.gh_watch_run(32146686161) == "watched"
+    assert gh.gh.watch(32146686161) == "watched"
     assert received["superseded_by"]() == replacement
 
 
@@ -863,9 +867,11 @@ def test_device_login_keeps_the_oauth_code_inside_human_input(monkeypatch):
     monkeypatch.setattr(gh.vis, "shell", start)
     monkeypatch.setattr(gh.vis, "ask", ask)
 
-    result = gh.gh_login()
+    result = gh.gh.login()
 
-    assert result == "GitHub CLI authenticated with github.com."
+    assert result == gh.Account(
+        hostname="github.com", is_authenticated=True, was_already_authenticated=False
+    )
     assert commands == [
         "gh auth status --hostname github.com",
         "gh --version",
@@ -892,7 +898,7 @@ def test_device_login_keeps_the_oauth_code_inside_human_input(monkeypatch):
         "cancel_label": "Cancel sign-in",
         "timeout_ms": 0,
     }
-    assert "ABCD-EFGH" not in result
+    assert "ABCD-EFGH" not in result.hostname
     assert process.stopped is False
 
 
@@ -906,9 +912,11 @@ def test_login_returns_without_hitl_when_the_cli_is_already_authenticated(monkey
         ),
     )
 
-    assert gh.gh_login() == "GitHub CLI is already authenticated with github.com."
+    assert gh.gh.login() == gh.Account(
+        hostname="github.com", is_authenticated=True, was_already_authenticated=True
+    )
     with pytest.raises(ValueError, match="host name"):
-        gh.gh_login("github.com; echo unsafe")
+        gh.gh.login("github.com; echo unsafe")
 
 
 def test_cancelling_device_login_stops_the_waiting_process(monkeypatch):
@@ -930,7 +938,7 @@ def test_cancelling_device_login_stops_the_waiting_process(monkeypatch):
     monkeypatch.setattr(gh.vis, "ask", lambda *args, **kwargs: Cancelled())
 
     with pytest.raises(gh.GhMissing, match="cancelled by the human"):
-        gh.gh_login()
+        gh.gh.login()
 
     assert process.stopped is True
 
@@ -942,10 +950,10 @@ def test_missing_auth_uses_login_hitl_before_a_view_opens(recorder, monkeypatch)
         called.append(True)
         raise gh.GhMissing("GitHub authentication was cancelled by the human")
 
-    monkeypatch.setattr(gh, "gh_login", login)
+    monkeypatch.setattr(gh, "_login", login)
 
     with pytest.raises(gh.GhMissing) as refusal:
-        gh.gh_watch_run(32146686161)
+        gh.gh.watch(32146686161)
 
     assert "\n" not in str(refusal.value)
     assert "cancelled by the human" in str(refusal.value)
@@ -972,12 +980,12 @@ def test_one_public_watcher_routes_pull_request_checks(monkeypatch):
     monkeypatch.setattr(gh, "fetch_checks", fetch)
     monkeypatch.setattr(gh, "watch", capture)
 
-    assert gh.gh_watch_run(pr=1421, repo="o/r") == "watched"
+    assert gh.gh.watch(pr=1421, repo="o/r") == "watched"
     assert received["fetch"] == (1421, "o/r")
     assert received["watch"][:2] == ("Checks · 1421", "Checks on 1421")
-    assert not hasattr(gh, "gh_watch_checks")
+    assert not hasattr(gh.gh, "watch_checks")
     with pytest.raises(ValueError, match="either run or pr"):
-        gh.gh_watch_run(run=7, pr=1421)
+        gh.gh.watch(run=7, pr=1421)
 
 
 def test_a_pull_requests_checks_read_as_the_same_run():
@@ -1055,3 +1063,68 @@ def test_a_tap_during_the_nap_is_answered_before_the_next_poll(recorder, monkeyp
     assert sum(slept[:2]) <= gh.NAP_SLICE_S * 2
     # GitHub keeps its own cadence: the tap neither polls it nor cuts the tick short.
     assert sum(slept) == pytest.approx(3.0)
+
+
+def test_runs_lists_recent_runs_as_typed_rows(monkeypatch):
+    commands = []
+
+    def capture(command, seconds=120):
+        commands.append(command)
+        return (
+            0,
+            json.dumps(
+                [
+                    {
+                        "databaseId": 32146686161,
+                        "workflowName": "CI",
+                        "headBranch": "main",
+                        "displayTitle": "docs: release",
+                        "event": "push",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "url": "https://github.com/o/r/actions/runs/32146686161",
+                        "createdAt": "2026-08-18T14:10:00Z",
+                    }
+                ]
+            ),
+        )
+
+    monkeypatch.setattr(gh, "_capture", capture)
+
+    assert gh.gh.runs() == (
+        gh.RunSummary(
+            run_id=32146686161,
+            workflow="CI",
+            branch="main",
+            title="docs: release",
+            event="push",
+            status="completed",
+            conclusion="success",
+            url="https://github.com/o/r/actions/runs/32146686161",
+            started_at="2026-08-18T14:10:00Z",
+        ),
+    )
+    assert commands == [f"gh run list -L 10 --json {gh.RUN_LIST_FIELDS}"]
+
+
+def test_runs_clamps_limit_and_reports_ghs_own_failure(monkeypatch):
+    commands = []
+
+    def capture(command, seconds=120):
+        commands.append(command)
+        return 1, "gh: rate limit"
+
+    monkeypatch.setattr(gh, "_capture", capture)
+
+    with pytest.raises(RuntimeError, match="gh run list failed: gh: rate limit"):
+        gh.gh.runs(repo="o/r", limit=5000)
+    assert commands == [f"gh run list --repo o/r -L 50 --json {gh.RUN_LIST_FIELDS}"]
+
+
+def test_selectors_refuse_everything_that_is_not_one_value():
+    with pytest.raises(ValueError, match="run must be a run id or a run URL"):
+        gh._run_selector("42; rm -rf /")
+    with pytest.raises(ValueError, match="owner/name"):
+        gh._repo_flag("o/r; echo no")
+    with pytest.raises(ValueError, match="pr must be"):
+        gh._pull_selector("1421; echo no")

@@ -61,7 +61,7 @@
 (defdescribe
   gh-extension-live-test
   (it
-    "accepts every op the gh extension says, keeps the picture, and returns only its string"
+    "accepts every op the gh extension says, keeps the picture, and answers its ending verdict"
     (let [ops
           (fixture ops-file)
 
@@ -70,9 +70,6 @@
 
           result
           (:result (last answers))
-
-          model-report
-          (json/read-json result :key-fn keyword)
 
           view
           (:final-view (last answers))
@@ -85,10 +82,11 @@
 
       ;; Every push before the close was accepted: the wire the extension speaks IS this one.
       (expect (every? :is-open (butlast answers)))
-      (expect (string? result))
-      (expect (= "failure" (get-in model-report [:run :conclusion])))
-      (expect (= 6 (count (:jobs model-report))))
-      (expect (= [:95742028770] (vec (keys (:failed_logs model-report)))))
+      (expect (map? result))
+      ;; No model_result crosses the wire any more: the extension's answer to the model
+      ;; is its own typed return value, and the close verdict carries only how it ended.
+      (expect (= :completed (:reason result)))
+      (expect (false? (:is-from-human result)))
       ;; The log is NOT declared with the rest: it arrives as one `add-node` addressed
       ;; `after` "run", and the engine's own ordering is what puts it second here.
       (expect (= ["run" "output" "progress" "score" "jobs" "steps" "links"]

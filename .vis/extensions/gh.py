@@ -32,6 +32,10 @@ log is never cached as final. When a running watch is overtaken by a newer commi
 workflow, branch and event, the obsolete watch closes and links to its replacement instead of
 polling work that no longer matters. Pull-request checks use this same view through the one public
 watcher; a check set with no checks settles neutral rather than waiting forever.
+
+The model's surface is one `gh` object — `login()`, `runs()`, `watch()` — and every answer is a
+typed frozen outcome (`Account`, `RunSummary`, `WatchOutcome`): jobs, steps and failed-log tails
+arrive as structure, and serialization happens at the host boundary only.
 """
 
 import calendar
@@ -42,11 +46,16 @@ import shlex
 import tempfile
 import time
 from collections import Counter
+from dataclasses import dataclass
 
 import vis
 
 # `gh run view --json <these>` is the whole payload the view is built from: one call per poll.
 RUN_FIELDS = "jobs,status,conclusion,workflowName,headBranch,url,displayTitle,number,event,databaseId"
+
+# `gh run list --json <these>` is what `runs()` reads: the identity and state of the
+# latest runs, without a watch and without job detail.
+RUN_LIST_FIELDS = "databaseId,workflowName,headBranch,displayTitle,event,status,conclusion,url,createdAt"
 
 # The tick a person watches things move on, and the one a long run settles into. Three seconds is
 # the slowest tick a counter still reads as LIVE on; a poll is one `gh run view --json` call, so
@@ -72,6 +81,115 @@ _RUNNING_STATES = ("queued", "in_progress", "waiting", "requested", "pending")
 
 class GhMissing(RuntimeError):
     """`gh` is absent or signed out — the one refusal that happens before a view opens."""
+
+
+@dataclass(frozen=True)
+class Account:
+    """GitHub CLI authentication for one host.
+
+    `was_already_authenticated` is True when login() found a valid account and did
+    nothing; False when this call completed a device flow. The one-time code, the
+    token and gh's own status text never cross into the result.
+    """
+
+    hostname: str
+    is_authenticated: bool
+    was_already_authenticated: bool
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """One row of a repository's recent Actions runs, newest first.
+
+    `status` and `conclusion` are GitHub's own spellings (`in_progress`,
+    `completed`; `success`, `failure`, `cancelled`, ...); `conclusion` is empty
+    while the run is still going. `started_at` is the run's UTC creation
+    timestamp, empty when GitHub did not report one.
+    """
+
+    run_id: int
+    workflow: str
+    branch: str
+    title: str
+    event: str
+    status: str
+    conclusion: str
+    url: str
+    started_at: str
+
+
+@dataclass(frozen=True)
+class StepOutcome:
+    """One step of one job: GitHub's own number, conclusion and name.
+
+    `conclusion` carries the step's STATUS while the step is still queued or
+    running, because that is all GitHub has said about it yet.
+    """
+
+    number: int | str
+    conclusion: str
+    name: str
+
+
+@dataclass(frozen=True)
+class JobOutcome:
+    """One job of a watched run, with its steps, in the run's own order.
+
+    `job_id` is GitHub's numeric job id, or the job's name when the row came from
+    pull-request checks, which have none. `conclusion` carries the job's STATUS
+    while it runs. `started_at`/`completed_at` are GitHub UTC timestamps, empty
+    when GitHub did not report them.
+    """
+
+    job_id: int | str
+    name: str
+    conclusion: str
+    started_at: str
+    completed_at: str
+    steps: tuple[StepOutcome, ...]
+
+
+@dataclass(frozen=True)
+class FailedLog:
+    """The bounded tail of one failed job's published log.
+
+    `lines` end at the job's last `##[error]` marker when it has one — the reason
+    a job failed sits above the runner's cleanup noise.
+    """
+
+    job_id: str
+    lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class WatchOutcome:
+    """What one finished watch answers: the run, every job, the damage.
+
+    `ending` is one of `completed`; `superseded` (a newer run of the same
+    workflow/branch/event took over — `replacement_run_id`, `replacement_url` and
+    `replacement_title` name it); `poll_failure` (gh stopped answering; `error`
+    carries the first line); and `interrupted` (the person watching stopped it;
+    `is_stopped_by_human` says who, `human_note` carries their words when they
+    left any). `status`/`conclusion` are the LAST poll's, so an interrupted watch
+    describes the run as it stood when the view closed. Pull-request checks
+    answer the same shape with `workflow` = "checks" and no numeric `run_id`.
+    """
+
+    run_id: int | None
+    workflow: str
+    branch: str
+    status: str
+    conclusion: str
+    url: str
+    ending: str
+    jobs: tuple[JobOutcome, ...]
+    failed_logs: tuple[FailedLog, ...]
+    error: str | None = None
+    is_stopped_by_human: bool = False
+    human_note: str | None = None
+    replacement_run_id: int | None = None
+    replacement_title: str = ""
+    replacement_url: str = ""
 
 
 # -- the mapping: a `gh run view` payload, read as the eight answers --------------------
@@ -697,18 +815,18 @@ def _device_authorization(process, hostname, seconds=60):
         process.wait(1)
 
 
-def gh_login(hostname="github.com"):
+def _login(hostname="github.com") -> Account:
     """Authenticate GitHub CLI through private human input and GitHub's browser device flow.
 
     If already signed in, returns immediately. Otherwise GitHub creates a short-lived code which is
-    shown only in a HITL dialog; the human opens GitHub, authorizes the CLI, and confirms there. The
-    model receives only the final status, never the code, token, account status output, or process
-    transcript. HTTPS Git credentials are configured as part of login. `hostname` defaults to
-    `github.com` and may name a GitHub Enterprise host.
+    shown only in a HITL dialog; the human opens GitHub, authorizes the CLI, and confirms there.
+    `hostname` defaults to `github.com` and may name a GitHub Enterprise host.
     """
     hostname = _github_hostname(hostname)
     if _auth_status(hostname):
-        return f"GitHub CLI is already authenticated with {hostname}."
+        return Account(
+            hostname=hostname, is_authenticated=True, was_already_authenticated=True
+        )
 
     installed, _ = _capture("gh --version", 30)
     if installed != 0:
@@ -768,7 +886,9 @@ def gh_login(hostname="github.com"):
                 "GitHub rejected or could not complete browser authentication"
             )
         completed = True
-        return f"GitHub CLI authenticated with {hostname}."
+        return Account(
+            hostname=hostname, is_authenticated=True, was_already_authenticated=False
+        )
     finally:
         if not completed:
             process.stop()
@@ -776,11 +896,34 @@ def gh_login(hostname="github.com"):
 
 def require_gh():
     """Ensure the default GitHub CLI account exists, asking the human to sign in when needed."""
-    gh_login()
+    _login()
 
 
 def _repo_flag(repo):
-    return f" --repo {repo}" if repo else ""
+    """` --repo owner/name` for another repository, refusing every other spelling."""
+    if not repo:
+        return ""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", str(repo)):
+        raise ValueError(f"repo must look like owner/name, got {repo!r}")
+    return f" --repo {repo}"
+
+
+def _run_selector(value):
+    """A run id or a run URL — the only spellings `gh run view` is handed from a caller."""
+    text = str(value)
+    if re.fullmatch(r"\d+", text):
+        return text
+    if re.fullmatch(r"https?://[^\s'\"]+", text):
+        return shlex.quote(text)
+    raise ValueError("run must be a run id or a run URL")
+
+
+def _pull_selector(value):
+    """A pull-request number, branch or URL, without shell syntax in it."""
+    text = str(value)
+    if re.fullmatch(r"[A-Za-z0-9._/~%-]+", text):
+        return shlex.quote(text)
+    raise ValueError("pr must be a number, branch, URL, or 'current'")
 
 
 def fetch_run(run_id, repo=None):
@@ -799,7 +942,11 @@ def fetch_run(run_id, repo=None):
 def newest_run(repo=None):
     """The run id of the newest run on the current branch — what `gh run watch` would pick."""
     exit_code, branch = _capture("git branch --show-current", 30)
-    on = f" --branch {branch.strip()}" if exit_code == 0 and branch.strip() else ""
+    on = (
+        f" --branch {shlex.quote(branch.strip())}"
+        if exit_code == 0 and branch.strip()
+        else ""
+    )
     exit_code, text = _capture(
         f"gh run list{_repo_flag(repo)}{on} -L 1 --json databaseId"
     )
@@ -809,6 +956,35 @@ def newest_run(repo=None):
             f"no GitHub Actions run to watch{on or ''} — push a commit, or pass a run id"
         )
     return rows[0]["databaseId"]
+
+
+def run_list(repo=None, limit=10):
+    """Recent Actions runs, newest first, as typed rows — no view, no watch."""
+    count = max(1, min(int(limit), 50))
+    exit_code, text = _capture(
+        f"gh run list{_repo_flag(repo)} -L {count} --json {RUN_LIST_FIELDS}"
+    )
+    if exit_code != 0:
+        raise RuntimeError(f"gh run list failed: {text.strip()[:400]}")
+    try:
+        rows = json.loads(text)
+    except json.JSONDecodeError as failure:
+        raise RuntimeError("gh run list returned invalid JSON") from failure
+    return tuple(
+        RunSummary(
+            run_id=int(row["databaseId"]),
+            workflow=str(row.get("workflowName") or "?"),
+            branch=str(row.get("headBranch") or ""),
+            title=str(row.get("displayTitle") or ""),
+            event=str(row.get("event") or ""),
+            status=str(row.get("status") or ""),
+            conclusion=str(row.get("conclusion") or ""),
+            url=str(row.get("url") or ""),
+            started_at=str(row.get("createdAt") or ""),
+        )
+        for row in rows
+        if isinstance(row, dict) and row.get("databaseId")
+    )
 
 
 def newer_run(payload, repo=None):
@@ -923,67 +1099,64 @@ def superseded_shape(shape):
     return settled
 
 
-def _model_report(payload, log_of, cache, superseded=None, failure=None):
-    """One compact, lossless-enough CI report: schema once, each fact once."""
+def _watch_outcome(payload, log_of, cache, superseded=None, failure=None, view=None):
+    """One typed CI verdict: each fact once, every job with its steps, failed logs' tails."""
     jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
-    report = {
-        "run": {
-            "id": payload.get("databaseId"),
-            "workflow": payload.get("workflowName") or "?",
-            "branch": payload.get("headBranch") or "?",
-            "status": payload.get("status") or "",
-            "conclusion": payload.get("conclusion") or "",
-            "url": payload.get("url") or "",
-        },
-        "job_fields": [
-            "id",
-            "name",
-            "conclusion",
-            "started_at",
-            "completed_at",
-            "steps",
-        ],
-        "step_fields": ["id", "conclusion", "name"],
-        "jobs": [
-            [
-                job.get("databaseId") or job.get("name") or index,
-                job.get("name") or "?",
-                job.get("conclusion") or job.get("status") or "",
-                job.get("startedAt") or "",
-                job.get("completedAt") or "",
-                [
-                    [
-                        step.get("number") or step_index,
-                        step.get("conclusion") or step.get("status") or "",
-                        step.get("name") or "?",
-                    ]
+    failed = []
+    for index, job in enumerate(jobs):
+        if tone_of(job.get("status"), job.get("conclusion")) != "error":
+            continue
+        tail = _job_log_tail(_job_id(job, index), LOG_TAIL_LINES, log_of, cache)
+        if tail:
+            failed.append(FailedLog(job_id=_job_id(job, index), lines=tuple(tail)))
+    ending = (
+        "superseded"
+        if superseded
+        else "poll_failure"
+        if failure
+        else "completed"
+        if str(payload.get("status") or "") == "completed"
+        else "interrupted"
+    )
+    return WatchOutcome(
+        run_id=payload.get("databaseId"),
+        workflow=str(payload.get("workflowName") or "?"),
+        branch=str(payload.get("headBranch") or "?"),
+        status=str(payload.get("status") or ""),
+        conclusion=str(payload.get("conclusion") or ""),
+        url=str(payload.get("url") or ""),
+        ending=ending,
+        jobs=tuple(
+            JobOutcome(
+                job_id=job.get("databaseId") or job.get("name") or index,
+                name=str(job.get("name") or "?"),
+                conclusion=str(job.get("conclusion") or job.get("status") or ""),
+                started_at=str(job.get("startedAt") or ""),
+                completed_at=str(job.get("completedAt") or ""),
+                steps=tuple(
+                    StepOutcome(
+                        number=step.get("number") or step_index,
+                        conclusion=str(
+                            step.get("conclusion") or step.get("status") or ""
+                        ),
+                        name=str(step.get("name") or "?"),
+                    )
                     for step_index, step in enumerate(job.get("steps") or [])
                     if isinstance(step, dict)
-                ],
-            ]
-            for index, job in enumerate(jobs)
-        ],
-        "failed_logs": {
-            str(job.get("databaseId") or job.get("name") or index): tail
-            for index, job in enumerate(jobs)
-            if tone_of(job.get("status"), job.get("conclusion")) == "error"
-            if (
-                tail := _job_log_tail(
-                    _job_id(job, index), LOG_TAIL_LINES, log_of, cache
-                )
+                ),
             )
-        },
-    }
-    if superseded:
-        report["ending"] = {
-            "reason": "superseded",
-            "replacement_run_id": superseded.get("databaseId"),
-            "replacement_title": superseded.get("displayTitle") or "",
-            "replacement_url": superseded.get("url") or "",
-        }
-    elif failure:
-        report["ending"] = {"reason": "poll_failure", "error": failure}
-    return json.dumps(report, ensure_ascii=False, separators=(",", ":"))
+            for index, job in enumerate(jobs)
+        ),
+        failed_logs=tuple(failed),
+        error=failure,
+        is_stopped_by_human=bool(view.is_from_human) if view is not None else False,
+        human_note=view.note if view is not None else None,
+        replacement_run_id=superseded.get("databaseId") if superseded else None,
+        replacement_title=str(superseded.get("displayTitle") or "")
+        if superseded
+        else "",
+        replacement_url=str(superseded.get("url") or "") if superseded else "",
+    )
 
 
 def _selection_signature(shape):
@@ -1177,6 +1350,9 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
     when `gh` stops answering, or when the human presses Interrupt — never on an invented duration.
     """
     payload = poll()
+    # The run facts answer the last poll whose picture reached the human: a poll that
+    # lands after they stop watching describes a moment they never saw.
+    published = payload
     shape = run_shape(payload, now=_wall_time())
     began = time.monotonic()
     manual_selection = None
@@ -1276,6 +1452,7 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                     view, shape, fresh, shown_selection, log_of, log_cache
                 )
                 shape = fresh
+                published = payload
             if shape["is_over"]:
                 _show_selection_logs(view, shape, log_of, log_cache, LOG_TAIL_LINES)
         except vis.Interrupted:
@@ -1288,41 +1465,25 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
             else []
         )
         if terminal_failure:
-            return view.close(
+            view.close(
                 reason="failed",
                 error=terminal_failure,
                 selection_snapshots=selection_snapshots,
-                model_result=_model_report(
-                    payload, log_of, log_cache, superseded, terminal_failure
-                ),
             )
-        if superseded:
-            return view.close(
+        elif superseded:
+            view.close(
                 reason="superseded",
                 selection_snapshots=selection_snapshots,
-                model_result=_model_report(payload, log_of, log_cache, superseded),
             )
-        return view.close(
-            selection_snapshots=selection_snapshots,
-            model_result=_model_report(payload, log_of, log_cache),
+        else:
+            view.close(selection_snapshots=selection_snapshots)
+        return _watch_outcome(
+            published, log_of, log_cache, superseded, terminal_failure, view
         )
 
 
-def gh_watch_run(run=None, repo=None, pr=None):
-    """What is this CI activity doing, and how did it end? Watch one run or one PR's checks.
-
-    Opens a live view a person can watch (and stop), easing polls from three seconds to eight after
-    five minutes. Job rows are controls: all jobs running in parallel are selected initially; tap one
-    to replace the steps and output below with that job, answered within a fifth of a second
-    whatever the poll cadence. The returned string is compact JSON: run
-    metadata; a schema-once list of every job with id, outcome, start/end times, and nested step
-    ids/outcomes/names; and one bounded log tail for each failed job. It never repeats the artifact
-    tree. `run` is a run id or URL; without `run` or `pr`, the newest run on the current branch is
-    selected. `pr` is a pull-request number, branch, URL, or `"current"`; it watches that PR's
-    aggregate checks through the same view. `run` and `pr` are mutually exclusive. Any running run
-    yields when a newer run starts the same workflow, branch and event. `repo` is `owner/name` for
-    another repository.
-    """
+def _watch_run(run=None, repo=None, pr=None):
+    """Resolve which run — or which pull request's checks — this watch is about, then watch it."""
     if run is not None and pr is not None:
         raise ValueError("Choose either run or pr, not both")
     require_gh()
@@ -1334,7 +1495,7 @@ def gh_watch_run(run=None, repo=None, pr=None):
             str(first.get("displayTitle") or "checks"),
             lambda: fetch_checks(pull, repo),
         )
-    run_id = run or newest_run(repo)
+    run_id = _run_selector(run) if run is not None else newest_run(repo)
     first = fetch_run(run_id, repo)
     title = str(first.get("workflowName") or "GitHub Actions")
     # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a live run showed
@@ -1407,7 +1568,7 @@ def checks_payload(rows, pull):
 
 def fetch_checks(pull, repo=None):
     """One poll of `gh pr checks`, mapped into the payload `run_shape` already understands."""
-    named = f" {pull}" if pull else ""
+    named = f" {_pull_selector(pull)}" if pull else ""
     command = (
         f"gh pr checks{named}{_repo_flag(repo)} "
         "--json name,state,bucket,startedAt,completedAt,link,workflow"
@@ -1424,24 +1585,74 @@ def fetch_checks(pull, repo=None):
     return checks_payload(rows, pull)
 
 
-PROMPT = """gh_ surface active — authenticate GitHub and watch Actions on a live view the human can see.
-  gh_login(hostname="github.com")
-  gh_watch_run(run=None, repo=None, pr=None)
-`gh_login` runs GitHub's browser device flow through private human input; no code or credential is
-returned to the model. A watcher invokes it automatically when signed out. The watcher follows one
-run or one pull request's checks until completion, then answers the diagnostic picture — use it
-instead of a shell polling loop."""
+class Gh:
+    """GitHub through the `gh` CLI: sign in, list runs, watch one to its end.
+
+    One transport and one credential path serve everything — the GitHub CLI
+    through the sandbox shell verb, no hand-built HTTPS, no model-visible
+    token. `login` may open a private human-input dialog; `runs` and `watch`
+    only read.
+    """
+
+    @vis.method(tag="mutation")
+    def login(self, hostname: str = "github.com") -> Account:
+        """Authenticate GitHub CLI on one host through GitHub's browser device flow.
+
+        Returns immediately when already signed in. Otherwise GitHub shows a short-lived code in
+        a private HITL dialog; the human opens GitHub, authorizes the CLI, and confirms there.
+        The model receives only the typed outcome — never the code, token, account status output,
+        or process transcript. HTTPS Git credentials are configured as part of login. `hostname`
+        defaults to `github.com` and may name a GitHub Enterprise host.
+        """
+        return _login(hostname)
+
+    def runs(self, repo: str | None = None, limit: int = 10) -> tuple[RunSummary, ...]:
+        """List recent Actions runs, newest first, without watching anything.
+
+        The answer to "which run is this" and "what ran lately": each `run_id` is what
+        `watch(run=...)` takes. `repo` is `owner/name` for another repository; `limit` is
+        capped at 50.
+        """
+        return run_list(repo, limit)
+
+    def watch(
+        self, run: str | int | None = None, repo: str | None = None, pr=None
+    ) -> WatchOutcome:
+        """What is this CI activity doing, and how did it end? Watch one run or PR checks.
+
+        Opens a live view a person can watch (and stop), easing polls from three seconds to eight
+        after five minutes. Job rows are controls: all jobs running in parallel are selected
+        initially; tap one to replace the steps and output below with that job, answered within a
+        fifth of a second whatever the poll cadence. The returned WatchOutcome carries run
+        metadata, every job with id, outcome, start/end times and nested steps, and one bounded
+        log tail for each failed job — it never repeats the artifact tree. `run` is a run id or
+        URL; without `run` or `pr`, the newest run on the current branch is selected. `pr` is a
+        pull-request number, branch, URL, or `"current"`; it watches that PR's aggregate checks
+        through the same view. `run` and `pr` are mutually exclusive. Any running run yields when
+        a newer run starts the same workflow, branch and event. `repo` is `owner/name` for
+        another repository.
+        """
+        return _watch_run(run, repo, pr)
+
+
+gh = Gh()
+
+
+PROMPT = """gh_ surface active — GitHub through the gh CLI (gh):
+  login(hostname="github.com")          authenticate through private human input
+  runs(repo=None, limit=10)             recent Actions runs, newest first
+  watch(run=None, repo=None, pr=None)   one run or PR checks, live, to its end
+Every answer is a typed frozen object (Account, RunSummary, WatchOutcome). A watch opens a live view
+the human can watch and stop; its WatchOutcome carries every job, step and failed-log tail once. Use
+watch() instead of a shell polling loop — it signs in by itself when needed."""
 
 
 vis.extension(
     name="gh",
-    description="Authenticate GitHub CLI and watch Actions on a live view.",
-    version="0.2.0",
+    description="GitHub through the gh CLI: sign in, list runs, watch Actions live.",
+    version="0.3.0",
     kind="integration",
     alias="gh",
-    symbols=[
-        vis.symbol(gh_login, tag="mutation"),
-        vis.symbol(gh_watch_run, tag="observation"),
-    ],
+    symbols=[vis.symbol(gh, name="gh", tag="observation")],
     prompt=PROMPT,
 )
