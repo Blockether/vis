@@ -1,5 +1,7 @@
-import type { ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 
+import { ChevronIcon } from "../../components/icons";
+import { IconButton } from "../../components/ui";
 export function FormLabel({
   label,
   hint,
@@ -24,6 +26,23 @@ export function FormLabel({
   );
 }
 
+/** WHERE THE DIALOG'S TWO COLUMNS STAND SIDE BY SIDE: the same `sm:` the settings
+ *  grid stacks at, so the fold and the layout it serves can never disagree. */
+const WIDE_COLUMNS = "(min-width: 640px)";
+
+const subscribeWideColumns = (onStoreChange: () => void) => {
+  const media = window.matchMedia?.(WIDE_COLUMNS);
+  media?.addEventListener("change", onStoreChange);
+  return () => media?.removeEventListener("change", onStoreChange);
+};
+
+/** True once there is room for both of the dialog's columns beside each other. */
+const useWideColumns = () =>
+  useSyncExternalStore(
+    subscribeWideColumns,
+    () => window.matchMedia?.(WIDE_COLUMNS).matches ?? false,
+  );
+
 /** Settings owned by this companion installation, never by a gateway. */
 /**
  * ONE COLUMN OF SETTINGS, and the dialog has two of them.
@@ -44,14 +63,45 @@ export function SettingsColumn({
   title,
   meta,
   action,
+  disclosure,
   children,
 }: {
   title: string;
   meta?: ReactNode;
   /** The column's ONE bare verb, at the physical end of its band. */
   action?: ReactNode;
+  /**
+   * The fold to expose while the two columns stack on a phone, or nothing where
+   * they stand beside each other. `ProjectCrumb`'s shape: the caller owns the
+   * state, the band carries the chevron.
+   */
+  disclosure?: {
+    isOpen: boolean;
+    onToggle: () => void;
+    /** What the fold is called to a screen reader: `Show application settings`. */
+    label: string;
+  };
   children: ReactNode;
 }) {
+  // The fold lives ONLY where the columns stack — below the same `sm:` that makes
+  // the dialog one column wide. Beside each other there is nothing to fold, and a
+  // chevron on a band that hides nothing is one more lie on the screen.
+  const isWide = useWideColumns();
+  const fold = disclosure && !isWide ? disclosure : null;
+  const body = (
+    /* A COLUMN CLOSES ITS OWN LAST GROUP. Reported over this screenshot: the
+       dialog's last panel simply stopped. On a phone the frame is full-bleed
+       and carries no bottom edge, so the selected amber cell of the last
+       choice ran out into paper with no hairline under it — measured at 390px,
+       the column body ended at the cell's own 2655px — and the two stacked
+       halves were told apart by the GRID rather than by the column that ends.
+       The body draws the rule it owes below itself; on `sm:` the columns stand
+       side by side and the frame's own 1px bottom border is that edge, so it
+       is dropped there rather than doubled. */
+    <div className="min-w-0 divide-y divide-dialog-edge border-b border-dialog-edge sm:min-h-0 sm:flex-1 sm:overflow-y-auto sm:overscroll-contain sm:border-b-0">
+      {children}
+    </div>
+  );
   return (
     <section className="flex min-w-0 flex-col sm:min-h-0">
       {/* A BAND NAMES THE COLUMN IN ONE LINE, and its verb is a BARE MARK at the
@@ -71,25 +121,28 @@ export function SettingsColumn({
               </span>
             )}
           </div>
-          {action && (
-            <span className="flex shrink-0 items-center empty:hidden">
-              {action}
-            </span>
-          )}
+          <span className="flex shrink-0 items-center empty:hidden">
+            {action}
+            {fold && (
+              /* THE FOLD IS THE BAND'S OWN MARK, and it stands where the machines'
+                 ＋ stands: the trailing edge, one bare chevron that TURNS rather than
+                 swaps glyph. Hidden is HIDDEN — the panels under this band are not on
+                 the page at all until the mark is pressed. */
+              <IconButton
+                variant="quiet"
+                edge
+                label={fold.label}
+                title={fold.label}
+                aria-expanded={fold.isOpen}
+                onClick={fold.onToggle}
+              >
+                <ChevronIcon open={fold.isOpen} className="size-4" />
+              </IconButton>
+            )}
+          </span>
         </div>
       </header>
-      {/* A COLUMN CLOSES ITS OWN LAST GROUP. Reported over this screenshot: the
-          dialog's last panel simply stopped. On a phone the frame is full-bleed
-          and carries no bottom edge, so the selected amber cell of the last
-          choice ran out into paper with no hairline under it — measured at 390px,
-          the column body ended at the cell's own 2655px — and the two stacked
-          halves were told apart by the GRID rather than by the column that ends.
-          The body draws the rule it owes below itself; on `sm:` the columns stand
-          side by side and the frame's own 1px bottom border is that edge, so it
-          is dropped there rather than doubled. */}
-      <div className="min-w-0 divide-y divide-dialog-edge border-b border-dialog-edge sm:min-h-0 sm:flex-1 sm:overflow-y-auto sm:overscroll-contain sm:border-b-0">
-        {children}
-      </div>
+      {!fold || fold.isOpen ? body : null}
     </section>
   );
 }

@@ -187,6 +187,10 @@ export function SettingsDialog({
       .map((conn) => conn.url),
   );
 
+  // On a phone the columns stack and the machines lead, so the application's own
+  // settings fold until asked for; side by side there is room and no fold exists.
+  const [appOpen, setAppOpen] = useState(false);
+
   const health = useFleetHealth(gateways);
 
   return (
@@ -196,9 +200,6 @@ export function SettingsDialog({
     <Modal size="wide" onDismiss={onClose}>
       <DialogFrame
         title="Settings"
-        subtitle={`This device · ${gateways.length} ${
-          gateways.length === 1 ? "machine" : "machines"
-        }`}
         onClose={onClose}
       >
         {/* Each column scrolls ITSELF on desktop. One shared scroller made the short
@@ -262,7 +263,14 @@ export function SettingsDialog({
             )}
           </SettingsColumn>
 
-          <SettingsColumn title="Application" meta="this device">
+          <SettingsColumn
+            title="Application"
+            disclosure={{
+              isOpen: appOpen,
+              onToggle: () => setAppOpen((open) => !open),
+              label: `${appOpen ? "Hide" : "Show"} application settings`,
+            }}
+          >
             {err && (
               <div className="p-3 sm:p-4">
                 <Banner kind="err">{err}</Banner>
