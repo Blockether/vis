@@ -5,7 +5,10 @@
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defn- reload! [] (require 'com.blockether.vis.ext.provider-opencode-go :reload))
+(defn- reload!
+  []
+  (require 'com.blockether.vis.ext.provider-opencode-go :reload)
+  (opencode-go/register!))
 
 (defdescribe provider-registration-test
              (it "registers ONE OpenCode Go provider that serves both wire dialects"
@@ -27,6 +30,29 @@
                    (expect (ifn? (:provider/get-token-fn provider)))
                    (expect (ifn? (:provider/auth-prompt-fn provider)))
                    (expect (ifn? (:provider/limits-fn provider))))))
+(defdescribe
+  session-start-hook-test
+  ;; Session identity is transport metadata owned by this provider extension,
+  ;; not a provider-id branch in the engine loop.
+  (it "contributes its conversation header through the session-start hook"
+      (reload!)
+      (let [ext
+            (some #(when (= "provider-opencode-go" (:ext/name %)) %) (vis/registered-extensions))
+
+            hook
+            (some #(when (= :session/start (:phase %)) %) (:ext/hooks ext))]
+
+        (expect (some? hook))
+        (when hook
+          (let [invoke (:fn hook)]
+            (expect (= {:provider-id :opencode-go
+                        :llm-headers {"x-opencode-session" "conversation-1"}}
+                       (invoke {:phase :session/start
+                                :environment {:session-id "conversation-1"
+                                              :router {:providers [{:id :opencode-go}]}}})))
+            (expect (nil? (invoke {:phase :session/start
+                                   :environment {:session-id "conversation-1"
+                                                 :router {:providers [{:id :anthropic}]}}}))))))))
 
 (defdescribe per-model-wire-routing-test
              (it "declares OpenAI-wire models as bare strings (svar default chat wire)"

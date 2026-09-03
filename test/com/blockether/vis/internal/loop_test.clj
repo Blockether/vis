@@ -901,6 +901,43 @@
   (it "does not add action-service headers for non-Copilot providers"
       (expect (nil? (#'lp/copilot-llm-headers {:provider :anthropic-coding-plan} "agent")))))
 
+;; Provider-specific request identity enters through the extension lifecycle; the
+;; engine only applies the generic provider/header contribution it receives.
+(defdescribe
+  session-start-provider-headers-test
+  (it "keeps session headers local and stable across conversation environments"
+      (let [shared-router
+            {:providers [{:id :opencode-go :llm-headers {"existing" "kept"}} {:id :anthropic}]}
+
+            first-env
+            (lp/create-environment shared-router {:db :memory})
+
+            second-env
+            (lp/create-environment shared-router {:db :memory})]
+
+        (try (let [first-session
+                   (str (:session-id first-env))
+
+                   second-session
+                   (str (:session-id second-env))
+
+                   first-headers
+                   (get-in first-env [:router :providers 0 :llm-headers])
+
+                   second-headers
+                   (get-in second-env [:router :providers 0 :llm-headers])]
+
+               (expect (= {"existing" "kept" "x-opencode-session" first-session} first-headers))
+               (expect (= second-session (get second-headers "x-opencode-session")))
+               (expect (= first-session
+                          (get-in first-env
+                                  [:session-llm-headers :opencode-go "x-opencode-session"])))
+               (expect (not= first-session second-session))
+               (expect (= {:id :anthropic} (get-in first-env [:router :providers 1])))
+               (expect (= {:providers [{:id :opencode-go :llm-headers {"existing" "kept"}}
+                                       {:id :anthropic}]}
+                          shared-router)))
+             (finally (lp/dispose-environment! first-env) (lp/dispose-environment! second-env))))))
 (defdescribe
   codex-stateful-session-test
   (it
@@ -6057,6 +6094,18 @@
                         :llm-headers {"fresh" "header"}
                         :responses-path "/responses"}
                        (first (:providers hydrated))))))))
+  (it "reapplies session headers after dynamic credential hydration"
+      (let [environment {:router {:providers [{:id :ap :llm-headers {"old" "header"}}]}
+                         :session-llm-headers {:ap {"session" "stable" "shared" "session"}}}]
+        (with-redefs [registry/provider-by-id (fn [_]
+                                                {:provider/get-token-fn
+                                                 (fn []
+                                                   {:token "fresh"
+                                                    :llm-headers {"fresh" "header"
+                                                                  "shared" "credential"}})})]
+          (expect (= {"fresh" "header" "session" "stable" "shared" "session"}
+                     (get-in (hydrate-environment-router environment)
+                             [:router :providers 0 :llm-headers]))))))
   (it "retains the exact old provider snapshot when token lookup fails"
       (let [provider
             {:id :ap :api-key "still-usable" :base-url "https://old.example"}

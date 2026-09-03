@@ -6817,14 +6817,34 @@
 
     (if (= hydrated provider-entries) router (assoc router :providers hydrated))))
 
+(defn- with-session-llm-headers
+  "Decorate one immutable router snapshot with session-scoped provider headers.
+   Configured and credential-derived headers are retained; a session hook owns any
+   same-named key it contributes. The shared process router is never mutated."
+  [router headers-by-provider]
+  (if (empty? headers-by-provider)
+    router
+    (update router
+            :providers
+            (fn [providers]
+              (mapv (fn [{:keys [id] :as provider}]
+                      (if-let [headers (not-empty (get headers-by-provider id))]
+                        (update provider :llm-headers #(merge (or % {}) headers))
+                        provider))
+                    providers)))))
+
 (defn- hydrate-environment-router
   "Hydrate only the router snapshot used by this provider attempt. The two-arity
    form is the real request boundary: it may run managed first-use authentication
    for the provider the router already resolved, never for unrelated fleet entries."
-  ([environment] (update environment :router hydrate-router-credentials))
+  ([environment]
+   (update environment
+           :router
+           #(with-session-llm-headers (hydrate-router-credentials %)
+                                      (:session-llm-headers environment))))
   ([environment provider-id]
    (ensure-managed-provider-auth! provider-id)
-   (update environment :router hydrate-router-credentials)))
+   (hydrate-environment-router environment)))
 
 (defn- router-provider-token
   "Token actually carried by provider `pid` in this exact router snapshot."
@@ -11098,7 +11118,17 @@
         ;; this process's own start and `/reload` may pick an edit up.
         (python-extensions/ensure-python-extensions-loaded!)
         (extension/register-extensions! env install-extension!)
-        env)
+        (let [session-llm-headers
+              (extension/session-start-llm-headers env (prompt/active-extensions env))
+              final-env (-> env
+                            (assoc :session-llm-headers session-llm-headers)
+                            (update :router with-session-llm-headers session-llm-headers))]
+
+          ;; Callbacks installed above closed over `environment-atom`; publish the
+          ;; fully decorated session before create-environment returns.
+          (reset! environment-atom final-env)
+          (swap! state-atom assoc :environment final-env)
+          final-env))
       (catch Throwable t
         ;; Best-effort: a teardown must never replace the real failure with its own.
         (try (env/dispose-python-context! (:python-context @pending)) (catch Throwable _ nil))

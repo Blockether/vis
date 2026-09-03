@@ -134,6 +134,15 @@
               :dynamic (go-limits/dynamic-limits! (:api-key detected))}
              (catch Throwable t (usage-error-report t)))))))
 
+(defn- session-start-headers
+  [{:keys [environment]}]
+  (let [session-id (some-> environment
+                           :session-id
+                           str)]
+    (when (and (seq session-id)
+               (some #(= PROVIDER_ID (:id %)) (get-in environment [:router :providers])))
+      {:provider-id PROVIDER_ID :llm-headers {"x-opencode-session" session-id}})))
+
 ;; Provider registration
 
 (defn register!
@@ -147,6 +156,10 @@
        :ext/author "Blockether"
        :ext/owner "vis"
        :ext/license "Apache-2.0"
+       :ext/hooks [{:id :opencode-go/session-header
+                    :doc "Send the stable Vis conversation id with OpenCode Go requests."
+                    :phase :session/start
+                    :fn session-start-headers}]
        ;; The key store owns auth, status, logout and the token envelope; which
        ;; wire a model rides is this provider's own business and is stamped onto
        ;; the entry it produces.

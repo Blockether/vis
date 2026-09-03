@@ -548,14 +548,14 @@
 ;; torn down on deregister.
 (s/def :ext/network-filters (s/coll-of ifn?))
 
-;; Hooks: the single mechanism extensions use to validate a candidate final answer.
-;; A hook is a named callback whose `:fn` receives a phase-shaped context map.
-;; `:turn.answer/validate` returns nil to accept or
-;; `{:reject true :message ... :hint ...}` to reject. Unused phases are refused;
-;; no compatibility shim hides stale extension code.
+;; Hooks are named extension callbacks at closed lifecycle phases. A hook's `:fn`
+;; receives a phase-shaped context map. `:session/start` may contribute request
+;; headers for one provider; `:turn.answer/validate` may reject a candidate final
+;; answer. Unused phases are refused so stale extension code cannot hide behind a
+;; compatibility path.
 (def canonical-hook-phases
   "Canonical namespaced lifecycle phases accepted by `:ext/hooks`."
-  #{:turn.answer/validate})
+  #{:session/start :turn.answer/validate})
 
 (defn hook-phase?
   "True when `phase` is a canonical namespaced hook phase."
@@ -573,6 +573,14 @@
 (s/def ::hook (s/keys :req-un [:ext.hook/id :ext.hook/doc :ext.hook/phase :ext.hook/fn]))
 
 (s/def :ext/hooks (s/coll-of ::hook :kind vector?))
+
+(s/def :ext.hook.return/provider-id keyword?)
+
+(s/def :ext.hook.return/llm-headers
+  (s/and (s/map-of util/non-blank-string? util/non-blank-string?) seq))
+
+(s/def ::session-start-llm-headers
+  (s/keys :req-un [:ext.hook.return/provider-id :ext.hook.return/llm-headers]))
 
 (s/def :ext.hook.return/text util/non-blank-string?)
 
@@ -1742,7 +1750,62 @@
 
        ~@body)))
 
+(defn session-start-llm-headers
+  "Run active extensions' `:session/start` hooks in registry order.
 
+   A hook receives `{:phase :session/start :environment environment}` and returns
+   nil or `{:provider-id keyword :llm-headers {nonblank-string nonblank-string}}`.
+   The result is keyed by provider id; later hooks override the same header. Hook
+   exceptions, malformed returns, and unknown provider ids fail environment creation
+   so required transport metadata is never silently omitted."
+  [environment active-extensions]
+  (let [provider-ids (into #{} (map :id) (get-in environment [:router :providers]))]
+    (reduce
+      (fn [headers-by-provider ext]
+        (reduce
+          (fn [acc {:keys [id phase] hook-fn :fn}]
+            (if (= :session/start phase)
+              (let [contribution (try (with-context {:ext ext :env environment}
+                                                    (hook-fn {:phase :session/start
+                                                              :environment environment}))
+                                      (catch Throwable t
+                                        (throw (ex-info (str "Extension session-start hook failed: "
+                                                             (:ext/name ext)
+                                                             "/" id)
+                                                        {:type :extension/session-start-hook-failed
+                                                         :extension (:ext/name ext)
+                                                         :hook id
+                                                         :phase :session/start}
+                                                        t))))]
+                (cond (nil? contribution) acc
+                      (not (s/valid? ::session-start-llm-headers contribution))
+                      (throw (ex-info
+                               (str
+                                 "Extension session-start hook returned invalid provider headers: "
+                                 (:ext/name ext)
+                                 "/" id)
+                               {:type :extension/invalid-session-start-hook-return
+                                :extension (:ext/name ext)
+                                :hook id
+                                :phase :session/start}))
+                      (not (contains? provider-ids (:provider-id contribution)))
+                      (throw (ex-info
+                               (str "Extension session-start hook targeted an unknown provider: "
+                                    (:ext/name ext)
+                                    "/" id)
+                               {:type :extension/unknown-session-start-provider
+                                :extension (:ext/name ext)
+                                :hook id
+                                :phase :session/start
+                                :provider-id (:provider-id contribution)}))
+                      :else (update acc
+                                    (:provider-id contribution)
+                                    #(merge (or % {}) (:llm-headers contribution)))))
+              acc))
+          headers-by-provider
+          (or (:ext/hooks ext) [])))
+      {}
+      (or active-extensions []))))
 
 (defn- deep-merge
   [& maps]
