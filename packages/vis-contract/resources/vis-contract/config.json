@@ -1,0 +1,38 @@
+{
+  "api_style_values": [
+    "anthropic",
+    "openai",
+    "openai-responses",
+    "gemini"
+  ],
+  "workspace_access_values": [
+    "read-only",
+    "readonly",
+    "ro",
+    "read-write",
+    "readwrite",
+    "rw"
+  ],
+  "workspace_draft_values": [
+    "shared",
+    "copy-only",
+    "copy-and-apply",
+    "not-allowed"
+  ],
+  "workspace_os_values": [
+    "macos",
+    "linux",
+    "wsl",
+    "windows"
+  ],
+  "jail_environment_values": [
+    "declared",
+    "inherit"
+  ],
+  "titling_modes": [
+    "llm",
+    "first_sentence",
+    "first_words",
+    "disabled"
+  ]
+}

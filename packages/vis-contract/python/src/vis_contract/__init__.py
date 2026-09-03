@@ -6,10 +6,8 @@ boundary, published on its own so it can be read where Vis is not: gateway
 routes and events, the ops a host answers, shell/View/content/toggle/provider-limits
 vocabularies, and [[Host]], the protocol an implementation is checked against.
 
-`contract.json` beside this file and the repository's language-neutral copy are
-rendered from the owning EDN documents by
-`com.blockether.vis.contract.python-host/write-package-document!`. Nothing here
-is written by hand or imports anything outside the standard library.
+`contract.json` beside this file is the validated portable contract aggregate.
+Its source JSON documents and JSON Schemas live in the `vis-contract` artifact.
 
 Read the ops:
 
@@ -29,13 +27,16 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
-    "CONTRACT",
+    "CONFIG",
     "CONTENT",
+    "CONTRACT",
     "GATEWAY",
     "LIVE",
     "OPS",
     "PROVIDER",
     "SHELL",
+    "SURFACE",
+    "TEST_RUNNER",
     "TOGGLE",
     "VERSION",
     "VIEW",
@@ -67,23 +68,28 @@ SHELL = CONTRACT["shell"]
 """The `shell` verb's lifecycle grammar: `default_op`, `handle_ops`, `spawn_ops`."""
 
 LIVE = CONTRACT["live"]
-"""The `live` verb's lifecycle grammar: `default_op`, `spawn_ops`, `handle_ops`, `flush_ms`.
-
-`flush_ms` is how long a handle may coalesce pushes before one has to cross: a
-host round trip per written line would park the extension on the journal writer
-once per line."""
+"""The `live` operation vocabulary and flush interval."""
 
 VIEW = CONTRACT["view"]
 """The closed View vocabulary — lifecycle kinds, semantic nodes and their bounds."""
 
 CONTENT = CONTRACT["content"]
-"""Canonical roles, statuses, content blocks, stream events and delta fields."""
+"""Canonical content vocabulary."""
+
+CONFIG = CONTRACT["config"]
+"""Canonical configuration vocabulary."""
 
 TOGGLE = CONTRACT["toggle"]
-"""Canonical toggle ids, kinds, bounds and boolean wire tokens."""
+"""Canonical toggle vocabulary."""
 
 PROVIDER = CONTRACT["provider"]
-"""Provider limits vocabulary: report statuses, row scopes, kinds, windows and sources."""
+"""Canonical provider-limits vocabulary."""
+
+SURFACE = CONTRACT["surface"]
+"""Canonical language-surface vocabulary."""
+
+TEST_RUNNER = CONTRACT["test_runner"]
+"""Canonical test-runner vocabulary."""
 
 
 def op(name):

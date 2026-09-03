@@ -311,7 +311,6 @@
              [vis-dark theme/vis-dark]
              [themes theme/themes]
              [palette theme/palette]
-             [pallete theme/pallete]
              [theme theme/theme]
              [color theme/color]
              [theme-registry theme/theme-registry]

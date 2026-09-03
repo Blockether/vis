@@ -1,0 +1,472 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/gateway.json",
+  "title": "Gateway contract",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "$ref": "common.json#/$defs/version"
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minimum_client": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minimum_gateway": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "version",
+        "minimum_client",
+        "minimum_gateway"
+      ]
+    },
+    "headers": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "common.json#/$defs/non_blank_string"
+      }
+    },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "audience": {
+            "enum": [
+              "administration",
+              "public",
+              "sdk"
+            ]
+          },
+          "operations": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "delete": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "request": {
+                    "enum": [
+                      "binary",
+                      "json",
+                      "none"
+                    ]
+                  },
+                  "response": {
+                    "enum": [
+                      "binary",
+                      "empty",
+                      "html",
+                      "json",
+                      "markdown",
+                      "negotiated",
+                      "resource",
+                      "sse"
+                    ]
+                  }
+                },
+                "required": [
+                  "request",
+                  "response"
+                ]
+              },
+              "get": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "request": {
+                    "enum": [
+                      "binary",
+                      "json",
+                      "none"
+                    ]
+                  },
+                  "response": {
+                    "enum": [
+                      "binary",
+                      "empty",
+                      "html",
+                      "json",
+                      "markdown",
+                      "negotiated",
+                      "resource",
+                      "sse"
+                    ]
+                  }
+                },
+                "required": [
+                  "request",
+                  "response"
+                ]
+              },
+              "patch": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "request": {
+                    "enum": [
+                      "binary",
+                      "json",
+                      "none"
+                    ]
+                  },
+                  "response": {
+                    "enum": [
+                      "binary",
+                      "empty",
+                      "html",
+                      "json",
+                      "markdown",
+                      "negotiated",
+                      "resource",
+                      "sse"
+                    ]
+                  }
+                },
+                "required": [
+                  "request",
+                  "response"
+                ]
+              },
+              "post": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "request": {
+                    "enum": [
+                      "binary",
+                      "json",
+                      "none"
+                    ]
+                  },
+                  "response": {
+                    "enum": [
+                      "binary",
+                      "empty",
+                      "html",
+                      "json",
+                      "markdown",
+                      "negotiated",
+                      "resource",
+                      "sse"
+                    ]
+                  }
+                },
+                "required": [
+                  "request",
+                  "response"
+                ]
+              },
+              "put": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "request": {
+                    "enum": [
+                      "binary",
+                      "json",
+                      "none"
+                    ]
+                  },
+                  "response": {
+                    "enum": [
+                      "binary",
+                      "empty",
+                      "html",
+                      "json",
+                      "markdown",
+                      "negotiated",
+                      "resource",
+                      "sse"
+                    ]
+                  }
+                },
+                "required": [
+                  "request",
+                  "response"
+                ]
+              }
+            },
+            "minProperties": 1
+          }
+        },
+        "required": [
+          "path",
+          "audience",
+          "operations"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "events": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "jobs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "transcribe": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "synthesize": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            }
+          },
+          "required": [
+            "transcribe",
+            "synthesize"
+          ]
+        },
+        "push": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "turn_terminal": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "queue_mirror": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "view": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "open": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "patch": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "close": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            }
+          },
+          "required": [
+            "open",
+            "patch",
+            "close"
+          ]
+        }
+      },
+      "required": [
+        "session",
+        "jobs",
+        "push",
+        "turn_terminal",
+        "queue_mirror",
+        "view"
+      ]
+    },
+    "envelopes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "error_response": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "body_keys": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              }
+            },
+            "error_keys": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              }
+            }
+          },
+          "required": [
+            "body_keys",
+            "error_keys"
+          ]
+        },
+        "handshake": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "keys": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              }
+            }
+          },
+          "required": [
+            "keys"
+          ]
+        },
+        "journal_line": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "metadata_keys": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              }
+            }
+          },
+          "required": [
+            "metadata_keys"
+          ]
+        },
+        "session_event": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "stamp_keys": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              }
+            }
+          },
+          "required": [
+            "schema",
+            "stamp_keys"
+          ]
+        },
+        "settled_turn": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "meta_keys": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "meta_keys"
+          ]
+        },
+        "subscription_ready": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "event": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "required_keys": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              }
+            },
+            "optional_keys": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              }
+            }
+          },
+          "required": [
+            "event",
+            "required_keys",
+            "optional_keys"
+          ]
+        }
+      },
+      "required": [
+        "error_response",
+        "handshake",
+        "journal_line",
+        "session_event",
+        "settled_turn",
+        "subscription_ready"
+      ]
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cursor_header": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "cursor_key": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "ready_event": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "generation_start_event": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        }
+      },
+      "required": [
+        "cursor_header",
+        "cursor_key",
+        "ready_event",
+        "generation_start_event"
+      ]
+    }
+  },
+  "required": [
+    "version",
+    "protocol",
+    "headers",
+    "routes",
+    "events",
+    "envelopes",
+    "replay"
+  ]
+}

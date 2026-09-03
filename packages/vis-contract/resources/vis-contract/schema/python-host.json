@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/python-host.json",
+  "title": "Python host contract",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "$ref": "common.json#/$defs/version"
+    },
+    "ops": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "$ref": "common.json#/$defs/snake_case_id"
+          },
+          "global": {
+            "type": "string",
+            "pattern": "^__vis_host_[a-z0-9_]+__$"
+          },
+          "arity": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "summary": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          },
+          "outside": {
+            "enum": [
+              "outside/local",
+              "outside/prompt",
+              "outside/refuse"
+            ]
+          },
+          "refusal": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          }
+        },
+        "required": [
+          "name",
+          "global",
+          "arity",
+          "summary",
+          "outside"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "shell": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_op": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "spawn_ops": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "handle_ops": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "default_op",
+        "spawn_ops",
+        "handle_ops"
+      ]
+    },
+    "live": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_op": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "spawn_ops": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "handle_ops": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "flush_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "default_op",
+        "spawn_ops",
+        "handle_ops",
+        "flush_ms"
+      ]
+    }
+  },
+  "required": [
+    "version",
+    "ops",
+    "shell",
+    "live"
+  ]
+}

@@ -18,8 +18,11 @@ vis_contract.OPS["shell"]["outside"]  # "local" — what the op does with no Vis
 vis_contract.SHELL["spawn_ops"]  # ["run", "background"]
 vis_contract.VIEW["kinds"]  # ["input", "live"] — one lifecycle, two policies
 vis_contract.CONTENT["block_types"]  # canonical cross-channel content blocks
-vis_contract.TOGGLE["types"]  # ["boolean", "enum"] — portable toggle kinds
-vis_contract.PROVIDER["limits"]["statuses"]  # how a limits report can come back
+vis_contract.CONFIG["api_style_values"]  # accepted provider API styles
+vis_contract.TOGGLE["types"]  # portable toggle kinds
+vis_contract.PROVIDER["limits"]["statuses"]  # provider report statuses
+vis_contract.SURFACE["capabilities"]  # language-tool capabilities
+vis_contract.TEST_RUNNER["selector_keys"]  # shared test selectors
 
 
 class MyHost:
@@ -38,10 +41,7 @@ vis_contract.check_host(MyHost())  # TypeError names every op you did not answer
 their doc lines are the document's, and the package's own suite fails when the
 protocol and `contract.json` stop agreeing.
 
-The document is generated from the owning files under
-[`resources/vis-contract/`](https://github.com/Blockether/vis/tree/main/packages/vis-contract/resources/vis-contract).
-The Clojure artifact reads those EDN sources directly; the repository's JavaScript
-generator input and this wheel's `contract.json` are pinned to identical bytes.
+The wheel-local `contract.json` is a byte-identical copy of the repository's portable aggregate. Its source documents and JSON Schemas live under [`resources/vis-contract/`](https://github.com/Blockether/vis/tree/main/packages/vis-contract/resources/vis-contract), and Skjema validates every source document before generation.
 
 ## License
 

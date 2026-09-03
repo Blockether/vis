@@ -1,0 +1,444 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/content.json",
+  "title": "Canonical content contract",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "$ref": "common.json#/$defs/version"
+    },
+    "roles": {
+      "$ref": "common.json#/$defs/token_list"
+    },
+    "message_statuses": {
+      "$ref": "common.json#/$defs/token_list"
+    },
+    "tool_statuses": {
+      "$ref": "common.json#/$defs/token_list"
+    },
+    "reasoning_visibilities": {
+      "$ref": "common.json#/$defs/token_list"
+    },
+    "block_types": {
+      "$ref": "common.json#/$defs/token_list"
+    },
+    "event_types": {
+      "$ref": "common.json#/$defs/token_list"
+    },
+    "delta_fields": {
+      "$ref": "common.json#/$defs/token_list"
+    }
+  },
+  "required": [
+    "version",
+    "roles",
+    "message_statuses",
+    "tool_statuses",
+    "reasoning_visibilities",
+    "block_types",
+    "event_types",
+    "delta_fields"
+  ],
+  "$defs": {
+    "block": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "prose"
+            },
+            "markdown": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "markdown"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "speech"
+            },
+            "text": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "code"
+            },
+            "text": {
+              "type": "string"
+            },
+            "language": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "tool"
+            },
+            "tool": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "status": {
+              "enum": [
+                "cancelled",
+                "completed",
+                "failed",
+                "pending",
+                "running"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "tool",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "reasoning"
+            },
+            "text": {
+              "type": "string"
+            },
+            "visibility": {
+              "enum": [
+                "private",
+                "visible"
+              ],
+              "default": "private"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "error"
+            },
+            "code": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "message": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "retryable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "code",
+            "message"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "attachment"
+            },
+            "attachment_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "name": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "media_type": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "attachment_id",
+            "name",
+            "media_type"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "type": {
+              "const": "notice"
+            },
+            "code": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "message": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "code",
+            "message"
+          ]
+        }
+      ]
+    },
+    "content": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/block"
+      }
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "role": {
+          "enum": [
+            "assistant",
+            "developer",
+            "system",
+            "tool",
+            "user"
+          ]
+        },
+        "status": {
+          "enum": [
+            "cancelled",
+            "completed",
+            "failed",
+            "streaming",
+            "suspended"
+          ]
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/block"
+          }
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "status",
+        "content",
+        "created_at"
+      ]
+    },
+    "event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "type": {
+              "const": "content.block.started"
+            },
+            "turn_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "block": {
+              "$ref": "#/$defs/block"
+            }
+          },
+          "required": [
+            "type",
+            "turn_id",
+            "block"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "type": {
+              "const": "content.block.delta"
+            },
+            "turn_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "block_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "field": {
+              "enum": [
+                "markdown",
+                "text"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "turn_id",
+            "block_id",
+            "field",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "type": {
+              "const": "content.block.completed"
+            },
+            "turn_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "block_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            }
+          },
+          "required": [
+            "type",
+            "turn_id",
+            "block_id"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "type": {
+              "const": "turn.completed"
+            },
+            "turn_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "status": {
+              "const": "completed"
+            }
+          },
+          "required": [
+            "type",
+            "turn_id",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "type": {
+              "const": "turn.failed"
+            },
+            "turn_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "status": {
+              "const": "failed"
+            }
+          },
+          "required": [
+            "type",
+            "turn_id",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "type": {
+              "const": "turn.cancelled"
+            },
+            "turn_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "status": {
+              "const": "cancelled"
+            }
+          },
+          "required": [
+            "type",
+            "turn_id",
+            "status"
+          ]
+        }
+      ]
+    }
+  }
+}

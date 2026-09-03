@@ -1,0 +1,50 @@
+{
+  "block_types": [
+    "attachment",
+    "code",
+    "error",
+    "notice",
+    "prose",
+    "reasoning",
+    "speech",
+    "tool"
+  ],
+  "delta_fields": [
+    "markdown",
+    "text"
+  ],
+  "event_types": [
+    "content.block.completed",
+    "content.block.delta",
+    "content.block.started",
+    "turn.cancelled",
+    "turn.completed",
+    "turn.failed"
+  ],
+  "message_statuses": [
+    "cancelled",
+    "completed",
+    "failed",
+    "streaming",
+    "suspended"
+  ],
+  "reasoning_visibilities": [
+    "private",
+    "visible"
+  ],
+  "roles": [
+    "assistant",
+    "developer",
+    "system",
+    "tool",
+    "user"
+  ],
+  "tool_statuses": [
+    "cancelled",
+    "completed",
+    "failed",
+    "pending",
+    "running"
+  ],
+  "version": 1
+}

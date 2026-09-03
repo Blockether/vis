@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/test-runner.json",
+  "title": "Test runner contract",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "$ref": "common.json#/$defs/version"
+    },
+    "selector_keys": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "paths",
+          "include",
+          "exclude"
+        ]
+      },
+      "minItems": 3,
+      "uniqueItems": true
+    },
+    "result_keys": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "language",
+          "mode",
+          "framework",
+          "tool",
+          "ns",
+          "total",
+          "pass",
+          "fail",
+          "errored",
+          "selected",
+          "skipped",
+          "failures",
+          "output"
+        ]
+      },
+      "minItems": 13,
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "version",
+    "selector_keys",
+    "result_keys"
+  ],
+  "$defs": {
+    "selectors": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "include": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "language": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "repl",
+            "cli"
+          ]
+        },
+        "framework": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "ns": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pass": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fail": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errored": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "ns": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "test": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": {
+                "enum": [
+                  "fail",
+                  "error"
+                ]
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "file": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "line": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "output": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

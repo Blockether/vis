@@ -1478,24 +1478,11 @@ second one.
 
 ### The surface you may require
 
-`com.blockether.vis.core` is the whole Clojure host contract — the only namespace an
-extension should require. The internal tree below it is not stable and is refactored
-without notice.
+`com.blockether.vis.core` is the public Clojure entry point. Extension declarations that cross a
+process or language boundary use the validated JSON documents published by
+`com.blockether/vis-contract`; engine internals are not an extension API.
 
-This is enforced, not merely asked for: `packages/vis-contract/resources/vis-contract/clojure-host.edn` is
-the Clojure twin of the Python `python-host.edn`. It names the facade and freezes the
-internal namespaces the in-tree extensions already reach past it for, and
-`clojure_host_test` scans `extensions/**` on every run — a require of an internal
-namespace that is not frozen there fails the suite, and a frozen entry nothing uses
-any more fails it too. The list may only shrink: if your extension needs something the
-facade does not export, export it from `com.blockether.vis.core`.
-
-Both declarations are one artifact of their own — `com.blockether/vis-contract` on
-Clojars, `vis-contract` on PyPI, cut from `packages/vis-contract` at the same
-`VIS_VERSION` — so a linter, a code generator or somebody else's build reads the
-contract without depending on the engine that implements it.
-
-### The extension spec
+### The extension declaration
 
 `vis/extension` validates the map and fills defaults; `vis/register-extension!` puts it in the registry.
 

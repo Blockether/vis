@@ -19,8 +19,7 @@
      resolve-one-anchor / resolve-anchor-range   exact write resolution
      resolve-anchor-range-read                   tolerant read resolution
      resolve-anchor-edit-span                    anchor span -> char span"
-  (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]))
+  (:require [clojure.string :as str]))
 
 (set! *warn-on-reflection* true)
 
@@ -43,13 +42,10 @@
    exact and can never be confused with the `:` inside the anchor."
   "│ ")
 
-(s/def :ext.editing.hashline/hash (s/and string? #(re-matches #"[0-9a-f]{3}" %)))
-(s/def :ext.editing.hashline/line pos-int?)
-;; `<1-based line>:<hash>` — the ONLY parseable anchor form. `cat` mints it,
-;; `grep` echoes it, `patch` consumes it, and nothing else in the tree parses one.
-(s/def :ext.editing.hashline/anchor (s/and string? #(re-matches #"\d+:[0-9a-f]{3}" %)))
-(s/def :ext.editing.hashline/parsed
-  (s/keys :req-un [:ext.editing.hashline/line :ext.editing.hashline/hash]))
+(defn hash? [x] (and (string? x) (boolean (re-matches #"[0-9a-f]{3}" x))))
+(defn line? [x] (pos-int? x))
+(defn anchor? [x] (and (string? x) (boolean (re-matches #"\d+:[0-9a-f]{3}" x))))
+(defn parsed? [x] (and (map? x) (line? (:line x)) (hash? (:hash x))))
 
 ;; Blob <-> coordinates
 

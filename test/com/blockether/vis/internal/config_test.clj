@@ -4,7 +4,6 @@
    the first-run welcome and the provider manager both rely on (a connected
    provider must survive a restart)."
   (:require [clojure.java.io :as io]
-            [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config :as config]
@@ -66,7 +65,7 @@
                        runtime
                        (config/runtime-config wire)]
 
-                   (expect (s/valid? ::config-spec/providers (get wire "providers")))
+                   (expect (config-spec/providers-valid? (get wire "providers")))
                    (expect (= {:timeout-ms 1800000
                                :first-byte-timeout-ms 600000
                                :idle-timeout-ms 600000
@@ -74,8 +73,8 @@
                               (get-in runtime [:providers 0 :network])))
                    (expect (= (get-in wire ["providers" 0 "network"])
                               (get-in (#'config/->yaml-safe runtime) ["providers" 0 "network"]))))
-                 (expect (not (s/valid? ::config-spec/providers
-                                        [{"id" "local" "network" {"first_byte_timeout_ms" -1}}])))))
+                 (expect (not (config-spec/providers-valid?
+                                [{"id" "local" "network" {"first_byte_timeout_ms" -1}}])))))
 
 (defdescribe
   ->svar-provider-test
@@ -605,7 +604,7 @@
         (expect (= "is_respect_retry_after"
                    (first (keys (#'config/->yaml-safe {:respect-retry-after? true})))))
         (expect (= "is_replace" (first (keys (#'config/->yaml-safe {:is-replace true})))))))
-  (it "parses vis.yml directly into the string-keyed clojure.spec shape"
+  (it "validates vis.yml in its original string-keyed JSON shape"
       (let [read-yaml
             @#'config/read-yaml-config-map
 
@@ -1172,33 +1171,31 @@
 (defdescribe
   declared-environment-test
   "`environment:` says WHERE each variable's value comes from, and every surface
-   resolves it through `extension-env-status`. The key used to be spec'd,
-   documented and completely unread; wiring it to a hidden precedence chain would
-   have left the same hole — a file that still does not state a name's source."
+   resolves it through `extension-env-status`. Every declaration names its source explicitly."
   (it "requires exactly one named source and refuses a bare literal"
-      (expect (s/valid? ::config-spec/environment {"A" {"env" "B"}}))
-      (expect (s/valid? ::config-spec/environment {"A" {"dotenv" "A"}}))
-      (expect (s/valid? ::config-spec/environment {"A" {"keychain" "vis-exa" "account" "alice"}}))
-      (expect (s/valid? ::config-spec/environment {"A" {"command" ["gh" "auth" "token"]}}))
+      (expect (config-spec/environment-valid? {"A" {"env" "B"}}))
+      (expect (config-spec/environment-valid? {"A" {"dotenv" "A"}}))
+      (expect (config-spec/environment-valid? {"A" {"keychain" "vis-exa" "account" "alice"}}))
+      (expect (config-spec/environment-valid? {"A" {"command" ["gh" "auth" "token"]}}))
       ;; Issue #156: a non-secret marker had no spelling at all, so a project had to
       ;; put a Vis-owned variable into its own `.env`.
-      (expect (s/valid? ::config-spec/environment {"VIS_MANAGED" {"literal" "true"}}))
-      (expect (s/valid? ::config-spec/environment {"VIS_MANAGED" {"literal" true}}))
-      (expect (s/valid? ::config-spec/environment {"VIS_PORT" {"literal" 8080}}))
-      (expect (not (s/valid? ::config-spec/environment {"A" "a-literal-value"})))
-      (expect (not (s/valid? ::config-spec/environment {"A" "${B}"})))
-      (expect (not (s/valid? ::config-spec/environment {"A" {}})))
-      (expect (not (s/valid? ::config-spec/environment {"A" {"literal" ""}})))
-      (expect (not (s/valid? ::config-spec/environment {"A" {"literal" "x" "env" "B"}})))
+      (expect (config-spec/environment-valid? {"VIS_MANAGED" {"literal" "true"}}))
+      (expect (config-spec/environment-valid? {"VIS_MANAGED" {"literal" true}}))
+      (expect (config-spec/environment-valid? {"VIS_PORT" {"literal" 8080}}))
+      (expect (not (config-spec/environment-valid? {"A" "a-literal-value"})))
+      (expect (not (config-spec/environment-valid? {"A" "${B}"})))
+      (expect (not (config-spec/environment-valid? {"A" {}})))
+      (expect (not (config-spec/environment-valid? {"A" {"literal" ""}})))
+      (expect (not (config-spec/environment-valid? {"A" {"literal" "x" "env" "B"}})))
       ;; The wrapper is for what is NOT a secret: a credential-looking name still
       ;; has to say where its value comes from.
-      (expect (not (s/valid? ::config-spec/environment {"OPENAI_API_KEY" {"literal" "sk-live"}})))
-      (expect (not (s/valid? ::config-spec/environment {"GITHUB_TOKEN" {"literal" "ghp-1"}})))
-      (expect (not (s/valid? ::config-spec/environment {"DB_PASSWORD" {"literal" "hunter2"}})))
-      (expect (not (s/valid? ::config-spec/environment {"A" {"env" "B" "dotenv" "B"}})))
-      (expect (not (s/valid? ::config-spec/environment {"A" {"keychain" "k" "command" ["x"]}})))
-      (expect (not (s/valid? ::config-spec/environment {"A" {"command" ["x"] "account" "alice"}})))
-      (expect (not (s/valid? ::config-spec/environment {"9BAD" {"env" "B"}}))))
+      (expect (not (config-spec/environment-valid? {"OPENAI_API_KEY" {"literal" "sk-live"}})))
+      (expect (not (config-spec/environment-valid? {"GITHUB_TOKEN" {"literal" "ghp-1"}})))
+      (expect (not (config-spec/environment-valid? {"DB_PASSWORD" {"literal" "hunter2"}})))
+      (expect (not (config-spec/environment-valid? {"A" {"env" "B" "dotenv" "B"}})))
+      (expect (not (config-spec/environment-valid? {"A" {"keychain" "k" "command" ["x"]}})))
+      (expect (not (config-spec/environment-valid? {"A" {"command" ["x"] "account" "alice"}})))
+      (expect (not (config-spec/environment-valid? {"9BAD" {"env" "B"}}))))
   (it "`env:` passes an outer variable through under a new name"
       (binding [config/*extension-getenv* {"WORK_OPENAI_KEY" "outer" "VIS_TEST_BLANK_OUTER" ""}]
         (with-declared-environment {"OPENAI_API_KEY" {"env" "WORK_OPENAI_KEY"}

@@ -1,7 +1,6 @@
 (ns com.blockether.vis.internal.manifest-test
   "The distribution has one closed manifest and no ambient discovery format."
   (:require [clojure.java.io :as io]
-            [clojure.spec.alpha :as s]
             [com.blockether.vis.internal.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
@@ -12,36 +11,36 @@
 
 (defn- refused? [text] (throws? clojure.lang.ExceptionInfo #(parsed text)))
 
-(defdescribe
-  manifest-shape-test
-  (it "reads one initialization vector and nothing else"
-      (let [m (manifest/read-manifest)]
-        (expect (s/valid? ::manifest/manifest m) (pr-str (s/explain-data ::manifest/manifest m)))
-        (expect (= #{:initialization} (set (keys m))))
-        (expect (seq (:initialization m)))))
-  (it "keeps gateway voice out of the extension manifest"
-      (expect (not-any? #(re-find #"voice" (str %)) (manifest/initializers))))
-  (it "answers exactly one manifest on the classpath"
-      ;; The whole point of naming resources explicitly: two manifests would
-      ;; mean one silently shadows the other, which is what ambient discovery did.
-      (expect (= 1
-                 (count (enumeration-seq (.getResources (clojure.lang.RT/baseLoader)
-                                                        manifest/manifest-resource))))))
-  (it "names an initializer that really resolves to something callable"
-      ;; Not `qualified-symbol?` - the spec already guarantees that shape. This
-      ;; asks reality: a renamed or deleted Var makes the distribution incomplete.
-      (doseq [initializer (manifest/initializers)]
-        (expect (ifn? (requiring-resolve initializer)) initializer)))
-  (it "declares one existing static resource per pack that owns documents"
-      (let [paths (manifest/apropos-resource-paths)]
-        (expect (seq paths))
-        (expect (= (count paths) (count (set paths))))
-        (doseq [path paths]
-          (expect (some? (io/resource path)) path))))
-  (it "answers every entry as a map carrying at least its initializer"
-      (doseq [entry (manifest/entries)]
-        (expect (qualified-symbol? (:register entry)) entry)
-        (expect (every? #{:register :apropos :is-optional :because} (keys entry)) entry))))
+(defdescribe manifest-shape-test
+             (it "reads one initialization vector and nothing else"
+                 (let [m (manifest/read-manifest)]
+                   (expect (manifest/manifest? m) (pr-str m))
+                   (expect (= #{:initialization} (set (keys m))))
+                   (expect (seq (:initialization m)))))
+             (it "keeps gateway voice out of the extension manifest"
+                 (expect (not-any? #(re-find #"voice" (str %)) (manifest/initializers))))
+             (it "answers exactly one manifest on the classpath"
+                 ;; The whole point of naming resources explicitly: two manifests would
+                 ;; mean one silently shadows the other, which is what ambient discovery did.
+                 (expect (= 1
+                            (count (enumeration-seq (.getResources (clojure.lang.RT/baseLoader)
+                                                                   manifest/manifest-resource))))))
+             (it "names an initializer that really resolves to something callable"
+                 ;; Not `qualified-symbol?` - the spec already guarantees that shape. This
+                 ;; asks reality: a renamed or deleted Var makes the distribution incomplete.
+                 (doseq [initializer (manifest/initializers)]
+                   (expect (ifn? (requiring-resolve initializer)) initializer)))
+             (it "declares one existing static resource per pack that owns documents"
+                 (let [paths (manifest/apropos-resource-paths)]
+                   (expect (seq paths))
+                   (expect (= (count paths) (count (set paths))))
+                   (doseq [path paths]
+                     (expect (some? (io/resource path)) path))))
+             (it "answers every entry as a map carrying at least its initializer"
+                 (doseq [entry (manifest/entries)]
+                   (expect (qualified-symbol? (:register entry)) entry)
+                   (expect (every? #{:register :apropos :is-optional :because} (keys entry))
+                           entry))))
 
 (defdescribe
   entry-shape-test

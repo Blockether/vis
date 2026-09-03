@@ -5,7 +5,6 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.doc-corpus :as dc]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
-            [clojure.spec.alpha :as s]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defdescribe
@@ -184,10 +183,8 @@ Whole skill body."}
    — before this, a catalogue with a typo contributed nothing to search and said
    nothing about it."
   (it "accepts the two shapes the store carries"
-      (expect (s/valid? :vis.doc/record
-                        {:name "pandas.read_csv" :kind "function" :text "Read a CSV file."}))
-      (expect (s/valid? :vis.doc/record
-                        {:name "gateway" :kind "doc" :resource "vis-docs/gateway.md"})))
+      (expect (dc/record? {:name "pandas.read_csv" :kind "function" :text "Read a CSV file."}))
+      (expect (dc/record? {:name "gateway" :kind "doc" :resource "vis-docs/gateway.md"})))
   (it "refuses a record no reader could use, naming the resource it came from"
       (doseq [bad [{:kind "doc" :resource "vis-docs/gateway.md"}
                    {:name "" :kind "function" :text "x"} {:name "x" :kind "page" :text "x"}
@@ -195,7 +192,7 @@ Whole skill body."}
                    {:name "x" :kind "function" :text "x" :resource "vis-docs/gateway.md"}
                    ;; Site navigation is the docs site's own resource, never a record.
                    {:name "x" :kind "doc" :resource "vis-docs/gateway.md" :blurb "One sentence."}]]
-        (expect (not (s/valid? :vis.doc/record bad)) (pr-str bad))
+        (expect (not (dc/record? bad)) (pr-str bad))
         (expect (throws? clojure.lang.ExceptionInfo #(#'dc/checked-record "test.edn" bad))
                 (pr-str bad))))
   (it "refuses a page that carries prose instead of naming its file"
@@ -203,7 +200,7 @@ Whole skill body."}
       ;; and by then `resolved-record` has spent the address and slurped the file
       ;; into `:text`, so the resolved page carries no `:resource` at all.
       (let [inline {:name "x" :kind "doc" :text "inline"}]
-        (expect (s/valid? :vis.doc/record inline))
+        (expect (dc/record? inline))
         (expect (throws? clojure.lang.ExceptionInfo #(#'dc/checked-record "test.edn" inline)))))
   (it "reads every declared record once, spending the resource it named"
       (let [rs (#'dc/manifest-records)]

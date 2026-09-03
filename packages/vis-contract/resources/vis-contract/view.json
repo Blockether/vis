@@ -1,0 +1,119 @@
+{
+  "field_types": [
+    "checkbox",
+    "multiline",
+    "multiselect",
+    "otp",
+    "password",
+    "plaintext",
+    "range",
+    "select"
+  ],
+  "range": {
+    "max": 100,
+    "min": 0,
+    "step": 1
+  },
+  "otp": {
+    "ceiling": 12,
+    "length": 6
+  },
+  "secret_handle_prefix": "vis-secret:",
+  "group_type": "group",
+  "choice_types": [
+    "multiselect",
+    "select"
+  ],
+  "kinds": [
+    "input",
+    "live"
+  ],
+  "version": 1,
+  "decor_types": [
+    "heading",
+    "paragraph"
+  ],
+  "secret_types": [
+    "otp",
+    "password"
+  ],
+  "text_types": [
+    "multiline",
+    "password",
+    "plaintext"
+  ],
+  "live": {
+    "table": {
+      "max_patch_rows": 200,
+      "max_rows": 5000
+    },
+    "tones": [
+      "error",
+      "idle",
+      "ok",
+      "running",
+      "warn"
+    ],
+    "max_stats": 32,
+    "ops": [
+      "add-node",
+      "append",
+      "clear",
+      "remove",
+      "remove-node",
+      "set"
+    ],
+    "log": {
+      "max_patch_lines": 500,
+      "window_lines": 2000,
+      "window_lines_cap": 100000
+    },
+    "max_links": 32,
+    "node_types": [
+      "link",
+      "log",
+      "progress",
+      "stat",
+      "status",
+      "steps",
+      "table"
+    ],
+    "link_targets": [
+      "attachment",
+      "path",
+      "url"
+    ],
+    "max_nodes": 32,
+    "sort_dirs": [
+      "asc",
+      "desc"
+    ],
+    "reasons": [
+      "completed",
+      "failed",
+      "interrupted",
+      "superseded",
+      "timeout",
+      "undeliverable"
+    ],
+    "max_steps": 200,
+    "orders": [
+      "insertion",
+      "newest-first"
+    ],
+    "aligns": [
+      "left",
+      "right"
+    ]
+  },
+  "actions": [
+    "cancel",
+    "interrupt",
+    "select",
+    "submit"
+  ],
+  "group_directions": [
+    "column",
+    "row"
+  ]
+}

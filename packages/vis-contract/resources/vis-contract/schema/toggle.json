@@ -55,6 +55,72 @@
           "$ref": "common.json#/$defs/token_list"
         }
       }
+    },
+    "contribution": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+        },
+        "label": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[^\\r\\n]+$"
+        },
+        "default": {},
+        "owner": {
+          "anyOf": [
+            {
+              "const": "vis"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "since": {
+          "type": "string"
+        },
+        "is_persist": {
+          "type": "boolean"
+        },
+        "is_settings": {
+          "type": "boolean"
+        },
+        "group": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "type": {
+          "enum": [
+            "boolean",
+            "enum"
+          ]
+        },
+        "choices": {
+          "type": "array",
+          "items": {},
+          "minItems": 1
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          },
+          "minItems": 1
+        },
+        "visible_fn": {}
+      },
+      "required": [
+        "id",
+        "label",
+        "default"
+      ]
     }
   }
 }

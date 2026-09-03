@@ -283,11 +283,9 @@ curl -sS http://127.0.0.1:7890/openapi.json -o vis-gateway.json
 
 That document is **OpenAPI 3.1** — which is JSON Schema 2020-12, so any generator reads it
 directly. It is public (no token, no protocol header: you generate a client *before* you have
-either), carries an `ETag`, and is rendered from the same
-`packages/vis-contract/resources/vis-contract/gateway.edn` the gateway routes itself from — a route
-cannot exist without appearing there. It states the path, method, path parameters, media types,
-audience and the shared error envelope; a body shown as an empty schema is one the contract does not
-constrain yet.
+either), carries an `ETag`, and is rendered from the validated
+`packages/vis-contract/resources/vis-contract/gateway.json`. A route cannot exist without appearing
+there. The document states paths, methods, parameters, media types, audiences and shared errors.
 
 Routes contributed by an extension are deliberately absent: they belong to that extension's own
 contract, and including them would make the document depend on what happened to be loaded.
@@ -324,9 +322,8 @@ a panel, the companion replaces its UI with a version-mismatch screen naming
 which half is stale and how to update it. A peer that advertises nothing is
 grandfathered in, never refused.
 
-Bump the protocol numbers in `packages/vis-contract/resources/vis-contract/gateway.edn`
-(and `APP_PROTOCOL` in the companion's `lib/compat.ts`) only for a breaking wire change, and raise
-the minimum client protocol only when the old shape genuinely cannot be served.
+Bump protocol numbers in `packages/vis-contract/resources/vis-contract/gateway.json` only for a
+breaking wire change, and raise the minimum client protocol only when the old shape cannot be served.
 
 ## Push notifications (iOS / Android)
 

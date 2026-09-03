@@ -5,7 +5,6 @@
    the last read ended — because that loop is the whole promise: no overlap, no
    gap, and no head lost to a buffer that ran out of room."
   (:require [clojure.java.io :as io]
-            [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
@@ -66,7 +65,7 @@
       (let [sid (session-id "spec")]
         (try (write-log! sid "s" "hello\n")
              (let [chunk (shell-log/read-chunk "s" (shell-log/log-file sid "s"))]
-               (expect (s/valid? ::shell-log/log-chunk chunk))
+               (expect (shell-log/log-chunk? chunk))
                (expect (= "hello\n" (:text chunk)))
                (expect (= 0 (:offset chunk)))
                (expect (= 6 (:next-offset chunk)))
@@ -118,7 +117,7 @@
              ;; More tail than the log holds is the whole log, never an error.
              (expect (= text (text-at -100000)))
              (let [c (shell-log/read-chunk "n" (shell-log/log-file sid "n") {:offset -3})]
-               (expect (s/valid? ::shell-log/log-chunk c))
+               (expect (shell-log/log-chunk? c))
                (expect (true? (:is-eof c)))
                ;; The offset it answers with is a real line boundary, so feeding it
                ;; back as a POSITIVE cursor reads exactly the same bytes.
@@ -157,7 +156,7 @@
         (try (write-log! sid "u" text)
              (expect (= text (read-all sid "u" 101)))
              (let [tail (shell-log/read-chunk "u" (shell-log/log-file sid "u") {:limit 103})]
-               (expect (not (str/includes? (:text tail) "\ufffd"))))
+               (expect (not (str/includes? (:text tail) "�"))))
              (finally (shell-log/delete-session-logs! sid)))))
   (it "reads a log that is still being written, and says there is more"
       (let [sid (session-id "live")]
@@ -209,7 +208,7 @@
 
         (try (write-log! sid "w" text)
              (let [c (shell-log/read-chunk "w" (shell-log/log-file sid "w") {:lines 3})]
-               (expect (s/valid? ::shell-log/log-chunk c))
+               (expect (shell-log/log-chunk? c))
                (expect (= "line-497\nline-498\nline-499\n" (:text c)))
                (expect (true? (:is-eof c))))
              ;; More lines than the log holds is the whole log, never an error.

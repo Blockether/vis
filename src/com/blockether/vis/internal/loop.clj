@@ -3,7 +3,6 @@
   (:require
     [charred.api :as json]
     [clojure.set :as set]
-    [clojure.spec.alpha :as s]
     [clojure.string :as str]
     [com.blockether.anomaly.core :as anomaly]
     [com.blockether.svar.core :as svar]
@@ -1961,11 +1960,7 @@
   [ext id hit]
   (tel/log! {:level :warn
              :id ::answer-validation-hook-invalid-return
-             :data {:ext (:ext/name ext)
-                    :hook id
-                    :phase :turn.answer/validate
-                    :returned hit
-                    :explain (s/explain-data ::extension/answer-validation-reject hit)}})
+             :data {:ext (:ext/name ext) :hook id :phase :turn.answer/validate :returned hit}})
   nil)
 
 (defn- answer-validation-extensions
@@ -2011,7 +2006,7 @@
                        (extension/with-context
                          {:ext ext :env environment}
                          (try (let [hit (hook-fn ctx)]
-                                (cond (s/valid? ::extension/answer-validation-reject hit)
+                                (cond (extension/answer-validation-reject? hit)
                                       (answer-validation-rejection-message hook hit)
                                       (and (map? hit) (:reject hit))
                                       (answer-validation-invalid-return-message ext id hit)))
@@ -2576,54 +2571,40 @@
 
 (defn- block-duration-ms [block] (or (form/envelope-duration-ms (:envelope block)) 0))
 
-(s/def ::id nat-int?)
+(defn- nil-or-boolean? [x] (or (nil? x) (boolean? x)))
+(defn- iteration-envelope?
+  [envelope]
+  (and (map? envelope)
+       (#{:python/eval :vis/guard :vis/system :vis/answer} (:op envelope))
+       (#{:done :error :timeout} (:status envelope))
+       (pos-int? (:iteration envelope))
+       (pos-int? (:form-position envelope))
+       (pos-int? (:form-count envelope))
+       (nat-int? (:started-at-ms envelope))
+       (nat-int? (:finished-at-ms envelope))
+       (string? (:ref envelope))
+       (re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/[1-9][0-9]*/block/[1-9][0-9]*$"
+                   (:ref envelope))
+       (or (not (contains? envelope :timeout?)) (nil-or-boolean? (:timeout? envelope)))
+       (or (not (contains? envelope :repaired?)) (nil-or-boolean? (:repaired? envelope)))
+       (envelope-timestamps-ordered? envelope)
+       (envelope-form-position-valid? envelope)
+       (envelope-ref-consistent? envelope)
+       (envelope-has-no-derived-duration? envelope)))
 
-(s/def ::code string?)
-
-(s/def ::error (s/nilable map?))                       ; structured :error map
-
-(s/def ::timeout? (s/nilable boolean?))
-
-(s/def ::repaired? (s/nilable boolean?))
-
-(s/def ::comment string?)
-
-(s/def ::op #{:python/eval :vis/guard :vis/system :vis/answer})
-
-(s/def ::status #{:done :error :timeout})
-
-(s/def ::iteration pos-int?)
-
-(s/def ::form-position pos-int?)
-
-(s/def ::form-count pos-int?)
-
-(s/def ::started-at-ms nat-int?)
-
-(s/def ::finished-at-ms nat-int?)
-
-(s/def ::ref
-  (s/and string? #(re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/[1-9][0-9]*/block/[1-9][0-9]*$" %)))
-
-(s/def ::block-envelope
-  (s/and (s/keys :req-un [::op ::status ::iteration ::form-position ::form-count ::started-at-ms
-                          ::finished-at-ms ::ref]
-                 :opt-un [::timeout? ::repaired?])
-         envelope-timestamps-ordered?
-         envelope-form-position-valid?
-         envelope-ref-consistent?
-         envelope-has-no-derived-duration?))
-
-(s/def ::envelope ::block-envelope)
-
-(s/def ::iteration-block
-  (s/keys :req-un [::id ::code ::error ::envelope] :opt-un [::timeout? ::repaired? ::comment]))
+(defn- iteration-block?
+  [block]
+  (and (map? block)
+       (nat-int? (:id block))
+       (string? (:code block))
+       (or (nil? (:error block)) (map? (:error block)))
+       (iteration-envelope? (:envelope block))
+       (or (not (contains? block :timeout?)) (nil-or-boolean? (:timeout? block)))
+       (or (not (contains? block :repaired?)) (nil-or-boolean? (:repaired? block)))
+       (or (not (contains? block :comment)) (string? (:comment block)))))
 
 (defn validate-iteration-blocks!
-  "Fail fast if a stored/evaluated block lost mandatory envelope.
-   Tool-result envelopes enforce their nested info separately;
-   this spec enforces the outer block-level eval envelope for every
-   executed block."
+  "Fail fast if a stored block lost its execution envelope."
   [blocks]
   (let [blocks (mapv (fn [block]
                        (cond-> block
@@ -2633,11 +2614,9 @@
                                  {:code (:code block) :phase (get-in block [:envelope :op])})))
                      (or blocks []))]
     (doseq [block blocks]
-      (when-not (s/valid? ::iteration-block block)
+      (when-not (iteration-block? block)
         (throw (ex-info "Invalid iteration block"
-                        {:type :vis/invalid-iteration-block
-                         :block block
-                         :explain (s/explain-data ::iteration-block block)}))))
+                        {:type :vis/invalid-iteration-block :block block}))))
     blocks))
 
 ;; run-iteration

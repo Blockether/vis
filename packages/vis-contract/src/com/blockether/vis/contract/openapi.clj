@@ -1,21 +1,6 @@
 (ns com.blockether.vis.contract.openapi
-  "OpenAPI 3.1 description of the BUILT-IN gateway HTTP surface.
-
-   `vis-contract/gateway.edn` already declares every built-in route: its path, its
-   audience, and per method the request and response transport. This namespace
-   renders that declaration as an OpenAPI document and does nothing else — it is a
-   pure function of the contract, so the document a gateway serves and the document
-   a build writes are the same bytes, and a route can never appear in one without
-   the other.
-
-   OpenAPI 3.1 IS JSON Schema 2020-12, so no dialect is translated here. What the
-   contract knows — path, method, path parameters, media types, audience and the
-   shared error envelope — is what the document states; a body stays an
-   unconstrained schema until the contract declares one for that operation.
-
-   Only built-in routes are described. A route contributed by an extension belongs
-   to that extension's own contract, and collecting those would make the document a
-   function of what happens to be loaded rather than of the declaration."
+  "Renders the validated built-in gateway contract as OpenAPI 3.1.
+   Extension routes remain in their extension-owned contracts."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway]))
 

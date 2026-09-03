@@ -1,21 +1,16 @@
 (ns com.blockether.vis.internal.doc-corpus
   "The one ordered document corpus behind `apropos(pattern)` and `doc(name)`.
 
-   `META-INF/vis/manifest.edn` names every static EDN resource explicitly, and each
-   resource is a vector of records shaped as `{:name :kind :text}` or, for a
-   documentation page, `{:name :kind doc :resource ...}`. There is ONE shape and ONE
-   spec — `:vis.doc/record` — for a harvested symbol, a page, a skill and an MCP tool
-   alike: a static record that breaks it throws naming its resource, a dynamic
-   source's is logged and dropped. Dynamic skills, MCP tools and live callable
-   contracts append records through `register-source!`.
+   Static resources and live sources contribute the same closed record shape.
+   Invalid static records fail at load; invalid dynamic records are logged and dropped.
 
    `entries` is the whole corpus in source order, deduplicated by EXACT name; `pages`
    is the documentation subset the docs site renders. `apropos` applies one regular
    expression to record names and preserves corpus order — there is no ranking,
    tokenization, search index or classpath discovery. `doc` retrieves the same record
    by name and prints its whole text."
+  (:refer-clojure :exclude [record?])
   (:require [clojure.java.io :as io]
-            [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [com.blockether.vis.internal.manifest :as manifest]
@@ -23,12 +18,6 @@
 
 (set! *warn-on-reflection* true)
 
-;; Data — what crosses the Clojure -> CPython boundary
-
-(s/def :vis.doc/name string?)
-(s/def :vis.doc/text string?)
-(s/def :vis.doc/call (s/nilable string?))
-(s/def :vis.doc/params (s/nilable string?))
 (def kinds
   "The closed vocabulary of `:kind` — what a document IS, which is how a reader
    decides what to DO with it, and what `doc` RETURNS for it: `function` a
@@ -38,7 +27,6 @@
    all — reachable by name through `doc`, never returned by `apropos`."
   #{"function" "class" "module" "tool" "doc" "skill" "local"})
 
-(s/def :vis.doc/kind kinds)
 
 ;; Rendering a gist, comparing a name
 
@@ -143,16 +131,18 @@
   [{:keys [text resource]}]
   (if (some? resource) (nil? text) (not (str/blank? (str text)))))
 
-(s/def :vis.doc/resource string?)
-(s/def :vis.doc/record
-  (s/and (s/keys :req-un [:vis.doc/name :vis.doc/kind]
-                 :opt-un [:vis.doc/text :vis.doc/resource :vis.doc/call :vis.doc/params])
-         ;; CLOSED: a key no reader reads is a key that drifts. Site navigation —
-         ;; how a page is titled, grouped and ordered — is the docs site's own
-         ;; business and lives in `vis-docs/site.edn`, not in the search corpus.
-         #(every? #{:name :kind :text :resource :call :params} (keys %))
-         #(not (str/blank? (:name %)))
-         one-body?))
+(defn record?
+  [record]
+  (and (map? record)
+       (every? #{:name :kind :text :resource :call :params} (keys record))
+       (string? (:name record))
+       (not (str/blank? (:name record)))
+       (contains? kinds (:kind record))
+       (or (not (contains? record :text)) (string? (:text record)))
+       (or (not (contains? record :resource)) (string? (:resource record)))
+       (or (not (contains? record :call)) (nil? (:call record)) (string? (:call record)))
+       (or (not (contains? record :params)) (nil? (:params record)) (string? (:params record)))
+       (one-body? record)))
 
 (defn- page-names-a-file?
   "A page IS a markdown file: a `doc` record DECLARES the resource `docs` renders.
@@ -163,18 +153,14 @@
   (or (not= "doc" kind) (string? resource)))
 
 (defn- checked-record
-  "`record`, or a throw naming it and explaining why. The manifest declares WHICH
-   resources exist; this is what a record inside one has to BE — so a hand-edited
-   catalogue and a regenerated symbol index both fail at load with `explain-data`
-   instead of quietly contributing nothing to search."
   [resource record]
-  (if (and (s/valid? :vis.doc/record record) (page-names-a-file? record))
+  (if (and (record? record) (page-names-a-file? record))
     record
     (throw (ex-info (str "Invalid document record in " (pr-str resource))
                     {:type :vis.doc/invalid-record
                      :resource resource
                      :name (:name record)
-                     :explain (s/explain-data :vis.doc/record record)}))))
+                     :explain {:valid false :value record}}))))
 
 (defn- resolved-record
   "The record with its body in `:text`: a named resource is slurped HERE, once, so
@@ -265,12 +251,10 @@
    the static resources already threw at read, so what this catches is a live skill,
    an MCP listing or an extension's own source."
   [id entry]
-  (or (s/valid? :vis.doc/record entry)
+  (or (record? entry)
       (do (tel/log! {:level :warn
                      :id ::unusable-entry
-                     :data {:source id
-                            :name (:name entry)
-                            :explain (s/explain-data :vis.doc/record entry)}})
+                     :data {:source id :name (:name entry) :explain {:valid false :value entry}}})
           false)))
 
 (defn entries

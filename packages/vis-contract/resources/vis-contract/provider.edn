@@ -1,8 +1,0 @@
-{:contract/version 1
- :provider/limits {:kinds ["credits" "rate" "requests" "sessions" "tokens" "usd"]
-                   :precisions ["derived" "estimate" "exact" "unknown"]
-                   :scopes ["account" "model" "plan" "workspace"]
-                   :sources ["derived" "local" "provider-api" "static"]
-                   :statuses ["error" "ok" "unauthenticated" "unknown-provider" "unsupported"]
-                   :window-kinds ["calendar" "lifetime" "rolling"]
-                   :window-units ["day" "hour" "minute" "month" "week" "year"]}}

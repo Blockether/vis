@@ -1,0 +1,1246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blockether.com/vis-contract/schema/config.json",
+  "$defs": {
+    "nonBlankString": {
+      "type": "string",
+      "pattern": ".*\\S.*"
+    },
+    "stringList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": ".*\\S.*"
+      }
+    },
+    "command": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          },
+          "minItems": 1
+        }
+      ]
+    },
+    "apiStyle": {
+      "type": "string",
+      "enum": [
+        "anthropic",
+        "anthropic-messages",
+        "anthropic_messages",
+        "chat",
+        "chat-completions",
+        "chat_completions",
+        "claude",
+        "gemini",
+        "google",
+        "google-gemini",
+        "google_gemini",
+        "messages",
+        "openai",
+        "openai-chat",
+        "openai-compatible",
+        "openai-compatible-chat",
+        "openai-compatible-responses",
+        "openai-responses",
+        "openai_chat",
+        "openai_compatible",
+        "openai_compatible_chat",
+        "openai_compatible_responses",
+        "openai_responses",
+        "responses"
+      ]
+    },
+    "yamlValue": {
+      "oneOf": [
+        {
+          "type": [
+            "string",
+            "boolean",
+            "number",
+            "null"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/yamlValue"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/yamlValue"
+          }
+        }
+      ]
+    },
+    "networkTimeout": {
+      "type": "object",
+      "properties": {
+        "timeout_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "ttft_timeout_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "first_byte_timeout_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "idle_timeout_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "semantic_timeout_ms": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "context": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "output_limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "is_tool_call": {
+          "type": "boolean"
+        },
+        "api_style": {
+          "$ref": "#/$defs/apiStyle"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "provider": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "api_key": {
+          "type": "string"
+        },
+        "api_key_command": {
+          "$ref": "#/$defs/command"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "pattern": ".*\\S.*"
+              },
+              {
+                "$ref": "#/$defs/model"
+              }
+            ]
+          }
+        },
+        "base_url": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "compatibility": {
+          "$ref": "#/$defs/apiStyle"
+        },
+        "api_style": {
+          "$ref": "#/$defs/apiStyle"
+        },
+        "responses_path": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "llm_headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "extra_body": {
+          "$ref": "#/$defs/yamlValue"
+        },
+        "network": {
+          "$ref": "#/$defs/networkTimeout"
+        },
+        "is_stateless": {
+          "type": "boolean"
+        },
+        "is_image_input": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "rateLimit": {
+      "type": "object",
+      "properties": {
+        "same_provider_delays_ms": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "fallback_after_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "is_respect_retry_after": {
+          "type": "boolean"
+        },
+        "is_fallback_provider": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "routerNetwork": {
+      "type": "object",
+      "properties": {
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ttft_timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "first_byte_timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "idle_timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "semantic_timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "initial_delay_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_delay_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "multiplier": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_cost": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "tokens": {
+      "type": "object",
+      "properties": {
+        "is_check_context": {
+          "type": "boolean"
+        },
+        "pricing": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/yamlValue"
+          }
+        },
+        "context_limits": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "output_reserve": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "router": {
+      "type": "object",
+      "properties": {
+        "rate_limit": {
+          "$ref": "#/$defs/rateLimit"
+        },
+        "network": {
+          "$ref": "#/$defs/routerNetwork"
+        },
+        "budget": {
+          "$ref": "#/$defs/budget"
+        },
+        "tokens": {
+          "$ref": "#/$defs/tokens"
+        },
+        "failure_threshold": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "recovery_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "transient_status_codes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599
+          },
+          "uniqueItems": true
+        },
+        "window_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cooldown_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_wait_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "workspaceWhen": {
+      "type": "object",
+      "properties": {
+        "os": {
+          "oneOf": [
+            {
+              "enum": [
+                "macos",
+                "linux",
+                "wsl",
+                "windows"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "macos",
+                  "linux",
+                  "wsl",
+                  "windows"
+                ]
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "exists": {
+          "type": "string",
+          "pattern": "^(?:/|~(?:/|$))"
+        }
+      },
+      "additionalProperties": false
+    },
+    "workspaceEntry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^(?:/|~(?:/|$))"
+        },
+        "description": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "access": {
+          "enum": [
+            "read-only",
+            "readonly",
+            "ro",
+            "read-write",
+            "readwrite",
+            "rw"
+          ]
+        },
+        "search": {
+          "type": "boolean"
+        },
+        "draft": {
+          "enum": [
+            "shared",
+            "copy-only",
+            "copy-and-apply",
+            "not-allowed"
+          ]
+        },
+        "when": {
+          "$ref": "#/$defs/workspaceWhen"
+        },
+        "optional": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path"
+      ]
+    },
+    "workspace": {
+      "type": "object",
+      "properties": {
+        "filesystem": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workspaceEntry"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "jailFilesystem": {
+      "type": "object",
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "jailMachServices": {
+      "type": "object",
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        },
+        "keychain": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "networkRuleAllow": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "path": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "method"
+      ]
+    },
+    "networkRule": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "access": {
+          "enum": [
+            "read-only",
+            "readonly",
+            "ro",
+            "read-write",
+            "readwrite",
+            "rw",
+            "full",
+            "all",
+            "none",
+            "deny",
+            "closed"
+          ]
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/networkRuleAllow"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "host"
+      ]
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "allowed_domains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        },
+        "denied_domains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        },
+        "exclude_domains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        },
+        "allow_private": {
+          "type": "boolean"
+        },
+        "inbound_ports": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "uniqueItems": true
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/networkRule"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "jail": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "environment": {
+          "enum": [
+            "declared",
+            "inherit"
+          ]
+        },
+        "filesystem": {
+          "$ref": "#/$defs/jailFilesystem"
+        },
+        "network": {
+          "$ref": "#/$defs/network"
+        },
+        "deny_exec": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        },
+        "mach_services": {
+          "$ref": "#/$defs/jailMachServices"
+        }
+      },
+      "additionalProperties": false
+    },
+    "prompt": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "is_replace": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "text"
+          ]
+        }
+      ]
+    },
+    "grep": {
+      "type": "object",
+      "properties": {
+        "include_gitignored_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        },
+        "always_exclude": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "db": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "path": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "backend"
+      ]
+    },
+    "tui": {
+      "type": "object",
+      "properties": {
+        "theme_name": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "contributors_disabled": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "python": {
+      "type": "object",
+      "properties": {
+        "source_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        },
+        "interpreter": {
+          "$ref": "#/$defs/command"
+        },
+        "runner": {
+          "enum": [
+            "vispython",
+            "project"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcpAuth": {
+      "type": "object",
+      "properties": {
+        "client_id": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "scope": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "authorization_timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcpServer": {
+      "type": "object",
+      "properties": {
+        "transport": {
+          "enum": [
+            "stdio",
+            "streamable_http",
+            "http"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "url": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "listen": {
+          "type": "boolean"
+        },
+        "auth": {
+          "$ref": "#/$defs/mcpAuth"
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "command"
+          ],
+          "not": {
+            "required": [
+              "url"
+            ]
+          }
+        },
+        {
+          "required": [
+            "url"
+          ],
+          "not": {
+            "required": [
+              "command"
+            ]
+          }
+        }
+      ]
+    },
+    "mcp": {
+      "type": "object",
+      "properties": {
+        "servers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/mcpServer"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "titling": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "llm",
+            "first_sentence",
+            "first_words",
+            "disabled"
+          ]
+        },
+        "provider": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "model": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        }
+      },
+      "additionalProperties": false
+    },
+    "visionFact": {
+      "type": "object",
+      "properties": {
+        "learned_at": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "learned_at"
+      ]
+    },
+    "visionFacts": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": ".*\\S.*"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/visionFact"
+      }
+    },
+    "visionEye": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "model": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "learned_at": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "learned_at"
+      ]
+    },
+    "visionMemory": {
+      "type": "object",
+      "properties": {
+        "blind_providers": {
+          "$ref": "#/$defs/visionFacts"
+        },
+        "blind_models": {
+          "$ref": "#/$defs/visionFacts"
+        },
+        "working_eye": {
+          "$ref": "#/$defs/visionEye"
+        }
+      },
+      "additionalProperties": false
+    },
+    "environmentSource": {
+      "type": "object",
+      "properties": {
+        "env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "dotenv": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "keychain": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "account": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "command": {
+          "$ref": "#/$defs/command"
+        },
+        "literal": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": ".*\\S.*"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1,
+      "oneOf": [
+        {
+          "required": [
+            "env"
+          ]
+        },
+        {
+          "required": [
+            "dotenv"
+          ]
+        },
+        {
+          "required": [
+            "keychain"
+          ]
+        },
+        {
+          "required": [
+            "command"
+          ]
+        },
+        {
+          "required": [
+            "literal"
+          ]
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "account"
+            ]
+          },
+          "then": {
+            "required": [
+              "keychain"
+            ]
+          }
+        }
+      ]
+    },
+    "environmentSourceNoLiteral": {
+      "type": "object",
+      "properties": {
+        "env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "dotenv": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "keychain": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "account": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "command": {
+          "$ref": "#/$defs/command"
+        },
+        "literal": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": ".*\\S.*"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1,
+      "oneOf": [
+        {
+          "required": [
+            "env"
+          ]
+        },
+        {
+          "required": [
+            "dotenv"
+          ]
+        },
+        {
+          "required": [
+            "keychain"
+          ]
+        },
+        {
+          "required": [
+            "command"
+          ]
+        },
+        {
+          "required": [
+            "literal"
+          ]
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "account"
+            ]
+          },
+          "then": {
+            "required": [
+              "keychain"
+            ]
+          }
+        }
+      ],
+      "not": {
+        "required": [
+          "literal"
+        ]
+      }
+    },
+    "environment": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "patternProperties": {
+        "^(?:.*_)?(?:[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Pp][Hh][Rr][Aa][Ss][Ee]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss])$": {
+          "$ref": "#/$defs/environmentSourceNoLiteral"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/environmentSource"
+      }
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/provider"
+          }
+        },
+        "removed_providers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          }
+        },
+        "default_provider": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "default_model": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "fallback_provider": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "fallback_model": {
+          "type": "string",
+          "pattern": ".*\\S.*"
+        },
+        "router": {
+          "$ref": "#/$defs/router"
+        },
+        "system_prompt": {
+          "$ref": "#/$defs/prompt"
+        },
+        "workspace": {
+          "$ref": "#/$defs/workspace"
+        },
+        "jail": {
+          "$ref": "#/$defs/jail"
+        },
+        "environment": {
+          "$ref": "#/$defs/environment"
+        },
+        "db_spec": {
+          "$ref": "#/$defs/db"
+        },
+        "grep": {
+          "$ref": "#/$defs/grep"
+        },
+        "toggles": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": ".*\\S.*"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "boolean",
+              "number",
+              "null"
+            ]
+          }
+        },
+        "tui_settings": {
+          "$ref": "#/$defs/tui"
+        },
+        "mcp": {
+          "$ref": "#/$defs/mcp"
+        },
+        "python": {
+          "$ref": "#/$defs/python"
+        },
+        "titling": {
+          "$ref": "#/$defs/titling"
+        },
+        "vision_memory": {
+          "$ref": "#/$defs/visionMemory"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "api_style_values": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "workspace_access_values": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "workspace_draft_values": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "workspace_os_values": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "jail_environment_values": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "titling_modes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "api_style_values",
+    "workspace_access_values",
+    "workspace_draft_values",
+    "workspace_os_values",
+    "jail_environment_values",
+    "titling_modes"
+  ],
+  "additionalProperties": false
+}

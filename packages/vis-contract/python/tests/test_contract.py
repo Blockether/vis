@@ -214,6 +214,14 @@ def test_the_view_vocabulary_is_whole():
     assert view["live"]["ops"]
 
 
+def test_every_portable_contract_area_is_exported():
+    assert vis_contract.CONFIG is vis_contract.CONTRACT["config"]
+    assert vis_contract.SURFACE is vis_contract.CONTRACT["surface"]
+    assert vis_contract.TEST_RUNNER is vis_contract.CONTRACT["test_runner"]
+    assert vis_contract.SURFACE["capabilities"] == ["format", "lint", "test"]
+    assert "paths" in vis_contract.TEST_RUNNER["selector_keys"]
+
+
 def test_check_host_answers_a_complete_host():
     host = complete_host()
     assert vis_contract.check_host(host) is host

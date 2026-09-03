@@ -5,13 +5,11 @@
    command behavior from its traits; producers are checked once at `transient/run!`,
    never per keystroke or painted frame.
 
-   These shapes are private to this channel, so ordinary predicates keep them beside
-   their sole consumer instead of presenting a cross-owner `clojure.spec` contract.
-   Every `*-error` returns nil or one short line that `transient/run!` may put directly
+   These shapes are private to this channel, so ordinary predicates stay beside their
+   sole consumer. Every `*-error` returns nil or one short display line.
    in its typed exception."
   (:require [clojure.string :as str]))
 
-;; The vocabulary — one table, every surface reads it
 
 (def item-types
   "Every kind of row a transient offers, and what that kind MEANS:

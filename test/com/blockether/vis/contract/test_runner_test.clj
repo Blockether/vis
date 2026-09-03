@@ -1,82 +1,62 @@
 (ns com.blockether.vis.contract.test-runner-test
-  "Tests that REUSE the language-neutral test-runner contract.
-
-   Exercises the clojure.spec definitions (`::selectors`, `::result`), the
-   spec-derived key vectors (`selector-keys` / `result-keys`), and the shared
-   runtime helpers (`split-node-id`, `normalize-selectors`, `selected?`). The same specs a pack's
-   `run_tests` handler builds its result THROUGH are validated here, so a drift
-   in the contract shape is caught by this ns."
-  (:require [clojure.spec.alpha :as s]
-            [com.blockether.vis.contract.test-runner :as contract]
+  "Tests for the language-neutral test-runner JSON Schema and runtime helpers."
+  (:require [com.blockether.vis.contract.test-runner :as contract]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defdescribe selector-keys-test
-             (describe "selector-keys - derived from the ::selectors spec"
+             (describe "selector keys from the JSON Schema"
                        (it "lists the three optional selector keys in order"
-                           (expect (= [:paths :include :exclude] contract/selector-keys)))
-                       (it "stays in sync with the ::selectors spec :opt-un keys"
-                           (let [opts (apply hash-map (rest (s/form ::contract/selectors)))]
-                             (expect (= (mapv (comp keyword name) (:opt-un opts))
-                                        contract/selector-keys))))))
+                           (expect (= [:paths :include :exclude] contract/selector-keys)))))
 
 (defdescribe result-keys-test
-             (describe "result-keys - derived from the ::result spec"
+             (describe "result keys from the JSON Schema"
                        (it "lists every uniform result key in order"
                            (expect (= [:language :mode :framework :tool :ns :total :pass :fail
                                        :errored :selected :skipped :failures :output]
-                                      contract/result-keys)))
-                       (it "stays in sync with the ::result spec :opt-un keys"
-                           (let [opts (apply hash-map (rest (s/form ::contract/result)))]
-                             (expect (= (mapv (comp keyword name) (:opt-un opts))
-                                        contract/result-keys))))))
+                                      contract/result-keys)))))
 
 (defdescribe
-  selectors-spec-test
-  (describe
-    "::selectors - the selector map a runner accepts"
-    (it "accepts a path narrowed by a test name - ONE node-id string"
-        (expect (s/valid? ::contract/selectors {:paths ["test/a/core_test.clj::adds-test"]})))
-    (it "accepts many paths - files and directories alike"
-        (expect (s/valid? ::contract/selectors
+  selectors-schema-test
+  (describe "selectors - the selector map a runner accepts"
+            (it "accepts a path narrowed by a test name - ONE node-id string"
+                (expect (contract/selectors-valid? {:paths ["test/a/core_test.clj::adds-test"]})))
+            (it "accepts many paths - files and directories alike"
+                (expect (contract/selectors-valid?
                           {:paths ["test/a/core_test.clj" "extensions/b/test"] :exclude ["slow"]})))
-    (it "accepts the empty selector map (all keys optional)"
-        (expect (s/valid? ::contract/selectors {})))
-    ;; The shared map publishes ONE selector vocabulary, and a test NAME rides
-    ;; INSIDE a path entry (`file::name`). A pack may read spellings of its own —
-    ;; clojure resolves `ns` / `only` against its own workspace — but nothing
-    ;; else reaches THIS map to disagree about what the call selected.
-    (it "publishes no test-name selector beside :paths"
-        (expect (not (some #{:only :filter :var :vars} contract/selector-keys))))
-    (it "rejects :paths that is not a coll of strings"
-        (expect (not (s/valid? ::contract/selectors {:paths 42})))
-        (expect (not (s/valid? ::contract/selectors {:paths [42]}))))
-    ;; A namespace is a CLOJURE fact, never a shared one: that pack resolves its
-    ;; own `ns` spellings and carries the result in its OWN key. `s/keys` ignores
-    ;; unknown keys, so this pins the DERIVED key vector rather than the map's
-    ;; validity.
-    (it "publishes no namespace selector"
-        (expect (not (some #{:ns :namespace :namespaces} contract/selector-keys))))))
+            (it "accepts the empty selector map (all keys optional)"
+                (expect (contract/selectors-valid? {})))
+            ;; The shared map publishes ONE selector vocabulary, and a test NAME rides
+            ;; INSIDE a path entry (`file::name`). A pack may read spellings of its own —
+            ;; clojure resolves `ns` / `only` against its own workspace — but nothing
+            ;; else reaches THIS map to disagree about what the call selected.
+            (it "publishes no test-name selector beside :paths"
+                (expect (not (some #{:only :filter :var :vars} contract/selector-keys))))
+            (it "rejects :paths that is not a coll of strings"
+                (expect (not (contract/selectors-valid? {:paths 42})))
+                (expect (not (contract/selectors-valid? {:paths [42]}))))
+            ;; A namespace is a CLOJURE fact, never a shared one: that pack resolves its
+            ;; Namespace selectors are language-specific and do not enter this shared map.
+            (it "publishes no namespace selector"
+                (expect (not (some #{:ns :namespace :namespaces} contract/selector-keys))))))
 
 (defdescribe
-  result-spec-test
+  result-schema-test
   (describe
-    "::result - the uniform map every runner returns"
+    "result - the uniform map every runner returns"
     (it "validates a full green repl result"
-        (expect (s/valid? ::contract/result
-                          {:language "clojure"
-                           :mode "repl"
-                           :framework "lazytest"
-                           :ns "my.app.core-test"
-                           :total 32
-                           :pass 32
-                           :fail 0
-                           :selected 6
-                           :skipped 0
-                           :failures []
-                           :output "Ran 32 tests."})))
+        (expect (contract/result-valid? {:language "clojure"
+                                         :mode "repl"
+                                         :framework "lazytest"
+                                         :ns "my.app.core-test"
+                                         :total 32
+                                         :pass 32
+                                         :fail 0
+                                         :selected 6
+                                         :skipped 0
+                                         :failures []
+                                         :output "Ran 32 tests."})))
     (it "validates a failing result with a failure entry"
-        (expect (s/valid?
-                  ::contract/result
+        (expect (contract/result-valid?
                   {:language "clojure"
                    :mode "repl"
                    :framework "clojure.test"
@@ -89,14 +69,13 @@
                    [{:ns "x" :test "adds" :type "fail" :message "boom" :file "x.clj" :line 12}
                     {:ns "x" :test "boom" :type "error" :message "threw"}]})))
     (it "validates a cli result (the ns it RAN, not what was selected)"
-        (expect (s/valid? ::contract/result
-                          {:language "clojure" :mode "cli" :tool "clj" :ns "my.app.core-test"})))
+        (expect (contract/result-valid?
+                  {:language "clojure" :mode "cli" :tool "clj" :ns "my.app.core-test"})))
     (it "rejects a fault whose :type is outside the closed fail/error vocabulary"
-        (expect (not (s/valid? ::contract/result
-                               {:failures [{:ns "x" :test "adds" :type "exploded"}]}))))
-    (it "rejects an unknown :mode value"
-        (expect (not (s/valid? ::contract/result {:mode "weird"}))))
-    (it "rejects a negative count" (expect (not (s/valid? ::contract/result {:total -1}))))))
+        (expect (not (contract/result-valid? {:failures
+                                              [{:ns "x" :test "adds" :type "exploded"}]}))))
+    (it "rejects an unknown :mode value" (expect (not (contract/result-valid? {:mode "weird"}))))
+    (it "rejects a negative count" (expect (not (contract/result-valid? {:total -1}))))))
 
 (defdescribe split-node-id-test
              (describe

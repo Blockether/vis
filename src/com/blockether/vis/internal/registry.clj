@@ -1,12 +1,7 @@
 (ns com.blockether.vis.internal.registry
   "Three global registries in one place: channels, providers, commands.
 
-   Each is a small, self-contained piece - keyword id, a spec for the
-   descriptor map, a process-level atom holding the registered entries,
-   and a handful of fns for register / deregister / lookup. Putting
-   them together means one file owns every \"this is the canonical
-   shape of an extension contribution\" decision and one file owns
-   every place an extension's contribution lands at runtime.
+   Each descriptor is checked by a local predicate before entering its process registry.
 
    Channel registry (`:channel/id` keyword):
      channel                  build + validate a descriptor
@@ -38,15 +33,11 @@
                               Loading this ns also registers the
                               `vis-agent channels` parent itself.
 
-   Specs for keyword fields (`:channel/id`, `:provider/id`, `:cmd/name`,
-   ..., plus the descriptor specs `::channel`, `::provider`, `::command`,
-   `::arg`) live here too - the spec IS the registry's contract.
 
    Parsing / help rendering / dispatch utilities live in
    `com.blockether.vis.internal.commandline`. The closed initialization manifest
    lives in `com.blockether.vis.internal.manifest`."
-  (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
@@ -70,221 +61,89 @@
 ;; user wants them they pass `--debug` and the CLI re-adds the handler.
 (try (tel/remove-handler! :default/console) (catch Throwable _ nil))
 
-;; Channel descriptor - spec
+(defn- optional-valid? [m k pred] (or (not (contains? m k)) (pred (get m k))))
 
-;; Stable identity key for the channel, e.g. :tui, :cli, :api.
-;; Used as the session-soul `channel` column and as the dedup key
-;; in the registry.
-(s/def :channel/id keyword?)
-
-;; Sub-command word the CLI matches. `vis-agent channels tui ...` -> :tui channel.
-;; Two registered channels MUST NOT share the same :channel/cmd.
-;; There is no "default" channel - invoking `vis-agent` with no command
-;; prints help. Every channel is an explicit subcommand.
-(s/def :channel/cmd util/non-blank-string?)
-
-;; One-line description shown in `vis-agent help`.
-(s/def :channel/doc util/non-blank-string?)
-
-;; Optional usage line shown in `vis-agent help` (defaults to "vis-agent channels <cmd>").
-(s/def :channel/usage util/non-blank-string?)
-
- ;; When true, the channel takes over the controlling terminal
- ;; (Lanterna, ncurses, anything that writes to /dev/tty directly).
- ;; The CLI dispatcher reroutes stderr to its role-labelled file under
- ;; ~/.vis/logs/ BEFORE any channel code (or its transitive class loading)
- ;; executes, so JVM warnings and library prints never corrupt the screen.
-;; Defaults to false.
-(s/def :channel/owns-tty? boolean?)
-
-;; Entry point. (fn [args-vec] -> any). `args-vec` are the CLI tokens
-;; AFTER the channel command (so for `vis-agent channels tui --foo bar` it is
-;; `["--foo" "bar"]`).
-;; Accepts any IFn (functions OR vars) so callers can pass `#'channel-main`
-;; and benefit from REPL redefinition.
-(s/def :channel/main-fn ifn?)
-
-;; Optional. (fn [input opts] -> renderer-output) called by the channel's
-;; emit chokepoint to convert the canonical content blocks into the channel-flavored
-;; output. The TUI registers a :markdown walker; another channel
-;; could register an :html walker. Output type is channel-defined.
-(s/def :channel/messages-renderer-fn ifn?)
-
-;; Channel-owned nested commands, e.g. `vis-agent channels tui approve`.
-;; This keeps channel subcommands inside the channel descriptor instead of
-;; extension namespaces registering global command-registry entries directly.
-(s/def :channel/subcommands
-  (s/or :static (s/coll-of map? :kind vector?)
-        :dynamic ifn?))
-
-(s/def ::channel
-  (s/keys :req [:channel/id :channel/cmd :channel/doc :channel/main-fn]
-          :opt [:channel/usage :channel/owns-tty? :channel/subcommands
-                :channel/messages-renderer-fn]))
+(defn channel?
+  [x]
+  (and (map? x)
+       (keyword? (:channel/id x))
+       (util/non-blank-string? (:channel/cmd x))
+       (util/non-blank-string? (:channel/doc x))
+       (ifn? (:channel/main-fn x))
+       (optional-valid? x :channel/usage util/non-blank-string?)
+       (optional-valid? x :channel/owns-tty? boolean?)
+       (optional-valid? x :channel/messages-renderer-fn ifn?)
+       (optional-valid? x :channel/subcommands #(or (and (vector? %) (every? map? %)) (ifn? %)))))
 
 (defn channel
   "Build and validate a channel descriptor map."
-  [spec]
-  (when-not (s/valid? ::channel spec)
-    (throw (ex-info (str "Invalid channel '" (:channel/id spec)
-                         "':\n" (with-out-str (s/explain ::channel spec)))
+  [descriptor]
+  (if (channel? descriptor)
+    descriptor
+    (throw (ex-info (str "Invalid channel '" (:channel/id descriptor) "'")
                     {:type :channel/invalid-spec
-                     :id (:channel/id spec)
-                     :explain (s/explain-data ::channel spec)})))
-  spec)
+                     :id (:channel/id descriptor)
+                     :explain {:valid false :value descriptor}}))))
 
-;; Provider descriptor - spec
+(def ^:private provider-function-keys
+  #{:provider/status-fn :provider/logout-fn :provider/detect-fn :provider/auth-fn
+    :provider/auth-start-fn :provider/auth-complete-fn :provider/auth-await-fn
+    :provider/get-token-fn :provider/refresh-token-fn :provider/limits-fn :provider/enrich-models-fn
+    :provider/on-selected-fn})
 
-(s/def :provider/id keyword?)
-
-(s/def :provider/label util/non-blank-string?)
-
-;; All four runtime fns are optional individually so a minimal provider
-;; (e.g. one that reads a static API key from env) doesn't need to
-;; ship a no-op stub for every slot. Whoever calls them handles the
-;; absent case (`(when-let [f (:provider/status-fn p)] (f))`).
-(s/def :provider/status-fn ifn?)  ;; () -> {:is-authenticated bool ...}
-
-(s/def :provider/logout-fn ifn?)  ;; () -> nil  (clear creds)
-
-(s/def :provider/detect-fn ifn?)  ;; () -> token-or-nil  (non-interactive)
-
-(s/def :provider/auth-fn ifn?)  ;; (printer-fn) -> nil (interactive)
-
-;; ── Headless OAuth (the wire-drivable twin of :provider/auth-fn) ─────────────
-;; `auth-fn` is INTERACTIVE: it prints and blocks on a terminal/dialog, so it
-;; can never cross an HTTP boundary. These three slots split the SAME flow into
-;; steps a remote client (companion app, any gateway caller) can drive:
-;;
-;;   start    -> {:kind :pkce|:device …public fields… :flow <opaque, PRIVATE>}
-;;   complete -> PKCE only: exchange the pasted redirect URL / code
-;;   await    -> device only: BLOCK until GitHub-style device auth resolves
-;;
-;; The `:flow` value (PKCE verifier, device code) is a daemon-side secret and
-;; MUST NOT be emitted onto the wire. Credentials are persisted by the daemon
-;; exactly as the interactive path does — they never reach the client.
-(s/def :provider/auth-start-fn ifn?)  ;; () -> {:kind :url :user-code :verification-uri :interval-ms :expires-in-ms :flow}
-
-(s/def :provider/auth-complete-fn ifn?)  ;; (flow input-string) -> {:status :ok}  (PKCE)
-
-(s/def :provider/auth-await-fn ifn?)  ;; (flow) -> {:status :ok}  (device; BLOCKS)
-
-(s/def :provider/get-token-fn ifn?)  ;; () -> token-string/map  (resolve usable token)
-
-(s/def :provider/refresh-token-fn ifn?)  ;; () -> token-string/map  (FORCE refresh ignoring local expiry; runtime 401 recovery)
-
-(s/def :provider/limits-fn ifn?)  ;; () -> normalized limits envelope/map
-
-(s/def :provider/enrich-models-fn ifn?) ;; (svar-provider router-opts) -> models-vec (resolve :context/:tool-call? at router-build, e.g. LM Studio native endpoint)
-
-(s/def :provider/preset map?)         ;; extension-owned UI/runtime defaults: :base-url, :default-models, :api-style, :is-hidden
-
-;; The extension owns this provider's binding and configuration: it needs no
-;; `Add provider` step and binds as soon as the extension loads. Credential policy
-;; stays independent — absent `auth-fn` the runtime supplies it; with `auth-fn` the
-;; provider may authenticate interactively on first use. `providers/managed?` reads it.
-(s/def :provider/is-managed boolean?)
-
-(s/def :provider/on-selected-fn ifn?) ;; ({:provider :previous-provider :config :source}) -> nil
-
-(s/def ::provider
-  (s/and #(not (contains? % :provider/prompt-fn))
-         (s/keys :req [:provider/id :provider/label]
-                 :opt [:provider/status-fn :provider/logout-fn :provider/detect-fn :provider/auth-fn
-                       :provider/auth-start-fn :provider/auth-complete-fn :provider/auth-await-fn
-                       :provider/get-token-fn :provider/refresh-token-fn :provider/limits-fn
-                       :provider/enrich-models-fn :provider/preset :provider/on-selected-fn
-                       :provider/is-managed])))
+(defn provider?
+  [x]
+  (and (map? x)
+       (not (contains? x :provider/prompt-fn))
+       (keyword? (:provider/id x))
+       (util/non-blank-string? (:provider/label x))
+       (every? #(optional-valid? x % ifn?) provider-function-keys)
+       (optional-valid? x :provider/preset map?)
+       (optional-valid? x :provider/is-managed boolean?)))
 
 (defn provider
   "Build and validate a provider descriptor."
-  [spec]
-  (when-not (s/valid? ::provider spec)
-    (throw (ex-info (str "Invalid provider '" (:provider/id spec)
-                         "':\n" (with-out-str (s/explain ::provider spec)))
+  [descriptor]
+  (if (provider? descriptor)
+    descriptor
+    (throw (ex-info (str "Invalid provider '" (:provider/id descriptor) "'")
                     {:type :provider/invalid-spec
-                     :id (:provider/id spec)
-                     :explain (s/explain-data ::provider spec)})))
-  spec)
+                     :id (:provider/id descriptor)
+                     :explain {:valid false :value descriptor}}))))
 
-;; Command descriptor - spec
+(defn- arg?
+  [x]
+  (and (map? x)
+       (util/non-blank-string? (:name x))
+       (contains? #{:flag :positional} (:kind x))
+       (optional-valid? x :type #{:string :int :boolean :file})
+       (optional-valid? x :required boolean?)
+       (optional-valid? x :doc string?)))
 
-(s/def :cmd/name util/non-blank-string?)
-
-(s/def :cmd/doc util/non-blank-string?)
-
-(s/def :cmd/usage util/non-blank-string?)
-
-(s/def :cmd/run-fn ifn?)
-
-(s/def :cmd/owns-tty? boolean?)
-
-(s/def :cmd/internal? boolean?)  ;; host-owned canonical command, not an extension contribution
-
-;; Where in the command tree this command mounts. Vector of parent
-;; command-names from the root, EXCLUDING the root itself and the
-;; command's own `:cmd/name`. Examples:
-;;   []                  - top-level (`vis-agent <name>`)
-;;   ["extension"]       - nested under `vis-agent extension`
-;;   ["channels"]        - nested under `vis-agent channels`
-;;   ["foo" "bar"]       - nested as `vis-agent foo bar <name>`
-;; Used by the CLI dispatcher's auto-mount via `registered-under`.
-(s/def :cmd/parent (s/coll-of string? :kind vector?))
-
-;; arg spec: {:name "model" :kind :flag|:positional :type :string|:int|:boolean
-;;            :required true :doc "..."}
-(s/def :cmd.arg/name util/non-blank-string?)
-
-(s/def :cmd.arg/kind #{:flag :positional})
-
-(s/def :cmd.arg/type #{:string :int :boolean :file})
-
-(s/def :cmd.arg/required boolean?)
-
-(s/def :cmd.arg/doc string?)
-
-(s/def ::arg
-  (s/keys :req-un [:cmd.arg/name :cmd.arg/kind]
-          :opt-un [:cmd.arg/type :cmd.arg/required :cmd.arg/doc]))
-
-(s/def :cmd/args (s/coll-of ::arg :kind vector?))
-
-;; subcommands: vector OR 0-arg ifn returning vector
-(s/def :cmd/subcommands
-  (s/or :static (s/coll-of map? :kind vector?)
-        :dynamic ifn?))
-
-;; Optional vector of single-line example invocations shown in the
-;; EXAMPLES help section.
-(s/def :cmd/examples (s/coll-of string? :kind vector?))
-
-;; Extra help sections appended after SUBCOMMANDS / EXTENSION COMMANDS.
-;; Each entry is `{:title string :body string-or-0-arg-fn}`. The whole
-;; value may also be a 0-arg fn returning a sequence of entries -- used
-;; when the body requires runtime discovery (e.g. installed
-;; extensions) that should not run at registration time.
-(s/def :cmd/extra-sections
-  (s/or :static sequential?
-        :dynamic ifn?))
-
-(s/def ::command
-  (s/keys :req [:cmd/name :cmd/doc]
-          :opt [:cmd/usage :cmd/args :cmd/run-fn :cmd/subcommands :cmd/owns-tty? :cmd/examples
-                :cmd/parent :cmd/internal? :cmd/extra-sections]))
+(defn command?
+  [x]
+  (and (map? x)
+       (util/non-blank-string? (:cmd/name x))
+       (util/non-blank-string? (:cmd/doc x))
+       (optional-valid? x :cmd/usage util/non-blank-string?)
+       (optional-valid? x :cmd/run-fn ifn?)
+       (optional-valid? x :cmd/owns-tty? boolean?)
+       (optional-valid? x :cmd/internal? boolean?)
+       (optional-valid? x :cmd/parent #(and (vector? %) (every? string? %)))
+       (optional-valid? x :cmd/args #(and (vector? %) (every? arg? %)))
+       (optional-valid? x :cmd/subcommands #(or (and (vector? %) (every? map? %)) (ifn? %)))
+       (optional-valid? x :cmd/examples #(and (vector? %) (every? string? %)))
+       (optional-valid? x :cmd/extra-sections #(or (sequential? %) (ifn? %)))))
 
 (defn command
-  "Build and validate a command map. Children are NOT validated
-   recursively; they're checked the first time `dispatch!` or
-   `render-help` walks into them, which keeps dynamic subcommands
-   from forcing their fn at build time."
-  [spec]
-  (when-not (s/valid? ::command spec)
-    (throw (ex-info (str "Invalid command '" (:cmd/name spec)
-                         "':\n" (with-out-str (s/explain ::command spec)))
+  "Build and validate a command map without realizing dynamic children."
+  [descriptor]
+  (if (command? descriptor)
+    descriptor
+    (throw (ex-info (str "Invalid command '" (:cmd/name descriptor) "'")
                     {:type :commandline/invalid-spec
-                     :name (:cmd/name spec)
-                     :explain (s/explain-data ::command spec)})))
-  spec)
+                     :name (:cmd/name descriptor)
+                     :explain {:valid false :value descriptor}}))))
 
 (defn resolve-subcommands
   "Return the static vector of subcommands, calling the dynamic fn

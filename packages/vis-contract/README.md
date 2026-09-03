@@ -1,44 +1,24 @@
 # vis-contract
 
-The Vis **contract** as one declaration with language-native inputs:
+The language-neutral Vis contract is stored as JSON documents in
+`resources/vis-contract/`. Every document has a same-named JSON Schema under
+`resources/vis-contract/schema/`, and Clojure validates it with Skjema before exposing
+engine-friendly views.
 
-| reader | input | source |
-|---|---|---|
-| Clojure | `com.blockether/vis-contract` | `resources/vis-contract/*.edn` directly |
-| Python | `vis-contract` (PyPI, `python/`) | wheel-local `contract.json` |
-| JavaScript generator | root `contract.json` | byte-identical to the Python copy |
+The documents cover gateway protocol data, Python host operations, View, content,
+configuration, toggles, provider limits, language surfaces and test-runner results.
+They contain only JSON-domain values: object keys are strings, arrays are vectors and
+numbers are finite.
 
-`resources/vis-contract/python-host.edn` declares every call the `vis` Python
-module may make on its host — the host global, arity and outside-host policy.
-`resources/vis-contract/clojure-host.edn` is the executable dependency boundary: it
-names current source inputs and freezes every forbidden Clojure edge and hand-written
-JavaScript/Python wire value by source-file count while consumers move to the SDKs.
-`resources/vis-contract/gateway.edn` owns the built-in route table, protocol headers and
-versions, event vocabularies, terminal/queue semantics and replay anchors.
-`resources/vis-contract/view.edn` owns both View kinds' field, node, operation and lifecycle
-vocabularies plus renderer bounds. `resources/vis-contract/content.edn` owns canonical roles,
-statuses, blocks, stream events and delta fields. `resources/vis-contract/toggle.edn` owns toggle
-ids, kinds, settings-copy bounds and boolean wire tokens. `resources/vis-contract/provider.edn`
-owns provider limits report statuses, row scopes, kinds, windows, precisions and sources.
-
-Nothing here requires a Vis namespace. The engine reads this project off its own
-classpath, `vis-agent` depends on the wheel, and a tool in somebody else's
-repository can read the same declaration without installing an agent.
-
-View, canonical content, toggles and provider limits are executable contracts: their namespaces own
-predicates, specs and error data as well as portable resource vocabularies. Core, gateway and channels
-consume those shapes directly, and generated readers receive the same documents without engine
-data entering the renderer. `com.blockether.vis.contract.surface` and
-`com.blockether.vis.contract.test-runner` are Clojure only: the language surface's result shapes
-and the shared test-selector vocabulary never travel as a document, so they are executable specs
-without a portable one.
+The root `contract.json` is the portable aggregate. Its byte-identical copy ships in
+the `vis-contract` Python wheel. Neither copy is edited by hand.
 
 ## Changing the contract
 
-1. Edit the owning document under `resources/vis-contract/`.
-2. Re-render the language-neutral and Python copies with
+1. Edit the owning `.json` document and its schema under `resources/vis-contract/`.
+2. Run the focused contract tests; malformed documents fail while loading through
+   Skjema.
+3. Re-render both portable copies with
    `(com.blockether.vis.contract.python-host/write-package-document!)`.
-3. The contract, package and gateway characterization tests fail on source or byte drift.
 
-Both published ecosystems are versioned by the repository's `VIS_VERSION`; generated
-artifacts consume the same owning declarations rather than maintaining a second vocabulary.
+The project has no dependency on the Vis engine.

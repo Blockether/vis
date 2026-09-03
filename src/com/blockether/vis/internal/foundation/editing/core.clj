@@ -36,7 +36,6 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.set :as set]
-            [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.fff :as fff]
             [com.blockether.parinferish.balance :as balance]
@@ -3482,21 +3481,6 @@
 ;; still agree, or the entire batch is refused with the current anchor. A parse
 ;; break is refused too, and neither failure writes anything.
 
-;; The refusal payload crosses the boundary as ex-data -> tool failure -> wire.
-(s/def :ext.editing.patch/reason
-  #{:anchor-malformed :anchor-line-out-of-range :anchor-mismatch :anchor-range-inverted
-    :replacement-missing :replacement-is-anchor :parse-broken :file-not-found :path-is-dir
-    :path-escape})
-(s/def :ext.editing.patch/current-anchor :ext.editing.hashline/anchor)
-(s/def :ext.editing.patch/current-from-anchor :ext.editing.hashline/anchor)
-(s/def :ext.editing.patch/current-to-anchor :ext.editing.hashline/anchor)
-(s/def :ext.editing.patch/stated-line pos-int?)
-(s/def :ext.editing.patch/error-line pos-int?)
-(s/def :ext.editing.patch/refusal
-  (s/keys :req-un [:ext.editing.patch/reason]
-          :opt-un [:ext.editing.patch/current-anchor :ext.editing.patch/current-from-anchor
-                   :ext.editing.patch/current-to-anchor :ext.editing.patch/stated-line
-                   :ext.editing.patch/error-line]))
 
 (defn- positional-only!
   "Refuse an options MAP in a slot that takes a positional argument. `cat` and

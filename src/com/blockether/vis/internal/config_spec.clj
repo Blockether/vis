@@ -10,8 +10,8 @@
 
    Security consumers derive their internal policy maps through the adapters at
    the end of this namespace, so validation and enforcement share one contract."
-  (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.contract.config :as contract-config]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]))
 
@@ -55,8 +55,6 @@
 (defn- named-yaml-map? [m] (and (yaml-map? m) (every? util/non-blank-string? (keys m))))
 
 (defn- one-of [values] #(contains? values %))
-(defn- spec-pred [spec] #(s/valid? spec %))
-
 (defn- closed-map?
   "Validate a string-keyed map against key -> predicate schema."
   ([schema m] (closed-map? schema #{} m))
@@ -127,10 +125,7 @@
    "google" :gemini
    "google-gemini" :gemini})
 
-(def api-style-values
-  "The dialects a config may name, in the spelling the documentation teaches.
-   Every other key of [[api-style-aliases]] is an accepted alias of one of these."
-  ["anthropic" "openai" "openai-responses" "gemini"])
+(def api-style-values contract-config/api-style-values)
 
 (defn normalize-api-style
   "`v` (string or keyword, in any accepted spelling) -> svar's `:api-style`,
@@ -155,26 +150,19 @@
    "is_tool_call" boolean?
    "api_style" api-style?})
 
-(s/def ::api-key-command
-  ;; Structured argv, never a shell string: the helper is exec'd directly, so a
-  ;; bare string is ONE argument and is never word-split. Both spellings are the
-  ;; same value shape; there is no shell to quote for.
-  (s/or :argv non-empty-string-list?
-        :program util/non-blank-string?))
+(defn- api-key-command? [x] (or (non-empty-string-list? x) (util/non-blank-string? x)))
 
-(s/def ::model-map #(closed-map? model-schema #{"name"} %))
-(s/def ::model
-  (s/or :name util/non-blank-string?
-        :map ::model-map))
-(s/def ::models (s/coll-of ::model :kind vector?))
+(defn- model-map? [x] (closed-map? model-schema #{"name"} x))
+(defn- model? [x] (or (util/non-blank-string? x) (model-map? x)))
+(defn- models? [x] (and (vector? x) (every? model? x)))
 
 (def provider-schema
   {"id" util/non-blank-string?
    "api_key" string?
    ;; Command-backed credential: argv whose trimmed stdout IS the API key.
    ;; Resolved live (short-lived SSO/vault helpers) and NEVER persisted.
-   "api_key_command" (spec-pred ::api-key-command)
-   "models" (spec-pred ::models)
+   "api_key_command" api-key-command?
+   "models" models?
    "base_url" util/non-blank-string?
    "compatibility" api-style?
    "api_style" api-style?
@@ -192,8 +180,8 @@
    ;; `is_image_input: false` vetoes vision for every model it serves.
    "is_image_input" boolean?})
 
-(s/def ::provider #(closed-map? provider-schema #{"id"} %))
-(s/def ::providers (s/coll-of ::provider :kind vector?))
+(defn- provider? [x] (closed-map? provider-schema #{"id"} x))
+(defn- providers? [x] (and (vector? x) (every? provider? x)))
 
 ;; Router contract -------------------------------------------------------------
 
@@ -213,7 +201,7 @@
    "fallback_after_ms" positive-int?
    "is_respect_retry_after" boolean?
    "is_fallback_provider" boolean?})
-(s/def ::rate-limit #(closed-map? rate-limit-schema %))
+(defn- rate-limit? [x] (closed-map? rate-limit-schema x))
 
 (def router-network-schema
   {"timeout_ms" positive-int?
@@ -225,23 +213,23 @@
    "initial_delay_ms" positive-int?
    "max_delay_ms" positive-int?
    "multiplier" number?})
-(s/def ::router-network #(closed-map? router-network-schema %))
+(defn- router-network? [x] (closed-map? router-network-schema x))
 
 (def budget-schema {"max_tokens" positive-int? "max_cost" non-negative-number?})
-(s/def ::budget #(closed-map? budget-schema %))
+(defn- budget? [x] (closed-map? budget-schema x))
 
 (def token-schema
   {"is_check_context" boolean?
    "pricing" named-yaml-map?
    "context_limits" number-map?
    "output_reserve" positive-int?})
-(s/def ::tokens #(closed-map? token-schema %))
+(defn- tokens? [x] (closed-map? token-schema x))
 
 (def router-schema
-  {"rate_limit" (spec-pred ::rate-limit)
-   "network" (spec-pred ::router-network)
-   "budget" (spec-pred ::budget)
-   "tokens" (spec-pred ::tokens)
+  {"rate_limit" rate-limit?
+   "network" router-network?
+   "budget" budget?
+   "tokens" tokens?
    "failure_threshold" positive-int?
    "recovery_ms" positive-int?
    "transient_status_codes" #(and (or (vector? %) (set? %))
@@ -251,7 +239,7 @@
    "window_ms" positive-int?
    "cooldown_ms" positive-int?
    "max_wait_ms" positive-int?})
-(s/def ::router #(closed-map? router-schema %))
+(defn- router? [x] (closed-map? router-schema x))
 
 ;; Sandbox contracts -----------------------------------------------------------
 
@@ -265,25 +253,15 @@
 ;; drops it silently when its own path is absent. The catalog is the sole source
 ;; of truth; `jail.filesystem.allow` references entries by id.
 (def workspace-entry-keys #{"id" "path" "description" "access" "search" "draft" "when" "optional"})
-(def workspace-access-values #{"read-only" "readonly" "ro" "read-write" "readwrite" "rw"})
-(def workspace-draft-values
-  "Per-root DRAFT isolation vocabulary.
-
-   `shared`         — the draft writes THROUGH to the real root (default).
-   `copy-only`      — the draft gets a private copy; `apply!` never lands it back.
-   `copy-and-apply` — private copy, landed back into the real root on `apply!`.
-   `not-allowed`    — the root is withheld from a drafted session entirely."
-  #{"shared" "copy-only" "copy-and-apply" "not-allowed"})
-(def workspace-os-values
-  "Host tokens `when.os` may name. `wsl` is Linux under WSL: a WSL host also
-   matches a `linux` clause, but a plain Linux host never matches `wsl`."
-  #{"macos" "linux" "wsl" "windows"})
+(def workspace-access-values contract-config/workspace-access-values)
+(def workspace-draft-values contract-config/workspace-draft-values)
+(def workspace-os-values contract-config/workspace-os-values)
 (def workspace-when-keys #{"os" "exists"})
 (def workspace-when-schema
   {"os" #(or (contains? workspace-os-values %)
              (and (vector? %) (seq %) (every? workspace-os-values %)))
    "exists" rooted-path?})
-(s/def ::workspace-when #(closed-map? workspace-when-schema %))
+(defn- workspace-when? [x] (closed-map? workspace-when-schema x))
 (def workspace-entry-schema
   {"id" util/non-blank-string?
    "path" rooted-path?
@@ -291,20 +269,20 @@
    "access" (one-of workspace-access-values)
    "search" boolean?
    "draft" (one-of workspace-draft-values)
-   "when" (spec-pred ::workspace-when)
+   "when" workspace-when?
    "optional" boolean?})
-(s/def ::workspace-entry #(closed-map? workspace-entry-schema #{"id" "path"} %))
-(s/def ::workspace-entries (s/coll-of ::workspace-entry :kind vector?))
+(defn- workspace-entry? [x] (closed-map? workspace-entry-schema #{"id" "path"} x))
+(defn- workspace-entries? [x] (and (vector? x) (every? workspace-entry? x)))
 (def workspace-keys #{"filesystem"})
-(def workspace-schema {"filesystem" (spec-pred ::workspace-entries)})
-(s/def ::workspace #(closed-map? workspace-schema %))
+(def workspace-schema {"filesystem" workspace-entries?})
+(defn- workspace? [x] (closed-map? workspace-schema x))
 
 ;; ── Jail filesystem admission ────────────────────────────────────────────────
 ;; Pure id references into the workspace catalog (deny-by-omission): a catalog
 ;; root is OUTSIDE the OS jail unless its id appears in `allow`.
 (def jail-filesystem-keys #{"allow"})
 (def jail-filesystem-schema {"allow" #(and (vector? %) (every? util/non-blank-string? %))})
-(s/def ::jail-filesystem #(closed-map? jail-filesystem-schema %))
+(defn- jail-filesystem? [x] (closed-map? jail-filesystem-schema x))
 
 ;; ── Jail Mach services (macOS) ───────────────────────────────────────────────
 ;; Seatbelt denies every Mach lookup by default, which is what breaks Keychain
@@ -314,7 +292,7 @@
 (def jail-mach-services-keys #{"allow" "keychain"})
 (def jail-mach-services-schema
   {"allow" #(and (vector? %) (every? util/non-blank-string? %)) "keychain" boolean?})
-(s/def ::jail-mach-services #(closed-map? jail-mach-services-schema %))
+(defn- jail-mach-services? [x] (closed-map? jail-mach-services-schema x))
 
 (def keychain-mach-services
   "The Mach services a confined child must reach to read the macOS Keychain:
@@ -356,24 +334,14 @@
 ;; `PERL*`, `BASH_ENV`, `IFS` …): those execute in the UNCONFINED detacher /
 ;; enforcer hops, so no mode and no declaration can buy them back
 ;; (`process-jail/jailed-child-env`).
-(def jail-environment-values #{"declared" "inherit"})
-(def jail-keys #{"enabled" "environment" "filesystem" "network" "deny_exec" "mach_services"})
-(def jail-schema
-  {"enabled" boolean?
-   "environment" (one-of jail-environment-values)
-   "filesystem" (spec-pred ::jail-filesystem)
-   "network" (spec-pred ::network)
-   "deny_exec" string-list?
-   "mach_services" (spec-pred ::jail-mach-services)})
-(s/def ::jail #(closed-map? jail-schema %))
 
 (def network-rule-allow-keys #{"method" "path"})
 (def network-rule-keys #{"host" "access" "methods" "allow" "ports"})
 (def network-keys
   #{"allowed_domains" "denied_domains" "exclude_domains" "allow_private" "inbound_ports" "rules"})
 (def network-rule-allow-schema {"method" util/non-blank-string? "path" util/non-blank-string?})
-(s/def ::network-rule-allow #(closed-map? network-rule-allow-schema #{"method"} %))
-(s/def ::network-rule-allows (s/coll-of ::network-rule-allow :kind vector?))
+(defn- network-rule-allow? [x] (closed-map? network-rule-allow-schema #{"method"} x))
+(defn- network-rule-allows? [x] (and (vector? x) (every? network-rule-allow? x)))
 
 (def network-rule-schema
   {"host" util/non-blank-string?
@@ -381,9 +349,9 @@
                       "deny" "closed"})
    "methods" #(and (or (vector? %) (set? %)) (every? util/non-blank-string? %))
    "ports" port-list?
-   "allow" (spec-pred ::network-rule-allows)})
-(s/def ::network-rule #(closed-map? network-rule-schema #{"host"} %))
-(s/def ::network-rules (s/coll-of ::network-rule :kind vector?))
+   "allow" network-rule-allows?})
+(defn- network-rule? [x] (closed-map? network-rule-schema #{"host"} x))
+(defn- network-rules? [x] (and (vector? x) (every? network-rule? x)))
 
 (def network-schema
   {"allowed_domains" string-list?
@@ -391,8 +359,19 @@
    "exclude_domains" string-list?
    "allow_private" boolean?
    "inbound_ports" #(and (vector? %) (= (count %) (count (distinct %))) (every? port? %))
-   "rules" (spec-pred ::network-rules)})
-(s/def ::network #(closed-map? network-schema %))
+   "rules" network-rules?})
+(defn- network? [x] (closed-map? network-schema x))
+
+(def jail-environment-values contract-config/jail-environment-values)
+(def jail-keys #{"enabled" "environment" "filesystem" "network" "deny_exec" "mach_services"})
+(def jail-schema
+  {"enabled" boolean?
+   "environment" (one-of jail-environment-values)
+   "filesystem" jail-filesystem?
+   "network" network?
+   "deny_exec" string-list?
+   "mach_services" jail-mach-services?})
+(defn- jail? [x] (closed-map? jail-schema x))
 
 ;; Remaining top-level blocks --------------------------------------------------
 
@@ -415,27 +394,21 @@
     "toggles" "tui_settings" "mcp" "python" "titling" "vision_memory"})
 
 (def prompt-schema {"text" string? "is_replace" boolean?})
-(s/def ::prompt-map #(closed-map? prompt-schema #{"text"} %))
-(s/def ::system-prompt
-  (s/or :text string?
-        :map ::prompt-map))
+(defn- prompt-map? [x] (closed-map? prompt-schema #{"text"} x))
+(defn- system-prompt? [x] (or (string? x) (prompt-map? x)))
 
 (def grep-schema {"include_gitignored_paths" string-list? "always_exclude" string-list?})
-(s/def ::grep #(closed-map? grep-schema %))
+(defn- grep? [x] (closed-map? grep-schema x))
 
 (def db-schema {"backend" util/non-blank-string? "path" util/non-blank-string?})
-(s/def ::db-spec #(closed-map? db-schema #{"backend"} %))
+(defn- db-spec? [x] (closed-map? db-schema #{"backend"} x))
 
 (def tui-schema
   {"theme_name" util/non-blank-string?
    "contributors_disabled" #(and (or (vector? %) (set? %)) (every? util/non-blank-string? %))})
-(s/def ::tui-settings #(closed-map? tui-schema %))
+(defn- tui-settings? [x] (closed-map? tui-schema x))
 
-(s/def ::python-interpreter
-  ;; Same value shape as a provider's `api_key_command`: an argv vector, or a
-  ;; bare program/path that is ONE argument and is never word-split.
-  (s/or :argv non-empty-string-list?
-        :program util/non-blank-string?))
+(defn- python-interpreter? [x] (or (non-empty-string-list? x) (util/non-blank-string? x)))
 
 (def python-schema
   ;; `source_paths`: extra import roots prepended to `sys.path` for `vis-agent python`,
@@ -450,16 +423,16 @@
   ;; `vispython` sandbox or the `project` interpreter's own pytest. Explicit call
   ;; arguments still win.
   {"source_paths" string-list?
-   "interpreter" (spec-pred ::python-interpreter)
+   "interpreter" python-interpreter?
    "runner" (one-of #{"vispython" "project"})})
-(s/def ::python #(closed-map? python-schema %))
+(defn- python? [x] (closed-map? python-schema x))
 
 
 (def mcp-auth-schema
   {"client_id" util/non-blank-string?
    "scope" util/non-blank-string?
    "authorization_timeout_ms" positive-int?})
-(s/def ::mcp-auth #(closed-map? mcp-auth-schema %))
+(defn- mcp-auth? [x] (closed-map? mcp-auth-schema x))
 
 (def mcp-server-schema
   {"transport" (one-of #{"stdio" "streamable_http" "http"})
@@ -472,52 +445,40 @@
    "enabled" boolean?
    "timeout_ms" positive-int?
    "listen" boolean?
-   "auth" (spec-pred ::mcp-auth)})
-(s/def ::mcp-server
-  #(and (closed-map? mcp-server-schema %)
-        ;; `command`/`args` and `url`/`headers` are the standard MCP client
-        ;; configuration shapes. `transport` is optional so a standard config
-        ;; can omit it; `http` remains a read-compatible alias for pre-canonical
-        ;; Vis state and is normalized to `streamable_http` on a gateway save.
-        (let [transport
-              (case (get % "transport")
-                "http"
-                "streamable_http"
+   "auth" mcp-auth?})
+(defn- mcp-server?
+  [x]
+  (and (closed-map? mcp-server-schema x)
+       (let [transport
+             (if (= "http" (get x "transport")) "streamable_http" (get x "transport"))
 
-                (get % "transport"))
+             has-cmd?
+             (util/non-blank-string? (get x "command"))
 
-              has-cmd?
-              (util/non-blank-string? (get % "command"))
+             has-url?
+             (util/non-blank-string? (get x "url"))]
 
-              has-url?
-              (util/non-blank-string? (get % "url"))]
+         (case transport
+           "stdio"
+           (and has-cmd? (not has-url?))
 
-          (case transport
-            "stdio"
-            (and has-cmd? (not has-url?))
+           "streamable_http"
+           (and has-url? (not has-cmd?))
 
-            "streamable_http"
-            (and has-url? (not has-cmd?))
+           nil
+           (not= has-cmd? has-url?)
 
-            nil
-            (and (or has-cmd? has-url?) (not (and has-cmd? has-url?)))
+           false))))
+(defn- mcp-servers?
+  [x]
+  (and (map? x) (every? util/non-blank-string? (keys x)) (every? mcp-server? (vals x))))
+(def mcp-schema {"servers" mcp-servers?})
+(defn- mcp? [x] (closed-map? mcp-schema x))
 
-            false))))
-(s/def ::mcp-servers
-  #(and (map? %)
-        (every? util/non-blank-string? (keys %))
-        (every? (spec-pred ::mcp-server) (vals %))))
-(def mcp-schema {"servers" (spec-pred ::mcp-servers)})
-(s/def ::mcp #(closed-map? mcp-schema %))
-
-(def titling-modes
-  "How a session gets its name. Only `llm` spends a provider call; the other
-   two derive the title locally from the request itself, and `disabled` leaves
-   the session unnamed (Blockether/vis#71)."
-  #{"llm" "first_sentence" "first_words" "disabled"})
+(def titling-modes contract-config/titling-modes)
 (def titling-schema
   {"mode" titling-modes "provider" util/non-blank-string? "model" util/non-blank-string?})
-(s/def ::titling #(closed-map? titling-schema %))
+(defn- titling? [x] (closed-map? titling-schema x))
 
 ;; What the WIRE answered about images ------------------------------------------
 ;;
@@ -532,23 +493,20 @@
 ;; again, instead of blinding it for good on one refusal.
 
 (def vision-fact-schema {"learned_at" util/non-blank-string? "providers" string-list?})
-(s/def ::vision-fact #(closed-map? vision-fact-schema #{"learned_at"} %))
-(s/def ::vision-facts
-  #(and (map? %)
-        (every? util/non-blank-string? (keys %))
-        (every? (spec-pred ::vision-fact) (vals %))))
+(defn- vision-fact? [x] (closed-map? vision-fact-schema #{"learned_at"} x))
+(defn- vision-facts?
+  [x]
+  (and (map? x) (every? util/non-blank-string? (keys x)) (every? vision-fact? (vals x))))
 
 (def vision-eye-schema
   {"provider" util/non-blank-string?
    "model" util/non-blank-string?
    "learned_at" util/non-blank-string?})
-(s/def ::vision-eye #(closed-map? vision-eye-schema #{"provider" "learned_at"} %))
+(defn- vision-eye? [x] (closed-map? vision-eye-schema #{"provider" "learned_at"} x))
 
 (def vision-memory-schema
-  {"blind_providers" (spec-pred ::vision-facts)
-   "blind_models" (spec-pred ::vision-facts)
-   "working_eye" (spec-pred ::vision-eye)})
-(s/def ::vision-memory #(closed-map? vision-memory-schema %))
+  {"blind_providers" vision-facts? "blind_models" vision-facts? "working_eye" vision-eye?})
+(defn- vision-memory? [x] (closed-map? vision-memory-schema x))
 
 ;; ── `environment:` — what the workspace's `.env` CANNOT say ───────────────────
 ;;
@@ -604,7 +562,7 @@
    "account" util/non-blank-string?
    ;; Structured argv whose trimmed stdout IS the value, same shape and same
    ;; no-shell contract as `api_key_command`.
-   "command" (spec-pred ::api-key-command)
+   "command" api-key-command?
    ;; The value itself, written down on purpose — never a bare scalar.
    "literal" env-literal?})
 
@@ -612,24 +570,24 @@
   "The five spellings of WHERE; exactly one of them makes an entry."
   #{"env" "dotenv" "keychain" "command" "literal"})
 
-(s/def ::environment-source
-  #(and (closed-map? environment-source-schema %)
-        ;; Exactly ONE source — a second one would make the source invisible again.
-        (= 1 (count (filter environment-sources (keys %))))
-        (or (contains? % "keychain") (not (contains? % "account")))))
+(defn- environment-source?
+  [x]
+  (and (closed-map? environment-source-schema x)
+       (= 1 (count (filter environment-sources (keys x))))
+       (or (contains? x "keychain") (not (contains? x "account")))))
 
-(s/def ::environment
-  #(and (map? %)
-        (every? env-var-name? (keys %))
-        (every? (fn [[name entry]]
-                  (and (s/valid? ::environment-source entry)
-                       ;; A credential-looking name may not carry its own value.
-                       (or (not (contains? entry "literal"))
-                           (not (re-matches credential-name-pattern (str name))))))
-                %)))
+(defn- environment?
+  [x]
+  (and (map? x)
+       (every? env-var-name? (keys x))
+       (every? (fn [[name entry]]
+                 (and (environment-source? entry)
+                      (or (not (contains? entry "literal"))
+                          (not (re-matches credential-name-pattern (str name))))))
+               x)))
 
 (def config-schema
-  {"providers" (spec-pred ::providers)
+  {"providers" providers?
    ;; Provider ids the operator DELETED. A provider can enter the fleet without
    ;; ever being in `providers` — synthesized from an env var or a stored
    ;; credential — so "deleted" cannot be expressed by absence and is recorded
@@ -639,24 +597,30 @@
    "default_model" util/non-blank-string?
    "fallback_provider" util/non-blank-string?
    "fallback_model" util/non-blank-string?
-   "router" (spec-pred ::router)
-   "system_prompt" (spec-pred ::system-prompt)
-   "workspace" (spec-pred ::workspace)
-   "jail" (spec-pred ::jail)
-   "environment" (spec-pred ::environment)
-   "db_spec" (spec-pred ::db-spec)
-   "grep" (spec-pred ::grep)
+   "router" router?
+   "system_prompt" system-prompt?
+   "workspace" workspace?
+   "jail" jail?
+   "environment" environment?
+   "db_spec" db-spec?
+   "grep" grep?
    "toggles" named-scalar-map?
-   "tui_settings" (spec-pred ::tui-settings)
-   "mcp" (spec-pred ::mcp)
-   "python" (spec-pred ::python)
-   "titling" (spec-pred ::titling)
-   "vision_memory" (spec-pred ::vision-memory)})
+   "tui_settings" tui-settings?
+   "mcp" mcp?
+   "python" python?
+   "titling" titling?
+   "vision_memory" vision-memory?})
 
-(s/def ::config #(closed-map? config-schema %))
 
-(defn explain-data [config] (s/explain-data ::config config))
-(defn valid? [config] (s/valid? ::config config))
+
+(defn explain-data [config] (contract-config/config-explain-data config))
+(defn valid? [config] (contract-config/config-valid? config))
+(defn providers-valid?
+  [providers]
+  (contract-config/definition-valid? "config" {"providers" providers}))
+(defn environment-valid?
+  [environment]
+  (contract-config/definition-valid? "environment" environment))
 
 (def ^:private nested-schemas
   "Which closed-map schema a parent key nests, so a failure is attributed to the
@@ -913,36 +877,37 @@
                         :vis/panel (config-error-panel fields source)
                         :source source
                         :fields fields
-                        :problems (mapv #(update % :val redact)
-                                        (::s/problems (explain-data config)))}))))))
+                        :config (redact config)
+                        :problems (mapv redact (:errors (explain-data config)))}))))))
 
 (def process-jail-config-keys
   #{:disabled? :inherit-host-env? :allow-read-write :allow-read :allow-write :deny-read :deny-write
     :deny-exec :no-search :inbound-ports :path-descriptions :mach-services})
 
-(s/def ::process-jail-config
-  (s/and map?
-         #(every? process-jail-config-keys (keys %))
-         #(boolean? (:disabled? %))
-         #(boolean? (:inherit-host-env? %))
-         #(every? rooted-path-list?
-                  ((juxt :allow-read-write :allow-read :allow-write :deny-read :deny-write) %))
-         #(rooted-path-list? (or (:no-search %) []))
-         #(rooted-path-list? (or (:deny-exec %) []))
-         #(s/valid? (get network-schema "inbound_ports") (:inbound-ports %))
-         #(string-list? (or (:mach-services %) []))
-         #(let [d (:path-descriptions %)] (or (nil? d) (string-map? d)))))
+(defn- process-jail-config?
+  [policy]
+  (and (map? policy)
+       (every? process-jail-config-keys (keys policy))
+       (boolean? (:disabled? policy))
+       (boolean? (:inherit-host-env? policy))
+       (every? rooted-path-list?
+               ((juxt :allow-read-write :allow-read :allow-write :deny-read :deny-write) policy))
+       (rooted-path-list? (or (:no-search policy) []))
+       (rooted-path-list? (or (:deny-exec policy) []))
+       (vector? (:inbound-ports policy))
+       (= (count (:inbound-ports policy)) (count (distinct (:inbound-ports policy))))
+       (every? port? (:inbound-ports policy))
+       (string-list? (or (:mach-services policy) []))
+       (let [descriptions (:path-descriptions policy)]
+         (or (nil? descriptions) (string-map? descriptions)))))
 
 (defn assert-process-jail-config!
   "Validate and return the exact internal policy consumed by process-jail."
   [policy]
-  (if (s/valid? ::process-jail-config policy)
+  (if (process-jail-config? policy)
     policy
     (throw (ex-info "Invalid process-jail configuration"
-                    {:type :vis/invalid-process-jail-config
-                     :problems (mapv #(update % :val redact)
-                                     (::s/problems (s/explain-data ::process-jail-config
-                                                                   policy)))}))))
+                    {:type :vis/invalid-process-jail-config :policy (redact policy)}))))
 
 (defn- resolve-exec-denies
   "Resolve `jail.deny-exec` entries into absolute executable paths that the jail

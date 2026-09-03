@@ -61,6 +61,194 @@
           "$ref": "common.json#/$defs/token_list"
         }
       }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "enum": [
+            "calendar",
+            "lifetime",
+            "rolling"
+          ]
+        },
+        "unit": {
+          "enum": [
+            "day",
+            "hour",
+            "minute",
+            "month",
+            "week",
+            "year"
+          ]
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "resets_at_ms": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "limit_row": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "label": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "scope": {
+          "enum": [
+            "account",
+            "model",
+            "plan",
+            "workspace"
+          ]
+        },
+        "subject": {
+          "type": "object"
+        },
+        "kind": {
+          "enum": [
+            "credits",
+            "rate",
+            "requests",
+            "sessions",
+            "tokens",
+            "usd"
+          ]
+        },
+        "precision": {
+          "enum": [
+            "derived",
+            "estimate",
+            "exact",
+            "unknown"
+          ]
+        },
+        "source": {
+          "enum": [
+            "derived",
+            "local",
+            "provider-api",
+            "static"
+          ]
+        },
+        "used": {
+          "type": "number"
+        },
+        "limit": {
+          "type": "number"
+        },
+        "remaining": {
+          "type": "number"
+        },
+        "is_unlimited": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string"
+        },
+        "window": {
+          "$ref": "#/$defs/window"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "scope",
+        "kind",
+        "precision",
+        "source",
+        "is_unlimited"
+      ]
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "provider_id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "status": {
+          "enum": [
+            "error",
+            "ok",
+            "unauthenticated",
+            "unknown-provider",
+            "unsupported"
+          ]
+        },
+        "fetched_at_ms": {
+          "type": "integer"
+        },
+        "static": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "rpm": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tpm": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "dynamic": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "limits": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/limit_row"
+              }
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "limits"
+          ]
+        },
+        "error": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "type": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "message": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "data": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "type",
+            "message"
+          ]
+        }
+      },
+      "required": [
+        "provider_id",
+        "status",
+        "fetched_at_ms",
+        "static",
+        "dynamic"
+      ]
     }
   }
 }

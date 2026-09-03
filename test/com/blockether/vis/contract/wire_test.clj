@@ -60,8 +60,8 @@
                  (wire/canonical {"total_cost" 0.1 "cache_created" 2})))))
 
 (defdescribe
-  no-legacy-key-survives-test
-  (it "every canonical map key is a snake_case STRING — no keyword, kebab, or `?`"
+  canonical-key-test
+  (it "every canonical map key is a snake_case string"
       (let [ks (all-map-keys (wire/canonical rich-fixture))]
         (expect (seq ks))
         (expect (every? string? ks))

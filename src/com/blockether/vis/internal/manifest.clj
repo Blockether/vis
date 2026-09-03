@@ -26,7 +26,6 @@
    Nothing scans the classpath and there is no alternate manifest format."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
@@ -45,23 +44,25 @@
        (not (str/includes? x "\\"))
        (not-any? #{"" "." ".."} (str/split x #"/"))))
 
-(s/def ::register qualified-var-symbol?)
-(s/def ::apropos resource-path?)
-(s/def ::is-optional true?)
-(s/def ::because (s/and string? (complement str/blank?)))
-(s/def ::entry
-  (s/and (s/keys :req-un [::register] :opt-un [::apropos ::is-optional ::because])
-         #(every? #{:register :apropos :is-optional :because} (keys %))
-         ;; An optional pack states WHY it may be absent, and nothing else may.
-         #(= (contains? % :is-optional) (contains? % :because))))
-(s/def ::initialization
-  (s/and (s/coll-of (s/or :required qualified-var-symbol?
-                          :declared ::entry)
-                    :kind vector?
-                    :distinct true)
-         seq))
-(s/def ::manifest
-  (s/and (s/keys :req-un [::initialization]) #(= #{:initialization} (set (keys %)))))
+(defn- entry?
+  [x]
+  (and (map? x)
+       (every? #{:register :apropos :is-optional :because} (keys x))
+       (qualified-var-symbol? (:register x))
+       (or (not (contains? x :apropos)) (resource-path? (:apropos x)))
+       (or (not (contains? x :is-optional)) (true? (:is-optional x)))
+       (or (not (contains? x :because))
+           (and (string? (:because x)) (not (str/blank? (:because x)))))
+       (= (contains? x :is-optional) (contains? x :because))))
+
+(defn manifest?
+  [x]
+  (and (map? x)
+       (= #{:initialization} (set (keys x)))
+       (vector? (:initialization x))
+       (seq (:initialization x))
+       (= (count (:initialization x)) (count (set (:initialization x))))
+       (every? #(or (qualified-var-symbol? %) (entry? %)) (:initialization x))))
 
 (defn- read-edn
   "Read manifest EDN `text`, refusing tagged literals - the one reader."
@@ -85,11 +86,10 @@
 
 (defn- validated
   [source m]
-  (if (s/valid? ::manifest m)
+  (if (manifest? m)
     m
-    (throw (ex-info
-             "Invalid distribution manifest"
-             {:type :manifest/invalid :resource source :explain (s/explain-data ::manifest m)}))))
+    (throw (ex-info "Invalid distribution manifest"
+                    {:type :manifest/invalid :resource source :explain {:valid false :value m}}))))
 
 (defn- normalized-entries [m] (mapv #(if (map? %) % {:register %}) (:initialization m)))
 

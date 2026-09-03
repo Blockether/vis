@@ -116,32 +116,109 @@
   },
   "gateway":
   {
-    "version": 4,
     "protocol":
     {
-      "minimum_client": 12,
       "minimum_gateway": 12,
+      "minimum_client": 12,
       "version": 12
     },
-    "headers":
+    "replay":
     {
-      "accept": "accept",
-      "authorization": "authorization",
-      "client": "x-vis-client",
-      "client_id": "x-vis-client-id",
-      "client_pid": "x-vis-client-pid",
-      "client_version": "x-vis-client-version",
-      "content_type": "content-type",
-      "etag": "etag",
-      "gateway_secret": "x-vis-gateway-secret",
-      "if_none_match": "if-none-match",
-      "last_event_id": "last-event-id",
-      "minimum_gateway_protocol": "x-vis-min-gateway-protocol",
-      "protocol": "x-vis-protocol",
-      "suppress_registry_recovery": "x-vis-suppress-registry-recovery"
+      "cursor_key": "seq",
+      "generation_start_event": "turn.started",
+      "ready_event": "subscription.ready",
+      "cursor_header": "last-event-id"
     },
+    "envelopes":
+    {
+      "handshake":
+      {
+        "keys":
+        {
+          "protocol": "protocol",
+          "min_client": "min_client",
+          "build": "build",
+          "version": "version",
+          "min_gateway": "min_gateway"
+        }
+      },
+      "session_event":
+      {
+        "stamp_keys":
+        {
+          "schema": "schema",
+          "timestamp": "ts",
+          "sequence": "seq",
+          "type": "type",
+          "session_id": "session_id"
+        },
+        "schema": 1
+      },
+      "journal_line":
+      {
+        "metadata_keys":
+        {
+          "pid": "_pid",
+          "producer": "_producer",
+          "store": "_store"
+        }
+      },
+      "subscription_ready":
+      {
+        "event": "subscription.ready",
+        "optional_keys":
+        {
+          "latest_iteration": "latest_iteration"
+        },
+        "required_keys":
+        {
+          "current_turn_id": "current_turn_id",
+          "cursor": "cursor",
+          "type": "type",
+          "server_time_ms": "server_time_ms",
+          "session_id": "session_id",
+          "is_live": "is_live"
+        }
+      },
+      "settled_turn":
+      {
+        "meta_keys": ["model","provider","llm_selected","llm_actual","is_llm_fallback","llm_routing_trace","tokens","cost","confidence","eval","duration_ms","utilization"]
+      },
+      "error_response":
+      {
+        "body_keys":
+        {
+          "error": "error"
+        },
+        "error_keys":
+        {
+          "message": "message",
+          "type": "type"
+        }
+      }
+    },
+    "events":
+    {
+      "queue_mirror": ["turn.queued.deleted","queue.resumed","turn.queued","queue.paused","turn.queued.updated","turn.queued.drained"],
+      "push": ["turn.end"],
+      "turn_terminal": ["turn.failed","turn.completed","turn.cancelled"],
+      "jobs":
+      {
+        "transcribe": "voice.job",
+        "synthesize": "speech.job"
+      },
+      "session": ["block.activity","block.output","block.preview","block.started","content.block.completed","content.block.delta","content.block.started","context.updated","iteration.completed","iteration.error","provider.retry","queue.paused","queue.resumed","session.model_updated","session.status","session.title_updated","subscription.ready","turn.cancelled","turn.completed","turn.failed","turn.progress","turn.queued","turn.queued.deleted","turn.queued.drained","turn.queued.updated","turn.started","view.close","view.open","view.patch"],
+      "view":
+      {
+        "patch": "view.patch",
+        "close": "view.close",
+        "open": "view.open"
+      }
+    },
+    "version": 4,
     "routes": [
       {
+        "path": "\/docs",
         "audience": "public",
         "operations":
         {
@@ -150,10 +227,10 @@
             "request": "none",
             "response": "resource"
           }
-        },
-        "path": "\/docs"
+        }
       },
       {
+        "path": "\/docs\/*path",
         "audience": "public",
         "operations":
         {
@@ -162,10 +239,10 @@
             "request": "none",
             "response": "resource"
           }
-        },
-        "path": "\/docs\/*path"
+        }
       },
       {
+        "path": "\/healthz",
         "audience": "public",
         "operations":
         {
@@ -174,10 +251,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/healthz"
+        }
       },
       {
+        "path": "\/metrics",
         "audience": "administration",
         "operations":
         {
@@ -186,10 +263,10 @@
             "request": "none",
             "response": "negotiated"
           }
-        },
-        "path": "\/metrics"
+        }
       },
       {
+        "path": "\/openapi.json",
         "audience": "public",
         "operations":
         {
@@ -198,10 +275,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/openapi.json"
+        }
       },
       {
+        "path": "\/readyz",
         "audience": "public",
         "operations":
         {
@@ -210,10 +287,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/readyz"
+        }
       },
       {
+        "path": "\/v1\/admin\/status",
         "audience": "administration",
         "operations":
         {
@@ -222,10 +299,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/admin\/status"
+        }
       },
       {
+        "path": "\/v1\/admin\/stop",
         "audience": "administration",
         "operations":
         {
@@ -234,10 +311,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/admin\/stop"
+        }
       },
       {
+        "path": "\/v1\/capabilities",
         "audience": "sdk",
         "operations":
         {
@@ -246,10 +323,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/capabilities"
+        }
       },
       {
+        "path": "\/v1\/clients",
         "audience": "sdk",
         "operations":
         {
@@ -258,10 +335,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/clients"
+        }
       },
       {
+        "path": "\/v1\/clients\/:cid",
         "audience": "sdk",
         "operations":
         {
@@ -270,27 +347,27 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/clients\/:cid"
+        }
       },
       {
+        "path": "\/v1\/devices",
         "audience": "sdk",
         "operations":
         {
-          "get":
+          "post":
           {
-            "request": "none",
+            "request": "json",
             "response": "json"
           },
-          "post":
+          "get":
           {
-            "request": "json",
+            "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/devices"
+        }
       },
       {
+        "path": "\/v1\/devices\/:token",
         "audience": "sdk",
         "operations":
         {
@@ -299,10 +376,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/devices\/:token"
+        }
       },
       {
+        "path": "\/v1\/devices\/actions\/test",
         "audience": "sdk",
         "operations":
         {
@@ -311,10 +388,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/devices\/actions\/test"
+        }
       },
       {
+        "path": "\/v1\/events",
         "audience": "sdk",
         "operations":
         {
@@ -323,10 +400,10 @@
             "request": "none",
             "response": "sse"
           }
-        },
-        "path": "\/v1\/events"
+        }
       },
       {
+        "path": "\/v1\/fs",
         "audience": "sdk",
         "operations":
         {
@@ -335,10 +412,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/fs"
+        }
       },
       {
+        "path": "\/v1\/fs\/actions\/mkdir",
         "audience": "sdk",
         "operations":
         {
@@ -347,27 +424,27 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/fs\/actions\/mkdir"
+        }
       },
       {
+        "path": "\/v1\/mcp\/servers",
         "audience": "sdk",
         "operations":
         {
-          "get":
+          "post":
           {
-            "request": "none",
+            "request": "json",
             "response": "json"
           },
-          "post":
+          "get":
           {
-            "request": "json",
+            "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/mcp\/servers"
+        }
       },
       {
+        "path": "\/v1\/mcp\/servers\/:name",
         "audience": "sdk",
         "operations":
         {
@@ -381,10 +458,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/mcp\/servers\/:name"
+        }
       },
       {
+        "path": "\/v1\/mcp\/servers\/:name\/actions\/enable",
         "audience": "sdk",
         "operations":
         {
@@ -393,10 +470,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/mcp\/servers\/:name\/actions\/enable"
+        }
       },
       {
+        "path": "\/v1\/mcp\/servers\/:name\/actions\/kill",
         "audience": "sdk",
         "operations":
         {
@@ -405,10 +482,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/mcp\/servers\/:name\/actions\/kill"
+        }
       },
       {
+        "path": "\/v1\/mcp\/servers\/:name\/actions\/start",
         "audience": "sdk",
         "operations":
         {
@@ -417,10 +494,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/mcp\/servers\/:name\/actions\/start"
+        }
       },
       {
+        "path": "\/v1\/mcp\/servers\/:name\/auth\/cancel",
         "audience": "sdk",
         "operations":
         {
@@ -429,10 +506,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/mcp\/servers\/:name\/auth\/cancel"
+        }
       },
       {
+        "path": "\/v1\/mcp\/servers\/:name\/auth\/complete",
         "audience": "sdk",
         "operations":
         {
@@ -441,10 +518,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/mcp\/servers\/:name\/auth\/complete"
+        }
       },
       {
+        "path": "\/v1\/mcp\/servers\/:name\/auth\/logout",
         "audience": "sdk",
         "operations":
         {
@@ -453,10 +530,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/mcp\/servers\/:name\/auth\/logout"
+        }
       },
       {
+        "path": "\/v1\/mcp\/servers\/:name\/auth\/poll",
         "audience": "sdk",
         "operations":
         {
@@ -465,10 +542,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/mcp\/servers\/:name\/auth\/poll"
+        }
       },
       {
+        "path": "\/v1\/mcp\/servers\/:name\/auth\/start",
         "audience": "sdk",
         "operations":
         {
@@ -477,10 +554,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/mcp\/servers\/:name\/auth\/start"
+        }
       },
       {
+        "path": "\/v1\/mcp\/servers\/actions\/test",
         "audience": "sdk",
         "operations":
         {
@@ -489,10 +566,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/mcp\/servers\/actions\/test"
+        }
       },
       {
+        "path": "\/v1\/models",
         "audience": "sdk",
         "operations":
         {
@@ -501,27 +578,27 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/models"
+        }
       },
       {
+        "path": "\/v1\/projects",
         "audience": "sdk",
         "operations":
         {
-          "get":
+          "post":
           {
-            "request": "none",
+            "request": "json",
             "response": "json"
           },
-          "post":
+          "get":
           {
-            "request": "json",
+            "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/projects"
+        }
       },
       {
+        "path": "\/v1\/projects\/:pid",
         "audience": "sdk",
         "operations":
         {
@@ -530,20 +607,20 @@
             "request": "none",
             "response": "empty"
           },
-          "get":
+          "patch":
           {
-            "request": "none",
+            "request": "json",
             "response": "json"
           },
-          "patch":
+          "get":
           {
-            "request": "json",
+            "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/projects\/:pid"
+        }
       },
       {
+        "path": "\/v1\/projects\/:pid\/sessions",
         "audience": "sdk",
         "operations":
         {
@@ -552,10 +629,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/projects\/:pid\/sessions"
+        }
       },
       {
+        "path": "\/v1\/projects\/actions\/ensure",
         "audience": "sdk",
         "operations":
         {
@@ -564,10 +641,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/projects\/actions\/ensure"
+        }
       },
       {
+        "path": "\/v1\/projects\/overview",
         "audience": "sdk",
         "operations":
         {
@@ -576,10 +653,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/projects\/overview"
+        }
       },
       {
+        "path": "\/v1\/provider-presets",
         "audience": "sdk",
         "operations":
         {
@@ -588,10 +665,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/provider-presets"
+        }
       },
       {
+        "path": "\/v1\/providers",
         "audience": "sdk",
         "operations":
         {
@@ -600,10 +677,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/providers"
+        }
       },
       {
+        "path": "\/v1\/providers\/:provider-id",
         "audience": "sdk",
         "operations":
         {
@@ -612,10 +689,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/providers\/:provider-id"
+        }
       },
       {
+        "path": "\/v1\/providers\/:provider-id\/auth\/cancel",
         "audience": "sdk",
         "operations":
         {
@@ -624,10 +701,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/providers\/:provider-id\/auth\/cancel"
+        }
       },
       {
+        "path": "\/v1\/providers\/:provider-id\/auth\/complete",
         "audience": "sdk",
         "operations":
         {
@@ -636,10 +713,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/providers\/:provider-id\/auth\/complete"
+        }
       },
       {
+        "path": "\/v1\/providers\/:provider-id\/auth\/poll",
         "audience": "sdk",
         "operations":
         {
@@ -648,10 +725,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/providers\/:provider-id\/auth\/poll"
+        }
       },
       {
+        "path": "\/v1\/providers\/:provider-id\/auth\/start",
         "audience": "sdk",
         "operations":
         {
@@ -660,10 +737,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/providers\/:provider-id\/auth\/start"
+        }
       },
       {
+        "path": "\/v1\/providers\/:provider-id\/limits",
         "audience": "sdk",
         "operations":
         {
@@ -672,10 +749,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/providers\/:provider-id\/limits"
+        }
       },
       {
+        "path": "\/v1\/providers\/:provider-id\/logout",
         "audience": "sdk",
         "operations":
         {
@@ -684,10 +761,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/providers\/:provider-id\/logout"
+        }
       },
       {
+        "path": "\/v1\/providers\/:provider-id\/models",
         "audience": "sdk",
         "operations":
         {
@@ -696,10 +773,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/providers\/:provider-id\/models"
+        }
       },
       {
+        "path": "\/v1\/providers\/:provider-id\/status",
         "audience": "sdk",
         "operations":
         {
@@ -708,44 +785,44 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/providers\/:provider-id\/status"
+        }
       },
       {
+        "path": "\/v1\/router",
         "audience": "sdk",
         "operations":
         {
-          "get":
-          {
-            "request": "none",
-            "response": "json"
-          },
           "patch":
           {
             "request": "json",
             "response": "json"
-          }
-        },
-        "path": "\/v1\/router"
-      },
-      {
-        "audience": "sdk",
-        "operations":
-        {
+          },
           "get":
           {
             "request": "none",
             "response": "json"
-          },
+          }
+        }
+      },
+      {
+        "path": "\/v1\/sessions",
+        "audience": "sdk",
+        "operations":
+        {
           "post":
           {
             "request": "json",
             "response": "json"
+          },
+          "get":
+          {
+            "request": "none",
+            "response": "json"
           }
-        },
-        "path": "\/v1\/sessions"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid",
         "audience": "sdk",
         "operations":
         {
@@ -754,20 +831,20 @@
             "request": "none",
             "response": "empty"
           },
-          "get":
-          {
-            "request": "none",
-            "response": "json"
-          },
           "patch":
           {
             "request": "json",
             "response": "json"
+          },
+          "get":
+          {
+            "request": "none",
+            "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/artifacts",
         "audience": "sdk",
         "operations":
         {
@@ -776,10 +853,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/artifacts"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/attachments",
         "audience": "sdk",
         "operations":
         {
@@ -788,10 +865,10 @@
             "request": "binary",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/attachments"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/cancel-current",
         "audience": "sdk",
         "operations":
         {
@@ -800,10 +877,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/cancel-current"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/context",
         "audience": "sdk",
         "operations":
         {
@@ -812,10 +889,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/context"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/drain-queue",
         "audience": "sdk",
         "operations":
         {
@@ -824,10 +901,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/drain-queue"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/events-since",
         "audience": "sdk",
         "operations":
         {
@@ -836,27 +913,27 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/events-since"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/forks",
         "audience": "sdk",
         "operations":
         {
-          "get":
+          "post":
           {
-            "request": "none",
+            "request": "json",
             "response": "json"
           },
-          "post":
+          "get":
           {
-            "request": "json",
+            "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/forks"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/iterations\/:iid\/attachments",
         "audience": "sdk",
         "operations":
         {
@@ -865,10 +942,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/iterations\/:iid\/attachments"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/iterations\/:iid\/attachments\/:idx",
         "audience": "sdk",
         "operations":
         {
@@ -877,27 +954,27 @@
             "request": "none",
             "response": "binary"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/iterations\/:iid\/attachments\/:idx"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/model",
         "audience": "sdk",
         "operations":
         {
-          "get":
-          {
-            "request": "none",
-            "response": "json"
-          },
           "patch":
           {
             "request": "json",
             "response": "json"
+          },
+          "get":
+          {
+            "request": "none",
+            "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/model"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/release",
         "audience": "sdk",
         "operations":
         {
@@ -906,10 +983,10 @@
             "request": "none",
             "response": "empty"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/release"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/resources",
         "audience": "sdk",
         "operations":
         {
@@ -918,10 +995,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/resources"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/resources\/logs",
         "audience": "sdk",
         "operations":
         {
@@ -930,10 +1007,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/resources\/logs"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/resources\/stop",
         "audience": "sdk",
         "operations":
         {
@@ -942,10 +1019,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/resources\/stop"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/resume-queue",
         "audience": "sdk",
         "operations":
         {
@@ -954,10 +1031,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/resume-queue"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/seq",
         "audience": "sdk",
         "operations":
         {
@@ -966,10 +1043,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/seq"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/slashes",
         "audience": "sdk",
         "operations":
         {
@@ -978,10 +1055,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/slashes"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/speech",
         "audience": "sdk",
         "operations":
         {
@@ -990,10 +1067,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/speech"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/speech\/jobs\/:job-id",
         "audience": "sdk",
         "operations":
         {
@@ -1007,10 +1084,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/speech\/jobs\/:job-id"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/speech\/jobs\/:job-id\/audio",
         "audience": "sdk",
         "operations":
         {
@@ -1019,10 +1096,10 @@
             "request": "none",
             "response": "binary"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/speech\/jobs\/:job-id\/audio"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/speech\/jobs\/:job-id\/events",
         "audience": "sdk",
         "operations":
         {
@@ -1031,10 +1108,10 @@
             "request": "none",
             "response": "sse"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/speech\/jobs\/:job-id\/events"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/suggest",
         "audience": "sdk",
         "operations":
         {
@@ -1043,10 +1120,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/suggest"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/transcript",
         "audience": "sdk",
         "operations":
         {
@@ -1055,10 +1132,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/transcript"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/transcript.html",
         "audience": "sdk",
         "operations":
         {
@@ -1067,10 +1144,10 @@
             "request": "none",
             "response": "html"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/transcript.html"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/transcript.md",
         "audience": "sdk",
         "operations":
         {
@@ -1079,36 +1156,31 @@
             "request": "none",
             "response": "markdown"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/transcript.md"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/turns",
         "audience": "sdk",
         "operations":
         {
-          "get":
-          {
-            "request": "none",
-            "response": "json"
-          },
           "post":
           {
             "request": "json",
             "response": "json"
+          },
+          "get":
+          {
+            "request": "none",
+            "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/turns"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/turns\/:tid",
         "audience": "sdk",
         "operations":
         {
           "delete":
-          {
-            "request": "none",
-            "response": "json"
-          },
-          "get":
           {
             "request": "none",
             "response": "json"
@@ -1117,11 +1189,16 @@
           {
             "request": "json",
             "response": "json"
+          },
+          "get":
+          {
+            "request": "none",
+            "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/turns\/:tid"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/turns\/:tid\/attachments",
         "audience": "sdk",
         "operations":
         {
@@ -1130,10 +1207,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/turns\/:tid\/attachments"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/turns\/:tid\/cancel",
         "audience": "sdk",
         "operations":
         {
@@ -1142,10 +1219,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/turns\/:tid\/cancel"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/turns\/:tid\/trace",
         "audience": "sdk",
         "operations":
         {
@@ -1154,10 +1231,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/turns\/:tid\/trace"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/usage",
         "audience": "sdk",
         "operations":
         {
@@ -1166,10 +1243,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/usage"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/views\/:view-id\/actions",
         "audience": "sdk",
         "operations":
         {
@@ -1178,10 +1255,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/views\/:view-id\/actions"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/views\/input",
         "audience": "sdk",
         "operations":
         {
@@ -1190,10 +1267,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/views\/input"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/views\/live",
         "audience": "sdk",
         "operations":
         {
@@ -1202,10 +1279,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/views\/live"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/views\/live\/:view-id\/log\/:node-id",
         "audience": "sdk",
         "operations":
         {
@@ -1214,10 +1291,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/views\/live\/:view-id\/log\/:node-id"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/voice",
         "audience": "sdk",
         "operations":
         {
@@ -1226,10 +1303,10 @@
             "request": "binary",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/voice"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/voice\/jobs\/:job-id",
         "audience": "sdk",
         "operations":
         {
@@ -1243,10 +1320,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/voice\/jobs\/:job-id"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/voice\/jobs\/:job-id\/events",
         "audience": "sdk",
         "operations":
         {
@@ -1255,10 +1332,10 @@
             "request": "none",
             "response": "sse"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/voice\/jobs\/:job-id\/events"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/workspace",
         "audience": "sdk",
         "operations":
         {
@@ -1267,27 +1344,27 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/workspace"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/workspace\/drafts",
         "audience": "sdk",
         "operations":
         {
-          "get":
-          {
-            "request": "none",
-            "response": "json"
-          },
           "post":
           {
             "request": "json",
             "response": "json"
+          },
+          "get":
+          {
+            "request": "none",
+            "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/workspace\/drafts"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/workspace\/drafts\/:workspace-id",
         "audience": "sdk",
         "operations":
         {
@@ -1296,10 +1373,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/workspace\/drafts\/:workspace-id"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/workspace\/resume",
         "audience": "sdk",
         "operations":
         {
@@ -1308,10 +1385,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/workspace\/resume"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/workspace\/root",
         "audience": "sdk",
         "operations":
         {
@@ -1320,10 +1397,10 @@
             "request": "json",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/workspace\/root"
+        }
       },
       {
+        "path": "\/v1\/sessions\/:sid\/workspace\/stash",
         "audience": "sdk",
         "operations":
         {
@@ -1332,10 +1409,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/:sid\/workspace\/stash"
+        }
       },
       {
+        "path": "\/v1\/sessions\/actions\/search",
         "audience": "sdk",
         "operations":
         {
@@ -1344,73 +1421,73 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/sessions\/actions\/search"
+        }
       },
       {
+        "path": "\/v1\/settings",
         "audience": "sdk",
         "operations":
         {
-          "get":
-          {
-            "request": "none",
-            "response": "json"
-          },
           "post":
           {
             "request": "json",
             "response": "json"
-          }
-        },
-        "path": "\/v1\/settings"
-      },
-      {
-        "audience": "sdk",
-        "operations":
-        {
-          "get":
-          {
-            "request": "none",
-            "response": "json"
-          }
-        },
-        "path": "\/v1\/settings\/:id"
-      },
-      {
-        "audience": "sdk",
-        "operations":
-        {
-          "get":
-          {
-            "request": "none",
-            "response": "json"
           },
+          "get":
+          {
+            "request": "none",
+            "response": "json"
+          }
+        }
+      },
+      {
+        "path": "\/v1\/settings\/:id",
+        "audience": "sdk",
+        "operations":
+        {
+          "get":
+          {
+            "request": "none",
+            "response": "json"
+          }
+        }
+      },
+      {
+        "path": "\/v1\/speech\/model",
+        "audience": "sdk",
+        "operations":
+        {
           "post":
           {
             "request": "none",
             "response": "json"
-          }
-        },
-        "path": "\/v1\/speech\/model"
-      },
-      {
-        "audience": "sdk",
-        "operations":
-        {
+          },
           "get":
           {
             "request": "none",
             "response": "json"
-          },
+          }
+        }
+      },
+      {
+        "path": "\/v1\/speech\/voices",
+        "audience": "sdk",
+        "operations":
+        {
           "post":
           {
             "request": "binary",
             "response": "json"
+          },
+          "get":
+          {
+            "request": "none",
+            "response": "json"
           }
-        },
-        "path": "\/v1\/speech\/voices"
+        }
       },
       {
+        "path": "\/v1\/speech\/voices\/:voice-id",
         "audience": "sdk",
         "operations":
         {
@@ -1419,10 +1496,10 @@
             "request": "none",
             "response": "json"
           }
-        },
-        "path": "\/v1\/speech\/voices\/:voice-id"
+        }
       },
       {
+        "path": "\/v1\/speech\/voices\/:voice-id\/sample",
         "audience": "sdk",
         "operations":
         {
@@ -1431,207 +1508,151 @@
             "request": "none",
             "response": "binary"
           }
-        },
-        "path": "\/v1\/speech\/voices\/:voice-id\/sample"
+        }
       },
       {
+        "path": "\/v1\/voice\/model",
         "audience": "sdk",
         "operations":
         {
-          "get":
-          {
-            "request": "none",
-            "response": "json"
-          },
           "post":
           {
             "request": "none",
             "response": "json"
+          },
+          "get":
+          {
+            "request": "none",
+            "response": "json"
           }
-        },
-        "path": "\/v1\/voice\/model"
+        }
       }],
-    "events":
+    "headers":
     {
-      "jobs":
-      {
-        "synthesize": "speech.job",
-        "transcribe": "voice.job"
-      },
-      "push": ["turn.end"],
-      "queue_mirror": ["queue.paused","queue.resumed","turn.queued","turn.queued.deleted","turn.queued.drained","turn.queued.updated"],
-      "session": ["block.activity","block.output","block.preview","block.started","content.block.completed","content.block.delta","content.block.started","context.updated","iteration.completed","iteration.error","provider.retry","queue.paused","queue.resumed","session.model_updated","session.status","session.title_updated","subscription.ready","turn.cancelled","turn.completed","turn.failed","turn.progress","turn.queued","turn.queued.deleted","turn.queued.drained","turn.queued.updated","turn.started","view.close","view.open","view.patch"],
-      "turn_terminal": ["turn.cancelled","turn.completed","turn.failed"],
-      "view":
-      {
-        "close": "view.close",
-        "open": "view.open",
-        "patch": "view.patch"
-      }
-    },
-    "envelopes":
-    {
-      "error_response":
-      {
-        "body_keys":
-        {
-          "error": "error"
-        },
-        "error_keys":
-        {
-          "message": "message",
-          "type": "type"
-        }
-      },
-      "handshake":
-      {
-        "keys":
-        {
-          "build": "build",
-          "min_client": "min_client",
-          "min_gateway": "min_gateway",
-          "protocol": "protocol",
-          "version": "version"
-        }
-      },
-      "journal_line":
-      {
-        "metadata_keys":
-        {
-          "pid": "_pid",
-          "producer": "_producer",
-          "store": "_store"
-        }
-      },
-      "session_event":
-      {
-        "schema": 1,
-        "stamp_keys":
-        {
-          "schema": "schema",
-          "sequence": "seq",
-          "session_id": "session_id",
-          "timestamp": "ts",
-          "type": "type"
-        }
-      },
-      "settled_turn":
-      {
-        "meta_keys": ["model","provider","llm_selected","llm_actual","is_llm_fallback","llm_routing_trace","tokens","cost","confidence","eval","duration_ms","utilization"]
-      },
-      "subscription_ready":
-      {
-        "event": "subscription.ready",
-        "optional_keys":
-        {
-          "latest_iteration": "latest_iteration"
-        },
-        "required_keys":
-        {
-          "current_turn_id": "current_turn_id",
-          "cursor": "cursor",
-          "is_live": "is_live",
-          "server_time_ms": "server_time_ms",
-          "session_id": "session_id",
-          "type": "type"
-        }
-      }
-    },
-    "replay":
-    {
-      "cursor_header": "last-event-id",
-      "cursor_key": "seq",
-      "generation_start_event": "turn.started",
-      "ready_event": "subscription.ready"
+      "protocol": "x-vis-protocol",
+      "suppress_registry_recovery": "x-vis-suppress-registry-recovery",
+      "client_version": "x-vis-client-version",
+      "minimum_gateway_protocol": "x-vis-min-gateway-protocol",
+      "accept": "accept",
+      "if_none_match": "if-none-match",
+      "last_event_id": "last-event-id",
+      "etag": "etag",
+      "gateway_secret": "x-vis-gateway-secret",
+      "authorization": "authorization",
+      "client": "x-vis-client",
+      "content_type": "content-type",
+      "client_id": "x-vis-client-id",
+      "client_pid": "x-vis-client-pid"
     }
   },
   "view":
   {
-    "kinds": ["input","live"],
-    "actions": ["cancel","interrupt","select","submit"],
     "field_types": ["checkbox","multiline","multiselect","otp","password","plaintext","range","select"],
-    "text_types": ["multiline","password","plaintext"],
-    "choice_types": ["multiselect","select"],
-    "secret_types": ["otp","password"],
-    "decor_types": ["heading","paragraph"],
-    "group_type": "group",
-    "group_directions": ["column","row"],
-    "otp":
-    {
-      "length": 6,
-      "ceiling": 12
-    },
     "range":
     {
       "min": 0,
       "max": 100,
       "step": 1
     },
+    "otp":
+    {
+      "length": 6,
+      "ceiling": 12
+    },
     "secret_handle_prefix": "vis-secret:",
+    "group_type": "group",
+    "choice_types": ["multiselect","select"],
+    "kinds": ["input","live"],
+    "version": 1,
+    "decor_types": ["heading","paragraph"],
+    "secret_types": ["otp","password"],
+    "text_types": ["multiline","password","plaintext"],
     "live":
     {
-      "node_types": ["link","log","progress","stat","status","steps","table"],
-      "link_targets": ["attachment","path","url"],
-      "ops": ["add-node","append","clear","remove","remove-node","set"],
+      "table":
+      {
+        "max_patch_rows": 200,
+        "max_rows": 5000
+      },
       "tones": ["error","idle","ok","running","warn"],
-      "orders": ["insertion","newest-first"],
-      "aligns": ["left","right"],
-      "sort_dirs": ["asc","desc"],
-      "reasons": ["completed","failed","interrupted","superseded","timeout","undeliverable"],
+      "max_stats": 32,
+      "ops": ["add-node","append","clear","remove","remove-node","set"],
       "log":
       {
         "window_lines": 2000,
         "window_lines_cap": 100000,
         "max_patch_lines": 500
       },
-      "table":
-      {
-        "max_rows": 5000,
-        "max_patch_rows": 200
-      },
-      "max_stats": 32,
-      "max_steps": 200,
       "max_links": 32,
-      "max_nodes": 32
-    }
+      "node_types": ["link","log","progress","stat","status","steps","table"],
+      "link_targets": ["attachment","path","url"],
+      "max_nodes": 32,
+      "sort_dirs": ["asc","desc"],
+      "reasons": ["completed","failed","interrupted","superseded","timeout","undeliverable"],
+      "max_steps": 200,
+      "orders": ["insertion","newest-first"],
+      "aligns": ["left","right"]
+    },
+    "actions": ["cancel","interrupt","select","submit"],
+    "group_directions": ["column","row"]
   },
   "content":
   {
-    "version": 1,
-    "roles": ["assistant","developer","system","tool","user"],
     "message_statuses": ["cancelled","completed","failed","streaming","suspended"],
     "tool_statuses": ["cancelled","completed","failed","pending","running"],
-    "reasoning_visibilities": ["private","visible"],
-    "block_types": ["attachment","code","error","notice","prose","reasoning","speech","tool"],
     "event_types": ["content.block.completed","content.block.delta","content.block.started","turn.cancelled","turn.completed","turn.failed"],
-    "delta_fields": ["markdown","text"]
+    "block_types": ["attachment","code","error","notice","prose","reasoning","speech","tool"],
+    "version": 1,
+    "reasoning_visibilities": ["private","visible"],
+    "delta_fields": ["markdown","text"],
+    "roles": ["assistant","developer","system","tool","user"]
+  },
+  "config":
+  {
+    "api_style_values": ["anthropic","openai","openai-responses","gemini"],
+    "workspace_draft_values": ["shared","copy-only","copy-and-apply","not-allowed"],
+    "workspace_access_values": ["read-only","readonly","ro","read-write","readwrite","rw"],
+    "titling_modes": ["llm","first_sentence","first_words","disabled"],
+    "jail_environment_values": ["declared","inherit"],
+    "workspace_os_values": ["macos","linux","wsl","windows"]
   },
   "toggle":
   {
-    "version": 1,
     "id_pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
-    "types": ["boolean","enum"],
-    "default_type": "boolean",
-    "max_description_length": 100,
     "boolean_wire":
     {
-      "true": ["1","on","true","yes"],
-      "false": ["0","false","no","off"]
+      "false": ["0","false","no","off"],
+      "true": ["1","on","true","yes"]
     },
-    "config_truthy": ["1","on","true","yes"]
+    "default_type": "boolean",
+    "types": ["boolean","enum"],
+    "config_truthy": ["1","on","true","yes"],
+    "version": 1,
+    "max_description_length": 100
   },
   "provider":
   {
     "version": 1,
     "limits":
     {
-      "statuses": ["error","ok","unauthenticated","unknown-provider","unsupported"],
-      "scopes": ["account","model","plan","workspace"],
-      "kinds": ["credits","rate","requests","sessions","tokens","usd"],
-      "window_kinds": ["calendar","lifetime","rolling"],
-      "window_units": ["day","hour","minute","month","week","year"],
+      "sources": ["derived","local","provider-api","static"],
       "precisions": ["derived","estimate","exact","unknown"],
-      "sources": ["derived","local","provider-api","static"]
+      "scopes": ["account","model","plan","workspace"],
+      "window_units": ["day","hour","minute","month","week","year"],
+      "kinds": ["credits","rate","requests","sessions","tokens","usd"],
+      "statuses": ["error","ok","unauthenticated","unknown-provider","unsupported"],
+      "window_kinds": ["calendar","lifetime","rolling"]
     }
+  },
+  "surface":
+  {
+    "capabilities": ["format","lint","test"],
+    "version": 1
+  },
+  "test_runner":
+  {
+    "result_keys": ["language","mode","framework","tool","ns","total","pass","fail","errored","selected","skipped","failures","output"],
+    "version": 1,
+    "selector_keys": ["paths","include","exclude"]
   }
 }

@@ -33,25 +33,23 @@
    handle — the command, the path, the start/end and the exit — on the
    `extension_aggregate` sidecar rail under [[index-extension-id]]."
   (:require [clojure.java.io :as io]
-            [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.persistance :as persistance])
   (:import (java.io File InputStream OutputStream RandomAccessFile)
            (java.nio.charset StandardCharsets)))
 
-;; Data
-
-(s/def ::id (s/and string? seq))
-(s/def ::offset (s/int-in 0 Long/MAX_VALUE))
-(s/def ::next-offset ::offset)
-(s/def ::text string?)
-(s/def ::is-eof boolean?)
-(s/def ::is-truncated boolean?)
-
-(s/def ::log-chunk
-  (s/and (s/keys :req-un [::id ::offset ::next-offset ::text ::is-eof] :opt-un [::is-truncated])
-         #(>= (long (:next-offset %)) (long (:offset %)))))
+(defn log-chunk?
+  [x]
+  (and (map? x)
+       (string? (:id x))
+       (seq (:id x))
+       (nat-int? (:offset x))
+       (nat-int? (:next-offset x))
+       (>= (long (:next-offset x)) (long (:offset x)))
+       (string? (:text x))
+       (boolean? (:is-eof x))
+       (or (not (contains? x :is-truncated)) (boolean? (:is-truncated x)))))
 
 (def default-chunk-bytes
   "Bytes ONE read returns when the caller named no limit. A window, not the

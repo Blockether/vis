@@ -1,7 +1,6 @@
 (ns com.blockether.vis.contract.surface-test
-  "Contract tests for the clojure.spec language-surface result specs: the shape
-   format + lint + run_tests share, and `check`'s accept/reject/pass-through
-   behaviour."
+  "Contract tests for the JSON Schema-backed language-surface result shapes shared by
+   format, lint, run_tests and check."
   (:require [com.blockether.vis.contract.surface :as contract]
             [lazytest.core :refer [defdescribe expect it]]))
 

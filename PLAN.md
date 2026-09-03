@@ -37,14 +37,9 @@ consumer uses.
   source path itself is wired into `deps.edn:6-10`, where `packages/vis-agent/src` is a RESOURCE root
   on `:paths`, plus `build.clj:1092-1094`, `.github/workflows/ci.yml:264-305` whose conftest expects
   `vis-contract` as a sibling directory, and `e2e/run.py`.
-- `packages/vis-contract/README.md:10-14` currently owns only Clojure/Python host declarations.
-  View, gateway, configuration, execution, provider and persistence contracts remain in engine
-  implementation files.
-- Production Clojure has 19 namespaces and 569 `s/def` forms: 65 are already in
-  `packages/vis-contract`, 471 remain under engine `src/`, and 33 describe private TUI transient
-  state. The largest hidden contracts are `internal/extension.clj` (147),
-  `internal/view/spec.clj` (104), `internal/registry.clj` (44), and
-  `internal/config_spec.clj` (43).
+- `packages/vis-contract/resources/vis-contract/` now contains the portable JSON documents and
+  same-named JSON Schemas for the extracted contract areas. Skjema validates each source document
+  before Clojure derives runtime-friendly views; Clojure Spec is no longer a contract layer.
 - `internal/gateway/wire.clj:56-184` mixes canonical key/JSON conversion with gateway event sets and
   SSE framing. `internal/gateway/protocol.clj:22-78` mixes pure compatibility declarations with
   release/build/runtime discovery. `gateway/state.clj:1-5536`, `server.clj:1-5019` and
@@ -57,15 +52,8 @@ consumer uses.
   discovery, workspace context, editing, shell, shims, Python capture, PTY, MCP, harness,
   introspection and model-facing tool registration. That is the execution environment of Core, not
   a peer layer called Foundation or Base Tooling.
-- The source-reader gate now measures 29 distinct `com.blockether.vis.internal.*` dependencies in
-  production extensions, plus the temporary `com.blockether.vis.core` facade: 30 forbidden
-  destinations across the 14 active packs. The TUI owns 18 internal destinations plus the facade,
-  `vis-language-python` owns 9 plus the facade, and `vis-language-clojure` owns 6 plus the facade;
-  11 internal destinations are used by no channel. `packages/vis-contract/resources/vis-contract/clojure-host.edn`
-  freezes each dependency by source-file count under `:contract/internal-debt`, including 23 sibling
-  dependencies in the current gateway server. The same executable gate freezes 93 distinct route,
-  event, header and protocol literals in the four Companion protocol modules and rejects direct
-  JavaScript/Python imports of `vis-contract`. New or stale debt fails `clojure_host_test`.
+- Production extensions still import engine internals directly. Those concrete edges are migration
+  inputs for the SDK phases; they are not encoded as contract data or maintained as an exception ledger.
 - Two packaging facts constrain the SDK work.
   `resources/META-INF/native-image/com.blockether/vis/reachability-metadata.json` names no Vis
   namespace at all, so renaming namespaces adds nothing there; the native risk is `build.clj`'s
@@ -184,9 +172,8 @@ moves to that consumer. Optional search and voice remain SDK-based extensions an
 
 ## Phase 1 — Make the final dependency graph executable
 
-**Rationale.** Three SDKs and a large namespace move are safe only if CI can distinguish public
-consumption from engine implementation. The intended graph must fail before the first extraction,
-while a closed debt inventory permits the gate to land against today's violations and only shrink.
+**Rationale.** Three SDKs and a large namespace move require direct tests for the intended public
+consumption graph. Architecture policy must describe the destination without preserving obsolete paths.
 
 **Data.** The allowed production edges are:
 
@@ -204,10 +191,8 @@ import the production namespace they test; contract conformance tests exercise p
 
 **Acceptance criteria.**
 
-- Extend the existing `clojure_host_test` and its `:contract/internal-debt` freeze instead of adding a
-  parallel gate: one Clojure namespace dependency test, plus one JavaScript/Python import/wire scan
-  enforcing the graph above, each with a closed exact debt set. A new violation fails; every migration
-  commit removes entries until Phase 12 deletes the debt mechanism.
+- Add direct Clojure namespace and JavaScript/Python import gates for the final graph. They report
+  current offenders from source rather than storing an allowlist in the contract.
 - Pin the current route table, gateway event vocabulary, View open/patch/action/close behavior,
   Human Input validation/secrets, Activity reduction, turn cancellation and cross-session permit
   isolation before moving their owners.
@@ -241,7 +226,7 @@ language one protocol source.
 |---|---|
 | `wire-key`, `engine-key`, `->wire`, `->engine`, `canonical`, `json-str`, `parse-json` | `com.blockether.vis.contract.wire` |
 | terminal/queue event sets, protocol version, headers, pure compatibility verdict | `com.blockether.vis.contract.gateway` |
-| routes, request/response envelopes, journal envelope and event vocabulary | `resources/vis-contract/gateway.edn` |
+| routes, request/response envelopes, journal envelope and event vocabulary | `resources/vis-contract/gateway.json` + `schema/gateway.json` |
 | generated route/event/key constants | each SDK's generated contract module |
 | `sse-frame`, `job-sse-frame` | `internal.gateway.server.transport.sse` |
 | bounded diagnostics | the one internal caller or a genuine internal leaf utility |
@@ -253,69 +238,50 @@ language one protocol source.
   `internal.gateway.wire` is deleted rather than forwarded.
 - Preserve total encoding of non-string keys, NaN/infinities, UUIDs, dates, symbols and keywords,
   plus in-process/JSON round-trip parity through shared fixtures.
-- `gateway.edn` declares every method/path, protocol header, request/response envelope, event type,
-  replay rule and terminal semantic; server handlers and emitting call sites drift-test against it.
+- `gateway.json` declares every method/path, protocol header, request/response envelope, event type,
+  replay rule and terminal semantic; `schema/gateway.json` validates every shape.
 - Routes intended only for administration or one host are marked explicitly rather than omitted.
 - SSE byte framing, Ring and concrete HTTP remain implementation; the contract owns semantics only.
-- Render deterministic Clojure, Python and JavaScript inputs from the same EDN and pin them
-  byte-for-byte.
+- Portable copies are rendered only from JSON documents already validated by Skjema.
 - `vis-contract` retains zero engine, SDK, filesystem, network, process or daemon dependencies.
 
 **Unknowns.** Which `/v1/admin/*` routes are intentionally public to SDK clients. Classify every live
-route in `gateway.edn`; absence from documentation is not a compatibility category.
+route in `gateway.json`; absence from documentation is not a protocol category.
 
-## Phase 3 — Make `vis-contract` the only home of executable contracts
+## Phase 3 — Make JSON Schema the executable contract
 
-**Rationale.** The 471 engine `s/def` forms are connection definitions hidden beside
-implementations. Moving them before SDK implementation establishes one source for validation,
-generation and capability parity.
+**Rationale.** Cross-language shapes need one representation that every ecosystem can read and one
+validator with identical source data. Clojure-specific declarations create a second authority and hide
+wire constraints from Python and JavaScript.
 
-**Data.** The initial ownership map is:
+**Data.** Every portable area owns two files:
 
-| current source | target contract |
-|---|---|
-| `internal/view/spec.clj` | `contract.view` + `resources/vis-contract/view.edn` |
-| contract portions of `internal/extension.clj` and `internal/registry.clj` | `contract.extension`, `contract.channel`, `contract.provider`, `contract.persistence` |
-| `internal/config_spec.clj` | `contract.config` |
-| `internal/provider_limits.clj` | `contract.provider` |
-| `internal/loop.clj` envelopes | `contract.execution` |
-| `internal/manifest.clj` declarations | `contract.manifest` |
-| `internal/content.clj`, theme and toggles | `contract.content`, `contract.theme`, `contract.toggle` |
-| `internal/test_contract.clj` and shell log shapes | `contract.test-runner`, `contract.shell` |
-| `internal/doc_corpus.clj` | `contract.docs` |
-| `internal/foundation/surface_contract.clj` | `contract.surface` |
-| editing/hashline inputs and outputs | `contract.editing` |
-| TUI `transient/spec.clj` | TUI-local `transient.validation` predicates |
+```text
+resources/vis-contract/<area>.json
+resources/vis-contract/schema/<area>.json
+```
 
-EDN is the source for closed vocabularies/envelopes consumed by multiple languages. Clojure-only
-callback contracts may remain executable Clojure specs inside the package; the plan does not invent
-a universal schema language.
+Clojure loaders call `contract.document/load!`, which rejects non-JSON-domain values and validates the
+document with Skjema before exposing derived keyword views. Runtime callbacks, atoms, IO and process
+handles are not contract data; their owning namespaces use local predicates.
 
 **Acceptance criteria.**
 
-- Every production `s/def` lives under `packages/vis-contract/src`; a whole-tree test rejects a new
-  production `clojure.spec.alpha` require elsewhere.
-- Cross-owner namespaces are named `contract.*`; architectural `*.spi`, `*.protocol`, `*.spec`,
-  `*_spec` and `*_contract` namespaces disappear. Private validation uses local predicates.
-- Extension contributions, slot ids, callbacks, manifest entries, providers, channels, persistence,
-  View shapes, environment operations and execution envelopes validate against contract-owned
-  definitions.
-- `resources/vis-contract/{extension,view,gateway}.edn` and further cross-language documents render
-  deterministic inputs for all SDKs with drift tests.
-- Runtime registries, atoms, IO, lifecycle, security/path policy and mutation remain outside the
-  contract package.
-- Replace language-specific host documents with one operation catalog carrying per-language
-  availability and idiomatic binding metadata; generated Clojure/Python/JavaScript host surfaces
-  must account for every operation.
-- Any current spec that proves to validate only a private intermediate becomes a local predicate
-  rather than expanding the public contract.
-- `contract.json` renders from contract-owned data only: `write-package-document!` loses its
-  vocabulary argument, `packages/vis-contract/README.md:20-29` stops instructing a caller to hand in
-  `internal.view.spec/contract-vocabulary`, and `python_package_test` plus `contract.python-host-test`
-  pin the argument-free render.
+- No production or test namespace depends on Clojure Spec.
+- Every contract document has one same-named JSON Schema, and every schema-backed document loads
+  through Skjema in the normal test suite.
+- View, content, gateway, configuration, Python host operations, toggles, provider limits, language
+  surfaces and test-runner results are sourced from JSON documents rather than Clojure literals.
+- Raw contract validators reject keyword keys, lists, non-finite numbers and other values that cannot
+  cross a JSON boundary.
+- `contract.json` and the Python wheel copy are generated only from validated contract documents and
+  remain byte-identical.
+- Private implementation shapes remain local predicates instead of expanding the public schema set.
+- Obsolete host-boundary inventories, forwarding namespaces and migration exception ledgers are
+  deleted rather than represented in the new contract.
 
-**Unknowns.** Some host operations may be meaningful only in-process or only over the gateway. Mark
-that transport/capability explicitly in the operation catalog; do not force false behavioral parity.
+**Unknowns.** Which remaining engine-only shapes are genuinely portable. Add a schema only when a
+second process or language consumes the shape; otherwise keep the predicate private.
 
 ## Phase 4 — Establish one Vis SDK product in three ecosystems
 
@@ -351,9 +317,8 @@ imports `contract.*`, and no SDK invents a second spelling for a contract vocabu
 - Clojure and Python extension modules receive a contract-declared Host object/adapter from the
   engine and have deterministic outside/test hosts. They never resolve engine Vars or import
   internals.
-- All three client modules implement connection identity, compatibility negotiation, auth/lease,
-  sessions, turns, View events/actions, cancellation, subscriptions/replay and resources from
-  `gateway.edn`.
+- All three client modules implement connection identity, protocol negotiation, auth/lease, sessions,
+  turns, View events/actions, cancellation, subscriptions/replay and resources from `gateway.json`.
 - Clojure production HTTP uses `babashka.http-client`. JavaScript ships framework-free ESM usable in
   browsers, Node and Capacitor plus `.d.ts`; it has no React or Capacitor dependency. Python remains
   usable on the CPython floor the embedded interpreter ships.
@@ -411,8 +376,8 @@ moves to that channel rather than being hidden in Environment.
 - Environment owns creation, workspace context, tool capability assembly, cancellation attachment,
   sandbox handles and disposal. Session/Turn code uses its operations without importing concrete
   tool children.
-- Contracts and generated SDK declarations leave the old directory first. Environment contains no
-  `s/def`, public facade or transport protocol ownership.
+- Contracts and generated SDK declarations leave the old directory first. Environment retains no
+  public facade or transport protocol ownership.
 - Language packs replace direct `foundation.environment.languages` and `foundation.editing.parse`
   imports with SDK operations/types or extension-local behavior; the shared language-surface result
   contract already moved to `contract.surface` in Phase 3.
@@ -691,8 +656,7 @@ src/com/blockether/vis       core.clj 825 · view.clj 352
 - Update `resources/vis-docs/extending.md:1465-1475,1540,1739`, the `doc()` catalog
   `resources/META-INF/vis/apropos/docs.edn` and `resources/vis-docs/site.edn` in the same slice, so
   `doc("extending")` never describes a deleted facade.
-- Empty and delete `:contract/internal-debt`; `clojure_host_test` states the SDK-only rule or is
-  removed with the document it guarded.
+- Delete temporary architecture migration gates once every first-party consumer uses an SDK.
 - Built-artifact end-to-end tests run the TUI through the Clojure SDK, the Companion through the packed
   JavaScript SDK and a Python extension/client through the wheel against the same gateway fixtures;
   `e2e/run.py` still drives the real CLI.
@@ -756,40 +720,20 @@ on-demand; a capability that appears only after unrelated use is not acceptable.
 
 ## State of the plan
 
-**IN PROGRESS** — Phases 1 and 2 are complete; Phase 3 is active. The executable dependency
-boundary freezes the remaining Clojure graph and JavaScript/Python wire debt. The contract-owned
-`gateway.edn` pins all 99 built-in paths / 121 method-path operations and each operation's request
-body plus successful response transport, alongside 14 protocol header spellings, protocol
-compatibility numbers, 32 gateway event names, terminal and queue-mirror sets, shared View
-lifecycle events and replay/envelope semantics. Canonical encoding lives in independently loadable
-`com.blockether.vis.contract.wire`; Core producers, server and engine tests import it directly.
-Concrete transport and bounded diagnostics remain beside their sole callers;
-`internal.gateway.wire` was deleted rather than forwarded. Release/build identity, daemon
-staleness and concrete diagnostics remain in `internal.gateway.runtime`. The same renderer emits
-the language-neutral root `contract.json` and the Python wheel's byte-identical copy.
+**IN PROGRESS** — Phases 1 and 2 are complete; Phase 3 is active. Canonical wire behavior lives in
+the independently loadable `com.blockether.vis.contract.wire`, while gateway protocol data is sourced
+from `gateway.json` and validated by `schema/gateway.json`.
 
-Phase 3 began with `view.edn`: `com.blockether.vis.contract.view` now owns the closed View
-vocabulary, defaults and every executable View shape. `internal/view/spec.clj` was deleted rather
-than forwarded; the engine and current TUI consumers import the contract owner directly, with the
-TUI edge frozen until its Phase 10 SDK migration. Package rendering remains argument-free. Existing
-View, Human Input, Activity, cancellation and cross-session permit suites preserve behavior. Three
-production namespaces have moved or been removed. TUI `transient/spec.clj` likewise became local
-`transient.validation` predicates, removing 33 production `s/def` forms without making a private
-paint shape public. `content.edn` and `contract.content` now own canonical roles, statuses, blocks,
-stream events and executable content shapes; `internal.content` is builders/projection only and the
-portable package exports the same `CONTENT` vocabulary. `toggle.edn` and `contract.toggle` own the
-id grammar, kinds, settings-copy bound, boolean tokens and executable contribution shape; the Core
-registry now owns only normalization, mutable values, listeners, persistence and hydration, while
-portable readers receive `TOGGLE`. `provider.edn` and `contract.provider` own the limits vocabulary
-and the whole report envelope every provider answer is judged by; `internal.provider-limits` is fetch,
-cache and normalization only, and portable readers receive `PROVIDER`. `contract.surface` now owns
-the language-surface result contract every pack's `format_code`, `lint_code` and `run_tests` answer
-is checked against; `internal/foundation/surface_contract.clj` was deleted rather than forwarded,
-both language packs and the dispatch surface import the contract owner directly, and the frozen
-consumer debt changed key without growing. `contract.test-runner` now owns the language-neutral
-test selector vocabulary, the uniform result map and the node-id helpers every pack's runner
-selects through; `internal/test_contract.clj` was deleted rather than forwarded, so no
-`*_contract` namespace survives outside the contract package.
+Phase 3 now uses JSON Schema as its only executable contract representation. `contract.document`
+rejects values outside the JSON domain and validates each source document with Skjema. JSON documents
+and schemas now cover gateway, View, content, configuration, Python host operations, toggles, provider
+limits, language surfaces and test-runner results. The superseded source formats, host inventory and
+language-specific validation declarations were removed rather than forwarded. Engine-facing namespaces derive
+keyword views from validated JSON or keep genuinely private runtime checks as local predicates.
+
+The portable root `contract.json` and Python wheel copy are generated from those validated documents
+and remain byte-identical. Existing View, Human Input, Activity, cancellation and cross-session permit
+suites preserve behavior while the remaining contract areas and SDK consumers migrate.
 
 Work already available as foundations:
 
@@ -801,8 +745,7 @@ Work already available as foundations:
 - Gateway startup deferral and first-frame work prove selective loading is feasible.
 - Issue #161 regressions pin stale-context retirement, abandoned-worker capacity reclamation and
   cross-session cancellation isolation.
-- `clojure_host_test` enforces the final graph, exact Clojure debt and the named Companion/Python
-  import/wire migration inputs from the independently loadable `vis-contract` artifact.
+- JSON Schema conformance tests enforce document/schema parity, JSON-domain values and Skjema loading.
 - `gateway_test` replaces route/event literals as the named fixture for the server, TUI/Companion
   View mirror and future Clojure, JavaScript and Python SDK conformance tests.
 

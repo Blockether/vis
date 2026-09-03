@@ -74,21 +74,11 @@ Config is YAML only, validated exactly as parsed:
 
 ## Executable configuration contract
 
-`com.blockether.vis.internal.config-spec/config` is the complete `clojure.spec`
-contract for the original string-keyed YAML representation. It covers these closed
-top-level blocks: `providers`, `default_provider`, `default_model`, `fallback_provider`,
-`fallback_model`, `router`, `system_prompt`, `workspace`, `jail`, `environment`,
-`db_spec`, `grep`, `toggles`, `tui_settings`, `mcp`, `python`, and `titling`. Filesystem
-admission is a closed block at `jail.filesystem`, and egress policy is a closed block at `jail.network`.
-
-Nested maps are also closed except maps whose keys are user-defined, such as environment
-variables, HTTP headers, toggle ids, MCP server names, pricing tables, and request bodies.
-Unknown keys and invalid value types fail config loading with source-aware spec problems;
-credentials are redacted from those problems.
-
-The parser validates this string-keyed map before any internal adaptation. The same
-namespace derives process-jail and network policies directly from that validated map, so
-security enforcement and the YAML schema cannot maintain different key lists.
+`packages/vis-contract/resources/vis-contract/config.json` is the canonical configuration
+document, and `schema/config.json` defines the complete original string-keyed YAML shape.
+Skjema validates that shape before any internal adaptation. The schema closes structural maps while
+allowing user-defined keys for environment variables, headers, toggle ids, MCP server names, pricing
+and request bodies. Invalid values report source-aware paths with credentials redacted.
 
 ## Invalid config: what you see
 

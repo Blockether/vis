@@ -21,7 +21,6 @@
   (:require [clojure.java.io :as io]
             [clojure.repl :as repl]
             [clojure.set :as set]
-            [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
             [com.blockether.vis.internal.activity.event :as activity-event]
@@ -44,55 +43,50 @@
 (def ^:private max-trace-frames 12)
 
 (declare op-tag op-tags op-keyword->tag op-keyword->batch-hint tool-call-name)
-;; ---- envelope leaf specs (op/*) ----
-(s/def ::symbol
-  (s/or :op keyword?
-        :tool-symbol symbol?))
-; op e.g. :cat, tool symbol e.g. 'cat
-(s/def ::tag keyword?)
-; #{:observation :mutation}
-(s/def ::result any?)
-; the actual Python eval value; shape varies per tool
-(s/def ::success? boolean?)
 
-(s/def ::metadata (s/map-of keyword? any?))
-; free-form aux: :duration-ms, :paths, :hit-count, :tool, :source, :extension, etc.
-;; ---- structured op/error sub-specs ----
-(s/def :op.error/message (s/and string? #(not (str/blank? %))))
+(defn- optional-field? [m k pred] (or (not (contains? m k)) (pred (get m k))))
 
-(s/def :op.error/trace (s/nilable string?))
+(defn- non-blank-string? [x] (util/non-blank-string? x))
 
-(s/def :op.error/hint (s/nilable (s/and string? #(not (str/blank? %)))))
+(defn- error-block?
+  [x]
+  (or (nil? x)
+      (and (map? x)
+           (string? (:source x))
+           (= :preflight (:phase x))
+           (optional-field? x :row pos-int?)
+           (optional-field? x :col pos-int?)
+           (optional-field? x
+                            :opened-loc
+                            #(or (nil? %)
+                                 (and (map? %) (pos-int? (:row %)) (pos-int? (:col %))))))))
 
-(s/def :op.error.block/source string?)
+(defn- tool-error?
+  [x]
+  (or (nil? x)
+      (and (map? x)
+           (non-blank-string? (:message x))
+           (optional-field? x :trace #(or (nil? %) (string? %)))
+           (optional-field? x :hint #(or (nil? %) (non-blank-string? %)))
+           (optional-field? x :block error-block?))))
 
-(s/def :op.error.block/row pos-int?)
+(defn tool-result?
+  "True when `x` is a valid tool-result envelope."
+  [x]
+  (and (map? x)
+       (contains? x :success?)
+       (boolean? (:success? x))
+       (optional-field? x :symbol #(or (keyword? %) (symbol? %)))
+       (optional-field? x :tag keyword?)
+       (optional-field? x :metadata #(and (map? %) (every? keyword? (keys %))))
+       (optional-field? x :error tool-error?)
+       (if (:success? x) (nil? (:error x)) (some? (:error x)))))
 
-(s/def :op.error.block/col pos-int?)
-
-(s/def :op.error.block/opened-loc
-  (s/nilable (s/keys :req-un [:op.error.block/row :op.error.block/col])))
-
-(s/def :op.error.block/phase #{:preflight})
-
-(s/def :op.error/block
-  (s/nilable (s/keys :req-un [:op.error.block/source :op.error.block/phase]
-                     :opt-un [:op.error.block/row :op.error.block/col :op.error.block/opened-loc])))
-
-(s/def ::error
-  (s/nilable (s/keys :req-un [:op.error/message]
-                     :opt-un [:op.error/trace :op.error/hint :op.error/block])))
-(s/def ::envelope
-  (s/and (s/keys :opt-un [::symbol ::tag ::result ::success? ::error ::metadata])
-         ;; Distinguishing-marker requirement: a real envelope MUST carry
-         ;; the canonical boolean `:success?` field. Without this gate,
-         ;; plain maps (e.g. user data, results from non-envelope code)
-         ;; would validate as envelopes because every field is optional.
-         ;; Renderers that special-case envelopes would then mis-categorise
-         ;; plain data.
-         #(contains? % :success?)
-         (fn [{:keys [success? error]}]
-           (if success? (nil? error) (or (nil? success?) (some? error))))))
+(defn assert-tool-result!
+  [x]
+  (when-not (tool-result? x)
+    (throw (ex-info "Invalid tool result" {:type :vis/invalid-tool-result :value x})))
+  x)
 
 (def ^:dynamic *tool-event-sink*
   "Optional per-eval sink for immutable tool lifecycle events. The sink is a
@@ -128,19 +122,6 @@
    block, which runs as one whole-block coroutine)."
   nil)
 
-(defn tool-result?
-  "True when `x` is a valid `:envelope` map. Renamed conceptually;
-   name kept for caller compatibility."
-  [x]
-  (s/valid? ::envelope x))
-
-(defn assert-tool-result!
-  [x]
-  (when-not (tool-result? x)
-    (throw (ex-info
-             "Invalid tool result"
-             {:type :vis/invalid-tool-result :value x :explain (s/explain-data ::envelope x)})))
-  x)
 
 (defn normalize-metadata
   "Fill timing keys on the `:metadata` map when absent. Returns a
@@ -373,240 +354,102 @@
 
       tool-error-data
       (assoc :data tool-error-data))))
-;; Symbol entry spec
-;; Symbol name bound in the Python sandbox.
-(s/def :ext.symbol/symbol symbol?)
-;; Implementation function the LLM calls from :code blocks.
-(s/def :ext.symbol/fn fn?)
-;; One-liner description shown in the sandbox var's docstring.
-(s/def :ext.symbol/doc util/non-blank-string?)
-;; Original host-side source form for REPL `source(alias.sym)` in Python.
-(s/def :ext.symbol/source util/non-blank-string?)
-;; Argument signatures, e.g. '([term] [term opts]).
-;; Shown in var meta :arglists and used by `render-symbol-line` to
-;; build the model-facing call form (e.g. `(cat path)`).
-(s/def :ext.symbol/arglists (s/and vector? seq))
-;; Raw callable helpers compose as normal Clojure values. They bypass the
-;; observed-tool envelope/channel wrapper and return their function's
-;; value directly in Python.
-(s/def :ext.symbol/raw? boolean?)
-;; Entry decorator: (fn [env f args] -> map). Wraps :fn on the way in.
-(s/def :ext.symbol/before-fn fn?)
-;; Exit decorator: (fn [env f args result] -> map). Wraps :fn on the way out.
-(s/def :ext.symbol/after-fn fn?)
-;; Error decorator: (fn [err env f args] -> map). Called when :fn throws.
-(s/def :ext.symbol/on-error-fn fn?)
-;; Live-ticker phrase: (fn [env args] -> string) completing "Vis is …" while the
-;; call is in flight. The TOOL owns it because only the tool knows what a private
-;; transport is actually doing — `_shell-wait tt` answers nothing, and neither does
-;; the caller's own disposable handle; `waiting up to 60s for: npm test` answers
-;; everything.
-(s/def :ext.symbol/ticker-fn fn?)
-;; Op classification carried INLINE on the symbol entry — every
-;; observed tool declares its tag right on `vis/symbol`'s opts map,
-;; and `register-extension!` walks the symbol vec to populate the
-;; op-keyword -> tag index automatically.
-(s/def :ext.symbol/tag #{:observation :mutation})
-(s/def :ext.symbol/presenter keyword?)
-;; High-fan-out batch-hint threshold (Phase 4). When a single display-block
-;; accumulates MORE than this many ops with the same `:op`, the iteration
-;; surfaces a soft "BATCH HINT" note nudging the agent to call the tool once
-;; with a vector argument instead of N times. Optional per-tool override of
-;; the default threshold (`iteration/default-batch-hint-threshold`).
-(s/def :ext.symbol/batch-hint pos-int?)
-;; Hidden alias symbols still bind into the Python sandbox but are omitted from the
-;; model-facing prompt symbol catalog (see prompt.clj). Used for back-compat
-;; aliases like db/add! ↔ db/add and db/commit ↔ db/commit! so both
-;; spellings resolve while only the canonical name is advertised.
-(s/def :ext.symbol/hidden? boolean?)
-;; Plain value bound in the sandbox (constant, data, config).
-;; Mutually exclusive with :ext.symbol/fn.
-(s/def :ext.symbol/val some?)
-;; Per-symbol activation predicate `(fn [env] -> bool)`, default true. THE gate:
-;; when it returns false the symbol is inactive this iteration — not bound into
-;; the env, not advertised in the prompt, its handler not dispatchable. Use it
-;; to tie a sub-toggle to one verb within a multi-toggle extension.
-(s/def :ext.symbol/active-fn fn?)
-;; When true, the live `env` is prepended as the call's FIRST arg (so the impl is
-;; `(fn [env & model-args])`). Orthogonal to gating — env-injection is mechanical.
-(s/def :ext.symbol/inject-env? boolean?)
-;; How a Python call's ALL-KEYWORD arguments fold back onto this symbol's
-;; POSITIONAL parameters. CPython collapses `tool(a=1, b=2)` into ONE trailing
-;; dict positional, so a fixed-arity impl `[env a b]` would otherwise receive the
-;; whole map in its first slot; the shape re-expands it — see
-;; `folded-kwargs->positional`. Either a shape map or a `(fn [input] -> source)`
-;; escape hatch; ABSENT ⇒ the arguments bind as CPython handed them over. Keys:
-;;   :lead-opt  one optional leading positional key
-;;   :pos       required positional keys, in order
-;;   :opt-pos   trailing optional positional keys
-;;   :rest      :opt (append remaining keys as a dict, omit when empty)
-;;              :always (always append the remaining-keys dict)
-(s/def :ext.symbol/call
-  (s/or :shape map?
-        :fn fn?))
-;; Wire-name advertised to the model (default: the symbol name). `exists?`→`file_exists`.
-(s/def :ext.symbol/name util/non-blank-string?)
-;; Compact model-facing routing/semantics — the FIRST thing `doc(name)` answers.
-;; The implementation docstring is developer documentation and never substitutes
-;; for it.
-(s/def :ext.symbol/description util/non-blank-string?)
-;; Exact raw return contract for the value Python receives; `doc(name)` appends it
-;; exactly once.
-(s/def :ext.symbol/result util/non-blank-string?)
-(s/def :ext.symbol.param/name util/non-blank-string?)
-(s/def :ext.symbol.param/required? boolean?)
-;; A tool's model-facing page has ONE shape, and these three keys are all of it:
-;; `:description` (what the verb does, what it REQUIRES, what an omitted key
-;; silently defaults to), `:result` (the raw value Python receives) and
-;; `:params` (the key vocabulary). Prose belongs in `:description`; a `:note`
-;; is a label, never a second description.
-;;
-;; Six words at most: the ONE thing the key's name does not already say
-;; ("or one per `nodes` entry"), never a second description. A key whose name
-;; says everything carries NO note. A note NEVER spells requiredness —
-;; `:required?` is the machine-readable statement and `doc(name)` renders it.
-;; A key only one pack/dialect reads leads with that pack and an em dash
-;; ("clojure — shadow-cljs build id"); the prefix is not charged against the six.
-(s/def :ext.symbol.param/note util/non-blank-string?)
-;; The OPTIONS-DICT key vocabulary, in the order a caller should think about it:
-;; `[{:name "paths" :required? true} {:name "ranges"} …]`. A tool whose `:call`
-;; shape ends in a dict has its WHOLE contract inside that dict, where a Python
-;; signature can say no more than `**kwargs` — so this is the only place
-;; requiredness is machine-readable, and `doc(name)` renders it as the `Keys:`
-;; line. Names are the WIRE keys, spelled exactly as the model types them, and
-;; EVERY key a handler reads is declared — an undeclared key is invisible, a
-;; declared key no code reads is a lie. Order is the CALL's order: the `:call`
-;; lead/positional key first, then what cannot be omitted, then the rest.
-;; A conditionally required key is `:required? true` plus the alternative in its
-;; note (`{:name "port" :required? true :note "or `build` names one"}`), because
-;; "sometimes required" is still a key the caller must think about.
-;; `test/com/blockether/vis/internal/extension_test.clj` enforces this shape over
-;; every live tool.
-(s/def :ext.symbol/params
-  (s/and (s/every (s/keys :req-un [:ext.symbol.param/name]
-                          :opt-un [:ext.symbol.param/required? :ext.symbol.param/note])
-                  :kind vector?)
-         seq))
-(s/def ::fn-symbol-entry
-  (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
-          :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/presenter
-                :ext.symbol/batch-hint :ext.symbol/before-fn :ext.symbol/active-fn
-                :ext.symbol/inject-env? :ext.symbol/after-fn :ext.symbol/on-error-fn
-                :ext.symbol/ticker-fn :ext.symbol/source :ext.symbol/name :ext.symbol/call
-                :ext.symbol/description :ext.symbol/result :ext.symbol/params]))
+;; Extension declaration validation
+(defn- vector-of? [pred x] (and (vector? x) (every? pred x)))
+(defn- set-of? [pred x] (and (set? x) (every? pred x)))
+(defn- unqualified-symbol? [x] (and (symbol? x) (nil? (namespace x))))
+(defn- map-values?
+  [key-pred value-pred x]
+  (and (map? x) (every? key-pred (keys x)) (every? value-pred (vals x))))
 
-(s/def ::val-symbol-entry
-  (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
+(defn- param-entry?
+  [x]
+  (and (map? x)
+       (non-blank-string? (:name x))
+       (optional-field? x :required? boolean?)
+       (optional-field? x :note non-blank-string?)))
 
-(s/def ::symbol-entry
-  (s/or :fn ::fn-symbol-entry
-        :val ::val-symbol-entry))
-;; Extension spec
-;; Logical extension id, e.g. "foundation" or "github-copilot".
-(s/def :ext/name util/non-blank-string?)
-;; Extension-level documentation - describes what this bundle provides.
-(s/def :ext/description util/non-blank-string?)
-;; Namespace(s) whose source loads/registers this extension. `vis/extension`
-;; captures this from the callsite; generated logical extensions may share it.
-(s/def :ext/source-nses (s/coll-of symbol? :kind vector?))
-;; Top-level kind - the *category* of surface this extension
-;; contributes. Used for prompt-rendering section labels AND as the
-;; section heading in `vis-agent extension list`. Examples: "foundation",
-;; "languages", "providers", "channels", "persistance". Authors may
-;; set it explicitly; for the common categorical cases (extensions
-;; that only contribute providers / channels / persistence backends)
-;; the `extension` builder auto-derives it.
-(s/def :ext/kind util/non-blank-string?)
-;; Guard evaluated at each turn boundary. (fn [env] -> bool).
-;; Default: (constantly true).
-(s/def :ext/activation-fn fn?)
-;; Optional extra LLM-facing documentation appended when the extension is active.
-(s/def :ext/prompt-fn fn?)
-;; Optional structured data merged into engine `ctx` before every model call.
-;; Return a map such as `{:project {...}}`; engine-owned keys still win on
-;; collision.
-(s/def :ext/ctx-fn fn?)
-;; Declarative cross-cutting operation hooks: `[{:op :phase :fn} ...]` installed
-;; under an owner derived from the extension name, so they register/unregister
-;; with its lifecycle. Each entry: `:op` (op-keyword), `:phase`
-;; (:before|:around|:after|:gate, default :after), `:fn` (the hook fn — see
-;; `register-op-hook!`). `:owner` is set automatically.
-(s/def :ext.op-hook/op keyword?)
+(defn- params? [x] (and (vector-of? param-entry? x) (seq x)))
 
-(s/def :ext.op-hook/phase #{:before :around :after :gate})
+(defn- fn-symbol-entry?
+  [x]
+  (and (map? x)
+       (symbol? (:ext.symbol/symbol x))
+       (fn? (:ext.symbol/fn x))
+       (non-blank-string? (:ext.symbol/doc x))
+       (vector? (:ext.symbol/arglists x))
+       (seq (:ext.symbol/arglists x))
+       (optional-field? x :ext.symbol/raw? boolean?)
+       (optional-field? x :ext.symbol/hidden? boolean?)
+       (optional-field? x :ext.symbol/tag #{:observation :mutation})
+       (optional-field? x :ext.symbol/presenter keyword?)
+       (optional-field? x :ext.symbol/batch-hint pos-int?)
+       (every? #(optional-field? x % fn?)
+               [:ext.symbol/before-fn :ext.symbol/active-fn :ext.symbol/after-fn
+                :ext.symbol/on-error-fn :ext.symbol/ticker-fn])
+       (optional-field? x :ext.symbol/inject-env? boolean?)
+       (optional-field? x :ext.symbol/source non-blank-string?)
+       (optional-field? x :ext.symbol/name non-blank-string?)
+       (optional-field? x :ext.symbol/call #(or (map? %) (fn? %)))
+       (optional-field? x :ext.symbol/description non-blank-string?)
+       (optional-field? x :ext.symbol/result non-blank-string?)
+       (optional-field? x :ext.symbol/params params?)))
 
-(s/def :ext.op-hook/fn ifn?)
+(defn- val-symbol-entry?
+  [x]
+  (and (map? x)
+       (symbol? (:ext.symbol/symbol x))
+       (contains? x :ext.symbol/val)
+       (some? (:ext.symbol/val x))
+       (non-blank-string? (:ext.symbol/doc x))
+       (optional-field? x :ext.symbol/source non-blank-string?)))
 
-(s/def :ext/op-hook (s/keys :req-un [:ext.op-hook/op :ext.op-hook/fn] :opt-un [:ext.op-hook/phase]))
+(defn- symbol-entry? [x] (or (fn-symbol-entry? x) (val-symbol-entry? x)))
 
-(s/def :ext/op-hooks (s/coll-of :ext/op-hook))
-
-;; Tier-2 egress NETWORK filters: fns `(fn [ctx] -> decision)` the gateway proxy
-;; runs over the FULL decrypted exchange at BOTH phases — the request on the way
-;; out and the upstream response (status + headers) on the way back (turn 46,
-;; `:phase` distinguishes). Installed into the egress proxy at register time,
-;; torn down on deregister.
-(s/def :ext/network-filters (s/coll-of ifn?))
-
-;; Hooks are named extension callbacks at closed lifecycle phases. A hook's `:fn`
-;; receives a phase-shaped context map. `:session_provider_kickoff` may contribute
-;; request headers while one provider joins a session; `:turn.answer/validate` may
-;; reject a candidate final answer. Unused phases are refused so stale extension
-;; code cannot hide behind a compatibility path.
 (def canonical-hook-phases
   "Canonical lifecycle phase keywords accepted by `:ext/hooks`."
   #{:session_provider_kickoff :turn.answer/validate})
 
-(defn hook-phase?
-  "True when `phase` is a canonical lifecycle phase keyword."
-  [phase]
-  (contains? canonical-hook-phases phase))
+(defn hook-phase? [phase] (contains? canonical-hook-phases phase))
 
-(s/def :ext.hook/id keyword?)
+(defn- op-hook?
+  [x]
+  (and (map? x)
+       (keyword? (:op x))
+       (ifn? (:fn x))
+       (optional-field? x :phase #{:before :around :after :gate})))
 
-(s/def :ext.hook/doc util/non-blank-string?)
+(defn- hook?
+  [x]
+  (and (map? x)
+       (keyword? (:id x))
+       (non-blank-string? (:doc x))
+       (hook-phase? (:phase x))
+       (fn? (:fn x))))
 
-(s/def :ext.hook/phase (s/and keyword? hook-phase?))
+(defn session-provider-kickoff-headers?
+  [x]
+  (and (map? x)
+       (= #{:llm-headers} (set (keys x)))
+       (map-values? non-blank-string? non-blank-string? (:llm-headers x))
+       (seq (:llm-headers x))))
 
-(s/def :ext.hook/fn fn?)
+(defn iteration-start-hint?
+  [x]
+  (and (map? x) (non-blank-string? (:text x)) (optional-field? x :importance keyword?)))
 
-(s/def ::hook (s/keys :req-un [:ext.hook/id :ext.hook/doc :ext.hook/phase :ext.hook/fn]))
+(defn answer-validation-reject?
+  [x]
+  (and (map? x)
+       (true? (:reject x))
+       (optional-field? x :message non-blank-string?)
+       (optional-field? x :hint non-blank-string?)))
 
-(s/def :ext/hooks (s/coll-of ::hook :kind vector?))
-
-(s/def :ext.hook.return/llm-headers
-  (s/and (s/map-of util/non-blank-string? util/non-blank-string?) seq))
-
-(s/def ::session-provider-kickoff-headers
-  (s/and (s/keys :req-un [:ext.hook.return/llm-headers]) #(= #{:llm-headers} (set (keys %)))))
-
-(s/def :ext.hook.return/text util/non-blank-string?)
-
-(s/def :ext.hook.return/importance keyword?)
-
-(s/def ::iteration-start-hint
-  (s/keys :req-un [:ext.hook.return/text] :opt-un [:ext.hook.return/importance]))
-
-(s/def :ext.hook.return/hint util/non-blank-string?)
-
-(s/def :ext.hook.return/reject true?)
-
-(s/def :ext.hook.return/message util/non-blank-string?)
-
-(s/def ::answer-validation-reject
-  (s/keys :req-un [:ext.hook.return/reject]
-          :opt-un [:ext.hook.return/message :ext.hook.return/hint]))
-;; Channel contributions let extensions add passive UI/command parts to
-;; concrete channel slots without requiring those channel namespaces.
-;; Shape: {:ext/channel-contributions {:tui.slot/commands [{:id :voice/input
-;;                                                          :fn f}]}}
-;; The slot key declares where the contribution goes; the channel owns that
-;; slot's fn arity + return contract.
 (defn- channel-slot?
   [x]
   (and (keyword? x)
-       (when-let [ns (namespace x)]
-         (str/ends-with? ns ".slot"))))
+       (some-> (namespace x)
+               (str/ends-with? ".slot"))))
 
 (defn- channel-slot->channel-id
   [slot]
@@ -616,361 +459,163 @@
                       {:type :extension/invalid-channel-contribution-slot :slot slot})))
     (keyword (subs ns 0 (- (count ns) (count ".slot"))))))
 
-(s/def :ext.channel-contribution/id keyword?)
+(defn- channel-contribution? [x] (and (map? x) (keyword? (:id x)) (ifn? (:fn x))))
 
-(s/def :ext.channel-contribution/fn ifn?)
+(defn- channel-contributions?
+  [x]
+  (and (map? x)
+       (every? channel-slot? (keys x))
+       (every? #(vector-of? channel-contribution? %) (vals x))))
 
-(s/def ::channel-contribution
-  (s/keys :req-un [:ext.channel-contribution/id :ext.channel-contribution/fn]))
-
-(s/def :ext/channel-contributions
-  (s/map-of channel-slot? (s/coll-of ::channel-contribution :kind vector?)))
-;; Slash commands
-;;
-;; Declarative cross-channel slash surface, mirroring `:ext/hooks` /
-;; `:ext/channel-contributions`. NO global atom, NO `register-slash!`.
-;; Every extension carries its slash specs on `:ext/slash-commands`;
-;; the engine derives the active slash set by walking
-;; `(active-extensions)` at lookup time (see `internal/slash.clj`).
-;;
-;; Coordinates: `:slash/parent` is the lineage vec (top-level commands
-;; like `/workspace` have `:parent []`; `/workspace apply` has
-;; `:parent ["workspace"]`, etc.). The canonical full path of a slash
-;; is `(conj parent name)`. `register-extension!` refuses two
-;; extensions declaring the same `[parent name]`.
-(s/def :slash/name util/non-blank-string?)
-
-(s/def :slash/parent (s/coll-of util/non-blank-string? :kind vector?))
-
-(s/def :slash/doc util/non-blank-string?)
-
-(s/def :slash/usage util/non-blank-string?)
-
-(s/def :slash/run-fn ifn?)
-
-(s/def :slash/requires (s/coll-of #{:session :workspace :channel} :kind set?))
-
-(s/def :slash/availability-fn ifn?)
-
-(s/def :slash/subcommands (s/coll-of util/non-blank-string? :kind vector?))
-
-(s/def ::slash
-  (s/keys :req [:slash/name]
-          :opt [:slash/parent :slash/doc :slash/usage :slash/run-fn :slash/requires
-                :slash/availability-fn :slash/subcommands]))
-
-(s/def :ext/slash-commands (s/coll-of ::slash :kind vector?))
-
+(defn- slash?
+  [x]
+  (and (map? x)
+       (non-blank-string? (:slash/name x))
+       (optional-field? x :slash/parent #(vector-of? non-blank-string? %))
+       (optional-field? x :slash/doc non-blank-string?)
+       (optional-field? x :slash/usage non-blank-string?)
+       (optional-field? x :slash/run-fn ifn?)
+       (optional-field? x :slash/requires #(set-of? #{:session :workspace :channel} %))
+       (optional-field? x :slash/availability-fn ifn?)
+       (optional-field? x :slash/subcommands #(vector-of? non-blank-string? %))))
 
 (defn slash-path
-  "Canonical full path vec of a slash spec: parent ++ [name]. Used as the
-   lookup key in `internal/slash.clj`."
+  "Canonical full path vector of a slash declaration."
   [slash-spec]
   (conj (vec (:slash/parent slash-spec)) (:slash/name slash-spec)))
-;; Optional extension-owned environment declarations. These name OS-style
-;; variables an extension reads; values come from the process environment or the
-;; working directory's `.env`, never from Vis config or the TUI.
-(s/def :ext.env/name util/non-blank-string?)
 
-(s/def :ext.env/label util/non-blank-string?)
+(defn- env-entry?
+  [x]
+  (and (map? x)
+       (non-blank-string? (:name x))
+       (optional-field? x :label non-blank-string?)
+       (optional-field? x :description string?)
+       (optional-field? x :secret? boolean?)
+       (optional-field? x :required? boolean?)))
 
-(s/def :ext.env/description string?)
+(defn- setting-entry?
+  [x]
+  (and (map? x)
+       (or (keyword? (:key x)) (non-blank-string? (:key x)))
+       (#{:toggle :choice :action} (:type x))
+       (non-blank-string? (:label x))
+       (optional-field? x :description string?)
+       (optional-field? x :choices #(and (vector-of? keyword? %) (seq %)))))
 
-(s/def :ext.env/secret? boolean?)
+(defn- provider-entry?
+  [x]
+  (let [optional-fn? (fn [k]
+                       (optional-field? x k #(or (nil? %) (ifn? %))))]
+    (and (map? x)
+         (not (contains? x :provider/prompt-fn))
+         (keyword? (:provider/id x))
+         (non-blank-string? (:provider/label x))
+         (every? optional-fn?
+                 [:provider/status-fn :provider/logout-fn :provider/detect-fn :provider/auth-fn
+                  :provider/get-token-fn :provider/refresh-token-fn :provider/limits-fn
+                  :provider/enrich-models-fn :provider/on-selected-fn])
+         (optional-field? x :provider/is-managed boolean?))))
 
-(s/def :ext.env/required? boolean?)
+(defn- persistance-entry?
+  [x]
+  (and (map? x)
+       (keyword? (:persistance/id x))
+       (symbol? (:persistance/ns x))
+       (nil? (namespace (:persistance/ns x)))
+       (re-find #"\." (name (:persistance/ns x)))))
 
-(s/def ::env-entry
-  (s/keys :req-un [:ext.env/name]
-          :opt-un [:ext.env/label :ext.env/description :ext.env/secret? :ext.env/required?]))
+(defn- sandbox-shim?
+  [x]
+  (and (map? x)
+       (non-blank-string? (:shim/name x))
+       (non-blank-string? (:shim/source x))
+       (optional-field? x :shim/imports #(and (vector-of? non-blank-string? %) (apply distinct? %)))
+       (optional-field? x :shim/globals #(and (vector-of? non-blank-string? %) (apply distinct? %)))
+       (optional-field? x :shim/docs non-blank-string?)
+       (optional-field? x :shim/bindings #(or (ifn? %) (map-values? string? ifn? %)))))
 
-(s/def :ext/env (s/coll-of ::env-entry :kind vector?))
-;; Optional extension-owned TUI setting declarations. The TUI stores the
-;; values, but the extension owns the row metadata so extension-specific
-;; knobs appear under Extensions -> <extension> instead of hardcoded host
-;; buckets.
-(s/def :ext.setting/key
-  (s/or :keyword keyword?
-        :string util/non-blank-string?))
+(defn- engine?
+  [x]
+  (and (map? x)
+       (optional-field? x :ext.engine/ns unqualified-symbol?)
+       (optional-field? x :ext.engine/alias unqualified-symbol?)
+       (optional-field? x :ext.engine/builtin? boolean?)
+       (optional-field? x :ext.engine/exact-symbol-names? boolean?)
+       (optional-field? x :ext.engine/symbols #(vector-of? symbol-entry? %))
+       (optional-field? x :ext.engine/classes #(map-values? symbol? class? %))
+       (optional-field? x :ext.engine/imports #(map-values? symbol? symbol? %))))
 
-(s/def :ext.setting/type #{:toggle :choice :action})
-
-(s/def :ext.setting/label util/non-blank-string?)
-
-(s/def :ext.setting/description string?)
-
-(s/def :ext.setting/choices (s/and (s/coll-of keyword? :kind vector?) seq))
-
-(s/def ::setting-entry
-  (s/keys :req-un [:ext.setting/key :ext.setting/type :ext.setting/label]
-          :opt-un [:ext.setting/description :ext.setting/choices]))
-
-(s/def :ext/settings (s/coll-of ::setting-entry :kind vector?))
-;; Optional extension-owned theme declarations. Plain EDN shape:
-;;   {:ext/theme {"THEME_NAME" {"PADDING" "0px"}}}
-;; The internal `com.blockether.vis.internal.theme` namespace owns the reusable theme
-;; token spec and built-in palettes; extensions can add channel-agnostic
-;; string-key settings here for channels to adapt.
-(s/def :ext/theme theme/extension-theme-map?)
-;; Semver version string, e.g. "1.0.0", "0.3.1-SNAPSHOT".
-(s/def :ext/version util/non-blank-string?)
-;; Author name or org - the entity that *created* the extension
-;; (e.g. "Blockether", "Acme Corp.").
-(s/def :ext/author util/non-blank-string?)
-;; Owner of the *package* - the project / distribution that ships
-;; this extension. For everything bundled in this repo: "vis".
-;; Third-party packages set their own owner (often the same as
-;; `:ext/author`, but they're independent: a Blockether-authored
-;; extension can be vendored by a downstream distribution).
-(s/def :ext/owner util/non-blank-string?)
-;; SPDX license identifier.
-(s/def :ext/license util/non-blank-string?)
-;; Surface slots
-;; CLI commands exported by this extension.
-(s/def :ext/cli (s/coll-of :com.blockether.vis.internal.registry/command :kind vector?))
-;; Channels exported by this extension.
-(s/def :ext/channels (s/coll-of :com.blockether.vis.internal.registry/channel :kind vector?))
-;; LLM providers exported by this extension. Each entry mirrors the
-;; canonical provider shape; we accept any IFn (or absence) for the
-;; optional runtime fns so a minimal provider doesn't ship no-op stubs.
-(let [or-nil-or-fn
-      (fn [k]
-        #(let [v (get % k ::absent)] (or (= v ::absent) (ifn? v))))
-
-      or-absent-boolean
-      (fn [k]
-        #(let [v (get % k ::absent)] (or (= v ::absent) (boolean? v))))]
-
-  (s/def ::provider-entry
-    (s/and map?
-           #(not (contains? % :provider/prompt-fn))
-           #(keyword? (:provider/id %))
-           #(util/non-blank-string? (:provider/label %))
-           (or-nil-or-fn :provider/status-fn)
-           (or-nil-or-fn :provider/logout-fn)
-           (or-nil-or-fn :provider/detect-fn)
-           (or-nil-or-fn :provider/auth-fn)
-           (or-nil-or-fn :provider/get-token-fn)
-           (or-nil-or-fn :provider/refresh-token-fn)
-           (or-nil-or-fn :provider/limits-fn)
-           (or-nil-or-fn :provider/enrich-models-fn)
-           (or-nil-or-fn :provider/on-selected-fn)
-           (or-absent-boolean :provider/is-managed))))
-
-(s/def :ext/providers (s/coll-of ::provider-entry :kind vector?))
-;; Persistence backends exported by this extension.
-(s/def :persistance/id keyword?)
-
-(s/def :persistance/ns
-  (s/and symbol?
-         #(nil? (namespace %))
-         #(re-find #"\." (name %))))
-
-(s/def :ext/persistance-entry (s/keys :req [:persistance/id :persistance/ns]))
-
-(s/def :ext/persistance (s/coll-of :ext/persistance-entry :kind vector?))
-;; Attachment storage-offload backends exported by this extension (each a
-;; descriptor map: :storage/id :storage/scheme :storage/put-fn :storage/get-fn
-;; plus optional :storage/offload? :storage/priority).
-(s/def :ext/attachment-storage (s/coll-of map? :kind vector?))
-;; Doctor contribution from this extension: ONE function the `vis-agent doctor`
-;; aggregator calls with the live environment and that returns a seq of
-;; diagnostic message maps. Replaces the previous doctor check vector
-;; of `{:check/id :check/name :check/description :check/run-fn}` maps -
-;; the metadata fields (`:check/name`, `:check/description`) were never
-;; surfaced anywhere; only `:check/id` made it onto messages, and the
-;; extension can stamp `:check-id` on its own messages just as easily
-;; without the host walking a vec of structured maps. Plan §1 Q19 + §10.
-;; Authors who don't ship checks just omit the field.
-;;
-;; Naming follows the `:ext/<surface>-fn` convention already used for
-;; `:ext/activation-fn` - ONE fn, called by the host, returns data.
-;;
-;; Per-message expectations (host coerces missing/invalid):
-;;   {:level :info|:warn|:error
-;;    :message "..."            ; required, non-blank
-;;    :remediation "..."        ; optional; renders as `-> ...` indented line
-;;    :check-id ::keyword     ; optional; renders as the prefix
-;;    :data {...}}              ; optional; passthrough for callers
-(s/def :ext/doctor-fn fn?)
-;; Sandbox Python SHIMS / AUTOLOADS. An extension may publish one or more
-;; "shims": a host-backed Python module (optionally auto-loaded onto builtins)
-;; installed into EVERY model sandbox context at creation time. This is how a
-;; pure-Clojure / JVM
-;; capability (YAMLStar's YAML 1.2 loader, an imaging-backed `matplotlib.pyplot`) is
-;; surfaced to the model's Python as a REAL importable module: no pip, no
-;; native wheels, no capability holes. `env-python/build-agent-context`
-;; consumes `extension/sandbox-shims` GENERICALLY — nothing about yaml or
-;; matplotlib is special-cased in the engine.
-;;
-;;   :shim/name        identity string (dedup / logging), never an import contract.
-;;   :shim/imports     exact top-level module names users may import (optional).
-;;   :shim/globals     exact names users call directly without importing (optional).
-;;                     These two fields drive prompt and `apropos` discovery; do not
-;;                     infer either from :shim/name.
-;;   :shim/docs        prose (OPTIONAL): a PULLED page for doctrine that belongs to
-;;                     no single name — a query language, the fixture vocabulary, a
-;;                     server-side API. PROSE ABOUT A NAME BELONGS ON THAT NAME:
- ;;                     every module a shim installs owns its `__doc__` and every
- ;;                     function and class it lends owns its docstring in
- ;;                     `resources/vis-shims/<file>.py`. The build harvests those
- ;;                     records into the manifest-listed apropos resource, so the
- ;;                     page a model reads is the source a maintainer edits — never
- ;;                     a second copy in Clojure that drifts from the module.
-;;                     Say what is NOT supported there: a shim is a REIMPLEMENTATION,
-;;                     and the hole is what the upstream docs will not warn about.
-;;   :shim/bindings    host callables the shim's Python delegates to — either a map
-;;                     {py-name -> host-fn} or a 0-arg fn returning that map.
-;;                     Each fn is wired onto the sandbox globals as a Python
-;;                     ProxyExecutable (args marshalled Python->Clojure, result
-;;                     Clojure->Python) BEFORE the source evals, so the Python
-;;                     can call across the boundary. Optional.
-;;   :shim/source      CLASSPATH RESOURCE PATH of the shim's Python source, e.g.
-;;                     "vis-shims/yaml.py". The file is the ONLY form: no inline
-;;                     Python strings in Clojure, so the shim is lintable,
-;;                     diffable, and free of escaping hazards. Read through
-;;                     `extension/shim-src` and eval'd into the context to publish
-;;                     the module into `sys.modules` and (for autoload) staple it
-;;                     onto builtins. Built-in shims live in `resources/vis-shims/`
-;;                     and are embedded in the native image by build.clj's
-;;                     `-H:IncludeResources=vis-shims/.*`; an extension shipping
-;;                     its own must embed its own resource pattern the same way.
-(s/def :shim/name util/non-blank-string?)
-
-(s/def :shim/imports (s/coll-of util/non-blank-string? :kind vector? :distinct true))
-
-(s/def :shim/globals (s/coll-of util/non-blank-string? :kind vector? :distinct true))
-
-(s/def :shim/docs util/non-blank-string?)
-
-(s/def :shim/bindings
-  (s/or :map (s/map-of string? ifn?)
-        :fn ifn?))
-
-(s/def :shim/source util/non-blank-string?)
-
-(s/def ::sandbox-shim
-  (s/keys :req [:shim/name :shim/source]
-          :opt [:shim/imports :shim/globals :shim/docs :shim/bindings]))
-
-(s/def :ext/sandbox-shims (s/coll-of ::sandbox-shim :kind vector?))
-;; Python sandbox contribution.
-(s/def :ext.engine/symbols (s/coll-of ::symbol-entry :kind vector?))
-;; Map of fully-qualified Java classes to expose in the sandbox.
-(s/def :ext.engine/classes
-  (s/and map?
-         #(every? symbol? (keys %))
-         #(every? class? (vals %))))
-;; Map of short-name imports for Java classes.
-(s/def :ext.engine/imports
-  (s/and map?
-         #(every? symbol? (keys %))
-         #(every? symbol? (vals %))))
-;; Optional Python namespace alias for this extension's symbols.
-(s/def :ext.engine/ns (s/and symbol? #(nil? (namespace %))))
-
-(s/def :ext.engine/alias (s/and symbol? #(nil? (namespace %))))
-;; Python-authored extensions declare their public sandbox names verbatim. Their
-;; extension alias remains registry metadata and never changes the Python API.
-(s/def :ext.engine/exact-symbol-names? boolean?)
-;; Built-in extensions ship in the main jar and bind their symbols BARE into the
-;; sandbox ns (no alias), like the engine verbs. Mutually exclusive with :alias.
-(s/def :ext.engine/builtin? boolean?)
-
-(s/def :ext/engine
-  (s/keys :opt [:ext.engine/ns :ext.engine/alias :ext.engine/builtin?
-                :ext.engine/exact-symbol-names? :ext.engine/symbols :ext.engine/classes
-                :ext.engine/imports]))
-;; Canonical source markers attached to registered extensions via the
-;; sidecar atom. Also surfaced in ctx :extensions / extension summaries
-;; and stamped onto tool-result info.
-(s/def ::alias symbol?)
-
-(s/def ::name util/non-blank-string?)
-
-(s/def ::description util/non-blank-string?)
-
-(s/def ::kind util/non-blank-string?)
-
-(s/def ::version util/non-blank-string?)
-
-(s/def ::author util/non-blank-string?)
-
-(s/def ::owner util/non-blank-string?)
-
-(s/def ::license util/non-blank-string?)
-
-(s/def ::source-paths (s/coll-of string? :kind vector?))
-
-(s/def ::source-mtime-max integer?)
-
-(s/def ::source-hash-sha256 (s/nilable (s/and string? #(= 64 (count %)))))
-
-(s/def ::registry-id symbol?)
-
-(s/def ::extension-info
-  (s/keys :req-un [::name ::source-paths ::source-mtime-max ::source-hash-sha256]
-          :opt-un [::alias ::description ::kind ::version ::author ::owner ::license
-                   ::registry-id]))
+(defn- extension-info?
+  [x]
+  (and (map? x)
+       (non-blank-string? (:name x))
+       (vector-of? string? (:source-paths x))
+       (integer? (:source-mtime-max x))
+       (or (nil? (:source-hash-sha256 x))
+           (and (string? (:source-hash-sha256 x)) (= 64 (count (:source-hash-sha256 x)))))
+       (optional-field? x :alias symbol?)
+       (every? #(optional-field? x % non-blank-string?)
+               [:description :kind :version :author :owner :license])
+       (optional-field? x :registry-id symbol?)))
 
 (defn ext-symbols [ext] (vec (or (get-in ext [:ext/engine :ext.engine/symbols]) [])))
-
 (defn ext-sandbox-shims [ext] (vec (or (:ext/sandbox-shims ext) [])))
 
 (defn symbol-active?
-  "Whether a symbol ENTRY is LIVE for `env` this iteration. Default true; an
-   `:active-fn (fn [env] -> bool)` makes it dynamic (e.g. a sub-toggle). `env` may
-   be nil — toggle-style predicates ignore it."
-  [e env]
-  (if-let [af (:ext.symbol/active-fn e)]
-    (boolean (try (af env) (catch Throwable _ false)))
+  "Whether a symbol entry is active for `env`."
+  [entry env]
+  (if-let [active-fn (:ext.symbol/active-fn entry)]
+    (boolean (try (active-fn env) (catch Throwable _ false)))
     true))
 
 (defn ext-alias-symbol [ext] (get-in ext [:ext/engine :ext.engine/alias]))
-
 (defn ext-exact-symbol-names?
-  "True when an extension's symbol names are already its exact Python API."
   [ext]
   (boolean (get-in ext [:ext/engine :ext.engine/exact-symbol-names?])))
-
-(defn ext-builtin?
-  "True when this extension is a BUILT-IN: its symbols bind BARE into the
-   sandbox ns (no alias), alongside the engine verbs. See
-   `builtin-sandbox-bindings`."
-  [ext]
-  (boolean (get-in ext [:ext/engine :ext.engine/builtin?])))
-
+(defn ext-builtin? [ext] (boolean (get-in ext [:ext/engine :ext.engine/builtin?])))
 (defn ext-source-nses [ext] (vec (or (:ext/source-nses ext) [])))
 
 (defn- ns-alias-required-when-symbols?
-  "Symbols need a home: an `:ext.engine/alias` (third-party → aliased ns) OR
-   `:ext.engine/builtin? true` (core → bare in the sandbox ns). One is required
-   when the extension contributes symbols."
   [ext]
   (or (empty? (ext-symbols ext)) (some? (ext-alias-symbol ext)) (ext-builtin? ext)))
 
 (defn- kind-required-when-symbols? [ext] (or (empty? (ext-symbols ext)) (some? (:ext/kind ext))))
 
-(s/def ::extension
-  (s/and (s/keys :req [:ext/name :ext/description]
-                 :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/engine :ext/prompt-fn
-                       :ext/ctx-fn :ext/hooks :ext/op-hooks :ext/network-filters :ext/env
-                       :ext/settings :ext/theme :ext/version :ext/author :ext/owner :ext/license
-                       :ext/cli :ext/channels :ext/providers :ext/persistance
-                       :ext/attachment-storage :ext/channel-contributions :ext/slash-commands
-                       :ext/doctor-fn :ext/sandbox-shims])
-         ns-alias-required-when-symbols?
-         kind-required-when-symbols?))
-;; Symbol helpers (builder fns)
+(defn- extension?
+  [x]
+  (and (map? x)
+       (non-blank-string? (:ext/name x))
+       (non-blank-string? (:ext/description x))
+       (optional-field? x :ext/source-nses #(vector-of? symbol? %))
+       (optional-field? x :ext/kind non-blank-string?)
+       (every? #(optional-field? x % fn?)
+               [:ext/activation-fn :ext/prompt-fn :ext/ctx-fn :ext/doctor-fn])
+       (optional-field? x :ext/hooks #(vector-of? hook? %))
+       (optional-field? x :ext/op-hooks #(every? op-hook? %))
+       (optional-field? x :ext/network-filters #(every? ifn? %))
+       (optional-field? x :ext/env #(vector-of? env-entry? %))
+       (optional-field? x :ext/settings #(vector-of? setting-entry? %))
+       (optional-field? x :ext/theme theme/extension-theme-map?)
+       (every? #(optional-field? x % non-blank-string?)
+               [:ext/version :ext/author :ext/owner :ext/license])
+       (optional-field? x :ext/cli #(vector-of? registry/command? %))
+       (optional-field? x :ext/channels #(vector-of? registry/channel? %))
+       (optional-field? x :ext/providers #(vector-of? provider-entry? %))
+       (optional-field? x :ext/persistance #(vector-of? persistance-entry? %))
+       (optional-field? x :ext/attachment-storage #(vector-of? map? %))
+       (optional-field? x :ext/channel-contributions channel-contributions?)
+       (optional-field? x :ext/slash-commands #(vector-of? slash? %))
+       (optional-field? x :ext/sandbox-shims #(vector-of? sandbox-shim? %))
+       (optional-field? x :ext/engine engine?)
+       (ns-alias-required-when-symbols? x)
+       (kind-required-when-symbols? x)))
+
 (defn- validate-symbol-entry!
-  "Assert a symbol entry conforms to ::symbol-entry. Throws on violation."
   [entry]
-  (when-not (s/valid? ::symbol-entry entry)
-    (throw (ex-info (str "Invalid symbol '" (:ext.symbol/symbol entry)
-                         "':\n" (with-out-str (s/explain ::symbol-entry entry)))
-                    {:type :extension/invalid-symbol
-                     :symbol (:ext.symbol/symbol entry)
-                     :explain (s/explain-data ::symbol-entry entry)})))
+  (when-not (symbol-entry? entry)
+    (throw (ex-info
+             (str "Invalid symbol '" (:ext.symbol/symbol entry) "'")
+             {:type :extension/invalid-symbol :symbol (:ext.symbol/symbol entry) :entry entry})))
   entry)
 
 (defn- var-source
@@ -1447,12 +1092,9 @@
   (let [ext (cond-> ext
               (contains? ext :ext/prompt-fn)
               (update :ext/prompt-fn normalize-prompt))]
-    (when-not (s/valid? ::extension ext)
-      (throw (ex-info (str "Invalid extension '" (:ext/name ext)
-                           "':\n" (with-out-str (s/explain ::extension ext)))
-                      {:type :extension/invalid-spec
-                       :name (:ext/name ext)
-                       :explain (s/explain-data ::extension ext)})))
+    (when-not (extension? ext)
+      (throw (ex-info (str "Invalid extension '" (:ext/name ext) "'")
+                      {:type :extension/invalid-declaration :name (:ext/name ext) :extension ext})))
     (validate-symbol-op-tags! ext)))
 ;; Hook execution - runtime wrappers with output validation + logging
 (defn- validate-hook-return!
@@ -1558,11 +1200,7 @@
   [sym result]
   (when-not (tool-result? result)
     (throw (ex-info (str "Symbol '" sym "' must return a canonical :envelope map")
-                    {:type :extension/invalid-symbol-result
-                     :symbol sym
-                     :spec :envelope
-                     :value result
-                     :explain (s/explain-data ::envelope result)})))
+                    {:type :extension/invalid-symbol-result :symbol sym :value result})))
   result)
 
 (defn- tool-call-name
@@ -1779,7 +1417,7 @@
                                           :provider-id (:id provider)}
                                          t))))]
               (cond (nil? contribution) acc
-                    (not (s/valid? ::session-provider-kickoff-headers contribution))
+                    (not (session-provider-kickoff-headers? contribution))
                     (throw (ex-info
                              (str
                                "Extension session provider kickoff hook returned invalid headers: "
@@ -2910,12 +2548,9 @@
           registry-id
           (assoc :registry-id registry-id))]
 
-    (when-not (s/valid? ::extension-info prov)
+    (when-not (extension-info? prov)
       (throw (ex-info "Invalid extension info"
-                      {:type :extension/invalid-info
-                       :name name
-                       :value prov
-                       :explain (s/explain-data ::extension-info prov)})))
+                      {:type :extension/invalid-info :name name :value prov})))
     prov))
 
 (defn deregister-extension!

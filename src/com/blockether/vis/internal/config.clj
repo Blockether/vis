@@ -1071,9 +1071,8 @@
         (when (map? raw) raw)))))
 
 (defn- read-yaml-config-map
-  "Parse one YAML file and validate its original string-keyed representation.
-   No keys or values are keywordized before clojure.spec sees them. Absent,
-   malformed, and non-map documents return nil; invalid maps throw."
+  "Parse one YAML file and validate its original string-keyed JSON shape.
+   Absent, malformed, and non-map documents return nil; invalid maps throw."
   [path]
   (when-let [normalized (parse-yaml-config-map path)]
     (config-spec/assert-config! normalized path)))

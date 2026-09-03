@@ -1,142 +1,14 @@
 (ns com.blockether.vis.contract.gateway
-  "Canonical gateway declarations shared by Core, the server and every language SDK.
-
-   `vis-contract/gateway.edn` is the source: the complete built-in method/path table,
-   protocol numbers and headers, built-in event vocabularies, terminal/queue semantics,
-   and cursor replay anchors. This namespace reads and validates those declarations;
-   it performs no transport, lifecycle or daemon work."
-  (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.spec.alpha :as s]
-            [clojure.string :as str]
+  "Gateway declarations loaded from the validated JSON contract."
+  (:require [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]))
 
-(def ^:private http-methods #{:delete :get :patch :post :put})
-(def ^:private audiences #{:administration :public :sdk})
-(def ^:private request-transports #{:binary :json :none})
-(def ^:private response-transports
-  #{:binary :empty :html :json :markdown :negotiated :resource :sse})
+(def ^:private source (delay (document/load! "gateway")))
+(def ^:private engine-source (delay (wire/->engine @source)))
 
-(defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
-(defn- closed-map? [m expected-keys] (and (map? m) (= expected-keys (set (keys m)))))
-(defn- event-set? [x] (and (set? x) (seq x) (every? non-blank-string? x)))
-(defn- wire-key-map?
-  [m expected-keys]
-  (and (closed-map? m expected-keys)
-       (every? non-blank-string? (vals m))
-       (= (count m) (count (set (vals m))))))
-
-(defn- valid-operation?
-  [{:keys [request response] :as operation}]
-  (and (closed-map? operation #{:request :response})
-       (contains? request-transports request)
-       (contains? response-transports response)))
-
-(defn- valid-route?
-  [{:keys [path operations audience] :as route}]
-  (and (closed-map? route #{:path :operations :audience})
-       (non-blank-string? path)
-       (str/starts-with? path "/")
-       (map? operations)
-       (seq operations)
-       (every? http-methods (keys operations))
-       (every? valid-operation? (vals operations))
-       (contains? audiences audience)))
-
-(defn- valid-document?
-  [{:contract/keys [version]
-    :gateway/keys [protocol headers routes events envelopes replay]
-    :as document}]
-  (let [{:keys [session jobs push turn-terminal queue-mirror view]}
-        events
-
-        {:keys [error-response handshake journal-line session-event subscription-ready
-                settled-turn]}
-        envelopes]
-
-    (and
-      (closed-map? document
-                   #{:contract/version :gateway/protocol :gateway/headers :gateway/routes
-                     :gateway/events :gateway/envelopes :gateway/replay})
-      (pos-int? version)
-      (closed-map? protocol #{:version :minimum-client :minimum-gateway})
-      (every? pos-int? (vals protocol))
-      (map? headers)
-      (seq headers)
-      (every? keyword? (keys headers))
-      (every? non-blank-string? (vals headers))
-      (= (count headers) (count (set (vals headers))))
-      (vector? routes)
-      (seq routes)
-      (every? valid-route? routes)
-      (= (count routes) (count (set (map :path routes))))
-      (closed-map? events #{:session :jobs :push :turn-terminal :queue-mirror :view})
-      (closed-map? jobs #{:transcribe :synthesize})
-      (every? non-blank-string? (vals jobs))
-      (every? event-set? [session push turn-terminal queue-mirror])
-      (every? session turn-terminal)
-      (every? session queue-mirror)
-      (closed-map? view #{:open :patch :close})
-      (every? session (vals view))
-      (closed-map? envelopes
-                   #{:error-response :handshake :journal-line :session-event :settled-turn
-                     :subscription-ready})
-      (closed-map? handshake #{:keys})
-      (wire-key-map? (:keys handshake) #{:build :min-client :min-gateway :protocol :version})
-      (closed-map? error-response #{:body-keys :error-keys})
-      (wire-key-map? (:body-keys error-response) #{:error})
-      (wire-key-map? (:error-keys error-response) #{:message :type})
-      (closed-map? session-event #{:schema :stamp-keys})
-      (pos-int? (:schema session-event))
-      (wire-key-map? (:stamp-keys session-event) #{:schema :sequence :session-id :timestamp :type})
-      (closed-map? journal-line #{:metadata-keys})
-      (wire-key-map? (:metadata-keys journal-line) #{:pid :producer :store})
-      (closed-map? subscription-ready #{:event :required-keys :optional-keys})
-      (contains? session (:event subscription-ready))
-      (wire-key-map? (:required-keys subscription-ready)
-                     #{:cursor :current-turn-id :is-live :server-time-ms :session-id :type})
-      (wire-key-map? (:optional-keys subscription-ready) #{:latest-iteration})
-      (not-any? (set (vals (:required-keys subscription-ready)))
-                (vals (:optional-keys subscription-ready)))
-      (closed-map? settled-turn #{:meta-keys})
-      (vector? (:meta-keys settled-turn))
-      (seq (:meta-keys settled-turn))
-      (every? non-blank-string? (:meta-keys settled-turn))
-      (= (count (:meta-keys settled-turn)) (count (set (:meta-keys settled-turn))))
-      (closed-map? replay #{:cursor-header :cursor-key :ready-event :generation-start-event})
-      (contains? headers (:cursor-header replay))
-      (non-blank-string? (:cursor-key replay))
-      (contains? session (:ready-event replay))
-      (contains? session (:generation-start-event replay))
-      (= (:event subscription-ready) (:ready-event replay)))))
-
-(s/def :contract/gateway valid-document?)
-
-(def ^:private resource-path "vis-contract/gateway.edn")
-
-(def ^:private document
-  (delay
-    (let [resource
-          (io/resource resource-path)
-
-          _
-          (when-not resource
-            (throw (ex-info (str "the gateway contract is missing from the classpath: "
-                                 resource-path)
-                            {:type :vis/contract-missing :resource resource-path})))
-
-          parsed
-          (edn/read-string (slurp resource))]
-
-      (when-not (s/valid? :contract/gateway parsed)
-        (throw (ex-info (str resource-path " is not a valid gateway contract")
-                        {:type :vis/contract-invalid
-                         :resource resource-path
-                         :explain (s/explain-str :contract/gateway parsed)})))
-      parsed)))
-
-(def version "Gateway contract document version." (:contract/version @document))
-(def protocol "Canonical gateway compatibility numbers." (:gateway/protocol @document))
+(def version "Gateway contract document version." (get @source "version"))
+(def protocol "Canonical gateway compatibility numbers." (:protocol @engine-source))
 (def protocol-version "Wire protocol spoken by this contract." (:version protocol))
 (def minimum-client-protocol
   "Oldest client protocol served by this gateway contract."
@@ -144,10 +16,18 @@
 (def minimum-gateway-protocol
   "Oldest gateway protocol accepted by this client contract."
   (:minimum-gateway protocol))
-(def headers "Semantic header key to canonical lower-case spelling." (:gateway/headers @document))
+(def headers "Semantic header key to canonical lower-case spelling." (:headers @engine-source))
+
 (def route-table
   "Complete built-in gateway route table, one record per path."
-  (:gateway/routes @document))
+  (mapv (fn [{:keys [path audience operations]}]
+          {:path path
+           :audience (keyword audience)
+           :operations (into {}
+                             (map (fn [[method operation]]
+                                    [method (update-vals operation keyword)]))
+                             operations)})
+        (:routes @engine-source)))
 (def route-operations
   "Complete `[method path]` to request/response transport declaration."
   (into {}
@@ -163,33 +43,29 @@
   (get route-operations [method path]))
 (def session-event-types
   "Closed built-in vocabulary carried by the session journal and multiplexed session SSE stream."
-  (get-in @document [:gateway/events :session]))
+  (set (get-in @source ["events" "session"])))
 (def job-events
-  "Directional event names carried by dedicated speech and voice job streams."
-  (get-in @document [:gateway/events :jobs]))
+  "Directional event names carried by dedicated speech job streams."
+  (get-in @engine-source [:events :jobs]))
 (def job-event-types "All dedicated job-stream event names." (set (vals job-events)))
 (def voice-job-event "Transcription job stream event name." (:transcribe job-events))
 (def speech-job-event "Speech synthesis job stream event name." (:synthesize job-events))
 (def push-event-types
   "Event names used by relay push payloads."
-  (get-in @document [:gateway/events :push]))
+  (set (get-in @source ["events" "push"])))
 (def turn-terminal-event-types
-  "Every built-in event type that ENDS a turn for every blocking reader.
-   `turn.cancelled` is terminal: a user stop or stall force-cancel lands exactly like
-   completion/failure, so omitting it leaves the reader and its live stream parked."
-  (get-in @document [:gateway/events :turn-terminal]))
+  "Every built-in event type that ends a turn."
+  (set (get-in @source ["events" "turn_terminal"])))
 (def queue-mirror-event-types
-  "Queue lifecycle events attached channels mirror for a DIFFERENT turn of the same
-   session. `turn.queued.drained` removes the head when Core starts it; pause/resume
-   events keep every sibling channel on the same held-backlog state."
-  (get-in @document [:gateway/events :queue-mirror]))
+  "Queue lifecycle events mirrored by attached channels."
+  (set (get-in @source ["events" "queue_mirror"])))
 (def view-events
   "Open, patch and close event names for both View kinds."
-  (get-in @document [:gateway/events :view]))
+  (get-in @engine-source [:events :view]))
 (def view-open-event "Session event that mounts either View kind." (:open view-events))
 (def view-patch-event "Session event carrying accepted View operations." (:patch view-events))
 (def view-close-event "Session event that ends either View kind." (:close view-events))
-(def envelopes "Canonical gateway envelope declarations." (:gateway/envelopes @document))
+(def envelopes "Canonical gateway envelope declarations." (:envelopes @engine-source))
 (def handshake-envelope "Gateway identity handshake declaration." (:handshake envelopes))
 (def handshake-keys "Semantic handshake key to canonical wire spelling." (:keys handshake-envelope))
 (def error-response-envelope "Shared JSON error response declaration." (:error-response envelopes))
@@ -284,7 +160,7 @@
              (get required :server-time-ms) server-time-ms}
       (some? latest-iteration)
       (assoc (get optional :latest-iteration) latest-iteration))))
-(def replay "Cursor and generation anchors for session replay." (:gateway/replay @document))
+(def replay "Cursor and generation anchors for session replay." (:replay @engine-source))
 (def event-types
   "All event names on session, dedicated-job and relay-push streams."
   (into session-event-types (concat job-event-types push-event-types)))
@@ -296,30 +172,7 @@
   []
   (set (keys route-operations)))
 
-(defn- ->package-data
-  [value]
-  (cond (map? value) (into (sorted-map)
-                           (map (fn [[k v]]
-                                  [(wire/wire-key k) (->package-data v)]))
-                           value)
-        (set? value) (->> value
-                          (map ->package-data)
-                          (sort-by pr-str)
-                          vec)
-        (sequential? value) (mapv ->package-data value)
-        :else (wire/->wire value)))
-
-(defn package-document
-  "Deterministic string-keyed gateway data for generated Python and JavaScript inputs.
-   Sets become sorted vectors; route order remains the owning EDN's order."
-  []
-  (array-map "version" version
-             "protocol" (->package-data protocol)
-             "headers" (->package-data headers)
-             "routes" (->package-data route-table)
-             "events" (->package-data (:gateway/events @document))
-             "envelopes" (->package-data envelopes)
-             "replay" (->package-data replay)))
+(defn package-document "The validated language-neutral gateway document." [] @source)
 
 (defn session-event-type?
   "True when `event-type` belongs to the closed session-stream vocabulary."

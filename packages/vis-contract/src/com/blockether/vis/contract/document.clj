@@ -1,19 +1,10 @@
 (ns com.blockether.vis.contract.document
-  "One contract document, read as JSON and validated against its JSON Schema.
-
-   `resources/vis-contract/<name>.json` IS the declaration: string keys,
-   snake_case, the same shape the rendered `contract.json` carries, so a reader in
-   any language sees one spelling. Its schema is
-   `resources/vis-contract/schema/<name>.json`, which keeps the small reusable
-   definitions in `$defs` and `$ref`s the cross-document ones from
-   `schema/common.json` — the shape of a document is DECLARED there, never
-   re-implemented as predicates beside the accessors.
-
-   This is the only place either file is parsed. An invalid document throws while
-   loading, with the schema's own errors, instead of surfacing later as a missing
-   key in whatever happened to read it first."
+  "Loads JSON contract documents and validates them with their same-named JSON Schemas.
+   `schema/common.json` supplies shared definitions. Raw validators reject values outside
+   the JSON data model; engine adapters may normalize keyword maps before validation."
   (:require [clojure.java.io :as io]
-            [com.blockether.skjema.core :as skjema]))
+            [com.blockether.skjema.core :as skjema]
+            [com.blockether.vis.contract.wire :as wire]))
 
 (set! *warn-on-reflection* true)
 
@@ -27,18 +18,67 @@
     (skjema/read-schema resource)))
 
 (def ^:private common-schema (delay (read-resource "vis-contract/schema/common.json")))
+(def ^:private schemas (atom {}))
+(def ^:private validators (atom {}))
+
+(defn- schema
+  [document-name]
+  (or (get @schemas document-name)
+      (let [value (read-resource (str "vis-contract/schema/" document-name ".json"))]
+        (swap! schemas assoc document-name value)
+        value)))
 
 (defn- compiled-schema
-  "The compiled schema for one document, with `schema/common.json` in the registry
-   so its `$ref`s resolve without a network fetch."
-  [document-name]
-  (let [schema (read-resource (str "vis-contract/schema/" document-name ".json"))]
-    (skjema/compile-schema schema
-                           {:base (get schema "$id")
-                            :registry {(get @common-schema "$id") @common-schema}
-                            ;; `format` annotates unless asked to assert, and the
-                            ;; contract means its `regex`/`uri` formats as constraints.
-                            :format-assertion true})))
+  [document-name definition]
+  (let [cache-key [document-name definition]]
+    (or (get @validators cache-key)
+        (let [source (schema document-name)
+              schema-id (get source "$id")
+              target (if definition
+                       (-> (select-keys source ["$schema" "$id" "$defs"])
+                           (assoc "$ref" (str "#/$defs/" definition)))
+                       source)
+              compiled (skjema/compile-schema target
+                                              {:base schema-id
+                                               :registry {(get @common-schema "$id") @common-schema}
+                                               :format-assertion true})]
+
+          (swap! validators assoc cache-key compiled)
+          compiled))))
+
+(defn explain
+  "JSON Schema errors for `value`, or nil when it satisfies the document root or
+   named definition. Clojure keyword maps are normalized to their JSON spelling
+   before definition validation."
+  ([document-name value] (skjema/explain (compiled-schema document-name nil) value))
+  ([document-name definition value]
+   (skjema/explain (compiled-schema document-name definition) (wire/->wire value))))
+
+(defn valid?
+  "True when `value` satisfies the document root or named JSON Schema definition."
+  ([document-name value] (nil? (explain document-name value)))
+  ([document-name definition value] (nil? (explain document-name definition value))))
+
+(defn- json-value?
+  [value]
+  (cond (or (nil? value) (string? value) (boolean? value)) true
+        (number? value) (and (not (Double/isNaN (double value)))
+                             (not (Double/isInfinite (double value))))
+        (vector? value) (every? json-value? value)
+        (map? value) (and (every? string? (keys value)) (every? json-value? (vals value)))
+        :else false))
+
+(defn explain-json
+  "JSON Schema errors without converting Clojure values into JSON spellings."
+  [document-name definition value]
+  (if (json-value? value)
+    (skjema/explain (compiled-schema document-name definition) value)
+    {:errors [{:message "value is not JSON data" :value value}]}))
+
+(defn valid-json?
+  "True when raw JSON-shaped data satisfies a named definition."
+  [document-name definition value]
+  (nil? (explain-json document-name definition value)))
 
 (defn load!
   "The contract document named `document-name`, parsed and validated against its
@@ -52,7 +92,7 @@
         parsed
         (read-resource resource-path)]
 
-    (when-let [{:keys [errors]} (skjema/explain (compiled-schema document-name) parsed)]
+    (when-let [{:keys [errors]} (skjema/explain (compiled-schema document-name nil) parsed)]
       (throw (ex-info
                (str resource-path " does not satisfy vis-contract/schema/" document-name ".json")
                {:type :vis/contract-invalid :resource resource-path :errors errors})))

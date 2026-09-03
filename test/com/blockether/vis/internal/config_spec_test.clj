@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.config-spec-test
   (:require [clojure.java.io :as io]
-            [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.vis.internal.config-spec :as config-spec]
             [lazytest.core :refer [defdescribe expect it]]
@@ -134,9 +133,7 @@
 
 (defdescribe
   config-contract-test
-  (it "registers a complete string-keyed clojure.spec contract"
-      (expect (s/get-spec :com.blockether.vis.internal.config-spec/config))
-      (expect (config-spec/valid? full-config)))
+  (it "validates the complete string-keyed JSON contract" (expect (config-spec/valid? full-config)))
   (it
     "rejects keyword keys, aliases, unknown keys, and invalid security values"
     (expect (not (config-spec/valid? {:filesystem {}})))
@@ -403,14 +400,6 @@
 
 (defdescribe
   config-completeness-test
-  (it "registers specs for every fixed and dynamic configuration block"
-      (doseq [spec-name [:config :model-map :model :models :provider :providers :rate-limit
-                         :router-network :budget :tokens :router :workspace-entry :workspace-entries
-                         :workspace :jail-filesystem :jail :network-rule-allow :network-rule-allows
-                         :network-rule :network-rules :network :prompt-map :system-prompt :grep
-                         :db-spec :tui-settings :mcp-server :mcp-servers :mcp :workspace-when
-                         :jail-mach-services]]
-        (expect (s/get-spec (keyword "com.blockether.vis.internal.config-spec" (name spec-name))))))
   (it
     "keeps every declared key set, schema, and exhaustive fixture in sync"
     (let [provider

@@ -12,10 +12,8 @@
  ;; JitPack hosts sherpa-onnx, which the built-in gateway speech subsystem uses.
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps
- {;; The extension CONTRACT, published on its own so an extension — or a tool in
-  ;; somebody else's repository — can read what the host offers without depending on
-  ;; the engine. It carries `resources/vis-contract/*.edn`, so the engine reads its
-  ;; own contract off this dependency's classpath.
+{;; The extension contract is published separately so extensions and tools can read
+  ;; its validated JSON documents without depending on the engine.
   com.blockether/vis-contract {:local/root "packages/vis-contract"}
   com.blockether/vis-foundation-search {:local/root "extensions/common/vis-foundation-search"}
   com.blockether/vis-language-clojure {:local/root "extensions/languages/vis-language-clojure"}
@@ -87,7 +85,6 @@
   info.sunng/ring-jetty9-adapter {:mvn/version "0.40.3"}
   io.github.java-diff-utils/java-diff-utils {:mvn/version "4.17"}
   io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
-  metosin/malli {:mvn/version "0.20.1"}
   metosin/reitit-ring {:mvn/version "0.10.1"}
   org.babashka/http-client {:mvn/version "0.4.24"}
   ;; Pure-Java X.509 minting for the egress-proxy MITM CA (ephemeral, per-session) —

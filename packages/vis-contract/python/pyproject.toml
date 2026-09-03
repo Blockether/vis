@@ -1,17 +1,7 @@
-# The DECLARATION half of Vis: published as `vis-contract`, imported as `vis_contract`.
-#
-# `src/vis_contract/contract.json` is never written by hand. The owning EDN files
-# under `resources/vis-contract/` are rendered by the argument-free
-# `contract.python-host/write-package-document!`. `python_package_test` pins it
-# byte-for-byte to the language-neutral root copy and fails when either drifts.
-#
-# `version` mirrors the repo-root `VIS_VERSION`, the one version source
-# (`build.clj`), and `vis-agent` depends on exactly this version: the API and the
-# declaration it was cut against always install as a pair.
-#
-# No dependencies, and none are welcome — a declaration everyone reads must be
-# cheap to install. `requires-python` is the CPython level vis' own CPython
-# implements, because the module this contract describes is a file that engine execs.
+# Published Python reader for the validated Vis JSON contract.
+# `src/vis_contract/contract.json` is generated and pinned byte-for-byte to the
+# repository aggregate. `version` mirrors the repo-root `VIS_VERSION`.
+# The reader intentionally has no runtime dependencies.
 
 [build-system]
 requires = ["hatchling>=1.27"]

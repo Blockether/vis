@@ -108,13 +108,13 @@ Highlights:
 High-performance data-driven data specification library for Clojure/Script.
 - Stars: 1710
 
-Title: clojure.spec.alpha
-URL: https://clojuredocs.org/clojure.spec.alpha
-Published: 2018-01-01T00:00:00.000Z
-Author: Rich Hickey
+Title: JSON Schema
+URL: https://json-schema.org/
+Published: 2020-12-01T00:00:00.000Z
+Author: JSON Schema contributors
 Highlights:
-## Spec
-The spec library specifies the structure of data.")
+## Validation
+A vocabulary for annotating and validating JSON documents.")
 
 (defn- mock-mcp
   "Replace the private `call-mcp-tool!` so tests bypass the JSON-RPC
@@ -158,7 +158,7 @@ The spec library specifies the structure of data.")
             (expect (not (str/includes? (get r "endpoint") "SECRET"))))
         (it "non-N/A authors carried through; N/A is stripped"
             (expect (nil? (get (first cs) "authors")))
-            (expect (= "Rich Hickey" (get (second cs) "authors"))))
+            (expect (= "JSON Schema contributors" (get (second cs) "authors"))))
         (it ":published preserved on the citation"
             (expect (= "2019-05-17T19:21:51.000Z" (get (first cs) "published"))))))))
 
@@ -572,7 +572,7 @@ const total = add(1, 2);")
 
       (doseq [[path content] entries]
         (let [data (.getBytes ^String content StandardCharsets/UTF_8)
-              entry (TarArchiveEntry. path)]
+              entry (TarArchiveEntry. ^String path)]
 
           (.setSize entry (alength data))
           (.putArchiveEntry tar entry)

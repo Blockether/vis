@@ -2568,17 +2568,9 @@
          answer->wire
          json/write-json-str))))
 
-;; -- The Python seam ---------------------------------------------------------
 
 (def ^:private live-ops
-  "The live verb's op grammar, the same shape the shell verb's is:
-   `open` MOUNTS a view and answers the id every later op names, and each handle
-   op drives the view that id stands for.
-
-   `packages/vis-contract/resources/vis-contract/python-host.edn` declares the
-   same table for the packaged module and for a host outside Vis, and
-   `contract.python-host-test` is what fails when the two drift: an op the engine
-   does not know would make an extension that runs inside Vis refuse outside it."
+  "The live verb operation grammar declared by validated `python-host.json`."
   {:default "open" :spawn #{"open"} :handle #{"patch" "state" "close"}})
 
 (defn- live-op-name

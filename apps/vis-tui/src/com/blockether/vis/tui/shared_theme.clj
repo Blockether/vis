@@ -3,8 +3,7 @@
 
    Keep this namespace pure data: no Lanterna, Swing, browser, or terminal
    backend imports. Channels adapt these tokens to their own render types."
-  (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [com.blockether.vis.tui.util :as util]))
 
 (def default-theme-id
@@ -31,26 +30,26 @@
       (and (vector? x) (every? theme-setting-value? x))
       (and (map? x) (every? theme-key? (keys x)) (every? theme-setting-value? (vals x)))))
 
-(s/def ::rgb rgb?)
+(def ^:private required-theme-keys
+  #{:name :display-name :mode :palette :fonts :widths :spacing :settings})
 
-(s/def ::name util/non-blank-string?)
-
-(s/def ::display-name util/non-blank-string?)
-
-(s/def ::mode #{:light :dark})
-
-(s/def ::palette (s/and (s/map-of keyword? ::rgb) seq))
-
-(s/def ::fonts map?)
-
-(s/def ::widths map?)
-
-(s/def ::spacing map?)
-
-(s/def ::settings (s/map-of string? theme-setting-value?))
-
-(s/def ::theme
-  (s/keys :req-un [::name ::display-name ::mode ::palette ::fonts ::widths ::spacing ::settings]))
+(defn valid-theme?
+  [x]
+  (and (map? x)
+       (every? #(contains? x %) required-theme-keys)
+       (util/non-blank-string? (:name x))
+       (util/non-blank-string? (:display-name x))
+       (contains? #{:light :dark} (:mode x))
+       (map? (:palette x))
+       (seq (:palette x))
+       (every? keyword? (keys (:palette x)))
+       (every? rgb? (vals (:palette x)))
+       (map? (:fonts x))
+       (map? (:widths x))
+       (map? (:spacing x))
+       (map? (:settings x))
+       (every? string? (keys (:settings x)))
+       (every? theme-setting-value? (vals (:settings x)))))
 
 (def common-fonts
   {:mono {:family "monospace" :size "inherit" :weight "normal" :style "normal"}
@@ -947,14 +946,7 @@
   "Default palette. Kept as a named var for channels that only need colours."
   (:palette default-theme))
 
-(def pallete
-  "Deprecated misspelling retained as an alias for callers/searches using
-   'pallete'. Prefer `palette`."
-  palette)
-
-(defn valid-theme? [x] (s/valid? ::theme x))
-
-(defn explain-theme [x] (s/explain-data ::theme x))
+(defn explain-theme [x] (when-not (valid-theme? x) {:valid false :value x}))
 
 (defn- normalize-theme-id
   [id]

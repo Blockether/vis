@@ -2,8 +2,7 @@
   "Tests for the pure hashline layer — the anchor vocabulary `cat` mints, `grep`
    echoes and `patch` spends. No IO here: every case is a string in, a resolution
    or a refusal out."
-  (:require [clojure.spec.alpha :as s]
-            [clojure.string :as string]
+  (:require [clojure.string :as string]
             [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -17,15 +16,15 @@
   anchor-token-test
   (it "an anchor is a line number, a colon and exactly three hex chars"
       (doseq [n (range 1 6)]
-        (expect (s/valid? :ext.editing.hashline/anchor (anchor-of n)))
+        (expect (hashline/anchor? (anchor-of n)))
         (expect (= n (hashline/anchor->line (anchor-of n))))))
   (it "a blank line hashes to 000 and is still addressable"
       (expect (= "3:000" (anchor-of 3)))
-      (expect (s/valid? :ext.editing.hashline/anchor (anchor-of 3))))
+      (expect (hashline/anchor? (anchor-of 3))))
   (it "the hash ignores surrounding whitespace, so re-indentation is not a new line"
       (expect (= (hashline/line-hash "  (defn f [] 1)") (hashline/line-hash "(defn f [] 1)  "))))
   (it "a parsed anchor carries both coordinates"
-      (expect (s/valid? :ext.editing.hashline/parsed (hashline/parse-anchor "4439:a80")))
+      (expect (hashline/parsed? (hashline/parse-anchor "4439:a80")))
       (expect (:malformed (hashline/parse-anchor "a80")))
       ;; A re-quoted anchor is a common serializer mistake and must still parse.
       (expect (= 4439 (:line (hashline/parse-anchor "\"4439:a80\"")))))

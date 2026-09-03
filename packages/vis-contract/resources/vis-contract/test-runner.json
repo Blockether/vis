@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "selector_keys": [
+    "paths",
+    "include",
+    "exclude"
+  ],
+  "result_keys": [
+    "language",
+    "mode",
+    "framework",
+    "tool",
+    "ns",
+    "total",
+    "pass",
+    "fail",
+    "errored",
+    "selected",
+    "skipped",
+    "failures",
+    "output"
+  ]
+}

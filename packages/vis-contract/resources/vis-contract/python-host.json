@@ -1,0 +1,130 @@
+{
+  "version": 6,
+  "ops": [
+    {
+      "name": "state_get",
+      "global": "__vis_host_state_get__",
+      "arity": 1,
+      "summary": "Read one value out of the extension's durable state.",
+      "outside": "outside/local"
+    },
+    {
+      "name": "state_put",
+      "global": "__vis_host_state_put__",
+      "arity": 2,
+      "summary": "Write one JSON value into the extension's durable state.",
+      "outside": "outside/local"
+    },
+    {
+      "name": "state_del",
+      "global": "__vis_host_state_del__",
+      "arity": 1,
+      "summary": "Drop one key from the extension's durable state.",
+      "outside": "outside/local"
+    },
+    {
+      "name": "state_keys",
+      "global": "__vis_host_state_keys__",
+      "arity": 0,
+      "summary": "List every key the extension's durable state holds.",
+      "outside": "outside/local"
+    },
+    {
+      "name": "log",
+      "global": "__vis_host_log__",
+      "arity": 2,
+      "summary": "Emit one engine log line at a level.",
+      "outside": "outside/local"
+    },
+    {
+      "name": "notify",
+      "global": "__vis_host_notify__",
+      "arity": 2,
+      "summary": "Show one notification on the user's channel.",
+      "outside": "outside/local"
+    },
+    {
+      "name": "shell",
+      "global": "__vis_host_shell__",
+      "arity": 1,
+      "summary": "Run one shell op — start, logs, type, wait or stop.",
+      "outside": "outside/local"
+    },
+    {
+      "name": "jailed_shell",
+      "global": "__vis_host_jailed_shell__",
+      "arity": 1,
+      "summary": "Run one shell op inside the workspace jail.",
+      "outside": "outside/refuse",
+      "refusal": "vis.jailed_shell needs the Vis host's jail; nothing outside a Vis process can enforce it. Run the command with vis.shell when an unjailed process is what you meant, or run this extension under vis-agent."
+    },
+    {
+      "name": "jailed_shell_session",
+      "global": "__vis_host_jailed_shell_session__",
+      "arity": 1,
+      "summary": "Run one shell op inside a persistent jailed session.",
+      "outside": "outside/refuse",
+      "refusal": "vis.jailed_shell_session needs the Vis host's jail; nothing outside a Vis process can enforce it. Run the command with vis.shell when an unjailed process is what you meant, or run this extension under vis-agent."
+    },
+    {
+      "name": "request_input",
+      "global": "__vis_host_request_input__",
+      "arity": 3,
+      "summary": "Ask the human, and block until the answer settles or is cancelled.",
+      "outside": "outside/prompt"
+    },
+    {
+      "name": "live",
+      "global": "__vis_host_live__",
+      "arity": 1,
+      "summary": "Open, patch, read or close one live view.",
+      "outside": "outside/local"
+    },
+    {
+      "name": "reveal_secret",
+      "global": "__vis_host_reveal_secret__",
+      "arity": 1,
+      "summary": "Resolve a `vis-secret:` handle to its plaintext.",
+      "outside": "outside/local"
+    },
+    {
+      "name": "forget_secret",
+      "global": "__vis_host_forget_secret__",
+      "arity": 1,
+      "summary": "Drop the plaintext a secret handle stands for.",
+      "outside": "outside/local"
+    },
+    {
+      "name": "declare_env",
+      "global": "__vis_host_declare_env__",
+      "arity": 1,
+      "summary": "Resolve the environment variables the extension declared.",
+      "outside": "outside/local"
+    }
+  ],
+  "shell": {
+    "default_op": "run",
+    "spawn_ops": [
+      "run",
+      "background"
+    ],
+    "handle_ops": [
+      "logs",
+      "wait",
+      "send",
+      "stop"
+    ]
+  },
+  "live": {
+    "default_op": "open",
+    "spawn_ops": [
+      "open"
+    ],
+    "handle_ops": [
+      "patch",
+      "state",
+      "close"
+    ],
+    "flush_ms": 100
+  }
+}
