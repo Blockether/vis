@@ -9,10 +9,10 @@
    size is not meaning, and the agent burns a tool call to learn nothing.
 
    This namespace closes that gap WITHOUT switching the turn's model: one cheap
-   side-channel `ask!` on the cheapest+fastest model in the SAME fleet that does
-   carry `:vision` (svar picks it by capability, across providers) turns each image
-   into text, and the text rides the prompt where the image would have been. The
-   pinned model, its thinking chain and its tool continuity are untouched.
+   side-channel `ask!` prefers a `:vision` model from the foreground provider, then
+   the last provider whose eyes worked, then the cheapest+fastest eyes elsewhere in
+   the same fleet. Svar owns that ordered provider preference and capability filter.
+   The pinned model, its thinking chain and its tool continuity are untouched.
 
    Three properties make it affordable rather than wasteful:
 
@@ -420,16 +420,25 @@
   @proven-eye)
 
 (defn- describe-routing
-  "`DESCRIBE_ROUTING` narrowed by everything already learned: providers whose wire
-   refused pixels and model NAMES that cannot read them are excluded, and the provider
-   that last ANSWERED is preferred.
+  "`DESCRIBE_ROUTING` narrowed by everything already learned. The foreground
+   provider gets first refusal, followed by the provider that last ANSWERED; svar
+   then considers every remaining provider. Providers whose wire refused pixels
+   and model NAMES that cannot read them are excluded.
 
-   The preference names a PROVIDER, never a forced model — svar still optimizes for cost
-   and speed within it, the capability filter still holds, and the preference disappears
-   the moment that provider is excluded, so nothing learned here can pin a pass to a
-   broken endpoint."
-  [excluded excluded-models]
-  (let [preferred (:provider-id @proven-eye)]
+   Preferences name PROVIDERS, never forced models — svar still optimizes for cost
+   and speed within each one, the capability filter still holds, and an excluded
+   provider disappears from the chain."
+  [preferred-provider excluded excluded-models]
+  (let [excluded
+        (set excluded)
+
+        preferred
+        (->> [preferred-provider (:provider-id @proven-eye)]
+             (remove nil?)
+             distinct
+             (remove excluded)
+             vec)]
+
     (cond-> DESCRIBE_ROUTING
       (seq excluded)
       (assoc :exclude-providers excluded)
@@ -437,8 +446,8 @@
       (seq excluded-models)
       (assoc :exclude-models excluded-models)
 
-      (and preferred (not (contains? (set excluded) preferred)))
-      (assoc :prefer-providers [preferred]))))
+      (seq preferred)
+      (assoc :prefer-providers preferred))))
 
 (defn remember-image-blind!
   "Record `provider-id` as unable to carry an image content part at all. Idempotent, and
@@ -544,7 +553,8 @@
 (defn sighted-model
   "Descriptor of the model this fleet would use to LOOK at an image, or nil when no
    configured provider carries `:vision` — one that already refused pixels, on the
-   wire or by name, does not count. Cheap: router arithmetic, no I/O.
+   wire or by name, does not count. `preferred-provider` gets first refusal without
+   becoming a pin. Cheap: router arithmetic, no I/O.
 
    TOTAL BY CONTRACT. The probe runs INSIDE request assembly and its answer is only
    ever an OFFER — nil means the caller keeps today's blind behaviour, so nothing
@@ -553,19 +563,22 @@
    combinations it rejects, and Vis passes router-SHAPED config maps around (its own
    `resolve-effective-model` is structural for exactly that reason). A probe that
    propagated would abort turns that carry no images at all."
-  [router]
-  (when (map? router)
-    (let [blind
-          (blind-provider-ids)
+  ([router] (sighted-model router nil))
+  ([router preferred-provider]
+   (when (map? router)
+     (let [blind
+           (blind-provider-ids)
 
-          blind-models
-          (blind-model-names)]
+           blind-models
+           (blind-model-names)]
 
-      (try (svar-router/resolve-effective-model router (describe-routing blind blind-models))
-           (catch Throwable t
-             (tel/log! {:level :debug :id ::sight-probe-failed :data {:error (ex-message t)}}
-                       "Vision-capability probe failed; treating the fleet as blind")
-             nil)))))
+       (try (svar-router/resolve-effective-model
+              router
+              (describe-routing preferred-provider blind blind-models))
+            (catch Throwable t
+              (tel/log! {:level :debug :id ::sight-probe-failed :data {:error (ex-message t)}}
+                        "Vision-capability probe failed; treating the fleet as blind")
+              nil))))))
 
 (defn available?
   "True when the fallback is on AND some configured model can actually see."
@@ -765,7 +778,7 @@
                  (max 1 (count (:models provider))))
                (:providers router))))
 
-(defn describe-images
+(defn- describe-images*
   "Descriptions for already-wired images (the `attachments/wire-image` shape:
    `:base64`, `:media-type`), ALIGNED to the input order.
 
@@ -779,9 +792,9 @@
    asks run in PARALLEL against one shared wall clock, so a turn arriving with
    several new images costs about one call's latency, and every later request in
    the session answers from cache."
-  [router context images]
+  [router context images preferred-provider]
   (when (and (seq images) (enabled?))
-    (when-let [model (sighted-model router)]
+    (when-let [model (sighted-model router preferred-provider)]
       (let [entries (mapv (fn [image]
                             (let [k (content-digest image)]
                               {:image image :key k :cached (get @description-cache k)}))
@@ -826,7 +839,9 @@
                                (<= (- (long deadline-at) (util/now-ms)) 0))
                          done
                          (let [outcome (describe-round router
-                                                       (describe-routing excluded excluded-models)
+                                                       (describe-routing preferred-provider
+                                                                         excluded
+                                                                         excluded-models)
                                                        context
                                                        deadline-at
                                                        (:name model)
@@ -857,7 +872,13 @@
                 (or cached (get by-digest key)))
               entries)))))
 
-(defn describe-attachments
+(defn describe-images
+  "Describe wired images, preferring `preferred-provider` without pinning to it."
+  ([router context images] (describe-images* router context images nil))
+  ([router context images preferred-provider]
+   (describe-images* router context images preferred-provider)))
+
+(defn- describe-attachments*
   "Wire raw user attachments through the send-time image gate and describe what
    survives it, keyed by the LABEL the prompt manifest uses for the same row.
 
@@ -871,7 +892,7 @@
    call. The map can hold one text per label, so the second row would silently
    inherit the first row's report — and an agent reading a description under the
    wrong picture testifies to something nobody saw."
-  [router context attachments]
+  [router context attachments preferred-provider]
   (let [wired
         (:attached (attachments/wire-images attachments))
 
@@ -882,7 +903,7 @@
         (filterv #(= 1 (get label-counts (attachments/image-label %))) wired)
 
         descriptions
-        (describe-images router context addressable)]
+        (describe-images router context addressable preferred-provider)]
 
     (if (seq descriptions)
       (into {}
@@ -892,6 +913,12 @@
                  addressable
                  descriptions))
       {})))
+
+(defn describe-attachments
+  "Describe raw image attachments, preferring `preferred-provider` without pinning to it."
+  ([router context attachments] (describe-attachments* router context attachments nil))
+  ([router context attachments preferred-provider]
+   (describe-attachments* router context attachments preferred-provider)))
 
 (defn descriptions-message
   "The plain-TEXT `{:role \"user\"}` message that stands in for images a blind target

@@ -4011,11 +4011,11 @@
    in the fleet can see. Resolved per request (a provider switch mid-session takes
    effect immediately) but it costs only router arithmetic: the calls happen lazily,
    per image actually in play, and each image is described once per process."
-  [environment context]
+  [environment context preferred-provider]
   (let [router (:router environment)]
     (when (vision-describe/available? router)
       (fn [images]
-        (vision-describe/describe-images router context images)))))
+        (vision-describe/describe-images router context images preferred-provider)))))
 
 (defn- conversation-suffix
   "Append-only conversation suffix for the current turn: each prior iteration
@@ -7936,15 +7936,16 @@
         turn-context
         (ctx-loop/render-block! environment ctx-renderer/render-turn-boundary)
 
-        ;; A blind target does not lose the user's screenshot: the cheapest sighted
-        ;; model in the SAME fleet turns each image into text (once per image — the
-        ;; description is content-keyed), and the report rides the manifest where the
-        ;; image blocks would have been.
+        ;; A blind target does not lose the user's screenshot: a sighted model on the
+        ;; foreground provider gets first refusal before the rest of the fleet. It turns
+        ;; each image into text once (the description is content-keyed), and the report
+        ;; rides the manifest where the image blocks would have been.
         initial-image-descriptions
         (when-not initial-target-vision?
           (vision-describe/describe-attachments (:router environment)
                                                 user-request
-                                                (:attached user-attachments)))
+                                                (:attached user-attachments)
+                                                (:provider initial-resolved-model)))
 
         ;; The current turn is assembled separately so an immediate same-route
         ;; follow-up can append it to the exact prior request. Canonical assembly
@@ -8433,11 +8434,12 @@
                  ;; that one semantic rewrite switches the base to canonical recap.
                  visible-trailer-iters (conversation-trailer-for-base summarized-trailer-iters
                                                                       (:resumed? message-base))
-                 conversation-suffix-msgs (conversation-suffix
-                                            visible-trailer-iters
-                                            replay-target
-                                            {:describe-images
-                                             (replay-image-describer environment user-request)})
+                 conversation-suffix-msgs
+                 (conversation-suffix
+                   visible-trailer-iters
+                   replay-target
+                   {:describe-images
+                    (replay-image-describer environment user-request (:provider replay-target))})
                  provider-messages (into (vec messages) conversation-suffix-msgs)
                  effective-messages-atom (atom provider-messages)
                  ;; Per-ITERATION rescue counter: escalating context-overflow folds.

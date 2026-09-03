@@ -89,6 +89,30 @@
                 :speed :medium
                 :capabilities #{:chat :vision}}]}]))
 
+(defn- same-provider-fleet
+  "A blind foreground model with costlier eyes beside it, plus cheaper eyes elsewhere."
+  []
+  (svar/make-router
+    [{:id :foreground
+      :api-key "k"
+      :base-url "http://foreground.invalid"
+      :api-style :openai
+      :models [{:name "foreground-blind"
+                :pricing {:input 0.1 :output 0.2}
+                :speed :fast
+                :capabilities #{:chat}}
+               {:name "foreground-seer"
+                :pricing {:input 1.0 :output 2.0}
+                :speed :fast
+                :capabilities #{:chat :vision}}]}
+     {:id :external
+      :api-key "k"
+      :base-url "http://external.invalid"
+      :api-style :openai
+      :models [{:name "external-seer"
+                :pricing {:input 0.01 :output 0.02}
+                :speed :fast
+                :capabilities #{:chat :vision}}]}]))
 (defn- blind-fleet
   []
   (svar/make-router [{:id :blind
@@ -206,6 +230,22 @@
         (expect (= "pricey-seer" (:name m)))
         (expect (= :seeing (:provider m)))
         (expect (contains? (:capabilities m) :vision))))
+  ;; Session 0263b73d: a blind GLM turn sent the screenshot to a cheaper provider
+  ;; even though the selected provider offered its own vision-capable Flash model.
+  (it "prefers eyes on the foreground turn's provider before global optimization"
+      (vd/remember-working-eye! :external "external-seer")
+      (let [fleet
+            (same-provider-fleet)
+
+            {:keys [calls]}
+            (with-asks
+              descriptions
+              #(vd/describe-images fleet "ctx" [(distinct-image "same-plan")] :foreground))]
+
+        (expect (= "external-seer" (:name (vd/sighted-model fleet))))
+        (expect (= {:name "foreground-seer" :provider :foreground}
+                   (select-keys (vd/sighted-model fleet :foreground) [:name :provider])))
+        (expect (= [:foreground :external] (:prefer-providers (:routing (:opts (first calls))))))))
   (it "resolves nothing when no configured model can see"
       (expect (nil? (vd/sighted-model (blind-fleet))))
       (expect (false? (vd/available? (blind-fleet))))

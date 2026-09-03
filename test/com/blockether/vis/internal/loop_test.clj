@@ -3614,7 +3614,8 @@
                                       {:provider :zai-coding-plan :model "glm-5-turbo"}
                                       {:describe-images ((deref #'lp/replay-image-describer)
                                                           {:router seeing-router}
-                                                          "why is the plot empty?")}))
+                                                          "why is the plot empty?"
+                                                          :seeing)}))
 
               note
               (last suffix)]
@@ -3635,14 +3636,14 @@
                                          :base-url "http://blind.invalid"
                                          :api-style :openai
                                          :models [{:name "cheap-blind" :capabilities #{:chat}}]}])]
-          (expect (nil? ((describer) {:router router} "ctx")))))
+          (expect (nil? ((describer) {:router router} "ctx" :blind)))))
     (it "is a fn when the fleet has a seeing model"
         (let [router (svar/make-router [{:id :seeing
                                          :api-key "k"
                                          :base-url "http://seeing.invalid"
                                          :api-style :openai
                                          :models [{:name "seer" :capabilities #{:chat :vision}}]}])]
-          (expect (fn? ((describer) {:router router} "ctx")))))
+          (expect (fn? ((describer) {:router router} "ctx" :seeing)))))
     ;; Regression: a router-SHAPED config map (no live provider state) made the sight
     ;; probe throw an NPE out of svar's resolver, so a plain text turn — no images
     ;; anywhere near it — died on the way into the request.
@@ -3650,7 +3651,8 @@
         (expect (nil? ((describer)
                         {:router {:providers [{:id :zai-coding-plan
                                                :models [{:name "glm-5-turbo"}]}]}}
-                        "ctx"))))
+                        "ctx"
+                        :zai-coding-plan))))
     (it "is nil while the vision_fallback_describe toggle is off"
         (let [router (svar/make-router [{:id :seeing
                                          :api-key "k"
@@ -3658,7 +3660,7 @@
                                          :api-style :openai
                                          :models [{:name "seer" :capabilities #{:chat :vision}}]}])]
           (toggles/set-value! "vision_fallback_describe" false)
-          (try (expect (nil? ((describer) {:router router} "ctx")))
+          (try (expect (nil? ((describer) {:router router} "ctx" :seeing)))
                (finally (toggles/reset-to-default! "vision_fallback_describe")))))))
 (defdescribe
   conversation-suffix-image-budget-test
