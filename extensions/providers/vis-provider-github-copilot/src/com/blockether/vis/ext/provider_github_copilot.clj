@@ -1002,6 +1002,14 @@
                                :base-url (str base "/v1")
                                :api-style :anthropic
                                :responses-path "/responses"
+                               ;; sol may legitimately spend several minutes reasoning before its
+                               ;; first byte. Keep the gateway backstop outside that measured
+                               ;; prefill envelope; project config can still override every value.
+                               :network {:timeout-ms 900000
+                                         :ttft-timeout-ms 240000
+                                         :first-byte-timeout-ms 240000
+                                         :idle-timeout-ms 120000
+                                         :semantic-timeout-ms 300000}
                                :default-models (svar/provider-default-models pid)}})]))
 
 (defn register!

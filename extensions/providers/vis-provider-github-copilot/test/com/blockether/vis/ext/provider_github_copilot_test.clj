@@ -3,6 +3,23 @@
             [com.blockether.vis.ext.provider-github-copilot :as sut]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
+;; Regression, issue #169: Copilot shipped without a network envelope, so the gateway's
+;; fixed 120-second backstop cancelled long-prefill sol calls before svar's watchdog did.
+(defdescribe copilot-network-policy-test
+             (it "ships the measured Copilot network envelope for every account tier"
+                 (let [expected
+                       {:timeout-ms 900000
+                        :ttft-timeout-ms 240000
+                        :first-byte-timeout-ms 240000
+                        :idle-timeout-ms 120000
+                        :semantic-timeout-ms 300000}
+
+                       providers
+                       (mapcat @#'sut/provider-entries [:individual :business :enterprise])]
+
+                   (doseq [provider providers]
+                     (expect (= expected (get-in provider [:provider/preset :network])))))))
+
 (defdescribe
   provider-registration-test
   (it "registers ONE transparent provider per Copilot account (no per-wire sub-providers)"

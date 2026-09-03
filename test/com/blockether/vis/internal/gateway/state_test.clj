@@ -2020,13 +2020,16 @@
                  (expect (false? (await-cancel token 350)))
                  (expect (true? (await-cancel token 1200))))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
-    (it "resets per-call output state and provider ceilings at each provider call"
+    ;; Regression, issue #169: every `:provider-call` reset turn-level `:produced?`, so a
+    ;; 71-iteration turn was treated as wholly unanswered and cancelled at the 120s ceiling.
+    (it "keeps turn-level output state across provider iterations"
         (let [answered (advance {:produced? true :first-output-timeout-ms 700 :stall-timeout-ms 600}
                                 {:phase :provider-call :provider "cloud"}
                                 42)]
-          (expect (false? (:produced? answered)))
+          (expect (true? (:produced? answered)))
           (expect (not (contains? answered :first-output-timeout-ms)))
-          (expect (not (contains? answered :stall-timeout-ms)))))
+          (expect (not (contains? answered :stall-timeout-ms)))
+          (expect (false? (:tripped? (decision (assoc answered :started? true) 120001))))))
     (it "holds a turn that already streamed output to the full stall ceiling"
         (let [sid
               (str "stall-" (java.util.UUID/randomUUID))

@@ -2466,9 +2466,9 @@
    deliberately above svar's 5-minute semantic watchdog. Applying that same budget
    to silence from the very first byte is what let the reported turn sit 3m47s
    with zero iterations, freezing the session queue behind it while the user
-   watched a spinner. A streaming provider that has not emitted one byte in two
-   minutes is wedged, not slow — and the resulting failure is TRANSIENT, so the
-   queue re-runs the message on backoff and an over-eager trip costs one retry."
+   watched a spinner. A provider-scoped network policy may widen this ceiling for
+   a legitimately long prefill. If the watchdog still trips, the turn fails and
+   waits for an explicit retry; Vis never replays a provider request automatically."
   (* 2 60 1000))
 
 (def ^:private first-output-exempt-phases
@@ -2554,7 +2554,8 @@
    as output made a turn that never received one token look like a producing turn:
    it kept the full cancel grace and the full [[TURN_STALL_TIMEOUT_MS]] ceiling.
    The marker still moves the idle deadline — the wait legitimately begins there —
-   it just no longer claims the model said anything."
+   it just no longer claims the model said anything. Output already produced by an
+   earlier iteration remains turn-level progress."
   #{:provider-call})
 
 (defn- advance-turn-stall-state
@@ -2579,7 +2580,7 @@
         (cond-> (assoc state :phase (:phase chunk))
           provider-call?
           (-> (dissoc :first-output-timeout-ms :stall-timeout-ms)
-              (assoc :produced? false)))]
+              (update :produced? boolean)))]
 
     (cond-> state
       ;; Provider calls may carry a wider provider-owned prefill envelope. Keep
