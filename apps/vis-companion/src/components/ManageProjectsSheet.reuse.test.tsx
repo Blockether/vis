@@ -339,7 +339,7 @@ describe("browsing opens one level above the current project", () => {
        (await screen.findByRole("button", { name: /^vis/ })).textContent,
     ).toContain("current");
 
-    await userEvent.click(screen.getByRole("button", { name: "New project…" }));
+    await userEvent.click(screen.getByRole("button", { name: "New project" }));
     expect(
        (await screen.findByRole("button", { name: /vis\// })).textContent,
     ).toContain("current");
@@ -467,22 +467,24 @@ describe("the path band", () => {
 // the gateway's folder browser — an empty list that filled in one network round-trip
 // later, with no project rows and no trash beside them, and no way back to the inventory.
 describe("the projects mark opens the inventory", () => {
-  it("puts creation in the dark heading and gives each path its own line", async () => {
+  it("uses a plus for creation and keeps project paths on their own line", async () => {
     sheet();
-    const create = screen.getByRole("button", { name: "New project…" });
+    const create = screen.getByRole("button", { name: "New project" });
     const heading = create.closest("header")!;
     expect(heading).toHaveClass("bg-dialog-title");
+    expect(create.textContent).toBe("");
+    expect(create.querySelector("svg")).not.toBeNull();
 
-     const row = await screen.findByRole("button", { name: /^vis/ });
+    const row = await screen.findByRole("button", { name: /^vis/ });
     expect(row.textContent).toContain("3 transcripts, 1 running");
     const path = screen.getByText("~/code/vis");
     expect(path).toHaveClass("block");
     expect(path.parentElement).toBe(row.querySelector("span.min-w-0.flex-1"));
   });
-  // Regression, user report: the project's trash was narrower than the close cell and
-  // left the sheet for a second dialog. The question belongs exactly where that project row
-  // stood, with the same full-width yes/no answer used by session deletion.
-  it("asks to delete inside the project row, from a close-width trash cell", async () => {
+  // Regression, user report: project deletion expanded the selected row with a cost
+  // paragraph above the answers. It should replace that row with the same single-height
+  // yes/no strip used by session deletion.
+  it("asks to delete in one row-height strip, from a close-width trash cell", async () => {
     const { client, onRemove, panel } = sheet();
 
      const row = await screen.findByRole("button", { name: /^vis/ });
@@ -501,8 +503,11 @@ describe("the projects mark opens the inventory", () => {
     await userEvent.click(trash);
 
     const question = screen.getByRole("group", { name: "Delete vis?" });
-    expect(question.textContent).toContain("3 transcripts");
-    expect(question.textContent).toContain("1 running");
+    expect(question.querySelector("p")).toBeNull();
+    expect(question.querySelector("div.flex")).toHaveClass(
+      "min-h-12",
+      "mouse:min-h-8",
+    );
      expect(screen.queryByRole("button", { name: /^vis/ })).toBeNull();
       expect(screen.getByRole("button", { name: /^demo/ })).toBeInTheDocument();
     // The anchored projects sheet is still the only dialog on screen.
@@ -528,11 +533,11 @@ describe("the projects mark opens the inventory", () => {
     expect(screen.getAllByRole("dialog")).toEqual([panel()]);
   });
 
-  it("leaves `New project…` the way it was entered", async () => {
+  it("leaves the new-project step the way it was entered", async () => {
     sheet();
-     await screen.findByRole("button", { name: /^vis/ });
+    await screen.findByRole("button", { name: /^vis/ });
 
-    await userEvent.click(screen.getByRole("button", { name: "New project…" }));
+    await userEvent.click(screen.getByRole("button", { name: "New project" }));
      await screen.findByRole("button", { name: /tools/ });
 
     await userEvent.click(

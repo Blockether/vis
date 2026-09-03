@@ -23,7 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BandButton, ConfirmRow, IconButton, Input, Spinner } from './ui';
 import { AnchoredPanel, MenuBack, MenuHeading, MenuItem, MenuNote } from './Menu';
 import type { MenuPosition } from '../lib/anchored-menu';
-import { ChevronIcon, PencilIcon, ProjectsIcon, TrashIcon } from './icons';
+import { ChevronIcon, PencilIcon, PlusIcon, ProjectsIcon, TrashIcon } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { BrowseEntry } from '../lib/types';
 import { homeifyPath } from '../lib/path';
@@ -132,25 +132,6 @@ interface ProjectRemoval {
   progress: ProjectRemovalProgress | null;
 }
 
-/** The full blast radius stays inside the row whose destructive question it labels. */
-function removalCost(
-  project: ManagedProject,
-  machine: string,
-  progress: ProjectRemovalProgress | null,
-  error: string | null,
-): string {
-  const transcripts = `${project.count} ${project.count === 1 ? 'transcript' : 'transcripts'}`;
-  const scope = project.projectId
-    ? `Deletes all ${transcripts} from ${machine}.`
-    : `Deletes all ${transcripts} in this workspace group from ${machine}; the shared folder stays.`;
-  const running = project.live > 0
-    ? `${project.live} running ${project.live === 1 ? 'session is' : 'sessions are'} stopped too.`
-    : '';
-  const progressCopy = progress ? `Deleted ${progress.done} of ${progress.total}.` : '';
-  const failure = error ? `Could not delete: ${error}` : '';
-  return [scope, running, 'This cannot be undone.', progressCopy, failure].filter(Boolean).join(' ');
-}
-
 export function ManageProjectsSheet({
   label,
   isAdding,
@@ -166,9 +147,9 @@ export function ManageProjectsSheet({
   /** The machine whose files these are — the title says it, so no row has to. */
   label: string;
   /**
-   * Opens straight on the folder browser. The row's `New project` button MEANS what
-   * it says: landing on the inventory first and making a human hunt for a second
-   * "New project…" is a tap spent on a verb the button already named.
+   * Opens straight on the folder browser. The row's `New project` control means what
+   * it says: landing on the inventory first and making a human hunt for another
+   * creation control is a tap spent on a verb already chosen.
    */
   isAdding?: boolean;
   /** Where the panel hangs from `sm:` up — the control that opened it. */
@@ -438,11 +419,11 @@ export function ManageProjectsSheet({
       {!adding && (
         <MenuHeading
           cells={
-            // The inventory's own verb is a cell too, and a QUIET one: it opens a
-            // step, it commits nothing, and the accent in this sheet means "this is
-            // the thing you are about to do". Its box is the ✕'s box, so the band
-            // ends in one run of cells instead of a slab parked beside a mark.
-            <BandButton onClick={() => setAdding(true)}>New project…</BandButton>
+            // Creation is universal chrome here: the plus is the same square band cell
+            // as the way out, while its accessible name keeps the verb explicit.
+            <BandButton label="New project" onClick={() => setAdding(true)}>
+              <PlusIcon className="size-3.5" />
+            </BandButton>
           }
           onClose={onCancel}
           closeLabel={`Close projects on ${label}`}
@@ -464,7 +445,7 @@ export function ManageProjectsSheet({
                   <ConfirmRow
                     key={entry.root}
                     question={`Delete ${entry.name}?`}
-                    cost={removalCost(entry, label, removing.progress, removing.error)}
+                    cost={removing.error ? `Could not delete: ${removing.error}` : undefined}
                     confirmLabel={
                       removing.busy
                         ? removing.progress
@@ -508,7 +489,7 @@ export function ManageProjectsSheet({
         <>
       {/* Adding is a task, not a step in a tour, so its band carries the app's one way
           out when the human ASKED for it by name (the start flow's `New project`).
-          Reached from the inventory's own `New project…` it IS a step inside this
+          Reached from the inventory's own plus it IS a step inside this
           menu, and a step is left the way it was entered — otherwise the only exit
           from the browser is closing the sheet and finding the folder mark again. */}
       {isAdding ? (

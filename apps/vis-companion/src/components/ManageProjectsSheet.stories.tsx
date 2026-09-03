@@ -38,3 +38,21 @@ export const Inventory: Story = {
     await expect(args.onCancel).toHaveBeenCalledOnce();
   },
 };
+
+/** Project removal stays in the selected row and never grows into a second line. */
+export const DeleteConfirmation: Story = {
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await userEvent.click(
+      page.getByRole('button', {
+        name: `Remove every transcript in ${STORY_PROJECTS[0].name}`,
+      }),
+    );
+    const question = page.getByRole('group', {
+      name: `Delete ${STORY_PROJECTS[0].name}?`,
+    });
+    await expect(question.querySelector('p')).toBeNull();
+    await expect(page.getByRole('button', { name: 'No, keep' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Yes, delete' })).toBeVisible();
+  },
+};
