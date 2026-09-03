@@ -283,9 +283,10 @@ describe("starring a session", () => {
     expect(asked.some((options) => options?.behavior === "smooth")).toBe(false);
   });
 
-  // Regression, user report: the favorite mark followed the title's variable width and
-  // sat after the status dot. It must own a fixed slot before that dot in every row.
-  it("reserves the favorite slot before the status icon without moving idle", async () => {
+  // Reported from a phone screenshot: favorite marks formed a second status column on
+  // the row's far edge. The list already owns a fixed leading mark column, so the star
+  // belongs there in every row while the status remains only status.
+  it("reserves the favorite slot at the row's leading edge", async () => {
     const view = renderSessionsScreen({
       machines: [
         {
@@ -301,22 +302,21 @@ describe("starring a session", () => {
 
     const row = (id: string) =>
       document.querySelector(`[data-session-id="${id}"]`) as HTMLElement;
+    const favorite = (id: string) =>
+      row(id).querySelector("[data-session-favorite-slot]") as HTMLElement;
     const status = (id: string) =>
       row(id).querySelector("[data-session-status]") as HTMLElement;
-    const starredStatus = status("starred");
-    const plainStatus = status("plain");
+    const starredFavorite = favorite("starred");
+    const plainFavorite = favorite("plain");
 
-    expect(starredStatus).toBeTruthy();
-    expect(plainStatus).toBeTruthy();
-    expect(starredStatus.children[0]?.hasAttribute("data-session-favorite-slot")).toBe(true);
-    expect(starredStatus.children[1]?.hasAttribute("data-session-status-dot")).toBe(true);
-    expect(starredStatus.children[2]?.textContent).toBe("IDLE");
-    expect(plainStatus.children[0]?.hasAttribute("data-session-favorite-slot")).toBe(true);
-    expect(plainStatus.children[1]?.hasAttribute("data-session-status-dot")).toBe(true);
-    expect(plainStatus.children[2]?.textContent).toBe("IDLE");
-    expect((starredStatus.children[0] as HTMLElement).className).toBe(
-      (plainStatus.children[0] as HTMLElement).className,
-    );
-    expect(screen.getByText("Starred session").parentElement?.querySelector("svg")).toBeNull();
+    expect(row("starred").children[0]).toBe(starredFavorite);
+    expect(row("plain").children[0]).toBe(plainFavorite);
+    expect(starredFavorite.querySelector("svg.fill-accent")).not.toBeNull();
+    expect(plainFavorite.querySelector("svg")).toBeNull();
+    expect(starredFavorite.className).toBe(plainFavorite.className);
+    expect(status("starred").children[0]?.hasAttribute("data-session-status-dot")).toBe(true);
+    expect(status("starred").children[1]?.textContent).toBe("IDLE");
+    expect(status("plain").children[0]?.hasAttribute("data-session-status-dot")).toBe(true);
+    expect(status("plain").children[1]?.textContent).toBe("IDLE");
   });
 });

@@ -290,11 +290,21 @@ export const SessionRow = memo(function SessionRow({
               sessionId={session.id}
               onOpen={() => void commands.open(conn, session.id)}
             >
-              {/* THE MARK COLUMN, EMPTY — and reserved for exactly that reason. The
-            project band above these rows spends it on its fold, so a row that
-            skipped it started its title 23px to the LEFT of the name that heads
-            it. See `LIST_MARK`. */}
-              <span className={LIST_MARK} aria-hidden="true" />
+              {/* THE LEADING MARK COLUMN. The project band spends it on its fold; a session
+              spends it on its favorite. Empty or filled, the fixed slot keeps every title
+              on the same edge. */}
+              <span
+                data-session-favorite-slot
+                className={LIST_MARK}
+                aria-hidden={!isStarred}
+              >
+                {isStarred && (
+                  <>
+                    <StarIcon filled className="size-3" />
+                    <span className="sr-only">Favorite</span>
+                  </>
+                )}
+              </span>
               {/* One row of facts, laid out twice from ONE dom order.
             A phone stacks it: what the session IS on the first line, what it has DONE
             on the second, each line's own trailing fact right-aligned against it.
@@ -304,12 +314,11 @@ export const SessionRow = memo(function SessionRow({
             FIXED tracks. That is the difference between a list and a phone list
             stretched to 1400px, where a title sat at x=56 and its own status badge at
             x=1325 with nothing between them to carry the eye across.
-            Each fixed track is its own content's width: the status one holds its fixed
-            favorite slot BEFORE the dot plus the longest label. `INPUT NEEDED` measures
-            83px, so the whole cluster owns 7.25rem and neither a title nor a missing star
-            can move it. The id track pays for its 8 hex characters inside 4.5rem instead
-            of charging that width to the title. */}
-              <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_7.25rem_6rem] sm:gap-y-0">
+            Each fixed track is its own content's width. `INPUT NEEDED` is the widest status,
+            so that cluster owns 6rem; the favorite lives in the row's leading mark column
+            instead of forming a second status column at the far edge. The id track pays for
+            its 8 hex characters inside 4.5rem instead of charging that width to the title. */}
+              <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_6rem_6rem] sm:gap-y-0">
                 {/* The NAME, and nothing but the name. The badges used to ride inside this
               cell, so every row started its flags at a different x — the longer the
               title, the further right its `NEW` — and a long title pushed them off
@@ -420,17 +429,6 @@ export const SessionRow = memo(function SessionRow({
                   role={renameBusy ? "status" : undefined}
                   className={`col-start-3 row-start-1 inline-flex shrink-0 items-center gap-1 justify-self-end font-mono text-chip font-bold tracking-[0.08em] sm:col-start-auto sm:row-start-auto sm:justify-self-start ${statusTone(session)}`}
                 >
-                  <span
-                    data-session-favorite-slot
-                    className="inline-flex size-3 shrink-0 items-center justify-center"
-                  >
-                    {isStarred && (
-                      <>
-                        <StarIcon filled className="size-3" />
-                        <span className="sr-only">Favorite</span>
-                      </>
-                    )}
-                  </span>
                   <span
                     data-session-status-dot
                     aria-hidden="true"

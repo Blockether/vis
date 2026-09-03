@@ -1422,7 +1422,10 @@ export const STORY_FLEET_PROJECTS: StoryProject[] = [
     name: 'uberworkspace',
     projectId: 'project-rewrite',
     rows: [
-      fleetRow('~/rewrite', 'fd3c03f9', STORY_SESSION.title, 1, 61, 'running'),
+      {
+        ...fleetRow('~/rewrite', 'fd3c03f9', STORY_SESSION.title, 1, 61, 'running'),
+        favorite_rank: 1,
+      },
       fleetRow('~/rewrite', '41d78df4', 'Scrolling up in a long session is 180 screens', 14, 118, 'awaiting'),
       fleetRow('~/rewrite', '9c1e77ab', 'Keep the running placeholder out of the render window', 52, 24),
       ...Array.from({ length: 110 }, (_, index) =>
