@@ -90,23 +90,46 @@ describe("the native shell after backgrounding", () => {
     expect(document.activeElement).toBe(composer);
   });
 
-  // Regression, TestFlight build 4861: the app went to the background with the
-  // composer still focused in the DOM. At process teardown WebKit reported that
-  // focused element as programmatically cleared, UIKit's keyboard queue never
-  // answered on the main thread, and the watchdog killed Vis with 0x8BADF00D.
-  it("releases the DOM editor when the app leaves the foreground", () => {
+  // Regression, TestFlight build 5275: leaving the foreground blurred the composer
+  // from JS. WebKit reported that programmatic focus clear to the UI process during
+  // the background scene update, UIKit turned it into a keyboard task no thread was
+  // left to run, and the watchdog killed Vis with 0x8BADF00D after ten seconds.
+  it("never touches DOM focus while the app leaves the foreground", () => {
     render(<ViewportProbe />);
     const composer = screen.getByRole("textbox", { name: "Message" });
+    const blur = vi.spyOn(composer, "blur");
     composer.focus();
 
     act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 300 }));
     expect(document.activeElement).toBe(composer);
 
     act(() => native.app.get("appStateChange")?.({ isActive: false }));
-    expect(document.activeElement).not.toBe(composer);
+    expect(blur).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(composer);
 
+    // Back on screen the keyboard machinery answers again, and only a real focus
+    // change raises the keyboard the suspension took away.
     act(() => native.app.get("appStateChange")?.({ isActive: true }));
     act(() => vi.advanceTimersByTime(200));
+    expect(blur).toHaveBeenCalled();
     expect(document.activeElement).toBe(composer);
+  });
+
+  // Regression, TestFlight build 5275: the restore is deferred past the resume, so
+  // an app that goes away again inside that window would have raised the keyboard
+  // from the background — the same watchdog kill by a later route.
+  it("leaves focus alone when the app goes away again before the restore", () => {
+    render(<ViewportProbe />);
+    const composer = screen.getByRole("textbox", { name: "Message" });
+    composer.focus();
+
+    act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 300 }));
+    act(() => native.app.get("appStateChange")?.({ isActive: false }));
+    act(() => native.app.get("appStateChange")?.({ isActive: true }));
+    act(() => native.app.get("appStateChange")?.({ isActive: false }));
+
+    const focus = vi.spyOn(composer, "focus");
+    act(() => vi.advanceTimersByTime(200));
+    expect(focus).not.toHaveBeenCalled();
   });
 });

@@ -447,6 +447,18 @@ let pinnedShellHeight: number | null = null;
 // driver in `useVisualViewportShell` and read through `isSoftKeyboardUp`.
 let softKeyboardUp = false;
 
+// Whether the platform says the app is on screen, maintained by the native
+// lifecycle driver in `useVisualViewportShell` and read through `isAppForeground`.
+//
+// It gates every programmatic focus change the app makes. A `blur()` or `focus()`
+// issued from JS reaches the UI process one IPC hop later, where UIKit turns it
+// into a keyboard task — and that queue only runs while the app is on screen. A
+// task that lands during the background scene update parks the main thread on an
+// `NSConditionLock` no keyboard thread is left to open: zero CPU, ten seconds,
+// `0x8BADF00D` (TestFlight builds 4861 and 5275). `document.visibilityState`
+// cannot answer this: a resumed iOS webview keeps reporting `hidden` (`lib/wake`).
+let nativeForeground = true;
+
 // `--safe-bottom` is deliberately NOT written on `document.documentElement`. A
 // custom property set on the ROOT invalidates the computed style of every
 // element that could inherit it, and the keyboard drivers below rewrite it on
@@ -511,8 +523,23 @@ let reclaimShellForExternalNavigation: (() => void) | null = null;
  */
 export function reclaimViewportForExternalNavigation(): void {
   const active = document.activeElement;
-  if (isKeyboardInputElement(active)) active.blur();
+  // Foreground only: dropping focus from a backgrounded app is what the keyboard
+  // watchdog kills for (see `nativeForeground`), and there is no keyboard left to
+  // dismiss anyway.
+  if (nativeForeground && isKeyboardInputElement(active)) active.blur();
   reclaimShellForExternalNavigation?.();
+}
+
+/**
+ * Is the app on screen right now, as the native lifecycle reports it?
+ *
+ * The one gate on programmatic focus: iOS answers a JS `blur()`/`focus()` through
+ * UIKit's keyboard task queue, which stops running the moment the app leaves the
+ * foreground, and a task queued there holds the main thread until the watchdog
+ * kills the process.
+ */
+export function isAppForeground(): boolean {
+  return nativeForeground;
 }
 
 /**
@@ -999,21 +1026,24 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     }
 
     // Native background: `appStateChange` reaches JS from
-    // `applicationWillResignActive`, the last moment UIKit's keyboard machinery
-    // still answers. A DOM editor left focused past it is what kills the app much
-    // LATER: at process teardown WebKit reports the focused element as
-    // programmatically cleared, UIKit turns that into a synchronous keyboard task,
-    // and the main thread waits on an `NSConditionLock` no keyboard thread is left
-    // to open — zero CPU, five seconds, `0x8BADF00D` (TestFlight build 4861). The
-    // AppDelegate's `endEditing(true)` releases UIKit's first responder only; the
-    // DOM never learns it lost first responder, so drop the DOM's own focus here
-    // and remember the editor, because the way back still owes it its keyboard.
+    // `applicationWillResignActive`, where the AppDelegate has already called
+    // `endEditing(true)` — UIKit's own first responder release, taken in the UI
+    // process while the keyboard machinery still answers. The keyboard is on its
+    // way down and nothing here has to push it.
+    //
+    // What must NOT happen here is a DOM `blur()`. It reaches the UI process as
+    // `didProgrammaticallyClearFocusedElement` one IPC hop later, with the scene
+    // update to Background already under way; UIKit turns it into a synchronous
+    // keyboard task no thread is left to run, and the main thread waits on an
+    // `NSConditionLock` until the watchdog kills Vis — zero CPU, ten seconds,
+    // `0x8BADF00D` (TestFlight build 5275, and 4861 before it from the resume
+    // side). So only remember the editor: the way back still owes it its keyboard.
     let releasedForBackground: HTMLElement | null = null;
     const onNativeBackground = () => {
+      nativeForeground = false;
       const active = document.activeElement;
       if (!isKeyboardInputElement(active)) return;
       releasedForBackground = keyboardPinned || isSoftKeyboardUp() ? active : null;
-      active.blur();
     };
 
     // Native resume: Capacitor fires this on iOS/Android even when the webview
@@ -1021,6 +1051,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     // the first foreground frame, then make one real focus change so the keyboard
     // returns instead of leaving a keyboard-sized empty band.
     const onNativeResume = () => {
+      nativeForeground = true;
       const active = document.activeElement;
       const staleNativeKeyboard = nativeKeyboard && (keyboardPinned || softKeyboardUp);
       const editor =
@@ -1032,9 +1063,20 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       timers.push(
         window.setTimeout(() => {
           releasedForBackground = null;
+          // Gone again inside the delay: this focus would land in exactly the
+          // background the watchdog kills for.
+          if (!nativeForeground) return;
           if (!editor.isConnected) return;
           const focused = document.activeElement;
-          if (focused !== document.body && focused !== document.documentElement) return;
+          if (
+            focused !== editor &&
+            focused !== document.body &&
+            focused !== document.documentElement
+          )
+            return;
+          // Nothing dropped the DOM's focus while the app was away, so only a real
+          // focus CHANGE raises the keyboard again.
+          if (focused === editor) editor.blur();
           editor.focus({ preventScroll: true });
         }, RESUME_KEYBOARD_FOCUS_MS),
       );

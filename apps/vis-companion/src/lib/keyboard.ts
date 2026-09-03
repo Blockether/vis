@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { Keyboard } from '@capacitor/keyboard';
 import { hasHardwarePointer } from './pointer';
-import { isSoftKeyboardUp } from './viewport';
+import { isAppForeground, isSoftKeyboardUp } from './viewport';
 
 /**
  * Keeping the software keyboard across a native sheet.
@@ -137,11 +137,12 @@ export function holdKeyboardAcrossSheet(
     let attempts = 0;
 
     const raise = () => {
-      // Away: a programmatic blur or focus inside a backgrounded WebView is exactly
+      // Away: a programmatic blur or focus while the app is off screen is exactly
       // what UIKit cannot answer — the keyboard queue holds the main thread until
-      // the watchdog kills the app (TestFlight build 4861). The composer is not
-      // worth that, and the shell releases and restores focus on the app's own
-      // lifecycle events anyway.
+      // the watchdog kills the app (TestFlight builds 4861 and 5275). The composer
+      // is not worth that, and the shell restores focus on the app's own lifecycle
+      // events anyway.
+      if (!isAppForeground()) return;
       if (element.ownerDocument?.visibilityState === 'hidden') return;
       // Up already — this focus worked, or the platform brought it back by itself.
       // Touching focus now is precisely what the user reads as a flicker.
