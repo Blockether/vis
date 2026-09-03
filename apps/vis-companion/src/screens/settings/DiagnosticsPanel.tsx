@@ -13,19 +13,26 @@ import { SettingsPanel } from "./SettingsLayout";
 
 /** ONE FACT ROW, and the answer is the fact. The label is the same word in every
  *  build — Version, Commit — so it takes the hint ink while the value takes the
- *  row's white and its weight: one size, the panel's own mono `text-ui` voice,
- *  and ink plus weight carry the hierarchy a second size would only flatten.
+ *  row's white and its weight: one size for both sides, and ink plus weight
+ *  carry the hierarchy a second size would only flatten. That size is
+ *  `text-meta` — the dialog's own DETAIL step, the one a machine row's second
+ *  line and this dialog's footnotes already take. These facts are reference
+ *  metadata read a few times a year, not rows you act on; `text-ui` is the
+ *  size of a machine's NAME, and six bold values at it weighed more than the
+ *  rows above them. The fold's one control keeps its control density, so the
+ *  verb still leads — one step above the facts under a pointer (`text-ui`),
+ *  the facts' own size on touch, where its filled shape does the leading.
  *  Labels take the spare width; values hold the trailing edge. The row is FLEX,
  *  not grid: the value's percentage cap resolves against the row here, while a
  *  grid AUTO track cannot resolve it and collapses to a two-character column
  *  that wraps every answer. */
 function DiagnosticFact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex min-w-0 items-baseline gap-4 px-3 py-2 sm:px-4">
-      <dt className="min-w-0 flex-1 break-words font-mono text-ui text-dialog-hint">
+    <div className="flex min-w-0 items-baseline gap-4 px-3 py-1.5 sm:px-4">
+      <dt className="min-w-0 flex-1 break-words font-mono text-meta text-dialog-hint">
         {label}
       </dt>
-      <dd className="max-w-[65%] break-words text-right font-mono text-ui font-bold text-white">
+      <dd className="max-w-[65%] break-words text-right font-mono text-meta font-bold text-white">
         {value}
       </dd>
     </div>
@@ -117,7 +124,7 @@ export function DiagnosticsPanel({
             />
           </dl>
           <div className="space-y-2 p-3 sm:p-4">
-            <p className="font-mono text-ui text-dialog-hint">
+            <p className="font-mono text-meta text-dialog-hint">
               No credentials or request bodies are recorded.
             </p>
             {exported && <Banner kind="ok">{exported}</Banner>}
