@@ -109,6 +109,22 @@
 
 ;; Marshalling helpers
 
+(defonce ^:private
+  ^{:doc "Extension namespace -> worker key. Every namespace operation resolves
+           through this map so a session-local extension follows its sandbox into
+           that session's interpreter; registry-only contexts use the shared worker."}
+  context-workers
+  (atom {}))
+
+(defn- worker-for [sess]
+  (get @context-workers sess pyext/shared-key))
+
+(defn- exec-in! [sess code]
+  (pyext/exec! (worker-for sess) sess code))
+
+(defn- install-sync-tool-in! [sess tool-name]
+  (pyext/install-sync-tool! (worker-for sess) sess tool-name))
+
 (def ^:private callable-key
   "The one key `extension_bootstrap.py` seals a Python callable under.
 
@@ -137,7 +153,7 @@
    The interpreter renders the value as JSON text, so what comes back is exactly
    what a host tool result is: plain data with string keys, and nothing live."
   [sess expr]
-  (let [text (try (pyext/run pyext/shared-key sess expr)
+  (let [text (try (pyext/run (worker-for sess) sess expr)
                   (catch Throwable t
                     (throw (ex-info (raised-message t) {:type ::python-raised :session sess} t))))]
     (when (and text (not= "null" text)) (json/read-json text :key-fn identity))))
@@ -195,36 +211,44 @@
    and the guest loses the globals they were bound to."
   [sess names]
   (python-host/forget-tools! sess names)
-  (try (pyext/exec! pyext/shared-key sess
-                    (str/join (map (fn [nm]
-                                     (str "del " nm "\n"))
-                                   names)))
+  (try (exec-in! sess
+                 (str/join (map (fn [nm]
+                                  (str "del " nm "\n"))
+                                names)))
        (catch Throwable _ nil)))
+
+(def ^:private callable-path-key ::callable-path)
 
 (defn- unseal
   "Answer `x` with every sealed callable marker replaced by a Clojure fn.
 
-   The fn takes the ARG VECTOR (the shape [[call-py]] hands it), evaluates the
-   call in the same session, and unseals the answer in turn — a Python callable
-   may hand back another one, and a registration nests them inside dicts and
-   lists."
-  [sess x]
-  (cond (and (map? x) (= 1 (count x)) (contains? x callable-key))
-        (let [cid (str (get x callable-key))]
-          (fn [args]
-            (let [[sealed callbacks] (sealed-args args)]
-              (when (seq callbacks)
-                (python-host/install-sync-tools! sess callbacks (partial pyext/install-sync-tool! pyext/shared-key)))
-              (try (unseal sess (run-in sess (python-call-expr cid sealed)))
-                   (finally (when (seq callbacks) (release-callbacks! sess (keys callbacks))))))))
-        (map? x) (into {}
-                       (map (fn [[k v]]
-                              [k (unseal sess v)]))
-                       x)
-        (sequential? x) (mapv (fn [v]
-                                (unseal sess v))
-                              x)
-        :else x))
+   Registration callables carry their structural path as metadata. A session can
+   evaluate the same admitted registration in its own worker and use that path
+   to select the corresponding callable without registering the extension again."
+  ([sess x] (unseal sess [] x))
+  ([sess path x]
+   (cond (and (map? x) (= 1 (count x)) (contains? x callable-key))
+         (let [cid (str (get x callable-key))]
+           (with-meta
+             (fn [args]
+               (let [[sealed callbacks] (sealed-args args)]
+                 (when (seq callbacks)
+                   ;; `install-sync-tools!` hands the installer the session itself,
+                   ;; so the installer is passed whole rather than partially applied.
+                   (python-host/install-sync-tools! sess callbacks install-sync-tool-in!))
+                 (try (unseal sess (run-in sess (python-call-expr cid sealed)))
+                      (finally (when (seq callbacks)
+                                 (release-callbacks! sess (keys callbacks)))))))
+             {callable-path-key path}))
+         (map? x) (into {}
+                        (map (fn [[k v]]
+                               [k (unseal sess (conj path k) v)]))
+                        x)
+         (sequential? x) (mapv (fn [i v]
+                                 (unseal sess (conj path i) v))
+                               (range)
+                               x)
+         :else x)))
 
 (defn- call-py
   "Call a Python callable of an extension with marshalled args, answering the
@@ -417,27 +441,35 @@
   live-contexts
   (atom #{}))
 
-(defn ^:no-doc build-context
-  "Open one trusted extension session in the embedded interpreter and answer its
-   name.
+(defn- open-context!
+  "The body both `build-context` arities share.
 
-   A session is a Python namespace, not a second interpreter: `label` only makes
-   the name readable in a log, and the counter makes it unique. Extensions are
-   TRUSTED code - real filesystem, network, environment, thread and subprocess
-   access - and the interpreter that serves them is the one the host runs
-   unconfined, so nothing here narrows what Python may do.
-
-   Every name the extension calls back through is installed by [[bind-host!]]
-   before the bootstrap runs, because the injector reads them at module level."
-  [label]
+   Private, and called directly rather than through the var, so a test that
+   redefines `build-context` is not re-entered by its own one-argument arity
+   (`with-redefs` swaps the var, and a self-call through it lands back in the
+   stub — measured, as a 2-arg call into a 1-arg stub)."
+  [worker label]
   (let [sess (str "vis_ext_" (.incrementAndGet ^AtomicLong context-seq)
                   "_" (str/replace (str label) #"[^A-Za-z0-9_]" "_"))]
-    ;; The extension interpreter is the CHILD process: it starts on the first
-    ;; call, and the runtime - which MAKES the namespace, and carries the upcall
-    ;; stub every host name is bound through - goes in before anything else.
-    (pyext/install-runtime! pyext/shared-key sess)
-    (swap! live-contexts conj sess)
-    sess))
+    (swap! context-workers assoc sess worker)
+    (try (pyext/trust! worker sess true)
+         (pyext/install-runtime! worker sess)
+         (swap! live-contexts conj sess)
+         sess
+         (catch Throwable t
+           (swap! context-workers dissoc sess)
+           (throw t)))))
+
+(defn ^:no-doc build-context
+  "Open one trusted extension namespace and answer its unique name.
+
+   With one argument this is the gateway-wide registration namespace in the
+   shared worker. `worker` selects a session's existing worker instead: only the
+   namespace is new, while imports and native-library state are shared with that
+   session's sandbox. Trust is per namespace, so it is set explicitly here and
+   never inherited by the sandbox namespace."
+  ([label] (open-context! pyext/shared-key label))
+  ([worker label] (open-context! worker label)))
 
 (def ^:private log-levels {"trace" :trace "debug" :debug "info" :info "warn" :warn "error" :error})
 
@@ -596,7 +628,7 @@
   [sess label]
   (python-host/install-sync-tools! sess
                                    (host-doors sess label)
-                                   (partial pyext/install-sync-tool! pyext/shared-key))
+                                   install-sync-tool-in!)
   sess)
 
 (defn ^:no-doc bind-test-host!
@@ -613,7 +645,7 @@
      (fn [& _]
        (throw (ex-info "vis.live is not available while running tests; use an in-memory test host"
                        {:type :vis/test-live-refused})))}
-    (partial pyext/install-sync-tool! pyext/shared-key))
+    install-sync-tool-in!)
   sess)
 
 (def ^:no-doc host-member-names
@@ -655,8 +687,103 @@
                                   (str "host call " member " is not available while checking")
                                   {:type :vis/extension-check-inert :member member}))))]))
            host-member-names)
-     (partial pyext/install-sync-tool! pyext/shared-key))
+     install-sync-tool-in!)
    sess))
+
+(defonce ^:private loaded
+  ;; canonical path -> {:sha :ext-name :context :snapshot :source}
+  (atom {}))
+
+(defonce ^:private
+  ^{:doc "`[worker-key extension-name]` -> one realized extension registration in
+           that session's interpreter. The gateway registry never points at these
+           rows; its wrappers select them only for the owning session."}
+  session-contexts
+  (atom {}))
+
+(defn- discard-context!
+  [ctx]
+  (when ctx
+    (let [worker (worker-for ctx)]
+      (swap! live-contexts disj ctx)
+      (swap! context-workers dissoc ctx)
+      (try (python-host/forget-session! ctx) (catch Throwable _ nil))
+      (when (pyext/worker-live? worker)
+        (try (pyext/close-session! worker ctx) (catch Throwable _ nil)))))
+  nil)
+
+(defn- initialize-extension-context!
+  "Evaluate admitted extension `source` in a trusted namespace of `worker`.
+   Returns its unsealed registration without touching the Clojure registry."
+  [worker label ^File snap source]
+  (let [ctx (build-context worker label)
+        frozen-home (.getCanonicalPath (.getParentFile snap))]
+    (try
+      (bind-host! ctx label)
+      (locking ctx
+        (exec-in! ctx bootstrap-python)
+        (exec-in!
+          ctx
+          (str "import sys as __vis_pathsys__\n"
+               "import os as __vis_pathos__\n"
+               "__vis_ext_dir__ = " (python-string-literal (.getCanonicalPath snap)) "\n"
+               "__vis_frozen_home__ = " (python-string-literal frozen-home) "\n"
+               "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
+               "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
+               "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
+               "                          if not __vis_p__.startswith(__vis_frozen_home__)\n"
+               "                          or __vis_pathos__.path.isdir(__vis_p__)]\n"
+               "for __vis_name__, __vis_mod__ in list(__vis_pathsys__.modules.items()):\n"
+               "    __vis_file__ = getattr(__vis_mod__, '__file__', None) or ''\n"
+               "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
+               "            and not __vis_file__.startswith(__vis_ext_dir__)):\n"
+               "        del __vis_pathsys__.modules[__vis_name__]\n"))
+        (exec-in! ctx source))
+      {:context ctx :registration (unseal ctx (run-in ctx "__vis_registration__()"))}
+      (catch Throwable t
+        (discard-context! ctx)
+        (throw t)))))
+
+(defn- source-entry
+  [ext-name source-ctx]
+  (some (fn [[_ entry]]
+          (when (and (= ext-name (:ext-name entry))
+                     (identical? source-ctx (:context entry)))
+            entry))
+        @loaded))
+
+(defn- session-call-target
+  "Resolve a registry callable to the matching namespace in the invoking
+   session's worker. Calls with no worker-backed session keep using the one
+   gateway-wide registration namespace."
+  [ext-name env source-ctx source-f]
+  (let [effective-env (or (not-empty env) extension/*current-environment*)
+        worker (:python-context effective-env)
+        path (get (meta source-f) callable-path-key)]
+    (if-not (and worker path (pyext/worker-live? worker))
+      [source-ctx source-f]
+      (if-let [entry (source-entry ext-name source-ctx)]
+        (let [cache-key [worker ext-name]
+              local
+              (locking session-contexts
+                (let [cached (get @session-contexts cache-key)]
+                  (if (identical? source-ctx (:source-context cached))
+                    cached
+                    (let [fresh (initialize-extension-context!
+                                  worker
+                                  (str ext-name)
+                                  (io/file (:snapshot entry))
+                                  (:source entry))
+                          row (assoc fresh :source-context source-ctx)]
+                      (swap! session-contexts assoc cache-key row)
+                      (discard-context! (:context cached))
+                      row))))
+              target-f (get-in (:registration local) path)]
+          (when-not (fn? target-f)
+            (throw (ex-info (str "Python extension callable disappeared at " (pr-str path))
+                            {:extension ext-name :path path})))
+          [(:context local) target-f])
+        [source-ctx source-f]))))
 
 ;; Adapters — Python callables wrapped as the Clojure fns the extension
 ;; registry expects. Every adapter is defensive: a closed context (after
@@ -676,25 +803,15 @@
                      str)})
 
 (defn- call-py-ext
-  "Invoke a Python callable inside THE session context (`extension/with-context`):
-   the extension identity (so `vis.state` host callbacks own their aggregate
-   rows) plus the live session env, which `vis.jailed_shell_session`, `vis.ask`
-   and `vis.state` read.
-
-   Adapters handed a real env (activation, prompt, ctx, slash, op hooks) pass it;
-   adapters with none (symbol calls, render, provider callbacks) pass nil and
-   inherit the caller's session instead of running session-less. That keeps
-   `vis.jailed_shell_session` and `vis.ask` available when a caller has a live
-   session. `vis.jailed_shell` does not depend on this context: it reads disk at
-   each spawn.
-   Returns the `->clj` view of the result."
+  "Invoke a Python callable in the invoking session's interpreter when that
+   session owns a worker, otherwise in the gateway-wide registration context.
+   The extension namespace is trusted; the sandbox namespace beside it is not."
   [ext-name env ctx f args]
-  (extension/with-context {:ext (or extension/*current-extension* {:ext/name ext-name}) :env env}
-                          ;; Both host doors run on threads that were never in Clojure — the one
-                          ;; the interpreter pins every call to, and a `par` worker — so the context
-                          ;; bound above travels to them explicitly, or `vis.state` reaches its door
-                          ;; with no extension bound and refuses the call.
-                          (python-host/conveying ctx (call-py ctx f args))))
+  (let [effective-env (or (not-empty env) extension/*current-environment*)
+        [call-ctx call-f] (session-call-target ext-name effective-env ctx f)]
+    (extension/with-context
+      {:ext (or extension/*current-extension* {:ext/name ext-name}) :env effective-env}
+      (python-host/conveying call-ctx (call-py call-ctx call-f args)))))
 
 (defn- sctx->env
   "Minimal state env for a slash callback: the persistence handle and session
@@ -1449,9 +1566,6 @@
 
 ;; Loader
 
-(defonce ^:private loaded
-  ;; canonical path -> {:sha :ext-name :context}
-  (atom {}))
 
 (defonce ^:private failures
   ;; [{:file :error}] from the most recent scan.
@@ -1647,10 +1761,27 @@
    being replaced, so a failing close must never take the load, or the failure
    being reported, down with it."
   [ctx]
-  (when ctx
-    (swap! live-contexts disj ctx)
-    (try (python-host/forget-session! ctx) (catch Throwable _ nil))
-    (try (pyext/close-session! pyext/shared-key ctx) (catch Throwable _ nil)))
+  (let [locals (into []
+                     (filter (fn [[_ row]]
+                               (identical? ctx (:source-context row))))
+                     @session-contexts)]
+    (when (seq locals)
+      (swap! session-contexts #(apply dissoc % (map first locals)))
+      (doseq [[_ row] locals]
+        (discard-context! (:context row))))
+    (discard-context! ctx)))
+
+(defn ^:no-doc close-session-contexts!
+  "Close every trusted extension namespace in `worker` before its sandbox
+   namespace and worker process are retired."
+  [worker]
+  (let [locals (into []
+                     (filter (fn [[[k _] _]] (= worker k)))
+                     @session-contexts)]
+    (when (seq locals)
+      (swap! session-contexts #(apply dissoc % (map first locals)))
+      (doseq [[_ row] locals]
+        (discard-context! (:context row)))))
   nil)
 
 (defn- load-file!
@@ -1686,47 +1817,13 @@
          sha
          (util/sha256-hex source)
 
-         ctx
-         (build-context (.getName f))]
+         initialized
+         (initialize-extension-context! pyext/shared-key (.getName f) snap source)
 
-     (try (bind-host! ctx (.getName f))
-          (locking ctx
-            (pyext/exec! pyext/shared-key ctx bootstrap-python)
-            ;; Prepend the FROZEN copy of the extension file's own dir to
-            ;; sys.path so sibling packages/modules import cleanly, and import
-            ;; the admitted bytes rather than whatever disk holds by the time the
-            ;; import runs. The path crosses as a Python string LITERAL, encoded
-            ;; by the JSON writer, never spliced raw into a snippet.
-            ;;
-            ;; `sys.modules` is ONE table for the whole interpreter, so a sidecar
-            ;; module imported before a `/reload` would answer every later import
-            ;; of that name with the bytes of the tree it came from - the very
-            ;; staleness freezing exists to prevent. A module that came out of
-            ;; SOME frozen tree other than this load's own is therefore evicted
-            ;; here, and dead trees drop off `sys.path` with it.
-            (pyext/exec!
-              pyext/shared-key
-              ctx
-              (str "import sys as __vis_pathsys__\n"
-                   "import os as __vis_pathos__\n"
-                   "__vis_ext_dir__ = "
-                   (python-string-literal (.getCanonicalPath snap))
-                   "\n"
-                   "__vis_frozen_home__ = "
-                   (python-string-literal (.getCanonicalPath ^File @snapshot-home))
-                   "\n"
-                   "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
-                   "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
-                   "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
-                   "                          if not __vis_p__.startswith(__vis_frozen_home__)\n"
-                   "                          or __vis_pathos__.path.isdir(__vis_p__)]\n"
-                   "for __vis_name__, __vis_mod__ in list(__vis_pathsys__.modules.items()):\n"
-                   "    __vis_file__ = getattr(__vis_mod__, '__file__', None) or ''\n"
-                   "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
-                   "            and not __vis_file__.startswith(__vis_ext_dir__)):\n"
-                   "        del __vis_pathsys__.modules[__vis_name__]\n"))
-            (pyext/exec! pyext/shared-key ctx source))
-          (let [reg (unseal ctx (run-in ctx "__vis_registration__()"))]
+         ctx
+         (:context initialized)]
+
+     (try (let [reg (:registration initialized)]
             (when (nil? reg)
               (throw (ex-info (str (.getName f) " never called vis.extension(...)")
                               {:type ::no-registration :file path})))
@@ -1741,6 +1838,7 @@
                :sha sha
                :code-sha (:code-sha frozen)
                :snapshot (.getCanonicalPath snap)
+               :source source
                :ext-name (:ext/name spec)
                :ext validated
                :context ctx}))

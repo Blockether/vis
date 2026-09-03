@@ -138,13 +138,7 @@
                 (try {"id" id
                       "value" (case op
                                 "install-runtime"
-                                ;; Trusted BEFORE anything runs in it: this
-                                ;; process exists to run the user's own
-                                ;; extension code, and the runtime's `_vis_fs`
-                                ;; asks the interpreter whether the session it
-                                ;; is running is one the host trusts.
-                                (do (runtime/trust! session)
-                                    (runtime/install-runtime! session))
+                                (runtime/install-runtime! session)
 
                                 "install-sync-tool"
                                 (runtime/install-sync-tool! session code)
@@ -328,6 +322,11 @@
         state))))
 
 (defn- alive? [state] (and state (.isAlive ^Process (:process state))))
+
+(defn worker-live?
+  "True when `k` already owns a live worker; never starts one."
+  [k]
+  (boolean (alive? (get @workers k))))
 
 (defn- live
   "The worker for `k`, started if this is the first call or if the last one died.

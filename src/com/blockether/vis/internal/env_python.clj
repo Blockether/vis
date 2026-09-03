@@ -1242,6 +1242,12 @@
   (when session
     (swap! disposed-sessions conj session)
     (python-host/forget-session! session)
+    ;; A gateway worker also holds this session's trusted extension namespaces.
+    ;; Close those while the process is still alive; the registry itself remains
+    ;; gateway-wide and outlives every one of these per-session realizations.
+    (when-let [close-extensions
+               (resolve 'com.blockether.vis.internal.python-extensions/close-session-contexts!)]
+      (try (close-extensions session) (catch Throwable _ nil)))
     (try (py-close-session! session) (catch Throwable _ nil))
     (swap! session-workers dissoc session)
     nil))

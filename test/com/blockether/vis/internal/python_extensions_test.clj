@@ -312,6 +312,83 @@ vis.extension(
                  (expect (= {:stdout "False\n"}
                             (ep/run-python-block ctx "print('glms_jenkins' in globals())"))))
                (finally (ep/dispose-python-context! ctx))))))))
+(def ^:private one-interpreter-py
+  "import os
+import sys
+import vis
+
+
+def session_probe(path):
+    \"\"\"await session_probe(path) -> dict — read a path the sandbox may not.\"\"\"
+    marker = sys.modules['vis_session_probe']
+    marker.value += 2
+    # Under a jail the interpreter refuses this path to Python — the extension
+    # is trusted, so it goes through the door the host gave it.
+    text = vis.fs.read_text(path)
+    return {'pid': os.getpid(), 'value': marker.value, 'text': text}
+
+
+vis.extension(
+    name='one-interpreter',
+    description='Session interpreter probe.',
+    alias='one_interpreter',
+    symbols=[vis.symbol(session_probe)],
+)
+")
+
+(defdescribe
+  python-extension-session-interpreter-test
+  (it "runs trusted extension namespaces beside the owning sandbox namespace"
+      (with-loaded
+        {"one_interpreter.py" one-interpreter-py}
+        (fn [_ _]
+          (let [sandbox-root (temp-dir)
+                outside-root (temp-dir)
+                outside (io/file outside-root "trusted.txt")
+                _ (spit outside "trusted")
+                ext (registered "one-interpreter")
+                registered-before ext
+                made (ep/create-python-context
+                       {}
+                       (fn [] [(.getCanonicalPath sandbox-root)])
+                       {:worker? true
+                        :jail-enabled? true
+                        :enabled? false
+                        :allowed-domains []
+                        :denied-domains []
+                        :exclude-domains []}
+                       nil
+                       nil
+                       nil)
+                ctx (:python-context made)
+                env {:python-context ctx
+                     :session-id "one-interpreter-session"
+                     :extensions (atom [ext])
+                     :active-extensions (atom [])}]
+            (try
+              (lp/sync-active-extension-symbols! env [ext])
+              (let [result
+                    (ep/run-python-block
+                      ctx
+                      (str "import os, sys, types\n"
+                           "sandbox_pid = os.getpid()\n"
+                           "sys.modules['vis_session_probe'] = types.SimpleNamespace(value=40)\n"
+                           "try:\n"
+                           "    open(" (pr-str (.getCanonicalPath outside)) ", encoding='utf-8').read()\n"
+                           "    sandbox_access = 'open'\n"
+                           "except Exception:\n"
+                           "    sandbox_access = 'refused'\n"
+                           "answer = await session_probe(" (pr-str (.getCanonicalPath outside)) ")\n"
+                           "print(sandbox_pid, answer['pid'], answer['value'], answer['text'], sandbox_access)"))
+                    words (str/split (str/trim (:stdout result)) #"\s+")]
+                (expect (= (first words) (second words)))
+                (expect (= ["42" "trusted" "refused"] (subvec (vec words) 2)))
+                (expect (identical? registered-before (registered "one-interpreter")))
+                (expect (contains? @@#'pyx/session-contexts [ctx "one-interpreter"])))
+              (finally
+                (ep/dispose-python-context! ctx)))
+            (expect (not (contains? @@#'pyx/session-contexts [ctx "one-interpreter"]))))))))
+
 ;; Tool adapter — envelope semantics
 
 (defdescribe tool-envelope-test

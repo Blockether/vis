@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - perf(gateway): build a session when one is asked for, not four at boot
 - fix(gateway): stop every turn a session is running, and keep the session
 - feat(sandbox): give each gateway session its own Python worker process
+- feat(sandbox): run a session's extensions in the same interpreter as its sandbox
 ## [v0.1.41] - 2026-08-21
 
 ### Changed

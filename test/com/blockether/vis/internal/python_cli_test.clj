@@ -104,14 +104,20 @@
                                                "    print('absent', type(e).__name__)"))]
           (expect (= 0 exit))
           (expect (re-find #"absent ModuleNotFoundError" out))))
-    (it "a no-network context blocks socket name resolution"
-        (let [{:keys [exit out]} (run-src ctx
-                                          (str "import socket\n" "try:\n"
-                                               "    socket.gethostbyname('example.com')\n"
-                                               "    print('resolved')\n"
-                                               "except Exception:\n" "    print('blocked')"))]
-          (expect (= 0 exit))
-          (expect (re-find #"blocked" out))))
+    (it "a no-network context with a jail blocks socket name resolution"
+        ;; The guard follows the jail, like the filesystem: `vis-agent python`
+        ;; runs unjailed and reaches the machine through `shell` anyway, so a
+        ;; refusal in Python there would guard nothing. This case states the
+        ;; jailed contract, which is the one that means something.
+        (tpc/with-own [jailed {} (constantly [(System/getProperty "user.dir")])
+                       {:jail-enabled? true :enabled? false}]
+          (let [{:keys [exit out]} (run-src jailed
+                                            (str "import socket\n" "try:\n"
+                                                 "    socket.gethostbyname('example.com')\n"
+                                                 "    print('resolved')\n"
+                                                 "except Exception:\n" "    print('blocked')"))]
+            (expect (= 0 exit))
+            (expect (re-find #"blocked" out)))))
     (it "a network-enabled context builds without error"
         (expect (some? (python-cli-context {:network? true}))))))
 
