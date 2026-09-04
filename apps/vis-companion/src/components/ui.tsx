@@ -1571,11 +1571,12 @@ export function NotifyConnectionSwitch({
  *
  * - TARGET AND FACE ARE DIFFERENT. A ✕ either ends a band (`isBand`) with the band's
  *   full 48×48 target (36×36 for a mouse), stands alone at the end of a row
- *   (`isStandalone`) with a 32px circular face, or sits inside another control as a
- *   32px mark (`mouse:size-6`). The band target carries a 32px circular FACE, 28px for
- *   a mouse: the visible control rides the header rhythm while the invisible room
- *   around it keeps the way out comfortably hittable. A wrapped title can make the
- *   band taller; the target still stretches with it while its face stays round.
+ *   (`isStandalone`) with a 44×44 target (28×28 for a mouse), or sits inside another
+ *   control as a 32px mark (`mouse:size-6`). Band and standalone targets each carry a
+ *   compact circular FACE: 32px for the band and 28px for a row, shrinking to 28px and
+ *   24px for a mouse. The visible control rides the local rhythm while the invisible room
+ *   around it keeps the way out comfortably hittable. A wrapped title can make the band
+ *   taller; the target still stretches with it while its face stays round.
  * - A BAND CLOSE IS A COMPACT BRANDED DISC, NOT A SECOND VERB. The two Blockether
  *   palettes carry the SAME amber pair, mirrored: on Light's dark title paper the face is
  *   an amber fill with dark ink, and on Dark's amber title band it is that pair swapped —
@@ -1611,7 +1612,7 @@ export function CloseButton({
    * face inside it stays on the control rhythm instead of inflating to the touch target.
    */
   isBand?: boolean;
-  /** This ✕ ends a row without another control supplying its face. */
+  /** This ✕ ends a row: its generous target carries a compact circular face. */
   isStandalone?: boolean;
 }) {
   const mark = <CloseIcon />;
@@ -1624,13 +1625,17 @@ export function CloseButton({
         isBand
           ? 'group w-12 self-stretch transition-opacity duration-150 focus-visible:outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-40 mouse:w-9'
           : isStandalone
-            ? 'size-8 self-center rounded-full border border-current/20 transition-[background-color,color,transform] duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 active:scale-[0.94] disabled:cursor-not-allowed disabled:opacity-40 mouse:size-7'
+            ? 'group size-11 self-center focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 mouse:size-7'
             : 'size-8 self-center border-l border-current/20 transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current mouse:size-6'
       } ${className}`}
       {...props}
     >
       {isBand ? (
         <span className="grid size-8 place-items-center rounded-full border border-current transition-[background-color,box-shadow,transform] duration-150 blockether-light:bg-accent blockether-light:text-accent-foreground blockether-dark:bg-accent-foreground blockether-dark:text-accent group-hover:bg-current/15 blockether-light:group-hover:bg-accent-2 blockether-dark:group-hover:bg-hover group-focus-visible:ring-2 group-focus-visible:ring-current/60 blockether-dark:group-focus-visible:ring-accent-foreground/60 group-active:scale-[0.94] motion-reduce:transition-none mouse:size-7">
+          {mark}
+        </span>
+      ) : isStandalone ? (
+        <span className="pointer-events-none grid size-7 place-items-center rounded-full border border-current/20 transition-[background-color,color,transform] duration-150 group-hover:bg-err/15 group-hover:text-err group-focus-visible:bg-err/15 group-focus-visible:text-err group-focus-visible:ring-2 group-focus-visible:ring-accent/60 group-active:scale-[0.94] motion-reduce:transition-none mouse:size-6">
           {mark}
         </span>
       ) : (

@@ -492,6 +492,14 @@ describe("CloseButton", () => {
     }
   });
 
+  // Regression, user screenshot: queued-message remove controls painted their entire
+  // target as a large circle. The target must remain generous while its face stays
+  // subordinate to the queued message.
+  it("separates a standalone row target from its compact face", () => {
+    const standalone = html({ isStandalone: true });
+    expect(standalone).toMatch(/<button[^>]*>[\s\S]*<span[^>]*>[\s\S]*<svg/);
+  });
+
   // Design request: the full-size target stays part of the band while the visible close is
   // a compact circle, and the two Blockether palettes carry the same amber pair mirrored —
   // Light fills the face with amber over dark ink, Dark fills it with the ink and marks it
