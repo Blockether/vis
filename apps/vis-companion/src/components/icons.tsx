@@ -67,9 +67,11 @@ const NAMES_A_SIZE = /(?:^|\s)(?:size|[hw])-/;
 function Mark({
   icon: Drawn,
   className,
+  fill,
 }: {
   icon: LucideIcon;
   className?: string;
+  fill?: "none" | "currentColor";
 }) {
   return (
     <Drawn
@@ -78,6 +80,7 @@ function Mark({
         !NAMES_A_SIZE.test(className ?? "") && "size-3.5",
         className,
       )}
+      fill={fill}
       aria-hidden="true"
     />
   );
@@ -250,13 +253,13 @@ export function TrashIcon({ className }: { className?: string }) {
 }
 
 /**
- * The favorite mark. Filled is "starred": the BODY is an amber FILL, so it wears
- * the brand yellow (`accent`, #ffc420) and never the brown ink a text glyph
- * needs. Yellow on yellow paper is not a mark, though — #ffc420 on the light
- * theme's #faf3eb measures 1.45:1, under the 3:1 a graphic owes, so a starred
- * row carried a glyph the eye slid straight off. The EDGE carries the contrast
- * the fill cannot: `accent-ink` (light #7a4a00, 6.8:1 on that paper; dark
- * #fde68a on panel). The shape is legible, the colour is still the brand yellow.
+ * The favorite mark. Filled is "starred": the BODY carries `fill=currentColor`
+ * itself so a webview cannot drop the state with a missing utility; `text-accent`
+ * gives that body the brand yellow (#ffc420). Yellow on yellow paper is not a mark,
+ * though — #ffc420 on the light theme's #faf3eb measures 1.45:1, under the 3:1 a
+ * graphic owes. The EDGE carries the contrast the fill cannot: `accent-ink` (light
+ * #7a4a00, 6.8:1 on that paper; dark #fde68a on panel). The shape is legible, the
+ * colour is still the brand yellow.
  *
  * The un-starred outline stays adaptive (`stroke-current`) so it reads among the
  * other action icons; the fill alone is too quiet to spot at a glance in a list,
@@ -272,8 +275,9 @@ export function StarIcon({
   return (
     <Mark
       icon={Star}
+      fill={filled ? "currentColor" : "none"}
       className={classes(
-        filled ? "fill-accent stroke-accent-ink" : "fill-none stroke-current",
+        filled ? "text-accent stroke-accent-ink" : "stroke-current",
         className,
       )}
     />

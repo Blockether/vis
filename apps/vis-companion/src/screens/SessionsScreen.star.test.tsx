@@ -101,7 +101,7 @@ describe("starring a session", () => {
     const row = () =>
       (document.querySelector('[data-session-id="older"]') as HTMLElement)
         .parentElement!;
-    expect(row().querySelector("svg.fill-accent")).toBeNull();
+    expect(row().querySelector("svg[fill='currentColor']")).toBeNull();
 
     await userEvent.click(
       screen
@@ -111,8 +111,8 @@ describe("starring a session", () => {
 
     // No remount, no reopened list: the same row, in the same commit. One star,
     // not a mark and a control — the row's state IS the way to take it back.
-    expect(row().querySelector("svg.fill-accent")).not.toBeNull();
-    expect(row().querySelectorAll("svg.fill-accent")).toHaveLength(1);
+    expect(row().querySelector("svg[fill='currentColor']")).not.toBeNull();
+    expect(row().querySelectorAll("svg[fill='currentColor']")).toHaveLength(1);
     expect(
       screen
         .getByRole("group", { name: "Older session actions" })
@@ -194,7 +194,7 @@ describe("starring a session", () => {
     // Home in the same frame the star was tapped — there is no animation left to be
     // dropped by the re-order that same tap starts.
     expect(home).toEqual([{ left: 0, behavior: "auto" }]);
-    expect(row.parentElement!.querySelector("svg.fill-accent")).not.toBeNull();
+    expect(row.parentElement!.querySelector("svg[fill='currentColor']")).not.toBeNull();
   });
 
   // Regression, user report ("the star is not showing on the session row ... as long
@@ -235,7 +235,7 @@ describe("starring a session", () => {
     const row =
       document.querySelector('[data-session-id="s17"]')?.parentElement ?? null;
     expect(row).not.toBeNull();
-    expect(row!.querySelector("svg.fill-accent")).not.toBeNull();
+    expect(row!.querySelector("svg[fill='currentColor']")).not.toBeNull();
   });
   // Regression, user report on iOS (paraphrased: slide the LAST row open, tap the
   // star, the row moves up wearing no mark, and only the next slide shows it — with
@@ -311,7 +311,7 @@ describe("starring a session", () => {
 
     expect(row("starred").children[0]).toBe(starredFavorite);
     expect(row("plain").children[0]).toBe(plainFavorite);
-    expect(starredFavorite.querySelector("svg.fill-accent")).not.toBeNull();
+    expect(starredFavorite.querySelector("svg[fill='currentColor']")).not.toBeNull();
     expect(plainFavorite.querySelector("svg")).toBeNull();
     expect(starredFavorite.className).toBe(plainFavorite.className);
     expect(status("starred").children[0]?.hasAttribute("data-session-status-dot")).toBe(true);
