@@ -325,7 +325,6 @@ export function SettingsDialog({
                   await onAddMachine(conn, makeActive);
                   setIsAdding(false);
                 }}
-                isStacked
               />
             </div>
           </DialogFrame>

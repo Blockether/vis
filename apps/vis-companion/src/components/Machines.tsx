@@ -1,4 +1,5 @@
 import {
+  Fragment,
   Suspense,
   lazy,
   useCallback,
@@ -10,7 +11,7 @@ import {
 } from 'react';
 import type { GatewayConn } from '../lib/types';
 import { GatewayClient, GatewayError } from '../lib/gateway';
-import { parsePairing } from '../lib/pairing';
+import { parsePairing, parsePairingJson, parsePairingUrl } from '../lib/pairing';
 import {
   REACH_HINT,
   REACH_LABEL,
@@ -24,7 +25,7 @@ import { onWake } from '../lib/wake';
 import { hasHardwarePointer } from '../lib/pointer';
 import { warm } from '../lib/warm';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
-import { Banner, Button, ConfirmRow, Input, ListRow, Spinner } from './ui';
+import { Banner, Button, ConfirmRow, CopyChip, Input, ListRow, Spinner } from './ui';
 import {
   AddressIcon,
   ChevronIcon,
@@ -967,25 +968,80 @@ function PairingProgress({
 }
 
 /**
- * THE TWO WAYS IN: the pairing link (or its QR) printed by `vis-agent gateway pair`, and
- * an address typed by hand. Both end in the same handshake, so both report the same
- * reason when a machine cannot be reached.
+ * ONE STEP OF THE PAIRING PAGE: a mono ordinal in the mark column and, on the shared
+ * left edge beside it, the step's name and whatever it holds — prose, a command, the
+ * field. The ordinal is the only mark; the order IS the explanation.
+ */
+function PairStep({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+  return (
+    <li
+      className={`grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-2 ${
+        n > 1 ? '@3xl:border-l @3xl:border-dialog-edge @3xl:pl-6' : ''
+      }`}
+    >
+      <span
+        aria-hidden="true"
+        className="pt-px font-mono text-body font-black tabular-nums text-accent-ink"
+      >
+        {n}
+      </span>
+      <div className="min-w-0 space-y-2">
+        <h3 className="font-mono text-body font-bold text-white">{title}</h3>
+        {children}
+      </div>
+    </li>
+  );
+}
+
+/**
+ * A COMMAND TO RUN SOMEWHERE ELSE, and the one way to take it there. It is the copy
+ * chip beside a mono line, never a code block a finger has to select: the reader is
+ * on the phone or at this screen, and the terminal is on the other machine.
+ */
+function PairCommand({ value, isInline = false }: { value: string; isInline?: boolean }) {
+  if (isInline) {
+    return <code className="font-mono text-accent-ink">{value}</code>;
+  }
+  return (
+    <div className="flex items-center gap-2 border border-dialog-edge bg-input py-1 pl-3 pr-1">
+      {/* A narrow column wraps the command, and a browser will break a word at the
+          hyphen inside `--require-token`; a flag torn in two is a different flag. Each
+          word is one unbreakable box, so the line only ever wraps between words. */}
+      <code className="min-w-0 flex-1 font-mono text-ui text-white">
+        {value.split(' ').map((word, index) => (
+          <Fragment key={index}>
+            {index > 0 ? ' ' : null}
+            <span className="inline-block">{word}</span>
+          </Fragment>
+        ))}
+      </code>
+      <CopyChip value={value} label="Copy command" density="compact">
+        Copy
+      </CopyChip>
+    </div>
+  );
+}
+
+/**
+ * THE ONE WAY IN, explained in the order it happens: the pairing link (or its QR)
+ * printed by `vis-agent gateway pair`, scanned or pasted, or an address typed by hand.
+ * All of it ends in the same handshake, so all of it reports the same reason when a
+ * machine cannot be reached.
+ *
+ * It used to be two cards, "Pairing link" and "URL + token", each with its own verb:
+ * two forms for one handshake, stretched across a desktop with the reader left to
+ * work out which was theirs — and neither said what to run on the other machine.
  */
 export function AddMachine({
   onAdd,
-  isStacked = false,
 }: {
   onAdd: (conn: GatewayConn, makeActive?: boolean) => Promise<void>;
-  /**
-   * The two ways in sit side by side on a page and STACK inside a settings column:
-   * a media query cannot see that the column is half a dialog, so on a desktop the
-   * pair of cards split 446px between them and the field for a pairing LINK came
-   * out 175px wide.
-   */
-  isStacked?: boolean;
 }) {
+  // ONE FIELD TAKES WHATEVER THE TERMINAL PRINTED: the `vis://` link, its JSON, or
+  // a bare address. Two forms for one handshake made the reader choose between
+  // them before knowing what the difference was; the difference is a token, and
+  // only a bare address is missing one, so that is the only time it is asked for.
   const [payload, setPayload] = useState('');
-  const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
   const [msg, setMsg] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1078,7 +1134,6 @@ export function AddMachine({
         const via = REACH_LABEL[reachOf(chosen)].toLowerCase();
         setMsg({ kind: 'ok', text: `Connected to ${candidate.label} (${via})` });
         setPayload('');
-        setUrl('');
         setToken('');
         return;
       }
@@ -1105,23 +1160,22 @@ export function AddMachine({
     }
   }
 
-  async function addFromPayload() {
-    const conn = parsePairing(payload);
-    if (!conn) {
-      setMsg({ kind: 'err', text: 'Not a vis:// pairing link or machine URL' });
-      return;
-    }
-    await tryConn(conn);
-  }
+  // A pairing link carries its own token; a typed address may skip the scheme,
+  // so it is supplied instead of refused, and the token field stands beside it.
+  const link = parsePairingUrl(payload) ?? parsePairingJson(payload);
+  const address = link ? null : normalizeGatewayUrl(payload);
+  const asksToken = Boolean(address);
 
-  async function addManual() {
-    // A typed address may skip the scheme: supply it instead of refusing.
-    const u = normalizeGatewayUrl(url);
-    if (!u) {
-      setMsg({ kind: 'err', text: `"${url.trim()}" is not a machine address` });
+  async function add() {
+    if (link) {
+      await tryConn(link);
       return;
     }
-    await tryConn({ url: u, token: token.trim() || undefined, label: hostOf(u) });
+    if (!address) {
+      setMsg({ kind: 'err', text: `"${payload.trim()}" is not a pairing link or a machine address` });
+      return;
+    }
+    await tryConn({ url: address, token: token.trim() || undefined, label: hostOf(address) });
   }
 
   const secondsLeft = run
@@ -1129,7 +1183,7 @@ export function AddMachine({
     : 0;
 
   return (
-    <div className="min-w-0">
+    <div className="@container min-w-0">
       {scanning && (
         <Suspense fallback={<ScannerOpening onCancel={() => setScanning(false)} />}>
           <QrScanner
@@ -1147,74 +1201,82 @@ export function AddMachine({
         </Suspense>
       )}
 
-      <div
-        className={`grid min-w-0 items-start gap-3 ${isStacked ? '' : 'md:grid-cols-2'}`}
-      >
-        <div className="overflow-hidden border border-dialog-edge bg-panel transition-colors focus-within:border-accent">
-          <header className="border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
-            <h3 className="font-mono text-body font-bold text-white">Pairing link</h3>
-            <p className="mt-0.5 text-ui text-dialog-hint">
-              Paste the link from <code className="text-accent-ink">vis-agent gateway pair</code> on
-              that machine.
+      {/* THE PAGE IS THE INSTRUCTIONS. Three numbered steps in the order they happen:
+          the command on the other machine, how its answer gets here, and the field
+          that takes it. Stacked on one left edge where the surface is a column — a
+          phone, the settings dialog — and side by side, left to right, where it is a
+          page: it is the component's own width that says which, not the viewport. */}
+      <ol className="min-w-0 space-y-5 @3xl:grid @3xl:grid-cols-3 @3xl:gap-x-6 @3xl:space-y-0">
+        <PairStep n={1} title="On the machine that runs vis">
+          <p className="text-body text-dialog-hint">
+            Start the gateway where this device can reach it. It prints a QR code and a
+            pairing link.
+          </p>
+          <PairCommand value="vis-agent gateway start --host 0.0.0.0 --require-token --pair" />
+          <p className="text-ui text-dialog-hint">
+            Already running? <PairCommand value="vis-agent gateway pair" isInline /> prints the
+            same code again.
+          </p>
+        </PairStep>
+
+        <PairStep n={2} title={canScan ? 'Scan the code, or paste the link' : 'Copy the link it printed'}>
+          {canScan ? (
+            <Button variant="primary" onClick={() => setScanning(true)} disabled={busy}>
+              Scan QR
+            </Button>
+          ) : (
+            <p className="text-body text-dialog-hint">
+              Under the QR code the terminal prints one line that starts with{' '}
+              <code className="font-mono text-white">vis://gateway</code>. Copy that whole line and
+              paste it below.
             </p>
-          </header>
-          <div className="space-y-2.5 p-3">
-            <Input
-              placeholder="vis://gateway?url=…&amp;token=…"
-              value={payload}
-              onChange={(event) => setPayload(event.target.value)}
-              autoCapitalize="none"
-              autoCorrect="off"
-            />
-            <div className="flex gap-2">
-              <Button
-                className="flex-1"
-                onClick={addFromPayload}
-                disabled={busy || !payload}
-              >
-                {busy ? 'Pairing\u2026' : 'Pair'}
-              </Button>
-              {canScan && (
-                <Button variant="secondary" onClick={() => setScanning(true)} disabled={busy}>
-                  Scan QR
-                </Button>
+          )}
+        </PairStep>
+
+        <PairStep n={3} title="Pair">
+          {/* The field and its verb stay one row at every width: a hint standing between
+              them read as a third option. What else the field takes is said ABOVE it,
+              as prose — inside the placeholder, "or" looked like part of the address. */}
+          <p className="text-body text-dialog-hint">
+            Paste the link, or a machine address like{' '}
+            <code className="font-mono text-white">10.0.0.5:7890</code> — LAN, Tailscale or a
+            Cloudflare tunnel.
+          </p>
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1 space-y-2">
+              <Input
+                aria-label="Pairing link or machine address"
+                placeholder="vis://gateway?url=…&amp;token=…"
+                value={payload}
+                onChange={(event) => setPayload(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && payload && !busy) void add();
+                }}
+                autoCapitalize="none"
+                autoCorrect="off"
+              />
+              {asksToken && (
+                <Input
+                  aria-label="Bearer token"
+                  placeholder="Bearer token (optional on loopback)"
+                  value={token}
+                  onChange={(event) => setToken(event.target.value)}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                />
               )}
             </div>
-          </div>
-        </div>
-
-        <div className="overflow-hidden border border-dialog-edge bg-panel transition-colors focus-within:border-accent">
-          <header className="border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
-            <h3 className="font-mono text-body font-bold text-white">URL + token</h3>
-            <p className="mt-0.5 text-ui text-dialog-hint">
-              LAN, Tailscale, and Cloudflare tunnel addresses are supported.
-            </p>
-          </header>
-          <div className="space-y-2.5 p-3">
-            <Input
-              placeholder="my-machine.example.com or 10.0.0.5:7890"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              autoCapitalize="none"
-              autoCorrect="off"
-            />
-            <Input
-              placeholder="Bearer token (optional on loopback)"
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-              autoCapitalize="none"
-              autoCorrect="off"
-            />
             <Button
-              className="w-full"
-              onClick={addManual}
-              disabled={busy || !url}
+              variant={canScan ? 'secondary' : 'primary'}
+              className="shrink-0"
+              onClick={add}
+              disabled={busy || !payload}
             >
-              {busy ? 'Connecting\u2026' : 'Connect'}
+              {busy ? 'Pairing\u2026' : 'Pair'}
             </Button>
           </div>
-        </div>
-      </div>
+        </PairStep>
+      </ol>
 
       {run && (
         <PairingProgress

@@ -199,26 +199,28 @@ vis-agent gateway start --host 0.0.0.0 --require-token --pair
 vis://gateway?url=http%3A%2F%2F<host>%3A7890&token=<bearer-token>
 ```
 
-In the companion app, open **Gateways → Add a gateway → Pairing link** and tap
-**Scan QR** (or paste the link into the field and tap **Pair**). The
+In the companion app, open **Machines → Add a machine** and tap **Scan QR** on a
+phone, or paste the link into the one field and tap **Pair** anywhere. The
 QR also lists the reachable hosts it picked, in preference order:
 **Tailscale addresses first** (they keep working off-LAN), then LAN
 (`10.x` / `192.168.x` / `172.16–31.x`), then the concrete bind host.
 
 ### Connecting from the companion app
 
-Open the companion (web, iOS, or Android). Its first screen is **Gateways**.
-Under **Add a gateway** there are two ways in:
+Open the companion (web, iOS, or Android). Its first screen is **Machines**,
+and **Add a machine** under it is three numbered steps: the command to run on
+the machine, how its answer gets to this device, and ONE field that takes it:
 
-- **Pairing link** — the fastest path, and the only one that also carries the
-  token. Either tap **Scan QR** and point the camera at the QR from `vis-agent gateway
-  pair` (or `vis-agent gateway start … --pair`), or paste the
-  `vis://gateway?url=…&token=…` link into the field and tap **Pair**. Both fill
-  in the URL and bearer token together, so there is nothing else to type.
-- **URL + token** — for a gateway whose address you already know. Enter the
-  gateway URL (LAN, Tailscale, or a Cloudflare tunnel address) and, when it is
-  token-gated, the bearer token, then tap **Connect**. The token is optional
-  only for a loopback (`127.0.0.1`) gateway.
+- **The pairing link** — the fastest path, and the only one that also carries the
+  token. On a phone tap **Scan QR** and point the camera at the QR from
+  `vis-agent gateway pair` (or `vis-agent gateway start … --pair`); anywhere
+  else paste the `vis://gateway?url=…&token=…` line the terminal printed under
+  the QR and tap **Pair**. Both fill in the URL and bearer token together, so
+  there is nothing else to type.
+- **A machine address** — for a gateway whose address you already know. Type
+  it into the same field (LAN, Tailscale, or a Cloudflare tunnel address, with
+  or without `http://`); a **Bearer token** field appears beneath it, optional
+  only for a loopback (`127.0.0.1`) gateway. Tap **Pair**.
 
 Each saved gateway then carries a live status dot, re-probed every six seconds:
 green `●` online (with the round-trip in milliseconds), red `●` offline, amber

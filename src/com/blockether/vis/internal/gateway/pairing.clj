@@ -211,7 +211,8 @@
 
       (emit "")
       (emit "VIS companion pairing")
-      (emit "scan this in iOS Settings → Gateway → Scan QR")
+      (emit
+        "in the companion app open Machines → Add a machine, then scan this or paste the link below")
       (when (seq hosts) (emit (str "reachable hosts: " (str/join ", " hosts))))
       (emit payload)
       (emit (terminal-qr payload))

@@ -1,5 +1,6 @@
+import type { ReactNode } from 'react';
 import type { GatewayConn } from '../lib/types';
-import { DialogHeader, closeWith } from '../components/ui';
+import { CloseButton } from '../components/ui';
 import { AddMachine, MachineRows, useFleetHealth } from '../components/Machines';
 
 interface Props {
@@ -19,6 +20,24 @@ interface Props {
    * Absent while nothing is paired — then this screen IS the app.
    */
   onClose?: () => void;
+}
+
+/**
+ * The one heading this page has, twice: a name, a rule that runs to the frame's far
+ * edge, and — for the list that can be left — the way out standing on that rule. The
+ * machines used to wear a dialog's title band and drop shadow here, on a page, one
+ * hairline above a section that wore this; one page, one kind of heading.
+ */
+function PageHeading({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div className="mb-3 flex items-center gap-3">
+      <h2 className="font-mono text-body font-black uppercase tracking-[0.12em] text-white">
+        {title}
+      </h2>
+      <span className="h-px flex-1 bg-dialog-edge" />
+      {children}
+    </div>
+  );
 }
 
 /**
@@ -46,11 +65,13 @@ export function ConnectScreen({
   });
 
   return (
-    <div className="mx-auto w-full max-w-[1400px] space-y-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,translate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-1.5 starting:opacity-0 motion-reduce:transition-none sm:space-y-6 sm:px-6 sm:py-6">
+    <div className="mx-auto w-full max-w-[1400px] space-y-8 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,translate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-1.5 starting:opacity-0 motion-reduce:transition-none sm:space-y-8 sm:px-6 sm:py-6">
       {conns.length > 0 && (
-        <section className="overflow-hidden border border-dialog-edge bg-panel shadow-none sm:shadow-[4px_4px_0_var(--dialog-shadow)]">
-          <DialogHeader title="Machines" {...closeWith(onClose, 'Close machines')} />
-          <div className="border-t border-dialog-edge">
+        <section>
+          <PageHeading title="Machines">
+            {onClose && <CloseButton label="Close machines" isStandalone onClick={onClose} />}
+          </PageHeading>
+          <div className="border border-dialog-edge bg-panel">
             <MachineRows
               conns={conns}
               selectedUrl={active?.url}
@@ -68,14 +89,12 @@ export function ConnectScreen({
           with the parent's, and the two cards read as a flicker inside a page
           that is itself still fading in. */}
       <section>
-        <div className="mb-3 flex items-center gap-3">
-          <h2 className="font-mono text-body font-black uppercase tracking-[0.12em] text-white">
-            Add a machine
-          </h2>
-          <span className="h-px flex-1 bg-dialog-edge" />
+        <PageHeading title="Add a machine" />
+        {/* The same plane the machines stand on: a heading, then ONE edge around what it
+            heads. Bare on the page, the steps had no visible end and no visible start. */}
+        <div className="border border-dialog-edge bg-panel p-4 sm:p-5">
+          <AddMachine onAdd={onAdd} />
         </div>
-
-        <AddMachine onAdd={onAdd} />
       </section>
     </div>
   );
