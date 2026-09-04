@@ -126,7 +126,28 @@ export const Exchange: Story = {
   args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED },
   render: (args) => (
     <>
-      <UserMessage>{STORY_EXCHANGE_TURN.request ?? ""}</UserMessage>
+      <UserMessage onFork={() => {}}>{STORY_EXCHANGE_TURN.request ?? ""}</UserMessage>
+      <AssistantMessage
+        turn={{ ...STORY_EXCHANGE_TURN, iterations: args.iterations }}
+        whole={args.whole}
+      />
+    </>
+  ),
+};
+
+/**
+ * THE TURN'S OWN VERB, mid-act. A fork is cut AT a turn, on the turn's role line,
+ * because that is where the reader can see what they are forking. On a pointer the
+ * verb surfaces with the turn under it; while the gateway copies, it says so and
+ * takes no second press.
+ */
+export const Forking: Story = {
+  args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED },
+  render: (args) => (
+    <>
+      <UserMessage onFork={() => {}} isForking>
+        {STORY_EXCHANGE_TURN.request ?? ""}
+      </UserMessage>
       <AssistantMessage
         turn={{ ...STORY_EXCHANGE_TURN, iterations: args.iterations }}
         whole={args.whole}

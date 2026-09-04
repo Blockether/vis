@@ -43,10 +43,13 @@ export function renderSessionScreen({
   session = sessionFixture(),
   client: clientOverrides = {},
   subscriptions: hubOverrides = {},
+  onOpenSession = () => {},
 }: {
   session?: Session;
   client?: Fake;
   subscriptions?: Fake;
+  /** Where the screen sends the reader when it opens ANOTHER session. */
+  onOpenSession?: (sid: string, fresh?: boolean) => void;
 } = {}) {
   const nothing = () => null;
   const known: Fake = {
@@ -107,7 +110,7 @@ export function renderSessionScreen({
       subscriptions={subscriptions as never}
       sid={sid}
       onBack={() => {}}
-      onOpenSession={() => {}}
+      onOpenSession={onOpenSession}
     />
   );
   const view = render(screenFor(session.id));

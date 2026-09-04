@@ -59,7 +59,6 @@ import type {
   McpServerInput,
   McpServersResponse,
   McpTestResult,
-  ForkPoint,
   BrowseEntry,
   BrowseListing,
 } from "./types";
@@ -3138,22 +3137,6 @@ export class GatewayClient {
       path,
       name,
     });
-  }
-
-
-  /**
-   * Every turn of `sid` a fork can be cut at, oldest-first — `GET
-   * /v1/sessions/:sid/forks`. Lean rows on purpose: the picker paints one line
-   * per turn and must not pull a transcript to do it.
-   */
-  async forkPoints(sid: string, signal?: AbortSignal): Promise<ForkPoint[]> {
-    const res = await this.request<{ turns?: ForkPoint[] }>(
-      "GET",
-      `/v1/sessions/${encodeURIComponent(sid)}/forks`,
-      undefined,
-      signal,
-    );
-    return res.turns ?? [];
   }
 
   /**

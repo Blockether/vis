@@ -51,8 +51,8 @@ export type SessionRowCommands = {
     fresh?: boolean,
   ) => void | Promise<void>;
   rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
-  /** Opens the fork question under the very cell that was pressed. */
-  fork: (session: Session, conn: GatewayConn, anchor: HTMLElement) => void;
+  /** Forks the whole conversation and opens the copy; the row stays as it was. */
+  fork: (session: Session, conn: GatewayConn) => void | Promise<void>;
   requestDelete: (session: Session, conn: GatewayConn) => void;
   toggleStar: (session: Session, conn: GatewayConn) => void;
 };
@@ -268,8 +268,9 @@ export const SessionRow = memo(function SessionRow({
               name: `Fork ${title}`,
               icon: <ForkIcon className="size-4" />,
               // Forking COPIES — it takes nothing away from the row it starts on —
-              // so it stays a neutral verb beside Rename, never the red one.
-              onSelect: (anchor) => commands.fork(session, conn, anchor),
+              // so it stays a neutral verb beside Rename, never the red one, and
+              // asks nothing: the copy opens. Cutting at a turn is that turn's own verb.
+              onSelect: () => void commands.fork(session, conn),
             },
             {
               key: "delete",

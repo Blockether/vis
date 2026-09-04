@@ -29,6 +29,7 @@ import {
   CircleDotIcon,
   CircleSlashIcon,
   CircleXIcon,
+  ForkIcon,
   PauseIcon,
   PlayIcon,
 } from "./icons";
@@ -51,6 +52,7 @@ import {
   Disclosure,
   IconButton,
   LoadMore,
+  MetaButton,
   PROSE,
   Spinner,
 } from "./ui";
@@ -3783,9 +3785,19 @@ function attachmentKey(att: GatewayAttachment, index: number): string {
 export const UserMessage = memo(function UserMessage({
   children,
   attachments,
+  onFork,
+  isForking = false,
 }: {
   children: string;
   attachments?: GatewayAttachment[];
+  /**
+   * Fork the conversation THROUGH this turn. The verb lives on the turn because
+   * that is where the reader can see what they are forking; a list of forty
+   * truncated first lines in a popover could not say the same. Absent on a turn
+   * that is not persisted yet.
+   */
+  onFork?: () => void;
+  isForking?: boolean;
 }) {
   const parts = parseUserMessage(children);
   // Persisted user images re-render from DB-owned base64 (survives a restart even
@@ -3835,9 +3847,19 @@ export const UserMessage = memo(function UserMessage({
   // paths and URLs that the renderer cannot scope separately, so `break-words` remains
   // the last-resort overflow guard while hyphenation moderates ordinary word spacing.
   return (
-    <article className="mt-4 w-full">
-      <div className="mb-1 font-mono text-meta font-bold text-you-role">
-        You
+    <article className="group mt-4 w-full">
+      <div className="mb-1 flex items-baseline justify-between gap-2 font-mono text-meta font-bold text-you-role">
+        <span>You</span>
+        {onFork && (
+          // A reserved slot on the role line, so the transcript never reflows: on a
+          // pointer it surfaces with the turn under it, on touch it is simply there.
+          <span className="-my-1 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
+            <MetaButton onClick={onFork} disabled={isForking} aria-label="Fork from here">
+              <ForkIcon className="size-3" aria-hidden />
+              {isForking ? "Forking..." : "Fork from here"}
+            </MetaButton>
+          </span>
+        )}
       </div>
       <div
         className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground ${PROSE}`}

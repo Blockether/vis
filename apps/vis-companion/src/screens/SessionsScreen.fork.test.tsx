@@ -9,26 +9,19 @@ let restore = () => {};
 afterEach(() => restore());
 
 // A fork is a COPY of a conversation, so the row it starts from must come back
-// untouched: these tests hold the slide's verb, the panel's two answers (the whole
-// session, or one turn), and the request each one actually puts on the wire.
+// untouched, and the row's verb asks nothing: one press forks the whole session and
+// opens the copy. Cutting at a turn is that turn's own verb, in the transcript.
 describe("forking a session from its slide", () => {
-  const forks = {
-    turns: [
-      { turn_id: "t1", request: "make the header amber" },
-      { turn_id: "t2", request: "now undo the second half" },
-    ],
-    session: { id: "forked", title: "A session (fork)" },
-  };
   const machines = [
     {
       sessions: [listSession({ id: "s1", title: "A session" })],
-      routes: { "/v1/sessions/s1/forks": forks },
+      routes: { "/v1/sessions/s1/forks": { session: { id: "forked", title: "A session (fork)" } } },
     },
   ];
 
   const strip = () => screen.getByRole("group", { name: "A session actions" });
 
-  it("offers the whole session first and forks it without naming a turn", async () => {
+  it("forks the whole session on one press and opens the copy", async () => {
     const opened: string[] = [];
     const view = renderSessionsScreen({
       machines,
@@ -43,9 +36,6 @@ describe("forking a session from its slide", () => {
     expect(fork.className).not.toContain("bg-err");
     await userEvent.click(fork);
 
-    await screen.findByText("Whole session");
-    await userEvent.click(screen.getByText("Whole session"));
-
     await screen.findByText("A session", {}, { timeout: 2000 });
     const posted = view.requests.filter(
       (request) => request.method === "POST" && request.path === "/v1/sessions/s1/forks",
@@ -53,31 +43,7 @@ describe("forking a session from its slide", () => {
     expect(posted).toHaveLength(1);
     expect(posted[0].body).toEqual({});
     expect(opened).toEqual(["forked"]);
-  });
-
-  it("lists the session's turns and forks THROUGH the one that was picked", async () => {
-    const opened: string[] = [];
-    const view = renderSessionsScreen({
-      machines,
-      onOpen: (_conn, sid) => opened.push(sid),
-    });
-    restore = view.restore;
-    await screen.findByText("A session");
-
-    await userEvent.click(strip().querySelector('button[aria-label="Fork A session"]')!);
-
-    // The turns are the picker, numbered as the reader counts them and carrying the
-    // words that opened each one.
-    const second = await screen.findByText("Turn 2 · now undo the second half");
-    expect(screen.getByText("Turn 1 · make the header amber")).toBeTruthy();
-    await userEvent.click(second);
-
-    await screen.findByText("A session", {}, { timeout: 2000 });
-    const posted = view.requests.filter(
-      (request) => request.method === "POST" && request.path === "/v1/sessions/s1/forks",
-    );
-    expect(posted).toHaveLength(1);
-    expect(posted[0].body).toEqual({ through_turn_id: "t2" });
-    expect(opened).toEqual(["forked"]);
+    // No question was asked on the way.
+    expect(screen.queryByRole("dialog", { name: "Fork this session" })).toBeNull();
   });
 });

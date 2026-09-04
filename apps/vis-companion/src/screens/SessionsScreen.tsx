@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Banner, Button, LoadMore, Spinner } from '../components/ui';
+import { Banner, Button, LoadMore } from '../components/ui';
 import {
   MachineGap,
   MachineMark,
@@ -11,7 +11,6 @@ import {
 import {
   NavigatorSkeleton,
   draftSearchText,
-  firstLine,
   sessionSearchText,
   type SessionListActions,
   type SessionRowAction,
@@ -23,16 +22,11 @@ import {
   type SessionRowsContext,
 } from './sessions/SessionProjectGroups';
 import {
-  Menu,
-  MenuHeading,
-  MenuItem,
-  MenuNote,
-  MENU_WIDTH,
   PANEL_SIZES,
 } from '../components/Menu';
 import { GatewayClient, type ProjectWindows, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { ForkPoint, GatewayConn, Session, SseEvent } from '../lib/types';
+import type { GatewayConn, Session, SseEvent } from '../lib/types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, viewKind } from '../lib/view';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
@@ -303,12 +297,6 @@ interface Props {
   onDiscardShare?: () => void;
 }
 
-/**
- * The busy key for the fork that takes the WHOLE session: a turn's own id marks
- * a fork cut at that turn, and no turn id can collide with this word.
- */
-const WHOLE_SESSION_FORK = 'whole-session';
-
 export function SessionsScreen({
   conns,
   primary = null,
@@ -369,7 +357,6 @@ export function SessionsScreen({
     machine: FleetMachine;
     at: { top: number; left: number };
   } | null>(null);
-  const forkAnchorEl = useRef<HTMLElement | null>(null);
   const pollStartedAt = useRef<number | null>(null);
   // Is the gateway pushing this list its fleet status, and when did the window last
   // cost a read? Refs, not state: the poll reads them on its own tick, and a cadence
@@ -378,26 +365,8 @@ export function SessionsScreen({
   const lastWindowReadAt = useRef(0);
   // The row action belongs to one session on one machine. Renaming needs an input
   // dialog; deleting asks through `ConfirmRow` exactly where that session row stood.
-  // FORKING one session, from that row's own slide. The order is one value like
-  // the start order above it: which row, on which machine, and where the panel
-  // hangs — leaving it forgets all three.
-  const [forkFlow, setForkFlow] = useState<{
-    session: Session;
-    conn: GatewayConn;
-    at: { top: number; left: number };
-  } | null>(null);
-  // The turns that row can be cut at. `null` = still reading; the panel says so
-  // rather than claiming the session has none.
-  const [forkPoints, setForkPoints] = useState<{ rows: ForkPoint[] | null; error: string | null }>({
-    rows: null,
-    error: null,
-  });
-  // Which choice in the panel is running — the whole session, or one turn's id.
-  const [forkBusy, setForkBusy] = useState<string | null>(null);
-  // WHICH row the open panel is reading turns for, out of the render loop: the fleet
-  // poll hands this screen a new machine object every few seconds and an effect that
-  // depended on it would abort its own read on the frame it started.
-  const forkSourceRef = useRef<{ sid: string; conn: GatewayConn } | null>(null);
+  // Forking from the row COPIES the whole conversation and opens the copy — one
+  // press, no question; a fork cut at a turn is asked on that turn, in the transcript.
   const [rowAction, setRowAction] = useState<SessionRowAction | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -1288,63 +1257,23 @@ export function SessionsScreen({
     }
   }, [load, onOpen]);
 
-
-  /** Open the conversation-fork question under the row action that invoked it. */
-  const startFork = useCallback((session: Session, conn: GatewayConn, anchor: HTMLElement) => {
-    forkAnchorEl.current = anchor;
-    const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
-    if (!at) return;
-    forkSourceRef.current = { sid: session.id, conn };
-    setForkPoints({ rows: null, error: null });
-    setForkBusy(null);
-    setForkFlow({ session, conn, at });
-  }, []);
-
-  const leaveFork = useCallback((restoreFocus = false) => {
-    setForkFlow(null);
-    setForkBusy(null);
-    if (restoreFocus) forkAnchorEl.current?.focus();
-  }, []);
-
-  // Read turns once per opening, keyed by row rather than by objects replaced by fleet polling.
-  const forkSid = forkFlow?.session.id ?? null;
-  const forkMachine = forkFlow ? machineKey(forkFlow.conn) : null;
-  useEffect(() => {
-    const source = forkSourceRef.current;
-    if (!forkSid || !forkMachine || !source) return;
-    const controller = new AbortController();
-    void clientFor(source.conn)
-      .forkPoints(source.sid, controller.signal)
-      .then((rows) => setForkPoints({ rows, error: null }))
-      .catch((cause) => {
-        if (controller.signal.aborted) return;
-        setForkPoints({ rows: [], error: (cause as Error).message });
-      });
-    return () => controller.abort();
-  }, [forkSid, forkMachine]);
-
   /**
-   * Cut the fork. `throughTurnId` is the LAST turn it keeps; without one the
-   * fork carries the whole conversation. The fork is a session of its own, so
-   * the app goes straight into it — the source row is untouched behind it.
+   * Fork the whole conversation from its row. The fork is a session of its own, so
+   * the app goes straight into it — the source row is untouched behind it. A fork
+   * that failed has no panel left to speak from, so the word lands where a failed
+   * create's does.
    */
-  const runFork = useCallback(
-    async (throughTurnId?: string) => {
-      if (!forkFlow) return;
-      const { session, conn } = forkFlow;
-      setForkBusy(throughTurnId ?? WHOLE_SESSION_FORK);
-      setForkPoints((points) => ({ ...points, error: null }));
+  const forkSession = useCallback(
+    async (session: Session, conn: GatewayConn) => {
+      setCreateError(null);
       try {
-        const forked = await clientFor(conn).forkSession(session.id, throughTurnId);
-        setForkFlow(null);
-        setForkBusy(null);
+        const forked = await clientFor(conn).forkSession(session.id);
         await onOpen(conn, forked.id);
       } catch (cause) {
-        setForkBusy(null);
-        setForkPoints((points) => ({ ...points, error: (cause as Error).message }));
+        setCreateError((cause as Error).message);
       }
     },
-    [forkFlow, onOpen],
+    [onOpen],
   );
 
   // Apply a successful gateway deletion to exactly the machine that owned it. The
@@ -1490,11 +1419,11 @@ export function SessionsScreen({
     () => ({
       open: onOpen,
       rename: renameSession,
-      fork: startFork,
+      fork: forkSession,
       requestDelete: startDelete,
       toggleStar,
     }),
-    [onOpen, renameSession, startFork, startDelete, toggleStar],
+    [onOpen, renameSession, forkSession, startDelete, toggleStar],
   );
   const rowActions = useMemo<SessionListActions>(
     () => ({
@@ -2005,41 +1934,6 @@ export function SessionsScreen({
           </footer>
         )}
       </div>
-
-       {/* Conversation fork choices, anchored under the row action that opened them. */}
-      {forkFlow && (
-        <Menu label="Fork this session" at={forkFlow.at} onDismiss={() => leaveFork(true)}>
-          <MenuHeading>Fork</MenuHeading>
-          <MenuItem
-            title="Whole session"
-            hint="Every turn, continued from the end."
-            badge={forkBusy === WHOLE_SESSION_FORK ? 'Forking...' : undefined}
-            onSelect={() => void runFork()}
-          />
-          <MenuHeading tone="quiet">Up to a turn</MenuHeading>
-          {forkPoints.rows === null ? (
-            <MenuNote>
-              <Spinner tone="accent" />
-              Reading turns...
-            </MenuNote>
-          ) : forkPoints.rows.length === 0 ? (
-            <MenuNote>{forkPoints.error ?? 'This session has no turns to fork yet.'}</MenuNote>
-          ) : (
-            <>
-              {forkPoints.error && <MenuNote>{forkPoints.error}</MenuNote>}
-              {forkPoints.rows.map((point, index) => (
-                <MenuItem
-                  key={point.turn_id}
-                  title={`Turn ${index + 1} · ${firstLine(point.request ?? '') || 'No words on this turn'}`}
-                  badge={forkBusy === point.turn_id ? 'Forking...' : undefined}
-                  onSelect={() => void runFork(point.turn_id)}
-                />
-              ))}
-            </>
-          )}
-        </Menu>
-      )}
-
 
       {manageProjects && (
         <ManageProjectsSheet

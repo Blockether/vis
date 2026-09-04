@@ -4131,6 +4131,26 @@ export function SessionScreen({
     };
   }, [client, sid, runningTurnId, runningTurnNeedsAttachmentRefresh]);
 
+  // The turn a fork is being cut through, so its own verb can say so while the
+  // gateway copies the conversation. The fork is a session of its own; the app
+  // goes straight into it and this one stays exactly as it was.
+  const [forkingTurnId, setForkingTurnId] = useState<string | null>(null);
+  const forkThrough = useCallback(
+    async (turnId: string) => {
+      setForkingTurnId(turnId);
+      setError(null);
+      try {
+        const forked = await client.forkSession(sid, turnId);
+        onOpenSession(forked.id, true);
+      } catch (cause) {
+        setError((cause as Error).message);
+      } finally {
+        setForkingTurnId(null);
+      }
+    },
+    [client, sid, onOpenSession],
+  );
+
   const turnRows = useMemo(
     () =>
       visibleTurns.map((turn, index) => {
@@ -4147,7 +4167,13 @@ export function SessionScreen({
             key={turn.turn_id}
           >
             {(request || (turn.attachments?.length ?? 0) > 0) && (
-              <UserMessage attachments={turn.attachments}>{request}</UserMessage>
+              <UserMessage
+                attachments={turn.attachments}
+                onFork={turn.turn_id ? () => void forkThrough(turn.turn_id) : undefined}
+                isForking={forkingTurnId === turn.turn_id}
+              >
+                {request}
+              </UserMessage>
             )}
             <AssistantMessage
               turn={turn}
@@ -4173,6 +4199,8 @@ export function SessionScreen({
       client,
       sid,
       openLinkedArtifact,
+      forkThrough,
+      forkingTurnId,
     ],
   );
 
