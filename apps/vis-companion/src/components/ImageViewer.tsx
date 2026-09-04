@@ -37,7 +37,7 @@ import {
   PenToolbar,
   type AnnotationSurface,
 } from "./AnnotationLayer";
-import { CheckIcon, CopyIcon, DownloadIcon, DrawIcon, ShareIcon, TrimIcon } from "./icons";
+import { CheckIcon, ChevronIcon, CopyIcon, DownloadIcon, DrawIcon, ShareIcon, TrimIcon } from "./icons";
 import { Button, DialogHeader, IconButton, Spinner } from "./ui";
 import { useGalleryStep, type GalleryPicture } from "../lib/gallery";
 import { useStickyOverlay } from "../lib/sticky-overlay";
@@ -193,6 +193,7 @@ export function ImageViewer({
   const gestureRef = useRef<Gesture>(null);
   const shiftRef = useRef(0);
   const [drawing, setDrawing] = useState(false);
+  const [drawingToolsOpen, setDrawingToolsOpen] = useState(true);
   const [penColor, setPenColor] = useState<PenToken>(PEN_COLORS[0].token);
   const [strokeCount, setStrokeCount] = useState(0);
   const [busy, setBusy] = useState<
@@ -665,14 +666,26 @@ export function ImageViewer({
       />
 
       {drawing && (
-        <PenToolbar
-          color={penColor}
-          onColor={setPenColor}
-          strokeCount={strokeCount}
-          onUndo={() => annotationRef.current?.undo()}
-          onClear={() => annotationRef.current?.clear()}
-          className="absolute right-[max(0.75rem,env(safe-area-inset-right))] top-1/2 z-20 -translate-y-1/2 sm:right-4"
-        />
+        <div className="absolute right-[max(0.75rem,env(safe-area-inset-right))] top-1/2 z-20 flex -translate-y-1/2 items-center gap-1 sm:right-4">
+          <IconButton
+            variant="overlay"
+            label={drawingToolsOpen ? "Hide drawing tools" : "Show drawing tools"}
+            title={drawingToolsOpen ? "Hide drawing tools" : "Show drawing tools"}
+            aria-expanded={drawingToolsOpen}
+            onClick={() => setDrawingToolsOpen((open) => !open)}
+          >
+            <ChevronIcon back={!drawingToolsOpen} />
+          </IconButton>
+          {drawingToolsOpen && (
+            <PenToolbar
+              color={penColor}
+              onColor={setPenColor}
+              strokeCount={strokeCount}
+              onUndo={() => annotationRef.current?.undo()}
+              onClear={() => annotationRef.current?.clear()}
+            />
+          )}
+        </div>
       )}
 
       {/* THE PICTURE CLEARS THE BAND THAT CLEARS THE NOTCH.

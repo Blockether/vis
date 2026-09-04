@@ -28,3 +28,14 @@ export const Drawing: Story = {
     await expect(page.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
   },
 };
+
+/** The pen stays active while its rail folds down to a single way back. */
+export const DrawingToolsHidden: Story = {
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await userEvent.click(page.getByRole('button', { name: 'Draw on image' }));
+    await userEvent.click(page.getByRole('button', { name: 'Hide drawing tools' }));
+    await expect(page.queryByRole('group', { name: 'Drawing tools' })).not.toBeInTheDocument();
+    await expect(page.getByRole('button', { name: 'Show drawing tools' })).toBeInTheDocument();
+  },
+};

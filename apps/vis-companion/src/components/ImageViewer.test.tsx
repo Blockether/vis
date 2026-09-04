@@ -219,11 +219,31 @@ describe("ImageViewer", () => {
   it("centres the right-hand drawing rail vertically", () => {
     act(() => control("Draw on image").click());
     const tools = document.querySelector('[aria-label="Drawing tools"]');
+    const dock = tools?.parentElement;
     expect(tools?.className).toContain("flex-col");
-    expect(tools?.className).toContain("right-[max(");
-    expect(tools?.className).toContain("top-1/2");
-    expect(tools?.className).toContain("-translate-y-1/2");
-    expect(document.querySelector("header")?.nextElementSibling).toBe(tools);
+    expect(dock?.className).toContain("right-[max(");
+    expect(dock?.className).toContain("top-1/2");
+    expect(dock?.className).toContain("-translate-y-1/2");
+    expect(document.querySelector("header")?.nextElementSibling).toBe(dock);
+  });
+
+  // Regression, user report: the drawing rail covered the picture with no way to tuck it away.
+  it("folds the drawing rail to one reversible edge control", () => {
+    act(() => control("Draw on image").click());
+    expect(document.querySelector('[aria-label="Drawing tools"]')).not.toBeNull();
+
+    const hide = control("Hide drawing tools");
+    expect(hide.getAttribute("aria-expanded")).toBe("true");
+    act(() => hide.click());
+
+    expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
+    expect(
+      document.querySelector("canvas")?.getAttribute("data-annotation"),
+    ).toBe("active");
+    const show = control("Show drawing tools");
+    expect(show.getAttribute("aria-expanded")).toBe("false");
+    act(() => show.click());
+    expect(document.querySelector('[aria-label="Drawing tools"]')).not.toBeNull();
   });
 
   // The promise under the buttons follows the control that is actually there:
