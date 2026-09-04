@@ -7,7 +7,9 @@
             [com.blockether.vis.internal.language.python.core :as core]
             [com.blockether.vis.internal.language.python.interpreter :as interp]
             [com.blockether.vis.internal.process-jail :as process-jail]
+            [com.blockether.vis.internal.python-extensions :as pyx]
             [com.blockether.vis.internal.python-project :as pyproj]
+            [com.blockether.vis.internal.python-worker :as pyext]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -171,13 +173,65 @@
                                 runs))))
              (finally (doseq [root roots]
                         (cleanup root))))))
+  ;; Regression, CI run 33861036414: unrelated extension work in the shared
+  ;; interpreter could corrupt pytest's process-wide import state.
+  (it
+    "keeps hermetic pytest state out of the shared extension worker"
+    (let [root
+          (tmp-dir)
+
+          entered
+          (io/file root "interference-entered")
+
+          release
+          (io/file root "interference-release")
+
+          context
+          (pyx/build-context "pytest-interference")
+
+          interference
+          (future
+            (pyext/exec! pyext/shared-key
+                         context
+                         (str "import os, sys, time\n"
+                              "__vis_had_pytest__ = 'pytest' in sys.modules\n"
+                              "__vis_saved_pytest__ = sys.modules.get('pytest')\n"
+                              "sys.modules['pytest'] = None\n"
+                              "open("
+                              (pr-str (.getCanonicalPath entered))
+                              ", 'w').close()\n"
+                              "try:\n"
+                              "    while not os.path.exists("
+                              (pr-str (.getCanonicalPath release))
+                              "):\n"
+                              "        time.sleep(0.01)\n" "finally:\n"
+                              "    if __vis_had_pytest__:\n"
+                              "        sys.modules['pytest'] = __vis_saved_pytest__\n"
+                              "    else:\n" "        sys.modules.pop('pytest', None)\n")))]
+
+      (try (.mkdirs (io/file root "tests"))
+           (spit (io/file root "tests" "test_ok.py") "def test_ok():\n    assert True\n")
+           (expect (true? (loop [remaining 500]
+                            (cond (.exists entered) true
+                                  (zero? remaining) false
+                                  :else (do (Thread/sleep 10) (recur (dec remaining)))))))
+           (let [result (:result (core/py-test-fn {:workspace/root (.getPath root)} {}))]
+             (expect (= [1 0] [(get result "pass") (get result "fail")])))
+           (finally (spit release "release\n")
+                    (try (deref interference 5000 nil) (catch Throwable _ nil))
+                    (pyx/close-context! context)
+                    (cleanup root)))))
+  ;; Regression, CI run 33861036414: pytest's faulthandler replaced the JVM's
+  ;; SIGSEGV handler, so an FFM upcall could terminate the entire Python worker.
   ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: an extension test
   ;; reached the active session host and filed its live view as user work.
   (it "refuses a live session view from code running under run_tests"
       (let [root (tmp-dir)]
         (try (.mkdirs (io/file root "tests"))
              (spit (io/file root "tests" "test_live.py")
-                   (str "import vis\n\n" "def test_live_is_not_session_work():\n"
+                   (str "import faulthandler\nimport vis\n\n"
+                        "def test_live_is_not_session_work():\n"
+                        "    assert not faulthandler.is_enabled()\n"
                         "    with vis.live('Test view', [vis.status('state', 'Running')]):\n"
                         "        pass\n"))
              (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)} {}))]

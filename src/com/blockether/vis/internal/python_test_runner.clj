@@ -35,6 +35,12 @@
 
 (def ^:private field-sep "\u001f")
 
+(def ^:private test-worker-key
+  "A process reserved for hermetic tests. Pytest mutates interpreter-wide import
+   and stdio state, so sharing its interpreter with extension registration lets
+   otherwise unrelated work corrupt a run."
+  ::pytest)
+
 (defn- ensure-pytest!
   "Make the REAL `pytest` importable in `session`, installing it ONCE into the
    sandbox's own packages directory when the machine has never had it. Answers
@@ -47,12 +53,12 @@
    on a machine that had never installed pytest — the install succeeded and the
    very next import still raised `ModuleNotFoundError`."
   [^String session]
-  (try (pyext/exec! pyext/shared-key session "import pytest")
+  (try (pyext/exec! test-worker-key session "import pytest")
        nil
        (catch Throwable _
          (let [{:keys [exit out]} (python-runtime/pip-install! ["pytest"])]
            (if (zero? (long (or exit 1)))
-             (try (pyext/exec! pyext/shared-key
+             (try (pyext/exec! test-worker-key
                                session
                                "import importlib; importlib.invalidate_caches(); import pytest")
                   nil
@@ -157,7 +163,7 @@
        "__vis_terr__ = __vis_ts__.stderr\n" "__vis_ts__.stdout = __vis_tbuf__\n"
        "__vis_ts__.stderr = __vis_tbuf__\n" "try:\n"
        "    __vis_test_rc__ = int(__vis_pt__.main("
-       "['-q', '-p', 'no:cacheprovider', __vis_test_file__],"
+       "['-q', '-p', 'no:cacheprovider', '-p', 'no:faulthandler', __vis_test_file__],"
        " plugins=[__vis_col__]))\n" "finally:\n"
        "    __vis_ts__.stdout = __vis_told__\n" "    __vis_ts__.stderr = __vis_terr__\n"
        "    for __vis_m__ in [__vis_k__ for __vis_k__ in list(__vis_ts__.modules)"
@@ -199,7 +205,7 @@
   ^:private
   ^{:doc
     "The one gate over pytest's process-wide sys.path, sys.modules and stdio.
-     The shared worker accepts concurrent contexts, but concurrent pytest mains
+     Its reserved worker accepts concurrent contexts, but concurrent pytest mains
      corrupt each other's snapshots and can terminate that interpreter."}
   pytest-process-lock
   (Object.))
@@ -220,16 +226,16 @@
           (test-sys-path scan-dir test-file sys-path)
 
           session
-          (pyx/build-context (.getName test-file))]
+          (pyx/build-context test-worker-key (.getName test-file))]
 
       (try (pyx/bind-test-host! session (.getName test-file))
-           (pyext/exec! pyext/shared-key session pyx/bootstrap-python)
+           (pyext/exec! test-worker-key session pyx/bootstrap-python)
            (when-let [missing (ensure-pytest! session)]
              (throw (ex-info missing {:file path})))
            ;; The two inputs cross as JSON the guest PARSES: pasting JSON straight
-           ;; into Python source would keep its `\\/` escapes verbatim and break
+           ;; into Python source would keep its `\/` escapes verbatim and break
            ;; every path in it.
-           (pyext/exec! pyext/shared-key
+           (pyext/exec! test-worker-key
                         session
                         (str "__vis_test_paths__ = "
                              (env/py-json-literal (vec paths))
@@ -237,9 +243,9 @@
                              "__vis_test_file__ = "
                              (env/py-json-literal path)
                              "\n"))
-           (pyext/exec! pyext/shared-key session run-test-src)
+           (pyext/exec! test-worker-key session run-test-src)
            (let [outcome
-                 (json/read-json (pyext/run pyext/shared-key
+                 (json/read-json (pyext/run test-worker-key
                                             session
                                             (str "{'report': __vis_test_report__,"
                                                  " 'rc': __vis_test_rc__,"
