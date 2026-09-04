@@ -107,9 +107,10 @@ describe("a desk cuts a page for the room it really has", () => {
     const view = onScreen(900);
     try {
       await waitFor(() => expect(view.getByText("alpha 00")).toBeTruthy());
-      // 900px, minus the 137px of bands above the first row, the 24px the detached
-      // panel keeps under itself and the peek under the last row, over a 33px row.
-      expect(shown(view)).toHaveLength(21);
+      // 900px, minus the 176px of app bar, machine strip and project band above the
+      // first row, the footer under the list and the peek under the last row, over
+      // a 33px row.
+      expect(shown(view)).toHaveLength(20);
     } finally {
       view.unmount();
       view.restore();

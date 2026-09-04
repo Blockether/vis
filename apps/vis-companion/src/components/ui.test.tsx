@@ -758,7 +758,7 @@ describe("Pager", () => {
     );
     expect(html).toContain("4 / 80");
     expect(html).toContain(
-      'class="hidden flex-1 items-center justify-center gap-1 sm:flex"',
+      'class="hidden flex-1 items-center justify-center gap-1 @2xl:flex"',
     );
     // `display: none` takes the numbers out of the accessibility tree too, so the
     // position is announced ONCE, by the live region both forms are drawn from.

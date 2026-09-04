@@ -101,7 +101,9 @@ import {
   relayUrlFor,
   unregisterFromPush,
 } from "./lib/relay";
-import { isShellChromeVisible, shellScreen } from "./lib/shell";
+import { isShellChromeVisible, isShellSplit, shellScreen } from "./lib/shell";
+import { useDeskRail } from "./lib/fit-rows";
+import { EmptyPane } from "./screens/EmptyPane";
 import {
   pushIntentFrom,
   resolvePushIntent,
@@ -1008,6 +1010,9 @@ export function App() {
   // not this whole tree and not the multi-thousand-line session screen. Rotation is
   // coordinated imperatively in lib/viewport.ts without stamping a class on <html>.
 
+  // A media query is a runtime fact, read here so every render asks it once.
+  const isDesk = useDeskRail();
+
   if (!ready) return <Splash />;
 
   // A session already open keeps its own screen; the offline gate is about the
@@ -1028,12 +1033,16 @@ export function App() {
     hasConn,
     tab,
   });
-  const isChromeVisible = isShellChromeVisible(shellView);
+  // THE DESK SPLITS THE SHELL: the list is a sidebar and the transcript, or the
+  // empty pane that waits for one, fills the rest. The decision is `lib/shell`'s;
+  // the width is read here because a media query is a runtime fact.
+  const isSplit = isShellSplit(shellView, isDesk);
+  const isChromeVisible = isShellChromeVisible(shellView, isSplit);
   // Keep the fleet list alive while Machines is open, not only while a session is open.
   // Changing tabs should change visibility, never the list's component identity: its cached
   // rows, scope, scroll position, and expanded projects are already the user's frame.
   const sessionsMounted = conns.length > 0 && !!active;
-  const sessionsVisible = shellView === "sessions";
+  const sessionsVisible = shellView === "sessions" || isSplit;
 
   return (
     <Shell>
@@ -1052,10 +1061,22 @@ export function App() {
       )}
 
       <main
-        className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${shellView === "session" ? "overflow-hidden" : "overflow-y-auto"}`}
+        className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${isSplit ? "flex" : ""} ${shellView === "session" ? "overflow-hidden" : "overflow-y-auto"}`}
       >
+        {/* THE DESK'S SIDEBAR. On a phone the list is a screen the transcript replaces;
+            on a desk it is a 20rem column the transcript stands beside, so the list
+            is up in BOTH shell states and the same mounted component simply changes
+            width — its scroll, scope and folds are the reader's frame either way. */}
         {sessionsMounted && (
-          <div className={sessionsVisible ? "h-full" : "hidden"}>
+          <div
+            className={
+              !sessionsVisible
+                ? "hidden"
+                : isSplit
+                  ? "h-full w-80 shrink-0 border-r border-dialog-edge"
+                  : "h-full"
+            }
+          >
             <SessionsScreen
               conns={conns}
               primary={primary}
@@ -1095,19 +1116,22 @@ export function App() {
             conn={sessionConn}
           />
         )}
+        {isSplit && shellView === "sessions" && <EmptyPane />}
         {shellView === "session" && openTarget && client && subscriptions && (
-          <SessionScreen
-            key={`${openTarget.conn.url}:${openTarget.sid}`}
-            client={client}
-            subscriptions={subscriptions}
-            sid={openTarget.sid}
-            fresh={openTarget.fresh}
-            onBack={leaveSession}
-            onOpenSession={(sid, fresh) =>
-              void openGatewaySession(openTarget.conn, sid, fresh)
-            }
-            onManageProviders={openProviderSettings}
-          />
+          <div className="h-full min-h-0 min-w-0 flex-1">
+            <SessionScreen
+              key={`${openTarget.conn.url}:${openTarget.sid}`}
+              client={client}
+              subscriptions={subscriptions}
+              sid={openTarget.sid}
+              fresh={openTarget.fresh}
+              onBack={leaveSession}
+              onOpenSession={(sid, fresh) =>
+                void openGatewaySession(openTarget.conn, sid, fresh)
+              }
+              onManageProviders={openProviderSettings}
+            />
+          </div>
         )}
       </main>
 

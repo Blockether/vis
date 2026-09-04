@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import sessionListSource from "../components/SessionList.tsx?raw";
 import sessionsScreenSource from "./SessionsScreen.tsx?raw";
-import fleetRailSource from "./sessions/FleetRail.tsx?raw";
 import sessionProjectGroupsSource from "./sessions/SessionProjectGroups.tsx?raw";
 
 describe("sessions feature boundaries", () => {
@@ -14,18 +13,6 @@ describe("sessions feature boundaries", () => {
     ].map((match) => match[1] ?? match[2]);
 
     expect(ownedRenderers).toEqual([]);
-  });
-
-  it("keeps desktop fleet navigation outside the fleet orchestrator", () => {
-    const localRail = sessionsScreenSource.match(
-      /^function\s+(FleetRail|RailGroup)\s*\(/m,
-    );
-
-    expect(localRail?.[1] ?? null).toBeNull();
-    expect(sessionsScreenSource).toContain("<FleetRail");
-    expect(fleetRailSource).toContain("<ListRow");
-    expect(fleetRailSource).toContain('density="compact"');
-    expect(fleetRailSource).not.toContain("<button");
   });
 
   it("passes row interaction through one reusable feature contract", () => {

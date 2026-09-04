@@ -44,9 +44,20 @@ export function shellScreen(state: ShellState): ShellScreen {
 }
 
 /**
- * The shell owns the header and the tab bar for every screen except a session:
- * that one brings its own header, back control and safe-area padding.
+ * THE DESK IS A SPLIT: the list stands in a sidebar beside the transcript, the
+ * ChatGPT shape, so both of those screens are up at once and neither owns the
+ * whole shell. Every other screen fills it alone, on a desk as on a phone.
  */
-export function isShellChromeVisible(screen: ShellScreen): boolean {
-  return screen !== 'session';
+export function isShellSplit(screen: ShellScreen, isDesk: boolean): boolean {
+  return isDesk && (screen === 'session' || screen === 'sessions');
+}
+
+/**
+ * The shell owns the header and the tab bar for every screen except a session:
+ * that one brings its own header, back control and safe-area padding. In the
+ * desk's split the shell keeps its bar over both columns — the session's own
+ * header is then the transcript's, not the app's.
+ */
+export function isShellChromeVisible(screen: ShellScreen, isSplit = false): boolean {
+  return isSplit || screen !== 'session';
 }

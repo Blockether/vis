@@ -308,7 +308,10 @@ export const SessionRow = memo(function SessionRow({
               {/* One row of facts, laid out twice from ONE dom order.
             A phone stacks it: what the session IS on the first line, what it has DONE
             on the second, each line's own trailing fact right-aligned against it.
-            From `sm:` up there is room for the whole sentence on one line, and the
+            With room for the whole sentence on one line — and the ROOM IS THE LIST'S,
+            asked of the scroller the rows are poured into (`@container`), never of the
+            window: a desk stands this list in a 20rem sidebar beside the transcript,
+            where a viewport `sm:` would still lay five fixed columns into 320px — the
             facts stop floating: the wrapper below turns to `contents` so its children
             become grid items of the row itself, and id / turns / status / time land on
             FIXED tracks. That is the difference between a list and a phone list
@@ -318,12 +321,12 @@ export const SessionRow = memo(function SessionRow({
             so that cluster owns 6rem; the favorite lives in the row's leading mark column
             instead of forming a second status column at the far edge. The id track pays for
             its 8 hex characters inside 4.5rem instead of charging that width to the title. */}
-              <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_6rem_6rem] sm:gap-y-0">
+              <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 @3xl:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_6rem_6rem] @3xl:gap-y-0">
                 {/* The NAME, and nothing but the name. The badges used to ride inside this
               cell, so every row started its flags at a different x — the longer the
               title, the further right its `NEW` — and a long title pushed them off
               the line entirely. They have their own column now. */}
-                <span className="col-start-1 row-start-1 flex min-w-0 items-center gap-1.5 sm:col-start-auto sm:row-start-auto">
+                <span className="col-start-1 row-start-1 flex min-w-0 items-center gap-1.5 @3xl:col-start-auto @3xl:row-start-auto">
                   {/* THE LEAF, and the one line a human wrote: it is PROSE, so it wears
                 Inter while every fact beside it stays mono — the family is the
                 hierarchy, the same split the transcript makes between an answer and
@@ -391,7 +394,7 @@ export const SessionRow = memo(function SessionRow({
                   )}
                 </span>
                 {/* Unread and unsent-message flags share one aligned column. */}
-                <span className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5 font-mono text-chip sm:col-start-auto sm:row-start-auto">
+                <span className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5 font-mono text-chip @3xl:col-start-auto @3xl:row-start-auto">
                   {unread > 0 && (
                     <span className="shrink-0 bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
                       {unread > 1 ? `${unread} new` : "new"}
@@ -406,40 +409,49 @@ export const SessionRow = memo(function SessionRow({
                     </span>
                   )}
                 </span>
-                {/* `sm:contents` is what lets one dom order be two layouts: on a phone this
-              is a single line of prose under the title, and from `sm:` up it dissolves
-              so that the id and the turn count become columns in their own right. */}
+                {/* `@3xl:contents` is what lets one dom order be THREE layouts. Under 24rem —
+              the desk's sidebar — the row is the TITLE and its status mark and nothing else,
+              the way a list of conversations beside the conversation reads; from 24rem the
+              id, the turns and the time come back as one line of prose under the title; at
+              48rem that line dissolves so the id and the turn count become columns in their
+              own right. The facts are never dropped from the tree, only from the paint. */}
                 {/* One rank, one ink: hierarchy is carried by SIZE (title 12px vs meta 10px),
               never by transparency — an id at 55% ink beside a `·` at 40% beside a full
               hint made one 9px line carry three different inks and none of them readable.
               A COUNT ends on its track's edge, not where its own digits run out:
               left-aligned, `9 turns` stopped 6px short of the `20 turns` one row below
               it, and a column of numbers that does not end together is not a column. */}
-                <span className="col-start-1 row-start-2 flex min-w-0 items-center gap-x-2 font-mono text-meta text-dialog-hint sm:contents">
+                <span className="col-start-1 row-start-2 hidden min-w-0 items-center gap-x-2 font-mono text-meta text-dialog-hint @sm:flex @3xl:contents">
                   <span className="truncate tabular-nums">
                     {shortId(session.id)}
                   </span>
-                  <span className="sm:hidden" aria-hidden="true">
+                  <span className="@3xl:hidden" aria-hidden="true">
                     ·
                   </span>
-                  <span className="whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums sm:justify-self-end">
+                  <span className="whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums @3xl:justify-self-end">
                     {turns} {turns === 1 ? "turn" : "turns"}
                   </span>
                 </span>
                 <span
                   data-session-status
                   role={renameBusy ? "status" : undefined}
-                  className={`col-start-3 row-start-1 inline-flex shrink-0 items-center gap-1 justify-self-end font-mono text-chip font-bold tracking-[0.08em] sm:col-start-auto sm:row-start-auto sm:justify-self-start ${statusTone(session)}`}
+                  className={`col-start-3 row-start-1 shrink-0 items-center gap-1 justify-self-end font-mono text-chip font-bold tracking-[0.08em] @3xl:col-start-auto @3xl:row-start-auto @3xl:justify-self-start ${
+                    // IN THE SIDEBAR ONLY A DEMAND IS A MARK: a row that is live or
+                    // waiting on the reader shows its dot beside the title, and a row
+                    // that is merely idle shows nothing — thirty grey squares down a
+                    // column say less than one green one.
+                    status === "IDLE" ? "hidden @sm:inline-flex" : "inline-flex"
+                  } ${statusTone(session)}`}
                 >
                   <span
                     data-session-status-dot
                     aria-hidden="true"
                     className={`size-1.5 shrink-0 ${statusDot(session)} ${live ? "animate-pulse motion-reduce:animate-none" : ""}`}
                   />
-                  <span>{renameBusy ? "Saving" : status}</span>
+                  <span className="sr-only @sm:not-sr-only">{renameBusy ? "Saving" : status}</span>
                 </span>
                 <span
-                  className="col-start-2 col-end-4 row-start-2 justify-self-end whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums sm:col-start-auto sm:col-end-auto sm:row-start-auto"
+                  className="col-start-2 col-end-4 row-start-2 hidden justify-self-end whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums @sm:block @3xl:col-start-auto @3xl:col-end-auto @3xl:row-start-auto"
                   title={formatExact(timestamp)}
                 >
                   {timeLabel(timestamp)}
@@ -805,8 +817,8 @@ export function NavigatorSkeleton() {
                   key={row}
                   className={`flex min-h-12 w-full items-center py-1.5 [&+&]:border-t [&+&]:border-dialog-edge mouse:min-h-8 mouse:py-1 ${LIST_EDGE}`}
                 >
-                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_7.25rem_6rem] sm:gap-y-0">
-                    <span className="col-start-1 row-start-1 sm:col-start-auto sm:row-start-auto">
+                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 @3xl:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_7.25rem_6rem] @3xl:gap-y-0">
+                    <span className="col-start-1 row-start-1 @3xl:col-start-auto @3xl:row-start-auto">
                       <SkeletonBar
                         type="text-meta"
                         width={width}
@@ -814,7 +826,7 @@ export function NavigatorSkeleton() {
                         tone="bg-muted/30"
                       />
                     </span>
-                    <span className="col-start-1 row-start-2 flex items-center gap-x-2 sm:contents">
+                    <span className="col-start-1 row-start-2 hidden items-center gap-x-2 @sm:flex @3xl:contents">
                       <SkeletonBar
                         type="text-chip"
                         width="w-14"
@@ -831,8 +843,8 @@ export function NavigatorSkeleton() {
                     {/* The flag column a real row keeps for `NEW` / `dirty`.
                         Nothing is loading in it, but the track has to exist or the
                         columns shift the moment the rows arrive. */}
-                    <span className="col-start-2 row-start-1 sm:col-start-auto sm:row-start-auto" />
-                    <span className="col-start-3 row-start-1 justify-self-end sm:col-start-auto sm:row-start-auto sm:justify-self-start">
+                    <span className="col-start-2 row-start-1 @3xl:col-start-auto @3xl:row-start-auto" />
+                    <span className="col-start-3 row-start-1 justify-self-end @3xl:col-start-auto @3xl:row-start-auto @3xl:justify-self-start">
                       <SkeletonBar
                         type="text-chip"
                         width="w-12"
@@ -840,7 +852,7 @@ export function NavigatorSkeleton() {
                         tone="bg-muted/25"
                       />
                     </span>
-                    <span className="col-start-3 row-start-2 justify-self-end sm:col-start-auto sm:row-start-auto sm:justify-self-start">
+                    <span className="col-start-3 row-start-2 hidden justify-self-end @sm:block @3xl:col-start-auto @3xl:row-start-auto @3xl:justify-self-start">
                       <SkeletonBar
                         type="text-chip"
                         width="w-12"

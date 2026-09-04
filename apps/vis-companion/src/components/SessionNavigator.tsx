@@ -462,17 +462,18 @@ export function Pager({
 
             No phone line holds both: at 390px the count and the widest window want
             431px of a 362px line. The numbers are the half that can be said in fewer
-            characters, so below `sm` they become `4 / 80` — 56px, the SAME 56px on
-            every page of every project, so the band holds one height for the whole
-            walk. `<` and `>` still step, and the strip comes back whole
-            at `sm`, where a number is a tap and not a squeeze between two others. */}
+            characters, so in a list under 42rem they become `4 / 80` — 56px, the SAME
+            56px on every page of every project, so the band holds one height for the
+            whole walk. `<` and `>` still step, and the strip comes back whole where the
+            LIST (`@container`, never the window: the desk's sidebar is a narrow list in a
+            wide window) has room for a number to be a tap and not a squeeze. */}
         <span
           aria-hidden="true"
-          className="min-w-12 px-1 text-center font-mono text-chip text-dialog-hint tabular-nums sm:hidden"
+          className="min-w-12 px-1 text-center font-mono text-chip text-dialog-hint tabular-nums @2xl:hidden"
         >
           {page} / {pageCount}
         </span>
-        <span className="hidden flex-1 items-center justify-center gap-1 sm:flex">
+        <span className="hidden flex-1 items-center justify-center gap-1 @2xl:flex">
           {pageWindow(page, pageCount).map((entry, index) =>
             entry === null ? (
               <span
@@ -490,7 +491,7 @@ export function Pager({
                 aria-label={`Page ${entry}`}
                 aria-current={entry === page ? 'page' : undefined}
                 onClick={() => onPage(entry)}
-                className="min-w-7 px-1 font-mono tabular-nums sm:min-w-8 sm:px-1.5"
+                className="min-w-7 px-1 font-mono tabular-nums @2xl:min-w-8 @2xl:px-1.5"
               >
                 {entry}
               </Button>
