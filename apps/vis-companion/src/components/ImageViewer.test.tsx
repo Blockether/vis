@@ -209,13 +209,19 @@ describe("ImageViewer", () => {
       expect(action.textContent).toBe("");
       expect(action.querySelector("svg")).not.toBeNull();
     }
-    expect(tools?.parentElement?.className).toContain("top-[calc(3rem");
-    expect(document.querySelector("header")?.nextElementSibling).toBe(
-      tools?.parentElement,
-    );
 
     act(() => control("Finish drawing").click());
     expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
+  });
+
+  // Regression, user report: inks and drawing history stretched across a second
+  // header band instead of sharing one compact rail beside the picture.
+  it("places drawing tools in one right-hand vertical rail", () => {
+    act(() => control("Draw on image").click());
+    const tools = document.querySelector('[aria-label="Drawing tools"]');
+    expect(tools?.className).toContain("flex-col");
+    expect(tools?.className).toContain("right-[max(");
+    expect(document.querySelector("header")?.nextElementSibling).toBe(tools);
   });
 
   // The promise under the buttons follows the control that is actually there:

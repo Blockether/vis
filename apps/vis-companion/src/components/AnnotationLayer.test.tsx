@@ -40,6 +40,14 @@ function mount(node: React.ReactNode) {
   act(() => root.render(node));
 }
 
+function control(label: string): HTMLButtonElement {
+  const button = host.querySelector<HTMLButtonElement>(
+    `button[aria-label="${label}"]`,
+  );
+  if (!button) throw new Error(`no ${label} control`);
+  return button;
+}
+
 function layer(): HTMLCanvasElement {
   const canvas = host.querySelector("canvas");
   if (!canvas) throw new Error("no annotation layer");
@@ -206,12 +214,8 @@ describe("PenToolbar", () => {
         onClear={() => undefined}
       />,
     );
-    const back = [...host.querySelectorAll("button")].filter((b) =>
-      ["Undo", "Clear"].includes(b.textContent ?? ""),
-    );
-    expect(back).toHaveLength(2);
-    for (const button of back)
-      expect((button as HTMLButtonElement).disabled).toBe(true);
+    const back = [control("Undo"), control("Clear")];
+    for (const button of back) expect(button.disabled).toBe(true);
 
     mount(
       <PenToolbar
@@ -222,11 +226,9 @@ describe("PenToolbar", () => {
         onClear={() => undefined}
       />,
     );
-    const undo = [...host.querySelectorAll("button")].find(
-      (b) => b.textContent === "Undo",
-    );
-    expect((undo as HTMLButtonElement).disabled).toBe(false);
-    act(() => (undo as HTMLButtonElement).click());
+    const undo = control("Undo");
+    expect(undo.disabled).toBe(false);
+    act(() => undo.click());
     expect(onUndo).toHaveBeenCalled();
   });
 });
