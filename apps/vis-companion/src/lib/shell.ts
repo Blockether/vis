@@ -46,18 +46,21 @@ export function shellScreen(state: ShellState): ShellScreen {
 /**
  * THE DESK IS A SPLIT: the list stands in a sidebar beside the transcript, the
  * ChatGPT shape, so both of those screens are up at once and neither owns the
- * whole shell. Every other screen fills it alone, on a desk as on a phone.
+ * whole shell. Every other screen fills it alone, on a desk as on a phone. The
+ * sidebar can be put away (`isSidebarShown`): then the desk hands whichever of the
+ * two is open the whole shell, and the bar keeps the way to bring it back.
  */
-export function isShellSplit(screen: ShellScreen, isDesk: boolean): boolean {
-  return isDesk && (screen === 'session' || screen === 'sessions');
+export function isShellSplit(screen: ShellScreen, isDesk: boolean, isSidebarShown = true): boolean {
+  return isDesk && isSidebarShown && (screen === 'session' || screen === 'sessions');
 }
 
 /**
- * The shell owns the header and the tab bar for every screen except a session:
- * that one brings its own header, back control and safe-area padding. In the
- * desk's split the shell keeps its bar over both columns — the session's own
- * header is then the transcript's, not the app's.
+ * The shell owns the header and the tab bar for every screen except a phone's
+ * session: that one brings its own header, back control and safe-area padding.
+ * A desk keeps the bar over every screen — it holds the sidebar toggle, and with
+ * the list beside or behind the transcript the session's own header is the
+ * transcript's, not the app's.
  */
-export function isShellChromeVisible(screen: ShellScreen, isSplit = false): boolean {
-  return isSplit || screen !== 'session';
+export function isShellChromeVisible(screen: ShellScreen, isDesk = false): boolean {
+  return isDesk || screen !== 'session';
 }

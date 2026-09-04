@@ -275,14 +275,14 @@ export function HeaderTitle({
       <span className="flex min-w-0 flex-1 flex-col items-start overflow-hidden">
         {onRename ? (
           <EditableName
-            face={`max-w-[100%] min-w-0 truncate bg-transparent p-0 font-mono font-bold text-white ${HEADER_TYPE}`}
+            face={`max-w-[100%] min-w-0 truncate bg-transparent p-0 font-semibold text-white ${HEADER_TYPE}`}
             label={renameLabel ?? 'Rename'}
             value={typeof name === 'string' ? name : ''}
             onCommit={onRename}
           />
         ) : (
           <span
-            className={`max-w-[100%] min-w-0 truncate font-mono font-bold text-white ${HEADER_TYPE}`}
+            className={`max-w-[100%] min-w-0 truncate font-semibold text-white ${HEADER_TYPE}`}
           >
             {name}
           </span>
@@ -469,7 +469,10 @@ export function Pager({
             wide window) has room for a number to be a tap and not a squeeze. */}
         <span
           aria-hidden="true"
-          className="min-w-12 px-1 text-center font-mono text-chip text-dialog-hint tabular-nums @2xl:hidden"
+          // The desk's 20rem sidebar is a list narrower than any phone: there the
+          // count under the project's name and this position cannot both fit beside
+          // the verb, and the position is the one the arrows already imply.
+          className="min-w-12 px-1 text-center font-mono text-chip text-dialog-hint tabular-nums @max-xs:hidden @2xl:hidden"
         >
           {page} / {pageCount}
         </span>
@@ -625,7 +628,7 @@ export function ProjectStatusCounts({
 
   return statuses.map((status) => (
     <Fragment key={status.label}>
-      <span aria-hidden>·</span>
+      <span aria-hidden className="mx-2">·</span>
       <span className={`inline-flex items-center gap-1 whitespace-nowrap font-bold ${status.tone}`}>
         <span className={`size-1.5 ${status.dot}`} aria-hidden="true" />
         {status.label}

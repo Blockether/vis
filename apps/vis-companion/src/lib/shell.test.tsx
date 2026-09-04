@@ -89,10 +89,18 @@ describe('the desk split', () => {
     expect(screens.filter((s) => isShellSplit(s, false))).toEqual([]);
   });
 
-  it('keeps the chrome over a split session, and drops it over a phone session', () => {
-    expect(isShellChromeVisible('session', isShellSplit('session', true))).toBe(true);
-    expect(isShellChromeVisible('session', isShellSplit('session', false))).toBe(false);
-    expect(isShellChromeVisible('sessions', isShellSplit('sessions', true))).toBe(true);
+  // Regression, user report (paraphrased: there is no button to hide the sidebar):
+  // the split had no way out, so a desk could never read one transcript wide.
+  it('hands the whole shell to whichever screen is open once the sidebar is put away', () => {
+    expect(isShellSplit('session', true, false)).toBe(false);
+    expect(isShellSplit('sessions', true, false)).toBe(false);
+    expect(isShellSplit('session', true, true)).toBe(true);
+  });
+
+  it('keeps the chrome over every desk screen, and drops it over a phone session', () => {
+    expect(isShellChromeVisible('session', true)).toBe(true);
+    expect(isShellChromeVisible('session', false)).toBe(false);
+    expect(isShellChromeVisible('sessions', true)).toBe(true);
   });
 });
 

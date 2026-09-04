@@ -59,7 +59,7 @@ import { discardSharedFiles } from "./lib/share-files";
 import { applyTheme, resolveTheme } from "./lib/theme";
 import { getThemePref } from "./lib/storage";
 import { BackButton, CloseButton, IconButton } from "./components/ui";
-import { SearchIcon, SettingsIcon } from "./components/icons";
+import { SearchIcon, SettingsIcon, SidebarIcon } from "./components/icons";
 import { ConnectScreen } from "./screens/ConnectScreen";
 import { SessionsScreen } from "./screens/SessionsScreen";
 import { IncompatibleScreen } from "./screens/IncompatibleScreen";
@@ -103,6 +103,7 @@ import {
 } from "./lib/relay";
 import { isShellChromeVisible, isShellSplit, shellScreen } from "./lib/shell";
 import { useDeskRail } from "./lib/fit-rows";
+import { useSidebar } from "./lib/sidebar";
 import { EmptyPane } from "./screens/EmptyPane";
 import {
   pushIntentFrom,
@@ -1012,6 +1013,8 @@ export function App() {
 
   // A media query is a runtime fact, read here so every render asks it once.
   const isDesk = useDeskRail();
+  // Whether the desk's sidebar is up: the reader's own choice, kept across reloads.
+  const [isSidebarShown, toggleSidebar] = useSidebar();
 
   if (!ready) return <Splash />;
 
@@ -1035,14 +1038,17 @@ export function App() {
   });
   // THE DESK SPLITS THE SHELL: the list is a sidebar and the transcript, or the
   // empty pane that waits for one, fills the rest. The decision is `lib/shell`'s;
-  // the width is read here because a media query is a runtime fact.
-  const isSplit = isShellSplit(shellView, isDesk);
-  const isChromeVisible = isShellChromeVisible(shellView, isSplit);
+  // the width is read here because a media query is a runtime fact. The sidebar
+  // can be put away, and then whichever of the two is open takes the whole shell.
+  const canSplit = isShellSplit(shellView, isDesk);
+  const isSplit = isShellSplit(shellView, isDesk, isSidebarShown);
+  const isChromeVisible = isShellChromeVisible(shellView, isDesk);
   // Keep the fleet list alive while Machines is open, not only while a session is open.
   // Changing tabs should change visibility, never the list's component identity: its cached
   // rows, scope, scroll position, and expanded projects are already the user's frame.
   const sessionsMounted = conns.length > 0 && !!active;
-  const sessionsVisible = shellView === "sessions" || isSplit;
+  const sessionsVisible =
+    isSplit || (shellView === "sessions" && (!isDesk || isSidebarShown));
 
   return (
     <Shell>
@@ -1057,11 +1063,12 @@ export function App() {
             setQuery("");
           }}
           onAppSettings={openSettings}
+          sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
         />
       )}
 
       <main
-        className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${isSplit ? "flex" : ""} ${shellView === "session" ? "overflow-hidden" : "overflow-y-auto"}`}
+        className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${canSplit ? "flex" : ""} ${shellView === "session" ? "overflow-hidden" : "overflow-y-auto"}`}
       >
         {/* THE DESK'S SIDEBAR. On a phone the list is a screen the transcript replaces;
             on a desk it is a 20rem column the transcript stands beside, so the list
@@ -1116,7 +1123,7 @@ export function App() {
             conn={sessionConn}
           />
         )}
-        {isSplit && shellView === "sessions" && <EmptyPane />}
+        {canSplit && shellView === "sessions" && <EmptyPane />}
         {shellView === "session" && openTarget && client && subscriptions && (
           <div className="h-full min-h-0 min-w-0 flex-1">
             <SessionScreen
@@ -1236,6 +1243,7 @@ export function Header({
   onSearch,
   onCloseSearch,
   onAppSettings,
+  sidebar,
 }: {
   query: string;
   onQuery: (next: string) => void;
@@ -1244,6 +1252,12 @@ export function Header({
   onSearch: () => void;
   onCloseSearch: () => void;
   onAppSettings: () => void;
+  /**
+   * The desk's sidebar toggle, when the shell has a sidebar to toggle: the list
+   * beside the transcript can be put away to read wide, and this is the ONE way
+   * back to it — a session's own header has no back arrow on a desk.
+   */
+  sidebar?: { isShown: boolean; onToggle: () => void };
 }) {
   // `/` opens the search from anywhere on the shell — unannounced on purpose, and
   // never stolen from someone already typing. Escape closes it again, because a page
@@ -1306,13 +1320,24 @@ export function Header({
           />
         </div>
       ) : (
-        <div className="mx-auto flex w-full max-w-[1400px] items-center pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
+        <div className="mx-auto flex w-full max-w-[1400px] items-center gap-3 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
           {/* THE MARK IS AN ILLUSTRATION, NOT A GLYPH. An eye outline, an iris, a
               pupil, a highlight, a smile and seven rays share the box, so barely a
               third of it is ink and it reads smaller than it measures; under 24px a
               1x screen washes the pupil to grey and closes the smile. It takes the
               scale's own rung, half the bar and twice the wordmark's cap height,
               never a pixel fitted by hand to the file's proportion. */}
+          {sidebar && (
+            <IconButton
+              type="button"
+              label={sidebar.isShown ? "Hide the session list" : "Show the session list"}
+              title={sidebar.isShown ? "Hide the session list" : "Show the session list"}
+              aria-expanded={sidebar.isShown}
+              onClick={sidebar.onToggle}
+            >
+              <SidebarIcon className="size-4" />
+            </IconButton>
+          )}
           <div className="flex h-12 items-center gap-2.5" aria-label="Vis">
             <img
               src="/vis-logo.png"

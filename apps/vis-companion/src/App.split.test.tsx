@@ -87,6 +87,44 @@ describe("a desk keeps the list beside the conversation", () => {
     view.unmount();
   });
 
+  // Regression, user report (paraphrased: there is no button to hide the sidebar):
+  // the split had no way out, so a wide transcript was never readable wide.
+  it("puts the sidebar away from the bar, hands the screen to what is open, and brings it back", async () => {
+    const restoreDensity = onADesk();
+    // The test above left its session in the route; this one starts with none open.
+    window.location.hash = "";
+    const view = renderApp({ machines: fleet() });
+    restore = () => {
+      view.restore();
+      restoreDensity();
+    };
+    await screen.findByText("Alpha one");
+    const main = view.baseElement.querySelector("main") as HTMLElement;
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide the session list" }));
+    // With nothing open, putting the list away leaves the empty pane and the
+    // bar's explicit way back; it never relabels a list that is still visible.
+    expect((main.firstElementChild as HTMLElement).className).toBe("hidden");
+    expect(screen.getByRole("region", { name: "No session open" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show the session list" })).toBeTruthy();
+    expect(localStorage.getItem("vis.sidebar")).toBe("hidden");
+
+    fireEvent.click(screen.getByRole("button", { name: "Show the session list" }));
+    expect((main.firstElementChild as HTMLElement).className).toContain("w-80");
+    fireEvent.click(screen.getByText("Alpha one"));
+    await screen.findByLabelText("Message Vis");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide the session list" }));
+    // The transcript stands alone, still under the shell's bar, still with no arrow.
+    expect((main.firstElementChild as HTMLElement).className).toBe("hidden");
+    expect(screen.queryByRole("button", { name: "Back to sessions" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show the session list" }));
+    expect(screen.getByRole("region", { name: "Sessions" })).toBeTruthy();
+    expect((main.firstElementChild as HTMLElement).className).toContain("w-80");
+    expect(screen.getByRole("button", { name: "Hide the session list" })).toBeTruthy();
+    view.unmount();
+  });
+
   it("still hands a phone the whole screen and a way back", async () => {
     const view = renderApp({ machines: fleet() });
     restore = view.restore;

@@ -537,11 +537,17 @@ export const ProjectGroup = memo(function ProjectGroup({
                     <span className="flex max-w-full min-w-0 items-center gap-2">
                       {qualifierPath && (
                         <>
-                          <span className="min-w-0 truncate">{qualifierPath}</span>
+                          <span className="min-w-0 shrink-[8] truncate">{qualifierPath}</span>
                           <span aria-hidden>·</span>
                         </>
                       )}
-                      <span className="flex shrink-0 items-center gap-2">
+                      {/* The count gives way LAST, and with an ellipsis rather than a
+                        clip: the path shrinks eight times as readily, and only a list
+                        narrower than the count itself (the desk's sidebar, a project in
+                        three states at once) trims it. Measured before this: the band
+                        asked for 348px of a 308px sidebar and its `+` stood 24px past
+                        the rows' edge, half of it under the scrollbar gutter. */}
+                      <span className="min-w-0 truncate">
                         <HeaderTally count={tally.count} unit="session" />
                         <ProjectStatusCounts
                           live={tally.live}

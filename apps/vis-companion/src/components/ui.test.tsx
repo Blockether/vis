@@ -913,7 +913,7 @@ describe("HeaderTally", () => {
 // Regression, user report: the machine name had to be editable from the list
 // itself ("clicking on machine name to edit it and save"), and the edit must not
 // move anything. The resting name and the field it becomes are one box: same class
-// list, and the field is sized in CHARACTERS of the header's mono face, so the
+// list, and the field is sized in CHARACTERS of the header's face, so the
 // address beside it does not shift when the caret arrives.
 describe("HeaderTitle rename", () => {
   const resting = renderToStaticMarkup(
@@ -928,8 +928,11 @@ describe("HeaderTitle rename", () => {
     />,
   );
 
+  // Inter, not the mono face: the name heads rows whose titles are Inter and stands
+  // under a session header set in Inter — mono is for the address and the count
+  // UNDER it, which are facts, not the name of the thing.
   it("is INK, not a second control: the name keeps its own face", () => {
-    const face = "font-mono font-bold text-white";
+    const face = "font-semibold text-white";
     expect(resting).toContain(face);
     expect(editable).toContain(face);
     // No border, no box, no height of its own — anything that paints a frame
