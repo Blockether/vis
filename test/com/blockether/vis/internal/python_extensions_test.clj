@@ -207,6 +207,39 @@ vis.extension(
                                   (expect (= false (:changed? again)))
                                   (expect (= 1 (:loaded again))))))))
 
+;; Regression, user report: an extension reading Python's conventional `__file__`
+;; global failed during loading before it could call `vis.extension(...)`.
+(defdescribe
+  extension-entry-module-globals-test
+  (it
+    "binds the canonical entry file and conventional module globals before evaluation"
+    (with-loaded
+      {"entry_globals.py"
+       (str
+         "import os
+import vis
+"
+         "ENTRY_FILE = os.path.realpath(__file__)
+"
+         "CONVENTIONAL = {name: name in globals() for name in "
+         "('__name__', '__file__', '__cached__', '__loader__', '__package__', '__spec__', '__builtins__')}
+"
+         "def entry_metadata():
+"
+         "    \"Return entry-module metadata.\"
+"
+         "    return {'file': ENTRY_FILE, 'globals': CONVENTIONAL}
+"
+         "vis.extension(name='entry-globals', description='entry globals', alias='entry', "
+         "symbols=[vis.symbol(entry_metadata)])
+")}
+      (fn [result {:keys [ext-dir]}]
+        (expect (= {:loaded 1 :failed 0 :changed? true} result))
+        (let [metadata (:result ((symbol-fn (registered "entry-globals") 'entry_metadata)))]
+          (expect (= (.getCanonicalPath (io/file ext-dir "entry_globals.py"))
+                     (get metadata "file")))
+          (expect (every? true? (vals (get metadata "globals")))))))))
+
 (def ^:private object-namespace-py
   "\"\"\"Object namespace fixture.\"\"\"
 import vis

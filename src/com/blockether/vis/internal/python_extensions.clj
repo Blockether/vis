@@ -718,8 +718,10 @@
 
 (defn- initialize-extension-context!
   "Evaluate admitted extension `source` in a trusted namespace of `worker`.
-   Returns its unsealed registration without touching the Clojure registry."
-  [worker label ^File snap source]
+   `entry-path` is the canonical source entry file exposed through Python's
+   conventional module globals. Returns the unsealed registration without
+   touching the Clojure registry."
+  [worker label ^File snap entry-path source]
   (let [ctx
         (build-context worker label)
 
@@ -739,6 +741,8 @@
                   "__vis_frozen_home__ = "
                   (python-string-literal frozen-home)
                   "\n"
+                  "__file__ = " (python-string-literal entry-path)
+                  "\n" "__cached__ = None\n"
                   "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
                   "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
                   "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
@@ -785,6 +789,7 @@
                           (let [fresh (initialize-extension-context! worker
                                                                      (str ext-name)
                                                                      (io/file (:snapshot entry))
+                                                                     (:path entry)
                                                                      (:source entry))
                                 row (assoc fresh :source-context source-ctx)]
 
@@ -1845,7 +1850,7 @@
          (util/sha256-hex source)
 
          initialized
-         (initialize-extension-context! pyext/shared-key (.getName f) snap source)
+         (initialize-extension-context! pyext/shared-key (.getName f) snap path source)
 
          ctx
          (:context initialized)]
