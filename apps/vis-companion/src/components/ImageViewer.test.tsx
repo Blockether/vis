@@ -202,9 +202,13 @@ describe("ImageViewer", () => {
     expect(
       document.querySelector("canvas")?.getAttribute("data-annotation"),
     ).toBe("active");
-    // Five inks, Undo and Clear sit directly under the title band, not in the footer.
+    // Five inks and two icon verbs sit directly under the title band.
     const tools = document.querySelector('[aria-label="Drawing tools"]');
     expect(tools?.querySelectorAll("button[aria-pressed]")).toHaveLength(5);
+    for (const action of [control("Undo"), control("Clear")]) {
+      expect(action.textContent).toBe("");
+      expect(action.querySelector("svg")).not.toBeNull();
+    }
     expect(tools?.parentElement?.className).toContain("top-[calc(3rem");
     expect(document.querySelector("header")?.nextElementSibling).toBe(
       tools?.parentElement,

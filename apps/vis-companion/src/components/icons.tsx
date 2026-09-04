@@ -24,6 +24,7 @@ import {
   Crop,
   Download,
   Ellipsis,
+  Eraser,
   Folder,
   GitFork,
   Globe,
@@ -46,6 +47,7 @@ import {
   Star,
   Trash2,
   TriangleAlert,
+  Undo2,
   X,
   Zap,
 } from "lucide-react";
@@ -103,6 +105,10 @@ export function CloseIcon({ className }: { className?: string }) {
   return <Mark icon={X} className={className} />;
 }
 
+/** Remove every stroke from the current drawing. */
+export function ClearIcon({ className }: { className?: string }) {
+  return <Mark icon={Eraser} className={className} />;
+}
 /**
  * THE MARK OF SEARCH, and the one convention nobody gets to be creative about: a
  * schematic magnifying glass, INSIDE the open field and leading it. A bare framed box
@@ -219,6 +225,10 @@ export function VoiceLoopIcon({ className }: { className?: string }) {
   return <Mark icon={MicVocal} className={className} />;
 }
 
+/** Take back the most recent drawing stroke. */
+export function UndoIcon({ className }: { className?: string }) {
+  return <Mark icon={Undo2} className={className} />;
+}
 /** Draw directly on a picture. */
 export function DrawIcon({ className }: { className?: string }) {
   return <Mark icon={Pencil} className={className} />;

@@ -3366,12 +3366,11 @@ describe("a call site positions, and the component paints", () => {
     ).not.toContain("safe-area-inset-top");
   });
 
-  it("draws the zoom bar as one frame", () => {
+  // The zoom group's own frame stays visible outside the clipped child buttons.
+  it("draws the zoom bar as one complete frame", () => {
     expect(imageViewerSource).toContain("isJoined");
-    // ONE frame means one corner: the group carries it and clips it, so no segment
-    // rounds an edge that lands in the middle of the bar.
     expect(imageViewerSource).toContain(
-      "overflow-hidden rounded-control [&>button]:rounded-none",
+      "overflow-hidden rounded-control border border-edge-strong [&>button]:rounded-none",
     );
   });
 

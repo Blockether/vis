@@ -733,7 +733,7 @@ export function ImageViewer({
               it, so its segments stay square and no notch opens where two of them
               meet. */}
           <div
-            className="flex shrink-0 items-center overflow-hidden rounded-control [&>button]:rounded-none"
+            className="flex shrink-0 items-center overflow-hidden rounded-control border border-edge-strong [&>button]:rounded-none"
             aria-label="Zoom controls"
           >
             <Button

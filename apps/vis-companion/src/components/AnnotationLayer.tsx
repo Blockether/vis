@@ -16,7 +16,8 @@ import {
   type PenToken,
   type Stroke,
 } from "../lib/annotate";
-import { Button } from "./ui";
+import { ClearIcon, UndoIcon } from "./icons";
+import { IconButton } from "./ui";
 
 /**
  * A transparent sheet you can draw on, and the tools that drive it.
@@ -281,12 +282,24 @@ export function PenToolbar({
           />
         </button>
       ))}
-      <Button variant="secondary" onClick={onUndo} disabled={!strokeCount}>
-        Undo
-      </Button>
-      <Button variant="secondary" onClick={onClear} disabled={!strokeCount}>
-        Clear
-      </Button>
+      <IconButton
+        variant="secondary"
+        label="Undo"
+        title="Undo"
+        onClick={onUndo}
+        disabled={!strokeCount}
+      >
+        <UndoIcon />
+      </IconButton>
+      <IconButton
+        variant="secondary"
+        label="Clear"
+        title="Clear"
+        onClick={onClear}
+        disabled={!strokeCount}
+      >
+        <ClearIcon />
+      </IconButton>
     </div>
   );
 }
