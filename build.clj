@@ -180,7 +180,6 @@
 
 (def ^:private package-descriptions
   {'com.blockether/vis "vis - single-namespace SDK + iteration runtime + binary entry point."
-   'com.blockether/vis-persistance-sqlite "SQLite backend for the vis persistence facade."
    'com.blockether/vis-provider-github-copilot "GitHub Copilot OAuth device-flow provider."
    'com.blockether/vis-foundation-exa "Exa MCP web/code search tools for the Vis SCI sandbox."})
 

@@ -8,7 +8,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
-            [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
+            [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [lazytest.core :refer [defdescribe expect it]]))
 
 

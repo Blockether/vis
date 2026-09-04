@@ -7,8 +7,7 @@
    slash returns `:slash/tasks / :facts`) writes them to
    the CTX engine via the same path a model-emitted mutator would."
   (:require [clojure.string :as str]
-            [com.blockether.vis.ext.persistance-sqlite.core :as ps]
-            [com.blockether.vis.ext.persistance-sqlite.registrar]
+            [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.extension :as extension]

@@ -1,8 +1,8 @@
-(ns com.blockether.vis.ext.persistance-sqlite.maintenance-test
+(ns com.blockether.vis.internal.persistance.sqlite.maintenance-test
   "The fortnightly space reclaim: a store is rewritten only when the freelist is
    both OLD enough and BIG enough, and the `vis.db.vacuum` marker is what makes
    the window a window."
-  (:require [com.blockether.vis.ext.persistance-sqlite.maintenance :as maintenance]
+  (:require [com.blockether.vis.internal.persistance.sqlite.maintenance :as maintenance]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io File)))
 

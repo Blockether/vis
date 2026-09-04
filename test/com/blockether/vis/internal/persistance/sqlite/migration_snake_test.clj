@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.persistance-sqlite.migration-snake-test
+(ns com.blockether.vis.internal.persistance.sqlite.migration-snake-test
   "Single-migration + snake-schema guard: exactly ONE Flyway migration (V1)
    ships, and its DDL is fully canonical — snake_case identifiers only, no
    kebab, no `?`, and the cross-channel `project` table carries NO channel
@@ -6,7 +6,7 @@
    behind in a store that already exists."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.ext.persistance-sqlite.migration :as migration]
+            [com.blockether.vis.internal.persistance.sqlite.migration :as migration]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private migration-dir "db/sqlite/migration")

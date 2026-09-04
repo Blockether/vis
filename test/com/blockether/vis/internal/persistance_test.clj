@@ -92,3 +92,21 @@
                     persistance/max-persisted-error-chars))
         ;; An answer is DATA: the facade never truncates it.
         (expect (= huge (get (second (:content @seen)) "text"))))))
+
+(defdescribe
+  static-backend-table-test
+  "Backends are a STATIC table in the facade — nothing registers one at runtime.
+   A spec without `:backend` dispatches to `default-backend`; an id the table
+   does not know is refused before any namespace loads."
+  (it "defaults to sqlite and tags the opened store with it"
+      (expect (= :sqlite persistance/default-backend))
+      (let [store (persistance/db-create-connection! :memory)]
+        (try (expect (= :sqlite (:backend store)))
+             (finally (persistance/db-dispose-connection! store)))))
+  (it "refuses an unknown backend"
+      (let [ex (try (persistance/db-create-connection! {:backend :postgres :path "x"})
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+        (expect (some? ex))
+        (expect (str/includes? (ex-message ex) "Unknown persistence backend"))
+        (expect (= [:sqlite] (:known (ex-data ex)))))))

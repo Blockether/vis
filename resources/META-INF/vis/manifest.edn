@@ -9,7 +9,6 @@
   com.blockether.vis.internal.foundation.harness.core/register!
   com.blockether.vis.ext.language-clojure.core/register!
   com.blockether.vis.ext.language-python.core/register!
-  com.blockether.vis.ext.persistance-sqlite.registrar/register!
   com.blockether.vis.ext.provider-alibaba/register!
   com.blockether.vis.ext.provider-anthropic/register!
   com.blockether.vis.ext.provider-github-copilot/register!

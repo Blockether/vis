@@ -1,20 +1,19 @@
 (ns com.blockether.vis.internal.persistance
-  "Persistence facade: backend registry, connection lifecycle, and every
+  "Persistence facade: the backend table, connection lifecycle, and every
    delegated `store-*`/`db-*` fn.
 
-   Extensions register backend adapters through `:ext/persistance`. The
-   facade dispatches each delegated call by resolving the matching var on
-   the chosen backend namespace (`(ns-resolve ns-sym 'db-store-iteration!)`
-   etc.) and applying it to the original args. This keeps the facade
-   dialect-agnostic - every migration runner / driver-specific oddity stays
-   inside the backend adapter.
+   SQLite is the backend Vis ships and the default; `backends` is the closed
+   table a second dialect would join. The facade dispatches each delegated call
+   by resolving the matching var on the chosen backend namespace
+   (`(ns-resolve ns-sym 'db-store-iteration!)` etc.) and applying it to the
+   original args. This keeps the facade dialect-agnostic - every migration
+   runner / driver-specific oddity stays inside the backend adapter.
 
    Frontends still call `db-error->user-message` here, but the actual
    translation is offered by backend adapters. Same for store-staleness
    checks used by the process-wide shared connection."
   (:require [charred.api :as json]
-            [clojure.walk :as walk]
-            [com.blockether.vis.internal.manifest :as manifest])
+            [clojure.walk :as walk])
   (:import (java.time Instant)
            (java.util Date UUID)))
 
@@ -132,60 +131,36 @@
 
     (->kw (or status :done))))
 
-;; Backend registry
+;; Backends
 
-(defonce ^:private backends
-  ;; {:sqlite {:ns 'com.blockether.vis.ext.persistance-sqlite.core}}
-  (atom {}))
+(def ^:private backends
+  "Every persistence backend Vis ships, keyed by id: the namespace whose public
+   `db-*` fns the facade delegates to. A second dialect (Postgres, ...) is a
+   second entry here and nothing else — the facade never discovers backends at
+   runtime. The namespace loads on the first real DB op (see
+   `require-backend-ns!`), so commands that never touch the store skip the
+   ~480 ms of JDBC/Hikari/Flyway class loading on a cold JVM."
+  {:sqlite 'com.blockether.vis.internal.persistance.sqlite.core})
 
-(defn register-backend!
-  "Register a persistence backend implementation.
-
-   `id`     - keyword identity, e.g. `:sqlite`.
-   `ns-sym` - fully qualified namespace symbol that defines the backend
-              functions (`db-open!`, `db-close!`, `db-log!`, every
-              `store-*`/`db-*` fn used by this facade). Vars are
-              resolved lazily via `ns-resolve` so REPL redefinition
-              just works.
-
-   Idempotent on `id`. Returns `id`."
-  [id ns-sym]
-  (when-not (keyword? id) (throw (ex-info "Backend id must be a keyword" {:id id})))
-  (when-not (symbol? ns-sym) (throw (ex-info "Backend ns-sym must be a symbol" {:ns-sym ns-sym})))
-  (swap! backends assoc id {:ns ns-sym})
-  id)
-
-(defn deregister-backend! [id] (swap! backends dissoc id) nil)
-
-(defn registered-backends "Map of registered backends keyed by id." [] @backends)
-
-;; Initialization
-;;
-;; Persistence registration is part of the one ordered distribution manifest.
-;; The facade initializes it before selecting a backend, so direct callers do not
-;; need to wire application startup themselves.
+(def default-backend
+  "The backend a spec/store without an explicit `:backend` dispatches to."
+  :sqlite)
 
 (defn- pick-backend-id
-  "Decide which backend handles this call. Honors an explicit
-   `:backend` key on the spec/store; otherwise falls back to the
-   single registered backend; otherwise throws."
+  "Decide which backend handles this call: the explicit `:backend` key on the
+   spec/store, else `default-backend`. Throws on an unknown id."
   [db-spec-or-store]
-  (or (when (map? db-spec-or-store) (:backend db-spec-or-store))
-      (when (= 1 (count @backends)) (first (keys @backends)))
-      (throw (ex-info (str "No persistence backend selected. "
-                           (if (empty? @backends)
-                             "No backends registered. Did you forget to require "
-                             "Multiple backends registered, pass {:backend ...} in db-spec. ")
-                           (when (empty? @backends)
-                             "`com.blockether.vis.ext.persistance-sqlite.core`?"))
-                      {:registered (vec (keys @backends))}))))
+  (let [bid (or (when (map? db-spec-or-store) (:backend db-spec-or-store)) default-backend)]
+    (when-not (contains? backends bid)
+      (throw (ex-info (str "Unknown persistence backend " bid)
+                      {:backend bid :known (vec (keys backends))})))
+    bid))
 
 (defn- require-backend-ns!
-  "Ensure the backend's heavyweight namespace has been loaded. Backends
-   are typically registered through a lightweight `registrar` ns whose
-   `:persistance/ns` points at the heavy ns; this fn does the deferred
-   `(require ...)` so callers don't pay the load cost until they actually
-   dispatch a backend call. Silent no-op when the ns is already loaded.
+  "Ensure the backend's heavyweight namespace has been loaded: the deferred
+   `(require ...)` behind every delegated call, so callers don't pay the load
+   cost until they actually dispatch one. Silent no-op when the ns is already
+   loaded.
 
    SERIALIZED under Clojure's global require lock (what
    `requiring-resolve` uses): plain `require` is not thread-safe, and
@@ -203,21 +178,15 @@
                   t)))))
 
 (defn- resolve-impl
-  "Resolve the var implementing `fn-name` on the chosen backend.
-   Auto-loads the backend ns on first call so backends can ship as a
-   tiny registrar + heavy implementation pair. Throws a useful error
-   when the backend is missing the fn."
+  "Resolve the var implementing `fn-name` on the chosen backend, loading the
+   backend ns on first call. Throws a useful error when the backend is missing
+   the fn."
   [db-spec-or-store fn-name]
   (let [bid
         (pick-backend-id db-spec-or-store)
 
         ns-sym
-        (get-in @backends [bid :ns])
-
-        _
-        (when-not ns-sym
-          (throw (ex-info (str "Backend " bid " not registered")
-                          {:backend bid :registered (vec (keys @backends))})))
+        (get backends bid)
 
         _
         (require-backend-ns! bid ns-sym)
@@ -251,11 +220,8 @@
         (pick-backend-id db-spec-or-store)
 
         ns-sym
-        (get-in @backends [bid :ns])]
+        (get backends bid)]
 
-    (when-not ns-sym
-      (throw (ex-info (str "Backend " bid " not registered")
-                      {:backend bid :registered (vec (keys @backends))})))
     (require-backend-ns! bid ns-sym)
     (some-> (ns-resolve ns-sym fn-name)
             deref)))
@@ -272,18 +238,15 @@
      {:backend :sqlite :path ...}     - explicit backend selection
      {:backend :sqlite :datasource ds} - caller-owned DataSource
 
-   With a single registered backend, omitting `:backend` works and the
-   facade tags the returned store map with the chosen backend so all
-   subsequent facade calls dispatch correctly.
-
-   Initializes the distribution manifest before selecting a backend."
+   Omitting `:backend` selects `default-backend`; the facade tags the returned
+   store map with the chosen backend so all subsequent facade calls dispatch
+   correctly."
   [db-spec]
-  (manifest/initialize!)
   (let [normalized
         (normalize-spec db-spec)
 
         bid
-        (pick-backend-id (if (map? normalized) normalized {:backend (pick-backend-id {})}))
+        (pick-backend-id normalized)
 
         f
         @(resolve-impl {:backend bid} 'db-open!)
@@ -642,11 +605,10 @@
 
 (defn- backend-error-translators
   []
-  (manifest/initialize!)
-  (keep (fn [[_ {:keys [ns]}]]
-          (some-> (ns-resolve ns 'db-error->user-message)
+  (keep (fn [[_ ns-sym]]
+          (some-> (ns-resolve ns-sym 'db-error->user-message)
                   deref))
-        @backends))
+        backends))
 
 (defn db-error->user-message
   "Translate a persistence exception into something a human can act on.

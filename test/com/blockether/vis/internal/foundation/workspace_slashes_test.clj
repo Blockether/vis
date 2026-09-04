@@ -1,8 +1,7 @@
 (ns com.blockether.vis.internal.foundation.workspace-slashes-test
   "Filesystem-root slash command tests."
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.ext.persistance-sqlite.core :as ps]
-            [com.blockether.vis.ext.persistance-sqlite.registrar]
+            [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.workspace-slashes :as ws-slashes]
             [com.blockether.vis.internal.paths :as paths]

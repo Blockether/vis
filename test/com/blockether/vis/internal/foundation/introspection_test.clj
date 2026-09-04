@@ -5,7 +5,7 @@
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.env-python :as env-python]
-            [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
+            [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt]
             [com.blockether.vis.internal.foundation.core :as foundation]

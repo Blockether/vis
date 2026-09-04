@@ -5,8 +5,7 @@
    message is a bang, runs the shell tool directly (honoring `:shell/enabled`),
    and persists one synthetic iteration whose form owns the command's stdout."
   (:require [clojure.string :as str]
-            [com.blockether.vis.ext.persistance-sqlite.core :as ps]
-            [com.blockether.vis.ext.persistance-sqlite.registrar]
+            [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance :as persistance]

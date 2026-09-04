@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-09-03.
+> Generated 2026-09-04.
 
 Vis is a coding agent that writes Python into a sandboxed CPython runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -44,7 +44,7 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 59 unique, across 14 `deps.edn` modules (root + extensions).
+- **Direct dependency coordinates:** 59 unique, across 13 `deps.edn` modules (root + extensions).
 - **Declared jar footprint (direct coords):** ~38 MB; concentrated in the embedded CPython runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
@@ -201,10 +201,14 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm` | `v1.13.5` | Apache-2.0 | 183 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
+| `com.github.seancorfield/honeysql` | `2.7.1425` | EPL-2.0 | 43 KB | 3rd-party |
+| `com.github.seancorfield/next.jdbc` | `1.3.1118` | EPL-2.0 | 55 KB | 3rd-party |
 | `com.google.zxing/core` | `3.5.4` | Apache-2.0 | 596 KB | 3rd-party |
+| `com.taoensso/nippy` | `3.8.0` | EPL-1.0 | 52 KB | 3rd-party |
 | `com.taoensso/telemere` | `1.2.1` | EPL-1.0 | 59 KB | 3rd-party |
 | `com.taoensso/telemere-slf4j` | `1.2.1` | EPL-1.0 | 19 KB | 3rd-party |
 | `com.taoensso/trove` | `1.1.0` | EPL-1.0 | 17 KB | 3rd-party |
+| `com.zaxxer/HikariCP` | `7.1.0` | Apache-2.0 | 169 KB | 3rd-party |
 | `info.sunng/ring-jetty9-adapter` | `0.40.3` | EPL-1.0 | 163 KB | 3rd-party |
 | `io.github.clj-holmes/clj-watson` | `git:be98e4db74fb8927db4825cc73bbe2606e44e5e3` | EPL-2.0 | source checkout | 3rd-party |
 | `io.github.clojure/tools.build` | `0.10.14` | EPL-1.0 | 32 KB | 3rd-party |
@@ -223,9 +227,13 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `org.commonmark/commonmark-ext-gfm-strikethrough` | `0.29.0` | BSD-2-Clause | 13 KB | 3rd-party |
 | `org.commonmark/commonmark-ext-gfm-tables` | `0.29.0` | BSD-2-Clause | 23 KB | 3rd-party |
 | `org.flatland/ordered` | `1.15.12` | EPL-1.0 | 14 KB | 3rd-party |
+| `org.flywaydb/flyway-core` | `12.11.0` | Apache-2.0 | 791 KB | 3rd-party |
+| `org.flywaydb/flyway-database-nc-sqlite` | `12.11.0` | Apache-2.0 | 6 KB | 3rd-party |
+| `org.xerial/sqlite-jdbc` | `3.53.2.1` | Apache-2.0 | 11.4 MB | 3rd-party |
 | `org.yamlstar/yamlstar` | `0.1.17` | MIT | 15 KB | 3rd-party |
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
 | `slipset/deps-deploy` | `0.2.5` | EPL-1.0 | 8 KB | 3rd-party |
+| `tools.jackson.core/jackson-databind` | `3.2.1` | Apache-2.0 | 1.9 MB | 3rd-party |
 
 ### `vis-tui` extension
 
@@ -247,21 +255,6 @@ _Clojure language pack (format/lint/tests/REPL)._
 | `dev.weavejester/cljfmt` | `0.16.5` | EPL-1.0 | 20 KB | 3rd-party |
 | `nrepl/nrepl` | `1.7.0` | EPL-1.0 | 103 KB | 3rd-party |
 | `zprint/zprint` | `1.2.9` | MIT | 220 KB | 3rd-party |
-
-### `vis-persistance-sqlite` extension
-
-_Durable session store (SQLite + Flyway migrations)._
-
-| Dependency | Version | License | Jar size | Ownership |
-|---|---|---|---|---|
-| `com.github.seancorfield/honeysql` | `2.7.1425` | EPL-2.0 | 43 KB | 3rd-party |
-| `com.github.seancorfield/next.jdbc` | `1.3.1118` | EPL-2.0 | 55 KB | 3rd-party |
-| `com.taoensso/nippy` | `3.8.0` | EPL-1.0 | 52 KB | 3rd-party |
-| `com.zaxxer/HikariCP` | `7.1.0` | Apache-2.0 | 169 KB | 3rd-party |
-| `org.flywaydb/flyway-core` | `12.11.0` | Apache-2.0 | 791 KB | 3rd-party |
-| `org.flywaydb/flyway-database-nc-sqlite` | `12.11.0` | Apache-2.0 | 6 KB | 3rd-party |
-| `org.xerial/sqlite-jdbc` | `3.53.2.1` | Apache-2.0 | 11.4 MB | 3rd-party |
-| `tools.jackson.core/jackson-databind` | `3.2.1` | Apache-2.0 | 1.9 MB | 3rd-party |
 
 ### `vis-contract` extension
 
@@ -384,7 +377,7 @@ Notes:
   the JNI plus the ONNX Runtime inside it — is not a declared dependency at all,
   so it is absent from the table above: one platform's copy is fetched at
   runtime or embedded for the build host (§4.2).
-- `sqlite-jdbc` is bundled by the optional `vis-persistance-sqlite` extension.
+- `sqlite-jdbc` is bundled by the core session store (`internal/persistance/sqlite`).
 - The final GraalVM **native binary** is larger than any single jar because it
   statically links the JDK; the Python interpreter travels beside it as the
   python sidecar. Track both in the `native-release` workflow output.

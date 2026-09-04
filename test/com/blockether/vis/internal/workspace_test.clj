@@ -6,8 +6,7 @@
    (instant on CoW filesystems) and clean the clone up in `finally`, so
    the live repo and ~/.rifts are never touched."
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.ext.persistance-sqlite.core :as ps]
-            [com.blockether.vis.ext.persistance-sqlite.registrar]
+            [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.workspace :as ws]
             [lazytest.core :refer [defdescribe expect it]]
             [next.jdbc :as jdbc]))

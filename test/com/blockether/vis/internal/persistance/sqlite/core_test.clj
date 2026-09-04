@@ -7,15 +7,15 @@
       ;; not for use. Suppress redundant-let / unused-binding here
       ;; rather than rewrite every block.
       '{:linters {:redundant-let {:level :off} :unused-binding {:level :off}}}}
-    com.blockether.vis.ext.persistance-sqlite.core-test
+    com.blockether.vis.internal.persistance.sqlite.core-test
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             ;; Force-load the SQLite backend ns so the `private-core-fn` helper
             ;; below can resolve its private vars at top-level def time. The backend
             ;; is otherwise loaded lazily by persistence dispatch.
-            [com.blockether.vis.ext.persistance-sqlite.core :as sqlite-core]
-            [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer
+            [com.blockether.vis.internal.persistance.sqlite.core :as sqlite-core]
+            [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h :refer
              [raw-count raw-query]]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.persistance :as persistance]
@@ -31,7 +31,7 @@
 
 (defn- private-core-fn
   [name]
-  (deref (resolve (symbol "com.blockether.vis.ext.persistance-sqlite.core" name))))
+  (deref (resolve (symbol "com.blockether.vis.internal.persistance.sqlite.core" name))))
 
 (defn- table-columns
   [store table]
@@ -44,7 +44,7 @@
 
 (def ^:private migration-checksum-mismatch-user-message
   @(resolve
-     'com.blockether.vis.ext.persistance-sqlite.core/migration-checksum-mismatch-user-message))
+     'com.blockether.vis.internal.persistance.sqlite.core/migration-checksum-mismatch-user-message))
 
 (defdescribe
   sqlite-extension-aggregate-test
@@ -808,7 +808,7 @@
 
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])
-   (require '[com.blockether.vis.ext.persistance-sqlite.test-helpers :as h])
+   (require '[com.blockether.vis.internal.persistance.sqlite.test-helpers :as h])
    (try
      (let [dir     (System/getProperty \"vis.test.db-dir\")
            marker  (System/getProperty \"vis.test.marker\")
@@ -3478,7 +3478,7 @@
 
           ;; `forms-tally` is private, so reach it through the ns, not `#'`.
           tally-var
-          (ns-resolve 'com.blockether.vis.ext.persistance-sqlite.core 'forms-tally)
+          (ns-resolve 'com.blockether.vis.internal.persistance.sqlite.core 'forms-tally)
 
           orig
           @tally-var

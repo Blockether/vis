@@ -4,8 +4,7 @@
    The companion's slide offers both, so both must be answerable from the daemon
    without a terminal: fork the whole session, or fork THROUGH one turn."
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.ext.persistance-sqlite.core :as ps]
-            [com.blockether.vis.ext.persistance-sqlite.registrar]
+            [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
             [lazytest.core :refer [defdescribe expect it]]

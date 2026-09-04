@@ -174,7 +174,6 @@
 
      - providers   -> joined `:provider/label`s
      - channels    -> joined `:channel/cmd`s
-     - persistance -> joined `:persistance/id` names
      - everything else (foundation, languages, uncategorized) -> blank
 
    Joined with `, ` so an extension contributing multiple of one
@@ -191,11 +190,6 @@
     "channels"
     (->> (:ext/channels e)
          (keep :channel/cmd)
-         (str/join ", "))
-
-    "persistance"
-    (->> (:ext/persistance e)
-         (keep (comp name :persistance/id))
          (str/join ", "))
 
     ""))

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.persistance-sqlite.maintenance
+(ns com.blockether.vis.internal.persistance.sqlite.maintenance
   "Space reclamation for a file-backed SQLite store.
 
    SQLite never hands the file back on its own: `auto_vacuum` is off, so pages a

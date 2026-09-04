@@ -1501,7 +1501,7 @@ process or language boundary use the validated JSON documents published by
 | `:ext/doctor-fn` | `(fn [env] -> [checks])` — health checks for `vis-agent doctor`. |
 | `:ext/settings` `:ext/env` | Declared settings / environment variables, resolved exactly as a Python extension's `env=` is ([Environment](#environment)). |
 
-Channels, providers, persistence backends, and workspace backends register through their own keys (`:ext/channels`, `:ext/providers`, `:ext/persistance`, `:ext/workspace-backends`) — read a first-party extension of the matching kind as the reference implementation.
+Channels, providers, and workspace backends register through their own keys (`:ext/channels`, `:ext/providers`, `:ext/workspace-backends`) — read a first-party extension of the matching kind as the reference implementation.
 
 The remaining accepted keys are **declarative registrations**: the host applies them when the extension registers and undoes them when it unregisters, so nothing needs a global atom or an imperative `register-*!` call.
 

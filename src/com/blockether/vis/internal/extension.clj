@@ -14,8 +14,8 @@
      - the per-iteration `:ext/hooks` checks
      - the parse-error rescue chain
 
-   Channel and provider registries live in `internal.registry`; backend dispatch
-   lives in `internal.persistance`. The one ordered distribution manifest invokes
+   Channel and provider registries live in `internal.registry`; the persistence
+   backend table lives in `internal.persistance`. The one ordered distribution manifest invokes
    each extension's explicit registration function."
   (:refer-clojure :exclude [symbol])
   (:require [clojure.java.io :as io]
@@ -29,7 +29,6 @@
             [com.blockether.vis.internal.egress-proxy :as egress-proxy]
             [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.util :as util]
@@ -516,14 +515,6 @@
                   :provider/enrich-models-fn :provider/on-selected-fn])
          (optional-field? x :provider/is-managed boolean?))))
 
-(defn- persistance-entry?
-  [x]
-  (and (map? x)
-       (keyword? (:persistance/id x))
-       (symbol? (:persistance/ns x))
-       (nil? (namespace (:persistance/ns x)))
-       (re-find #"\." (name (:persistance/ns x)))))
-
 (defn- sandbox-shim?
   [x]
   (and (map? x)
@@ -601,7 +592,6 @@
        (optional-field? x :ext/cli #(vector-of? registry/command? %))
        (optional-field? x :ext/channels #(vector-of? registry/channel? %))
        (optional-field? x :ext/providers #(vector-of? provider-entry? %))
-       (optional-field? x :ext/persistance #(vector-of? persistance-entry? %))
        (optional-field? x :ext/attachment-storage #(vector-of? map? %))
        (optional-field? x :ext/channel-contributions channel-contributions?)
        (optional-field? x :ext/slash-commands #(vector-of? slash? %))
@@ -2030,11 +2020,10 @@
 ;; Public API - extension builder
 (defn- derive-kind
   "Auto-derive `:ext/kind` for the categorical cases when the author
-   didn't set one. Extensions that contribute providers, channels,
-   channel contributions, or persistence backends (and nothing forcing a different
-   label) get bucketed under `\"providers\"` / `\"channels\"` /
-   `\"persistance\"` so `vis-agent extension list` reads as a clean grouped
-   table instead of a column of blanks.
+   didn't set one. Extensions that contribute providers, channels or
+   channel contributions (and nothing forcing a different label) get
+   bucketed under `\"providers\"` / `\"channels\"` so `vis-agent extension list`
+   reads as a clean grouped table instead of a column of blanks.
 
    Explicit `:ext/kind` always wins. Extensions that fit no
    categorical bucket (and don't set a kind themselves) stay
@@ -2044,7 +2033,6 @@
         (seq (:ext/providers spec)) "providers"
         (seq (:ext/channels spec)) "channels"
         (seq (:ext/channel-contributions spec)) "channels"
-        (seq (:ext/persistance spec)) "persistance"
         :else nil))
 
 (defn extension
@@ -2098,9 +2086,6 @@
 
         (not (:ext/providers spec))
         (assoc :ext/providers [])
-
-        (not (:ext/persistance spec))
-        (assoc :ext/persistance [])
 
         (not (:ext/attachment-storage spec))
         (assoc :ext/attachment-storage [])
@@ -2322,11 +2307,6 @@
   (doseq [provider-entry providers]
     (registry/register-provider! provider-entry)))
 
-(defn- dispatch-persistance!
-  [entries]
-  (doseq [{:persistance/keys [id ns]} entries]
-    (persistance/register-backend! id ns)))
-
 (defn- dispatch-attachment-storage!
   [entries]
   (doseq [entry entries]
@@ -2358,8 +2338,7 @@
    This is THE single entry point for everything an extension
    contributes to vis. Whatever the extension declares -- Python sandbox
    symbols (`:ext.engine/symbols`), CLI commands (`:ext/cli`), channels
-   (`:ext/channels`), LLM providers (`:ext/providers`), persistence
-   backends (`:ext/persistance`) -- gets routed here and dispatched into
+   (`:ext/channels`), LLM providers (`:ext/providers`) -- gets routed here and dispatched into
    the matching sub-registry as a side effect.
 
    Also computes source-file markers (paths, max-mtime, sha256) and
@@ -2427,7 +2406,6 @@
                       :cli (count (:ext/cli ext))
                       :channels (count (:ext/channels ext))
                       :providers (count (:ext/providers ext))
-                      :persistance (count (:ext/persistance ext))
                       :themes (count (:ext/theme ext))}
                :msg (str "Extension '" ns-sym "' registered globally")})
     (doseq [c (:ext/cli ext)]
@@ -2435,7 +2413,6 @@
     (doseq [c (:ext/channels ext)]
       (registry/register-channel! c))
     (dispatch-providers! (:ext/providers ext))
-    (dispatch-persistance! (:ext/persistance ext))
     (dispatch-attachment-storage! (:ext/attachment-storage ext))
     (install-op-hooks! ext)
     (install-egress-filters! ext)
@@ -2580,12 +2557,6 @@
              (tel/log! {:level :warn
                         :id ::deregister-provider-failed
                         :data {:ext ns-sym :provider-id (:provider/id p) :error (ex-message t)}}))))
-    (doseq [{:persistance/keys [id]} (:ext/persistance ext)]
-      (try (persistance/deregister-backend! id)
-           (catch Throwable t
-             (tel/log! {:level :warn
-                        :id ::deregister-backend-failed
-                        :data {:ext ns-sym :backend-id id :error (ex-message t)}}))))
     (doseq [backend (:ext/attachment-storage ext)]
       (try (attachment-storage/deregister-backend! (:storage/id backend))
            (catch Throwable t

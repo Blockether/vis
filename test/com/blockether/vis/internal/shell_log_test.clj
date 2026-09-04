@@ -7,7 +7,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
+            [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.shell-log :as shell-log]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io File)))

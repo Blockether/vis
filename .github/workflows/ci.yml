@@ -166,7 +166,6 @@ jobs:
       matrix:
         path:
           - .
-          - extensions/persistance/vis-persistance-sqlite
           - extensions/providers/vis-provider-github-copilot
           - extensions/providers/vis-provider-openai-codex
           - extensions/providers/vis-provider-anthropic

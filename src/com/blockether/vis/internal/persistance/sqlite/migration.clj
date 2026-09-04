@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.persistance-sqlite.migration
+(ns com.blockether.vis.internal.persistance.sqlite.migration
   "Flyway-backed schema migration runner.
 
    Lives in the SQLite extension because:

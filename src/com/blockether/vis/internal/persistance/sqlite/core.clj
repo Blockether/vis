@@ -1,5 +1,5 @@
 (ns ^{:clj-kondo/config '{:linters {:unused-public-var {:level :off}}}}
-    com.blockether.vis.ext.persistance-sqlite.core
+    com.blockether.vis.internal.persistance.sqlite.core
   "SQLite store - V1 schema implementation.
 
    Every public defn in this file is dispatched dynamically by
@@ -21,8 +21,8 @@
   (:require [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
-            [com.blockether.vis.ext.persistance-sqlite.maintenance :as maintenance]
-            [com.blockether.vis.ext.persistance-sqlite.migration :as migration]
+            [com.blockether.vis.internal.persistance.sqlite.maintenance :as maintenance]
+            [com.blockether.vis.internal.persistance.sqlite.migration :as migration]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.core :as vis]
@@ -4566,21 +4566,12 @@
                                        :limit 1}))]
           (<-blob (:ctx row)))))))
 
-;; Backend registration
+;; Loading
 ;;
-;; The extension is registered by `register!` in the lightweight
-;; `com.blockether.vis.ext.persistance-sqlite.registrar` namespace, which
-;; the distribution manifest invokes on every Vis startup. That registrar declares
-;; `:persistance/ns` as THIS ns; the persistance facade calls
-;; `requiring-resolve` on backend fns, so this heavyweight ns is loaded
-;; on demand on the first real DB op (and not at all when the user runs
-;; commands that never touch the DB - see `registrar.clj` for the
-;; rationale and the load-cost numbers).
-;;
-;; Tests that need the SQLite backend registered should require the
-;; `registrar` ns; tests that only need the fns can require this ns
-;; directly without registering the extension.
-
+;; This ns is the `:sqlite` entry of the persistance facade's backend table;
+;; the facade requires it on the first real DB op (see
+;; `com.blockether.vis.internal.persistance/require-backend-ns!`), so commands
+;; that never touch the DB skip its ~480 ms of class loading on a cold JVM.
 (defn db-load-ctx-history
   "Return a sorted-by-turn vec of `[turn-n ctx-map]` pairs for the session.
    Each ctx-map is the Nippy-decoded `:session/turn_state.ctx` for the

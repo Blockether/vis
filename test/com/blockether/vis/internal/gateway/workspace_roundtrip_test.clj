@@ -6,8 +6,7 @@
    through VERBATIM — one representation, no re-hydration. These tests exercise
    both wire projection and daemon-owned draft lifecycle operations."
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.ext.persistance-sqlite.core :as ps]
-            [com.blockether.vis.ext.persistance-sqlite.registrar]
+            [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]

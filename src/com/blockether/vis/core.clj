@@ -538,10 +538,7 @@
              [db-create-connection! persistance/db-create-connection!]
              [db-dispose-connection! persistance/db-dispose-connection!]
              [db-shared-connection! persistance/db-shared-connection!]
-             [db-dispose-shared-connection! persistance/db-dispose-shared-connection!]
-             [register-backend! persistance/register-backend!]
-             [deregister-backend! persistance/deregister-backend!]
-             [registered-backends persistance/registered-backends])
+             [db-dispose-shared-connection! persistance/db-dispose-shared-connection!])
 
 ;; Logging
 (import-vars [db-log! persistance/db-log!])

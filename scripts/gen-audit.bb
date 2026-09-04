@@ -29,7 +29,6 @@
 ;; still render (just without a blurb), so a new extension never breaks the doc.
 (def blurbs
   {"core" "_Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._"
-   "vis-persistance-sqlite" "_Durable session store (SQLite + Flyway migrations)._"
    "vis-language-clojure" "_Clojure language pack (format/lint/tests/REPL)._"
    "vis-language-python" "_Python language pack._"
    "vis-channel-tui" "_Terminal UI (Lanterna)._"})
@@ -732,7 +731,7 @@ Notes:
   the JNI plus the ONNX Runtime inside it — is not a declared dependency at all,
   so it is absent from the table above: one platform's copy is fetched at
   runtime or embedded for the build host (§4.2).
-- `sqlite-jdbc` is bundled by the optional `vis-persistance-sqlite` extension.
+- `sqlite-jdbc` is bundled by the core session store (`internal/persistance/sqlite`).
 - The final GraalVM **native binary** is larger than any single jar because it
   statically links the JDK; the Python interpreter travels beside it as the
   python sidecar. Track both in the `native-release` workflow output.
