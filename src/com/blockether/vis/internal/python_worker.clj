@@ -71,6 +71,26 @@
    instruction, which is why no CLI command exposes this."
   "VIS_PYTHON_WORKER_SOCKET")
 
+(def ^:private guest-source-env "VIS_PYTHON_GUEST_SOURCE_DIR")
+
+(defonce ^:private guest-source-directory
+  (delay (let [dir (io/file (System/getProperty "user.home") ".vis" "python" "vis-guest")]
+           (.mkdirs dir)
+           (doseq [name ["vis_introspection.py" "vis_autoinstall.py"]]
+             (let [resource (or (io/resource (str "vis-guest/" name))
+                                (throw (ex-info (str "Missing Vis guest module " name)
+                                                {:module name})))
+                   target (io/file dir name)
+                   source (slurp resource)]
+
+               (when-not (and (.isFile target) (= source (slurp target))) (spit target source))))
+           (.getCanonicalPath dir))))
+
+(defn guest-source-dir
+  "Stage and answer the directory containing Vis-owned Python guest modules."
+  []
+  @guest-source-directory)
+
 ;; The peer — one live connection, used identically on both sides
 
 (defn- peer-over
@@ -265,7 +285,10 @@
     ;; This process resolves the interpreter for itself: it is a child JVM with
     ;; its own classpath and no inherited resolution.
     (python-runtime/ensure-library!)
-    (runtime/initialize! {})
+    (let [guest-dir (or (util/env-val guest-source-env)
+                        (throw (ex-info "The Python worker has no Vis guest source directory"
+                                        {:type :vis/python-worker-guest-source})))]
+      (runtime/initialize! {:source-paths [guest-dir]}))
     ;; The caller is the CHILD interpreter's answer, forwarded whole: the parent
     ;; authorizes against it, and a payload that names something else is the
     ;; guest's word, not the interpreter's.
@@ -361,11 +384,12 @@
       (process-jail/python-worker-policy policy run-directory control-socket boot-read-paths))))
 
 (defn- boot-read-paths
-  "Existing working directory, JVM classpath, Java home, package cache and runtime
-   tree needed before the child can connect. They are read-only, not session roots."
-  [library]
+  "Existing working directory, JVM classpath, Java home, package cache, runtime
+   tree and Vis guest modules needed before the child can connect. They are
+   read-only, not session roots."
+  [library guest-dir]
   (->> (concat [(System/getProperty "user.dir") (System/getProperty "java.home")
-                (Locations/packagesDir)]
+                (Locations/packagesDir) guest-dir]
                (str/split (System/getProperty "java.class.path" "")
                           (re-pattern (java.util.regex.Pattern/quote File/pathSeparator)))
                (when library
@@ -422,11 +446,12 @@
                                         :id ::no-library-to-hand-over
                                         :data {:error (ex-message t)}})
                              nil))
+              guest-dir (guest-source-dir)
               policy (launch-policy! k
                                      (.getAbsolutePath dir)
                                      (.getAbsolutePath socket)
-                                     (boot-read-paths library))
-              extra (cond-> {socket-env (.getAbsolutePath socket)}
+                                     (boot-read-paths library guest-dir))
+              extra (cond-> {socket-env (.getAbsolutePath socket) guest-source-env guest-dir}
                       library
                       (assoc runtime/native-path-env (str library)))]
 

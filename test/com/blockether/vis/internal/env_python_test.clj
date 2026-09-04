@@ -129,7 +129,16 @@
             (expect (= #{[{"query" "a.*b" "is_regex" true}] [{"query" "c.+d" "is_regex" true}]}
                        (set @seen))))))))
 
-
+(defdescribe
+  worker-doc-apropos-surface-test
+  (it "loads Vis-owned introspection modules in the session worker"
+      (tpc/with-own
+        [ctx {} (constantly [(System/getProperty "user.dir")]) {:worker? true :jail-enabled? true}]
+        (let [result (ep/run-python-block ctx
+                                          (str "print(doc('doc').splitlines()[0])\n"
+                                               "print([item.name for item in apropos(r'^doc$')])"))]
+          (expect (nil? (:error result)))
+          (expect (= "# doc  ·  callable\n['doc']\n" (:stdout result)))))))
 
 (defdescribe
   doc-apropos-surface-test

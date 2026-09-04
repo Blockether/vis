@@ -924,23 +924,6 @@
 ;; Sessions
 ;; =============================================================================
 
-(def ^:private guest-source-dir
-  "Where Vis stages its OWN guest Python for the interpreter to import.
-
-   The runtime imports what it ships from its own manifest; this is the twin for
-   the modules Vis owns (`resources/vis-guest/`). They are STAGED as files, not
-   exec'd as text, so a traceback inside one names a file and a line."
-  (delay (let [dir (io/file (System/getProperty "user.home") ".vis" "python" "vis-guest")]
-           (io/make-parents (io/file dir "keep"))
-           (.mkdirs dir)
-           (doseq [nm ["vis_introspection.py" "vis_autoinstall.py"]]
-             (when-let [res (io/resource (str "vis-guest/" nm))]
-               (let [target (io/file dir nm)
-                     source (slurp res)]
-
-                 (when-not (and (.isFile target) (= source (slurp target))) (spit target source)))))
-           (.getAbsolutePath dir))))
-
 (defonce ^:private interpreter-started (atom false))
 (defonce ^:private interpreter-lock (Object.))
 
@@ -967,7 +950,7 @@
     (locking interpreter-lock
       (when-not @interpreter-started
         (python-runtime/ensure-library!)
-        (runtime/initialize! {:source-paths [@guest-source-dir]})
+        (runtime/initialize! {:source-paths [(pyext/guest-source-dir)]})
         (runtime/logs! (fn [ndjson]
                          (doseq [line (str/split-lines (str ndjson))]
                            (when-not (str/blank? line)
