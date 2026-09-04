@@ -2009,16 +2009,14 @@ export function SessionsScreen({
        {/* Conversation fork choices, anchored under the row action that opened them. */}
       {forkFlow && (
         <Menu label="Fork this session" at={forkFlow.at} onDismiss={() => leaveFork(true)}>
-          <MenuHeading>
-            Fork · {forkFlow.session.title?.trim() || 'Untitled session'}
-          </MenuHeading>
+          <MenuHeading>Fork</MenuHeading>
           <MenuItem
-            title="The whole session"
-            hint="A new session carrying every turn of this one, continuing from the end. This session stays exactly as it is."
-            badge={forkBusy === WHOLE_SESSION_FORK ? 'Forking...' : 'Default'}
+            title="Whole session"
+            hint="Every turn, continued from the end."
+            badge={forkBusy === WHOLE_SESSION_FORK ? 'Forking...' : undefined}
             onSelect={() => void runFork()}
           />
-          <MenuHeading tone="quiet">Or fork at a turn</MenuHeading>
+          <MenuHeading tone="quiet">Up to a turn</MenuHeading>
           {forkPoints.rows === null ? (
             <MenuNote>
               <Spinner tone="accent" />
@@ -2033,7 +2031,6 @@ export function SessionsScreen({
                 <MenuItem
                   key={point.turn_id}
                   title={`Turn ${index + 1} · ${firstLine(point.request ?? '') || 'No words on this turn'}`}
-                  hint="The fork keeps this turn and everything before it, and nothing after."
                   badge={forkBusy === point.turn_id ? 'Forking...' : undefined}
                   onSelect={() => void runFork(point.turn_id)}
                 />

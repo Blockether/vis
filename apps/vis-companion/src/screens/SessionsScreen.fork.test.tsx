@@ -43,8 +43,8 @@ describe("forking a session from its slide", () => {
     expect(fork.className).not.toContain("bg-err");
     await userEvent.click(fork);
 
-    await screen.findByText("The whole session");
-    await userEvent.click(screen.getByText("The whole session"));
+    await screen.findByText("Whole session");
+    await userEvent.click(screen.getByText("Whole session"));
 
     await screen.findByText("A session", {}, { timeout: 2000 });
     const posted = view.requests.filter(
