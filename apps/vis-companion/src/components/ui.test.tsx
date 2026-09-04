@@ -2186,6 +2186,17 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(first(html())).not.toContain("border");
     });
 
+    // Regression, user report (the Diagnostics band was taller than the machine
+    // panel bands): `compact` changed only the pointer face, so touch kept the regular
+    // list row's paper. Compact the visible band too, then restore the platform-sized
+    // target as invisible slop; the row remains easy to press without looking oversized.
+    it("keeps compact paper and restores its touch reach outside it", () => {
+      const compact = first(html({ density: "compact" }));
+      expect(compact).toContain("after:absolute");
+      expect(compact.some((token) => token.startsWith("after:content-"))).toBe(true);
+      expect(compact).toContain("mouse:after:content-none");
+    });
+
     it("marks the selected one with the amber edge, framed or not", () => {
       expect(first(html({ isFramed: true, isSelected: true }))).toContain(
         "border-accent",

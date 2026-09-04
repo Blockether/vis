@@ -540,10 +540,11 @@ export function CopyChip({
  * and `min-h-11` there, `hover:bg-hover` with and without a focus paper, a frame
  * on some and none on others — so rows doing one job read as several.
  *
- * Framing and pointer density are the two real differences. A row standing on
- * the page needs no frame; a row inside a card needs one. `compact` spends less
- * height only when a mouse is present, so a touch row keeps its full target.
- * Selection stays the amber edge over raised paper in every form.
+ * Framing and density are the two real differences. A row standing on the page
+ * needs no frame; a row inside a card needs one. `compact` is a 36px band under
+ * touch and 32px under a pointer; invisible slop restores the touch target to 44px
+ * without making the paper taller. Selection stays the amber edge over raised paper
+ * in every form.
  */
 export const ListRow = forwardRef<
   HTMLButtonElement,
@@ -567,12 +568,15 @@ export const ListRow = forwardRef<
     : isSelected
       ? 'bg-panel-2'
       : '';
-  const spacing = density === 'compact' ? 'mouse:min-h-8 mouse:py-0' : '';
+  const spacing =
+    density === 'compact'
+      ? 'relative min-h-9 py-0.5 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[""] mouse:min-h-8 mouse:py-0 mouse:after:content-none'
+      : 'min-h-12 py-2';
   return (
     <button
       ref={ref}
       type="button"
-      className={`flex min-h-12 w-full min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent motion-reduce:transition-none ${paper} ${spacing} ${className}`}
+      className={`flex w-full min-w-0 items-center gap-2 px-3 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent motion-reduce:transition-none ${paper} ${spacing} ${className}`}
       {...props}
     />
   );

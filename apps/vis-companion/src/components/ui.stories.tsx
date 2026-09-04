@@ -250,7 +250,7 @@ export const Rows: Story = {
           Framed, inside a panel
         </ListRow>
         <ListRow className="w-full" density="compact">
-          Pointer-compact, touch-safe
+          Compact band, touch-safe
         </ListRow>
       </Group>
       <Group of="ChoiceCell, with the action that belongs to the row">

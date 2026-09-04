@@ -196,7 +196,7 @@ export function SettingsPanel({
     // The dialog is the only box; a group is separated from the next by the one
     // rule its container divides on, exactly as a project is separated from the
     // next in the sessions list.
-    <section className="min-w-0 overflow-hidden bg-panel transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+    <section className="min-w-0 bg-panel transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
       {/* A HEADER LINE IS NOT A COMPETITION FOR ONE ROW. The status used to be
           `shrink-0` beside the name, so it took its whole intrinsic width first
           and the name lived on what was left: measured on a 390px iPhone,
@@ -206,9 +206,11 @@ export function SettingsPanel({
           instead — the name is measured at its own width so a status that does
           not fit beside it drops to its own line. */}
       {/* A NESTED BAND IS NOT A COLUMN BAND. It keeps the smaller hint-colour title
-          but shares the column band's height and gutter. A disclosure IS the band,
-          so its whole named row responds instead of leaving inert copy beside a
-          tiny trailing target. An ordinary action still occupies only the edge. */}
+          but shares the column band's visible height and gutter. A disclosure IS the
+          band, so its whole named row responds instead of leaving inert copy beside a
+          tiny trailing target. Its invisible touch reach may cross the band's edge; the
+          body, not the section, owns overflow clipping so that reach remains real. An
+          ordinary action still occupies only the edge. */}
       {disclosure ? (
         <header className="border-b border-dialog-edge">
           <ListRow
@@ -234,10 +236,11 @@ export function SettingsPanel({
           )}
         </header>
       )}
-      {/* A PANEL BODY DIVIDES ITS OWN PARTS. `divide-y` draws only BETWEEN
-          siblings, so a panel holding one list is unchanged, and a panel whose
-          last child is a verb gets the hairline that verb needs to be a row. */}
-      <div className="divide-y divide-dialog-edge">{children}</div>
+      {/* A PANEL BODY DIVIDES AND CLIPS ITS OWN PARTS. `divide-y` draws only BETWEEN
+          siblings, so a panel holding one list is unchanged, and a panel whose last
+          child is a verb gets the hairline that verb needs to be a row. Clipping begins
+          here rather than on the section, where it would cut off the header's touch slop. */}
+      <div className="overflow-hidden divide-y divide-dialog-edge">{children}</div>
     </section>
   );
 }
