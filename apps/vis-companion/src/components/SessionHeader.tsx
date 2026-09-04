@@ -44,7 +44,10 @@ export function SessionHeader({
     <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] mouse:min-h-9 mouse:pt-0">
       <BackButton label="Back to sessions" onClick={commands.back} />
       <div className="min-w-0 flex-1 self-center px-3 py-1.5 mouse:py-1">
-        <h1 className="truncate font-mono text-subhead font-bold text-white mouse:text-title">
+        {/* The title is the sentence the screen is about, and a human's sentence is
+            PROSE: Inter, the transcript's own face, one step above its body — while the
+            connection line under it and the id chip beside it stay mono facts. */}
+        <h1 className="truncate text-subhead font-semibold text-white mouse:text-title">
           {model.title}
         </h1>
         <div className="flex min-w-0 items-center gap-1.5 font-mono text-meta text-dialog-hint">

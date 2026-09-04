@@ -2549,13 +2549,15 @@ describe("what leads a bar is sized to lead it", () => {
     expect(appSource).not.toContain("h-[18px]");
   });
 
-  it("gives the session's title a step over the prose it heads", () => {
+  it("gives the session's title a step over the prose it heads, in the prose's face", () => {
     expect(sessionHeaderSource).toContain(
-      'className="truncate font-mono text-subhead font-bold text-white mouse:text-title"',
+      'className="truncate text-subhead font-semibold text-white mouse:text-title"',
     );
     expect(sessionHeaderSource).not.toContain(
       'className="truncate font-mono text-body font-bold text-white"',
     );
+    // A human's sentence is not a machine fact: the id chip beside it is mono, the title is not.
+    expect(sessionHeaderSource).not.toMatch(/<h1 className="[^"]*font-mono/);
   });
 });
 describe("a setting is picked and switched by one control each", () => {
