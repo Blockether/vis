@@ -956,23 +956,86 @@
             (slurp "bin/vis-agent")
 
             fn-body
-            (re-find #"(?s)absolute_vis_classpath\(\) \{.*?\n\}\n" launcher)
+            (re-find #"(?s)absolute_project_classpath\(\) \{.*?\n\}\n" launcher)
 
             dir
             (.toFile (Files/createTempDirectory "vis-classpath" (make-array FileAttribute 0)))]
 
-        (expect (some? fn-body) "launcher defines absolute_vis_classpath")
+        (expect (some? fn-body) "launcher defines absolute_project_classpath")
         (try (write-executable!
                (io/file dir "clojure")
                "#!/usr/bin/env bash\nprintf '%s' 'src:resources:/opt/m2/lib.jar'\n")
              (let [{:keys [exit output]}
                    (run-bash ["bash" "-c"
-                              (str "source_root=/checkout\nvis_extension_sdeps=()\n"
-                                   fn-body
-                                   "absolute_vis_classpath")]
+                              (str fn-body "absolute_project_classpath /checkout -Spath -M:vis")]
                              {"PATH" (str (.getPath dir) ":" (System/getenv "PATH"))})]
                (expect (zero? exit) output)
                (expect (= "/checkout/src:/checkout/resources:/opt/m2/lib.jar" output) output))
              (expect (str/includes? launcher "-Scp \"$vis_classpath\" -M:vis")
                      "launch line hands -Scp over")
              (finally (delete-tree! dir))))))
+
+
+;; Regression: the public `vis-agent tui` command fell through to the one-shot
+;; prompt shortcut, so asking for the terminal client sent "tui" to a model.
+(defdescribe
+  tui-launcher-dispatch-test
+  (it "routes tui to the terminal app before the agent prompt dispatcher"
+      (let [root
+            (.toFile (Files/createTempDirectory "vis-tui-launcher-test-"
+                                                (make-array FileAttribute 0)))
+
+            home
+            (doto (io/file root "home") .mkdirs)
+
+            path-dir
+            (doto (io/file root "path") .mkdirs)
+
+            clojure
+            (io/file path-dir "clojure")]
+
+        (try (write-executable! clojure
+                                (str "#!/usr/bin/env bash\n" "for arg in \"$@\"; do\n"
+                                     "  if [[ \"$arg\" == -Spath ]]; then\n"
+                                     "    printf '%s' 'src:resources:/opt/lib.jar'\n"
+                                     "    exit 0\n" "  fi\n"
+                                     "done\n" "printf '<%s>' \"$@\"\n"))
+             (let [{:keys [exit output]}
+                   (run-bash ["bash" "bin/vis-agent" "tui" "--jvm" "--help"]
+                             {"HOME" (.getAbsolutePath home)
+                              "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
+                              "VIS_NO_AUTO_INSTALL" "1"
+                              "PATH" (str (.getAbsolutePath path-dir) ":" (System/getenv "PATH"))})]
+               (expect (zero? exit) output)
+               (expect (str/includes? output "<-M:run>") output)
+               (expect (not (str/includes? output "<-M:vis>")) output)
+               (expect (str/includes? output "<--help>") output))
+             (finally (delete-tree! root)))))
+  (it "prefers the co-located native terminal client without invoking the engine"
+      (let [root
+            (.toFile (Files/createTempDirectory "vis-native-tui-launcher-test-"
+                                                (make-array FileAttribute 0)))
+
+            bin
+            (doto (io/file root "bin") .mkdirs)
+
+            home
+            (doto (io/file root "home") .mkdirs)
+
+            launcher
+            (io/file bin "vis-agent")]
+
+        (try (io/copy (io/file "bin/vis-agent") launcher)
+             (.setExecutable ^java.io.File launcher true)
+             (write-executable! (io/file bin "vis-agent-native")
+                                "#!/usr/bin/env bash\nprintf 'engine'\n")
+             (write-executable! (io/file bin "vis-tui")
+                                "#!/usr/bin/env bash\nprintf '<%s>' \"$@\"\n")
+             (let [{:keys [exit output]} (run-bash
+                                           ["bash" (.getAbsolutePath launcher) "tui" "--continue"]
+                                           {"HOME" (.getAbsolutePath home)
+                                            "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))})]
+               (expect (zero? exit) output)
+               (expect (= "<--continue>" output) output)
+               (expect (not (str/includes? output "engine")) output))
+             (finally (delete-tree! root))))))

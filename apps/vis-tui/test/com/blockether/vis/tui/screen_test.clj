@@ -1642,7 +1642,8 @@ therapy line 2"
                        (print-session-id-on-exit!)
                        (.flush ps)
                        (let [out (.toString bytes "UTF-8")]
-                         (expect (= "\rResume with:\nvis-tui --session-id abc123\n" out))))))))
+                         (expect (= "\rResume with:\nvis-agent tui --session-id abc123\n"
+                                    out))))))))
 
 (defdescribe parse-args-test
              (it "no args -> empty opts map" (expect (= {} (parse-args []))))
@@ -1653,7 +1654,7 @@ therapy line 2"
                  (expect (= {:session-id "abc123" :resume true}
                             (parse-args ["--session-id" "abc123" "--resume"]))))
              (it "unknown flag throws :vis/user-error (regression: typo silently swallowed)"
-                 ;; `vis-tui --sessions-id <uuid>` used to succeed
+                 ;; `vis-agent tui --sessions-id <uuid>` used to succeed
                  ;; silently and start a fresh session. The user reported it
                  ;; explicitly: the flag with a stray "s" must blow up.
                  (expect (user-error? #(parse-args ["--sessions-id"

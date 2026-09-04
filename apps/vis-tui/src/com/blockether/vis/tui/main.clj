@@ -1,5 +1,5 @@
 (ns com.blockether.vis.tui.main
-  "The `vis-tui` process entry point.
+  "The terminal client process entry point.
 
    The terminal application is a gateway CONSUMER, exactly like the companion
    app: it owns no engine, no database, no provider credential and no session
@@ -18,11 +18,11 @@
   (:gen-class))
 
 (def usage
-  "vis-tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue]")
+  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue]")
 
 (def ^:private help-text
   [usage "" "The Vis terminal application. It talks to a Vis gateway over HTTP and SSE;"
-   "start one with `vis-agent gateway` if none is running." ""
+   "start one with `vis-agent gateway start` if none is running." ""
    "  --gateway HOST[:PORT]  gateway address (env VIS_GATEWAY_URL)"
    "  --gateway-token TOKEN  gateway token (env VIS_GATEWAY_TOKEN)"
    "  --session-id ID        open one existing session"
@@ -93,7 +93,7 @@
   (let [{:keys [gateway gateway-token help screen-args] :as opts}
         (try (parse-args args)
              (catch clojure.lang.ExceptionInfo e
-               (print-line! (str "vis-tui: " (.getMessage e)))
+               (print-line! (str "vis-agent tui: " (.getMessage e)))
                (System/exit 2)))]
     (cond help (doseq [line help-text]
                  (print-line! line))

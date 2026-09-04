@@ -4257,7 +4257,7 @@
            (str "\n\nAvailable sessions (most recent first):\n"
                 (str/join "\n" (map line available))
                 "\n\nUse the 8-char prefix or full UUID with --session-id.")
-           "\n\nNo sessions exist yet - run `vis-tui` without --session-id first."))))
+           "\n\nNo sessions exist yet - run `vis-agent tui` without --session-id first."))))
 
 (defn- current-session-id
   []
@@ -7286,7 +7286,7 @@
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 (def ^:private tui-usage
-  "vis-tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue]")
+  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue]")
 
 
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
@@ -7357,7 +7357,7 @@
   (when-let [id (current-session-id)]
     (let [^java.io.PrintStream out vis/original-stdout]
       (.print out "\rResume with:\n")
-      (.print out (str "vis-tui --session-id " id "\n"))
+      (.print out (str "vis-agent tui --session-id " id "\n"))
       (.flush out))))
 
 (defn- run-channel-main!

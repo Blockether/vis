@@ -147,6 +147,15 @@ for arg in "$@"; do
 done
 if (( ${#args[@]} > 0 )); then set -- "${args[@]}"; else set --; fi
 
+# `tui` is a launcher-owned surface: the terminal client is a separate process,
+# never prompt text for the one-shot agent. Keep its arguments verbatim after
+# swallowing the command word (the wrapper already removed its own `--jvm`).
+tui_requested=0
+if [[ "${1:-}" == tui ]]; then
+  tui_requested=1
+  shift
+fi
+
 # ── --jfr: Java Flight Recorder profiling ────────────────────────────────────
 # Export VIS_JFR=1 so the client and detached gateway daemon each create their
 # own role-tagged recording. This works for both JVM source and native-image.
@@ -1110,6 +1119,30 @@ esac
 
 # ── Launch ───────────────────────────────────────────────────────────────────
 runtime="$(runtime_effective)"
+
+# A native terminal client is deliberately a sibling process, not code linked
+# into the engine image. Prefer it when present. Source installs (and developer
+# `--jvm` runs) launch the app from the same pinned checkout instead. Most
+# importantly, absence of the client can never send the word `tui` to a model.
+if (( tui_requested )) && [[ "$runtime" == native ]]; then
+  native_runtime="$(find_native 2>/dev/null || true)"
+  native_home="${native_runtime:+$(cd -P "$(dirname "$native_runtime")" && pwd)}"
+  tui_runtime=""
+  for candidate in "${native_home:+$native_home/vis-tui}" "$vis_install_dir/vis-tui"; do
+    if [[ -x "$candidate" ]]; then tui_runtime="$candidate"; break; fi
+  done
+  if [[ -z "$tui_runtime" ]] && command -v vis-tui >/dev/null 2>&1; then
+    tui_runtime="$(command -v vis-tui)"
+  fi
+  if [[ -n "$tui_runtime" ]]; then
+    configure_system_trust native
+    measure_log "native TUI → $tui_runtime"
+    cd "$invocation_cwd"
+    run_measured_or_exec "process native TUI" "$tui_runtime" "$@"
+  fi
+  runtime=jvm
+fi
+
 configure_system_trust "$runtime"
 case "$runtime" in
   native)
@@ -1203,6 +1236,30 @@ ensure_compatible_jvm_runtime() {
   return 1
 }
 
+absolute_project_classpath() {
+  local project_root="$1" raw entry out=""
+  shift
+  raw="$(clojure "$@")" || return 1
+  local IFS=':'
+  for entry in $raw; do
+    [[ -z "$entry" ]] && continue
+    [[ "$entry" != /* ]] && entry="$project_root/$entry"
+    out="${out:+$out:}$entry"
+  done
+  printf '%s' "$out"
+}
+
+if (( tui_requested )); then
+  tui_root="$source_root/apps/vis-tui"
+  [[ -f "$tui_root/deps.edn" ]] || die "the terminal UI is not installed" \
+    "Run:  vis-agent update"
+  measure_log "JVM TUI → $tui_root"
+  ensure_compatible_jvm_runtime || exit 1
+  cd "$tui_root"
+  tui_classpath="$(absolute_project_classpath "$tui_root" -Spath -M:run)" || exit 1
+  run_measured_or_exec "process JVM TUI" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} -Scp "$tui_classpath" -M:run "$@"
+fi
+
 user_extension_sdeps="$(collect_user_extension_sdeps)"
 vis_extension_sdeps=()
 if [[ -n "$user_extension_sdeps" ]]; then
@@ -1248,16 +1305,5 @@ fi
 # cached classpath is read back (`-Spath` costs no JVM once the cache is fresh),
 # every relative entry is anchored to the source root, and `-Scp` hands the
 # absolute one over; the alias' :jvm-opts/:main-opts still come from the cache.
-absolute_vis_classpath() {
-  local raw entry out=""
-  raw="$(clojure ${vis_extension_sdeps[@]+"${vis_extension_sdeps[@]}"} -Spath -M:vis)" || return 1
-  local IFS=':'
-  for entry in $raw; do
-    [[ -z "$entry" ]] && continue
-    [[ "$entry" != /* ]] && entry="$source_root/$entry"
-    out="${out:+$out:}$entry"
-  done
-  printf '%s' "$out"
-}
-vis_classpath="$(absolute_vis_classpath)" || exit 1
+vis_classpath="$(absolute_project_classpath "$source_root" ${vis_extension_sdeps[@]+"${vis_extension_sdeps[@]}"} -Spath -M:vis)" || exit 1
 run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} ${vis_extension_sdeps[@]+"${vis_extension_sdeps[@]}"} -Scp "$vis_classpath" -M:vis "$@"

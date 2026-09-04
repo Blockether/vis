@@ -1706,7 +1706,7 @@
   "Fork a session by id. Creates a new `session_state` row
    that points at the latest state as its parent, optionally with a
    user-supplied title. Prints the new state UUID; the session
-   id (soul-id) stays the same so `vis-tui --session-id <ID>` keeps
+   id (soul-id) stays the same so `vis-agent tui --session-id <ID>` keeps
    working and now resumes from the fork."
   [cid-input title]
   (let [d
@@ -1740,7 +1740,7 @@
                         (when title (stdout! (str "  Title:        " title)))
                         (stdout! (str "  New state-id: " new-state))
                         (stdout! "")
-                        (stdout! (str "  Resume with: vis-tui --session-id " resolved))
+                        (stdout! (str "  Resume with: vis-agent tui --session-id " resolved))
                         (stdout! ""))
                     (do (stdout! (str "Failed to fork session "
                                       resolved
@@ -1820,9 +1820,9 @@
                        {:key :created :label "Created" :width 16 :align :left}]
                       rows)
         (stdout! (str "\n  " (count rows) " session(s)\n"))
-        (stdout! "  Resume with: vis-tui --session-id <ID>  (full or short)")
-        (stdout! "  Pick latest: vis-tui --continue")
-        (stdout! "  Browse:      vis-tui --resume")
+        (stdout! "  Resume with: vis-agent tui --session-id <ID>  (full or short)")
+        (stdout! "  Pick latest: vis-agent tui --continue")
+        (stdout! "  Browse:      vis-agent tui --resume")
         (stdout! "  Show:        vis-agent sessions show <ID>")
         (stdout! "  Fork:        vis-agent sessions fork <ID> [--title TITLE]")
         (stdout! "  Export:      vis-agent sessions export <ID> --md"))))
@@ -1910,7 +1910,7 @@
                              :created (or (fmt/format-date (:created-at state)) "-")})
                           states)))
     (stdout! "")
-    (stdout! (str "  Resume:  vis-tui --session-id " (:id session)))
+    (stdout! (str "  Resume:  vis-agent tui --session-id " (:id session)))
     (stdout! (str "  Export:  vis-agent sessions export " (subs (str (:id session)) 0 8) " --md"))
     (stdout! "")
     (shutdown-agents)))
