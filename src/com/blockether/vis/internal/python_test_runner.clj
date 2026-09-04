@@ -195,6 +195,15 @@
 
 (defn- failing? [tests] (boolean (some (comp #{:failed :errored} :outcome) tests)))
 
+(defonce
+  ^:private
+  ^{:doc
+    "The one gate over pytest's process-wide sys.path, sys.modules and stdio.
+     The shared worker accepts concurrent contexts, but concurrent pytest mains
+     corrupt each other's snapshots and can terminate that interpreter."}
+  pytest-process-lock
+  (Object.))
+
 (defn- run-test-file!
   "Run ONE test file in a fresh trusted session: bootstrap the `vis` module, make
    sure `pytest` is there, then drive `run-test-src`. `sys-path` is the extra
@@ -203,56 +212,57 @@
    per-test record list. Never throws — a broken test file is one `:errored`
    result, never a host crash."
   [sys-path ^File scan-dir ^File test-file]
-  (let [path
-        (.getCanonicalPath test-file)
+  (locking pytest-process-lock
+    (let [path
+          (.getCanonicalPath test-file)
 
-        paths
-        (test-sys-path scan-dir test-file sys-path)
+          paths
+          (test-sys-path scan-dir test-file sys-path)
 
-        session
-        (pyx/build-context (.getName test-file))]
+          session
+          (pyx/build-context (.getName test-file))]
 
-    (try (pyx/bind-test-host! session (.getName test-file))
-         (pyext/exec! pyext/shared-key session pyx/bootstrap-python)
-         (when-let [missing (ensure-pytest! session)]
-           (throw (ex-info missing {:file path})))
-         ;; The two inputs cross as JSON the guest PARSES: pasting JSON straight
-         ;; into Python source would keep its `\\/` escapes verbatim and break
-         ;; every path in it.
-         (pyext/exec! pyext/shared-key
-                      session
-                      (str "__vis_test_paths__ = "
-                           (env/py-json-literal (vec paths))
-                           "\n"
-                           "__vis_test_file__ = "
-                           (env/py-json-literal path)
-                           "\n"))
-         (pyext/exec! pyext/shared-key session run-test-src)
-         (let [outcome
-               (json/read-json (pyext/run pyext/shared-key
-                                          session
-                                          (str "{'report': __vis_test_report__,"
-                                               " 'rc': __vis_test_rc__,"
-                                               " 'output': __vis_test_output__}"))
-                               :key-fn
-                               identity)
+      (try (pyx/bind-test-host! session (.getName test-file))
+           (pyext/exec! pyext/shared-key session pyx/bootstrap-python)
+           (when-let [missing (ensure-pytest! session)]
+             (throw (ex-info missing {:file path})))
+           ;; The two inputs cross as JSON the guest PARSES: pasting JSON straight
+           ;; into Python source would keep its `\\/` escapes verbatim and break
+           ;; every path in it.
+           (pyext/exec! pyext/shared-key
+                        session
+                        (str "__vis_test_paths__ = "
+                             (env/py-json-literal (vec paths))
+                             "\n"
+                             "__vis_test_file__ = "
+                             (env/py-json-literal path)
+                             "\n"))
+           (pyext/exec! pyext/shared-key session run-test-src)
+           (let [outcome
+                 (json/read-json (pyext/run pyext/shared-key
+                                            session
+                                            (str "{'report': __vis_test_report__,"
+                                                 " 'rc': __vis_test_rc__,"
+                                                 " 'output': __vis_test_output__}"))
+                                 :key-fn
+                                 identity)
 
-               tests
-               (parse-report (str (get outcome "report")))]
+                 tests
+                 (parse-report (str (get outcome "report")))]
 
-           {:file path
-            :rc (int (get outcome "rc" -1))
-            :ok? (not (failing? tests))
-            :output (str (get outcome "output"))
-            :tests tests})
-         (catch Throwable t
-           {:file path
-            :rc -1
-            :ok? false
-            :output ""
-            :tests [{:nodeid (.getName test-file) :outcome :errored :message (ex-message t)}]
-            :error (ex-message t)})
-         (finally (pyx/close-context! session)))))
+             {:file path
+              :rc (int (get outcome "rc" -1))
+              :ok? (not (failing? tests))
+              :output (str (get outcome "output"))
+              :tests tests})
+           (catch Throwable t
+             {:file path
+              :rc -1
+              :ok? false
+              :output ""
+              :tests [{:nodeid (.getName test-file) :outcome :errored :message (ex-message t)}]
+              :error (ex-message t)})
+           (finally (pyx/close-context! session))))))
 
 (defn test-python-extensions!
   "Discover and run every Python test (`test_*.py` / `*_test.py`) across the

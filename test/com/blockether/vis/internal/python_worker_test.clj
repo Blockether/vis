@@ -130,7 +130,7 @@ time.sleep(30)")
                             session
                             execution
                             {:python-context-retired-atom retired})))
-           (Thread/sleep 2500)
+           (expect (true? (.waitFor process 10 java.util.concurrent.TimeUnit/SECONDS)))
            (expect (true? @retired))
            (expect (false? (worker/worker-live? session)))
            (expect (false? (.isAlive process)))

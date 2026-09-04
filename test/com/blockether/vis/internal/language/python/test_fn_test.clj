@@ -142,6 +142,35 @@
                (expect (= 0 (get res "files")))
                (expect (= 0 (get res "pass"))))
              (finally (cleanup root)))))
+  ;; Regression, CI run 33853319237: concurrent hermetic runs raced pytest's
+  ;; process-wide state and sometimes terminated the shared worker.
+  (it "isolates concurrent hermetic test runs in the shared worker"
+      (let [roots
+            (mapv (fn [_]
+                    (tmp-dir))
+                  (range 8))
+
+            gate
+            (promise)]
+
+        (try (doseq [root roots]
+               (.mkdirs (io/file root "tests"))
+               (spit (io/file root "tests" "test_ok.py")
+                     (str "import time\n\n" "def test_ok():\n"
+                          "    time.sleep(0.1)\n" "    assert True\n")))
+             (let [runs (mapv (fn [root]
+                                (future @gate
+                                        (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                                                  {}))))
+                              roots)]
+               (deliver gate true)
+               (expect (= (vec (repeat 8 [1 0]))
+                          (mapv (fn [run]
+                                  (let [result (deref run 60000 nil)]
+                                    [(get result "pass") (get result "fail")]))
+                                runs))))
+             (finally (doseq [root roots]
+                        (cleanup root))))))
   ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: an extension test
   ;; reached the active session host and filed its live view as user work.
   (it "refuses a live session view from code running under run_tests"
