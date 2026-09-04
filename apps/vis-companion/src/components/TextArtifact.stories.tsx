@@ -5,9 +5,9 @@ import { TextBody } from './TextArtifact';
 /**
  * A DOCUMENT THE MODEL WROTE, READ IN THE TRANSCRIPT.
  *
- * The same component answers two questions, and the answer is the FACE: a note is
- * prose, so it renders as a document in the sans face; a log is machine output, so
- * it stays monospace, pre-wrapped, and keeps its own line breaks.
+ * The same component answers two questions through layout: a note renders as a
+ * document, while a log stays pre-wrapped and keeps its authored line breaks. Both
+ * use the app's one JetBrains Mono face.
  *
  * `raw` is the third state and the one worth looking at: a note still being
  * written is shown as its SOURCE inline, because rendering a half-finished plan in

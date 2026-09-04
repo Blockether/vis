@@ -32,9 +32,9 @@ controls or flow. A functional change is a separate decision.
 
 ### Type
 
-The app ships Inter for human prose and JetBrains Mono for machine facts, paths, ids, counts,
-durations, models, code and control labels. The TUI uses the terminal face. Never add a third family
-or rely on a system fallback.
+The app ships JetBrains Mono for every word and fact: prose, controls, paths, ids, counts, durations,
+models and code. The TUI uses the terminal face. Never add a second family or rely on a system
+fallback.
 
 | step | px/line | role |
 |---|---:|---|

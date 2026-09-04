@@ -946,9 +946,8 @@ describe("HeaderTitle rename", () => {
     />,
   );
 
-  // Inter, not the mono face: the name heads rows whose titles are Inter and stands
-  // under a session header set in Inter — mono is for the address and the count
-  // UNDER it, which are facts, not the name of the thing.
+  // The name and the facts under it share the app's one JetBrains Mono face; size,
+  // weight and ink carry their hierarchy instead of a second font family.
   it("is INK, not a second control: the name keeps its own face", () => {
     const face = "font-semibold text-white";
     expect(resting).toContain(face);
@@ -2597,7 +2596,7 @@ describe("what leads a bar is sized to lead it", () => {
     expect(appSource).not.toContain("h-[18px]");
   });
 
-  it("gives the session's title a step over the prose it heads, in the prose's face", () => {
+  it("gives the session's title a step over the prose it heads", () => {
     expect(sessionHeaderSource).toContain(
       'className="truncate text-subhead font-semibold text-white mouse:text-title"',
     );

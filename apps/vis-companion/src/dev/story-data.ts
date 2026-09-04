@@ -540,7 +540,7 @@ export const LOG_TEXT = [
   '12:04:13.004 error    EADDRINUSE 127.0.0.1:6006 — storybook is already up',
 ].join('\n');
 
-/** A note the model wrote: headings, a list and code, so the prose face is drawn. */
+/** A note the model wrote: headings, a list and code, so the prose layout is drawn. */
 export const NOTE_MARKDOWN = [
   '# Composer, one row',
   '',

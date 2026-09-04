@@ -63,9 +63,9 @@ export function SessionHeader({
       <div
         className={`min-w-0 flex-1 self-center py-1.5 mouse:py-1 ${isDesk && !sidebar ? "pl-4 pr-3" : "px-3"}`}
       >
-        {/* The title is the sentence the screen is about, and a human's sentence is
-            PROSE: Inter, the transcript's own face, one step above its body — while the
-            connection line under it and the id chip beside it stay mono facts. */}
+        {/* The title is the sentence the screen is about. It stays one step above
+            its body by size and weight, while the connection line and id chip
+            step down to the facts scale — all in the app's one mono face. */}
         <h1 className="truncate text-subhead font-semibold text-white mouse:text-title">
           {model.title}
         </h1>

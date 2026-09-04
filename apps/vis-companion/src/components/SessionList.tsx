@@ -314,12 +314,10 @@ export const SessionRow = memo(function SessionRow({
               title, the further right its `NEW` — and a long title pushed them off
               the line entirely. They have their own column now. */}
                 <span className="col-start-1 row-start-1 flex min-w-0 items-center gap-1.5 @3xl:col-start-auto @3xl:row-start-auto">
-                  {/* THE LEAF, and the one line a human wrote: it is PROSE, so it wears
-                Inter while every fact beside it stays mono — the family is the
-                hierarchy, the same split the transcript makes between an answer and
-                its tool calls. Machine 15 -> project 13 mono -> session 13 Inter: the
-                leaf keeps the ladder's last step by face and weight, not by shrinking
-                to a 10px id-sized line that read as one more column of metadata. */}
+                  {/* THE LEAF is the one line a human wrote. It keeps the same
+                JetBrains Mono face as the whole app. Its 13px medium type completes
+                the hierarchy below the larger machine and project names, while every
+                fact beside it steps down to the metadata scale. */}
                   {renameDraft !== null ? (
                     <EditableNameField
                       ref={renameInputRef}
