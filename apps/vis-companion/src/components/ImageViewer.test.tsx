@@ -186,7 +186,7 @@ describe("ImageViewer", () => {
   it("holds Trim while the pen is out", () => {
     act(() => control("Draw on image").click());
     expect(control("Trim to view").disabled).toBe(true);
-    act(() => control("Draw on image").click());
+    act(() => control("Finish drawing").click());
     expect(control("Trim to view").disabled).toBe(false);
   });
 
@@ -197,7 +197,8 @@ describe("ImageViewer", () => {
     expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
 
     act(() => control("Draw on image").click());
-    expect(control("Draw on image").getAttribute("aria-pressed")).toBe("true");
+    expect(control("Finish drawing").getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
     expect(
       document.querySelector("canvas")?.getAttribute("data-annotation"),
     ).toBe("active");
@@ -209,19 +210,19 @@ describe("ImageViewer", () => {
       tools?.parentElement,
     );
 
-    act(() => control("Draw on image").click());
+    act(() => control("Finish drawing").click());
     expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
   });
 
-  // The promise printed under the buttons has to match the button that is
-  // actually there: without `onApply` the picture can only leave by copy/share.
-  it("says what drawing is FOR, and only offers Apply when there is somewhere to apply it", () => {
+  // The promise under the buttons follows the control that is actually there:
+  // without `onApply`, the check only puts the pen down before copy or share.
+  it("says what the drawing check does, and only offers Apply when there is somewhere to apply it", () => {
     expect(
       document.querySelector('[aria-live="polite"]')?.textContent,
     ).toContain("to zoom");
     act(() => control("Draw on image").click());
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe(
-      "Draw on the image, then copy or share it.",
+      "Draw on the image, then use the check to copy or share it.",
     );
 
     act(() =>
@@ -239,37 +240,36 @@ describe("ImageViewer", () => {
   });
 });
 
-// Regression, user report: drawing on an artifact put TWO finish buttons on the same
-// strip — "Done" beside "Use edit" — and neither was named Save nor stood where a
-// screen is left from. The verb that keeps the ink is the band's cell now, one
-// hairline from the ✕, and the pen's toggle stays a toggle.
-it("keeps the ink through one Save in the band, one cell from the way out", () => {
-  const applied = vi.fn();
+// Regression, user report: the check that confirms a drawing sat in the title band,
+// detached from the pencil that entered drawing mode. It now replaces that pencil in
+// the same footer slot, so the tool changes state without adding a second control.
+it("replaces the pencil with the drawing check in the same footer slot", () => {
   act(() =>
     root.render(
       <ImageViewer
         src="blob:picture"
         name="chart.png"
         onClose={() => undefined}
-        onApply={applied}
+        onApply={() => undefined}
       />,
     ),
   );
 
   const header = document.querySelector('[role="dialog"] header');
-  const save = named("Save changes");
-  expect(header?.contains(save)).toBe(true);
-  expect(save.textContent).toBe("");
-  expect(save.nextElementSibling).toBe(control("Close chart.png"));
+  const pencil = control("Draw on image");
+  const slot = pencil.parentElement;
+  expect(header?.querySelector('[aria-label="Save changes"]')).toBeNull();
 
-  // The strip never grows a second way to finish: pressed IS drawing.
-  act(() => control("Draw on image").click());
-  expect(control("Draw on image").getAttribute("aria-pressed")).toBe("true");
-  expect([...document.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Done");
+  act(() => pencil.click());
 
-  // And Save puts the pen down: it is the end of drawing, not a step beside it.
-  act(() => save.click());
-  expect(control("Draw on image").getAttribute("aria-pressed")).toBe("false");
+  const finish = control("Save changes");
+  expect(finish.parentElement).toBe(slot);
+  expect(finish.querySelector("svg")).not.toBeNull();
+  expect(document.querySelector('[aria-label="Draw on image"]')).toBeNull();
+
+  act(() => finish.click());
+  expect(control("Draw on image").parentElement).toBe(slot);
+  expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
 });
 
 // Regression, user report: pressing Save on an untouched shared picture started a
@@ -289,7 +289,8 @@ it("closes an untouched pending image without preparing a replacement", async ()
     ),
   );
 
-  await act(async () => named("Save changes").click());
+  act(() => control("Draw on image").click());
+  await act(async () => control("Save changes").click());
 
   expect(applied).not.toHaveBeenCalled();
   expect(closed).toHaveBeenCalledOnce();

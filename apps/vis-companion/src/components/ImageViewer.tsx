@@ -38,7 +38,7 @@ import {
   type AnnotationSurface,
 } from "./AnnotationLayer";
 import { CheckIcon, CopyIcon, DownloadIcon, DrawIcon, ShareIcon, TrimIcon } from "./icons";
-import { BandButton, Button, DialogHeader, IconButton, Spinner } from "./ui";
+import { Button, DialogHeader, IconButton, Spinner } from "./ui";
 import { useGalleryStep, type GalleryPicture } from "../lib/gallery";
 import { useStickyOverlay } from "../lib/sticky-overlay";
 
@@ -622,13 +622,11 @@ export function ImageViewer({
   }
 
   /**
-   * Hand the drawn-on picture back to whoever opened the viewer, and leave. The
+   * Hand the edited picture back to whoever opened the viewer, and leave. The
    * caller owns the slot it came from, so an annotated attachment REPLACES itself
    * instead of arriving as a second copy, and the original bytes are never mutated
-   * here.
-   *
-   * The pen is put down first, because saving IS the end of drawing — which is why
-   * the toggle below offers no second way to finish.
+   * here. The footer check calls this from the pencil's own slot: accepting a drawing
+   * changes the tool in place instead of adding a detached verb to the title band.
    */
   async function applyEdit() {
     if (!onApply) return;
@@ -654,46 +652,16 @@ export function ImageViewer({
       aria-modal="true"
       aria-label={`${shown.name} image viewer`}
     >
-      {/* The picture's own title bar is the app's one dialog band — it only has to
-          float over the image and clear the notch.
-
-          SAVING IS A CELL OF THAT BAND, ONE HAIRLINE FROM THE ✕. It is the verb that
-          ENDS this screen, the way a note's Save does, so it stands where leaving
-          stands — not down in the strip of drawing tools, where it read as a SECOND
-          finish button beside the pen's own toggle and neither of the two said which
-          one kept the ink. */}
+      {/* The picture's own title bar is the app's one dialog band. It floats over
+          the image, clears the notch, and carries only the title and the way out.
+          Drawing is accepted where it started: the pencil's footer slot changes to
+          a check while the pen is active. */}
       <DialogHeader
         title={shown.name}
         closeLabel={`Close ${shown.name}`}
         onClose={onClose}
         isUnderNotch
         className="absolute inset-x-0 top-0 z-20"
-        actions={
-          onApply ? (
-            <BandButton
-              label={
-                applyLabel === "Save"
-                  ? busy === "apply"
-                    ? "Saving changes"
-                    : "Save changes"
-                  : undefined
-              }
-              onClick={() => void applyEdit()}
-              disabled={busy !== null}
-              // Ink on the layer, or a trim taken: the cell wears the accent only
-              // when the picture on screen is no longer the picture on the gateway.
-              isPrimary={hasEdits}
-            >
-              {applyLabel === "Save" ? (
-                busy === "apply" ? <Spinner /> : <CheckIcon />
-              ) : busy === "apply" ? (
-                "Saving…"
-              ) : (
-                applyLabel
-              )}
-            </BandButton>
-          ) : null
-        }
       />
 
       {drawing && (
@@ -794,19 +762,46 @@ export function ImageViewer({
           </div>
 
           <IconButton
-            variant={drawing ? "primary" : "secondary"}
-            label="Draw on image"
-            title="Draw on image"
+            variant={onApply && hasEdits ? "primary" : "secondary"}
+            label={
+              onApply && (drawing || hasEdits)
+                ? applyLabel === "Save"
+                  ? busy === "apply"
+                    ? "Saving changes"
+                    : "Save changes"
+                  : applyLabel
+                : drawing
+                  ? "Finish drawing"
+                  : "Draw on image"
+            }
+            title={
+              onApply && (drawing || hasEdits)
+                ? applyLabel === "Save"
+                  ? "Save changes"
+                  : applyLabel
+                : drawing
+                  ? "Finish drawing"
+                  : "Draw on image"
+            }
             onClick={() => {
+              if (onApply && (drawing || hasEdits)) {
+                void applyEdit();
+                return;
+              }
               resetTransform();
               setDrawing((current) => !current);
               setStatus("");
             }}
             aria-pressed={drawing}
+            disabled={busy !== null}
           >
-            {/* One toggle, one state: pressed IS drawing, so it never renames itself
-                into a finish verb that competes with the band's Save. */}
-            <DrawIcon />
+            {busy === "apply" ? (
+              <Spinner />
+            ) : drawing || (onApply && hasEdits) ? (
+              <CheckIcon />
+            ) : (
+              <DrawIcon />
+            )}
           </IconButton>
 
           <IconButton
@@ -849,11 +844,10 @@ export function ImageViewer({
             >
               <CopyIcon />
             </IconButton>
-            {/* The strip's one primary is share. The picture's way BACK is the band's
-                own cell up top, which wears the band's ink instead of claiming a rank
-                down here, so exactly one primary button stands on the screen. */}
+            {/* The check becomes the primary only after there is an edit to keep;
+                until then Share remains the strip's one filled verb. */}
             <IconButton
-              variant="primary"
+              variant={onApply && hasEdits ? "secondary" : "primary"}
               label={`${shareAction} image`}
               title={`${shareAction} image`}
               onClick={() =>
@@ -876,8 +870,10 @@ export function ImageViewer({
           {status ||
             (drawing
               ? onApply
-                ? `Draw on the image, then ${applyLabel} at the top.`
-                : "Draw on the image, then copy or share it."
+                ? applyLabel === "Save"
+                  ? "Draw on the image, then use the check."
+                  : `Draw on the image, then ${applyLabel}.`
+                : "Draw on the image, then use the check to copy or share it."
               : gallery
                 ? `${step + 1} of ${gallery.length} · swipe for the next image, or press ← and →.`
                 : "Pinch, scroll, or double-click to zoom, then Trim to keep just that.")}

@@ -600,23 +600,14 @@ describe("BandButton", () => {
     expect(html()).not.toContain("bg-accent");
   });
 
-  // Regression, user report ("why isn't the global save next to that whole close on the
-  // header bar"): an opened note kept its own docked footer — a bordered `Button` under
-  // the comments, at the far end of the column from the ✕ — after every other dialog verb
-  // in the app had become a cell of the band that names what it acts on. The annotator
-  // hands ONE cell up, and both surfaces that open a document give it to their band.
-  it("is where an opened document's own verb stands, on both surfaces", () => {
+  // An opened note keeps its global Save beside the close in the title band. Image
+  // drawing is different: its check replaces the pencil that entered the local tool.
+  it("keeps a document verb in its band and a tool verb in its tool slot", () => {
     expect(markdownArtifactSource).toContain("<BandButton");
     expect(markdownArtifactSource.match(/onClick={save}/g)).toHaveLength(1);
-    // Nothing is docked under the note any more, and the band reports the version.
     expect(markdownArtifactSource).not.toContain("border-t border-dialog-edge px-3 py-3 pb-[max(");
-    // And on both, that cell is the PRIMARY one: the band paints what is owed.
     expect(markdownArtifactSource).toContain("isPrimary");
-    expect(imageViewerSource).toContain("isPrimary");
-    // The sheet hands that one cell straight to its band. The transcript's own
-    // overlay stands its version cell in the SAME run — `v2 of 2` beside Save,
-    // one hairline from the ✕ — so the annotator's cell is still the band's and
-    // never a footer of its own.
+    expect(imageViewerSource).not.toContain("<BandButton");
     expect(artifactsSheetSource).toContain("actions={actions}");
     expect(docSource).toMatch(/actions=\{\s*<>\s*\{versionCell\}\s*\{actions\}/);
   });
@@ -3784,7 +3775,6 @@ describe("every control is drawn in the gallery", () => {
     AnnotationLayer: "./MarkdownArtifact.stories.tsx",
     ChatContent: "./LiveView.stories.tsx",
     HumanInputPrompt: "../dev/humanInput.stories.tsx",
-    ImageViewer: "./ArtifactsSheet.stories.tsx",
     LiveArtifact: "./ArtifactsSheet.stories.tsx",
     PdfArtifact: "./DocArtifact.stories.tsx",
     SessionNavigator: "./ui.stories.tsx",
