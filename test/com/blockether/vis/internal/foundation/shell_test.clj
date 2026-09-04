@@ -519,6 +519,24 @@
         (let [r (shell-run* env "pwd" {"cwd" home})]
           (expect (= home (str/trim (get r "out"))))
           (expect (= home (:dir (meta r))))))))
+  ;; Regression, issue #unjail-shell-cwd: an unjailed process still rejected a cwd
+  ;; outside the workspace roots because the redundant model-tool allowlist stayed active.
+  (it "lets an explicitly unjailed shell use any host cwd"
+      (let [home
+            (.getCanonicalPath (io/file (System/getProperty "user.home")))
+
+            env
+            {:jail-policy-fn (constantly {:disabled? true})}]
+
+        (binding [workspace/*workspace-root*
+                  (workspace/trunk-root)
+
+                  workspace/*filesystem-roots*
+                  nil]
+
+          (let [r (shell-run* env "pwd" {"cwd" home})]
+            (expect (= home (str/trim (get r "out"))))
+            (expect (= home (:dir (meta r))))))))
   (it "accepts the HOME-relative paths advertised in session access"
       (let [home
             (.getCanonicalPath (io/file (System/getProperty "user.home")))

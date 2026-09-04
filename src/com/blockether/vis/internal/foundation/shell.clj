@@ -261,9 +261,9 @@
 (defn- resolve-dir
   "Resolve a command's `cwd` against the primary workspace, then authorize the
    canonical result against every filesystem root in the immutable environment
-   snapshot plus the live workspace overlay. A configured sibling such as
-   `../svar` is therefore valid when that canonical sibling is an allowed root;
-   arbitrary traversal remains denied. Absolute paths follow the same rule."
+   snapshot plus the live workspace overlay. An explicitly disabled process jail
+   allows every host path; existence and directory checks still apply. A configured
+   sibling such as `../svar` is valid when that canonical sibling is an allowed root."
   ^File [opts]
   (let [env
         (::environment opts)
@@ -307,11 +307,13 @@
               (if (.isAbsolute requested-file) requested-file (io/file root requested)))
 
             allowed?
-            (some (fn [^File allowed-root]
-                    ;; Path#startsWith is component-aware and handles a filesystem root
-                    ;; correctly (`/` is not naively joined with another `/`).
-                    (or (= dir allowed-root) (.startsWith (.toPath dir) (.toPath allowed-root))))
-                  roots)
+            (or (::unrestricted? opts)
+                (some (fn [^File allowed-root]
+                        ;; Path#startsWith is component-aware and handles a filesystem root
+                        ;; correctly (`/` is not naively joined with another `/`).
+                        (or (= dir allowed-root)
+                            (.startsWith (.toPath dir) (.toPath allowed-root))))
+                      roots))
 
             root-paths
             (mapv #(.getPath ^File %) roots)]
@@ -492,7 +494,9 @@
 
 (defn- resolve-dir-for-policy
   ^File [opts env policy]
-  (try (resolve-dir (assoc (or opts {}) ::environment (or (::environment policy) env)))
+  (try (resolve-dir (cond-> (assoc (or opts {}) ::environment (or (::environment policy) env))
+                      (:disabled? policy)
+                      (assoc ::unrestricted? true)))
        (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
 
 (def ^:private child-env
