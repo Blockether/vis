@@ -76,7 +76,8 @@ Reproduce from the report's own steps first; if it does not reproduce, that IS t
 
 - "Ready" is exactly: the smallest relevant `run_tests` namespaces pass, `lint_code` (clj-kondo + reflection) is clean, `format_code` has run, and the behavior is pinned by a suite test. Anything short of that stays uncommitted and is reported as unfinished.
 - Ready work is **committed and pushed to `main` in the same session without being asked again** — finished features must never be left sitting in the working tree. No scratch, notes or report files in a commit. Never pass `--no-verify`; the hooks are the gate.
-- **Push to `main` is the only automatic remote action.** Tags, releases, store submissions, force pushes and history rewrites still require an explicit request.
+- When shipped work resolves a referenced GitHub issue, close it after the verified commit reaches `origin/main`; leave a brief comment naming the commit and verification. An issue left open means the work is not shipped.
+- **Push to `main` and closing an issue resolved by that pushed commit are the only automatic remote actions.** Tags, releases, store submissions, force pushes and history rewrites still require an explicit request.
 
 ### Commit messages
 
