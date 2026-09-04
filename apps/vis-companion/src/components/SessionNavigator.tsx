@@ -626,11 +626,21 @@ export function ProjectStatusCounts({
     unread > 0 ? { label: `${unread} new`, tone: 'text-accent-ink', dot: 'bg-accent' } : null,
   ].filter((status): status is NonNullable<typeof status> => status !== null);
 
+  // INLINE, NOT `inline-flex`: the qualifier line ellipsizes when a phone's band
+  // runs out of room, and `text-overflow` only elides TEXT — an atomic inline box
+  // is dropped whole, so a status built as one painted `1 live ·▪` and no ellipsis.
   return statuses.map((status) => (
     <Fragment key={status.label}>
-      <span aria-hidden className="mx-2">·</span>
-      <span className={`inline-flex items-center gap-1 whitespace-nowrap font-bold ${status.tone}`}>
-        <span className={`size-1.5 ${status.dot}`} aria-hidden="true" />
+      {/* On a list under 28rem the dots close up: the phone's band holds the count,
+          the live pulse and the amber demand beside a pager and a verb, and at 440px
+          those three facts wanted 250px of the 238px left — `1 needs input` lost
+          its last word to an ellipsis. Eight pixels a side was the difference. */}
+      <span aria-hidden className="mx-2 @max-md:mx-1">·</span>
+      <span className={`whitespace-nowrap font-bold ${status.tone}`}>
+        <span
+          className={`mr-1 inline-block size-1.5 align-[0.05em] ${status.dot}`}
+          aria-hidden="true"
+        />
         {status.label}
       </span>
     </Fragment>

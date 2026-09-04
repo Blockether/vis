@@ -207,6 +207,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     start: number;
     rows: Session[];
     total: number;
+    awaiting: Session[];
   } | null>(null);
   // A project FOLDS, and only the top one starts open: the screen's job is to show
   // the work that moved last, not four checkouts' history at once. What the reader
@@ -282,6 +283,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           start,
           rows: held.rows.slice(start - from),
           total: held.total,
+          awaiting: held.awaiting,
         });
     }
     void (async () => {
@@ -300,6 +302,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           start,
           rows: answer.rows.slice(start - from),
           total: answer.total,
+          awaiting: answer.awaiting,
         });
         // Behind the answer, never beside it: the reader's own page is never waiting on
         // a read taken for a page they have not asked for. A project that has ended
@@ -385,15 +388,25 @@ export const ProjectGroup = memo(function ProjectGroup({
   // started or is holding words for is admitted rather than parked behind the pill.
   const rows = useMemo(() => {
     const shown = painting.map((session) => local.get(session.id) ?? session);
-    return searching
-      ? shown
-      : holdOrder(
-          epoch,
-          shown,
-          (session) => ({ id: session.id, millis: sessionMillis(session) }),
-          admitted,
-        ).rows;
-  }, [searching, painting, local, epoch, admitted]);
+    if (searching) return shown;
+    const held = holdOrder(
+      epoch,
+      shown,
+      (session) => ({ id: session.id, millis: sessionMillis(session) }),
+      admitted,
+    ).rows;
+    // A RUN PARKED ON A HUMAN IS SAID WHERE IT LIVES, however deep it sits. The
+    // gateway carries the project's parked sessions BESIDE every window it cuts
+    // (`ProjectPage.awaiting`) instead of lifting them into the order, so they are
+    // pinned above the page here: the header said `1 needs input` while the row
+    // it counted sat forty pages down and no page showed INPUT NEEDED. A parked row
+    // the page already holds is painted once, in its place.
+    const onPage = new Set(held.map((session) => session.id));
+    const parked = (paged?.awaiting ?? NO_ROWS)
+      .filter((session) => !onPage.has(session.id))
+      .map((session) => local.get(session.id) ?? session);
+    return parked.length === 0 ? held : [...parked, ...held];
+  }, [searching, painting, local, epoch, admitted, paged]);
   useEffect(() => {
     // The project shrank under the pager (a deletion, a smaller step): the page that
     // no longer exists becomes the first one rather than the last one a reader never
@@ -536,10 +549,19 @@ export const ProjectGroup = memo(function ProjectGroup({
                     // took the band's trailing column and left it nothing to stand on.
                     <span className="flex max-w-full min-w-0 items-center gap-2">
                       {qualifierPath && (
-                        <>
-                          <span className="min-w-0 shrink-[8] truncate">{qualifierPath}</span>
-                          <span aria-hidden>·</span>
-                        </>
+                        // The path LEAVES WITH ITS OWN SEPARATOR, and on a narrow list it
+                        // is not there at all. It was two flex items that shrank a pixel
+                        // at a time: measured on the 440px phone the report came from,
+                        // beside a pager and the verb, `~/rewrite` was down to `~.` and
+                        // still cost `1 needs input` its last word; at 393px the path had
+                        // given every pixel and its dot stayed, opening the line with
+                        // `· 113 sessions`. Under 28rem the counts are the whole line —
+                        // they say what the reader can ACT on — and the path stays on the
+                        // `title`, as it does for a machine whose address is its name.
+                        <span className="min-w-0 shrink-[8] truncate @max-md:hidden">
+                          {qualifierPath}
+                          <span aria-hidden> ·</span>
+                        </span>
                       )}
                       {/* The count gives way LAST, and with an ellipsis rather than a
                         clip: the path shrinks eight times as readily, and only a list

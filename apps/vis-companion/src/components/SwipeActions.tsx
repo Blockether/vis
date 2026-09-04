@@ -194,9 +194,16 @@ export function SwipeActions({
           action strip (a 16px icon over a 10px caption) stands 34px against a 32px
           desktop session row. This panel stretches to the track, so its single child
           has to stretch to IT — otherwise the row's hover slab stops short of the rule
-          under it and the row reads as if it had lost two pixels of its own height. */}
+          under it and the row reads as if it had lost two pixels of its own height.
+
+          The one column is `minmax(0, 1fr)`, never `auto`: a grid item's automatic
+          minimum is its min-content width, and a header whose count, live pulse and
+          path are all `nowrap` has a min-content width far past any phone. Measured
+          on the 393px rail, a project band of `~/rewrite · 113 sessions · 1 live · 1
+          needs input` grew its track to 528px: nothing truncated, and the pager and
+          the `+` stood 135px past the edge of the list, under the swipe strip. */}
       <div
-        className="grid w-full shrink-0 snap-start bg-panel mouse:bg-transparent"
+        className="grid w-full shrink-0 grid-cols-[minmax(0,1fr)] snap-start bg-panel mouse:bg-transparent"
         onClickCapture={(event) => {
           // While the drawer is open the row itself is a dismiss target, never a
           // navigation: a thumb resting on it must not open the session.

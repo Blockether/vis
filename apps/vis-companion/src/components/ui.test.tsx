@@ -831,6 +831,22 @@ describe("a project band carries its own count and its own pager", () => {
     expect(cluster).not.toContain("ProjectStatusCounts");
   });
 
+  // Regression, same phone screenshot (440px, `uberworkspace`, paged, one live and one
+  // parked): once the band could truncate, the path had given every pixel and its dot
+  // stayed, opening the line with `· 113 sessions`; on the 440px phone the path was
+  // down to `~.` and `1 needs input` still lost its last word. Under 28rem the counts
+  // ARE the line — they say what the reader can act on — and the path rides on the
+  // `title`, as it does for a machine whose address is its name.
+  it("gives the phone's qualifier line to the counts, and takes the path with its dot", () => {
+    const path = /<span className="([^"]*)">\s*\{qualifierPath\}\s*<span aria-hidden> ·<\/span>\s*<\/span>/.exec(
+      qualifier,
+    )?.[1] ?? "";
+    expect(path).toContain("@max-md:hidden");
+    expect(path).toContain("truncate");
+    // No separator of its own beside the path any more: it left with the path.
+    expect(qualifier).not.toContain("<span aria-hidden>·</span>");
+  });
+
   it("hangs no second box under the band, in the list or in its skeleton", () => {
     expect(sessionsListSource).not.toContain("SectionShelf");
     expect(uiSource).not.toContain("export function SectionShelf");

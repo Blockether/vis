@@ -631,6 +631,15 @@ export interface ProjectPage {
   total: number;
   /** Cursor of this page's last row: what the page AFTER it is asked for, `""` at the end. */
   nextCursor: string;
+  /**
+   * The project's sessions PARKED on an unanswered human-input request, complete
+   * however deep in the project they sit (`state/list-sessions-page`). They stand
+   * BESIDE the window rather than in it — the ordering never lifts them, so a page
+   * never moves when a turn asks or is answered — and the group pins them above the
+   * rows it paints. A parked row that is also IN the window is here too; the group
+   * paints it once.
+   */
+  awaiting: Session[];
 }
 /**
  * The project windows ONE reader is holding, and the validator each was issued
@@ -3006,6 +3015,7 @@ export class GatewayClient {
     const pin = pins.get(key);
     const res = await this.requestFull<{
       sessions?: Session[];
+      awaiting?: Session[];
       total?: number;
       next_cursor?: string | null;
     }>(
@@ -3021,13 +3031,16 @@ export class GatewayClient {
     // A row the wire repeated keeps the object the group is already rendering, so a
     // page that only gained a title does not re-render every row on it.
     const rows = reconcileRows(pin?.page.rows ?? null, res.data?.sessions ?? []);
+    const awaiting = reconcileRows(pin?.page.awaiting ?? null, res.data?.awaiting ?? []);
     // Every row names the model it runs on, so opening any of them paints the right
     // chip on the FIRST frame instead of after a per-session round trip.
     this.seedSessionModels(rows);
+    this.seedSessionModels(awaiting);
     const page: ProjectPage = {
       rows,
       total: res.data?.total ?? rows.length,
       nextCursor: res.data?.next_cursor ?? "",
+      awaiting,
     };
     if (!res.etag) {
       pins.delete(key);

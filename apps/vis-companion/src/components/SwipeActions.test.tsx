@@ -52,7 +52,7 @@ describe('SwipeActions tones', () => {
   // 2px short of the rule under it. The panel is a GRID: one child, stretched on both
   // axes, so whatever height the track ends up with is the row's height too.
   it('lets the row fill the swipe track', () => {
-    expect(strip()).toContain('grid w-full shrink-0 snap-start');
+    expect(strip()).toContain('grid w-full shrink-0 grid-cols-[minmax(0,1fr)] snap-start');
   });
 
   // The verbs are under the row's TRAILING edge and nowhere else: the row is panel
@@ -350,5 +350,26 @@ describe('the slide', () => {
     const verb = screen.getByRole('button', { name: 'Make tower primary' });
     expect(verb.textContent).toBe('Primary');
     expect(verb.getAttribute('title')).toBe('Make tower primary');
+  });
+
+  // Regression, user report with a phone screenshot (440px): the project band ran
+  // past the list — the path and the counts under the name were not truncated, and
+  // the pager and the `+` stood off the edge, a bare `1` showing past the rows'
+  // chevron column. The panel this track holds the row in is a grid, and a grid
+  // item's automatic minimum is its min-content width: a band whose every part is
+  // `nowrap` widened the track to 528px of a 393px list. The column must be free
+  // to be narrower than what it holds, so the band inside truncates instead.
+  it('lets the row it holds be narrower than its own nowrap content', () => {
+    const html = renderToStaticMarkup(
+      <SwipeActions
+        label="a project"
+        actions={[{ key: 'delete', label: 'Delete', icon: <TrashIcon />, onSelect: () => {} }]}
+      >
+        <span>row</span>
+      </SwipeActions>,
+    );
+    const panel = /<div class="([^"]*\bgrid\b[^"]*)"/.exec(html)?.[1] ?? '';
+    expect(panel).toContain('w-full');
+    expect(panel).toContain('grid-cols-[minmax(0,1fr)]');
   });
 });

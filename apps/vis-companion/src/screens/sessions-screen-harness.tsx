@@ -214,10 +214,10 @@ export function sessionsWindow(rows: Session[], url: URL, projects: ProjectOverv
     total: listed.length,
     has_more: hasMore,
     next_cursor: hasMore && last ? listCursor(last, dirty) : null,
-    // The real gateway answers parked runs and stable project totals BESIDE the
-    // head window, complete however deep the fleet sits. A project's page is not
-    // that head: it carries neither.
-    awaiting: ranked.filter((session) => session.is_awaiting_input === true),
+    // The real gateway answers parked runs BESIDE every window it cuts, complete
+    // however deep they sit and narrowed to the same project as the listing; the
+    // stable project totals ride only beside the head.
+    awaiting: listed.filter((session) => session.is_awaiting_input === true),
     ...(after || root ? {} : { overview: overviewFor(ranked, projects) }),
   };
 }
