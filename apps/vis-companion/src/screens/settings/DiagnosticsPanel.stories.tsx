@@ -6,8 +6,8 @@ import { DiagnosticsPanel } from './DiagnosticsPanel';
 /**
  * THE APPLICATION COLUMN'S FOLDED LAST BAND.
  *
- * Resting, it is one band and a chevron; pressed, the six facts and the one
- * way out stand under it. The open body is what this gallery owns — the export
+ * Resting, it is one band and a chevron; pressed, six facts pair into three compact
+ * rows above the one way out. The open body is what this gallery owns — the export
  * verb's busy and banner states live behind the platform hand-off and are
  * pinned in `SettingsScreen.diagnostics.test.tsx`, beside the mock that stands
  * in for it.
@@ -48,12 +48,12 @@ export const BandPress: Story = {
   },
 };
 
-/** Open, phone: every value holds the trailing edge, and the commit earns its width. */
+/** Open, phone: six facts keep their words while sharing three compact rows. */
 export const Open: Story = {
   args: { isOpen: true, onToggle: () => {} },
 };
 
-/** Open, desktop: the same rows on the dialog's pointer rhythm, no tighter. */
+/** Open, desktop: the same compact matrix follows the machine-panel rhythm. */
 export const OpenDesktop: Story = {
   args: { isOpen: true, onToggle: () => {} },
   parameters: { viewport: { defaultViewport: 'desktop' } },

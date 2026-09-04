@@ -10,28 +10,20 @@ import { RETAINED_LOG_POLICY, exportDiagnostics } from "../../lib/diagnostics";
 import { Banner, Button } from "../../components/ui";
 import { SettingsPanel } from "./SettingsLayout";
 
-/** ONE FACT ROW, and the answer is the fact. The label is the same word in every
- *  build — Version, Commit — so it takes the hint ink while the value takes the
- *  row's white and its weight: one size for both sides, and ink plus weight
- *  carry the hierarchy a second size would only flatten. That size is
- *  `text-meta` — the dialog's own DETAIL step, the one a machine row's second
- *  line and this dialog's footnotes already take. These facts are reference
- *  metadata read a few times a year, not rows you act on; `text-ui` is the
- *  size of a machine's NAME, and six bold values at it weighed more than the
- *  rows above them. The fold's one control keeps its control density, so the
- *  verb still leads — one step above the facts under a pointer (`text-ui`),
- *  the facts' own size on touch, where its filled shape does the leading.
- *  Labels take the spare width; values hold the trailing edge. The row is FLEX,
- *  not grid: the value's percentage cap resolves against the row here, while a
- *  grid AUTO track cannot resolve it and collapses to a two-character column
- *  that wraps every answer. */
+/** ONE COMPACT FACT CELL, and the answer is the fact. Diagnostics is reference
+ *  material, not a second settings form, so six facts pair into the same three-row
+ *  rhythm as the machine panels instead of consuming six full-width rows. The label
+ *  keeps the hint ink while the value takes the row's white and its weight: one
+ *  `text-meta` size for both sides, with ink plus weight carrying the hierarchy.
+ *  Each cell keeps its answer at the trailing edge; the one-pixel grid supplies the
+ *  only internal rules, rather than boxing every fact. */
 function DiagnosticFact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex min-w-0 items-baseline gap-4 px-3 py-1.5 sm:px-4">
+    <div className="flex min-w-0 items-baseline gap-2 bg-panel px-3 py-1.5 sm:px-4">
       <dt className="min-w-0 flex-1 break-words font-mono text-meta text-dialog-hint">
         {label}
       </dt>
-      <dd className="max-w-[65%] break-words text-right font-mono text-meta font-bold text-white">
+      <dd className="max-w-[70%] break-words text-right font-mono text-meta font-bold text-white">
         {value}
       </dd>
     </div>
@@ -81,17 +73,16 @@ export function DiagnosticsPanel({
       title="Diagnostics"
       disclosure={{ isOpen, onToggle, label: foldLabel }}
     >
-      {/* THE PANEL'S FACTS ARE ROWS, NOT A PARAGRAPH UNDER THEM. This band never
-          explained itself with prose — retention, cap, what the export button
-          does were sentences before the rows took them over. A number the
-          reader can scan is a row; the one sentence that survives is the trust
-          promise beside the verb it qualifies. The wire fact split the same
-          way: "Protocol 12+ · must accept client 12" was a sentence wrapping
-          itself ragged in the trailing column, and each half is one fact that
-          never wraps. */}
+      {/* THE PANEL'S FACTS ARE A COMPACT MATRIX, NOT SIX SETTINGS ROWS. Related
+          identity, protocol and retention facts pair across three shared rows; no
+          fact disappears merely to make the panel quiet. The one sentence that
+          survives is the trust promise beside the export verb it qualifies. */}
       {isOpen && (
         <>
-          <dl className="divide-y divide-dialog-edge">
+          <dl
+            aria-label="Application diagnostics"
+            className="grid grid-cols-2 gap-px bg-dialog-edge"
+          >
             <DiagnosticFact label="Version" value={APP_VERSION} />
             <DiagnosticFact label="Build" value={APP_BUILD_NUMBER} />
             <DiagnosticFact label="Commit" value={APP_BUILD_COMMIT} />
@@ -101,7 +92,7 @@ export function DiagnosticsPanel({
             />
             <DiagnosticFact label="Client protocol" value={`${APP_PROTOCOL}`} />
             <DiagnosticFact
-              label="Log retention"
+              label="Retention"
               value={`${RETAINED_LOG_POLICY.days} days · ${RETAINED_LOG_POLICY.megabytes} MB`}
             />
           </dl>

@@ -48,8 +48,8 @@ describe('application diagnostics settings', () => {
     expect(screen.getByText(APP_VERSION)).toBeInTheDocument();
     expect(screen.getByText(APP_BUILD_NUMBER)).toBeInTheDocument();
     expect(screen.getByText(APP_BUILD_COMMIT)).toBeInTheDocument();
-    // The wire is two facts in two rows, not one sentence wrapping in the
-    // trailing column; the retention the prose used to explain is a row too.
+    // The compact matrix preserves both wire facts as distinct terms instead of
+    // flattening them into one sentence; retention remains an explicit fact too.
     expect(
       screen.getByText(`${APP_MIN_GATEWAY_PROTOCOL}+`),
     ).toBeInTheDocument();
