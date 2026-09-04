@@ -173,7 +173,6 @@ jobs:
           - extensions/providers/vis-provider-openrouter
           - extensions/providers/vis-provider-standard
           - apps/vis-tui
-          - extensions/languages/vis-language-clojure
     steps:
       - uses: actions/checkout@v7
       # See the tests job for why we install GraalVM CE 25.1.3 directly rather

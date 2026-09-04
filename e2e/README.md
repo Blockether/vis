@@ -8,17 +8,14 @@ on an isolated temporary DB, so a healthy installed daemon cannot hide working-t
 
 ## Layout
 
-Scenarios are aggregated from the root **and** each language pack's `e2e/` — the
-same split as the test `--dir` list: the foundation (language-neutral
-editing) set lives here in the root; a pack owns the scenarios that
-exercise ITS surface, beside its `test/` dir.
+Every scenario lives under `e2e/scenarios/`: the foundation (language-neutral
+editing) set beside the per-language ones (`clj-*`, `py-*`) that exercise a
+language surface.
 
 ```
 e2e/
-  run.py                                              the runner (scans all roots)
-  scenarios/<id>/                                     foundation editing, any language
-extensions/languages/vis-language-clojure/e2e/scenarios/<id>/   clj editing + repair/format hook
-extensions/languages/vis-language-python/e2e/scenarios/<id>/    managed Python REPL
+  run.py                                              the runner
+  scenarios/<id>/                                     foundation editing, clj-* (repair/format hook), py-* (managed REPL)
 
   <id>/
     scenario.json   {lang, prompt, want, wantnot, want_answer?, want_tools?, want_forms?,

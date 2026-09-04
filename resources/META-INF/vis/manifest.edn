@@ -7,8 +7,8 @@
    :register com.blockether.vis.internal.foundation.shim-ls/register!}
   com.blockether.vis.internal.foundation.mcp.core/register!
   com.blockether.vis.internal.foundation.harness.core/register!
-  com.blockether.vis.ext.language-clojure.core/register!
-  com.blockether.vis.ext.language-python.core/register!
+  com.blockether.vis.internal.language.clojure.core/register!
+  com.blockether.vis.internal.language.python.core/register!
   com.blockether.vis.ext.provider-alibaba/register!
   com.blockether.vis.ext.provider-anthropic/register!
   com.blockether.vis.ext.provider-github-copilot/register!

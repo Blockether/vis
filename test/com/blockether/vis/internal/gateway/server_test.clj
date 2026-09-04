@@ -2747,19 +2747,20 @@
 (deftest the-shutdown-hook-names-who-called-system-exit
   (let [culprit (rv 'exit-culprit)]
     (testing "the thread parked in System/exit is named; JDK plumbing is dropped"
-      (let [r (culprit {"main" ["java.base/java.lang.Object.wait0(Native Method)"
-                                "java.base/java.lang.Thread.join(Thread.java:1327)"
-                                "java.base/java.lang.Shutdown.runHooks(Shutdown.java:130)"]
-                        "vis-turn-3"
-                        ["java.base/java.lang.Shutdown.exit(Shutdown.java:176)"
-                         "java.base/java.lang.Runtime.exit(Runtime.java:112)"
-                         "java.base/java.lang.System.exit(System.java:1901)"
-                         "java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(x:1)"
-                         "com.blockether.vis.ext.language_clojure.reflection$c.invoke(refl.clj:120)"
-                         "clojure.lang.AFn.run(AFn.java:22)"]})]
+      (let [r (culprit
+                {"main" ["java.base/java.lang.Object.wait0(Native Method)"
+                         "java.base/java.lang.Thread.join(Thread.java:1327)"
+                         "java.base/java.lang.Shutdown.runHooks(Shutdown.java:130)"]
+                 "vis-turn-3"
+                 ["java.base/java.lang.Shutdown.exit(Shutdown.java:176)"
+                  "java.base/java.lang.Runtime.exit(Runtime.java:112)"
+                  "java.base/java.lang.System.exit(System.java:1901)"
+                  "java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(x:1)"
+                  "com.blockether.vis.internal.language.clojure.reflection$c.invoke(refl.clj:120)"
+                  "clojure.lang.AFn.run(AFn.java:22)"]})]
         (is (= "vis-turn-3" (get r "thread"))
             "the thread that called exit, not the one running the hooks")
-        (is (= "com.blockether.vis.ext.language_clojure.reflection$c.invoke(refl.clj:120)"
+        (is (= "com.blockether.vis.internal.language.clojure.reflection$c.invoke(refl.clj:120)"
                (first (get r "frames")))
             "the first frame must be the CALLER, module prefixes and all")
         (is (= 2 (count (get r "frames"))))))

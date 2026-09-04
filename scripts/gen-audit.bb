@@ -29,8 +29,6 @@
 ;; still render (just without a blurb), so a new extension never breaks the doc.
 (def blurbs
   {"core" "_Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._"
-   "vis-language-clojure" "_Clojure language pack (format/lint/tests/REPL)._"
-   "vis-language-python" "_Python language pack._"
    "vis-channel-tui" "_Terminal UI (Lanterna)._"})
 
 ;; Licenses that POMs express oddly / not at all — pin them explicitly so the

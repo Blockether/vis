@@ -9,12 +9,10 @@ scenarios and checks, per scenario:
   - FAST PATH   the anchored `patch` wrote the edit, rather than the model
                 wandering through the file with `cat` alone
 
-Scenarios are SELF-CONTAINED FOLDERS, aggregated from the root `e2e/` and each
-language pack's `e2e/` (the language-neutral editing set lives in the root; a pack
-owns the scenarios that exercise its surface, beside its `test/` dir):
+Scenarios are SELF-CONTAINED FOLDERS under `e2e/scenarios/` — the language-neutral
+editing set beside the per-language ones (`clj-*`, `py-*`) that exercise a surface:
 
-    e2e/scenarios/<id>/                                  # foundation, any language
-    extensions/languages/<pack>/e2e/scenarios/<id>/      # that pack's surface
+    e2e/scenarios/<id>/
       scenario.json   {lang, prompt, want, wantnot, want_answer?,
                        want_tools?, want_forms?, want_requested_route?,
                        want_folded_prefix?, want_cache_read?, want_cache_metrics?}
@@ -264,16 +262,9 @@ def start_source_gateway():
     return gateway
 
 
-# Scenario roots, aggregated like the test alias's `--dir` list: the foundation
-# (language-neutral editing) set lives here in the root; each language pack
-# owns the e2e scenarios that exercise ITS surface, alongside its `test/` dir.
+# Every scenario lives here: the foundation (language-neutral editing) set and
+# the per-language ones (`clj-*`, `py-*`) that exercise a language surface.
 SCENARIO_ROOTS = [os.path.join(HERE, "scenarios")]
-LANG_ROOT = os.path.join(REPO, "extensions/languages")
-if os.path.isdir(LANG_ROOT):
-    SCENARIO_ROOTS.extend(
-        os.path.join(LANG_ROOT, pack, "e2e/scenarios")
-        for pack in sorted(os.listdir(LANG_ROOT))
-    )
 
 
 def load_scenarios(pick):

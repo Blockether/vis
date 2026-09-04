@@ -15,8 +15,6 @@
  {;; The extension contract is published separately so extensions and tools can read
   ;; its validated JSON documents without depending on the engine.
   com.blockether/vis-contract {:local/root "packages/vis-contract"}
-  com.blockether/vis-language-clojure {:local/root "extensions/languages/vis-language-clojure"}
-  com.blockether/vis-language-python {:local/root "extensions/languages/vis-language-python"}
   com.blockether/vis-provider-alibaba {:local/root "extensions/providers/vis-provider-alibaba"}
   com.blockether/vis-provider-anthropic {:local/root "extensions/providers/vis-provider-anthropic"}
   com.blockether/vis-provider-github-copilot {:local/root
@@ -34,6 +32,10 @@
   ;; --- third party -----------------------------------------------------------
   babashka/fs {:mvn/version "0.5.34"}
   babashka/process {:mvn/version "0.6.25"}
+  borkdude/edamame {:mvn/version "1.6.42"}
+  ;; Static analysis for the Clojure `lint_code` surface, run through its
+  ;; programmatic API (clj-kondo.core/run!).
+  clj-kondo/clj-kondo {:mvn/version "2026.07.24"}
   com.blockether/anomaly {:mvn/version "1.0.1"}
   com.blockether/fff {:mvn/version "0.12.6"}
   ;; Imaging WITHOUT `java.desktop`: decode/encode, transforms, vector drawing, text,
@@ -64,6 +66,18 @@
                                      :git/url
                                      "https://github.com/Blockether/vis-python-runtime.git"}
   com.cnuernber/charred {:mvn/version "1.041"}
+  ;; Jackson override (audit): clj-kondo -> cheshire drags in Jackson 2.x
+  ;; transitively (vis itself uses charred, not cheshire). Pin the whole Jackson
+  ;; 2.x set to one deliberate, patched version so the security audit sees a
+  ;; single controlled coordinate; core/smile/cbor MUST stay on the same version.
+  ;; jackson-databind is excluded on purpose: cheshire uses only the streaming
+  ;; core + smile/cbor factories, never ObjectMapper binding, so databind was
+  ;; never on the classpath — keep it that way, it is the CVE-prone module.
+  com.fasterxml.jackson.core/jackson-core {:mvn/version "2.22.1"}
+  com.fasterxml.jackson.dataformat/jackson-dataformat-cbor
+  {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.1"}
+  com.fasterxml.jackson.dataformat/jackson-dataformat-smile
+  {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.1"}
   com.github.seancorfield/honeysql {:mvn/version "2.7.1425"}
   com.github.seancorfield/next.jdbc {:mvn/version "1.3.1118"}
   com.google.zxing/core {:mvn/version "3.5.4"}
@@ -87,6 +101,9 @@
   ;; HikariCP wraps the underlying `SQLiteDataSource` in long-lived connections with
   ;; one dispose hook that actually releases handles.
   com.zaxxer/HikariCP {:mvn/version "7.1.0"}
+  ;; The conservative fallback Clojure formatter; zprint is canonical when a
+  ;; `.zprint.edn` is present.
+  dev.weavejester/cljfmt {:mvn/version "0.16.5"}
   ;; Jetty 12 CORE adapter, NOT ring/ring-jetty-adapter: ring's routes every request
   ;; through the ee9 servlet compatibility layer (12 extra jars, a servlet API on the
   ;; SSE hot path, a build-time-init flag for ee9's HttpOutput). This one is a bare
@@ -96,6 +113,7 @@
   io.github.java-diff-utils/java-diff-utils {:mvn/version "4.17"}
   io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
   metosin/reitit-ring {:mvn/version "0.10.1"}
+  nrepl/nrepl {:mvn/version "1.7.0"}
   org.babashka/http-client {:mvn/version "0.4.24"}
   ;; Pure-Java X.509 minting for the egress-proxy MITM CA (ephemeral, per-session) —
   ;; HTTPS verb/path enforcement for jailed shell children. No system provider is
@@ -132,7 +150,13 @@
   ring/ring-core {:mvn/version "1.15.5"}
   ;; CVE pin: Flyway 12.11.0 pulls tools.jackson jackson-databind 3.1.4
   ;; (CVE-2026-59889). Declared here so the top-level version wins.
-  tools.jackson.core/jackson-databind {:mvn/version "3.2.1"}}
+  tools.jackson.core/jackson-databind {:mvn/version "3.2.1"}
+  ;; zprint IS the repo's canonical formatter: `format_code` + the repo's
+  ;; `.zprint.edn` (`:option-fn`/`:guided` fn-map) are the only thing that
+  ;; formats this tree, and that config is tuned for 1.2.9. 1.3.0 changed
+  ;; guided newline handling and reflows let/binding forms differently, which
+  ;; would rewrite every namespace. antq bumped this once — hold it by hand.
+  zprint/zprint {:mvn/version "1.2.9"}}
  :aliases
  {:antq {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}} :main-opts ["-m" "antq.core"]}
   :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}
@@ -166,8 +190,7 @@
   :test
   {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
    :extra-paths
-   ["test" "dev" "extensions/languages/vis-language-clojure/test"
-    "extensions/languages/vis-language-python/test"
+   ["test" "dev"
     "extensions/providers/vis-provider-alibaba/test"
     "extensions/providers/vis-provider-anthropic/test"
     "extensions/providers/vis-provider-github-copilot/test"
@@ -182,7 +205,6 @@
    ;; com.blockether.vis.test-network-guard.
    :main-opts
    ["-m" "lazytest.main" "--hook" "com.blockether.vis.test-network-guard/no-network" "test"
-    "extensions/languages/vis-language-clojure/test" "extensions/languages/vis-language-python/test"
     "extensions/providers/vis-provider-alibaba/test"
     "extensions/providers/vis-provider-anthropic/test"
     "extensions/providers/vis-provider-github-copilot/test"
