@@ -671,7 +671,7 @@ export function ImageViewer({
           strokeCount={strokeCount}
           onUndo={() => annotationRef.current?.undo()}
           onClear={() => annotationRef.current?.clear()}
-          className="absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[calc(3.75rem+env(safe-area-inset-top))] z-20 sm:right-4 sm:top-15"
+          className="absolute right-[max(0.75rem,env(safe-area-inset-right))] top-1/2 z-20 -translate-y-1/2 sm:right-4"
         />
       )}
 

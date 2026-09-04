@@ -214,13 +214,15 @@ describe("ImageViewer", () => {
     expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
   });
 
-  // Regression, user report: inks and drawing history stretched across a second
-  // header band instead of sharing one compact rail beside the picture.
-  it("places drawing tools in one right-hand vertical rail", () => {
+  // Regression, user report: the drawing rail hugged the title instead of sitting
+  // beside the picture around the middle of a phone.
+  it("centres the right-hand drawing rail vertically", () => {
     act(() => control("Draw on image").click());
     const tools = document.querySelector('[aria-label="Drawing tools"]');
     expect(tools?.className).toContain("flex-col");
     expect(tools?.className).toContain("right-[max(");
+    expect(tools?.className).toContain("top-1/2");
+    expect(tools?.className).toContain("-translate-y-1/2");
     expect(document.querySelector("header")?.nextElementSibling).toBe(tools);
   });
 

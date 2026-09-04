@@ -268,7 +268,7 @@ export function PenToolbar({
     <div
       role="group"
       aria-label="Drawing tools"
-      className={`flex flex-col items-center gap-1 rounded-control border border-dialog-edge bg-panel p-1 ${className}`}
+      className={`flex flex-col items-center gap-1 rounded-panel border border-dialog-edge bg-panel px-0 py-1 sm:p-1 ${className}`}
     >
       {PEN_COLORS.map((pen) => (
         <button
@@ -280,7 +280,7 @@ export function PenToolbar({
           aria-pressed={color === pen.token}
         >
           <span
-            className={`size-7 rounded-control border-2 ${pen.className} ${
+            className={`size-7 rounded-full border-2 ${pen.className} ${
               color === pen.token ? "border-accent" : "border-edge-strong"
             }`}
           />
