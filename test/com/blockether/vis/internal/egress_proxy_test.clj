@@ -581,10 +581,8 @@
       ;; an unrelated public host still dials
       (is (:addr (ep/safe-upstream-address "example.org" 443 pol))))))
 
-(deftest host-policy-specificity-matches-sandbox-guard
-  ;; The shell-child egress proxy and the in-interpreter Python guard
-  ;; (`env-python/network-guard-python`) must reach ONE verdict for the same
-  ;; allow/deny lists. Both are specificity-based: a SPECIFIC (non-`*`) match wins
+(deftest host-policy-specificity
+  ;; The egress proxy owns the allow/deny verdict. A SPECIFIC (non-`*`) match wins
   ;; over a `*` in the OTHER list, so `denied ["*"]` + `allowed ["example.com"]`
   ;; means "deny everything EXCEPT example.com" — NOT "deny wins unconditionally."
   (testing "denied `*` + a specific allow ⇒ deny all EXCEPT the allowlist (subdomains too)"

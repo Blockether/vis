@@ -4052,6 +4052,15 @@
       ;; own the full cap, and the watchdog is a BACKSTOP, never a co-deadline.
       (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
                  (eval-timeout-ms-for-code 120000 "r = await shell(command=\"sleep 300\")")))
+      ;; Regression: a HANDLE wait (`sh.wait(600)`) parks the guest in a host call
+      ;; for up to the same cap, but the scan only knew the verb — the block died
+      ;; at the base watchdog, the interrupt could not reach a thread parked in
+      ;; the host, and the worker was retired mid-turn.
+      (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
+                 (eval-timeout-ms-for-code 120000 "sh = await shell(\"make\")\nr = sh.wait(600)")))
+      (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
+                 (eval-timeout-ms-for-code 120000 "r = sh.wait(secs=600)")))
+      (expect (= 610000 (eval-timeout-ms-for-code 120000 "r = await block(secs=600)")))
       (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
                  (eval-timeout-ms-for-code
                    120000

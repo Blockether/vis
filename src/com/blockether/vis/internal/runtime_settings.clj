@@ -221,13 +221,15 @@
   300)
 
 (def ^:private timeout-secs-re
-  #"[\"']?(?:timeout_secs|timeout)[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)")
+  #"[\"']?(?:timeout_secs|timeout|secs)[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)")
 
 (def ^:private timeout-ms-re #"[\"']?timeout_ms[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)")
 
 ;; `subprocess` is NOT here: it never spawns (the POSIX refusal shim raises at
-;; once), so a block that mentions it buys no time. Only the `shell` tool waits.
-(def ^:private shell-call-re #"\bshell\s*\(")
+;; once), so a block that mentions it buys no time. Only the `shell` tool waits —
+;; through the verb itself or through a handle's `.wait(secs)`, which parks the
+;; guest in a host call for up to the same cap.
+(def ^:private shell-call-re #"\bshell\s*\(|\.wait\s*\(")
 
 (def ^:private run-tests-call-re #"\brun_tests\s*\(")
 
@@ -241,11 +243,12 @@
 
 (defn explicit-shell-timeout-secs
   "Best-effort scan for an EXPLICIT timeout override in Python code, in seconds.
-   Reads `timeout_secs` / `timeout` (seconds) and `timeout_ms` (milliseconds,
-   rounded up) — `repl_eval` and MCP calls spell their budget in ms, and leaving
-   that spelling out let a deliberately long call die at the default watchdog.
-   The real tool still owns validation/clamping; this only prevents the outer
-   watchdog from preempting a longer requested budget."
+   Reads `timeout_secs` / `timeout` / `secs` (seconds) and `timeout_ms`
+   (milliseconds, rounded up) — `repl_eval` and MCP calls spell their budget in
+   ms, a shell handle's `.wait(secs=…)` in seconds, and leaving a spelling out let
+   a deliberately long call die at the default watchdog. The real tool still owns
+   validation/clamping; this only prevents the outer watchdog from preempting a
+   longer requested budget."
   [code]
   (let [code
         (str code)

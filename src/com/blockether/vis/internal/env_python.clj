@@ -10,12 +10,11 @@
    JSON, in both directions — host to guest is a `json.loads` of a literal this
    namespace renders, guest to host is `python-host`'s envelope. **The guest's
    Python is a FILE**, never a string built here: the runtime ships the sandbox
-   runtime, the auto-imports, the network guard, the proxy environment and the
-   process redirect as modules it imports, and Vis' own guest code lives under
-   `resources/vis-guest/`. **The boundary is C, not Python:** the filesystem
-   roots, the process surface and the thread cap are policy the runtime holds
-   behind an audit hook, so no guard here is a security boundary — the ones here
-   are ergonomics.
+   runtime, auto-imports, network probe and process redirect as modules it imports,
+   and Vis' own guest code lives under `resources/vis-guest/`. **The boundaries are
+   native:** the worker's OS jail owns filesystem and egress confinement, while the
+   runtime audit hook is the fail-closed file/socket backstop before policy setup.
+   Python modules provide ergonomics, never security.
 
    Public surface used by the loop:
 
@@ -542,14 +541,6 @@
   ["json" "shlex" "re" "hashlib" "glob" "os" "sys" "collections" "Counter" "pathlib" "Path"
    "textwrap" "base64" "math" "socket" "builtins" "time" "datetime"])
 
-(def ^:private default-denied-domains
-  "Hosts ALWAYS blocked when the sandbox has network — even under an `*` allowlist.
-   Cloud-metadata endpoints are the classic SSRF target (credentials / instance
-   identity), so they are denied by default; config `:network/denied-domains`
-   ADDS to this set, never removes from it. The metadata IP is enforced at the
-   `connect()` level too (see `network-guard-python`) so a raw-IP socket can't
-   sidestep DNS to reach it."
-  ["169.254.169.254" "metadata.google.internal" "metadata.goog" "metadata"])
 
 ;; =============================================================================
 ;; Sandbox bindings
@@ -1021,68 +1012,13 @@
        (catch Throwable t (tel/log! {:level :warn :id ::confine-failed :error t}) nil)))
 
 (defn- install-network!
-  "Install the in-guest network policy for `session`: the domain guard when the
-   jail is on and there is a restriction to enforce, and the proxy environment
-   when egress routes through the gateway.
-
-   The CAPABILITY comes first and is not Python at all: with this session's
-   network off the runtime's audit hook refuses every socket, name lookup and
-   connection, so nothing seeded here can be rebound to get one back. Inside a
-   session that HAS egress the domain guard is LEGIBILITY — a refusal in Python
-   instead of a socket timeout — and the boundary deciding where a request may go
-   is the gateway proxy, which sees the request. Both are files the runtime ships,
-   configured by globals seeded before they run."
-  [session {:keys [enabled? jail-enabled? allowed-domains denied-domains proxy-port ca-file]}]
-  (let [net?
-        ;; One switch, the same one the filesystem follows: with no jail there is
-        ;; no guard — not on the filesystem and not on the network. A session
-        ;; without a jail reaches the machine through `shell` anyway, so refusing
-        ;; its sockets in Python guards nothing and only breaks ordinary code.
-        (or (not jail-enabled?) (boolean enabled?))
-
-        allowed
-        (vec allowed-domains)
-
-        denied
-        (into default-denied-domains denied-domains)
-
-        allow-all?
-        (or (empty? allowed) (some #(= "*" (str %)) allowed))
-
-        guard?
-        (and net? jail-enabled? (or (seq denied) (not allow-all?)))
-
-        ;; Under a proxy the guest must always reach loopback: the proxy itself
-        ;; enforces the real host, verb and path policy.
-        guard-allowed
-        (if proxy-port (into allowed ["127.0.0.1" "::1" "localhost"]) allowed)]
-
+  "Set the runtime's fail-closed socket capability. A jailed worker's kernel policy
+   and gateway proxy own destinations; a one-shot interpreter gets only this binary
+   on/off boundary. Proxy variables arrived in the worker's process environment."
+  [session {:keys [enabled? jail-enabled?]}]
+  (let [net? (or (not jail-enabled?) (boolean enabled?))]
     (try (py-network! session net? "Refused: this session was granted no network access.")
-         (catch Throwable t (tel/log! {:level :warn :id ::network-capability-failed :error t})))
-    (when guard?
-      (exec! session
-             (str "globals()['__vis_allowed_domains__'] = "
-                  (py-json-literal guard-allowed)
-                  "\n"
-                  "globals()['__vis_denied_domains__'] = "
-                  (py-json-literal (vec denied))))
-      (try (py-install-module! session "network_guard") (catch Throwable _ nil)))
-    (when-not guard?
-      ;; The guard's policy holder and its socket wrapper are PROCESS state — one
-      ;; interpreter serves every session — so a session that enforces nothing has
-      ;; to clear the holder. Left in place, the previous session's allowlist
-      ;; answers first and reports a domain refusal for a session whose sockets
-      ;; the capability layer had already refused outright.
-      (try (exec! session "import builtins; builtins.__vis_net_policy__ = None")
-           (catch Throwable t (tel/log! {:level :warn :id ::network-policy-not-cleared :error t}))))
-    (when (and net? proxy-port)
-      (exec! session
-             (str "globals()['__vis_proxy_url__'] = 'http://127.0.0.1:"
-                  proxy-port
-                  "'\n"
-                  "globals()['__vis_ca_file__'] = "
-                  (py-json-literal (str (or ca-file "")))))
-      (try (py-install-module! session "proxy_env") (catch Throwable _ nil)))))
+         (catch Throwable t (tel/log! {:level :warn :id ::network-capability-failed :error t})))))
 
 (defn- install-network-probe!
   "The dev network-filter loop: `network_probe([method,] url)` and
@@ -1191,14 +1127,20 @@
    taken, and the model's live-vars view shows only what its own blocks made."
   [custom-bindings roots-fn network-opts stdin]
   (let [session (new-session-name)]
-    ;; `:worker?` decides WHERE this session's Python runs, and it is the first
-    ;; thing decided, because every call below follows it. A gateway session
-    ;; takes a worker: its own process, its own interpreter, and therefore a
-    ;; confinement, a `sys.modules` and a native-library cache that are the
-    ;; session's rather than the gateway's. A one-shot `vis-agent python` is the
-    ;; only session in its own process already, so it keeps the interpreter it
-    ;; starts here.
-    (if (:worker? network-opts) (swap! session-workers assoc session session) (ensure-interpreter!))
+    ;; A gateway session configures its process boundary BEFORE any request can
+    ;; start the worker. The worker then installs the audit-hook backstop before
+    ;; the first model block. A one-shot CLI already owns its process.
+    (if (:worker? network-opts)
+      (let [policy-fn (or (:worker-policy-fn network-opts)
+                          (fn []
+                            (merge {:disabled? (not (:jail-enabled? network-opts))
+                                    :roots-fn roots-fn
+                                    :net-enabled? (boolean (:enabled? network-opts))}
+                                   (select-keys network-opts
+                                                [:proxy-port :proxy-token :ca-file]))))]
+        (pyext/configure! session policy-fn)
+        (swap! session-workers assoc session session))
+      (ensure-interpreter!))
     (confine! session roots-fn (:jail-enabled? network-opts))
     (py-stdin! session (guest-stdin-text stdin))
     (py-install-runtime! session)
@@ -1293,6 +1235,7 @@
                (resolve 'com.blockether.vis.internal.python-extensions/close-session-contexts!)]
       (try (close-extensions session) (catch Throwable _ nil)))
     (try (py-close-session! session) (catch Throwable _ nil))
+    (pyext/forget-policy! session)
     (swap! session-workers dissoc session)
     nil))
 
@@ -1338,12 +1281,13 @@
 
 (defn retire-python-context!
   "Kill `session`'s worker after its control plane stopped answering, then drop
-   the host doors its sandbox and trusted extension namespaces owned. Keeping the
-   session-to-worker route until ordinary disposal prevents any late caller from
-   falling through to the parent runtime."
+   the host doors its sandbox and trusted extension namespaces owned. The worker
+   key stays RETIRED until ordinary disposal: a late caller must not fall through
+   to the parent runtime, and must not start a fresh interpreter under this key
+   either — that one would carry the runtime but none of the session's tools."
   [session]
   (when-let [k (worker-of session)]
-    (pyext/stop-worker! k)
+    (pyext/retire-worker! k "its control plane stopped answering an interrupt")
     (when-let [close-extensions
                (resolve 'com.blockether.vis.internal.python-extensions/close-session-contexts!)]
       (try (close-extensions session) (catch Throwable _ nil))))

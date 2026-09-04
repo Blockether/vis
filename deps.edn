@@ -50,7 +50,7 @@
   ;; that repository's release archive, fetched once into ~/.vis/python/runtime/
   ;; (internal.python-runtime) or staged beside the native image. Git dependencies
   ;; with :deps/prep-lib require `clojure -X:deps prep` after a fresh checkout.
-  com.blockether/vis-python-runtime {:git/sha "fca0e966ba1ba97953ab3dc51a67a7681dd00ffd"
+  com.blockether/vis-python-runtime {:git/sha "147e259f19d5557ff11cc9bc66962c98bf8b2af3"
                                      :git/url
                                      "https://github.com/Blockether/vis-python-runtime.git"}
   com.cnuernber/charred {:mvn/version "1.041"}

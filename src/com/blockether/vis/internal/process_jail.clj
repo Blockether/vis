@@ -82,12 +82,13 @@
 (defn runtime-policy
   "The platform-neutral confinement VALUE the runtime compiles, from a session
    policy: the LIVE session roots via `:roots-fn` plus `:allow-read-write` are
-   read-write, `:allow-read` read-only, the deny lists win, egress is the session
-   proxy when one is up, otherwise open or off with `:net-enabled?`, and inbound
-   is the managed listener port plus `:inbound-ports`. Called per spawn, so each
-   child gets the CURRENT live roots without re-reading model-writable config."
+   read-write, `:allow-read` read-only, the deny lists win, `:unix-connect` names
+   exact local control sockets, egress is the session proxy when one is up, otherwise
+   open or off with `:net-enabled?`, and inbound is the managed listener port plus
+   `:inbound-ports`. Called per spawn, so each child gets the CURRENT live roots
+   without re-reading model-writable config."
   [{:keys [roots-fn net-enabled? allow-read-write allow-read deny-write deny-read deny-exec
-           proxy-port loopback-port keychain?]
+           proxy-port loopback-port keychain? unix-connect]
     :as policy}]
   (let [session-roots (when roots-fn (try (roots-fn) (catch Throwable _ nil)))]
     {:read-write (vec (concat session-roots allow-read-write))
@@ -95,11 +96,31 @@
      :deny-write (vec deny-write)
      :deny-read (vec deny-read)
      :deny-exec (vec deny-exec)
+     :unix-connect (vec unix-connect)
      :network (cond proxy-port {:proxy proxy-port}
                     net-enabled? :open
                     :else :off)
      :inbound (inbound-ports (cons loopback-port (:inbound-ports policy)))
      :keychain? (boolean keychain?)}))
+
+(defn python-worker-policy
+  "Add host-owned worker state, boot files and its exact control socket to a
+   session policy. When present, the session-attributed compatibility proxy
+   replaces the shared authenticated endpoint for stacks that omit proxy auth."
+  [base run-directory control-socket boot-read-paths]
+  (cond-> base
+    (and base (not (:disabled? base)))
+    (-> (update :allow-read-write #(vec (conj (or % []) (str run-directory))))
+        (update :allow-read
+                #(vec (concat (or % [])
+                              boot-read-paths
+                              (when-let [ca-file (:ca-file base)]
+                                [ca-file]))))
+        (assoc :unix-connect [(str control-socket)]
+               :all-proxy-http? true))
+
+    (and base (not (:disabled? base)) (:worker-proxy-port base))
+    (assoc :proxy-port (:worker-proxy-port base))))
 
 (def ^:private keychain-denial-markers
   "How the macOS Security framework reports a lookup it could not complete. The
@@ -162,11 +183,13 @@
       (if-let [port (:proxy-port policy)]
         (let [token (:proxy-token policy)
               url (str "http://" (when token (str token "@")) "127.0.0.1:" port)
-              ;; SOCKS5 shares the SAME loopback port (multiplexed by first byte).
-              ;; `ALL_PROXY` is the fallback for non-HTTP schemes (ssh/git+ssh/db/raw
-              ;; TCP) — it points at the SOCKS lane, while `http(s)_proxy` keep the
-              ;; HTTP proxy so HTTPS verb/path MITM is preserved for web traffic.
-              socks-url (str "socks5h://" (when token (str token "@")) "127.0.0.1:" port)
+              ;; Generic children use SOCKS5 on the multiplexed loopback port for
+              ;; non-HTTP schemes. Python package and HTTP stacks inconsistently
+              ;; prioritize `ALL_PROXY`; workers keep it on the HTTP lane so every
+              ;; request retains verb/path policy enforcement.
+              socks-url (if (:all-proxy-http? policy)
+                          url
+                          (str "socks5h://" (when token (str token "@")) "127.0.0.1:" port))
               ca (:ca-file policy)
               java-opts (java-proxy-options policy)]
 

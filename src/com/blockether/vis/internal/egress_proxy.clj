@@ -175,9 +175,8 @@
           :else (or (= h p) (str/ends-with? h (str "." p))))))
 
 (defn- host-ok?
-  "Host-level allow/deny with the SAME specificity as the in-interpreter sandbox
-   guard (`network-guard-python`), so both network layers reach one verdict: a
-   SPECIFIC (non-`*`) match wins over a `*` in the OTHER list. Specific deny wins
+  "Host-level allow/deny specificity. A SPECIFIC (non-`*`) match wins over a `*`
+   in the OTHER list. Specific deny wins
    (incl. both-specific); then specific allow (beats a `*` denylist); then a `*`
    denylist blocks the rest; else an empty/`*` allowlist allows and a non-empty
    allowlist with no match blocks."

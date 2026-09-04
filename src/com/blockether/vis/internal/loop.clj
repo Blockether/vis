@@ -10774,19 +10774,6 @@
             ;; in-interpreter domain guard — the sandbox network is unconfined, the
             ;; same all-or-nothing containment the OS process jail gives subprocesses.
             net-on? true
-            network-opts {;; A gateway session runs its Python in a worker of its
-                          ;; own: the runtime's policy is a PROCESS's, so one
-                          ;; interpreter for every session was one confinement,
-                          ;; one `sys.modules` and one native cache for all of
-                          ;; them.
-                          :worker? true
-                          :enabled? net-on?
-                          :jail-enabled? jail-enabled?
-                          :allowed-domains (:allowed-domains net-cfg)
-                          :denied-domains (:denied-domains net-cfg)
-                          :exclude-domains (:exclude-domains net-cfg)
-                          :allow-private (:allow-private net-cfg)
-                          :rules (:rules net-cfg)}
             ;; One shared gateway proxy serves every environment. Unguessable tokens
             ;; attribute requests to this environment's immutable policy snapshot.
             sandbox-token (str (java.util.UUID/randomUUID))
@@ -10811,6 +10798,8 @@
                       proxy-port (when proxy? (gateway-sandbox/ensure-proxy!))
                       ca-file (when proxy? (gateway-sandbox/ensure-ca!))
                       java-trust (when proxy? (gateway-sandbox/ensure-java-trust!))
+                      worker-proxy-port (when proxy?
+                                          (gateway-sandbox/ensure-session-proxy! sandbox-token))
                       repl-proxy-port (when proxy?
                                         (gateway-sandbox/ensure-session-proxy! repl-sandbox-token))]
 
@@ -10821,12 +10810,25 @@
                           ;; `.env` edit or a refreshed keychain item reaches the next child.
                           :env-values (config/child-environment-values)
                           :proxy-port proxy-port
+                          :worker-proxy-port worker-proxy-port
                           :proxy-token (when proxy? sandbox-token)
                           :repl-proxy-port repl-proxy-port
                           :repl-ca-file ca-file
                           :java-trust-store (:java-trust-store java-trust)
                           :java-trust-store-password (:java-trust-store-password java-trust)
                           :ca-file ca-file}))))
+            network-opts {;; The worker launch reads this policy before its first
+                          ;; interpreter request; the same snapshot configures its
+                          ;; runtime audit-hook backstop immediately afterwards.
+                          :worker? true
+                          :worker-policy-fn jail-policy-fn
+                          :enabled? net-on?
+                          :jail-enabled? jail-enabled?
+                          :allowed-domains (:allowed-domains net-cfg)
+                          :denied-domains (:denied-domains net-cfg)
+                          :exclude-domains (:exclude-domains net-cfg)
+                          :allow-private (:allow-private net-cfg)
+                          :rules (:rules net-cfg)}
             ;; Register one live policy function for the standard language-process launch
             ;; contract. Managed REPLs and project test runners share the same OS-jail +
             ;; gateway-proxy boundary as `shell` / subprocess, keyed per session.

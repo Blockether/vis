@@ -3,9 +3,34 @@
    retired interpreter can never be entered again."
   (:require [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.loop :as loop]
+            [com.blockether.vis.internal.python-host :as python-host]
             [com.blockether.vis.internal.python-worker :as worker]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.util.concurrent.atomic AtomicLong)))
+
+(defn- with-worker-context
+  "Run `f` with the session of a fresh confined session worker, then dispose it."
+  [f]
+  (let [root
+        (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
+
+        roots-fn
+        (constantly [root])
+
+        made
+        (env/create-python-context {}
+                                   roots-fn
+                                   {:worker? true
+                                    :worker-policy-fn (fn []
+                                                        {:roots-fn roots-fn :net-enabled? false})
+                                    :jail-enabled? true
+                                    :enabled? false}
+                                   nil)
+
+        session
+        (:python-context made)]
+
+    (try (f session) (finally (env/dispose-python-context! session)))))
 
 (defdescribe
   worker-control-plane-test
@@ -14,10 +39,11 @@
             (atom {})
 
             peer
-            {:pending pending :seq (AtomicLong. 0)}]
+            {:pending pending :serving (atom {}) :seq (AtomicLong. 0)}]
 
-        (with-redefs-fn {#'worker/live (fn [_]
-                                         {:peer peer})
+        (swap! @#'worker/workers assoc "session" {:peer peer})
+        (with-redefs-fn {#'worker/alive? (fn [state]
+                                           (= peer (:peer state)))
                          #'worker/send-line! (fn [_ _]
                                                nil)}
           (fn []
@@ -33,10 +59,60 @@
               (doseq [[_ waiting] @pending]
                 (deliver waiting {"value" false}))
               (deref call 1000 nil)
+              (swap! @#'worker/workers dissoc "session")
               (expect (= :vis/python-worker-timeout (:type observed))))))))
+  (it "fails a host call in flight so an interrupted guest parked in it unwinds"
+      (with-worker-context
+        (fn [session]
+          (let [dispatch
+                (deref #'python-host/dispatch)
+
+                released
+                (promise)]
+
+            (with-redefs-fn {#'python-host/dispatch (fn [caller tool payload]
+                                                      (if (= "slow" tool)
+                                                        (do (deref released 30000 nil) "\"late\"")
+                                                        (dispatch caller tool payload)))}
+              (fn []
+                (let [block (future
+                              (env/run-python-block
+                                session
+                                "import vis_runtime\nprint(vis_runtime.host_call('slow', '{}'))"))]
+                  (try (Thread/sleep 500)
+                       (expect (true? (env/interrupt-guest! session)))
+                       (let [answer (deref block 5000 ::parked)]
+                         (expect (not= ::parked answer))
+                         ;; The failed host call lets the guest run Python again,
+                         ;; where the pending KeyboardInterrupt lands; either
+                         ;; spelling is the block ending for the right reason.
+                         (expect (re-find #"(?i)interrupt" (str answer))))
+                       (expect (worker/worker-live? session))
+                       ;; The same worker, its tools intact, serves the next block.
+                       (expect (= "ok\n" (:stdout (env/run-python-block session "print('ok')"))))
+                       (finally (deliver released true))))))))))
+  (it "refuses to restart a retired worker until its session is rebuilt"
+      (with-worker-context (fn [session]
+                             (expect (= "1\n" (:stdout (env/run-python-block session "print(1)"))))
+                             (worker/retire-worker! session "test")
+                             (expect (worker/retired? session))
+                             (expect (false? (worker/worker-live? session)))
+                             (let [answer (try (env/run-python-block session "print(2)")
+                                               (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                               (expect (re-find #"python-worker-retired" (str answer))))
+                             (expect (false? (worker/worker-live? session)))
+                             (worker/configure! session (constantly {}))
+                             (expect (false? (worker/retired? session))))))
   (it "refuses an environment whose worker was retired"
       (expect (false? (env/context-enterable? {:python-context "retired-session"
                                                :python-context-retired-atom (atom true)}))))
+  (it "confines a session worker before its first interpreter operation"
+      (with-worker-context
+        (fn [session]
+          (let [answer (env/run-python-block
+                         session
+                         "import os\nprint(os.environ.get('VIS_SEATBELT_ACTIVE', 'missing'))")]
+            (expect (= "1\n" (:stdout answer)))))))
   (it "kills only a worker whose interrupt control plane failed"
       (let [retired
             (atom false)

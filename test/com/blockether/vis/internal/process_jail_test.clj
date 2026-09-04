@@ -39,7 +39,25 @@
                                          :inbound-ports [5273 "4200" 5273 nil "junk" 0 70000]}))))
     (is (= [] (:inbound (pj/runtime-policy {})))))
   (testing "the keychain grant is a boolean"
-    (is (true? (:keychain? (pj/runtime-policy {:keychain? true}))))))
+    (is (true? (:keychain? (pj/runtime-policy {:keychain? true})))))
+  (testing "a Python worker keeps session policy and adds only its bootstrap doors"
+    (let [policy (pj/python-worker-policy {:roots-fn (constantly ["/ws"])
+                                           :net-enabled? true
+                                           :proxy-port 4321
+                                           :worker-proxy-port 4322
+                                           :proxy-token "sess"
+                                           :keychain? true}
+                                          "/run"
+                                          "/run/control.sock"
+                                          ["/java" "/classpath"])]
+      (is (= ["/run"] (:allow-read-write policy)))
+      (is (= ["/java" "/classpath"] (:allow-read policy)))
+      (is (= ["/run/control.sock"] (:unix-connect policy)))
+      (is (= {"all_proxy" "http://sess@127.0.0.1:4322" "ALL_PROXY" "http://sess@127.0.0.1:4322"}
+             (select-keys (pj/proxy-env policy) ["all_proxy" "ALL_PROXY"])))
+      (is (= {:proxy 4322} (:network (pj/runtime-policy policy))))
+      (is (= "sess" (:proxy-token policy)))
+      (is (true? (:keychain? policy))))))
 
 (def ^:private enforcement-tokens
   "Words that only an enforcement dialect uses. Vis states policy; the runtime
