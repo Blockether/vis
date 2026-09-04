@@ -5,8 +5,8 @@
 Vis is a coding agent that writes Python into a sandboxed CPython runtime,
 keeps durable state outside the model context window, and inspects and changes
 the host project through tools. It ships as one Clojure package
-(`com.blockether.vis.core`, Apache-2.0) plus optional classpath extensions
-under `extensions/`. Users install the `vis-agent` Bash wrapper, which runs
+(`com.blockether.vis.core`, Apache-2.0) with the language packs, providers and
+the SQLite store inside it. Users install the `vis-agent` Bash wrapper, which runs
 live JVM source or a private GraalVM native-image sidecar.
 
 This document is the authoritative security, licensing and software
@@ -35,8 +35,8 @@ vulnerable, and what does it do with data.*
 - **How it ships.** One public **`vis-agent` Bash wrapper** with two runtime
   choices: live JVM source, or a private self-contained GraalVM native-image
   sidecar. The native executable is never installed as the public command.
-  Optional `extensions/*` add channels (TUI), languages, persistence and search;
-  each is a droppable classpath module. Speech is part of the core gateway.
+  Language packs, providers, persistence and speech are part of the core
+  package; the TUI is its own app module.
 - **Where it runs.** Locally, on a developer machine or CI runner. It reaches
   an LLM provider only for inference; everything else is on-box (§9).
 
@@ -44,7 +44,7 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 59 unique, across 11 `deps.edn` modules (root + extensions).
+- **Direct dependency coordinates:** 59 unique, across 3 `deps.edn` modules (root + siblings).
 - **Declared jar footprint (direct coords):** ~38 MB; concentrated in the embedded CPython runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
@@ -242,14 +242,14 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `tools.jackson.core/jackson-databind` | `3.2.1` | Apache-2.0 | 1.9 MB | 3rd-party |
 | `zprint/zprint` | `1.2.9` | MIT | 220 KB | 3rd-party |
 
-### `vis-tui` extension
+### `vis-tui` module
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
 | `com.blockether/lanterna` | `3.1.5-vis.49` | LGPL-3.0 | 601 KB | Blockether (in-house) |
 | `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 
-### `vis-contract` extension
+### `vis-contract` module
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
@@ -286,7 +286,7 @@ under **Apache-2.0** — **with the copyleft exception(s) below that need legal 
 ### Code ownership
 
 - **First-party (this repo, Apache-2.0):** the `com.blockether.vis.core` package
-  and every `extensions/*` module.
+  and every sibling module in this tree.
 - **Blockether in-house libraries** (separate repos, we own source + releases):
   every `com.blockether/*` coordinate above.
 - **3rd-party:** everything else in §5, sourced from its declared Maven or git repository.
@@ -329,7 +329,7 @@ GITHUB_TOKEN=<your-token> clojure -M:clj-watson scan -p deps.edn -a '*' -t githu
 ```
 
 `-a '*'` includes every alias so the scan covers the root package **and** all
-`:local/root` extensions; `-s` adds fix suggestions.
+`:local/root` siblings; `-s` adds fix suggestions.
 
 **In CI** — `.github/workflows/security-audit.yml` runs the scan on every
 `deps.edn` change, on pull requests, weekly (Mondays 06:00 UTC), and via manual

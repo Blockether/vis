@@ -18,7 +18,8 @@
    into the uniform lint finding map, tagged `\"provider\" \"general\"`:
    `{\"file\" \"row\" \"col\" \"level\" \"warning\" \"type\" \"reflection\"|\"boxed-math\"
      \"message\" \"provider\" \"general\"}`."
-  (:require [clojure.string :as str]))
+  (:require [com.blockether.vis.internal.util :as util]
+            [clojure.string :as str]))
 
 (def provider "The provider tag every finding from this namespace carries." "general")
 
@@ -351,9 +352,7 @@
    renamed or copied file reuses the findings, and the `\"file\"` each finding
    reports is stamped on afterwards."
   [^String code]
-  (.encodeToString (java.util.Base64/getUrlEncoder)
-                   (.digest (java.security.MessageDigest/getInstance "SHA-256")
-                            (.getBytes code "UTF-8"))))
+  (.encodeToString (java.util.Base64/getUrlEncoder) (util/sha256 (util/utf8 code))))
 
 (defn- cached
   "Findings for `key`, computed by `compute` on a miss.

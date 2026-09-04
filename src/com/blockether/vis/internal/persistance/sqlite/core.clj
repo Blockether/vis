@@ -18,7 +18,8 @@
    Connection lifecycle:
      (db-open! db-spec)   -> {:datasource ds :path ...}
      (db-close! store)    -> idempotent dispose"
-  (:require [charred.api :as json]
+  (:require [com.blockether.vis.internal.util :as util]
+            [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
             [com.blockether.vis.internal.persistance.sqlite.maintenance :as maintenance]
@@ -378,8 +379,8 @@
   (try (when-not (.isClosed pool)
          (when-let [^HikariPoolMXBean mx (.getHikariPoolMXBean pool)]
            (.softEvictConnections mx)
-           (let [deadline (+ (System/currentTimeMillis) (long POOL_DRAIN_TIMEOUT_MS))]
-             (while (and (pos? (.getActiveConnections mx)) (< (System/currentTimeMillis) deadline))
+           (let [deadline (+ (util/now-ms) (long POOL_DRAIN_TIMEOUT_MS))]
+             (while (and (pos? (.getActiveConnections mx)) (< (util/now-ms) deadline))
                (Thread/sleep 20)))))
        (catch Throwable _ nil))
   (try (.close pool) (catch Throwable _ nil))

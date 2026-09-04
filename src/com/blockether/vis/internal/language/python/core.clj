@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.language.python.core
-  "vis-language-python — a managed Python REPL exposed through the generic
+  "A managed Python REPL exposed through the generic
    language facade (repl_start / repl_status / repl_stop / repl_eval). Activates
    only when the workspace looks like a Python project. The REPL is a subprocess
    on a project-aware interpreter (uv / poetry / .venv / python3), registered as

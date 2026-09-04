@@ -50,7 +50,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
 
       # Self-contained: the docs namespace needs only commonmark + the

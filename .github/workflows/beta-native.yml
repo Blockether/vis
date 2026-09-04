@@ -165,7 +165,7 @@ jobs:
             ~/.gitlibs
             ~/.clojure/.cpcache
             ~/.vis/build-cache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       # GitHub's Linux runner ships ~4 GB of swap; back the 14 GB builder heap
       # with a real swapfile instead of letting the JVM die on GC overhead.

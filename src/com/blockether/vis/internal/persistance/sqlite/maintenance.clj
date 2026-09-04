@@ -28,6 +28,7 @@
    `FileLock` held for the rewrite). It is created only when a vacuum is
    actually attempted and deleted again when one fails, so a store that never
    needed reclaiming carries no marker and stays due."
+  (:require [com.blockether.vis.internal.util :as util])
   (:import (java.io File RandomAccessFile)
            (java.nio.channels FileLock OverlappingFileLockException)
            (javax.sql DataSource)))
@@ -144,16 +145,16 @@
         (.length (File. db-file))
 
         started
-        (System/currentTimeMillis)]
+        (util/now-ms)]
 
     (try (vacuum! ds)
-         (.setLastModified marker (System/currentTimeMillis))
+         (.setLastModified marker (util/now-ms))
          (merge space
                 {:is-vacuumed true
                  :reason :vacuumed
                  :before-bytes before
                  :after-bytes (.length (File. db-file))
-                 :duration-ms (- (System/currentTimeMillis) started)})
+                 :duration-ms (- (util/now-ms) started)})
          (catch Throwable t
            (merge space {:is-vacuumed false :reason :failed :error (ex-message t)})))))
 
@@ -172,7 +173,7 @@
               (marker-file db-file)
 
               now
-              (long (or now-ms (System/currentTimeMillis)))
+              (long (or now-ms (util/now-ms)))
 
               window
               (long (or interval-days vacuum-interval-days))]

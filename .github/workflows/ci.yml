@@ -81,7 +81,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       # Several unit tests resolve the provider router. Seed the machine-owned
       # YAML state store with a minimal provider; transport-facing tests mock IO.
@@ -156,8 +156,8 @@ jobs:
         working-directory: apps/vis-tui
         run: clojure -J-Duser.home="$HOME" -M:test
 
-  # Every extension must resolve its own deps.edn cleanly — catches stale
-  # :local/root paths or missing siblings the aggregate run would mask.
+  # Every deps.edn project in the tree must resolve cleanly on its own — catches
+  # a stale :local/root path or a missing sibling the aggregate run would mask.
   classpath:
     name: classpath / ${{ matrix.path }}
     runs-on: ubuntu-latest
@@ -166,12 +166,6 @@ jobs:
       matrix:
         path:
           - .
-          - extensions/providers/vis-provider-github-copilot
-          - extensions/providers/vis-provider-openai-codex
-          - extensions/providers/vis-provider-anthropic
-          - extensions/providers/vis-provider-zai
-          - extensions/providers/vis-provider-openrouter
-          - extensions/providers/vis-provider-standard
           - apps/vis-tui
     steps:
       - uses: actions/checkout@v7
@@ -187,7 +181,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       - name: Resolve ${{ matrix.path }} classpath
         run: cd ${{ matrix.path }} && clojure -X:deps prep && clojure -Spath > /dev/null
@@ -211,7 +205,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       - name: Lint the whole tree
         run: clojure -X:deps prep && clojure -M:lint
@@ -238,7 +232,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       - name: AOT-compile all namespaces, refusing reflection or boxed math
         env:

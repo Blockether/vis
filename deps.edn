@@ -1,8 +1,8 @@
-;; Vis' AGGREGATE build: the engine plus every extension on ONE classpath. Each
-;; extension still under `extensions/` is its own deps.edn project, linked in here as a
-;; :local/root dep. Nothing formats this file — `format_code` skips .edn on
-;; purpose — so the order is hand-kept: this tree's own projects first, then
-;; third-party coordinates alphabetically, then aliases alphabetically.
+;; Vis' build: the engine, its language packs, providers and store on ONE
+;; classpath; `packages/*` are the libraries it shares with the outside world,
+;; linked in as :local/root deps. Nothing formats this file — `format_code`
+;; skips .edn on purpose — so the order is hand-kept: this tree's own projects
+;; first, then third-party coordinates alphabetically, then aliases alphabetically.
 {;; "packages/vis-agent/src" is a RESOURCE root, not Clojure source: it holds the
  ;; distributable `vis` Python module (the one PyPI ships as `vis-agent`), which the
  ;; engine slurps off the classpath as `vis/__init__.py` and execs into every
@@ -15,18 +15,6 @@
  {;; The extension contract is published separately so extensions and tools can read
   ;; its validated JSON documents without depending on the engine.
   com.blockether/vis-contract {:local/root "packages/vis-contract"}
-  com.blockether/vis-provider-alibaba {:local/root "extensions/providers/vis-provider-alibaba"}
-  com.blockether/vis-provider-anthropic {:local/root "extensions/providers/vis-provider-anthropic"}
-  com.blockether/vis-provider-github-copilot {:local/root
-                                              "extensions/providers/vis-provider-github-copilot"}
-  com.blockether/vis-provider-openai-codex {:local/root
-                                            "extensions/providers/vis-provider-openai-codex"}
-  com.blockether/vis-provider-opencode-go {:local/root
-                                           "extensions/providers/vis-provider-opencode-go"}
-  com.blockether/vis-provider-openrouter {:local/root
-                                          "extensions/providers/vis-provider-openrouter"}
-  com.blockether/vis-provider-standard {:local/root "extensions/providers/vis-provider-standard"}
-  com.blockether/vis-provider-zai {:local/root "extensions/providers/vis-provider-zai"}
   com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm {:mvn/version "v1.13.5"}
   org.apache.commons/commons-compress {:mvn/version "1.28.0"}
   ;; --- third party -----------------------------------------------------------
@@ -190,30 +178,16 @@
   :test
   {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
    :extra-paths
-   ["test" "dev"
-    "extensions/providers/vis-provider-alibaba/test"
-    "extensions/providers/vis-provider-anthropic/test"
-    "extensions/providers/vis-provider-github-copilot/test"
-    "extensions/providers/vis-provider-openai-codex/test"
-    "extensions/providers/vis-provider-opencode-go/test"
-    "extensions/providers/vis-provider-openrouter/test"
-    "extensions/providers/vis-provider-standard/test" "extensions/providers/vis-provider-zai/test"]
+   ["test" "dev"]
    :jvm-opts ["-Xmx2g" "-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
               "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
               "-Dvis.drafts.dir=target/vis-drafts-test"]
    ;; --hook refuses non-loopback HTTP for the whole run: see
    ;; com.blockether.vis.test-network-guard.
    :main-opts
-   ["-m" "lazytest.main" "--hook" "com.blockether.vis.test-network-guard/no-network" "test"
-    "extensions/providers/vis-provider-alibaba/test"
-    "extensions/providers/vis-provider-anthropic/test"
-    "extensions/providers/vis-provider-github-copilot/test"
-    "extensions/providers/vis-provider-openai-codex/test"
-    "extensions/providers/vis-provider-opencode-go/test"
-    "extensions/providers/vis-provider-openrouter/test"
-    "extensions/providers/vis-provider-standard/test" "extensions/providers/vis-provider-zai/test"]}
+   ["-m" "lazytest.main" "--hook" "com.blockether.vis.test-network-guard/no-network" "test"]}
   ;; The ENGINE native binary's own suite: what only `target/vis` can answer — a
-  ;; whole one-shot agent turn and the provider extensions linked into the image.
+  ;; whole one-shot agent turn and the providers linked into the image.
   ;; A separate alias because it needs a native build first and must fail loudly when
   ;; the binary is missing. The standalone TUI has its own app suite and image build:
   ;;   clojure -T:build native && clojure -M:test-native

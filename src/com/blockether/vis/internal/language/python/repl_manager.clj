@@ -3,7 +3,8 @@
    line-framed eval server — one JSON request per line in, one JSON response per
    line out. Globals persist across evals (real REPL state). One process per dir;
    the `Process` handle is cached so teardown is clean."
-  (:require [charred.api :as json]
+  (:require [com.blockether.vis.internal.util :as util]
+            [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.language.python.interpreter :as interp]
@@ -210,7 +211,7 @@ _main()
          ;; this cmd rides into `status`, the resource registry and the footer.
          :cmd (conj (vec (butlast cmd)) "<vis python driver>")
          :pid (.pid p)
-         :started-at (System/currentTimeMillis)
+         :started-at (util/now-ms)
          ;; WHAT THIS REPL RUNS WITH, by name and digest: what the next start is
          ;; compared against, so a reuse can be refused without a value ever
          ;; reaching a result, a log or the transcript.

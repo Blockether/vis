@@ -142,7 +142,7 @@ WORKDIR /build
 
 # Dependency cache first, so a source-only edit does not refetch the world.
 COPY deps.edn build.clj VIS_VERSION ./
-COPY extensions/ ./extensions/
+COPY packages/ ./packages/
 
 
 RUN clojure -P -T:build || true

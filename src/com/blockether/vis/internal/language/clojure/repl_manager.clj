@@ -30,7 +30,8 @@
    REPL nobody asked for.
 
    Starting/stopping is CORE and ALWAYS allowed — never gated behind a flag."
-  (:require [clojure.edn :as edn]
+  (:require [com.blockether.vis.internal.util :as util]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.language.clojure.nrepl-client :as nrepl-client]
@@ -115,7 +116,7 @@
         (fn [m]
           (cond-> m
             (contains? m k)
-            (assoc-in [k :last-touch] (System/currentTimeMillis))))]
+            (assoc-in [k :last-touch] (util/now-ms))))]
 
     (swap! processes stamp)
     (swap! attachments stamp)))
@@ -150,8 +151,7 @@
   [info]
   (boolean (and (proc-alive? info)
                 (:started-at info)
-                (< (- (System/currentTimeMillis) (long (:started-at info)))
-                   (long start-deadline-ms)))))
+                (< (- (util/now-ms) (long (:started-at info))) (long start-deadline-ms)))))
 
 (defn- health-probe-ms
   "How long to wait for a recorded REPL to answer a describe before judging it
@@ -159,7 +159,7 @@
    slow legit boot is never killed mid-flight); anything else gets a short grace."
   [info]
   (if (booting? info)
-    (max 5000 (- (long start-deadline-ms) (- (System/currentTimeMillis) (long (:started-at info)))))
+    (max 5000 (- (long start-deadline-ms) (- (util/now-ms) (long (:started-at info)))))
     5000))
 
 (def ^:private default-aliases
@@ -418,7 +418,7 @@
 
     (swap! last-failures assoc
       [session-id dir]
-      (cond-> {"at" (System/currentTimeMillis)}
+      (cond-> {"at" (util/now-ms)}
         exit
         (assoc "exit" exit)
 
@@ -467,14 +467,13 @@
    with the process still alive — a slow cold boot). `proc` may be nil (pure
    port probe)."
   [^Process proc port deadline-ms]
-  (let [deadline (+ (System/currentTimeMillis) (long deadline-ms))]
+  (let [deadline (+ (util/now-ms) (long deadline-ms))]
     (loop []
 
       (let [st (:status (nrepl-client/probe! {:host "localhost" :port port :timeout-ms 500}))]
         (cond (= :up st) :up
               (and proc (not (.isAlive proc))) :died
-              (< (System/currentTimeMillis) deadline) (do (Thread/sleep (long wait-poll-ms))
-                                                          (recur))
+              (< (util/now-ms) deadline) (do (Thread/sleep (long wait-poll-ms)) (recur))
               :else :starting)))))
 
 (defn status
@@ -646,8 +645,8 @@
                            :pid pid
                            :dir dir
                            :log (.getAbsolutePath log)
-                           :started-at (System/currentTimeMillis)
-                           :last-touch (System/currentTimeMillis)
+                           :started-at (util/now-ms)
+                           :last-touch (util/now-ms)
                            :env-fingerprint env-fingerprint}]
 
                  (swap! processes assoc k info)
@@ -934,8 +933,8 @@
                              :build build
                              :target (:target shadow)
                              :dialect (if build :cljs :clj)
-                             :started-at (System/currentTimeMillis)
-                             :last-touch (System/currentTimeMillis)}
+                             :started-at (util/now-ms)
+                             :last-touch (util/now-ms)}
                         ;; ONE cheap eval, so the ANSWER to connect already says whether
                         ;; this build can evaluate at all — a `watch` with no runtime
                         ;; joined is a perfectly healthy attachment that evaluates
@@ -961,7 +960,7 @@
   []
   (when (pos? (long @idle-reap-ms))
     (let [now
-          (System/currentTimeMillis)
+          (util/now-ms)
 
           stale
           (for [[[sid dir] info]

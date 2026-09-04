@@ -1,7 +1,7 @@
 #!/usr/bin/env bb
 ;; Regenerate audit/README.md from the deps.edn graph.
 ;;
-;; Walks the root deps.edn + every extension deps.edn (skipping e2e test
+;; Walks the root deps.edn + every sibling deps.edn (skipping e2e test
 ;; fixtures), collects every DIRECT Maven or git coordinate (top-level :deps plus
 ;; each alias's :extra-deps / :replace-deps / :deps), de-duplicates so each
 ;; coordinate is reported once under the FIRST module that declares it, then
@@ -26,7 +26,7 @@
 (def repos ["https://repo.clojars.org" "https://repo1.maven.org/maven2"])
 
 ;; Module dir-name -> one-line blurb for its inventory section. Unknown modules
-;; still render (just without a blurb), so a new extension never breaks the doc.
+;; still render (just without a blurb), so a new module never breaks the doc.
 (def blurbs
   {"core" "_Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._"
    "vis-channel-tui" "_Terminal UI (Lanterna)._"})
@@ -320,7 +320,7 @@
 
 (defn- section-header
   [label]
-  (if (= label "core") "### core (deps.edn)" (format "### `%s` extension" label)))
+  (if (= label "core") "### core (deps.edn)" (format "### `%s` module" label)))
 
 (defn- render-module
   [label rows]
@@ -416,8 +416,8 @@
 Vis is a coding agent that writes Python into a sandboxed CPython runtime,
 keeps durable state outside the model context window, and inspects and changes
 the host project through tools. It ships as one Clojure package
-(`com.blockether.vis.core`, Apache-2.0) plus optional classpath extensions
-under `extensions/`. Users install the `vis-agent` Bash wrapper, which runs
+(`com.blockether.vis.core`, Apache-2.0) with the language packs, providers and
+the SQLite store inside it. Users install the `vis-agent` Bash wrapper, which runs
 live JVM source or a private GraalVM native-image sidecar.
 
 This document is the authoritative security, licensing and software
@@ -446,8 +446,8 @@ vulnerable, and what does it do with data.*
 - **How it ships.** One public **`vis-agent` Bash wrapper** with two runtime
   choices: live JVM source, or a private self-contained GraalVM native-image
   sidecar. The native executable is never installed as the public command.
-  Optional `extensions/*` add channels (TUI), languages, persistence and search;
-  each is a droppable classpath module. Speech is part of the core gateway.
+  Language packs, providers, persistence and speech are part of the core
+  package; the TUI is its own app module.
 - **Where it runs.** Locally, on a developer machine or CI runner. It reaches
   an LLM provider only for inference; everything else is on-box (§9).
 
@@ -459,7 +459,7 @@ vulnerable, and what does it do with data.*
         (count rows)
         " unique, across "
         (count modules)
-        " `deps.edn` modules (root + extensions).
+        " `deps.edn` modules (root + siblings).
 - **Declared jar footprint (direct coords):** ~"
         (format "%.0f" (/ total-b 1024.0 1024.0))
         " MB; concentrated in the embedded CPython runtime and the optional voice/ONNX stack (§8).
@@ -647,7 +647,7 @@ under **Apache-2.0**"
 ### Code ownership
 
 - **First-party (this repo, Apache-2.0):** the `com.blockether.vis.core` package
-  and every `extensions/*` module.
+  and every sibling module in this tree.
 - **Blockether in-house libraries** (separate repos, we own source + releases):
   every `com.blockether/*` coordinate above.
 - **3rd-party:** everything else in §5, sourced from its declared Maven or git repository.
@@ -690,7 +690,7 @@ GITHUB_TOKEN=<your-token> clojure -M:clj-watson scan -p deps.edn -a '*' -t githu
 ```
 
 `-a '*'` includes every alias so the scan covers the root package **and** all
-`:local/root` extensions; `-s` adds fix suggestions.
+`:local/root` siblings; `-s` adds fix suggestions.
 
 **In CI** — `.github/workflows/security-audit.yml` runs the scan on every
 `deps.edn` change, on pull requests, weekly (Mondays 06:00 UTC), and via manual

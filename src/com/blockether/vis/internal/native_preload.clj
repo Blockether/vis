@@ -26,13 +26,13 @@
             [com.blockether.vis.internal.manifest :as manifest]))
 
 (def ^:private compiled-package
-  "The one package tree this distribution compiles: core, internals, every
-   extension. A dependency's namespaces are reachable through their own code and
+  "The one package tree this distribution compiles: core and every internal
+   namespace. A dependency's namespaces are reachable through their own code and
    are none of our business."
   ["com" "blockether" "vis"])
 
 (defn- path->namespace
-  "`com/blockether/vis/ext/provider_openai__init.class` -> the namespace symbol."
+  "`com/blockether/vis/internal/provider/openai__init.class` -> the namespace symbol."
   [^String relative]
   (-> relative
       (str/replace #"__init\.class$" "")

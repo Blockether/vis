@@ -173,7 +173,7 @@ jobs:
             ~/.gitlibs
             ~/.clojure/.cpcache
             ~/.vis/build-cache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       # community: full agent, model downloads on first use (lean binary).
       # GitHub's Linux runner ships ~4 GB of swap; back the 12-14 GB builder heap
@@ -390,7 +390,7 @@ jobs:
             ~/.gitlibs
             ~/.clojure/.cpcache
             ~/.vis/build-cache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       - name: Build native image
         env:

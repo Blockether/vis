@@ -152,15 +152,15 @@
 
 ;;; ── Extension introspection ─────────────────────────────────────────────
 
-(def ^:private ^String ext-ns-prefix "com.blockether.vis.ext.")
+(def ^:private ^String ext-ns-prefix "com.blockether.vis.internal.")
 
 (defn- short-ext-ns
   "Render an extension namespace symbol with the `v/` prefix instead of
-   the canonical `com.blockether.vis.ext.` package, so the table column
+   the canonical `com.blockether.vis.internal.` package, so the table column
    stays narrow:
 
-     com.blockether.vis.internal.foundation.core      -> v/foundation.core
-     com.blockether.vis.ext.provider-github-copilot -> v/provider-github-copilot
+     com.blockether.vis.internal.foundation.core         -> v/foundation.core
+     com.blockether.vis.internal.provider.github-copilot -> v/provider.github-copilot
 
    Anything that doesn't start with the canonical prefix is returned
    unchanged."
@@ -2398,14 +2398,14 @@
         (doseq [p (sort-by :provider/id all)]
           (stdout!
             (str "  " (commandline/pad-right (name (:provider/id p)) w) (:provider/label p)))))
-      (stdout! "No providers registered. Drop a vis-provider-* jar onto the classpath."))))
+      (stdout! "No providers registered."))))
 
 (defn- cli-providers-list!
   [_parsed _residual]
   (config/init-cli!)
   (let [rows (providers-list-rows)]
     (if (empty? rows)
-      (stdout! "No providers registered. Drop a vis-provider-* jar onto the classpath.")
+      (stdout! "No providers registered.")
       (do (stdout! "\n  Providers\n")
           (print-table! providers-table-cols rows)
           (stdout! (str "\n  " (count rows) " provider(s)\n")))))
@@ -2432,8 +2432,7 @@
     (cond (and provider-name (nil? provider)) (do (stdout! (str "Unknown provider: " provider-name))
                                                   (stdout! "")
                                                   (print-registered-providers!))
-          (empty? providers)
-          (stdout! "No providers registered. Drop a vis-provider-* jar onto the classpath.")
+          (empty? providers) (stdout! "No providers registered.")
           :else (doseq [p providers]
                   (print-provider-status! p))))
   (shutdown-agents))
@@ -2464,7 +2463,7 @@
       (if (seq registered)
         (doseq [provider registered]
           (print-provider-limits! (:provider/id provider)))
-        (stdout! "No providers registered. Drop a vis-provider-* jar onto the classpath."))))
+        (stdout! "No providers registered."))))
   (shutdown-agents))
 
 (defn- cli-providers-auth!

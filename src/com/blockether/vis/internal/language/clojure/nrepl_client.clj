@@ -33,7 +33,8 @@
 
    Failure paths throw `ex-info` with `:type :clj/nrepl-*` so the
    Vis tool wrapper can surface a clean error to the model."
-  (:require [clojure.edn :as edn]
+  (:require [com.blockether.vis.internal.util :as util]
+            [clojure.edn :as edn]
             [clojure.string :as str]
             [nrepl.core :as nrepl]
             [nrepl.transport :as transport])
@@ -128,7 +129,7 @@
   (let [k (key-of host port)]
     (or (get-in @connections [k :conn])
         (let [c (open! host port timeout-ms)]
-          (swap! connections assoc k {:conn c :opened-at (System/currentTimeMillis)})
+          (swap! connections assoc k {:conn c :opened-at (util/now-ms)})
           c))))
 
 (defn- session-id-for
@@ -218,15 +219,15 @@
          nil]
 
     (cond
-      (> (System/currentTimeMillis) (long deadline)) {"timed_out" true
-                                                      "value" (peek values)
-                                                      "values" values
-                                                      "out" (.toString out-acc)
-                                                      "err" (.toString err-acc)
-                                                      "ns" ns*
-                                                      "status" (conj status "timeout")
-                                                      "ex" ex
-                                                      "root_ex" root-ex}
+      (> (util/now-ms) (long deadline)) {"timed_out" true
+                                         "value" (peek values)
+                                         "values" values
+                                         "out" (.toString out-acc)
+                                         "err" (.toString err-acc)
+                                         "ns" ns*
+                                         "status" (conj status "timeout")
+                                         "ex" ex
+                                         "root_ex" root-ex}
       ;; The response seq ended WITHOUT a `done`. nREPL only yields nil (ending
       ;; the seq) when the client's response-timeout elapses waiting for the next
       ;; message — or the socket dropped — so reaching here is a genuine eval
@@ -411,7 +412,7 @@
          status
          #{}]
 
-    (if (or (empty? rs) (> (System/currentTimeMillis) (long deadline)))
+    (if (or (empty? rs) (> (util/now-ms) (long deadline)))
       {:status status :msgs msgs}
       (let [msg
             (first rs)
@@ -472,7 +473,7 @@
    leftover messages. Returns true once the stream is clean (done reached)."
   [responses deadline]
   (loop [rs responses]
-    (cond (> (System/currentTimeMillis) (long deadline)) false
+    (cond (> (util/now-ms) (long deadline)) false
           (empty? rs) true
           :else (let [s (sget (first rs) "status")
                       st (cond (nil? s) #{}
@@ -491,7 +492,7 @@
    `*e` self-fetch when that middleware is absent. Never throws — returns nil on
    any failure so the base result is untouched."
   [session responses]
-  (let [deadline (+ (System/currentTimeMillis) 3000)]
+  (let [deadline (+ (util/now-ms) 3000)]
     (try (when (drain-to-done! responses deadline)
            (or (some (fn [op]
                        (let [{:keys [status msgs]} (collect-op session op deadline)]
@@ -693,8 +694,7 @@
    which is exactly the one we cloned this session for. Bounded and swallows
    everything so it is safe from the timeout path / a `finally`."
   [session]
-  (try (collect-op session "interrupt" (+ (System/currentTimeMillis) 1000))
-       (catch Throwable _ nil)))
+  (try (collect-op session "interrupt" (+ (util/now-ms) 1000)) (catch Throwable _ nil)))
 
 (defn- close-session!
   "Send a `close` op so the nREPL server reaps this session's executor thread.
@@ -705,7 +705,7 @@
    on the server until it stops. NOT used on the happy path: a reused session is
    closed only when its connection is torn down. Best-effort and bounded."
   [session]
-  (try (collect-op session "close" (+ (System/currentTimeMillis) 2000)) (catch Throwable _ nil)))
+  (try (collect-op session "close" (+ (util/now-ms) 2000)) (catch Throwable _ nil)))
 
 (def ^:private synthetic-eval-frame-re #"^[^\s]+/eval\d+(?:[/$][^\s]+)?(?:\s|$)")
 
@@ -742,7 +742,7 @@
   (when-not (string? code)
     (throw (ex-info "eval! requires a :code string" {:type :clj/nrepl-bad-args :code code})))
   (let [start
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         deadline
         (+ start (long timeout-ms))]
@@ -795,7 +795,7 @@
                    combined)
 
                  elapsed
-                 (- (System/currentTimeMillis) start)
+                 (- (util/now-ms) start)
 
                  res
                  (assoc combined
@@ -935,7 +935,7 @@
                  (nrepl/client conn timeout-ms)
 
                  deadline
-                 (+ (System/currentTimeMillis) (long timeout-ms))
+                 (+ (util/now-ms) (long timeout-ms))
 
                  responses
                  (nrepl/message client {:op "describe"})
@@ -964,7 +964,7 @@
 
                (cond done? (up versions ops)
                      (empty? rs) (if versions (up versions ops) {:status :unresponsive})
-                     (> (System/currentTimeMillis) deadline)
+                     (> (util/now-ms) deadline)
                      (if versions (up versions ops) {:status :unresponsive})
                      :else (let [msg
                                  (first rs)
@@ -1023,7 +1023,7 @@
   (if-not (pos? (long (or port 0)))
     {:status :down :form health-form}
     (let [start
-          (System/currentTimeMillis)
+          (util/now-ms)
 
           deadline
           (+ start (long timeout-ms))]
@@ -1047,7 +1047,7 @@
                 (combine responses deadline)
 
                 ms
-                (- (System/currentTimeMillis) start)]
+                (- (util/now-ms) start)]
 
             (cond
               (get combined "timed_out")

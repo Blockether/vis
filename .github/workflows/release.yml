@@ -58,7 +58,7 @@ jobs:
             ~/.m2/repository
             ~/.gitlibs
             ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'packages/**/deps.edn') }}
           restore-keys: |
             deps-${{ runner.os }}-
 
@@ -149,7 +149,7 @@ jobs:
         run: |
           set -euo pipefail
           # The monorepo publishes com.blockether/vis plus every package discovered
-          # from extensions/**/deps.edn. Probe the root vis jar as the bellwether —
+          # from packages/*/deps.edn. Probe the root vis jar as the bellwether —
           # every release deploys the full selected package set together.
           VERSION="${GITHUB_REF_NAME#v}"
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \

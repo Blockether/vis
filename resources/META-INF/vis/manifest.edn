@@ -9,12 +9,12 @@
   com.blockether.vis.internal.foundation.harness.core/register!
   com.blockether.vis.internal.language.clojure.core/register!
   com.blockether.vis.internal.language.python.core/register!
-  com.blockether.vis.ext.provider-alibaba/register!
-  com.blockether.vis.ext.provider-anthropic/register!
-  com.blockether.vis.ext.provider-github-copilot/register!
-  com.blockether.vis.ext.provider-openai-codex/register!
-  com.blockether.vis.ext.provider-opencode-go/register!
-  com.blockether.vis.ext.provider-openrouter/register!
-  com.blockether.vis.ext.provider-openai/register! com.blockether.vis.ext.provider-ollama/register!
-  com.blockether.vis.ext.provider-lmstudio/register!
-  com.blockether.vis.ext.provider-mistral/register! com.blockether.vis.ext.provider-zai/register!]}
+  com.blockether.vis.internal.provider.alibaba/register!
+  com.blockether.vis.internal.provider.anthropic/register!
+  com.blockether.vis.internal.provider.github-copilot/register!
+  com.blockether.vis.internal.provider.openai-codex/register!
+  com.blockether.vis.internal.provider.opencode-go/register!
+  com.blockether.vis.internal.provider.openrouter/register!
+  com.blockether.vis.internal.provider.openai/register! com.blockether.vis.internal.provider.ollama/register!
+  com.blockether.vis.internal.provider.lmstudio/register!
+  com.blockether.vis.internal.provider.mistral/register! com.blockether.vis.internal.provider.zai/register!]}

@@ -133,10 +133,10 @@ extension.
 {:deps {com.blockether/vis {:mvn/version "0.1.41"}}}
 ```
 
-`com.blockether/vis` already depends on every bundled extension, so that single
-coordinate gives the full agent. Depend on one package
-(`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`,
-`com.blockether/vis-language-python`, …) only when you embed a part of it.
+`com.blockether/vis` carries the language packs, providers and the SQLite store,
+so that single coordinate gives the full agent. Depend on
+`com.blockether/vis-contract` alone only when you need the host contract
+without the engine.
 
 ## What runs: native, or the source Vis owns
 

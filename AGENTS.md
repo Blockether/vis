@@ -9,12 +9,11 @@ Only what you would otherwise get wrong: repo decisions, local traps, and contra
 
 ## Where a change goes
 
-One engine, many extensions. Read the owning docstring before editing an area — this table only says which area owns what.
+One engine, one package. Read the owning docstring before editing an area — this table only says which area owns what.
 
 | path | what it owns |
 |---|---|
-| `src/` | the engine, one package (`com.blockether.vis.core`): loop, providers, gateway, sandbox, `internal/foundation/*` modules |
-| `extensions/{channels,languages,providers,persistance}/vis-*` | one extension per directory, each with its own `deps.edn` and an explicit `register!` Var listed in the one closed `resources/META-INF/vis/manifest.edn`. Runtime never discovers extension manifests from the classpath; initialization follows that vector in order, and `build.clj` derives native reachability from the same entrypoints |
+| `src/` | the engine, one package (`com.blockether.vis.core`): loop, gateway, sandbox, `internal/foundation/*` modules, plus everything that used to be a separate extension jar — `internal/language/{clojure,python}`, `internal/provider/*` and `internal/persistance/sqlite`. Each of those still exposes an explicit `register!` Var listed in the one closed `resources/META-INF/vis/manifest.edn`; runtime never discovers manifests from the classpath, initialization follows that vector in order, and `build.clj` derives native reachability from the same entrypoints. A second persistence dialect is one more row in `persistance/backends`, not a jar |
 | `packages/vis-agent` | the Python half, published as `vis-agent` and imported as `vis`. `src/vis/__init__.py` is the very file the engine execs inside every extension context (`deps.edn` puts it on the classpath) — never mirror, re-declare or hand-sync it |
 | `packages/vis-contract` | the host contract itself: canonical JSON documents and same-named JSON Schemas live in `resources/vis-contract/`; Skjema validates them for Clojure, and the Python wheel packages those source files directly |
 | `resources/vis-docs/` | the docs site AND what `doc("<slug>")` answers. `resources/META-INF/vis/apropos/docs.edn` is the page catalog the root manifest names explicitly; `resources/vis-docs/site.edn` is the site's own navigation — the ONE place a page is titled, grouped and ordered, and the reason a record carries none of it. There is no separate docs discovery path |

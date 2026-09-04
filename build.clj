@@ -1,6 +1,6 @@
 (ns build
-  "Build script for vis: ONE jar at `com.blockether/vis`, plus separate
-   jars for every classpath plug-in under `extensions/`.
+  "Build script for vis: ONE jar at `com.blockether/vis`, plus a jar for
+   every library under `packages/`.
 
    Earlier this monorepo published three host packages (vis-sdk, vis-runtime,
    vis-main). They've been merged into a single namespace at
@@ -14,9 +14,9 @@
      clojure -T:build deploy           # build + deploy all to Clojars
      clojure -T:build clean            # delete target/
 
-     clojure -T:build jar     :package vis-provider-anthropic    # one only
-     clojure -T:build install :package vis-provider-anthropic
-     clojure -T:build deploy  :package vis-provider-anthropic
+     clojure -T:build jar     :package vis-contract    # one only
+     clojure -T:build install :package vis-contract
+     clojure -T:build deploy  :package vis-contract
 
    The `:package` selector matches `:lib` short name (after the slash)."
   (:require [clojure.java.io :as io]
@@ -95,10 +95,10 @@
 ;; Package catalog
 
 (def ^:private subproject-patterns
-  "Where a publishable subproject's own deps.edn sits, by tree: an extension is
-   `extensions/<kind>/<name>`, a library shared with the outside world is
-   `packages/<name>`. Both are jars on Clojars; neither is listed by hand."
-  {"extensions" #"extensions/[^/]+/[^/]+/deps\.edn" "packages" #"packages/[^/]+/deps\.edn"})
+  "Where a publishable subproject's own deps.edn sits: a library shared with
+   the outside world is `packages/<name>`. Each is a jar on Clojars; none is
+   listed by hand."
+  {"packages" #"packages/[^/]+/deps\.edn"})
 
 (defn- subproject-deps-file?
   [^java.io.File f]
@@ -110,7 +110,7 @@
 (defn- subproject-dirs
   "Every subproject that declares its own deps.edn. New packages are publishable
    automatically — no hard-coded package list to remember when adding
-   `extensions/<kind>/<name>/deps.edn` or `packages/<name>/deps.edn`."
+   `packages/<name>/deps.edn`."
   []
   (->> (mapcat #(file-seq (io/file %)) (keys subproject-patterns))
        (filter subproject-deps-file?)
@@ -127,8 +127,8 @@
   "Every publishable jar in the monorepo. Deploy builds every selected package
   with local-root deps first, then rewrites publish POMs to same-version Maven
   coords and pushes the jars to Clojars. Packages are discovered from
-  `extensions/**/deps.edn` and `packages/*/deps.edn`, so adding one automatically
-  includes it in `jar`, `install`, and `deploy`."
+  `packages/*/deps.edn`, so adding one automatically includes it in `jar`,
+  `install`, and `deploy`."
   (into [{:lib 'com.blockether/vis :dir "."}] (map subproject-dir->package) (subproject-dirs)))
 
 (def ^:private sibling-versions
@@ -180,7 +180,6 @@
 
 (def ^:private package-descriptions
   {'com.blockether/vis "vis - single-namespace SDK + iteration runtime + binary entry point."
-   'com.blockether/vis-provider-github-copilot "GitHub Copilot OAuth device-flow provider."
    'com.blockether/vis-foundation-exa "Exa MCP web/code search tools for the Vis SCI sandbox."})
 
 (defn- build-pom-data
@@ -285,9 +284,9 @@
 (defn- selected-packages [{:keys [package]}] (if package [(pkg-by-name package)] packages))
 
 (defn- deploy-build-order
-  "Build extension/sibling packages before the root `com.blockether/vis` jar. The
-   root publish POM rewrites its `:local/root` extension deps to same-version
-   Maven coordinates, so a fresh tag release must have already installed those
+  "Build sibling packages before the root `com.blockether/vis` jar. The root
+   publish POM rewrites its `:local/root` deps to same-version Maven
+   coordinates, so a fresh tag release must have already installed those
    sibling jars into ~/.m2 before `package-publish-basis` resolves the root POM."
   [pkgs]
   (sort-by #(if (= 'com.blockether/vis (:lib %)) 1 0) pkgs))

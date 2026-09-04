@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.language.clojure.core
-  "vis-language-clojure — Clojure language handlers for Vis.
+  "Clojure language handlers for Vis.
 
    Format/test/REPL are exposed through the generic language facade
    (`format`, `test`, `repl_eval`, `repl_start`, `repl_stop`) —

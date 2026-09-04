@@ -20,7 +20,8 @@
    Failure mode: if a backend refuses (parse error, unfamiliar reader macro,
    anything that throws), the formatter returns the original source unchanged.
    We never silently corrupt a file because the formatter choked."
-  (:require [cljfmt.config :as cljfmt-config]
+  (:require [com.blockether.vis.internal.util :as util]
+            [cljfmt.config :as cljfmt-config]
             [cljfmt.core :as cljfmt]
             [clojure.java.io :as io]
             [zprint.config :as zprint-config]
@@ -161,8 +162,7 @@
   "SHA-256 of `s` as a URL-safe base64 string — the content half of the cache
    key. Hashing avoids pinning whole file bodies in the key."
   ^String [^String s]
-  (let [md (java.security.MessageDigest/getInstance "SHA-256")]
-    (.encodeToString (java.util.Base64/getUrlEncoder) (.digest md (.getBytes s "UTF-8")))))
+  (.encodeToString (java.util.Base64/getUrlEncoder) (util/sha256 (util/utf8 s))))
 
 (defn- result-key
   "Cache key for formatting `source` under `backend` governed by config file

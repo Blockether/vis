@@ -1,0 +1,20 @@
+(ns com.blockether.vis.internal.provider.ollama-test
+  (:require [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.provider.ollama]
+            [lazytest.core :refer [defdescribe expect it]]))
+
+(defdescribe provider-ollama-test
+             (it "registers one Ollama provider extension"
+                 (let [provider
+                       (vis/provider-by-id :ollama)
+
+                       status
+                       ((:provider/status-fn provider))]
+
+                   (expect (= :ollama (:provider/id provider)))
+                   (expect (= "Ollama" (:provider/label provider)))
+                   (expect (false? (:is-authenticated status)))
+                   (expect (nil? (:authenticated? status)))
+                   (expect (= "http://localhost:11434/v1" (:base-url status)))))
+             (it "retains svar's ordinary network defaults"
+                 (expect (nil? (get-in (vis/provider-by-id :ollama) [:provider/preset :network])))))
