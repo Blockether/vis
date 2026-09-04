@@ -365,8 +365,7 @@ export function SessionsScreen({
   const lastWindowReadAt = useRef(0);
   // The row action belongs to one session on one machine. Renaming needs an input
   // dialog; deleting asks through `ConfirmRow` exactly where that session row stood.
-  // Forking from the row COPIES the whole conversation and opens the copy — one
-  // press, no question; a fork cut at a turn is asked on that turn, in the transcript.
+  // Forking is the transcript's verb — it is cut at a turn, on that turn.
   const [rowAction, setRowAction] = useState<SessionRowAction | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -1257,25 +1256,6 @@ export function SessionsScreen({
     }
   }, [load, onOpen]);
 
-  /**
-   * Fork the whole conversation from its row. The fork is a session of its own, so
-   * the app goes straight into it — the source row is untouched behind it. A fork
-   * that failed has no panel left to speak from, so the word lands where a failed
-   * create's does.
-   */
-  const forkSession = useCallback(
-    async (session: Session, conn: GatewayConn) => {
-      setCreateError(null);
-      try {
-        const forked = await clientFor(conn).forkSession(session.id);
-        await onOpen(conn, forked.id);
-      } catch (cause) {
-        setCreateError((cause as Error).message);
-      }
-    },
-    [onOpen],
-  );
-
   // Apply a successful gateway deletion to exactly the machine that owned it. The
   // gateway already answered which ids disappeared, so neither a session nor a project
   // removal re-downloads the fleet merely to rediscover that answer.
@@ -1419,11 +1399,10 @@ export function SessionsScreen({
     () => ({
       open: onOpen,
       rename: renameSession,
-      fork: forkSession,
       requestDelete: startDelete,
       toggleStar,
     }),
-    [onOpen, renameSession, forkSession, startDelete, toggleStar],
+    [onOpen, renameSession, startDelete, toggleStar],
   );
   const rowActions = useMemo<SessionListActions>(
     () => ({

@@ -47,7 +47,6 @@ function row(rename = vi.fn(async () => {})) {
   const commands = {
     open: vi.fn(),
     rename,
-    fork: vi.fn(),
     requestDelete: vi.fn(),
     toggleStar: vi.fn(),
   };

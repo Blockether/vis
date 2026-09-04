@@ -3140,16 +3140,16 @@ export class GatewayClient {
   }
 
   /**
-   * Fork `sid` into a NEW INDEPENDENT session — the wire twin of the TUI's fork
-   * and fork-at-turn. `throughTurnId` is the LAST turn the fork keeps; omitted,
-   * the fork carries the whole conversation. The source session is untouched,
-   * and the answer is the fork's own row, ready to open.
+   * Fork `sid` into a NEW INDEPENDENT session — the wire twin of the TUI's
+   * fork-at-turn. `throughTurnId` is the LAST turn the fork keeps; the last turn of
+   * the conversation forks all of it. The source session is untouched, and the
+   * answer is the fork's own row, ready to open.
    */
-  async forkSession(sid: string, throughTurnId?: string): Promise<Session> {
+  async forkSession(sid: string, throughTurnId: string): Promise<Session> {
     const res = await this.request<{ session: Session }>(
       "POST",
       `/v1/sessions/${encodeURIComponent(sid)}/forks`,
-      throughTurnId ? { through_turn_id: throughTurnId } : {},
+      { through_turn_id: throughTurnId },
     );
     return res.session;
   }

@@ -11,7 +11,7 @@ import {
   SectionHeader,
 } from "./SessionNavigator";
 import { SwipeActions } from "./SwipeActions";
-import { ForkIcon, PencilIcon, StarIcon, TrashIcon } from "./icons";
+import { PencilIcon, StarIcon, TrashIcon } from "./icons";
 import { GatewayClient, type SessionMatch } from "../lib/gateway";
 import type { GatewayConn, Session, SessionUsage } from "../lib/types";
 import {
@@ -51,8 +51,6 @@ export type SessionRowCommands = {
     fresh?: boolean,
   ) => void | Promise<void>;
   rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
-  /** Forks the whole conversation and opens the copy; the row stays as it was. */
-  fork: (session: Session, conn: GatewayConn) => void | Promise<void>;
   requestDelete: (session: Session, conn: GatewayConn) => void;
   toggleStar: (session: Session, conn: GatewayConn) => void;
 };
@@ -259,18 +257,6 @@ export const SessionRow = memo(function SessionRow({
               label: "Rename",
               icon: <PencilIcon className="size-4" />,
               onSelect: beginRename,
-            },
-            {
-              key: "fork",
-              // The strip is 72px wide, so the caption is the one word; the whole
-              // sentence lives in `name` for a reader who cannot see the row.
-              label: "Fork",
-              name: `Fork ${title}`,
-              icon: <ForkIcon className="size-4" />,
-              // Forking COPIES — it takes nothing away from the row it starts on —
-              // so it stays a neutral verb beside Rename, never the red one, and
-              // asks nothing: the copy opens. Cutting at a turn is that turn's own verb.
-              onSelect: () => void commands.fork(session, conn),
             },
             {
               key: "delete",
