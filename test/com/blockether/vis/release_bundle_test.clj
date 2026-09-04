@@ -944,3 +944,35 @@
                              "beta-native.yml" beta
                              "native-release.yml" stable}]
         (expect (not (str/includes? source "VIS_CHANNEL")) what)))))
+
+;; Regression: `vis-agent --jvm` run from any directory other than the checkout
+;; died with "Could not locate com/blockether/vis/core". tools.deps caches the
+;; project roots RELATIVELY and the JVM resolves them against `user.dir`, which
+;; the launcher points at the invocation directory on purpose.
+(defdescribe
+  source-runtime-classpath-test
+  (it "anchors every relative classpath root to the source checkout before -Scp"
+      (let [launcher
+            (slurp "bin/vis-agent")
+
+            fn-body
+            (re-find #"(?s)absolute_vis_classpath\(\) \{.*?\n\}\n" launcher)
+
+            dir
+            (.toFile (Files/createTempDirectory "vis-classpath" (make-array FileAttribute 0)))]
+
+        (expect (some? fn-body) "launcher defines absolute_vis_classpath")
+        (try (write-executable!
+               (io/file dir "clojure")
+               "#!/usr/bin/env bash\nprintf '%s' 'src:resources:/opt/m2/lib.jar'\n")
+             (let [{:keys [exit output]}
+                   (run-bash ["bash" "-c"
+                              (str "source_root=/checkout\nvis_extension_sdeps=()\n"
+                                   fn-body
+                                   "absolute_vis_classpath")]
+                             {"PATH" (str (.getPath dir) ":" (System/getenv "PATH"))})]
+               (expect (zero? exit) output)
+               (expect (= "/checkout/src:/checkout/resources:/opt/m2/lib.jar" output) output))
+             (expect (str/includes? launcher "-Scp \"$vis_classpath\" -M:vis")
+                     "launch line hands -Scp over")
+             (finally (delete-tree! dir))))))

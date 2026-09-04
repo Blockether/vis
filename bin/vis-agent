@@ -1240,8 +1240,24 @@ if [[ -z "$vis_prep_stamp" || ! -f "$vis_prep_marker" ]]; then
     : > "$vis_prep_marker" 2>/dev/null || true
   fi
 fi
-if (( ${#vis_extension_sdeps[@]} > 0 )); then
-  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} "${vis_extension_sdeps[@]}" -M:vis "$@"
-else
-  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} -M:vis "$@"
-fi
+# The classpath tools.deps caches names this project's own roots RELATIVELY
+# (`src`, `resources`, …), and the JVM resolves a relative classpath entry
+# against `user.dir` — which the launch below deliberately points at the
+# INVOCATION directory, not this checkout. Left alone, a `--jvm` run from any
+# other directory dies with "Could not locate com/blockether/vis/core". So the
+# cached classpath is read back (`-Spath` costs no JVM once the cache is fresh),
+# every relative entry is anchored to the source root, and `-Scp` hands the
+# absolute one over; the alias' :jvm-opts/:main-opts still come from the cache.
+absolute_vis_classpath() {
+  local raw entry out=""
+  raw="$(clojure ${vis_extension_sdeps[@]+"${vis_extension_sdeps[@]}"} -Spath -M:vis)" || return 1
+  local IFS=':'
+  for entry in $raw; do
+    [[ -z "$entry" ]] && continue
+    [[ "$entry" != /* ]] && entry="$source_root/$entry"
+    out="${out:+$out:}$entry"
+  done
+  printf '%s' "$out"
+}
+vis_classpath="$(absolute_vis_classpath)" || exit 1
+run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} ${vis_extension_sdeps[@]+"${vis_extension_sdeps[@]}"} -Scp "$vis_classpath" -M:vis "$@"
