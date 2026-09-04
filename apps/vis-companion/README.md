@@ -253,6 +253,14 @@ A regular Vis tag releases everything together:
 git tag v1.0.2 && git push origin v1.0.2
 ```
 
+That tag also runs `.github/workflows/desktop-companion.yml`, which packages the same web
+bundle as a desktop app with [Pake](https://github.com/tw93/pake) on macOS (universal
+`.dmg`), Windows (`.msi`) and Linux (`.deb`, `.AppImage`) and attaches the installers to the
+GitHub Release. `scripts/desktop-package.mjs` holds the flags and asset names; locally,
+`npm run build && npm run package:desktop` writes this OS's installer to `build/desktop/`
+(needs a Rust toolchain). A **Run workflow** from a branch is a dry run that keeps the
+installers as workflow artifacts and publishes nothing.
+
 For another iOS/Android build while Vis remains `1.0.2`, commit and push the app
 fix and create a distinct immutable companion release tag through the guarded script:
 

@@ -1,0 +1,116 @@
+name: Desktop companion
+
+# Packages the Vis Companion (apps/vis-companion) as a DESKTOP app for macOS, Windows
+# and Linux with Pake — the same web bundle the phones get, wrapped in a Tauri window
+# (see apps/vis-companion/scripts/desktop-package.mjs for the flags and asset names).
+# A regular Vis `vX.Y.Z` release calls this after its own release succeeds and the
+# installers are attached to that release. A dispatch from a BRANCH is a DRY RUN: it
+# builds every installer as a workflow artifact and publishes nothing — the way to
+# prove a packaging change without spending a tag. A dispatch naming an already
+# pushed tag rebuilds that tag's source with THIS workflow file and attaches to it.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to attach the installers to (defaults to the calling ref)"
+        type: string
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach to; leave empty for a dry run on this ref"
+        type: string
+        required: false
+
+permissions:
+  contents: write          # upload assets to the release
+
+concurrency:
+  group: desktop-companion-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            label: macOS universal
+          - runner: windows-latest
+            label: Windows x64
+          - runner: ubuntu-latest
+            label: Linux x64
+    defaults:
+      run:
+        working-directory: apps/vis-companion
+        shell: bash
+    steps:
+      - name: Decide where this build lands
+        id: target
+        run: |
+          ref='${{ inputs.tag || github.ref_name }}'
+          case "$ref" in
+            v[0-9]*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo "attaching to $ref" ;;
+            *) echo 'publish=false' >> "$GITHUB_OUTPUT"; echo "dry run on $ref: packaging, publishing nothing" ;;
+          esac
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/vis-companion/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # Pake builds one macOS binary for both Apple silicon and Intel.
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Pake compiles inside the npx cache; keying on the pinned pake-cli version
+          # keeps a warm target dir across releases and drops it when the pin moves.
+          key: pake-3.15.7
+          cache-on-failure: true
+
+      - name: Install Linux WebKit build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf libssl-dev libxdo-dev build-essential file
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Package with Pake
+        run: npm run package:desktop
+
+      - name: List installers
+        run: ls -la build/desktop
+
+      - name: Keep installers as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vis-companion-desktop-${{ matrix.runner }}
+          path: apps/vis-companion/build/desktop/*
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: steps.target.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: |
+            apps/vis-companion/build/desktop/*

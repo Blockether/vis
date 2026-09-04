@@ -21,6 +21,7 @@ import {
   reachOf,
 } from '../lib/endpoints';
 import { onWake } from '../lib/wake';
+import { hasHardwarePointer } from '../lib/pointer';
 import { warm } from '../lib/warm';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { Banner, Button, ConfirmRow, Input, ListRow, Spinner } from './ui';
@@ -1006,9 +1007,15 @@ export function AddMachine({
   // mid-pair aborted nothing and the panel's timer went on ticking.
   useEffect(() => () => stopRef.current?.abort(), []);
 
+  // A QR is scanned by the device in your HAND, pointed at the screen that printed
+  // it. Under a mouse this app IS that screen — a laptop's camera faces the reader,
+  // not the terminal — so the verb is not offered and its chunk is never fetched.
+  const canScan = !hasHardwarePointer();
+
   // Warm the scanner chunk once these controls are idle. Whoever is here is one
   // tap away from "Scan", and the fetch is off the launch critical path.
   useEffect(() => {
+    if (!canScan) return undefined;
     const ric = window.requestIdleCallback;
     if (typeof ric !== 'function') {
       const id = window.setTimeout(prefetchScanner, 1200);
@@ -1016,7 +1023,7 @@ export function AddMachine({
     }
     const handle = ric(prefetchScanner, { timeout: 3000 });
     return () => window.cancelIdleCallback?.(handle);
-  }, []);
+  }, [canScan]);
 
   // Handshake first: never save a gateway we cannot reach. We only persist a
   // gateway that actually answered — an unreachable URL/QR is rejected with a
@@ -1167,9 +1174,11 @@ export function AddMachine({
               >
                 {busy ? 'Pairing\u2026' : 'Pair'}
               </Button>
-              <Button variant="secondary" onClick={() => setScanning(true)} disabled={busy}>
-                Scan QR
-              </Button>
+              {canScan && (
+                <Button variant="secondary" onClick={() => setScanning(true)} disabled={busy}>
+                  Scan QR
+                </Button>
+              )}
             </div>
           </div>
         </div>

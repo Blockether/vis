@@ -33,6 +33,7 @@
     "prepare:android": "npm run cap:config && node scripts/android-prepare.mjs",
     "build:android": "npm run build && npm run sync && node scripts/android-prepare.mjs",
     "build:ios": "npm run build && npm run sync",
+    "package:desktop": "node scripts/desktop-package.mjs",
     "prepare:ios": "node scripts/ios-prepare.mjs",
     "release:mobile": "node scripts/mobile-release.mjs",
     "release:ios": "node scripts/mobile-release.mjs",

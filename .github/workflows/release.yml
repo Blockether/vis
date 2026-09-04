@@ -249,3 +249,11 @@ jobs:
       track: all
       audience: all
     secrets: inherit
+
+  desktop:
+    name: Release matching desktop apps
+    needs: release
+    uses: ./.github/workflows/desktop-companion.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
