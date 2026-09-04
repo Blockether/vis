@@ -91,8 +91,9 @@
                 "Provider limits fn returned an invalid report"
                 {:report raw :explain (contract-provider/explain-report raw)}))
 
-(def ^:private limits-cache-ttl-ms
-  "How long one provider's live limits report is reused.
+(def ^:private default-cache-ms
+  "How long one provider's live limits report is reused when the provider does
+   not declare a budget of its own.
 
    `:provider/limits-fn` is an UPSTREAM HTTP call (the provider's usage
    endpoint). Every channel polls limits independently — the TUI footer thread,
@@ -100,8 +101,20 @@
    registered provider in one request) — so without a cache N clients times M
    providers hit the provider's API on every glance. 15s is short enough that a
    quota that just moved shows up promptly and long enough that a burst of
-   clients costs ONE upstream call."
+   clients costs ONE upstream call. A provider whose usage endpoint meters its
+   own callers asks for a longer budget with `:provider/limits-cache-ms`."
   15000)
+
+(def ^:private throttled-cache-ms
+  "How long an answer is reused after the usage endpoint REFUSED the check.
+   Asking a metered endpoint again every few seconds is what earned the refusal,
+   so a refusal is remembered far longer than a quota — and the last good report
+   stands in for it while it lasts."
+  (* 10 60 1000))
+
+(def ^:private throttled-statuses
+  "Upstream statuses that mean \"ask later\", not \"this is your quota\"."
+  #{408 409 425 429 500 502 503 504})
 
 (defonce ^:private limits-cache (atom {}))
 
@@ -110,16 +123,72 @@
 
    Called after auth changes (sign-in / sign-out): the cached report for a
    provider that just re-authenticated would otherwise keep saying
-   `:unauthenticated` for up to the TTL."
+   `:unauthenticated` until its budget ran out.
+
+   This is the ONE limits cache. A `:provider/limits-fn` that kept a cache of
+   its own would outlive this flush and keep painting the pre-login verdict at a
+   credential that already works, so a limits fn FETCHES and nothing else."
   ([] (reset! limits-cache {}))
   ([provider-id] (swap! limits-cache dissoc provider-id)))
 
+(defn- throttled-report?
+  "True when the provider answered \"ask later\" instead of a quota."
+  [report]
+  (and (= :error (:status report))
+       (contains? throttled-statuses (get-in report [:error :data :status]))))
+
+(defn- backing-off-note
+  [status]
+  (str "Showing the last known usage; the provider's usage endpoint returned HTTP "
+       status
+       ", so Vis is backing off."))
+
+(defn- settled
+  "What one freshly fetched `report` BECOMES in the cache: the value served, when
+   it expires, and the last good report kept to stand in for a throttled one.
+
+   The provider's budget buys reuse of a GOOD answer. A refusal backs off far
+   longer, and anything else — an error, a credential the provider rejected — is
+   re-asked at the default, so a verdict a sign-in already invalidated cannot
+   linger."
+  [report cache-ms stale-ok]
+  (let [throttled?
+        (throttled-report? report)
+
+        served
+        (if (and throttled? stale-ok)
+          (assoc-in stale-ok
+            [:dynamic :note]
+            (backing-off-note (get-in report [:error :data :status])))
+          report)]
+
+    {:report served
+     :expires-at-ms (+ (util/now-ms)
+                       (long (cond throttled? throttled-cache-ms
+                                   (= :ok (:status report)) cache-ms
+                                   :else default-cache-ms)))
+     :stale-ok (if (= :ok (:status report)) report stale-ok)}))
+
+(defn- servable?
+  "True while `entry` may still be served: a fetch still IN FLIGHT (the second
+   reader waits for the first instead of starting its own) or a finished one
+   inside its budget. Only a REALIZED delay is dereferenced, so this stays pure
+   enough for `swap!` to retry it."
+  [entry now-ms]
+  (boolean (when-let [d (:value entry)]
+             (or (not (realized? d)) (< (long now-ms) (long (:expires-at-ms @d)))))))
+
+(defn- last-good-report
+  [entry]
+  (when-let [d (:value entry)]
+    (when (realized? d) (:stale-ok @d))))
+
 (defn- cached-report
-  "Run `fetch` at most once per `limits-cache-ttl-ms` per provider.
+  "Run `fetch` at most once per `cache-ms` per provider.
 
    The cache holds a `delay`, so concurrent callers that miss together share ONE
    in-flight upstream call instead of stampeding it (single flight)."
-  [provider-id fetch]
+  [provider-id cache-ms fetch]
   (let [now
         (util/now-ms)
 
@@ -127,12 +196,14 @@
         (-> (swap! limits-cache
               (fn [m]
                 (let [e (get m provider-id)]
-                  (if (and e (< (- now (long (:at e))) (long limits-cache-ttl-ms)))
+                  (if (servable? e now)
                     m
-                    (assoc m provider-id {:at now :value (delay (fetch))})))))
+                    (assoc m
+                      provider-id {:value (delay
+                                            (settled (fetch) cache-ms (last-good-report e)))})))))
             (get provider-id))]
 
-    @(:value entry)))
+    (:report @(:value entry))))
 
 (defn provider-limits
   "Return a normalized, contract-validated limits report for one provider id.
@@ -158,6 +229,7 @@
 
     (cond (and provider (:provider/limits-fn provider))
           (cached-report provider-id
+                         (or (:provider/limits-cache-ms provider) default-cache-ms)
                          (fn []
                            (try (let [report (merge-report static-report
                                                            (or ((:provider/limits-fn provider))

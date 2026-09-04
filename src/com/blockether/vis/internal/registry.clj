@@ -99,7 +99,8 @@
        (util/non-blank-string? (:provider/label x))
        (every? #(optional-valid? x % ifn?) provider-function-keys)
        (optional-valid? x :provider/preset map?)
-       (optional-valid? x :provider/is-managed boolean?)))
+       (optional-valid? x :provider/is-managed boolean?)
+       (optional-valid? x :provider/limits-cache-ms pos-int?)))
 
 (defn provider
   "Build and validate a provider descriptor."

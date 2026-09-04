@@ -103,92 +103,39 @@
                                               {:open-browser-fn (constantly true)
                                                :manual-code-fn (fn [_]
                                                                  "code123#wrong")}))))))
-  (it
-    "reports live Claude subscription usage limits from Anthropic OAuth endpoint"
-    (let [provider
-          (vis/provider-by-id :anthropic-coding-plan)
-
-          called
-          (atom nil)]
-
-      (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []
-                                                          {:token "sk-ant-oat01-test"})
-                       #'http/get (fn [url opts]
-                                    (reset! called {:url url :opts opts})
-                                    {:status 200
-                                     :body (json/write-json-str
-                                             {:fiveHour {:utilization 72.5
-                                                         :resetsAt "2026-05-07T12:00:00Z"}
-                                              :sevenDay {:utilization 25}
-                                              :sevenDayOpus {:utilization 10}})})}
-        (fn []
-          (anthropic/clear-limits-cache!)
-          (let [report
-                ((:provider/limits-fn provider))
-
-                rows
-                (get-in report [:dynamic :limits])]
-
-            (expect (= "https://api.anthropic.com/api/oauth/usage" (:url @called)))
-            (expect (= "Bearer sk-ant-oat01-test"
-                       (get-in @called [:opts :headers "Authorization"])))
-            (expect (= :ok (:status report)))
-            (expect (= [:claude-5h :claude-7d :claude-opus-7d] (mapv :id rows)))
-            (expect (= 72.5 (:used (first rows))))
-            (expect (= 27.5 (:remaining (first rows))))
-            (expect (= 100.0 (:limit (first rows))))
-            (expect (= 1778155200000 (get-in (first rows) [:window :resets-at-ms]))))))))
-  (it "coalesces concurrent Claude subscription usage limit checks"
+  (it "reports live Claude subscription usage limits from Anthropic OAuth endpoint"
       (let [provider
             (vis/provider-by-id :anthropic-coding-plan)
 
-            calls
-            (atom 0)]
+            called
+            (atom nil)]
 
-        (anthropic/clear-limits-cache!)
         (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []
                                                             {:token "sk-ant-oat01-test"})
-                         #'http/get (fn [_url _opts]
-                                      (swap! calls inc)
-                                      (Thread/sleep 50)
+                         #'http/get (fn [url opts]
+                                      (reset! called {:url url :opts opts})
                                       {:status 200
-                                       :body (json/write-json-str {:five_hour {:utilization 8}
-                                                                   :seven_day {:utilization 7}})})}
+                                       :body (json/write-json-str
+                                               {:fiveHour {:utilization 72.5
+                                                           :resetsAt "2026-05-07T12:00:00Z"}
+                                                :sevenDay {:utilization 25}
+                                                :sevenDayOpus {:utilization 10}})})}
           (fn []
-            (let [reports (->> (repeatedly 2 #(future ((:provider/limits-fn provider))))
-                               doall
-                               (mapv deref))]
-              (expect (= 1 @calls))
-              (expect (= [:ok :ok] (mapv :status reports))))))))
-  (it "backs off after Anthropic usage endpoint returns HTTP 409 and serves stale limits"
-      (let [provider
-            (vis/provider-by-id :anthropic-coding-plan)
+            (let [report
+                  ((:provider/limits-fn provider))
 
-            calls
-            (atom 0)]
+                  rows
+                  (get-in report [:dynamic :limits])]
 
-        (anthropic/clear-limits-cache!)
-        (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []
-                                                            {:token "sk-ant-oat01-test"})
-                         #'http/get (fn [_url _opts]
-                                      (let [n (swap! calls inc)]
-                                        (if (= 1 n)
-                                          {:status 200
-                                           :body (json/write-json-str {:five_hour {:utilization 8}
-                                                                       :seven_day {:utilization
-                                                                                   7}})}
-                                          {:status 409 :body "conflict"})))}
-          (fn []
-            (let [fresh ((:provider/limits-fn provider))]
-              (expect (= :ok (:status fresh)))
-              (swap! @#'anthropic/limits-cache assoc :expires-at-ms 0)
-              (let [stale ((:provider/limits-fn provider))
-                    still-stale ((:provider/limits-fn provider))]
-
-                (expect (= 2 @calls))
-                (expect (= :ok (:status stale)))
-                (expect (= :ok (:status still-stale)))
-                (expect (str/includes? (get-in stale [:dynamic :note]) "HTTP 409"))))))))
+              (expect (= "https://api.anthropic.com/api/oauth/usage" (:url @called)))
+              (expect (= "Bearer sk-ant-oat01-test"
+                         (get-in @called [:opts :headers "Authorization"])))
+              (expect (= :ok (:status report)))
+              (expect (= [:claude-5h :claude-7d :claude-opus-7d] (mapv :id rows)))
+              (expect (= 72.5 (:used (first rows))))
+              (expect (= 27.5 (:remaining (first rows))))
+              (expect (= 100.0 (:limit (first rows))))
+              (expect (= 1778155200000 (get-in (first rows) [:window :resets-at-ms]))))))))
   (it
     "force-refreshes the rotated OAuth token when the usage endpoint answers 401, then retries once"
     (let [provider
@@ -200,7 +147,6 @@
           tokens
           (atom [])]
 
-      (anthropic/clear-limits-cache!)
       (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []
                                                           {:token "stale-token"})
                        #'anthropic/force-refresh-token! (fn [rejected]
@@ -228,7 +174,6 @@
             calls
             (atom 0)]
 
-        (anthropic/clear-limits-cache!)
         (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []
                                                             {:token "stale-token"})
                          #'anthropic/force-refresh-token! (fn [_rejected]
@@ -241,20 +186,26 @@
               (expect (= :unauthenticated (:status report)))
               (expect (= 1 @calls)))))))
   ;; User report, provider picker: a successful OAuth exchange kept painting the
-  ;; pre-login rejection because the extension cache outlived the new credential.
-  (it "drops a cached unauthenticated report when OAuth credentials are saved"
-      (let [auth-file (java.io.File/createTempFile "vis-anthropic-auth" ".json")]
-        (try (.delete auth-file)
-             (reset! @#'anthropic/limits-cache {:report {:provider-id :anthropic-coding-plan
-                                                         :status :unauthenticated}
-                                                :expires-at-ms Long/MAX_VALUE})
-             (with-redefs-fn {#'anthropic/auth-file (constantly (str auth-file))
-                              #'anthropic/auth-dir #(.getParentFile auth-file)}
-               (fn []
-                 (@#'anthropic/save-auth-file!
-                  {:access-token "access" :refresh-token "refresh" :expires-at-ms Long/MAX_VALUE})
-                 (expect (nil? @@#'anthropic/limits-cache))))
-             (finally (.delete auth-file) (anthropic/clear-limits-cache!)))))
+  ;; pre-login rejection, because this provider remembered its own usage verdict
+  ;; underneath the host cache, where the sign-in flush could not reach it.
+  (it "keeps no usage cache of its own — the host owns the budget"
+      (let [provider
+            (vis/provider-by-id :anthropic-coding-plan)
+
+            calls
+            (atom 0)]
+
+        (with-redefs-fn {#'anthropic/get-anthropic-token! (fn []
+                                                            {:token "sk-ant-oat01-test"})
+                         #'http/get (fn [_url _opts]
+                                      (swap! calls inc)
+                                      {:status 200
+                                       :body (json/write-json-str {:five_hour {:utilization 8}})})}
+          (fn []
+            ((:provider/limits-fn provider))
+            ((:provider/limits-fn provider))
+            (expect (= 2 @calls))
+            (expect (= 300000 (:provider/limits-cache-ms provider)))))))
   (it "returns unauthenticated limits report when Claude subscription OAuth is missing"
       (let [provider (vis/provider-by-id :anthropic-coding-plan)]
         (with-redefs-fn {#'anthropic/get-anthropic-token!
@@ -263,7 +214,6 @@
                          #'http/get (fn [& _]
                                       (throw (ex-info "should not call" {})))}
           (fn []
-            (anthropic/clear-limits-cache!)
             (let [report ((:provider/limits-fn provider))]
               (expect (= :unauthenticated (:status report)))
               (expect (= [] (get-in report [:dynamic :limits])))

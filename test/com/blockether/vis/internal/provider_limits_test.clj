@@ -5,7 +5,8 @@
    independently (TUI footer thread, companion router dialog, `/v1/router`
    fan-out), so the cache must collapse a burst into ONE call and an auth change
    must drop it immediately."
-  (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.registry :as registry]))
 
@@ -55,3 +56,42 @@
     (let [report (provider-limits/provider-limits :rejected-limits-test)]
       (is (= :unauthenticated (:status report)))
       (is (= [] (get-in report [:dynamic :limits]))))))
+
+(deftest a-provider-declares-how-long-its-report-may-be-reused
+  (let [calls (atom 0)]
+    (with-redefs [registry/provider-by-id (fn [_]
+                                            {:provider/id :budget-limits-test
+                                             :provider/limits-cache-ms 1
+                                             :provider/limits-fn (fn []
+                                                                   (swap! calls inc)
+                                                                   {:status :ok})})]
+      (provider-limits/flush-limits-cache! :budget-limits-test)
+      (provider-limits/provider-limits :budget-limits-test)
+      (Thread/sleep 5)
+      (provider-limits/provider-limits :budget-limits-test)
+      (testing "a 1ms budget expires where the 15s default would still be serving"
+        (is (= 2 @calls))))))
+
+(deftest a-throttled-usage-endpoint-serves-the-last-good-report
+  (let [calls (atom 0)]
+    (with-redefs [registry/provider-by-id
+                  (fn [_]
+                    {:provider/id :throttled-limits-test
+                     :provider/limits-cache-ms 1
+                     :provider/limits-fn (fn []
+                                           (if (= 1 (swap! calls inc))
+                                             {:status :ok :dynamic {:limits [] :note "live usage"}}
+                                             {:status :error
+                                              :error {:type :test/throttled
+                                                      :message "usage endpoint refused the check"
+                                                      :data {:status 429}}}))})]
+      (provider-limits/flush-limits-cache! :throttled-limits-test)
+      (is (= :ok (:status (provider-limits/provider-limits :throttled-limits-test))))
+      (Thread/sleep 5)
+      (let [throttled (provider-limits/provider-limits :throttled-limits-test)]
+        (testing "the last good quota stands in for the refusal, and says why"
+          (is (= :ok (:status throttled)))
+          (is (str/includes? (get-in throttled [:dynamic :note]) "HTTP 429")))
+        (testing "the back-off holds: no third call while it lasts"
+          (provider-limits/provider-limits :throttled-limits-test)
+          (is (= 2 @calls)))))))
