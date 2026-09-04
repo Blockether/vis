@@ -85,13 +85,20 @@ describe('one field takes whatever the terminal printed', () => {
     expect(gaps.map((n) => n.textContent)).toEqual([' ', ' ', ' ', ' ', ' ', ' ']);
   });
 
-  it('offers the scanner as the way in on the device in your hand', () => {
+  it('is a decision, not steps, on the device in your hand', () => {
     pointing('coarse');
     render(<AddMachine onAdd={vi.fn(async () => {})} />);
-    expect(screen.getAllByRole('heading', { level: 3 })[1].textContent).toBe(
-      'Scan the code, or paste the link',
-    );
+    // A phone has the camera: the two ways the code gets here are alternatives,
+    // so neither carries an ordinal and scanning is the one primary verb.
+    const ways = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
+    expect(ways).toEqual(['Scan the QR code', 'I have a pairing link']);
+    expect(document.body.textContent).not.toMatch(/^\s*1\s/m);
     expect(screen.getByRole('button', { name: 'Scan QR' })).toBeTruthy();
+    // The start command has nowhere to be pasted from a phone, so it is not shown;
+    // the field still takes the link or a bare address.
+    expect(screen.queryByRole('button', { name: 'Copy command' })).toBeNull();
+    expect(document.body.textContent).not.toContain('--require-token');
+    expect(field()).toBeTruthy();
   });
 
   it('pairs from a pasted link without asking for a token', async () => {

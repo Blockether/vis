@@ -994,6 +994,19 @@ function PairStep({ n, title, children }: { n: number; title: string; children: 
 }
 
 /**
+ * ONE WAY IN, on a phone: the choice's name on the shared left edge and what it
+ * holds under it. No ordinal — the two ways are alternatives, not an order.
+ */
+function PairChoice({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="min-w-0 space-y-2">
+      <h3 className="font-mono text-body font-bold text-white">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+/**
  * A COMMAND TO RUN SOMEWHERE ELSE, and the one way to take it there. It is the copy
  * chip beside a mono line, never a code block a finger has to select: the reader is
  * on the phone or at this screen, and the terminal is on the other machine.
@@ -1182,6 +1195,45 @@ export function AddMachine({
     ? Math.max(0, Math.ceil((run.startedAt + PROBE_TIMEOUT_MS - Math.max(now, run.startedAt)) / 1000))
     : 0;
 
+  // The field and its verb stay one row at every width: a hint standing between them
+  // read as a third option. What else the field takes is said ABOVE it, as prose —
+  // inside the placeholder, "or" looked like part of the address.
+  const field = (
+    <div className="flex items-start gap-2">
+      <div className="min-w-0 flex-1 space-y-2">
+        <Input
+          aria-label="Pairing link or machine address"
+          placeholder="vis://gateway?url=…&amp;token=…"
+          value={payload}
+          onChange={(event) => setPayload(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && payload && !busy) void add();
+          }}
+          autoCapitalize="none"
+          autoCorrect="off"
+        />
+        {asksToken && (
+          <Input
+            aria-label="Bearer token"
+            placeholder="Bearer token (optional on loopback)"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            autoCapitalize="none"
+            autoCorrect="off"
+          />
+        )}
+      </div>
+      <Button
+        variant={canScan ? 'secondary' : 'primary'}
+        className="shrink-0"
+        onClick={add}
+        disabled={busy || !payload}
+      >
+        {busy ? 'Pairing…' : 'Pair'}
+      </Button>
+    </div>
+  );
+
   return (
     <div className="@container min-w-0">
       {scanning && (
@@ -1201,82 +1253,73 @@ export function AddMachine({
         </Suspense>
       )}
 
-      {/* THE PAGE IS THE INSTRUCTIONS. Three numbered steps in the order they happen:
-          the command on the other machine, how its answer gets here, and the field
-          that takes it. Stacked on one left edge where the surface is a column — a
-          phone, the settings dialog — and side by side, left to right, where it is a
-          page: it is the component's own width that says which, not the viewport. */}
-      <ol className="min-w-0 space-y-5 @3xl:grid @3xl:grid-cols-3 @3xl:gap-x-6 @3xl:space-y-0">
-        <PairStep n={1} title="On the machine that runs vis">
-          <p className="text-body text-dialog-hint">
-            Start the gateway where this device can reach it. It prints a QR code and a
-            pairing link.
-          </p>
-          <PairCommand value="vis-agent gateway start --host 0.0.0.0 --require-token --pair" />
-          <p className="text-ui text-dialog-hint">
-            Already running? <PairCommand value="vis-agent gateway pair" isInline /> prints the
-            same code again.
-          </p>
-        </PairStep>
-
-        <PairStep n={2} title={canScan ? 'Scan the code, or paste the link' : 'Copy the link it printed'}>
-          {canScan ? (
-            <Button variant="primary" onClick={() => setScanning(true)} disabled={busy}>
+      {/* THE PAGE IS THE INSTRUCTIONS. Where a camera faces the terminal — a phone in the
+          hand — the page is a DECISION between the two ways the code gets here: scan it,
+          or paste the link. Where there is no camera it is three numbered steps in the
+          order they happen: the command on the other machine, how its answer gets here,
+          and the field that takes it — stacked on one left edge in a column, side by
+          side on a page; the component's own width says which, not the viewport. */}
+      {canScan ? (
+        <div className="min-w-0 space-y-4">
+          <PairChoice title="Scan the QR code">
+            <p className="text-body text-dialog-hint">
+              On the machine that runs vis, <PairCommand value="vis-agent gateway pair" isInline />{' '}
+              shows it in the terminal.
+            </p>
+            <Button
+              variant="primary"
+              className="w-full"
+              onClick={() => setScanning(true)}
+              disabled={busy}
+            >
               Scan QR
             </Button>
-          ) : (
+          </PairChoice>
+          <div aria-hidden="true" className="flex items-center gap-3">
+            <span className="h-px flex-1 bg-dialog-edge" />
+            <span className="font-mono text-ui uppercase text-dialog-hint">or</span>
+            <span className="h-px flex-1 bg-dialog-edge" />
+          </div>
+          <PairChoice title="I have a pairing link">
+            <p className="text-body text-dialog-hint">
+              The line under the QR code, or a machine address like{' '}
+              <code className="font-mono text-white">10.0.0.5:7890</code>.
+            </p>
+            {field}
+          </PairChoice>
+        </div>
+      ) : (
+        <ol className="min-w-0 space-y-5 @3xl:grid @3xl:grid-cols-3 @3xl:gap-x-6 @3xl:space-y-0">
+          <PairStep n={1} title="On the machine that runs vis">
+            <p className="text-body text-dialog-hint">
+              Start the gateway where this device can reach it. It prints a QR code and a
+              pairing link.
+            </p>
+            <PairCommand value="vis-agent gateway start --host 0.0.0.0 --require-token --pair" />
+            <p className="text-ui text-dialog-hint">
+              Already running? <PairCommand value="vis-agent gateway pair" isInline /> prints the
+              same code again.
+            </p>
+          </PairStep>
+
+          <PairStep n={2} title="Copy the link it printed">
             <p className="text-body text-dialog-hint">
               Under the QR code the terminal prints one line that starts with{' '}
               <code className="font-mono text-white">vis://gateway</code>. Copy that whole line and
               paste it below.
             </p>
-          )}
-        </PairStep>
+          </PairStep>
 
-        <PairStep n={3} title="Pair">
-          {/* The field and its verb stay one row at every width: a hint standing between
-              them read as a third option. What else the field takes is said ABOVE it,
-              as prose — inside the placeholder, "or" looked like part of the address. */}
-          <p className="text-body text-dialog-hint">
-            Paste the link, or a machine address like{' '}
-            <code className="font-mono text-white">10.0.0.5:7890</code> — LAN, Tailscale or a
-            Cloudflare tunnel.
-          </p>
-          <div className="flex items-start gap-2">
-            <div className="min-w-0 flex-1 space-y-2">
-              <Input
-                aria-label="Pairing link or machine address"
-                placeholder="vis://gateway?url=…&amp;token=…"
-                value={payload}
-                onChange={(event) => setPayload(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && payload && !busy) void add();
-                }}
-                autoCapitalize="none"
-                autoCorrect="off"
-              />
-              {asksToken && (
-                <Input
-                  aria-label="Bearer token"
-                  placeholder="Bearer token (optional on loopback)"
-                  value={token}
-                  onChange={(event) => setToken(event.target.value)}
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                />
-              )}
-            </div>
-            <Button
-              variant={canScan ? 'secondary' : 'primary'}
-              className="shrink-0"
-              onClick={add}
-              disabled={busy || !payload}
-            >
-              {busy ? 'Pairing\u2026' : 'Pair'}
-            </Button>
-          </div>
-        </PairStep>
-      </ol>
+          <PairStep n={3} title="Pair">
+            <p className="text-body text-dialog-hint">
+              Paste the link, or a machine address like{' '}
+              <code className="font-mono text-white">10.0.0.5:7890</code> — LAN, Tailscale or a
+              Cloudflare tunnel.
+            </p>
+            {field}
+          </PairStep>
+        </ol>
+      )}
 
       {run && (
         <PairingProgress

@@ -208,8 +208,10 @@ QR also lists the reachable hosts it picked, in preference order:
 ### Connecting from the companion app
 
 Open the companion (web, iOS, or Android). Its first screen is **Machines**,
-and **Add a machine** under it is three numbered steps: the command to run on
-the machine, how its answer gets to this device, and ONE field that takes it:
+and **Add a machine** under it reads differently by device. On a phone it is a
+decision: **Scan the QR code**, or **I have a pairing link** with ONE field. At a
+desk — where the app is on the machine that printed the code — it is three
+numbered steps: the command to run, the line to copy, and that same field:
 
 - **The pairing link** — the fastest path, and the only one that also carries the
   token. On a phone tap **Scan QR** and point the camera at the QR from
