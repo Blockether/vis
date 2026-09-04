@@ -10841,19 +10841,11 @@
             ;; gateway-proxy boundary as `shell` / subprocess, keyed per session.
             _register-repl-jail (when session-id
                                   (process-jail/register-session-jail! session-id jail-policy-fn))
-            ;; The `:fs/access` gate, pushed down into the sandbox filesystem: a path an
-            ;; extension's gate hook refuses is refused for `open(..., "w")`,
-            ;; `shutil.move` and `Path.unlink` exactly as it is for `patch`.
-            sandbox-gate-fn (when sandbox-roots-fn
-                              (extension/fs-access-gate (fn []
-                                                          @environment-atom)))
             {:keys [python-context python-engine sandbox-ns initial-ns-keys] :as sandbox}
             (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
                                        sandbox-roots-fn
                                        network-opts
-                                       nil
-                                       nil
-                                       sandbox-gate-fn)
+                                       nil)
             _ (vreset! pending sandbox)
             ;; A gateway restart or a `/resume` in a new process builds a FRESH sandbox
             ;; while the transcript still shows the helpers this session refined, so the

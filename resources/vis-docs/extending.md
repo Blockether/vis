@@ -430,15 +430,15 @@ vis.op_hook(ops, fn, phase="before")
   op; observe-only (the return value is ignored).
 
 **Gate ops.** `"fs_access"` is not a tool: it is asked for every path the
-engine's editors AND the Python interpreter touch, so `open(p, "w")`,
-`Path.unlink` and `shutil.move` are refused by the same rule as `grep` and
-`patch` — a guard cannot be routed around by picking another tool or another
-language. `fn(access)` receives `{"operation": "file-read" | "file-write",
+host file tools touch — `cat`, `grep`, `patch`, `ls` — so a guard cannot be
+routed around by picking another tool. It does not reach the Python
+interpreter: a block's own `open(p, "w")` is bounded by the sandbox roots, not
+by a hook. `fn(access)` receives `{"operation": "file-read" | "file-write",
 "path": <absolute path>}`, returns `vis.block(reason)` to refuse or `None` to
 allow, and `phase` says nothing (the operation has not run yet, so declaring
 one is refused at the call site). A gate fails **closed**: an error inside the
 hook refuses the operation, because a boundary that opens when its guard breaks
- is not a boundary.
+is not a boundary.
 
 `vis.strings_of(value)` collects every string leaf of a nested structure —
 handy for scanning op args for paths.

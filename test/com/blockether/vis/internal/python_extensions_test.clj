@@ -280,7 +280,7 @@ vis.extension(
               (registered "glms")
 
               made
-              (ep/create-python-context {} nil {:worker? true} nil nil nil)
+              (ep/create-python-context {} nil {:worker? true} nil)
 
               ctx
               (:python-context made)
@@ -371,8 +371,6 @@ vis.extension(
                                          :allowed-domains []
                                          :denied-domains []
                                          :exclude-domains []}
-                                        nil
-                                        nil
                                         nil)
 
               ctx
@@ -874,9 +872,8 @@ vis.extension(
 (defdescribe
   fs-access-gate-python-test
   "A gate is ASKED, never wrapped: the Python callable receives the gate's own
-   string-keyed ctx and answers with `vis.block(reason)` or None. The op reaches
-   `confine!`, so the rule binds `open(p, 'w')` and `write` alike — an argument
-   guard could only ever see the tool."
+   string-keyed ctx and answers with `vis.block(reason)` or None. The compiled
+   hook is what the host file tools consult before they touch a path."
   (it "compiles a Python fs_access hook into a :gate hook that refuses by sentence"
       (with-loaded
         {"vault.py" fs-gate-py}

@@ -705,9 +705,10 @@
 ;; The :fs/access gate
 
 ;; The vocabulary of what is protected belongs to an EXTENSION, never to the
-;; engine: the engine only ASKS, through the `:fs/access` gate that the Python
-;; sandbox filesystem asks under the interpreter. This layer extracts the op's
-;; paths and turns a refusal into a tool failure.
+;; engine: the engine only ASKS. This layer extracts the op's paths, asks the
+;; gate before the op runs and turns a refusal into a tool failure. Only the
+;; host file tools ask; a Python block's own `open` is bounded by the sandbox
+;; roots instead.
 
 (defn- extracted-paths
   [path-extractor args]
@@ -3080,7 +3081,8 @@
 ;; write-safe — whole-file write primitive (create or overwrite)
 ;;
 ;; Python owns whole-file writes (`Path.write_text`, `open(p, "w")`) on the
-;; model-facing side; both pass the same `:fs/access` gate.
+;; model-facing side, bounded by the sandbox roots; this primitive asks the
+;; `:fs/access` gate.
 ;;
 ;; Shape:
 ;;   {:success? true

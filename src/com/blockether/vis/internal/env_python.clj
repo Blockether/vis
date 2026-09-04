@@ -1181,14 +1181,15 @@
    `custom-bindings` is `{symbol value}` — a function becomes a host tool, any
    other value crosses as data. `roots-fn` answers the directories the guest may
    read and write; without it the interpreter keeps whatever policy the process
-   already had. `network-opts` carries the egress rules.
+   already had. `network-opts` carries the egress rules. `stdin` is what the
+   guest reads from `sys.stdin`, or nil for none.
 
    The order matters and is the same order it has always been: the runtime
    first, then the names the block may not overwrite, then the tools, then the
    contracts those tools carry, then discovery, then policy — so every `__vis_*`
    name and every seeded module is already BASELINE when the member snapshot is
    taken, and the model's live-vars view shows only what its own blocks made."
-  [custom-bindings roots-fn network-opts stdin _stderr _gate-fn]
+  [custom-bindings roots-fn network-opts stdin]
   (let [session (new-session-name)]
     ;; `:worker?` decides WHERE this session's Python runs, and it is the first
     ;; thing decided, because every call below follows it. A gateway session

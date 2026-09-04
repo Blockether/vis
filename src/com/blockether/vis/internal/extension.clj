@@ -1500,10 +1500,10 @@
   "Gate ops, keyed by op keyword and valued by the spelling a hook author writes
    (`vis.op_hook([\"fs_access\"], guard)` in Python, `{:op :fs/access}` in Clojure).
 
-   `:fs/access` is asked for every path the model-driven editors touch
-   (`foundation/editing/core`), with `{:operation :path}` — so ONE rule covers
-   `open(p, \"w\")`, `shutil.move`, `Path.unlink` and `patch`
-   alike, and \"protected\" can never mean \"protected from Python only\"."
+   `:fs/access` is asked with `{:operation :path}` for every path the host file
+   tools touch — `cat`, `grep`, `patch`, `ls` (`foundation/editing/core`). It does
+   not reach the Python interpreter: `open(p, 'w')` inside a block is bounded by
+   the sandbox roots, not by a gate hook."
   {:fs/access "fs_access"})
 
 (defn gate-op
@@ -1701,15 +1701,6 @@
                                                (ex-message e))}))
                           (assoc :owner owner)))
                 gates))))))
-
-(defn fs-access-gate
-  "The `(fn [operation abs-path] -> refusal | nil)` the Python sandbox's `confine!`
-   consults on every path it touches. `env-thunk` yields the live environment, and
-   is only called when a gate hook is actually registered."
-  [env-thunk]
-  (fn [operation abs-path]
-    (when (gate-hooked? :fs/access)
-      (run-gate-hooks :fs/access (env-thunk) {:operation (str operation) :path (str abs-path)}))))
 
 (defn invoke-operation
   "Invoke host operation `f` through the declarative :around hooks for

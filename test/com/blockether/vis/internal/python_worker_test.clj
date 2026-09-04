@@ -108,8 +108,6 @@
                                       :allowed-domains []
                                       :denied-domains []
                                       :exclude-domains []}
-                                     nil
-                                     nil
                                      nil)
 
           session

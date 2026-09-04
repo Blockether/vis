@@ -48,19 +48,14 @@
 
 (defn new-context
   "A fresh sandbox result map, with `create-python-context`'s arguments in its own
-   order: bindings, then roots, then network. The tail the tests never vary —
-   stdin, stderr and the block gate — is filled in here so a call site states only
-   what it cares about."
+   order: bindings, then roots, then network, then stdin — so a call site states
+   only what it cares about."
   ([] (new-context {} nil nil))
   ([bindings] (new-context bindings nil nil))
   ([bindings roots-fn] (new-context bindings roots-fn nil))
-  ([bindings roots-fn network-opts] (new-context bindings roots-fn network-opts nil nil nil))
+  ([bindings roots-fn network-opts] (new-context bindings roots-fn network-opts nil))
   ([bindings roots-fn network-opts stdin]
-   (new-context bindings roots-fn network-opts stdin nil nil))
-  ([bindings roots-fn network-opts stdin stderr]
-   (new-context bindings roots-fn network-opts stdin stderr nil))
-  ([bindings roots-fn network-opts stdin stderr gate-fn]
-   (env-python/create-python-context bindings roots-fn network-opts stdin stderr gate-fn)))
+   (env-python/create-python-context bindings roots-fn network-opts stdin)))
 
 (defonce ^:private contexts (atom {}))
 
