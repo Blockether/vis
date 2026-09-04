@@ -281,39 +281,50 @@ vis.method(fn=None, *, tag="observation", is_hidden=False)
   itself spells with a trailing `?` (`is_tool_call` → `:tool-call?`); those map
   through one named table instead of by convention.
 
-An integration object can publish all of its public methods under one exact name:
+An integration object can publish a recursive capability tree under one exact name:
 
 ```python
-class Jenkins:
-    def poll(self, job, number=None, wait=0):
-        """Poll one build and return its typed status object."""
+class Issues:
+    def find(self, query):
+        """Find one issue and return its typed status object."""
         ...
 
     @vis.method(tag="mutation")
-    def rebuild(self, job, number):
-        """Start a replacement build."""
+    def create(self, title):
+        """Create one issue."""
         ...
 
     def _credential(self):
         ...
 
-jenkins = Jenkins()
+
+class Uberworkspace:
+    def __init__(self):
+        self.issues = Issues()
+
+
 vis.extension(
-    name="glms",
-    description="Jenkins integration.",
-    alias="glms",
-    symbols=[vis.symbol(jenkins, name="glms_jenkins")],
+    name="uberworkspace",
+    description="Workspace integration.",
+    alias="uw",
+    symbols=[vis.symbol(Uberworkspace(), name="uberworkspace")],
 )
 ```
 
-This exposes exactly `glms_jenkins.poll(...)` and
-`glms_jenkins.rebuild(...)`. Public callable methods are discovered in definition
-order; properties, data attributes, and names beginning with `_` never cross the
-boundary. `vis.method(...)` overrides `tag` or `is_hidden` for one method; otherwise
-the enclosing `vis.symbol(...)` defaults apply. Each method keeps its own signature
-and docstring in `apropos`/`doc`, runs through the same deferred worker and result
-envelope as a flat tool, and may return a custom typed object without flattening it
-([Object-first tools](#object-first-tools) below is the full pattern).
+This exposes exactly `uberworkspace.issues.find(...)` and
+`uberworkspace.issues.create(...)`; the extension `alias` does not alter that root.
+Public callable methods become tool leaves, while public attributes containing
+ordinary Python objects become namespace nodes recursively. Names beginning with
+`_` never cross the boundary. Public scalar, collection, module, class, or descriptor
+values are rejected with their full path instead of being silently serialized, and
+cycles or repeated object references are rejected with both conflicting paths.
+
+`vis.method(...)` overrides `tag` or `is_hidden` for one leaf; otherwise the enclosing
+`vis.symbol(...)` defaults apply. Every leaf keeps its signature and docstring under
+its full dotted name in `apropos`/`doc`, and runs through the same deferred worker and
+result envelope as a flat tool. Namespace values themselves have a concise readable
+representation in `python_execution` rather than exposing runtime class names or
+memory addresses ([Object-first tools](#object-first-tools) below is the full pattern).
 
 **A tool is a Python callable, never a provider tool.** `python_execution` is the
 only thing a model is handed a schema for; every symbol an extension registers is

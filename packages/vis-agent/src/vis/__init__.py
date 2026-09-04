@@ -217,7 +217,8 @@ def method(fn=None, *, tag="observation", is_hidden=False):
     return _mark if fn is None else _mark(fn)
 
 
-def _public_methods(obj):
+def _public_members(obj):
+    """Return public attributes without invoking arbitrary descriptors."""
     candidates = {}
     for cls in reversed(type(obj).__mro__):
         for name, raw in vars(cls).items():
@@ -226,19 +227,67 @@ def _public_methods(obj):
             declared = (
                 raw.__func__ if isinstance(raw, (staticmethod, classmethod)) else raw
             )
-            # Never invoke arbitrary descriptors while discovering capabilities.
-            if inspect.isroutine(declared):
-                candidates[name] = declared
+            candidates[name] = (
+                "method" if inspect.isroutine(declared) else "value",
+                declared,
+            )
     try:
         own = vars(obj)
     except TypeError:
         own = {}
     for name, value in own.items():
-        if not name.startswith("_") and callable(value):
-            candidates[name] = value
-    return [
-        (name, getattr(obj, name), declared) for name, declared in candidates.items()
-    ]
+        if not name.startswith("_"):
+            candidates[name] = ("value", value)
+    rows = []
+    for name, (kind, raw) in candidates.items():
+        if kind == "method":
+            rows.append((name, getattr(obj, name), raw))
+        elif callable(raw):
+            rows.append((name, raw, raw))
+        else:
+            rows.append((name, raw, None))
+    return rows
+
+
+def _is_namespace_object(value):
+    return (
+        value is not None
+        and type(value).__module__ != "builtins"
+        and not inspect.ismodule(value)
+        and not inspect.isclass(value)
+        and not callable(value)
+    )
+
+
+def _object_symbol_specs(obj, path, tag, is_hidden, seen):
+    object_id = id(obj)
+    previous = seen.get(object_id)
+    if previous is not None:
+        raise ValueError(
+            f"vis.symbol(object, ...): public attribute {path!r} repeats the object "
+            f"already exposed at {previous!r}; cycles and repeated references are not "
+            "supported"
+        )
+    seen[object_id] = path
+    specs = []
+    for member_name, value, declared in _public_members(obj):
+        member_path = f"{path}.{member_name}"
+        if callable(value):
+            raw = declared or value
+            method_tag = getattr(raw, "__vis_symbol_tag__", tag)
+            method_hidden = getattr(raw, "__vis_symbol_hidden__", is_hidden)
+            spec = _symbol_spec(value, member_name, method_tag, method_hidden)
+            spec["name"] = member_path.split(".", 1)[1]
+            specs.append(spec)
+        elif _is_namespace_object(value):
+            specs.extend(_object_symbol_specs(value, member_path, tag, is_hidden, seen))
+        else:
+            raise ValueError(
+                f"vis.symbol(object, ...): public attribute {member_path!r} has unsupported "
+                f"value of type {type(value).__name__}; expose callable methods, nest a "
+                "capability object, or make the attribute private"
+            )
+    return specs
 
 
 def symbol(fn, name=None, tag="observation", is_hidden=False):
@@ -253,11 +302,7 @@ def symbol(fn, name=None, tag="observation", is_hidden=False):
         raise ValueError(
             "vis.symbol(object, ...) requires name=<public Python identifier>"
         )
-    methods = []
-    for method_name, bound, raw in _public_methods(fn):
-        method_tag = getattr(raw, "__vis_symbol_tag__", tag)
-        method_hidden = getattr(raw, "__vis_symbol_hidden__", is_hidden)
-        methods.append(_symbol_spec(bound, method_name, method_tag, method_hidden))
+    methods = _object_symbol_specs(fn, name, tag, is_hidden, {})
     if not methods:
         raise ValueError("vis.symbol(object, ...) requires at least one public method")
     return {"marker": "namespace", "name": name, "methods": methods}

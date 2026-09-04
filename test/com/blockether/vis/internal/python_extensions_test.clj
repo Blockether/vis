@@ -300,6 +300,144 @@ vis.extension(
                                     (when (= "BuildStatus" (get value "__vis_object__")) "typed"))))
                        (expect (= "build" (get-in (deploy "build" 42) [:result "job"]))))))))
 
+(def ^:private recursive-object-namespace-py
+  "import vis
+
+class IssueNamespace:
+    def find_issue(self, query):
+        \"\"\"Find one issue.\"\"\"
+        return {'query': query}
+
+    @vis.method(tag='mutation')
+    def create_issue(self, title):
+        \"\"\"Create one issue.\"\"\"
+        return {'title': title}
+
+    def _token(self):
+        return 'private'
+
+class VisNamespace:
+    def __init__(self):
+        self.issues = IssueNamespace()
+
+class UberworkspaceNamespace:
+    def __init__(self):
+        self.vis = VisNamespace()
+
+    def ping(self):
+        \"\"\"Check the workspace.\"\"\"
+        return 'pong'
+
+vis.extension(
+    name='uberworkspace', description='Recursive object namespace fixture.',
+    kind='integration', alias='uberworkspace',
+    symbols=[vis.symbol(UberworkspaceNamespace(), name='uberworkspace')],
+)
+")
+
+;; Regression, issue #171: object namespaces stopped after one level, forcing
+;; extension authors to flatten nested capability objects into method names.
+(defdescribe
+  python-recursive-object-namespace-test
+  (it
+    "exports nested methods as managed dotted tools with readable namespace objects"
+    (with-loaded
+      {"recursive_object_namespace.py" recursive-object-namespace-py}
+      (fn [result _]
+        (expect (= {:loaded 1 :failed 0 :changed? true} result))
+        (let [ext
+              (registered "uberworkspace")
+
+              entries
+              (get-in ext [:ext/engine :ext.engine/symbols])
+
+              made
+              (ep/create-python-context {} nil {:worker? true} nil)
+
+              ctx
+              (:python-context made)
+
+              env
+              {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
+
+          (expect (= '[uberworkspace.ping uberworkspace.vis.issues.find_issue
+                       uberworkspace.vis.issues.create_issue]
+                     (mapv :ext.symbol/symbol entries)))
+          (expect (= [:observation :observation :mutation] (mapv :ext.symbol/tag entries)))
+          (expect (nil? (symbol-fn ext 'uberworkspace.vis.issues._token)))
+          (try (lp/sync-active-extension-symbols! env [ext])
+               (let
+                 [answer
+                  (ep/run-python-block
+                    ctx
+                    (str/join
+                      "\n"
+                      ["print(repr(uberworkspace))" "print(repr(uberworkspace.vis.issues))"
+                       "print(await uberworkspace.ping())"
+                       "print((await uberworkspace.vis.issues.find_issue('171'))['query'])"
+                       "print((await uberworkspace.vis.issues.create_issue('nested'))['title'])"
+                       "print([item.name for item in apropos(r'^uberworkspace\\.')])"
+                       "print('Find one issue.' in doc('uberworkspace.vis.issues.find_issue'))"]))
+
+                  out
+                  (or (:stdout answer) "")]
+
+                 (expect (nil? (:error answer)))
+                 (expect (str/includes? out "<vis namespace 'uberworkspace': ping, vis>"))
+                 (expect (str/includes?
+                           out
+                           "<vis namespace 'uberworkspace.vis.issues': create_issue, find_issue>"))
+                 (expect (str/includes? out "pong\n171\nnested\n"))
+                 (expect (str/includes? out "uberworkspace.vis.issues.find_issue"))
+                 (expect (str/ends-with? (str/trim out) "True")))
+               (lp/sync-active-extension-symbols! env [])
+               (expect (= {:stdout "False\n"}
+                          (ep/run-python-block ctx "print('uberworkspace' in globals())")))
+               (finally (ep/dispose-python-context! ctx))))))))
+
+(def ^:private invalid-recursive-object-namespace-py
+  "import vis
+
+class Leaf:
+    def run(self):
+        \"\"\"Run the leaf.\"\"\"
+        return True
+
+cycle = Leaf()
+cycle.child = cycle
+shared = Leaf()
+class Repeated:
+    def __init__(self):
+        self.first = shared
+        self.second = shared
+class Unsupported:
+    def __init__(self):
+        self.version = 171
+
+errors = []
+for name, value in [('cycle', cycle), ('repeated', Repeated()), ('unsupported', Unsupported())]:
+    try:
+        vis.symbol(value, name=name)
+    except ValueError as error:
+        errors.append(str(error))
+raise RuntimeError(' | '.join(errors))
+")
+
+;; Regression, issue #171: recursive discovery could otherwise loop forever,
+;; expose one object twice, or silently discard a public data attribute.
+(defdescribe python-recursive-object-namespace-validation-test
+             (it "rejects cycles, repeated references, and unsupported public values by path"
+                 (with-loaded {"invalid_recursive_object_namespace.py"
+                               invalid-recursive-object-namespace-py}
+                              (fn [result _]
+                                (let [error (:error (first (pyx/load-failures)))]
+                                  (expect (= 1 (:failed result)))
+                                  (expect (str/includes? error "cycle.child"))
+                                  (expect (str/includes? error "repeated.second"))
+                                  (expect (str/includes? error "repeated.first"))
+                                  (expect (str/includes? error "unsupported.version"))
+                                  (expect (str/includes? error "int")))))))
+
 (defdescribe
   python-object-namespace-sandbox-test
   ;; Regression, issue #166: namespaced methods could not be called through the

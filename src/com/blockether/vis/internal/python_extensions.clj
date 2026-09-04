@@ -759,9 +759,9 @@
 
 (defn- source-entry
   [ext-name source-ctx]
-  (some (fn [[_ entry]]
+  (some (fn [[path entry]]
           (when (and (= ext-name (:ext-name entry)) (identical? source-ctx (:context entry)))
-            entry))
+            (assoc entry :path path)))
         @loaded))
 
 (defn- session-call-target
