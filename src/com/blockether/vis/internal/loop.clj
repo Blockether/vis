@@ -5153,15 +5153,9 @@
           ;; Anthropic ignores the field, so setting it unconditionally is harmless.
           session-cache-key (some-> (:session-id environment)
                                     str)
-          ;; Phase E: sticky routing default. Cross-provider fallback
-          ;; (svar `:on-transient-error :hybrid`) poisons cache prefixes:
-          ;; an Anthropic 15K cached prefix becomes worthless the moment
-          ;; the next call lands on OpenAI/Z.ai, and the OpenAI cache is
-          ;; empty so we pay full input rate to bootstrap. Keep fallback
-          ;; within the active provider unless the caller explicitly
-          ;; overrides.
-          ;; Fallback OFF pins THIS call to the model it resolved to, so svar's own
-          ;; provider walk has nowhere else to land (`pin-routing-to-model`).
+          ;; Prepared turns opt into the cross-provider fleet. Direct callers that
+          ;; omit a policy stay on a warm provider; disabling `provider_fallback`
+          ;; pins the resolved model below.
           pinned-routing (pin-routing-to-model routing resolved-model)
           ;; Anthropic's safety classifier declines with HTTP 200 (`stop_reason: refusal`):
           ;; the credential, the provider and the wire are all healthy, so the recovery is a
@@ -10009,18 +10003,15 @@
                                :model root-model
                                :supported (:supported reasoning-effort-resolution)
                                :resolution reasoning-effort-resolution})))
-          ;; …but vector order does NOT bind svar's actual selection (it sorts
-          ;; by provider :priority). FORCE the pick into `:routing` so the call
-          ;; truly lands on the chosen provider+model. A caller-supplied
-          ;; `:routing` (e.g. a caller's own pin) wins on merge.
+          ;; The hoisted router makes the selected model the FIRST attempt. Hybrid
+          ;; fallback then wraps through the remaining fleet — including a configured
+          ;; primary that preceded a manual pick — while an explicit caller policy wins.
           routing (let [merged (merge pref-forced (or routing {}))]
-                    ;; Pin the ACTIVE provider+model so a provider failure surfaces as
-                    ;; an error the USER acts on (retry / switch provider — TUI Ctrl+K)
-                    ;; instead of svar silently hopping across the whole configured fleet
-                    ;; (`with-provider-fallback` → the confusing "tried every provider"
-                    ;; card). A session pick already pins this way; this makes the DEFAULT
-                    ;; (no-pick) turn behave identically.
                     (cond-> merged
+                      (and (provider-fallback-allowed?)
+                           (not (contains? merged :on-transient-error)))
+                      (assoc :on-transient-error :hybrid)
+
                       (and root-provider
                            root-model
                            (not (contains? merged :provider))

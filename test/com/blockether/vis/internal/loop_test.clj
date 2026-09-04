@@ -4668,7 +4668,8 @@
                                                     {:provider "lmstudio" :model "ornith"})}
           #(let [ctx (prepare env messages {})] (expect (= :lmstudio (:root-provider ctx)))
              (expect (= "ornith" (:root-model ctx))) (expect (= {:provider :lmstudio
-                                                                 :model "ornith"}
+                                                                 :model "ornith"
+                                                                 :on-transient-error :hybrid}
                                                                 (:routing ctx))))))
     (it "trims the persisted pin so the display root names the model that RAN"
         ;; The routing helpers trim; the display/cost root did not. A pref with
@@ -4679,7 +4680,8 @@
                                                     {:provider "  lmstudio  " :model "  ornith  "})}
           #(let [ctx (prepare env messages {})] (expect (= :lmstudio (:root-provider ctx)))
              (expect (= "ornith" (:root-model ctx))) (expect (= {:provider :lmstudio
-                                                                 :model "ornith"}
+                                                                 :model "ornith"
+                                                                 :on-transient-error :hybrid}
                                                                 (:routing ctx))))))
     (it "honors a live-catalog model the pinned provider does not list statically"
         ;; What the pickers actually offer: `/v1/providers/:id/models` (the TUI's
@@ -4691,7 +4693,9 @@
                                                     {:provider "lmstudio" :model "qwen3-next-80b"})}
           #(let [ctx (prepare env messages {})] (expect (= :lmstudio (:root-provider ctx)))
              (expect (= "qwen3-next-80b" (:root-model ctx))) (expect (= {:provider :lmstudio
-                                                                         :model "qwen3-next-80b"}
+                                                                         :model "qwen3-next-80b"
+                                                                         :on-transient-error
+                                                                         :hybrid}
                                                                         (:routing ctx))))))
     (it "does not combine a caller model with the persisted provider"
         (with-redefs-fn {#'session-model/model-of (fn [& _]
@@ -4701,7 +4705,7 @@
              ;; router's normal provider choice instead of borrowing LM Studio
              ;; from an unrelated persisted pair.
              (expect (= :openai-codex (:root-provider ctx))) (expect (= "shared" (:root-model ctx)))
-             (expect (= {:model "shared"} (:routing ctx))))))
+             (expect (= {:model "shared" :on-transient-error :hybrid} (:routing ctx))))))
     ;; Regression, issue #154: a queued route snapshot lost its provider before engine dispatch.
     (it "uses an explicit provider + model snapshot without consulting the current session pin"
         (with-redefs-fn {#'session-model/model-of (fn [& _]
@@ -4709,7 +4713,61 @@
                                                                     {})))}
           #(let [ctx (prepare env messages {:provider "lmstudio" :model "shared"})]
              (expect (= :lmstudio (:root-provider ctx))) (expect (= "shared" (:root-model ctx)))
-             (expect (= {:provider :lmstudio :model "shared"} (:routing ctx))))))))
+             (expect (= {:provider :lmstudio :model "shared" :on-transient-error :hybrid}
+                        (:routing ctx))))))))
+
+;; Regression, issue #154 follow-up, session ff83edc9-247d-4f04-9fab-3dd7072d5a34:
+;; a manually selected fallback exhausted its quota and its hard pin kept the configured primary out.
+(defdescribe
+  selected-provider-fallback-order-test
+  (it
+    "tries the session pick first, then wraps to the configured primary"
+    (let [router
+          (svar/make-router [{:id :openai-codex
+                              :api-key "test"
+                              :base-url "https://openai.example.com"
+                              :models [{:name "gpt-5.6-sol"}]}
+                             {:id :anthropic-coding-plan
+                              :api-key "test"
+                              :base-url "https://anthropic.example.com"
+                              :models [{:name "claude-fable-5-1"}]}]
+                            {:rate-limit {:same-provider-delays-ms []
+                                          :fallback-after-ms 0
+                                          :fallback-provider? true}})
+
+          env
+          {:db-info ::db :session-id "session-1" :router router}
+
+          messages
+          [{:role "user" :content "continue"}]
+
+          calls
+          (atom [])]
+
+      (with-redefs-fn {#'session-model/model-of (fn [& _]
+                                                  {:provider "anthropic-coding-plan"
+                                                   :model "claude-fable-5-1"})}
+        #(let [ctx (#'lp/prepare-turn-context env messages {}) _
+               (expect (= :hybrid (get-in ctx [:routing :on-transient-error]))) outcome
+               (try (svar-router/with-provider-fallback
+                      (:router ctx)
+                      (:routing ctx)
+                      (fn [provider model]
+                        (swap! calls conj [(:id provider) (:name model)])
+                        (if (= :anthropic-coding-plan (:id provider))
+                          (throw (ex-info
+                                   "Exceptional status code: 400"
+                                   {:type :svar.core/http-error
+                                    :status 400
+                                    :body
+                                    (str
+                                      "{\"type\":\"error\",\"error\":{\"type\":"
+                                      "\"invalid_request_error\",\"message\":"
+                                      "\"Third-party apps now draw from your extra usage.\"}}")}))
+                          {:api-usage {:total-tokens 1}})))
+                    (catch Exception e e))] (expect (= [[:anthropic-coding-plan "claude-fable-5-1"]
+                                                        [:openai-codex "gpt-5.6-sol"]]
+                                                       @calls)) (expect (map? outcome)))))))
 
 ;; Regression, reported session b34c2a0f-3eff-4ab6-8b9c-bb0c8c7fbda5: the gateway freezes a turn
 ;; id in `submit-turn!` and names it in every `turn.*` event, cancel and forced terminal, and it
