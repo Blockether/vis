@@ -7043,7 +7043,7 @@
                        (first (perr/provider-error-content (::lp/iteration-error result)))]
 
                    (expect (true? (::lp/fatal-iteration-error result)))
-                   (expect (= "provider_quota-exhausted" (get block "code")))
+                   (expect (= "provider_quota_exhausted" (get block "code")))
                    (expect (str/includes? (get block "message") "plan, usage limits")))))
 
 (defdescribe reload-router-hook-test

@@ -174,7 +174,7 @@
               "const": "error"
             },
             "code": {
-              "$ref": "common.json#/$defs/non_blank_string"
+              "$ref": "common.json#/$defs/snake_case_id"
             },
             "message": {
               "$ref": "common.json#/$defs/non_blank_string"
@@ -229,7 +229,7 @@
               "const": "notice"
             },
             "code": {
-              "$ref": "common.json#/$defs/non_blank_string"
+              "$ref": "common.json#/$defs/snake_case_id"
             },
             "message": {
               "$ref": "common.json#/$defs/non_blank_string"

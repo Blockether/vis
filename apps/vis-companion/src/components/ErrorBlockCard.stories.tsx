@@ -66,7 +66,7 @@ export const SuccessfulStreamFailed: Story = {
 export const Diagnostics: Story = {
   play: async ({ canvas }) => {
     await userEvent.click(canvas.getByRole("button", { name: "Diagnostics" }));
-    await expect(canvas.getByText("provider_rate-limit")).toBeVisible();
+    await expect(canvas.getByText("provider_rate_limit")).toBeVisible();
     await expect(canvas.getByText(/anthropic\/claude-opus-4/)).toBeVisible();
   },
 };

@@ -4769,7 +4769,7 @@ h = 8"
   (let [blocks
         [{"id" "provider-error-167"
           "type" "error"
-          "code" "provider_rate-limit"
+          "code" "provider_rate_limit"
           "title" "Provider rate-limited"
           "explanation" "the provider is throttling new requests."
           "next_step" "wait and retry, or switch provider/model."
@@ -4817,10 +4817,10 @@ h = 8"
         (expect (str/includes? text "Request req_167")))
     (it "keeps machine diagnostics after the human decision"
         (expect (str/includes? text "anthropic/claude-opus-4: 429 rate-limit"))
-        (expect (str/includes? text "provider_rate-limit"))
+        (expect (str/includes? text "provider_rate_limit"))
         (expect (< (str/index-of text "Provider rate-limited")
                    (str/index-of text "HTTP 429")
-                   (str/index-of text "provider_rate-limit")))
+                   (str/index-of text "provider_rate_limit")))
         (expect (not (str/includes? text "Flattened fallback")))
         (expect (not (str/includes? text "**"))))))
 ;; Every collapsible band NAMES itself on its disclosure row, and that name is

@@ -1149,7 +1149,9 @@
         message
         (str/join "\n\n" (remove str/blank? [title explanation next-step attempts-line]))]
 
-    [(cond-> (assoc (content/error (str "provider_" (name (or kind :failure))) message retryable?)
+    [(cond-> (assoc (content/error (str "provider_" (str/replace (name (or kind :failure)) "-" "_"))
+                                   message
+                                   retryable?)
                "kind" (name (or kind :failure))
                "title" title
                "explanation" explanation-body

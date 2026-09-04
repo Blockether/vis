@@ -477,7 +477,7 @@
                  (let [rendered (chat/content->markdown
                                   [{"id" "provider-error-1"
                                     "type" "error"
-                                    "code" "provider_rate-limit"
+                                    "code" "provider_rate_limit"
                                     "message" "Flattened fallback that must not be painted."
                                     "title" "Provider rate limit reached"
                                     "explanation" "the provider is throttling new requests."
@@ -498,7 +498,7 @@
                    (expect (str/includes? rendered "anthropic/claude-opus-4"))
                    (expect (str/includes? rendered "req_167"))
                    (expect (< (str/index-of rendered "Provider rate limit reached")
-                              (str/index-of rendered "provider_rate-limit")))
+                              (str/index-of rendered "provider_rate_limit")))
                    (expect (not (str/includes? rendered "Flattened fallback")))))
              (it "distinguishes a route that never sent from an HTTP response"
                  (let [rendered (chat/content->markdown [{"id" "provider-error-unsent"

@@ -74,7 +74,7 @@ describe("provider failure card", () => {
         block={{
           id: "provider-error-1",
           type: "error",
-          code: "provider_rate-limit",
+          code: "provider_rate_limit",
           message: "Flattened fallback that a structured client must not paint.",
           title: "Provider rate limit reached",
           explanation: "The provider is throttling new requests.",
@@ -108,13 +108,13 @@ describe("provider failure card", () => {
       expect(card.textContent).toContain("anthropic");
       expect(card.textContent).toContain("req_167");
       expect(card.textContent).not.toContain("Flattened fallback");
-      expect(card.textContent).not.toContain("provider_rate-limit");
+      expect(card.textContent).not.toContain("provider_rate_limit");
 
       fireEvent.click(view.getByRole("button", { name: "Diagnostics" }));
       expect(card.textContent).toContain("anthropic/claude-opus-4");
-      expect(card.textContent).toContain("provider_rate-limit");
+      expect(card.textContent).toContain("provider_rate_limit");
       expect(card.textContent?.indexOf("Provider rate limit reached")).toBeLessThan(
-        card.textContent?.indexOf("provider_rate-limit") ?? -1,
+        card.textContent?.indexOf("provider_rate_limit") ?? -1,
       );
     } finally {
       view.unmount();

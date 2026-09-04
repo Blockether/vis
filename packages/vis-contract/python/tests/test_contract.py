@@ -149,7 +149,7 @@ def test_the_shell_grammar_is_a_grammar():
 def test_the_content_vocabulary_is_whole():
     content = vis_contract.CONTENT
     assert content is vis_contract.CONTRACT["content"]
-    assert content["version"] == 1
+    assert content["version"] == 2
     assert set(content["roles"]) == {"user", "assistant", "system", "developer", "tool"}
     assert set(content["block_types"]) == {
         "attachment",

@@ -513,7 +513,7 @@
         (expect (str/includes? (perr/provider-error-explanation err) "no usable quota or credits"))
         (expect (str/includes? (perr/provider-error-next-step err) "plan, usage limits"))
         (let [block (first (perr/provider-error-content err))]
-          (expect (= "provider_quota-exhausted" (get block "code")))
+          (expect (= "provider_quota_exhausted" (get block "code")))
           (expect (false? (get block "retryable")))))))
 
 ;; Regression, issue #105: Anthropic's exhausted extra-usage 400 was parsed again in Vis while
@@ -539,6 +539,8 @@
 ;; Regression, reported session b30f87ac-f20e-4d7f-9fd2-416788d10527:
 ;; an Anthropic 400 was titled "Provider unavailable" even though the body named
 ;; the invalid service-tier value precisely.
+;; Regression, reported session 10bb33ec-42b3-42a2-9c29-42956810aae2:
+;; provider presentation kinds leaked their kebab-case spelling into machine codes.
 (defdescribe
   invalid-request-presentation-test
   (let [err {:message "Exceptional status code: 400"
@@ -551,6 +553,8 @@
         (expect (= :invalid-request (perr/provider-error-kind err)))
         (expect (= "Provider rejected the request" (perr/provider-error-title err)))
         (expect (str/includes? (perr/provider-error-explanation err) "service_tier"))
+        (expect (= "provider_invalid_request"
+                   (get (first (perr/provider-error-content err)) "code")))
         (expect (false? (perr/provider-error-retryable? err))))))
 
 ;; Regression, issue #105: Svar's model-unavailable verdict used to fall through
@@ -671,7 +675,7 @@
                    (expect (false? (perr/provider-error-retryable? resource-mismatch-err)))))
              (it "marks the typed content non-retryable and kind-specific"
                  (let [[c] (perr/provider-error-content resource-mismatch-err)]
-                   (expect (= "provider_resource-mismatch" (get c "code")))
+                   (expect (= "provider_resource_mismatch" (get c "code")))
                    (expect (false? (get c "retryable"))))))
 
 (def ^:private status-bearing-drop-err
@@ -933,7 +937,7 @@
         (expect (nil? (re-find #"(?i)rejected the request" (perr/provider-error-explanation err))))
         (expect (re-find #"(?i)hold fewer files open" (perr/provider-error-next-step err)))
         (expect (str/starts-with? (str (get (first (perr/provider-error-content err)) "code"))
-                                  "provider_file-descriptors"))))
+                                  "provider_file_descriptors"))))
   (it "matches the bare `Too many open files` phrase too"
       (let [err {:message "java.io.IOException: Too many open files" :data {}}]
         (expect (= :file-descriptors-exhausted (perr/provider-error-kind err)))))

@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.content-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.content :as content]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defdescribe
   content-construction-test
@@ -49,4 +49,15 @@ The work is complete and the tests pass.
         (expect (= {"provider" "openai-codex" "actual" {"model" "gpt-5.6"}} (get block "output")))))
   (it "keeps typed errors as data"
       (let [block (content/error "e1" "provider_unavailable" "Try again later." true)]
-        (expect (= true (get block "retryable"))))))
+        (expect (= true (get block "retryable")))))
+  ;; Regression, reported session 10bb33ec-42b3-42a2-9c29-42956810aae2:
+  ;; canonical error and notice codes accepted kebab-case and mixed-case identifiers.
+  (it "requires every diagnostic code to be lowercase snake_case"
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(content/error "e1" "provider_invalid-request" "No." false)))
+      (expect (throws? clojure.lang.ExceptionInfo
+                       #(content/error "e1" "Provider_Invalid_Request" "No." false)))
+      (expect (throws? clojure.lang.ExceptionInfo #(content/notice "n1" "rate-limit" "Wait.")))
+      (expect (= "provider_invalid_request"
+                 (get (content/error "e1" "provider_invalid_request" "Yes." false) "code")))
+      (expect (= "rate_limit" (get (content/notice "n1" "rate_limit" "Wait.") "code")))))

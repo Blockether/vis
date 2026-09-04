@@ -1193,7 +1193,7 @@ function storyProviderError(
   return {
     id: `provider-${kind}`,
     type: 'error',
-    code: `provider_${kind}`,
+    code: `provider_${kind.replace(/-/g, '_')}`,
     kind,
     title,
     explanation,
