@@ -110,6 +110,24 @@ describe('a mouse never slides', () => {
     expect(html).toContain('mouse:group-hover/swipe:pointer-events-auto');
     expect(html).toContain('mouse:group-focus-within/swipe:pointer-events-auto');
   });
+
+  // Regression, user report (paraphrased: the star, rename, fork and delete look
+  // ridiculous and stand too close to the margins): under a pointer each cell was
+  // still the drawer's 72px captioned slab — four tinted 34px boxes standing on a
+  // 32px row, flush against the paper's right edge, over the date they hid.
+  it('wears the icon-only disc under a pointer, inside the row\'s trailing gutter', () => {
+    const html = markup();
+    // The cell is the 28px disc every other icon-only control in the app is.
+    expect(html).toContain('mouse:size-7 mouse:rounded-full');
+    // The caption stays for the screen reader and leaves the screen.
+    expect(html).toContain('class="mouse:sr-only">Delete<');
+    // The strip ends where the row's own content does, not on the paper's edge.
+    expect(html).toContain('mouse:pl-6');
+    expect(html).toContain('pr-3 sm:pr-4');
+    // The hover slab is the TRACK's, so the row and its verbs never show a seam.
+    expect(html).toContain('mouse:hover:bg-hover');
+    expect(html).toContain('snap-start bg-panel mouse:bg-transparent');
+  });
 });
 
 describe('the slide', () => {
