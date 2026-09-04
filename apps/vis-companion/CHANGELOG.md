@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (5347) — 2026-09-04
+<!-- commit: 285fe174b5114cc11e124f6067196029bc33b84d -->
+
+- Let the sessions list scroll under the home indicator
+- Pair from a phone as a choice, not steps
+- Pair through one field on a three-step page
+- Pin parked sessions in their project and keep the band on the list
+- Enforce snake_case diagnostic codes
+- Ship desktop installers with Pake and hide Scan QR on desktop
+- Fork only from the turn, drop the row's fork verb
+- Fork from the row, fork at a turn from the turn
+- Cut the fork menu down to its two choices
+- Keep a fit sheet that reaches its cap below the notch
+- Move the list toggle off the app bar, read the Mac host natively
+- Align and collapse the desktop sidebar
+- Split the desk into a sidebar list and the transcript
+- Desktop row verbs become icon discs in the row gutter
+- Set session titles in the prose face
+- Align retired feature checks
+- Remove obsolete terminal artifact bridge
+- Remove aggregate and trim source commentary
+- Expand diagnostics from its whole band
+- Record companion build 5306
+
 ## 0.1.41 (5306) — 2026-09-03
 <!-- commit: 22cf694c3c0c39111ac1e42a37b3f3910ab76f8a -->
 
