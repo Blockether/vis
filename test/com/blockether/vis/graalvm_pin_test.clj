@@ -84,13 +84,19 @@
               :let [src
                     (slurp wf)]]
 
-        ;; Anything that BUILDS an artefact (uberjar, native image, Clojars jars)
-        ;; must run on the pinned JDK. Scan-only jobs (clj-watson, babashka) do
-        ;; not need a GraalVM and deliberately skip the 320 MB download.
-        (when (str/includes? src "clojure -T:build")
-          (expect (str/includes? src "uses: ./.github/actions/setup-graalvm-25")
+        ;; A build OR dependency prep can compile a git dependency. Every such JOB
+        ;; must therefore run on the one pinned JDK; a setup elsewhere in the same
+        ;; workflow cannot affect it.
+        (doseq [job
+                (re-seq #"(?ms)^  [a-zA-Z0-9_-]+:\n.*?(?=^  [a-zA-Z0-9_-]+:|\z)" src)
+
+                :when (or (str/includes? job "clojure -T:build")
+                          (str/includes? job "clojure -X:deps prep"))]
+
+          (expect (str/includes? job "uses: ./.github/actions/setup-graalvm-25")
                   (str (.getName wf)
-                       " runs `clojure -T:build` without ./.github/actions/setup-graalvm-25")))
+                       " prepares or builds on an unpinned JDK: "
+                       (first (str/split-lines job)))))
         ;; And no workflow may name a GraalVM version other than the pin.
         (doseq [[_ v] (re-seq #"GraalVM (?:CE )?(\d+\.\d+\.\d+)" src)]
           (expect (= GRAAL_VERSION v)

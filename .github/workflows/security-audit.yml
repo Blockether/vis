@@ -49,6 +49,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Dependency prep compiles git libraries (including vis-python-runtime's
+      # Java 22 FFM bridge), so a scan needs the same locked JDK as the build.
+      - uses: ./.github/actions/setup-graalvm-25
 
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
@@ -155,6 +158,10 @@ jobs:
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
+
+      # `clojure -X:deps prep` below can compile Java-bearing git libraries.
+      - uses: ./.github/actions/setup-graalvm-25
+        if: steps.guard.outputs.run == 'true'
 
       - uses: DeLaGuardo/setup-clojure@13.6.1
         if: steps.guard.outputs.run == 'true'
