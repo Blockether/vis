@@ -32,6 +32,22 @@
               deref
               :active-tab-id)))
 
+(defn- voice-recording-failed-signal
+  [throwable message]
+  (let [data (ex-data throwable)]
+    {:level :error
+     :id ::voice-recording-failed
+     :data (cond-> {:error message :type (:type data)}
+             (:backend data)
+             (assoc :backend (:backend data))
+
+             (seq (:attempts data))
+             (assoc :attempts (:attempts data)))}))
+
+(defn- log-voice-recording-failed!
+  [throwable message]
+  (tel/log! (voice-recording-failed-signal throwable message) message))
+
 (defn- voice-asr-failed-signal
   [audio-file throwable message]
   {:level :error
@@ -40,7 +56,7 @@
 
 (defn- log-voice-asr-failed!
   [audio-file throwable message]
-  (tel/log! (voice-asr-failed-signal audio-file throwable message)))
+  (tel/log! (voice-asr-failed-signal audio-file throwable message) message))
 
 
 (defn- recording-failure-text
@@ -83,13 +99,15 @@
       ;; whatever it said and the human was told nothing at all.
       (if-let [rec (try (recorder/start!)
                         (catch Throwable t
-                          (reset! state
-                            {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
-                          (idle-status!)
-                          (publish! {:op :notify
-                                     :text (str "Voice cannot record: " (recording-failure-text t))
-                                     :level :error})
-                          nil))]
+                          (let [message (recording-failure-text t)]
+                            (reset! state
+                              {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
+                            (idle-status!)
+                            (log-voice-recording-failed! t message)
+                            (publish! {:op :notify
+                                       :text (str "Voice cannot record: " message)
+                                       :level :error})
+                            nil)))]
         (let [started-at-ms (vis/now-ms)]
           (reset! state {:recorder rec :ticker nil :transcribing? false :workspace-id workspace-id})
           (let [ticker (start-ticker! rec started-at-ms)]

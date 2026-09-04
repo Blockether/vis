@@ -111,15 +111,40 @@
           (voice-input/stop-and-transcribe! {})
           (expect (await-event events #(= "Voice produced no audible text" (:text %))))
           (expect (not-any? #(= :input/append (:op %)) @events)))))
-  (it "clears recorder state and preserves actionable microphone errors"
-      (let [events (atom [])]
-        (reset-voice!)
-        (with-redefs [recorder/start! (fn []
-                                        (throw (ex-info "no input device"
-                                                        {:remediation "Grant microphone access."})))
-                      vis/publish-channel-event! (fn [_ event]
-                                                   (swap! events conj event))]
+  ;; Regression, issue #172: microphone initialization failures only reached a transient toast,
+  ;; leaving no persistent evidence that Java Sound could not see WSL2's audio server.
+  (it
+    "logs recorder initialization failures and preserves their remediation"
+    (let [events
+          (atom [])
 
-          (voice-input/start-recording! {})
-          (expect (nil? (:recorder @voice-input/state)))
-          (expect (some #(str/includes? (str (:text %)) "Grant microphone access.") @events))))))
+          logs
+          (atom [])]
+
+      (reset-voice!)
+      (with-redefs-fn {(ns-resolve 'com.blockether.vis.tui.voice-input 'log-voice-recording-failed!)
+                       (fn [throwable message]
+                         (swap! logs conj {:throwable throwable :message message}))}
+        (fn []
+          (with-redefs [recorder/start!
+                        (fn []
+                          (throw (ex-info "no input device"
+                                          {:type :voice/no-recorder
+                                           :backend :java-sound
+                                           :remediation "Grant microphone access."})))
+
+                        vis/publish-channel-event!
+                        (fn [_ event]
+                          (swap! events conj event))]
+
+            (voice-input/start-recording! {})
+            (expect (nil? (:recorder @voice-input/state)))
+            (expect (= :java-sound
+                       (-> @logs
+                           first
+                           :throwable
+                           ex-data
+                           :backend)))
+            (expect (str/includes? (:message (first @logs)) "Grant microphone access."))
+            (expect (some #(str/includes? (str (:text %)) "Grant microphone access.")
+                          @events))))))))
