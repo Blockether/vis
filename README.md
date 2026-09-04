@@ -42,11 +42,11 @@ vis-agent update            # move the command and its runtime to the newest com
 ## Quick start
 
 ```bash
-vis-tui                                             # interactive terminal UI
+vis-agent tui --jvm                                 # interactive terminal UI
 vis-agent gateway start --host 0.0.0.0 --pair --jvm # gateway for the phone app; prints the pairing QR
 ```
 
-`vis-tui` is the terminal application; it talks to a gateway over HTTP and starts the managed local daemon when none is running. `--jvm` runs the JVM source runtime — the checkout Vis owns — instead of an installed native binary (`VIS_JVM=1` is the same switch). A gateway bound to a non-loopback `--host` always requires a bearer token, and `--pair` prints the QR that carries it — see [Gateway & pairing](resources/vis-docs/gateway.md).
+`vis-agent tui` opens the terminal UI and starts the managed local gateway when none is running. `--jvm` runs the JVM source runtime — the checkout Vis owns — instead of an installed native binary (`VIS_JVM=1` is the same switch). A gateway bound to a non-loopback `--host` always requires a bearer token, and `--pair` prints the QR that carries it — see [Gateway & pairing](resources/vis-docs/gateway.md).
 
 ## Companion app (iPhone / Android)
 
