@@ -1859,6 +1859,9 @@ export function Modal({
 
           A `fit` dialog is one exception, and it is a SIZE rather than a second
           modal: same scrim, same physics, same box — it simply stops at its content.
+          Its ceiling is the glass MINUS the notch: a fit sheet clears no notch itself
+          (`IsFitSheet`), so one that has grown to its cap — fifteen provider presets —
+          would otherwise stand its title under the clock.
           `wide` is the other, and it is a LAYOUT rather than a mood: settings stands
           two columns wide, and 36rem split in half is two columns of nothing.
 
@@ -1869,7 +1872,7 @@ export function Modal({
       <div
         className={`flex w-full flex-col ${
           size === 'wide' ? 'sm:max-w-4xl' : 'sm:max-w-xl'
-        } ${size === 'fit' ? 'max-h-full sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`}
+        } ${size === 'fit' ? 'max-h-[calc(100%-env(safe-area-inset-top))] sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`}
         role="presentation"
         onClick={(event) => event.stopPropagation()}
       >

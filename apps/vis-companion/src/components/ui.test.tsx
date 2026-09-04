@@ -1109,7 +1109,7 @@ describe("Modal and DialogFrame as a phone sheet", () => {
       "DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]'",
     );
     expect(source).toContain("'sm:max-w-4xl' : 'sm:max-w-xl'");
-    expect(source).toContain("'max-h-full sm:h-auto' : DIALOG_DESKTOP_HEIGHT");
+    expect(source).toContain("'max-h-[calc(100%-env(safe-area-inset-top))] sm:h-auto' : DIALOG_DESKTOP_HEIGHT");
     // One width for every dialog that asks ONE question, so a question and a file
     // browser are the same rectangle. `wide` is the settings box and nothing else:
     // two columns side by side is a LAYOUT, and it is the only one in the app.
@@ -1930,8 +1930,19 @@ describe("Modal, fit", () => {
       "size === 'fit' ? 'items-end' : 'items-stretch'",
     );
     expect(uiSource).toContain(
-      "size === 'fit' ? 'max-h-full sm:h-auto' : DIALOG_DESKTOP_HEIGHT",
+      "size === 'fit' ? 'max-h-[calc(100%-env(safe-area-inset-top))] sm:h-auto' : DIALOG_DESKTOP_HEIGHT",
     );
+  });
+
+  // Regression, user report (paraphrased: the cap is still wrong — the providers run
+  // past the screen): a fit sheet clears no notch, and its ceiling was the WHOLE
+  // glass, so the provider picker — fifteen presets, taller than any phone — grew to
+  // the cap and stood its title and subtitle under the status bar's clock. The
+  // ceiling is the glass minus the notch, and the sheet keeps clearing none itself.
+  it("stops a fit sheet that reaches its cap below the notch", () => {
+    const fit = uiSource.slice(uiSource.indexOf("size === 'fit' ? 'max-h-"));
+    expect(fit.slice(0, 80)).toContain("calc(100%-env(safe-area-inset-top))");
+    expect(uiSource).not.toContain("'max-h-full sm:h-auto'");
   });
 
 
