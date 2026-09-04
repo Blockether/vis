@@ -103,6 +103,20 @@ describe("sessions feature boundaries", () => {
     expect(signature).toMatch(/^\s*reading,?$/m);
   });
 
+  // Regression, user report (paraphrased: on the phone a strip at the very bottom
+  // hides the last session of a machine): the section padded itself by the bottom
+  // safe area, so the list stopped above an opaque band under the home indicator
+  // and the final row of a page stayed cut behind it however far it was scrolled.
+  it("gives the bottom safe area to the scrolling list, not the section around it", () => {
+    const section = sessionsScreenSource.match(/<section aria-label="Sessions" className=\{`([^`]*)`\}/);
+    expect(section, "sessions section").not.toBeNull();
+    expect(section?.[1]).not.toContain("safe-area-inset-bottom");
+    const list = sessionsScreenSource.match(/<div ref=\{listRef\} className=\{`([^`]*)`\}/);
+    expect(list, "list scroller").not.toBeNull();
+    expect(list?.[1]).toContain("overflow-y-auto");
+    expect(list?.[1]).toContain("pb-[calc(0.75rem+env(safe-area-inset-bottom))]");
+  });
+
   it("keeps session rename inside the row", () => {
     expect(sessionListSource).toContain("renameDraft");
     expect(sessionListSource).toContain("commitRename");

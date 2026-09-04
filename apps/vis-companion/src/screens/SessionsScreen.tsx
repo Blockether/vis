@@ -1522,7 +1522,7 @@ export function SessionsScreen({
   if (loadError) return null;
 
   return (
-    <section aria-label="Sessions" className={`flex h-full min-h-0 w-full flex-col pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none ${isDesk ? '' : 'mx-auto max-w-[1400px] sm:px-6 sm:py-4'}`}>
+    <section aria-label="Sessions" className={`flex h-full min-h-0 w-full flex-col pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none ${isDesk ? '' : 'mx-auto max-w-[1400px] sm:px-6 sm:py-4'}`}>
       {/* On phones this panel sits FLUSH under the app header, whose own `border-b`
           already draws the rule below the Vis mark. A `border-y` here stacked a
           second hairline on top of it, so the Sessions tab wore a 2px seam while
@@ -1747,9 +1747,12 @@ export function SessionsScreen({
             390px glass for nothing. Full bleed, no vertical rules, and `h-full` keep the
             frame fixed while the rows scroll inside it. The final machine closes the list with
             one neutral 2px rule exactly where its content ends; machine identity stays in the
-            switcher instead of becoming another frame around every section. The section's own
-            `env(safe-area-inset-bottom)` keeps that edge and the final row clear of the home
-            indicator.
+            switcher instead of becoming another frame around every section. The bottom safe
+            area is the LIST's own padding, never the section's: a section inset stood
+            under the home indicator as an opaque strip of paper that the rows stopped
+            above, so the last row of a page sat cut in half behind it and no amount of
+            scrolling could bring it out. Rows now scroll under the indicator, and the
+            list's padding lifts the final row and its closing rule clear of it.
             At `sm` the card detaches from the viewport edges but still fills the
             available height. Its list owns overflow; the document never grows a second
             scrollbar or leaves an intrinsic-height strip above empty desktop paper. */}
@@ -1773,7 +1776,7 @@ export function SessionsScreen({
           </div>
         )}
 
-        <div ref={listRef} className={`@container min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable] pb-3 ${isDesk ? '' : 'sm:px-3'}`}>
+        <div ref={listRef} className={`@container min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable] pb-[calc(0.75rem+env(safe-area-inset-bottom))] ${isDesk ? '' : 'sm:px-3'}`}>
         {/* A PROMOTION WAITS FOR THE READER, and the arrow points UP because that
             is where those rows go. Rows fresher than the oldest row on screen are
             counted here instead of being inserted under the thumb; the tap is the
