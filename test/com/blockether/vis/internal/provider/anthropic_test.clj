@@ -6,6 +6,8 @@
             [com.blockether.vis.internal.provider.anthropic :as anthropic]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
+(anthropic/register!)
+
 (defdescribe
   provider-anthropic-test
   (it "registers separate Anthropic API-key and Claude subscription providers"
@@ -238,6 +240,21 @@
             (let [report ((:provider/limits-fn provider))]
               (expect (= :unauthenticated (:status report)))
               (expect (= 1 @calls)))))))
+  ;; User report, provider picker: a successful OAuth exchange kept painting the
+  ;; pre-login rejection because the extension cache outlived the new credential.
+  (it "drops a cached unauthenticated report when OAuth credentials are saved"
+      (let [auth-file (java.io.File/createTempFile "vis-anthropic-auth" ".json")]
+        (try (.delete auth-file)
+             (reset! @#'anthropic/limits-cache {:report {:provider-id :anthropic-coding-plan
+                                                         :status :unauthenticated}
+                                                :expires-at-ms Long/MAX_VALUE})
+             (with-redefs-fn {#'anthropic/auth-file (constantly (str auth-file))
+                              #'anthropic/auth-dir #(.getParentFile auth-file)}
+               (fn []
+                 (@#'anthropic/save-auth-file!
+                  {:access-token "access" :refresh-token "refresh" :expires-at-ms Long/MAX_VALUE})
+                 (expect (nil? @@#'anthropic/limits-cache))))
+             (finally (.delete auth-file) (anthropic/clear-limits-cache!)))))
   (it "returns unauthenticated limits report when Claude subscription OAuth is missing"
       (let [provider (vis/provider-by-id :anthropic-coding-plan)]
         (with-redefs-fn {#'anthropic/get-anthropic-token!

@@ -192,6 +192,15 @@
 
 (defn- auth-dir [] (io/file (str (System/getProperty "user.home") "/.vis")))
 
+(defonce ^:private limits-cache (atom nil))
+
+(defonce ^:private limits-lock (Object.))
+
+(defn clear-limits-cache!
+  "Drop the extension's usage report cache after credentials change or in tests."
+  []
+  (locking limits-lock (reset! limits-cache nil)))
+
 (defn- auth-json-key
   "JSON key -> engine keyword. What we write is snake_case (`refresh_token`);
    the kebab spelling older builds persisted reads back onto the same key."
@@ -206,17 +215,22 @@
 
 (defn- save-auth-file!
   "Persist credentials through the ONE JSON boundary (`vis/wire-json-str`):
-   snake_case string keys, total encoding."
+   snake_case string keys, total encoding. Drops any pre-login usage verdict so
+   the credential and the status painted for it cannot disagree."
   [credentials]
   (let [^java.io.File dir (auth-dir)]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit (auth-file) (vis/wire-json-str (assoc credentials :saved-at-ms (util/now-ms))))
+    (locking limits-lock
+      (spit (auth-file) (vis/wire-json-str (assoc credentials :saved-at-ms (util/now-ms))))
+      (reset! limits-cache nil))
     credentials))
 
 (defn- delete-auth-file!
   []
-  (let [f (io/file (auth-file))]
-    (when (.exists f) (.delete f))))
+  (locking limits-lock
+    (let [f (io/file (auth-file))]
+      (when (.exists f) (.delete f)))
+    (reset! limits-cache nil)))
 
 (defn detect-credentials
   "Detect persisted Anthropic OAuth credentials without network validation."
@@ -382,15 +396,6 @@
 
 (def ^:private limits-error-cache-ms (* 2 60 1000))
 
-(defonce ^:private limits-cache (atom nil))
-
-(defonce ^:private limits-lock (Object.))
-
-(defn clear-limits-cache!
-  "Clear the in-process Anthropic usage cache. Intended for tests and
-   forced provider refreshes; normal callers should use `limits`."
-  []
-  (reset! limits-cache nil))
 
 (defn- transient-usage-status? [status] (contains? #{409 429} status))
 
