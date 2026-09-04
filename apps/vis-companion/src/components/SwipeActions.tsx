@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { LIST_EDGE_END } from './SessionNavigator';
 
 export interface SwipeAction {
   key: string;
@@ -57,6 +58,17 @@ const OPEN_PAST_PX = 8;
  * Shared row-action drawer. Touch uses a two-panel scroll-snap track; fine pointers place
  * an opaque action strip over the trailing edge on hover/focus. Hidden actions cannot
  * intercept input, and hybrid devices retain the touch behavior.
+ *
+ * ONE CELL, TWO FACES. On touch a cell is the drawer's 72px captioned slab — an icon
+ * over a word, tinted by what the verb means, because a thumb slid it open and reads
+ * the caption. Under a pointer the same cell is `IconButton`'s 28px disc: the glyph
+ * alone, on the row's own hover tint, the row's trailing gutter between the last disc
+ * and the paper's edge. The desktop face is written HERE and not composed from
+ * `IconButton` because the touch face has no `ui.tsx` control to stand in for it, and
+ * two sets of buttons under one name are two rows of verbs to a screen reader and to
+ * every test that asks for `Rename` by name. Reported (paraphrased: the star, rename,
+ * fork and delete look ridiculous and stand too close to the margins): four 34px slabs
+ * on a 32px row, flush against the paper's right edge, over a date they hid.
  */
 export function SwipeActions({
   actions,
@@ -173,7 +185,10 @@ export function SwipeActions({
         }
         setOpen((current) => (current === next ? current : next));
       }}
-      className="group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:relative mouse:snap-none mouse:overflow-hidden"
+      // Under a pointer the TRACK is the row's hover slab: the strip and the row are two
+      // panels of one track, and a hover that belongs to only one of them leaves a seam
+      // — the row went back to plain paper the moment the cursor reached its own verbs.
+      className="group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:relative mouse:snap-none mouse:overflow-hidden mouse:transition-colors mouse:duration-150 mouse:hover:bg-hover mouse:motion-reduce:transition-none"
     >
       {/* A GRID, not a plain block: the track is as tall as its TALLEST panel, and the
           action strip (a 16px icon over a 10px caption) stands 34px against a 32px
@@ -181,7 +196,7 @@ export function SwipeActions({
           has to stretch to IT — otherwise the row's hover slab stops short of the rule
           under it and the row reads as if it had lost two pixels of its own height. */}
       <div
-        className="grid w-full shrink-0 snap-start bg-panel"
+        className="grid w-full shrink-0 snap-start bg-panel mouse:bg-transparent"
         onClickCapture={(event) => {
           // While the drawer is open the row itself is a dismiss target, never a
           // navigation: a thumb resting on it must not open the session.
@@ -194,7 +209,7 @@ export function SwipeActions({
         {children}
       </div>
       <div
-        className="flex shrink-0 snap-end mouse:pointer-events-none mouse:absolute mouse:inset-y-0 mouse:right-0 mouse:bg-hover mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/swipe:pointer-events-auto mouse:group-hover/swipe:opacity-100 mouse:group-focus-within/swipe:pointer-events-auto mouse:group-focus-within/swipe:opacity-100 mouse:motion-reduce:transition-none"
+        className={`flex shrink-0 snap-end mouse:pointer-events-none mouse:absolute mouse:inset-y-0 mouse:right-0 mouse:items-center mouse:gap-1 mouse:pl-6 mouse:bg-hover mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/swipe:pointer-events-auto mouse:group-hover/swipe:opacity-100 mouse:group-focus-within/swipe:pointer-events-auto mouse:group-focus-within/swipe:opacity-100 mouse:motion-reduce:transition-none ${LIST_EDGE_END}`}
         role="group"
         aria-label={label ? `${label} actions` : 'Row actions'}
       >
@@ -204,12 +219,12 @@ export function SwipeActions({
             type="button"
             aria-label={action.name ?? action.label}
             title={action.name ?? action.label}
-            className={`flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-1 border-l font-mono text-chip font-bold uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none ${
+            className={`flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-1 border-l font-mono text-chip font-bold uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none mouse:size-7 mouse:rounded-full mouse:border-l-0 mouse:bg-transparent mouse:text-white ${
               action.tone === 'danger'
-                ? 'border-err-edge bg-err-surface text-err-ink hover:bg-err hover:text-white'
+                ? 'border-err-edge bg-err-surface text-err-ink hover:bg-err hover:text-white mouse:hover:bg-err-surface mouse:hover:text-err'
                 : action.tone === 'accent'
-                  ? 'border-accent/40 bg-accent/15 text-accent-ink hover:bg-accent hover:text-accent-foreground'
-                  : 'border-dialog-edge bg-panel-2 text-accent-ink hover:bg-hover'
+                  ? 'border-accent/40 bg-accent/15 text-accent-ink hover:bg-accent hover:text-accent-foreground mouse:hover:bg-panel'
+                  : 'border-dialog-edge bg-panel-2 text-accent-ink hover:bg-hover mouse:hover:bg-panel'
             }`}
             onClick={(event) => {
               const anchor = event.currentTarget;
@@ -218,7 +233,7 @@ export function SwipeActions({
             }}
           >
             <span aria-hidden="true">{action.icon}</span>
-            {action.label}
+            <span className="mouse:sr-only">{action.label}</span>
           </button>
         ))}
       </div>

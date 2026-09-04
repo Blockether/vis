@@ -32,6 +32,7 @@ import {
   type LucideIcon,
   Mic,
   MicVocal,
+  PanelLeft,
   Paperclip,
   Pause,
   Pencil,
@@ -333,6 +334,11 @@ export function RefreshIcon({
 }
 export function SettingsIcon({ className }: { className?: string }) {
   return <Mark icon={Settings} className={className} />;
+}
+
+/** The desk's sidebar, as the one glyph every desktop app uses for putting it away. */
+export function SidebarIcon({ className }: { className?: string }) {
+  return <Mark icon={PanelLeft} className={className} />;
 }
 
 /**

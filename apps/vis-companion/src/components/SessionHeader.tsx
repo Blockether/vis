@@ -1,3 +1,4 @@
+import { useDeskRail } from "../lib/fit-rows";
 import { markSessionId } from "../lib/session-id";
 import { ArtifactsChip } from "./ArtifactsSheet";
 import { BackButton, CopyChip } from "./ui";
@@ -38,13 +39,19 @@ export function SessionHeader({
   model: SessionHeaderModel;
   commands: SessionHeaderCommands;
 }) {
+  // ON A DESK THE LIST IS BESIDE THIS HEADER, not behind it: there is nothing to go
+  // back to, so the arrow goes and the title takes the list's own leading edge.
+  const isDesk = useDeskRail();
   return (
     /* The notch strip stands above the 52px band via box-content. Edge controls
        own horizontal safe-area padding so the header's paper still reaches the glass. */
     <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] mouse:min-h-9 mouse:pt-0">
-      <BackButton label="Back to sessions" onClick={commands.back} />
-      <div className="min-w-0 flex-1 self-center px-3 py-1.5 mouse:py-1">
-        <h1 className="truncate font-mono text-subhead font-bold text-white mouse:text-title">
+      {!isDesk && <BackButton label="Back to sessions" onClick={commands.back} />}
+      <div className={`min-w-0 flex-1 self-center py-1.5 mouse:py-1 ${isDesk ? "pl-4 pr-3" : "px-3"}`}>
+        {/* The title is the sentence the screen is about, and a human's sentence is
+            PROSE: Inter, the transcript's own face, one step above its body — while the
+            connection line under it and the id chip beside it stay mono facts. */}
+        <h1 className="truncate text-subhead font-semibold text-white mouse:text-title">
           {model.title}
         </h1>
         <div className="flex min-w-0 items-center gap-1.5 font-mono text-meta text-dialog-hint">

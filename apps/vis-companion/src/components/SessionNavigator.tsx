@@ -275,14 +275,14 @@ export function HeaderTitle({
       <span className="flex min-w-0 flex-1 flex-col items-start overflow-hidden">
         {onRename ? (
           <EditableName
-            face={`max-w-[100%] min-w-0 truncate bg-transparent p-0 font-mono font-bold text-white ${HEADER_TYPE}`}
+            face={`max-w-[100%] min-w-0 truncate bg-transparent p-0 font-semibold text-white ${HEADER_TYPE}`}
             label={renameLabel ?? 'Rename'}
             value={typeof name === 'string' ? name : ''}
             onCommit={onRename}
           />
         ) : (
           <span
-            className={`max-w-[100%] min-w-0 truncate font-mono font-bold text-white ${HEADER_TYPE}`}
+            className={`max-w-[100%] min-w-0 truncate font-semibold text-white ${HEADER_TYPE}`}
           >
             {name}
           </span>
@@ -462,17 +462,21 @@ export function Pager({
 
             No phone line holds both: at 390px the count and the widest window want
             431px of a 362px line. The numbers are the half that can be said in fewer
-            characters, so below `sm` they become `4 / 80` — 56px, the SAME 56px on
-            every page of every project, so the band holds one height for the whole
-            walk. `<` and `>` still step, and the strip comes back whole
-            at `sm`, where a number is a tap and not a squeeze between two others. */}
+            characters, so in a list under 42rem they become `4 / 80` — 56px, the SAME
+            56px on every page of every project, so the band holds one height for the
+            whole walk. `<` and `>` still step, and the strip comes back whole where the
+            LIST (`@container`, never the window: the desk's sidebar is a narrow list in a
+            wide window) has room for a number to be a tap and not a squeeze. */}
         <span
           aria-hidden="true"
-          className="min-w-12 px-1 text-center font-mono text-chip text-dialog-hint tabular-nums sm:hidden"
+          // The desk's 20rem sidebar is a list narrower than any phone: there the
+          // count under the project's name and this position cannot both fit beside
+          // the verb, and the position is the one the arrows already imply.
+          className="min-w-12 px-1 text-center font-mono text-chip text-dialog-hint tabular-nums @max-xs:hidden @2xl:hidden"
         >
           {page} / {pageCount}
         </span>
-        <span className="hidden flex-1 items-center justify-center gap-1 sm:flex">
+        <span className="hidden flex-1 items-center justify-center gap-1 @2xl:flex">
           {pageWindow(page, pageCount).map((entry, index) =>
             entry === null ? (
               <span
@@ -490,7 +494,7 @@ export function Pager({
                 aria-label={`Page ${entry}`}
                 aria-current={entry === page ? 'page' : undefined}
                 onClick={() => onPage(entry)}
-                className="min-w-7 px-1 font-mono tabular-nums sm:min-w-8 sm:px-1.5"
+                className="min-w-7 px-1 font-mono tabular-nums @2xl:min-w-8 @2xl:px-1.5"
               >
                 {entry}
               </Button>
@@ -624,7 +628,7 @@ export function ProjectStatusCounts({
 
   return statuses.map((status) => (
     <Fragment key={status.label}>
-      <span aria-hidden>·</span>
+      <span aria-hidden className="mx-2">·</span>
       <span className={`inline-flex items-center gap-1 whitespace-nowrap font-bold ${status.tone}`}>
         <span className={`size-1.5 ${status.dot}`} aria-hidden="true" />
         {status.label}

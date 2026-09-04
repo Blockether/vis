@@ -758,7 +758,7 @@ describe("Pager", () => {
     );
     expect(html).toContain("4 / 80");
     expect(html).toContain(
-      'class="hidden flex-1 items-center justify-center gap-1 sm:flex"',
+      'class="hidden flex-1 items-center justify-center gap-1 @2xl:flex"',
     );
     // `display: none` takes the numbers out of the accessibility tree too, so the
     // position is announced ONCE, by the live region both forms are drawn from.
@@ -913,7 +913,7 @@ describe("HeaderTally", () => {
 // Regression, user report: the machine name had to be editable from the list
 // itself ("clicking on machine name to edit it and save"), and the edit must not
 // move anything. The resting name and the field it becomes are one box: same class
-// list, and the field is sized in CHARACTERS of the header's mono face, so the
+// list, and the field is sized in CHARACTERS of the header's face, so the
 // address beside it does not shift when the caret arrives.
 describe("HeaderTitle rename", () => {
   const resting = renderToStaticMarkup(
@@ -928,8 +928,11 @@ describe("HeaderTitle rename", () => {
     />,
   );
 
+  // Inter, not the mono face: the name heads rows whose titles are Inter and stands
+  // under a session header set in Inter — mono is for the address and the count
+  // UNDER it, which are facts, not the name of the thing.
   it("is INK, not a second control: the name keeps its own face", () => {
-    const face = "font-mono font-bold text-white";
+    const face = "font-semibold text-white";
     expect(resting).toContain(face);
     expect(editable).toContain(face);
     // No border, no box, no height of its own — anything that paints a frame
@@ -2549,13 +2552,15 @@ describe("what leads a bar is sized to lead it", () => {
     expect(appSource).not.toContain("h-[18px]");
   });
 
-  it("gives the session's title a step over the prose it heads", () => {
+  it("gives the session's title a step over the prose it heads, in the prose's face", () => {
     expect(sessionHeaderSource).toContain(
-      'className="truncate font-mono text-subhead font-bold text-white mouse:text-title"',
+      'className="truncate text-subhead font-semibold text-white mouse:text-title"',
     );
     expect(sessionHeaderSource).not.toContain(
       'className="truncate font-mono text-body font-bold text-white"',
     );
+    // A human's sentence is not a machine fact: the id chip beside it is mono, the title is not.
+    expect(sessionHeaderSource).not.toMatch(/<h1 className="[^"]*font-mono/);
   });
 });
 describe("a setting is picked and switched by one control each", () => {

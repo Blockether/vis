@@ -243,7 +243,7 @@ describe('a tapped notification ends on the session screen', () => {
     expect(screens).toEqual(['connect', 'connect', 'session', 'session']);
     // And it is the only screen allowed to take the chrome, because it brings
     // its own header and status-bar padding.
-    expect(screens.map(isShellChromeVisible)).toEqual([true, true, false, false]);
+    expect(screens.map((screen) => isShellChromeVisible(screen))).toEqual([true, true, false, false]);
   });
 
   it('never reached the session on the shipped handler', () => {

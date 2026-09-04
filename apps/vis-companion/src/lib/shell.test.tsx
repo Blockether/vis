@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { renderApp } from '../app-harness';
 import { renderSessionScreen } from '../screens/session-screen-harness';
 import { IconButton } from '../components/ui';
-import { isShellChromeVisible, shellScreen, type ShellState } from './shell';
+import { isShellChromeVisible, isShellSplit, shellScreen, type ShellState } from './shell';
 
 const state = (over: Partial<ShellState> = {}): ShellState => ({
   isSessionOpen: false,
@@ -77,6 +77,30 @@ describe('shell screen', () => {
 
   it('falls back to the list when an open session has no transport yet', () => {
     expect(shellScreen(state({ isSessionOpen: true, isSessionReady: false }))).toBe('sessions');
+  });
+});
+
+// The desk is a split: the list and the transcript are up together, so the shell's
+// bar stays over both and the session's own header is the transcript's.
+describe('the desk split', () => {
+  it('splits exactly the two screens that stand side by side', () => {
+    const screens = ['connect', 'incompatible', 'session', 'sessions'] as const;
+    expect(screens.filter((s) => isShellSplit(s, true))).toEqual(['session', 'sessions']);
+    expect(screens.filter((s) => isShellSplit(s, false))).toEqual([]);
+  });
+
+  // Regression, user report (paraphrased: there is no button to hide the sidebar):
+  // the split had no way out, so a desk could never read one transcript wide.
+  it('hands the whole shell to whichever screen is open once the sidebar is put away', () => {
+    expect(isShellSplit('session', true, false)).toBe(false);
+    expect(isShellSplit('sessions', true, false)).toBe(false);
+    expect(isShellSplit('session', true, true)).toBe(true);
+  });
+
+  it('keeps the chrome over every desk screen, and drops it over a phone session', () => {
+    expect(isShellChromeVisible('session', true)).toBe(true);
+    expect(isShellChromeVisible('session', false)).toBe(false);
+    expect(isShellChromeVisible('sessions', true)).toBe(true);
   });
 });
 
