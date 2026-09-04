@@ -2,6 +2,17 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (5358) — 2026-09-04
+<!-- commit: 6d94cf3156300f57a750c3ac179d4d38fa56159b -->
+
+- Make drawing rail collapsible
+- Refine mobile drawing rail
+- Move drawing tools into side rail
+- Use icons and frame zoom controls
+- Move drawing check into pencil slot
+- Use JetBrains Mono throughout
+- Record companion build 5347
+
 ## 0.1.41 (5347) — 2026-09-04
 <!-- commit: 285fe174b5114cc11e124f6067196029bc33b84d -->
 
