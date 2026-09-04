@@ -6,6 +6,7 @@
    is denied at the wire with no external network."
   (:require [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+            [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.egress-proxy :as ep]
             [com.blockether.vis.internal.tls-mitm :as tls])
   (:import (java.io BufferedReader InputStreamReader)
@@ -16,7 +17,7 @@
 (defn- run-wire-test
   "Run socket integration only in an unconfined host JVM."
   [f]
-  (if (= "1" (System/getenv "VIS_SEATBELT_ACTIVE"))
+  (if (runtime/jailed?)
     (is true "conditional skip: inherited Seatbelt forbids test listeners")
     (f)))
 

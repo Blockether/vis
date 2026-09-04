@@ -1,12 +1,11 @@
 (ns com.blockether.vis.internal.process-jail
   "OS-level process CONTAINMENT — the 'jail' — that wraps the shell executors'
    argv so an allowed child is physically confined to the session workspace roots
-   and, when network is off, cannot open a socket. This is real containment, a
-   real containment boundary — not a cooperative name/argv check, which can be
-   walked around since argv[0] is `bash` and the real binary hides inside the
-   `-lc` string;
-   the jail constrains what the child can DO once it runs, regardless of what a
-   script inside it tries (curl, python -c, /dev/tcp — all hit the same wall).
+   and, when network is off, cannot open a socket. This is a real containment
+   boundary — not a cooperative name/argv check, which can be walked around since
+   argv[0] is `bash` and the real binary hides inside the `-lc` string; the jail
+   constrains what the child can DO once it runs, regardless of what a script
+   inside it tries (curl, python -c, /dev/tcp — all hit the same wall).
 
    POLICY, NOT GUARDS. The jail is driven by a declarative *policy* compiled from
    vis.yml + the LIVE session roots, not by hand-written guard functions. The
@@ -15,14 +14,14 @@
 
      {:roots-fn     (fn [] [root-strings])  ; live session RW roots, re-read/spawn
       :net-enabled? <bool>                  ; whole shell-child network on/off
-      :allow-read-write [<path> …]           ; concise full read+write grant
-      :allow-write      [<path> …]           ; legacy writable paths (also readable)
+      :allow-read-write [<path> …]           ; full read+write grant
       :deny-write       [<path> …]           ; protect within writable (deny wins)
       :allow-read       [<path> …]           ; additional read-only paths
       :deny-read        [<path> …]           ; protect a read region (deny wins)
-      :mach-services    [<name> …]           ; macOS Mach services a child may look up
-      :inbound-ports    [<int> …]            ; extra local ports a child may ACCEPT on
-                                             ; (bind is local-only; accept is port-gated)
+      :deny-exec        [<path> …]           ; readable but never executable
+      :keychain?        <bool>               ; the OS credential store is reachable
+      :inbound-ports    [<int> …]            ; ports a child may ACCEPT on from
+                                             ; other hosts (loopback is always open)
       :env-values       {<NAME> <value>}     ; RESOLVED project env (`.env` +
                                              ; `environment:`) with ONE call's own
                                              ; `env` delta merged on, per spawn
@@ -32,319 +31,79 @@
 
    The filesystem model mirrors Anthropic's sandbox-runtime:
      - WRITE is allow-only: denied everywhere except the session roots + tmp +
-       `:allow-read-write` + `:allow-write`; `:deny-write` wins.
+       `:allow-read-write`; `:deny-write` wins.
      - READ is default-deny here (workspace-focused, stronger than srt's
        read-everywhere default): system code/config + RW paths + `:allow-read`
        are readable; `:deny-read` wins.
 
-   `spawn!` compiles the policy per process and hands it to the adjacent
-   `libvisjail`: Seatbelt on macOS, embedded bubblewrap on Linux. No enforcer
-   executable is searched on PATH or installed by the operator. Other operating
-   systems are unsupported and an enabled policy fails before spawn.
-
-   Two locks learned from the kernel, baked in here:
-     1. Seatbelt matches RESOLVED real paths, so every root is realpath'd before
-        templating (`/tmp` -> `/private/tmp`, else the rule never matches).
-     2. a default-deny profile must import system.sb or dyld/sysctl startup reads
-        are denied and every binary aborts before `main`."
+   This namespace owns WHAT a session's child may do: it turns the session's
+   configuration, live roots, proxy endpoint and call environment into one
+   platform-neutral policy value and the complete child environment. HOW the
+   operating system enforces that value belongs to `com.blockether/vis-python-runtime`
+   (`spawn-process!` with `:policy`): the per-platform enforcement, the
+   already-confined marker and the refusal on a host that cannot enforce all live
+   there, beside the process launcher, so no enforcement text is assembled here."
   (:require [clojure.string :as str]
             [com.blockether.vis-python-runtime :as python-runtime]
             [com.blockether.vis.internal.python-runtime :as vis-python-runtime]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
-  (:import (java.io File)
-           (java.nio.file LinkOption Paths)
-           (java.util HashMap)))
-
-(def ^:private link-opts (make-array LinkOption 0))
-
-(defn- real-path
-  "Canonical real-path string of `s`, or nil when it cannot be resolved. Seatbelt
-   matches resolved paths, so roots must pass through here before templating."
-  [s]
-  (let [s (paths/expand-home s)]
-    (when-not (str/blank? (str s))
-      (try (.toString (.toRealPath (Paths/get (str s) (make-array String 0)) link-opts))
-           (catch Throwable _ nil)))))
-
-(defn- deny-path
-  "Resolve a DENY target: prefer its real path, else fall back to the raw expanded
-   string. Deny lists must fail safe — a not-yet-existing secret still denies."
-  [s]
-  (or (real-path s)
-      (let [e (paths/expand-home s)]
-        (when-not (str/blank? (str e)) (str e)))))
-
-(defn- os-kind
-  []
-  (let [n (str/lower-case (str (System/getProperty "os.name")))]
-    (cond (str/includes? n "mac") :macos
-          (str/includes? n "linux") :linux
-          :else :other)))
-
-;; WSL detection. WSL2 runs a real Linux kernel, so user and mount namespaces work
-;; and it is treated as ordinary Linux. WSL1 is a syscall-translation shim with no
-;; real kernel namespaces, so embedded bubblewrap cannot enforce anything; it is
-;; reported UNENFORCEABLE rather than silently passing children through. The
-;; kernel `osrelease` distinguishes them: WSL2 = `...-microsoft-standard-WSL2`,
-;; WSL1 = `...-Microsoft` (no `WSL2` marker).
-(defn- linux-osrelease [] (try (slurp "/proc/sys/kernel/osrelease") (catch Throwable _ "")))
-
-(defn- wsl1?
-  "True only on WSL1 (a `microsoft` kernel WITHOUT the `WSL2` real-kernel marker)."
-  []
-  (let [r (str/lower-case (linux-osrelease))]
-    (and (str/includes? r "microsoft") (not (str/includes? r "wsl2")))))
+  (:import (java.util HashMap)))
 
 (defn supported?
-  "True when the current OS has a matching `libvisjail` beside libvispython.
-   WSL1 is excluded because it has no real Linux namespaces."
+  "True when this host can confine a child at all."
   []
-  (and (#{:macos :linux} (os-kind))
-       (not (wsl1?))
-       (try (boolean (python-runtime/resolve-jail)) (catch Throwable _ false))))
+  (nil? (python-runtime/jail-unsupported-reason)))
 
 (defn unenforceable-reason
-  "Nil when `supported?`, else a human explanation of the platform/runtime gap."
+  "Nil when `supported?`, else the runtime's explanation of the platform gap."
   []
-  (when-not (supported?)
-    (cond (= :other (os-kind)) "the OS process jail is not available on this operating system"
-          (wsl1?) "WSL1 has no real Linux kernel namespaces; the jail needs WSL2"
-          :else "the selected Python runtime has no matching libvisjail")))
+  (python-runtime/jail-unsupported-reason))
 
-(defn- inherited-jail?
-  "True inside a child already confined by this process-jail contract. Seatbelt
-   restrictions are inherited across exec, and macOS rejects applying a second
-   profile, so descendants must not wrap themselves again."
-  []
-  (= "1" (System/getenv "VIS_SEATBELT_ACTIVE")))
+(defn- enforcing?
+  "True when `policy` will actually confine the child: enabled, and either this
+   process is itself already confined (the child inherits) or the host can
+   confine. Decides whether the child gets the scrubbed environment."
+  [policy]
+  (boolean (and policy (not (:disabled? policy)) (or (python-runtime/jailed?) (supported?)))))
 
-;; Read paths every Mach-O binary + dyld needs to even reach main(), plus the
-;; standard package prefixes real tools live in (Homebrew/MacPorts/local) and
-;; the shared system config dir (TLS CAs, resolv.conf/hosts — needed once net is
-;; on). All read-only + world-readable code/config: no user secrets, and writes
-;; here stay denied (only the session roots are RW). A Homebrew-linked `bash`
-;; that can't read its own libreadline aborts before main, so this must be broad
-;; enough to actually launch tools.
-(def ^:private macos-system-read-roots
-  ["/usr" "/bin" "/sbin" "/System" "/Library" "/private/var/db/dyld" "/private/var/select"
-   "/private/etc" "/opt/homebrew" "/usr/local" "/opt/local"])
+(defn- inbound-ports
+  "Distinct integers in the legal TCP range; nil, junk and out-of-range values are
+   dropped so a bad config value can never widen the policy."
+  [ports]
+  (->> ports
+       (keep (fn [p]
+               (let [n (cond (integer? p) (long p)
+                             (string? p) (parse-long (str/trim p)))]
+                 (when (and n (<= 1 n 65535)) n))))
+       distinct
+       vec))
 
-;; Directory-EXISTENCE probes (home lookup, dyld, cwd resolution) need metadata on
-;; the traversal ancestors of granted roots. These are `literal` (the directory
-;; itself, revealing only that it exists) — never `subpath` — so a confined child
-;; can stat `$HOME` and `/Users` but cannot read the size/mtime of
-;; `~/.ssh/id_ed25519` and other secrets beneath them. This scoped metadata grant
-;; replaces a former global `(allow file-read-metadata)` that leaked file existence
-;; + size + mtime for every path on the host.
-(def ^:private macos-metadata-literals
-  ;; A `delay`, never an eager read: `native-image` initializes this namespace at
-  ;; BUILD time, so `user.home`/`java.io.tmpdir` would be the BUILDER's.
-  (delay (into ["/" "/Users" "/Volumes" "/private" "/opt" "/etc" "/var" "/tmp" "/home"]
-               (remove nil?)
-               [(System/getProperty "user.home") (System/getProperty "java.io.tmpdir")])))
-
-;; Linux read-only system roots a confined child needs to launch a real toolchain
-;; (dynamic loader, shared libs, shell, and -- once net is on -- TLS CAs + resolver
-;; config under /etc). All world-readable code/config, bind-mounted read-only; no
-;; user secrets (those live under $HOME, which is NOT bound unless it is a session
-;; root). `*-try` variants tolerate a path missing on a given distro.
-(def ^:private linux-system-read-roots
-  ["/usr" "/bin" "/sbin" "/lib" "/lib64" "/lib32" "/etc" "/opt" "/nix" "/run" "/var/lib"])
-
-(defn- sbpl-quote
-  [s]
-  (str "\""
-       (-> (str s)
-           (str/replace "\\" "\\\\")
-           (str/replace "\"" "\\\""))
-       "\""))
-
-(defn- subpaths [roots] (str/join (map #(str "(subpath " (sbpl-quote %) ")") roots)))
-
-(defn- ancestor-dirs
-  "Every ancestor directory of `p`, from its parent up to `/`, as absolute
-   strings. Canonicalizing a path under a granted root lstats/readlinks each
-   component on the way DOWN, so every ancestor needs `file-read-metadata` even
-   though only the root itself carries `file-read*`/`file-write*`. Without this a
-   confined child cannot `getCanonicalPath` a file it just created under a root
-   whose ancestors aren't otherwise granted — most notably the darwin per-user
-   temp dir (`/private/var/folders/<hash>/T`), whose `/private/var`,
-   `/private/var/folders`, ... chain is granted nowhere else."
-  [p]
-  (loop [cur
-         (when-let [s (not-empty p)]
-           (.getParentFile (java.io.File. ^String s)))
-
-         acc
-         []]
-
-    (if cur
-      (recur (.getParentFile ^java.io.File cur) (conj acc (.getPath ^java.io.File cur)))
-      acc)))
-
-(defn macos-profile
-  "Compile a Seatbelt (SBPL) profile string from a RESOLVED policy map
-   `{:rw [..] :ro [..] :deny-write [..] :deny-read [..] :net-enabled? <bool>}`
-   (all paths already canonical). Rules are emitted in Seatbelt's LAST-match-wins
-   order: allow reads (system + rw + ro), allow writes (rw), then the deny carve-
-   outs so `:deny-write`/`:deny-read` win over the allows. One-line string consumed
-   directly by `libvisjail`."
-  ^String
-  [{:keys [rw ro deny-write deny-read deny-exec net-enabled? proxy-port loopback-port inbound-ports
-           mach-services]}]
-  (let [rw
-        (->> rw
-             (keep real-path)
-             distinct
-             vec)
-
-        ro
-        (->> ro
-             (keep real-path)
-             distinct
-             vec)
-
-        dw
-        (->> deny-write
-             (keep deny-path)
-             distinct
-             vec)
-
-        dr
-        (->> deny-read
-             (keep deny-path)
-             distinct
-             vec)
-
-        dex
-        (->> deny-exec
-             (keep deny-path)
-             distinct
-             vec)]
-
-    (str
-      "(version 1)"
-      "(import \"system.sb\")"
-      "(deny default)"
-      "(allow process-fork process-exec)"
-      "(allow sysctl-read)"
-      ;; GraalVM Native Image uses a named POSIX semaphore for signal delivery on
-      ;; macOS. Without this narrow IPC permission, executables such as bb abort
-      ;; during VM startup before their main function runs.
-      "(allow ipc-posix-sem)"
-      ;; Seatbelt denies EVERY Mach lookup by default, which is what breaks macOS
-      ;; Keychain reads (`security`, `gh auth token`, `git credential-osxkeychain`)
-      ;; inside the jail. Only the services the operator granted are opened.
-      (when-let [ms (seq (distinct (remove str/blank? (filter string? mach-services))))]
-        (str "(allow mach-lookup"
-             (apply str (map #(str "(global-name " (sbpl-quote %) ")") ms))
-             ")"))
-      "(allow file-read-metadata"
-      (apply str
-        (map #(str "(literal " (sbpl-quote %) ")")
-             (distinct (concat @macos-metadata-literals (mapcat ancestor-dirs (concat rw ro))))))
-      (subpaths (concat macos-system-read-roots rw ro))
-      ")"
-      "(allow file-read*"
-      (subpaths macos-system-read-roots)
-      "(literal \"/dev/null\")(literal \"/dev/zero\")(literal \"/dev/random\")(literal \"/dev/urandom\"))"
-      (when (seq ro) (str "(allow file-read*" (subpaths ro) ")"))
-      "(allow file-read* file-write*"
-      "(literal \"/dev/null\")(literal \"/dev/tty\")(literal \"/dev/stdout\")(literal \"/dev/stderr\")"
-      (subpaths rw)
-      ")"
-      (when (seq dw) (str "(deny file-write*" (subpaths dw) ")"))
-      (when (seq dr) (str "(deny file-read*" (subpaths dr) ")"))
-      ;; Block EXECUTION of specific binaries (`jail.deny-exec`). Overrides the
-      ;; blanket `(allow process-fork process-exec)` above; a plain file-read deny
-      ;; does NOT stop exec on macOS (the kernel maps a signed/allowed binary
-      ;; without a file-read* check), so this is the real command block.
-      (when (seq dex) (str "(deny process-exec*" (subpaths dex) ")"))
-      ;; Network: a proxy endpoint is the sole outbound destination. A managed
-      ;; nREPL — and any explicitly allowlisted dev/server port — additionally
-      ;; needs to bind a server socket. Seatbelt's `network-bind` accepts the
-      ;; address class but not a reliable host:port constraint, so bind is limited
-      ;; to local IP sockets while inbound traffic is restricted, port by port, to
-      ;; the preselected nREPL port plus each `:inbound-ports` entry. Binding is
-      ;; broad (any local port); ACCEPTING a connection is the gated capability.
-      (let [inbound
-            (->> (cons loopback-port inbound-ports)
-                 (remove nil?)
-                 distinct)
-
-            server-rules
-            (when (seq inbound)
-              (str "(allow network-bind (local ip))"
-                   (apply str
-                     (map (fn [p]
-                            (str "(allow network-inbound (local ip \"*:" p "\"))"))
-                          inbound))))]
-
-        (cond proxy-port (str "(deny network*)"
-                              server-rules
-                              "(allow network-outbound (remote ip \"localhost:"
-                              proxy-port
-                              "\"))")
-              net-enabled? "(allow network*)"
-              :else (str "(deny network*)" server-rules))))))
-
-(defn compile-policy
-  "Resolve a raw jail policy VALUE into the canonical map `macos-profile` consumes:
-   read the LIVE session roots via `:roots-fn`, add the always-writable temp dirs,
-   fold in the environment-snapshotted `:allow-read-write`/`:allow-write`/
-   `:allow-read`/`:deny-write`/`:deny-read` paths (home-expanded + realpath'd).
-   Called per spawn, so each child gets the CURRENT live roots without re-reading
-   model-writable project config. `:allow-read-write` is the concise equivalent of
-   granting the same path through both legacy allow lists."
-  [{:keys [roots-fn net-enabled? allow-read-write allow-write allow-read deny-write deny-read
-           deny-exec proxy-port loopback-port inbound-ports mach-services]}]
-  (let [session-roots
-        (when roots-fn (try (roots-fn) (catch Throwable _ nil)))
-
-        tmps
-        [(System/getProperty "java.io.tmpdir") "/tmp"]
-
-        rw
-        (->> (concat session-roots tmps allow-read-write allow-write)
-             (keep real-path)
-             distinct
-             vec)
-
-        ro
-        (->> (concat allow-read-write allow-read)
-             (keep real-path)
-             distinct
-             vec)
-
-        ;; Extra inbound ports are sanitized to distinct integers in the legal TCP
-        ;; range; anything else (nil, junk, out-of-range) is dropped so a bad config
-        ;; value can never widen the profile or corrupt the emitted SBPL.
-        inbound-ports
-        (->> inbound-ports
-             (keep (fn [p]
-                     (let [n (cond (integer? p) (long p)
-                                   (string? p) (parse-long (str/trim p)))]
-                       (when (and n (<= 1 n 65535)) n))))
-             distinct
-             vec)]
-
-    {:rw rw
-     :ro ro
+(defn runtime-policy
+  "The platform-neutral confinement VALUE the runtime compiles, from a session
+   policy: the LIVE session roots via `:roots-fn` plus `:allow-read-write` are
+   read-write, `:allow-read` read-only, the deny lists win, egress is the session
+   proxy when one is up, otherwise open or off with `:net-enabled?`, and inbound
+   is the managed listener port plus `:inbound-ports`. Called per spawn, so each
+   child gets the CURRENT live roots without re-reading model-writable config."
+  [{:keys [roots-fn net-enabled? allow-read-write allow-read deny-write deny-read deny-exec
+           proxy-port loopback-port keychain?]
+    :as policy}]
+  (let [session-roots (when roots-fn (try (roots-fn) (catch Throwable _ nil)))]
+    {:read-write (vec (concat session-roots allow-read-write))
+     :read-only (vec allow-read)
      :deny-write (vec deny-write)
      :deny-read (vec deny-read)
      :deny-exec (vec deny-exec)
-     :net-enabled? (boolean net-enabled?)
-     :proxy-port proxy-port
-     :loopback-port loopback-port
-     :inbound-ports inbound-ports
-     :mach-services
-     (into [] (comp (filter string?) (remove str/blank?) (distinct)) mach-services)}))
+     :network (cond proxy-port {:proxy proxy-port}
+                    net-enabled? :open
+                    :else :off)
+     :inbound (inbound-ports (cons loopback-port (:inbound-ports policy)))
+     :keychain? (boolean keychain?)}))
 
 (def ^:private keychain-denial-markers
   "How the macOS Security framework reports a lookup it could not complete. The
-   first two are exactly what a DENIED Mach lookup produces under Seatbelt."
+   first two are exactly what a DENIED credential-store lookup produces inside the jail."
   ["SecKeychainSearchCreateFromAttributes" "SecKeychainItemCopyContent"
    "errSecInteractionNotAllowed" "User interaction is not allowed"
    "could not be found in the keychain"])
@@ -361,116 +120,12 @@
 (defn keychain-denial-hint
   "One actionable line when a command's output shows a Keychain lookup THIS jail
    denied, else nil. Silent when the jail is off (`:disabled?`) or the keychain
-   services are already granted — the failure is then a real Keychain miss and
-   naming the sandbox would send the caller the wrong way."
-  [{:keys [disabled? mach-services]} output]
-  (when (and (not disabled?)
-             (not (some #{"com.apple.SecurityServer"} mach-services))
-             (keychain-denial? output))
-    (str "Keychain lookup blocked by the sandbox: Seatbelt denies every Mach lookup by default."
-         " Set jail.mach_services.keychain: true in config to grant com.apple.SecurityServer,"
-         " com.apple.ocspd and com.apple.trustd.agent plus read access to the keychain"
-         " databases.")))
-
-(defn linux-bwrap-args
-  "Compile embedded-bubblewrap policy flags (ending in `--`) from a RESOLVED
-   policy map. Only bound paths exist in the child. Later read-only/masked binds
-   make deny-write, deny-read and deny-exec win. Filtered egress and managed
-   inbound ports omit `--unshare-net` because libvisjail creates the private network
-   namespace and bridges only those named loopback endpoints."
-  ^java.util.List
-  [{:keys [rw ro deny-write deny-read deny-exec net-enabled? proxy-port loopback-port]}]
-  (let [rw
-        (->> rw
-             (keep real-path)
-             distinct
-             vec)
-
-        ro
-        ;; System roots are bound at their LITERAL path (not real-path'd): on merged-usr
-        ;; distros `/lib`,`/lib64`,`/bin`,`/sbin` are symlinks into `/usr`, and the ELF
-        ;; interpreter is hardcoded (`/lib64/ld-linux-x86-64.so.2`, `/lib/ld-linux-aarch64.so.1`).
-        ;; Canonicalizing them collapses the loader mount point so EVERY binary fails to
-        ;; exec (ENOENT on its interpreter). `--ro-bind-try` tolerates any absent on a distro.
-        ;; User `:ro` allow-read paths stay canonicalized for dedup/symlink safety.
-        (->> (concat linux-system-read-roots (keep real-path ro))
-             distinct
-             vec)
-
-        dw
-        (->> deny-write
-             (keep deny-path)
-             distinct
-             vec)
-
-        dex
-        (->> deny-exec
-             (keep deny-path)
-             distinct
-             vec)
-
-        ro-flags
-        (mapcat (fn [p]
-                  ["--ro-bind-try" p p])
-                ro)
-
-        rw-flags
-        (mapcat (fn [p]
-                  ["--bind-try" p p])
-                rw)
-
-        dw-flags
-        (mapcat (fn [p]
-                  ["--ro-bind-try" p p])
-                dw)
-
-        dr-flags
-        (mapcat (fn [p]
-                  (let [rp (deny-path p)]
-                    (cond (nil? rp) nil
-                          (.isDirectory (File. ^String rp)) ["--tmpfs" rp]
-                          :else ["--ro-bind-try" "/dev/null" rp])))
-                (distinct deny-read))
-
-        ;; Mask each denied binary with /dev/null (a char device): `execve` on it fails
-        ;; (exit 126). Bound AFTER the allow binds so it wins over a binary inside an
-        ;; allowed `:ro` root -- the Linux equivalent of macOS `(deny process-exec*)`.
-        ;; On merged-usr distros the same binary is reachable via BOTH `/usr/bin/<n>` and
-        ;; `/bin/<n>` (distinct bwrap mounts), so masking only the canonical path leaves
-        ;; the PATH alias runnable -- mask every EXISTING bin-dir alias of the basename.
-        ;; `--ro-bind-try` aborts if the destination is absent on a read-only bind, so the
-        ;; alias set is filtered to files that actually exist on the host.
-        dex-flags
-        (mapcat (fn [p]
-                  (let [n (.getName (File. ^String p))]
-                    (->> (cons p
-                               (map #(str % "/" n)
-                                    ["/usr/bin" "/bin" "/usr/sbin" "/sbin" "/usr/local/bin"
-                                     "/usr/local/sbin"]))
-                         (filter #(.exists (File. ^String %)))
-                         distinct
-                         (mapcat (fn [t]
-                                   ["--ro-bind-try" "/dev/null" t])))))
-                dex)
-
-        ;; A named proxy or inbound endpoint asks libvisjail to own the private
-        ;; namespace and its two narrow loopback bridges. With neither endpoint,
-        ;; bubblewrap itself closes the network unless policy explicitly opens it.
-        net
-        (if (or proxy-port loopback-port net-enabled?) [] ["--unshare-net"])
-
-        bwrap-args
-        (vec (concat ["--die-with-parent" "--proc" "/proc" "--dev" "/dev"]
-                     ro-flags
-                     rw-flags
-                     dw-flags
-                     dr-flags
-                     dex-flags
-                     net
-                     ["--"]))]
-
-    bwrap-args))
-
+   is already granted (`:keychain?`) — the failure is then a real Keychain miss
+   and naming the sandbox would send the caller the wrong way."
+  [{:keys [disabled? keychain?]} output]
+  (when (and (not disabled?) (not keychain?) (keychain-denial? output))
+    (str "Keychain lookup blocked by the sandbox: a confined child cannot reach the OS"
+         " credential store by default. Set `jail.keychain: true` in config to grant it.")))
 
 
 (defn- java-proxy-options
@@ -478,7 +133,7 @@
   (when (and java-proxy? proxy-port)
     (str (when loopback-port
            ;; Keep the nREPL listener on AF_INET; its launcher binds 127.0.0.1 and
-           ;; the Seatbelt profile admits inbound traffic only on `loopback-port`.
+           ;; the jail admits inbound traffic only on `loopback-port`.
            "-Djava.net.preferIPv4Stack=true ")
          "-Dhttp.proxyHost=127.0.0.1"
          " -Dhttp.proxyPort="
@@ -495,16 +150,15 @@
                                          java-trust-store-password)))))
 
 (defn proxy-env
-  "Environment additions for a confined child. `VIS_SEATBELT_ACTIVE` records that
-   the kernel policy is already inherited, preventing an invalid nested profile.
-   When a gateway proxy endpoint is present, common proxy and CA variables cover
-   curl/git/Python/Bun/etc.; managed JVM children additionally receive proxy plus
-   ephemeral truststore properties through JAVA_TOOL_OPTIONS."
+  "Environment additions for a child of an enabled policy. When a gateway proxy
+   endpoint is present, common proxy and CA variables cover curl/git/Python/Bun/
+   etc.; managed JVM children additionally receive proxy plus ephemeral
+   truststore properties through JAVA_TOOL_OPTIONS. The already-confined marker
+   is not ours: the runtime stamps it on every child it confines."
   [policy]
   (if (:disabled? policy)
     {}
-    (let [jail-env
-          (if (and policy (or (inherited-jail?) (supported?))) {"VIS_SEATBELT_ACTIVE" "1"} {})]
+    (let [jail-env {}]
       (if-let [port (:proxy-port policy)]
         (let [token (:proxy-token policy)
               url (str "http://" (when token (str token "@")) "127.0.0.1:" port)
@@ -620,7 +274,7 @@
    proxy + CA variables. Every API key / token / credential the operator happens
    to have exported is DROPPED — an AMBIENT variable a child needs is named in
    `environment:` — and so is every [[pre-exec-hijack?]] name, which would run
-   code in the unconfined detacher/enforcer before the jail exists.
+   code in the unconfined launcher before the jail exists.
 
    `jail.environment: inherit` (`:inherit-host-env?`) replaces the allowlist with
    the operator's WHOLE ambient environment, secrets included: filesystem,
@@ -632,7 +286,7 @@
    environment and merges [[child-env-additions]] instead (unjailed
    platforms/`jail.enabled: false`), so non-confined behavior is unchanged."
   [policy]
-  (when (and policy (not (:disabled? policy)) (or (inherited-jail?) (supported?)))
+  (when (enforcing? policy)
     (let [inherited
           (into {}
                 (if (:inherit-host-env? policy)
@@ -679,56 +333,32 @@
 
 (defn spawn!
   "Spawn `argv` through the runtime-owned process boundary. An enabled policy
-   is compiled to Seatbelt or embedded-bubblewrap input; a disabled policy still
-   gets libvisjail's detached process group, PTY and lifecycle implementation.
+   becomes a [[runtime-policy]] value the runtime enforces (it refuses the spawn
+   on a host that cannot); a disabled policy, or a process that is itself already
+   confined, still gets libvisjail's detached process group, PTY and lifecycle
+   implementation with no second layer.
 
    Options: `:directory`, an exact `:environment` or trusted
    `:extra-environment`, `:pty?`, `:merge-stderr?`, `:rows`, and `:columns`."
   ([argv directory policy] (spawn! argv directory policy nil))
   ([argv directory policy {:keys [environment extra-environment pty? merge-stderr? rows columns]}]
-   (let [wanted?
-         (and policy (not (:disabled? policy)))
+   (let [confined? (and policy (not (:disabled? policy)) (not (python-runtime/jailed?)))]
+     ;; The spawn itself is the runtime library's (`Jail/spawn`), so the cdylib
+     ;; has to be resolvable HERE — in the process doing the spawning, which is
+     ;; not necessarily one that ever started an interpreter. Ensuring is a no-op
+     ;; once it resolves.
+     (try (vis-python-runtime/ensure-library!) (catch Throwable _ nil))
+     (python-runtime/spawn-process! (mapv str argv)
+                                    {:environment
+                                     (or environment (process-environment policy extra-environment))
+                                     :directory (some-> directory
+                                                        str)
+                                     :policy (when confined? (runtime-policy policy))
+                                     :pty? (boolean pty?)
+                                     :merge-stderr? (boolean merge-stderr?)
+                                     :rows (int (or rows 0))
+                                     :columns (int (or columns 0))}))))
 
-         inherited?
-         (and wanted? (inherited-jail?))
-
-         confined?
-         (and wanted? (not inherited?))
-
-         _
-         (when (and confined? (not (supported?)))
-           (throw (ex-info (str "Process denied: " (unenforceable-reason))
-                           {:type ::jail-unavailable})))
-
-         compiled
-         (when confined? (compile-policy policy))
-
-         ;; The spawn itself is the runtime library's (`Jail/spawn`), so the
-         ;; cdylib has to be resolvable HERE — in the process doing the spawning,
-         ;; which is not necessarily one that ever started an interpreter. It used
-         ;; to be resolved as a side effect of building a session's Python; a
-         ;; session with a worker of its own starts no interpreter in this
-         ;; process, and `shell` began answering "No vis-python runtime library"
-         ;; in a live gateway. Ensuring is a no-op once it resolves.
-         _
-         (try (vis-python-runtime/ensure-library!) (catch Throwable _ nil))]
-
-     (python-runtime/spawn-process!
-       (mapv str argv)
-       {:environment (or environment (process-environment policy extra-environment))
-        :directory (some-> directory
-                           str)
-        :confined? confined?
-        :seatbelt-profile (when (= :macos (os-kind))
-                            (some-> compiled
-                                    macos-profile))
-        :linux-arguments (if (= :linux (os-kind)) (if compiled (linux-bwrap-args compiled) []) [])
-        :proxy-port (when (= :linux (os-kind)) (:proxy-port compiled))
-        :inbound-port (when (= :linux (os-kind)) (:loopback-port compiled))
-        :pty? (boolean pty?)
-        :merge-stderr? (boolean merge-stderr?)
-        :rows (int (or rows 0))
-        :columns (int (or columns 0))}))))
 ;; ── ONE call's own environment ──────────────────────────────────────────────
 ;; `environment:` says what EVERY child of Vis gets. A verb that SPAWNS also
 ;; carries what THIS child gets on top, and it carries it as an ARGUMENT of the
@@ -938,9 +568,8 @@
   (cond (nil? base) nil
         (:disabled? base) base
         :else (-> base
-                  (update :allow-write #(vec (concat % language-process-runtime-dirs)))
-                  (update :allow-read
-                          #(vec (concat % repl-toolchain-read-dirs language-process-runtime-dirs)))
+                  (update :allow-read-write #(vec (concat % language-process-runtime-dirs)))
+                  (update :allow-read #(vec (concat % repl-toolchain-read-dirs)))
                   ;; Managed REPL/test children get ONLY their own nREPL
                   ;; loopback port; the shell dev-server inbound allowlist is
                   ;; not theirs to inherit (least privilege).

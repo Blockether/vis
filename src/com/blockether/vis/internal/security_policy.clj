@@ -89,7 +89,7 @@
          (config-validation/network-config config)
 
          path-keys
-         [:allow-read-write :allow-read :allow-write :deny-read :deny-write :no-search]
+         [:allow-read-write :allow-read :deny-read :deny-write :no-search]
 
          jail
          (reduce (fn [policy key]
@@ -152,12 +152,10 @@
 (defn read-write-roots
   "Filesystem roots available read/write to common model tools. When the jail is
    disabled, every host filesystem root is available; otherwise this is the
-   configured allowlist. `allow-write` remains readable under the process-jail
-   contract, so it belongs here too."
+   configured allowlist."
   [policy]
   (if (:jail-enabled policy)
-    (vec (distinct (concat (get-in policy [:process-jail :allow-read-write])
-                           (get-in policy [:process-jail :allow-write]))))
+    (vec (distinct (get-in policy [:process-jail :allow-read-write])))
     (host-filesystem-roots)))
 
 (defn no-search-roots

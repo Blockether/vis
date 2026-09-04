@@ -1,126 +1,63 @@
 (ns com.blockether.vis.internal.process-jail-test
-  "The OS process jail: the SBPL compiler is asserted as pure data, and — on a
-   macOS host that can actually enforce Seatbelt — a real wrapped `bash` proves
-   containment end to end (workspace RW allowed; outside-read, write-outside,
-   deny-write carve-outs, and network all denied). The policy is a PER-SESSION
-   VALUE compiled at the `libvisjail` spawn boundary, never process-global."
+  "The OS process jail as Vis owns it: a session's configuration, live roots and
+   proxy endpoint become ONE platform-neutral policy VALUE plus the complete
+   child environment, and — on a host that can enforce — a real wrapped `bash`
+   proves containment end to end. HOW that value is enforced is the runtime's
+   (`com.blockether/vis-python-runtime`); nothing here spells an enforcement
+   dialect, and a scan keeps it that way."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer
              [deftest is testing thrown? thrown-with-msg?]]
+            [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.process-jail :as pj]))
 
-(deftest macos-profile-compiler
-  (testing "net OFF denies sockets; net ON allows them"
-    (is (str/includes? (pj/macos-profile {:rw [] :net-enabled? false}) "(deny network*)"))
-    (is (str/includes? (pj/macos-profile {:rw [] :net-enabled? true}) "(allow network*)")))
-  (testing "default-deny base with the dyld/system import (else binaries abort)"
-    (let [p (pj/macos-profile {:rw [] :net-enabled? false})]
-      (is (str/includes? p "(deny default)"))
-      (is (str/includes? p "(import \"system.sb\")"))))
-  (testing "native-image signal delivery may open its POSIX semaphore"
-    (is (str/includes? (pj/macos-profile {:rw [] :net-enabled? false}) "(allow ipc-posix-sem)")))
-  (testing "resolvable RW roots become subpath rules on their REAL path"
-    (let [dir
-          (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-" (System/nanoTime)))
-            (.mkdirs))
+(deftest runtime-policy-value
+  (testing "live roots + read-write grants are read-write, read-only stays read-only"
+    (let [p (pj/runtime-policy {:roots-fn (constantly ["/ws" "/ws2"])
+                                :allow-read-write ["/cache"]
+                                :allow-read ["/ro"]
+                                :deny-write ["/ws/protected"]
+                                :deny-read ["/ws/secret"]
+                                :deny-exec ["/usr/bin/curl"]})]
+      (is (= ["/ws" "/ws2" "/cache"] (:read-write p)))
+      (is (= ["/ro"] (:read-only p)))
+      (is (= ["/ws/protected"] (:deny-write p)))
+      (is (= ["/ws/secret"] (:deny-read p)))
+      (is (= ["/usr/bin/curl"] (:deny-exec p)))
+      (is (false? (:keychain? p)))))
+  (testing "a failing roots-fn grants nothing rather than everything"
+    (is (= [] (:read-write (pj/runtime-policy {:roots-fn #(throw (ex-info "boom" {}))})))))
+  (testing "egress: the session proxy when one is up, else open or off"
+    (is (= {:proxy 4321} (:network (pj/runtime-policy {:proxy-port 4321 :net-enabled? true}))))
+    (is (= :open (:network (pj/runtime-policy {:net-enabled? true}))))
+    (is (= :off (:network (pj/runtime-policy {:net-enabled? false})))))
+  (testing "inbound is the managed listener port plus the configured ports, sanitized"
+    (is (= [54321 5273 4200]
+           (:inbound (pj/runtime-policy {:loopback-port 54321
+                                         :inbound-ports [5273 "4200" 5273 nil "junk" 0 70000]}))))
+    (is (= [] (:inbound (pj/runtime-policy {})))))
+  (testing "the keychain grant is a boolean"
+    (is (true? (:keychain? (pj/runtime-policy {:keychain? true}))))))
 
-          real
-          (.getCanonicalPath dir)
+(def ^:private enforcement-tokens
+  "Words that only an enforcement dialect uses. Vis states policy; the runtime
+   compiles it — a hit here means enforcement text leaked back into this repo."
+  ["Seatbelt" "SBPL" "sandbox-exec" "(deny default)" "bwrap" "bubblewrap" "--unshare" "mach-lookup"
+   "VIS_SEATBELT_ACTIVE"])
 
-          p
-          (pj/macos-profile {:rw [(.getPath dir)] :net-enabled? false})]
+(deftest vis-states-policy-and-never-compiles-enforcement
+  (doseq [file
+          (->> (file-seq (io/file "src"))
+               (filter #(str/ends-with? (.getName ^java.io.File %) ".clj")))
 
-      (is (str/includes? p (str "(subpath \"" real "\")"))
-          "rule must template the canonical path, not the raw /tmp path")
-      (.delete dir)))
-  (testing "deny-write / deny-read emit deny rules AFTER the allows (last-match-wins)"
-    (let [dir
-          (doto (io/file (System/getProperty "java.io.tmpdir")
-                         (str "vis-jail-fs-" (System/nanoTime)))
-            (.mkdirs))
+          :let [text
+                (slurp file)]
+          token
+          enforcement-tokens]
 
-          sub
-          (doto (io/file dir "protected") (.mkdirs))
-
-          realsub
-          (.getCanonicalPath sub)
-
-          p
-          (pj/macos-profile {:rw [(.getPath dir)] :deny-write [(.getPath sub)] :net-enabled? false})
-
-          allow-idx
-          (str/index-of p (str "(subpath \"" (.getCanonicalPath dir) "\")"))
-
-          deny-idx
-          (str/last-index-of p (str "(deny file-write*(subpath \"" realsub "\")"))]
-
-      (is (str/includes? p (str "(deny file-write*(subpath \"" realsub "\")")))
-      (is (and allow-idx deny-idx (< allow-idx deny-idx))
-          "the deny-write carve-out must come after the RW allow so it wins")
-      (io/delete-file sub true)
-      (io/delete-file dir true))))
-
-(deftest inbound-ports-gate-accept
-  (testing "no inbound ports: a jailed shell child cannot accept on any port"
-    (let [p (pj/macos-profile {:rw [] :net-enabled? false})]
-      (is (str/includes? p "(deny network*)"))
-      (is (not (str/includes? p "network-inbound"))
-          "without an allowlist there is no inbound rule at all")))
-  (testing "allowlisted ports emit one port-gated inbound rule each; bind is local-only"
-    (let [p (pj/macos-profile {:rw [] :net-enabled? false :inbound-ports [5273 4200]})]
-      (is (str/includes? p "(allow network-bind (local ip))"))
-      (is (str/includes? p "(allow network-inbound (local ip \"*:5273\"))"))
-      (is (str/includes? p "(allow network-inbound (local ip \"*:4200\"))"))
-      (is (not (str/includes? p "network-outbound"))
-          "an inbound allowlist never grants outbound egress")))
-  (testing "the managed nREPL loopback port and inbound ports coexist, de-duplicated"
-    (let [p (pj/macos-profile
-              {:rw [] :net-enabled? false :loopback-port 5273 :inbound-ports [5273 6000]})]
-      (is (= 2 (count (re-seq #"network-inbound" p)))
-          "duplicate loopback/inbound port collapses to one rule")
-      (is (str/includes? p "(allow network-inbound (local ip \"*:6000\"))"))))
-  (testing "compile-policy sanitizes to distinct legal integers, dropping junk/out-of-range"
-    (let [resolved (pj/compile-policy {:roots-fn (constantly [])
-                                       :inbound-ports [5273 "4200" 0 70000 "nope" 5273 nil]})]
-      (is (= [5273 4200] (:inbound-ports resolved))))))
-
-(deftest compile-policy-resolves-live-roots
-  (testing "session roots-fn + tmp become the RW set, allow-read → :ro"
-    (let [dir
-          (doto (io/file (System/getProperty "java.io.tmpdir")
-                         (str "vis-jail-cp-" (System/nanoTime)))
-            (.mkdirs))
-
-          resolved
-          (pj/compile-policy
-            {:roots-fn (constantly [(.getPath dir)]) :net-enabled? true :allow-read []})
-
-          canon
-          (.getCanonicalPath dir)]
-
-      (is (contains? (set (:rw resolved)) canon) "workspace root is writable")
-      (is (some #(str/includes? % "tmp") (:rw resolved)) "tmp dirs are always writable")
-      (is (true? (:net-enabled? resolved)))
-      (io/delete-file dir true))))
-
-(deftest compile-policy-supports-concise-read-write-grants
-  (testing "allow-read-write grants the path through both canonical access sets"
-    (let [dir
-          (doto (io/file (System/getProperty "java.io.tmpdir")
-                         (str "vis-jail-rw-" (System/nanoTime)))
-            (.mkdirs))
-
-          canon
-          (.getCanonicalPath dir)
-
-          resolved
-          (pj/compile-policy {:roots-fn (constantly []) :allow-read-write [(.getPath dir)]})]
-
-      (try (is (contains? (set (:rw resolved)) canon))
-           (is (contains? (set (:ro resolved)) canon))
-           (finally (io/delete-file dir true))))))
+    (is (not (str/includes? text token)) (str (.getPath ^java.io.File file) " mentions " token))))
 
 (defn- run-process
   [argv dir policy]
@@ -132,9 +69,7 @@
 
     {:exit (.waitFor process) :out @out :pid (.pid process)}))
 
-(defn- sandbox-applicable?
-  []
-  (and (pj/supported?) (not= "1" (System/getenv "VIS_SEATBELT_ACTIVE"))))
+(defn- sandbox-applicable? [] (and (pj/supported?) (not (runtime/jailed?))))
 
 (deftest native-spawn-is-off-by-default
   (let [dir (doto (io/file (System/getProperty "java.io.tmpdir")
@@ -188,10 +123,9 @@
                     (doseq [file (reverse (file-seq root))]
                       (io/delete-file file true)))))))
 (deftest proxy-env-vars
-  (testing "a confined child is marked even when it has no proxy endpoint"
-    (let [expected (if (pj/supported?) {"VIS_SEATBELT_ACTIVE" "1"} {})]
-      (is (= expected (pj/proxy-env {})))
-      (is (= expected (pj/proxy-env {:net-enabled? true})))))
+  (testing "no proxy endpoint, no additions — the confinement marker is the runtime's"
+    (is (= {} (pj/proxy-env {})))
+    (is (= {} (pj/proxy-env {:net-enabled? true}))))
   (testing ":proxy-port sets both-case proxy vars, and NO CA vars without a :ca-file"
     (let [e
           (pj/proxy-env {:proxy-port 4321})
@@ -208,7 +142,6 @@
         (is (= url (get e k)) k))
       (doseq [k ["all_proxy" "ALL_PROXY"]]
         (is (= socks (get e k)) k))
-      (when (pj/supported?) (is (= "1" (get e "VIS_SEATBELT_ACTIVE"))))
       (is (not (contains? e "CURL_CA_BUNDLE")))
       (is (not (contains? e "SSL_CERT_FILE")))))
   (testing ":proxy-token rides the proxy URL userinfo (session attribution)"
@@ -246,7 +179,7 @@
            :net-enabled? false
            :repl-proxy-port 1000
            :repl-ca-file "/repl-ca.pem"
-           :allow-write ["/w"]
+           :allow-read-write ["/w"]
            :allow-read ["/r"]}
 
           policy
@@ -255,8 +188,10 @@
       (is (false? (:net-enabled? policy)))
       (is (= 1000 (:proxy-port policy)))
       (is (= 54321 (:loopback-port policy)))
-      (is (some #{"~/.vis/logs"} (:allow-write policy)))
-      (is (some #{"/w"} (:allow-write policy)))))
+      (is (some #{"~/.vis/logs"} (:allow-read-write policy)))
+      (is (some #{"/w"} (:allow-read-write policy)))
+      (is (some #{"~/.sdkman"} (:allow-read policy)))
+      (is (nil? (:inbound-ports policy)) "the shell dev-server ports are not inherited")))
   (testing "unknown and disposed sessions fail before native spawn"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"session jail is not registered"
@@ -300,7 +235,6 @@
       (is (map? env))
       (is (contains? env "PATH"))
       (is (contains? env "HOME"))
-      (is (= "1" (get env "VIS_SEATBELT_ACTIVE")))
       (is (= "from-dotenv" (get env "MY_DECLARED_TOKEN"))
           "a declared variable reaches the confined child with its resolved value")
       (is (empty? (filter env (remove #{"MY_DECLARED_TOKEN"} secretish)))
@@ -346,9 +280,7 @@
       (is (= (get ambient outsider) (get inherited-env outsider))
           "`inherit` hands the confined child the ambient value verbatim")
       (is (= "from-dotenv" (get inherited-env "MY_DECLARED_TOKEN"))
-          "the project's own environment still applies on top under `inherit`")
-      (is (= "1" (get inherited-env "VIS_SEATBELT_ACTIVE"))
-          "`inherit` is an ENVIRONMENT mode only: the child is still confined")))
+          "the project's own environment still applies on top under `inherit`")))
   (testing "a pre-exec hijack name is refused under `inherit` too — that scrub is the jail itself"
     (let [env (pj/jailed-child-env {:roots-fn (constantly [])
                                     :net-enabled? false
@@ -356,184 +288,20 @@
                                     :env-values {"LD_PRELOAD" "/tmp/x.so" "PERL5OPT" "-Mevil"}})]
       (is (empty? (filter #'pj/pre-exec-hijack? (keys env)))))))
 
-(deftest metadata-scoped-to-roots
-  (testing
-    "file-read-metadata is scoped: no global grant; ancestors are literals,
-            granted roots are subpaths, and $HOME is NOT recursively exposed"
-    (let [p (pj/macos-profile (pj/compile-policy {:roots-fn (fn []
-                                                              ["/tmp"])
-                                                  :net-enabled? false}))]
-      (is (nil? (re-find #"\(allow file-read-metadata\)" p))
-          "the former GLOBAL metadata grant (the leak) must be gone")
-      (is (str/includes? p "file-read-metadata(literal \"/\")"))
-      (is (str/includes? p (str "(literal \"" (System/getProperty "user.home") "\")")))
-      (is (not (re-find #"file-read-metadata[^\n]*subpath \"[^\"]*\.ssh" p))
-          "metadata must not recurse into ~/.ssh and other home secrets")))
-  (testing
-    "a granted root's ancestor directories are metadata literals so a
-            confined child can canonicalize (lstat every component of) a path it
-            creates under, e.g. the darwin per-user temp dir (/private/var/folders/..)"
-    (let [dir
-          (doto (io/file (System/getProperty "java.io.tmpdir")
-                         (str "vis-jail-anc-" (System/nanoTime)))
-            (.mkdirs))
-
-          real
-          (.getCanonicalPath dir)
-
-          p
-          (pj/macos-profile (pj/compile-policy {:roots-fn (fn []
-                                                            [(.getPath dir)])
-                                                :net-enabled? false}))
-
-          ancestors
-          (loop [f
-                 (.getParentFile (io/file real))
-
-                 acc
-                 []]
-
-            (if f (recur (.getParentFile f) (conj acc (.getPath f))) acc))]
-
-      (try
-        ;; Every resolved ancestor — /private/var, /private/var/folders, <hash>, … —
-        ;; must carry a metadata literal; without the full chain getCanonicalPath
-        ;; EPERMs on the first ungranted component.
-        (doseq [anc ancestors]
-          (is (str/includes? p (str "(literal \"" anc "\")"))
-              (str "ancestor not granted metadata: " anc)))
-        (finally (.delete dir))))))
-
-(deftest linux-bwrap-compiler
-  ;; Pure argv compilation — runs on EVERY OS (incl. macOS + Linux CI), no kernel
-  ;; needed. Asserts the bubblewrap flag vector the Linux jail hands the executor.
-  (let [root
-        (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-lx-" (System/nanoTime)))
-          (.mkdirs))
-
-        prot
-        (doto (io/file root "protected") (.mkdirs))
-
-        rp
-        (.getCanonicalPath root)
-
-        pp
-        (.getCanonicalPath prot)
-
-        base
-        {:rw [(.getPath root)] :ro [] :deny-write [(.getPath prot)] :deny-read [(.getPath prot)]}
-
-        off
-        (pj/linux-bwrap-args (assoc base :net-enabled? false))
-
-        open
-        (pj/linux-bwrap-args (assoc base :net-enabled? true))
-
-        dex
-        (pj/linux-bwrap-args (assoc base
-                               :net-enabled? false
-                               :deny-exec ["/bin/sh"]))
-
-        pairs
-        (partition 2 1 off)]
-
-    (try (testing "argv shape: contains only flags and ends with the command separator"
-           (is (= "--die-with-parent" (first off)))
-           (is (= "--" (last off))))
-         (testing "session root is bind-mounted read-write"
-           (is (some #(= % ["--bind-try" rp]) pairs)))
-         (testing "system toolchain roots are read-only bind-mounted (else nothing launches)"
-           (is (some #(= % ["--ro-bind-try" "/usr"]) pairs)))
-         (testing "deny-write is re-bound read-only AFTER the rw bind (deny wins)"
-           (is (some #(= % ["--ro-bind-try" pp]) pairs))
-           (let [ai
-                 (.indexOf ^java.util.List off rp)
-
-                 di
-                 (.lastIndexOf ^java.util.List off pp)]
-
-             (is (and (pos? ai) (pos? di) (< ai di)))))
-         (testing "deny-read is masked with an empty tmpfs" (is (some #(= % ["--tmpfs" pp]) pairs)))
-         (testing "net OFF gets the --unshare-net kernel wall (safe)"
-           (is (some #{"--unshare-net"} off)))
-         (testing "filtered egress delegates the private network namespace to libvisjail"
-           (let [filtered (pj/linux-bwrap-args (assoc base
-                                                 :net-enabled? true
-                                                 :proxy-port 51000))]
-             (is (nil? (some #{"--unshare-net"} filtered)))))
-         (testing "an explicitly-open network shares the host namespace (no --unshare-net)"
-           (is (nil? (some #{"--unshare-net"} open))))
-         (testing
-           "deny-exec masks the binary with /dev/null so execve fails (macOS process-exec* parity)"
-           (is (some (fn [[a _]]
-                       (= "/dev/null" a))
-                     (partition 2 1 dex))
-               "deny-exec must emit a /dev/null mask bind for the binary")
-           (is (not (some (fn [[a _]]
-                            (= "/dev/null" a))
-                          (partition 2 1 off)))
-               "no /dev/null mask without deny-exec (deny-read here is a dir => tmpfs)"))
-         (finally (io/delete-file prot true) (io/delete-file root true)))))
-
-(deftest enabled-policy-fails-closed-without-libvisjail
-  (with-redefs [pj/supported?
-                (constantly false)
-
-                pj/unenforceable-reason
-                (constantly "runtime missing")]
-
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"runtime missing"
-          (pj/spawn! ["/bin/true"] "/tmp" {:roots-fn (constantly ["/tmp"]) :net-enabled? false})))))
-(deftest wsl-detection
-  ;; WSL2 runs a real kernel with namespaces, so it is treated as ordinary Linux.
-  ;; WSL1 has no real namespaces and must be reported unenforceable, never silently
-  ;; passed through. The kernel osrelease is the discriminator.
-  (testing "WSL1 kernel (a `Microsoft` build with NO `WSL2` marker) is detected"
-    (with-redefs [pj/linux-osrelease (constantly "4.4.0-19041-Microsoft")]
-      (is (true? (#'pj/wsl1?)))))
-  (testing "WSL2 real-kernel build is NOT flagged WSL1"
-    (with-redefs [pj/linux-osrelease (constantly "5.15.153.1-microsoft-standard-WSL2")]
-      (is (false? (#'pj/wsl1?)))))
-  (testing "native Linux is NOT flagged WSL1"
-    (with-redefs [pj/linux-osrelease (constantly "6.8.0-52-generic")]
-      (is (false? (#'pj/wsl1?))))))
-
-(deftest macos-profile-mach-services
-  (testing "no grant => no mach-lookup rule at all"
-    (is (not (str/includes? (pj/macos-profile {:rw [] :net-enabled? false}) "mach-lookup"))))
-  (testing "granted services become one global-name each inside a single allow"
-    (let [p (pj/macos-profile {:rw []
-                               :net-enabled? false
-                               :mach-services ["com.apple.SecurityServer" "com.apple.ocspd"]})]
-      (is (str/includes? p "(allow mach-lookup"))
-      (is (str/includes? p "(global-name \"com.apple.SecurityServer\")"))
-      (is (str/includes? p "(global-name \"com.apple.ocspd\")"))))
-  (testing "compile-policy sanitizes: strings only, blanks and duplicates dropped"
-    (is (= ["com.apple.SecurityServer"]
-           (:mach-services (pj/compile-policy {:roots-fn (constantly [])
-                                               :mach-services ["com.apple.SecurityServer"
-                                                               "com.apple.SecurityServer" "" nil
-                                                               7]}))))
-    (is (= [] (:mach-services (pj/compile-policy {:roots-fn (constantly [])}))))))
-
 (deftest keychain-denial-hint-explains-a-denied-lookup
   (testing "a Security-framework failure under a live jail names the config key"
     (let [hint (pj/keychain-denial-hint
-                 {:disabled? false :mach-services []}
+                 {:disabled? false :keychain? false}
                  "SecKeychainSearchCreateFromAttributes: parameters passed are not valid")]
-      (is (str/includes? hint "jail.mach_services.keychain"))
-      (is (str/includes? hint "com.apple.SecurityServer"))))
-  (testing "silent when the jail is off or the keychain services are already granted"
+      (is (str/includes? hint "jail.keychain: true"))))
+  (testing "silent when the jail is off or the keychain is already granted"
     (is (nil? (pj/keychain-denial-hint {:disabled? true}
                                        "SecKeychainSearchCreateFromAttributes: nope")))
-    (is (nil? (pj/keychain-denial-hint {:disabled? false
-                                        :mach-services ["com.apple.SecurityServer"]}
+    (is (nil? (pj/keychain-denial-hint {:disabled? false :keychain? true}
                                        "SecKeychainSearchCreateFromAttributes: nope"))))
   (testing "unrelated output is never annotated"
     (is (false? (pj/keychain-denial? "hello world")))
-    (is (nil? (pj/keychain-denial-hint {:disabled? false :mach-services []} "hello world")))))
+    (is (nil? (pj/keychain-denial-hint {:disabled? false :keychain? false} "hello world")))))
 
 ;; ONE call's own `env`: the delta a SPAWNING verb carries as an ARGUMENT, over
 ;; the project environment. Ambient scope is what this contract refuses — the

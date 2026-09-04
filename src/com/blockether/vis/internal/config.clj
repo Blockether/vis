@@ -823,8 +823,8 @@
                  :first-byte-timeout-ms :idle-timeout-ms :semantic-timeout-ms :max-retries
                  :initial-delay-ms :multiplier :max-tokens :max-cost :pricing :context-limits
                  :output-reserve :failure-threshold :recovery-ms :transient-status-codes :window-ms
-                 :cooldown-ms :max-wait-ms :allow-read-write :allow-read :allow-write :deny-read
-                 :deny-write :path :access :description :inbound-ports :deny-exec :allowed-domains
+                 :cooldown-ms :max-wait-ms :allow-read-write :allow-read :deny-read :deny-write
+                 :path :access :description :inbound-ports :deny-exec :allowed-domains
                  :denied-domains :exclude-domains :allow-private :rules :host :methods :allow
                  :method :text :is-replace :include-gitignored-paths :always-exclude :backend
                  :theme-name :contributors-disabled :servers :transport :command :args :cwd :env

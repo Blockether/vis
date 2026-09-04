@@ -165,9 +165,13 @@ as `ssh`, needs an explicit proxy command.
 
 ### Inbound development ports
 
-A confined server may accept only ports listed in
-`jail.network.inbound_ports`. Managed nREPL uses its own preselected loopback port and
-does not inherit this list.
+A confined server accepts connections on a port listed in
+`jail.network.inbound_ports`. On macOS the child shares the host's network stack, so
+a loopback listener (`localhost:5273`) is reachable from the operator's browser even
+unlisted and listing the port additionally opens it to other hosts; on Linux the
+child has its own network namespace and the host reaches it only through a listed
+port. Managed nREPL uses its own preselected loopback port and does not inherit
+this list.
 
 ```yaml
 jail:
@@ -220,19 +224,18 @@ This is a command guardrail, not capability containment. Another interpreter or 
 new script can perform the same operation. Use filesystem and network policy for the
 actual boundary.
 
-Seatbelt denies Mach service lookups by default. Permit macOS Keychain helpers with:
+A confined child cannot reach the operating system's credential store by default,
+so `gh`, `git` credential helpers and similar tools fail their lookup. Permit it with:
 
 ```yaml
 jail:
   enabled: true
-  mach_services:
-    keychain: true
-    allow: [com.example.agent]
+  keychain: true
 ```
 
-`keychain: true` grants the Security, trust, and revocation services plus read access
-to the system and user keychain databases. `allow` grants other global Mach service
-names. These settings are ignored outside macOS.
+On macOS this grants the Keychain services plus read access to the system and user
+keychain databases; on Linux it exposes the session D-Bus so the Secret Service
+(GNOME Keyring, KWallet) answers.
 
 ## Diagnose the effective policy
 

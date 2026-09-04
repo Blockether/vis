@@ -469,22 +469,6 @@
       },
       "additionalProperties": false
     },
-    "jailMachServices": {
-      "type": "object",
-      "properties": {
-        "allow": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "pattern": ".*\\S.*"
-          }
-        },
-        "keychain": {
-          "type": "boolean"
-        }
-      },
-      "additionalProperties": false
-    },
     "networkRuleAllow": {
       "type": "object",
       "properties": {
@@ -621,8 +605,8 @@
             "pattern": ".*\\S.*"
           }
         },
-        "mach_services": {
-          "$ref": "#/$defs/jailMachServices"
+        "keychain": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

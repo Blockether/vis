@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.runtime-settings :as rt]
@@ -1516,10 +1517,10 @@
 (defdescribe
   macos-jailed-pty-e2e-test
   (it
-    "keeps PTY/send/attach while nested shells inherit Seatbelt filesystem denial"
+    "keeps PTY/send/attach while nested shells inherit the filesystem denial"
     (if (or (not (str/starts-with? (System/getProperty "os.name" "") "Mac"))
             (not (process-jail/supported?))
-            (= "1" (System/getenv "VIS_SEATBELT_ACTIVE")))
+            (runtime/jailed?))
       (expect true)
       (let [ws
             (doto (io/file (System/getProperty "java.io.tmpdir")
@@ -2052,16 +2053,15 @@
 
 (defdescribe
   shell-keychain-note-test
-  (it "names the config key when a live jail denied the Mach lookup"
-      (let [note (command-note {:jail-policy-fn (constantly {:disabled? false :mach-services []})}
+  (it "names the config key when a live jail denied the credential-store lookup"
+      (let [note (command-note {:jail-policy-fn (constantly {:disabled? false :keychain? false})}
                                {:text (str "security: SecKeychainSearchCreateFromAttributes:"
                                            " The specified item could not be found")})]
-        (expect (str/includes? note "jail.mach_services.keychain"))))
+        (expect (str/includes? note "jail.keychain: true"))))
   (it "silent when the grant is present, the jail is off, or there is no jail at all"
       (let [out {:text "SecKeychainSearchCreateFromAttributes: nope"}]
         (expect (nil? (command-note {:jail-policy-fn (constantly {:disabled? false
-                                                                  :mach-services
-                                                                  ["com.apple.SecurityServer"]})}
+                                                                  :keychain? true})}
                                     out)))
         (expect (nil? (command-note {:jail-policy-fn (constantly {:disabled? true})} out)))
         (expect (nil? (command-note {} out)))))

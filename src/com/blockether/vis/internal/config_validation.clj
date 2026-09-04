@@ -226,14 +226,13 @@
 
 (defn- rooted-path-list? [value] (and (vector? value) (every? rooted-path? value)))
 (defn- port? [value] (and (integer? value) (<= 1 value 65535)))
-(defn- string-list? [value] (and (vector? value) (every? util/non-blank-string? value)))
 (defn- string-map?
   [value]
   (and (map? value) (every? string? (keys value)) (every? string? (vals value))))
 
 (def process-jail-config-keys
-  #{:disabled? :inherit-host-env? :allow-read-write :allow-read :allow-write :deny-read :deny-write
-    :deny-exec :no-search :inbound-ports :path-descriptions :mach-services})
+  #{:disabled? :inherit-host-env? :allow-read-write :allow-read :deny-read :deny-write :deny-exec
+    :no-search :inbound-ports :path-descriptions :keychain?})
 
 (defn- process-jail-config?
   [policy]
@@ -242,13 +241,13 @@
        (boolean? (:disabled? policy))
        (boolean? (:inherit-host-env? policy))
        (every? rooted-path-list?
-               ((juxt :allow-read-write :allow-read :allow-write :deny-read :deny-write) policy))
+               ((juxt :allow-read-write :allow-read :deny-read :deny-write) policy))
        (rooted-path-list? (or (:no-search policy) []))
        (rooted-path-list? (or (:deny-exec policy) []))
        (vector? (:inbound-ports policy))
        (= (count (:inbound-ports policy)) (count (distinct (:inbound-ports policy))))
        (every? port? (:inbound-ports policy))
-       (string-list? (or (:mach-services policy) []))
+       (boolean? (:keychain? policy))
        (let [descriptions (:path-descriptions policy)]
          (or (nil? descriptions) (string-map? descriptions)))))
 
@@ -260,14 +259,10 @@
     (throw (ex-info "Invalid process-jail configuration"
                     {:type :vis/invalid-process-jail-config :policy (redact policy)}))))
 
-(def keychain-mach-services ["com.apple.SecurityServer" "com.apple.ocspd" "com.apple.trustd.agent"])
-
-(def keychain-read-paths ["~/Library/Keychains" "/Library/Keychains"])
-
 (defn- resolve-exec-denies
   "Resolve `jail.deny-exec` entries into absolute executable paths that the jail
-   forbids from being EXECUTED (a Seatbelt `(deny process-exec* ...)`, which
-   overrides the blanket exec allow — kernel-enforced, no leaky argv parsing).
+   forbids from being EXECUTED (an exec deny that overrides the blanket exec
+   allow — kernel-enforced, no leaky argv parsing).
    A bare name is looked up on every PATH directory (all matches denied); an
    absolute/home path is denied verbatim."
   [names]
@@ -536,15 +531,6 @@
                          [(get e "path") d])))
                allowed)
 
-         mach
-         (get jail "mach_services" {})
-
-         keychain?
-         (true? (get mach "keychain"))
-
-         mach-services
-         (into [] (distinct) (concat (when keychain? keychain-mach-services) (get mach "allow" [])))
-
          read-only
          (into [] (comp (filter entry-read-only?) (map #(get % "path"))) allowed)
 
@@ -555,14 +541,13 @@
        {:disabled? (not (true? (get jail "enabled")))
         :inherit-host-env? (= "inherit" (get jail "environment"))
         :allow-read-write (into [] (comp (remove entry-read-only?) (map #(get % "path"))) allowed)
-        :allow-read (into [] (distinct) (concat read-only (when keychain? keychain-read-paths)))
-        :allow-write []
+        :allow-read read-only
         :deny-read []
         :deny-write []
         :deny-exec (resolve-exec-denies (get jail "deny_exec"))
-        :no-search (into [] (distinct) (concat no-search (when keychain? keychain-read-paths)))
+        :no-search no-search
         :inbound-ports (vec (get-in jail ["network" "inbound_ports"]))
-        :mach-services mach-services
+        :keychain? (true? (get jail "keychain"))
         :path-descriptions descriptions}))))
 
 (defn- network-allow->runtime

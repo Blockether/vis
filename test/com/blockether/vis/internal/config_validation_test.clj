@@ -80,8 +80,8 @@
            ;; Ambient-environment mode: `declared` (the default) or `inherit`.
            "environment" "declared"
            "filesystem" {"allow" ["svar" "ref" "gen" "cache"]}
-           ;; #90: macOS Mach lookups — an explicit allow list plus the keychain bundle.
-           "mach_services" {"allow" ["com.example.agent"] "keychain" false}
+           ;; #90: the OS credential store stays closed unless opted in.
+           "keychain" false
            "deny_exec" ["definitely-not-a-real-binary-xyz"]
            "network" {"inbound_ports" [5273 8080]
                       "allowed_domains" ["github.com"]
@@ -132,13 +132,12 @@
                 :inherit-host-env? false
                 :allow-read-write ["/opt/svar" "~/generated" "~/.m2" "~/.vis"]
                 :allow-read ["~/reference"]
-                :allow-write []
                 :deny-read []
                 :deny-write []
                 :deny-exec []
                 :no-search ["~/.m2" "~/.vis"]
                 :inbound-ports [5273 8080]
-                :mach-services ["com.example.agent"]
+                :keychain? false
                 :path-descriptions {"/opt/svar" "a sibling repo"
                                     "~/.m2" "maven cache"
                                     "~/.vis" (get config-validation/vis-home-entry "description")}}
@@ -460,29 +459,21 @@
                      {"workspace" {"filesystem" [{"id" "here" "path" "/"}]}}
                      mac-env))))))
 
-;; ── macOS Mach services / Keychain (#90) ─────────────────────────────────────
+;; ── The OS credential store (#90) ────────────────────────────────────────────
+;; Vis carries ONE platform-neutral boolean; which services and databases that
+;; opens is the runtime's business, so no service name or path appears here.
 
-(defdescribe
-  jail-mach-services-test
-  (it "keychain: true grants the three Security services and the keychain databases"
-      (let [pol (config-validation/process-jail-config (assoc-in full-config
-                                                         ["jail" "mach_services"]
-                                                         {"keychain" true
-                                                          "allow" ["com.example.agent"]}))]
-        (expect (= ["com.apple.SecurityServer" "com.apple.ocspd" "com.apple.trustd.agent"]
-                   config-validation/keychain-mach-services))
-        (expect (= ["com.apple.SecurityServer" "com.apple.ocspd" "com.apple.trustd.agent"
-                    "com.example.agent"]
-                   (:mach-services pol)))
-        ;; Reading the databases is what actually completes a lookup; they stay
-        ;; out of the search sweep so credentials never surface in results.
-        (expect (= ["~/Library/Keychains" "/Library/Keychains"]
-                   config-validation/keychain-read-paths))
-        (expect (every? (set (:allow-read pol)) config-validation/keychain-read-paths))
-        (expect (every? (set (:no-search pol)) config-validation/keychain-read-paths))))
-  (it "without the opt-in nothing is granted and nothing is added to the filesystem"
-      (let [pol (config-validation/process-jail-config
-                  (update full-config "jail" dissoc "mach_services"))]
-        (expect (= [] (:mach-services pol)))
-        (expect (= ["~/reference"] (:allow-read pol)))
-        (expect (not-any? (set (:no-search pol)) config-validation/keychain-read-paths)))))
+(defdescribe jail-keychain-test
+             (it "keychain: true is the one opt-in and it adds nothing to the filesystem grants"
+                 (let [pol (config-validation/process-jail-config
+                             (assoc-in full-config ["jail" "keychain"] true))]
+                   (expect (true? (:keychain? pol)))
+                   (expect (= ["~/reference"] (:allow-read pol)))))
+             (it "absent means closed"
+                 (let [pol (config-validation/process-jail-config
+                             (update full-config "jail" dissoc "keychain"))]
+                   (expect (false? (:keychain? pol)))))
+             (it "the old mach_services block is no longer a config key"
+                 (expect (seq (config-validation/explain-problems (assoc-in full-config
+                                                                    ["jail" "mach_services"]
+                                                                    {"keychain" true}))))))

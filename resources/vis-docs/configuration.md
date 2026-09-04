@@ -561,9 +561,9 @@ jail:
   environment: declared
   filesystem:
     allow: [sibling, reference, m2, cuda, scratch]
-  # macOS only: Mach lookups a confined child may make (deny by default).
-  mach_services:
-    keychain: true             # `gh`/`git` credential helpers may read the Keychain
+  # The OS credential store (macOS Keychain, Linux Secret Service) is closed to a
+  # confined child by default; `gh`/`git` credential helpers need this.
+  keychain: true
   # Egress policy is one facet of the jail; jail.enabled is the single gate.
   network:
     allowed_domains:
@@ -572,7 +572,8 @@ jail:
     denied_domains:
       - example.invalid
     allow_private: false
-    # Extra local ports on which a confined shell child may accept connections.
+    # Ports on which a confined shell child accepts connections from the host
+    # (and, on macOS, from other machines); see jail.md for the platform split.
     inbound_ports:
       - 5273
 ```
@@ -581,7 +582,7 @@ jail:
 reference for this boundary: the `workspace.filesystem` catalog and
 `jail.filesystem.allow` admission model, the network model (HTTPS method/path
 policy, MITM behavior, SSRF denial, programmable filters), `jail.network.inbound_ports`,
-`jail.mach_services` (macOS Keychain and Mach lookups), snapshot inheritance and
+`jail.keychain` (the OS credential store), snapshot inheritance and
 `/reload`, and the read-only `session["access"]` view.
 Every filesystem path must be absolute or home-relative (`~`); a bare-relative
 path is rejected when the config is read.

@@ -10837,7 +10837,7 @@
                           :java-trust-store-password (:java-trust-store-password java-trust)
                           :ca-file ca-file}))))
             ;; Register one live policy function for the standard language-process launch
-            ;; contract. Managed REPLs and project test runners share the same Seatbelt +
+            ;; contract. Managed REPLs and project test runners share the same OS-jail +
             ;; gateway-proxy boundary as `shell` / subprocess, keyed per session.
             _register-repl-jail (when session-id
                                   (process-jail/register-session-jail! session-id jail-policy-fn))

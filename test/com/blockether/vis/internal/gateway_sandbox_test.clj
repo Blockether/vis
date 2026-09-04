@@ -6,6 +6,7 @@
    \u2014 one shared listener, many sessions, no external network."
   (:require [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+            [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.egress-proxy :as ep]
             [com.blockether.vis.internal.gateway-sandbox :as gs])
   (:import (java.io BufferedReader InputStreamReader)
@@ -14,7 +15,7 @@
 
 (defn- run-wire-test
   [f]
-  (if (= "1" (System/getenv "VIS_SEATBELT_ACTIVE"))
+  (if (runtime/jailed?)
     (is true "conditional skip: inherited Seatbelt forbids test listeners")
     (f)))
 

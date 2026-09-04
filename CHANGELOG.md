@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- refactor(jail): state the confinement policy in Vis and let the runtime enforce it; `jail.mach_services` becomes the platform-neutral `jail.keychain: true`
 - feat(zai): make GLM-5.3-Flash the default Coding Plan model through svar 0.7.146
 - fix(live): answer a live-view tap without waiting out the provider tick
 - feat(gateway): authenticate GitHub CLI through private human input
