@@ -65,7 +65,7 @@ describe('VisBadge plugin', () => {
   // Capacitor only loads a plugin named in `packageClassList`; without this the
   // bridge answers "not implemented" and the app half silently does nothing.
   it('is registered with the Capacitor bridge', () => {
-    expect(prepare).toContain("const appPluginClasses = ['VisBadgePlugin', 'NativeSpeechPlugin'];");
+    expect(prepare).toContain("const appPluginClasses = ['VisBadgePlugin', 'NativeSpeechPlugin', 'VisHostPlugin'];");
     expect(prepare).toContain("packageClassList.includes('VisBadgePlugin')");
   });
 

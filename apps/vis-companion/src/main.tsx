@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { installDiagnostics } from './lib/diagnostics';
+import { loadHost } from './lib/host';
 import { paintStoredTheme } from './lib/theme';
 import './index.css';
 
@@ -14,6 +15,9 @@ installDiagnostics();
 // backgrounded webview. `index.html` already stamped the raw stored id during
 // parse; this settles it against the shipped catalog.
 paintStoredTheme();
+// One native question, asked before any field can be focused: is this iOS build
+// a Mac window? The keyboard driver reads the answer synchronously (`pointer.ts`).
+void loadHost();
 
 const root = createRoot(document.getElementById('root')!);
 

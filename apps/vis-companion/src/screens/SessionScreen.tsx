@@ -612,6 +612,7 @@ export function SessionScreen({
   onOpenSession,
   onManageProviders,
   fresh = false,
+  sidebar,
 }: {
   client: GatewayClient;
   subscriptions: SessionSubscriptionHub;
@@ -621,6 +622,8 @@ export function SessionScreen({
   /** Open this gateway's settings, where provider accounts and OAuth live. */
   onManageProviders?: () => void;
   fresh?: boolean;
+  /** The desk's list toggle, handed to the header's leading edge. */
+  sidebar?: { isShown: boolean; onToggle: () => void };
 }) {
   // The device rotates freely here. A flip is survived rather than forbidden:
   // `lib/viewport.ts` holds a rotation window open for the whole animation, and
@@ -4480,7 +4483,7 @@ export function SessionScreen({
             subscriptions={subscriptions}
             sid={sid}
           />
-          <SessionHeader model={headerModel} commands={headerCommands} />
+          <SessionHeader model={headerModel} commands={headerCommands} sidebar={sidebar} />
 
           {routerOpen && (
             <ProviderRouterDialog

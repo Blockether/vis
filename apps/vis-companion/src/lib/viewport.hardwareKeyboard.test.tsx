@@ -8,6 +8,11 @@ import { useVisualViewportShell } from "./viewport";
 const native = vi.hoisted(() => ({
   keyboard: new Map<string, (info: { keyboardHeight: number }) => void>(),
   accessoryBar: [] as boolean[],
+  isMac: false,
+}));
+
+vi.mock("./host", () => ({
+  isIosAppOnMac: () => native.isMac,
 }));
 
 vi.mock("@capacitor/core", () => ({
@@ -75,6 +80,7 @@ function window_(width: number, height: number) {
 beforeEach(() => {
   vi.useFakeTimers();
   native.keyboard.clear();
+  native.isMac = false;
   vi.stubGlobal("requestAnimationFrame", () => 1);
   vi.stubGlobal("cancelAnimationFrame", () => undefined);
 });
@@ -135,6 +141,25 @@ describe("focusing an editor with a keyboard already attached", () => {
     expect(shell.style.height).toBe("");
   });
 
+  // Regression, user report (paraphrased: installed on a MacBook, tapping the input
+  // still shows a grey field where the keyboard would be): a Mac window is iOS WebKit,
+  // and under a trackpad it still answers `(pointer: coarse)` — so the two guards
+  // above never fired there. The focus pinned the shell to two thirds of the window,
+  // and UIKit's frame for the keyboard it never draws confirmed the pin for good.
+  it("reserves nothing in a Mac window, whatever the pointer query says", () => {
+    native.isMac = true;
+    pointing("coarse");
+    window_(1280, 800);
+    render(<ViewportProbe />);
+    const shell = screen.getByTestId("shell");
+    const composer = screen.getByRole("textbox", { name: "Message" });
+
+    act(() => composer.focus());
+    expect(shell.style.height).toBe("");
+
+    act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 336 }));
+    expect(shell.style.height).toBe("");
+  });
   // Regression, user report (paraphrased: on the Mac a gray element still appears
   // while I type): reserving nothing for the shortcut bar never removed the bar.
   // UIKit kept hanging its form accessory off the focused field — a ~36px neutral

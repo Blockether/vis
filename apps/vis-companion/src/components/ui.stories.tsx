@@ -43,6 +43,7 @@ import {
   SettingsChoiceDisclosure,
   SettingsChoiceGroup,
   SettingsDisclosure,
+  SidebarToggle,
   Spinner,
   Switch,
   TextButton,
@@ -168,6 +169,8 @@ export const Marks: Story = {
       </Group>
       <Group of="Navigation and the ways out">
         <BackButton label="Back to sessions" />
+        <SidebarToggle isShown />
+        <SidebarToggle isShown={false} />
         <CloseButton label="Close the attachment" />
         <CloseButton label="Remove queued message" isStandalone />
         <CloseButton label="Close settings" isBand />

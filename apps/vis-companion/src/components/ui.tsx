@@ -52,6 +52,7 @@ import {
   ChevronIcon,
   CloseIcon,
   CopyIcon,
+  SidebarIcon,
 } from './icons';
 
 // Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
@@ -842,6 +843,9 @@ export function ChoiceRow({
  * which is two filled accents on one screen and a bar outranking its own screen. A bar
  * carries navigation, and navigation is a glyph in the page's ink.
  */
+const bandEdgeClass =
+  'grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center pl-[env(safe-area-inset-left)] text-white transition-[background-color,transform,translate,scale,rotate] duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.96] motion-reduce:transition-none mouse:w-[calc(2.5rem+env(safe-area-inset-left))]';
+
 export function BackButton({
   label,
   className = '',
@@ -851,7 +855,7 @@ export function BackButton({
     <button
       type="button"
       aria-label={label}
-      className={`grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center pl-[env(safe-area-inset-left)] text-white transition-[background-color,transform,translate,scale,rotate] duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.96] motion-reduce:transition-none mouse:w-[calc(2.5rem+env(safe-area-inset-left))] ${className}`}
+      className={`${bandEdgeClass} ${className}`}
       {...props}
     >
       <ChevronIcon back className="size-4" aria-hidden />
@@ -859,6 +863,35 @@ export function BackButton({
   );
 }
 
+/**
+ * THE DESK'S WAY BACK TO THE LIST, and it stands where the phone's arrow does.
+ *
+ * On a desk the session list is a column beside the transcript, so a session has
+ * nothing to go back to — but the column can be put away to read wide, and this is
+ * the ONE way to it. It wears `BackButton`'s own leading column with a panel glyph
+ * in it, so it sits at the seam between the list and the pane it toggles and keeps
+ * its place whether the list is up or away. In the app bar, beside the mark, it read
+ * as a piece of the logo; at the pane's edge it reads as what it is.
+ */
+export function SidebarToggle({
+  isShown,
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { isShown: boolean }) {
+  const label = isShown ? 'Hide the session list' : 'Show the session list';
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      aria-expanded={isShown}
+      className={`${bandEdgeClass} ${className}`}
+      {...props}
+    >
+      <SidebarIcon className="size-4" aria-hidden />
+    </button>
+  );
+}
 
 /**
  * A ROW OF A COMPLETION LIST, and there is only one of it.

@@ -48,6 +48,7 @@ import composerPayloadShelfSource from "./ComposerPayloadShelf.tsx?raw";
 import composerResponseControlsSource from "./ComposerResponseControls.tsx?raw";
 import composerSuggestionsSource from "./ComposerSuggestions.tsx?raw";
 import sessionHeaderSource from "./SessionHeader.tsx?raw";
+import emptyPaneSource from "../screens/EmptyPane.tsx?raw";
 import jumpToLatestSource from "./JumpToLatestButton.tsx?raw";
 import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
@@ -82,6 +83,7 @@ import { PlusIcon, ProjectsIcon } from "./icons";
 import { MACHINE_COLORS } from "../lib/machine-colors";
 import {
   BackButton,
+  SidebarToggle,
   Input,
   BandLabel,
   BandTally,
@@ -2534,6 +2536,22 @@ describe("the composer's own controls", () => {
     expect(html).toContain('aria-label="Back to sessions"');
     expect(classes(html)).toContain("pl-[env(safe-area-inset-left)]");
     expect(classes(html)).not.toContain("bg-dialog-title");
+  });
+
+  // Regression, user report (paraphrased: the open-sidebar icon beside the logo does
+  // not look good): the list's toggle sat in the app bar, where it read as part of
+  // the mark. It is the desk's way back to the list, so it wears the way-back's own
+  // column at the pane's leading edge and says which way it is about to go.
+  it("stands the desk's list toggle where the phone's arrow stands", () => {
+    const shown = renderToStaticMarkup(<SidebarToggle isShown />);
+    const hidden = renderToStaticMarkup(<SidebarToggle isShown={false} />);
+    expect(shown).toContain('aria-label="Hide the session list"');
+    expect(shown).toContain('aria-expanded="true"');
+    expect(hidden).toContain('aria-label="Show the session list"');
+    expect(classes(hidden)).toContain("pl-[env(safe-area-inset-left)]");
+    expect(sessionHeaderSource).toContain("<SidebarToggle");
+    expect(emptyPaneSource).toContain("<SidebarToggle");
+    expect(appSource).not.toContain("<SidebarToggle");
   });
 
   it("keeps the transcript's floating action inside its owning feature", () => {

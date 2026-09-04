@@ -1,3 +1,5 @@
+import { isIosAppOnMac } from './host';
+
 /**
  * The query that means A HARDWARE KEYBOARD IS PROBABLY THERE.
  *
@@ -20,8 +22,13 @@ export const HARDWARE_POINTER = '(pointer: fine)';
  *
  * Read it PER EVENT, never once at mount: a keyboard is folded onto an iPad
  * mid-session, and every answer downstream has to change with it.
+ *
+ * A Mac window is the one place the query lies: iOS WebKit under a trackpad still
+ * answers `coarse`, so the native host's word (`host.ts`) stands in for it there —
+ * a Mac always has keys.
  */
 export function hasHardwarePointer(): boolean {
   if (typeof window === 'undefined') return false;
+  if (isIosAppOnMac()) return true;
   return window.matchMedia?.(HARDWARE_POINTER).matches ?? false;
 }

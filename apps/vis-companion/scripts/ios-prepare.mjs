@@ -721,6 +721,7 @@ const notifyService = join(notifyDir, 'NotificationService.swift');
 const notifyPlist = join(notifyDir, 'Info.plist');
 const badgeSwift = join(appDir, 'VisBadge.swift');
 const speechSwift = join(appDir, 'NativeSpeech.swift');
+const hostSwift = join(appDir, 'VisHost.swift');
 const capConfig = join(appDir, 'capacitor.config.json');
 
 const notifyServiceSource = `import UserNotifications
@@ -953,16 +954,44 @@ const notifyFilesOk =
   && fileOk(notifyPlist, notifyPlistSource)
   && fileOk(badgeSwift, badgeSource);
 const speechFileOk = fileOk(speechSwift, speechSource);
+// THE HOST THE WEB LAYER CANNOT SEE. "Designed for iPad" on an Apple-silicon Mac is
+// iOS WebKit in a Mac window: it answers `(pointer: coarse)` under a trackpad and
+// UIKit posts keyboard frames for a keyboard it never draws, so the web layer's
+// keyboard driver (`src/lib/viewport.ts`, via `src/lib/pointer.ts`) reserved a third
+// of the window for keys nobody could see. `ProcessInfo.isiOSAppOnMac` is the truth,
+// and this one-verb plugin (`src/lib/host.ts`) is how the web layer reads it.
+const hostSource = `import Capacitor
+import Foundation
+
+@objc(VisHostPlugin)
+public class VisHostPlugin: CAPPlugin, CAPBridgedPlugin {
+  public let identifier = "VisHostPlugin"
+  public let jsName = "VisHost"
+  public let pluginMethods: [CAPPluginMethod] = [
+    CAPPluginMethod(name: "info", returnType: CAPPluginReturnPromise)
+  ]
+
+  @objc public func info(_ call: CAPPluginCall) {
+    var isMac = false
+    if #available(iOS 14.0, *) {
+      isMac = ProcessInfo.processInfo.isiOSAppOnMac
+    }
+    call.resolve(["isMac": isMac])
+  }
+}
+`;
+const hostFileOk = fileOk(hostSwift, hostSource);
 
 // `cap sync` rewrites this file from the INSTALLED packages, so plugin classes
 // that live in the app target are dropped from it every time. Putting them back
 // is exactly what this hook is for — it runs as `postsync`.
-const appPluginClasses = ['VisBadgePlugin', 'NativeSpeechPlugin'];
+const appPluginClasses = ['VisBadgePlugin', 'NativeSpeechPlugin', 'VisHostPlugin'];
 const capConfigJson = existsSync(capConfig) ? JSON.parse(readFileSync(capConfig, 'utf8')) : null;
 const packageClassList = capConfigJson?.packageClassList ?? [];
 const badgeConfigOk = !capConfigJson || packageClassList.includes('VisBadgePlugin');
 const speechConfigOk = !capConfigJson || packageClassList.includes('NativeSpeechPlugin');
-const capConfigOk = badgeConfigOk && speechConfigOk;
+const hostConfigOk = !capConfigJson || packageClassList.includes('VisHostPlugin');
+const capConfigOk = badgeConfigOk && speechConfigOk && hostConfigOk;
 
 let project = existsSync(pbxprojPath) ? readFileSync(pbxprojPath, 'utf8') : '';
 if (!project) die('no ios/App/App.xcodeproj/project.pbxproj — run `npm run add:ios` first');
@@ -1015,10 +1044,15 @@ const speechIds = {
   swiftRef: objectId(36),
   swiftBuild: objectId(37),
 };
+const hostIds = {
+  swiftRef: objectId(38),
+  swiftBuild: objectId(39),
+};
 
 const projectOk = project.includes(ids.target) && project.includes(ids.shortcutsRef);
 const notifyProjectOk = project.includes(notifyIds.target) && project.includes(notifyIds.badgeRef);
 const speechProjectOk = project.includes(speechIds.swiftRef) && project.includes(speechIds.swiftBuild);
+const hostProjectOk = project.includes(hostIds.swiftRef) && project.includes(hostIds.swiftBuild);
 
 const after = (pattern, addition, what) => {
   const match = pattern.exec(project);
@@ -1436,13 +1470,35 @@ if (!speechProjectOk) {
     `\t\t${speechIds.swiftRef} /* NativeSpeech.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeech.swift; sourceTree = "<group>"; };\n`,
   );
 }
+// VisHost is the same kind of app plugin: one Swift file compiled into the app target.
+if (!hostProjectOk) {
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift in Sources [*]/,'),
+    `\n\t\t\t\t${hostIds.swiftBuild} /* VisHost.swift in Sources */,`,
+    'App Sources phase',
+  );
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift [*]/,'),
+    `\n\t\t\t\t${hostIds.swiftRef} /* VisHost.swift */,`,
+    'App group',
+  );
+  before(
+    '/* End PBXBuildFile section */',
+    `\t\t${hostIds.swiftBuild} /* VisHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${hostIds.swiftRef} /* VisHost.swift */; };\n`,
+  );
+  before(
+    '/* End PBXFileReference section */',
+    `\t\t${hostIds.swiftRef} /* VisHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisHost.swift; sourceTree = "<group>"; };\n`,
+  );
+}
 const shareOk = shareFilesOk && projectOk;
 const badgeOk = notifyFilesOk && notifyProjectOk && badgeConfigOk;
 const speechOk = speechFileOk && speechProjectOk && speechConfigOk;
+const hostOk = hostFileOk && hostProjectOk && hostConfigOk;
 
 if (check) {
-  if (delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk && speechOk && splashOk) {
-    console.log('· ios: prepared stock Capacitor host with required app capabilities, branded icon and launch screen, share extension, Shortcuts, badge extension and public speech bridge');
+  if (delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk && speechOk && hostOk && splashOk) {
+    console.log('· ios: prepared stock Capacitor host with required app capabilities, branded icon and launch screen, share extension, Shortcuts, badge extension, public speech bridge and host plugin');
     process.exit(0);
   }
   const missing = missingPlistEntries.map(([key]) => key).join(', ');
@@ -1459,9 +1515,11 @@ if (check) {
               ? 'ios: no VisNotify badge extension / VisBadge plugin — run `node scripts/ios-prepare.mjs`'
               : !speechOk
                 ? 'ios: no NativeSpeech public TTS plugin — run `node scripts/ios-prepare.mjs`'
-                : !splashOk
-                  ? 'ios: launch screen still shows Capacitor\'s splash — run `node scripts/ios-prepare.mjs`'
-                  : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
+                : !hostOk
+                  ? 'ios: no VisHost plugin — run `node scripts/ios-prepare.mjs`'
+                  : !splashOk
+                    ? 'ios: launch screen still shows Capacitor\'s splash — run `node scripts/ios-prepare.mjs`'
+                    : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
   );
 }
 
@@ -1505,6 +1563,7 @@ if (!notifyFilesOk) {
   writeFileSync(badgeSwift, badgeSource);
 }
 if (!speechFileOk) writeFileSync(speechSwift, speechSource);
+if (!hostFileOk) writeFileSync(hostSwift, hostSource);
 if (!capConfigOk && capConfigJson) {
   capConfigJson.packageClassList = Array.from(
     new Set([...(capConfigJson.packageClassList ?? []), ...appPluginClasses]),
@@ -1541,5 +1600,6 @@ console.log(
     shareOk ? 'share extension + Shortcuts already present' : 'stamped VisShare extension + App Intents'
   }; ${badgeOk ? 'badge extension already present' : 'stamped VisNotify extension + VisBadge plugin'}; ${
     speechOk ? 'public speech bridge already present' : 'stamped NativeSpeech public TTS plugin'
+  }; ${hostOk ? 'host plugin already present' : 'stamped VisHost plugin'
   }; ${splashOk ? 'branded launch screen already present' : 'stamped the Vis launch screen'}`,
 );

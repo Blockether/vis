@@ -59,7 +59,7 @@ import { discardSharedFiles } from "./lib/share-files";
 import { applyTheme, resolveTheme } from "./lib/theme";
 import { getThemePref } from "./lib/storage";
 import { BackButton, CloseButton, IconButton } from "./components/ui";
-import { SearchIcon, SettingsIcon, SidebarIcon } from "./components/icons";
+import { SearchIcon, SettingsIcon } from "./components/icons";
 import { ConnectScreen } from "./screens/ConnectScreen";
 import { SessionsScreen } from "./screens/SessionsScreen";
 import { IncompatibleScreen } from "./screens/IncompatibleScreen";
@@ -1063,7 +1063,6 @@ export function App() {
             setQuery("");
           }}
           onAppSettings={openSettings}
-          sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
         />
       )}
 
@@ -1123,7 +1122,11 @@ export function App() {
             conn={sessionConn}
           />
         )}
-        {canSplit && shellView === "sessions" && <EmptyPane />}
+        {/* The list's toggle stands on the pane's leading edge — in the empty pane's
+            band, then in the session header's — never in the app bar beside the mark. */}
+        {canSplit && shellView === "sessions" && (
+          <EmptyPane sidebar={{ isShown: isSidebarShown, onToggle: toggleSidebar }} />
+        )}
         {shellView === "session" && openTarget && client && subscriptions && (
           <div className="h-full min-h-0 min-w-0 flex-1">
             <SessionScreen
@@ -1133,6 +1136,7 @@ export function App() {
               sid={openTarget.sid}
               fresh={openTarget.fresh}
               onBack={leaveSession}
+              sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
               onOpenSession={(sid, fresh) =>
                 void openGatewaySession(openTarget.conn, sid, fresh)
               }
@@ -1243,7 +1247,6 @@ export function Header({
   onSearch,
   onCloseSearch,
   onAppSettings,
-  sidebar,
 }: {
   query: string;
   onQuery: (next: string) => void;
@@ -1252,12 +1255,6 @@ export function Header({
   onSearch: () => void;
   onCloseSearch: () => void;
   onAppSettings: () => void;
-  /**
-   * The desk's sidebar toggle, when the shell has a sidebar to toggle: the list
-   * beside the transcript can be put away to read wide, and this is the ONE way
-   * back to it — a session's own header has no back arrow on a desk.
-   */
-  sidebar?: { isShown: boolean; onToggle: () => void };
 }) {
   // `/` opens the search from anywhere on the shell — unannounced on purpose, and
   // never stolen from someone already typing. Escape closes it again, because a page
@@ -1327,17 +1324,6 @@ export function Header({
               1x screen washes the pupil to grey and closes the smile. It takes the
               scale's own rung, half the bar and twice the wordmark's cap height,
               never a pixel fitted by hand to the file's proportion. */}
-          {sidebar && (
-            <IconButton
-              type="button"
-              label={sidebar.isShown ? "Hide the session list" : "Show the session list"}
-              title={sidebar.isShown ? "Hide the session list" : "Show the session list"}
-              aria-expanded={sidebar.isShown}
-              onClick={sidebar.onToggle}
-            >
-              <SidebarIcon className="size-4" />
-            </IconButton>
-          )}
           <div className="flex h-12 items-center gap-2.5" aria-label="Vis">
             <img
               src="/vis-logo.png"
