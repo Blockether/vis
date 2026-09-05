@@ -659,10 +659,62 @@
                 "del __vis_n__, __vis_table__"))
     nil))
 
+;; The environment's sandbox — built on first entry, never before
+
+(defn sandbox
+  "The environment's Python sandbox, BUILDING it if this is the first ask.
+
+   `create-environment` stores the sandbox as a delay rather than a value: a
+   session that never runs Python never starts an interpreter, and the wait for
+   one belongs to the turn that needs it instead of to `POST /v1/sessions`.
+   Every caller about to enter Python reads through here.
+
+   Callers that only tear down, retire, or ASK whether Python is live must use
+   [[sandbox-if-built]] instead — forcing a sandbox in order to dispose it would
+   start an interpreter for the sole purpose of killing it."
+  [environment]
+  (when-let [pending (:python-sandbox environment)]
+    (locking pending
+      (when (some-> (:python-context-retired-atom environment)
+                    deref)
+        (throw (ex-info "Python environment is disposed or retired" {})))
+      @pending)))
+
+(defn python-context
+  "The environment's Python context, building the sandbox on first ask.
+
+   An environment may also carry a context DIRECTLY, with no sandbox delay and
+   no session lifecycle around it — one interpreter someone built and handed in.
+   That context is already the answer, so this never forces anything for it."
+  [environment]
+  (or (:python-context environment) (:python-context (sandbox environment))))
+
+(defn sandbox-ns
+  "The environment's sandbox namespace, building the sandbox on first ask."
+  [environment]
+  (or (:sandbox-ns environment) (:sandbox-ns (sandbox environment))))
+
+(defn sandbox-if-built
+  "The environment's sandbox ONLY when it already exists, nil while it does not.
+
+   Never builds one. This is the read for teardown and for liveness questions,
+   where an absent sandbox is an answer rather than a reason to make one."
+  [environment]
+  (when-let [pending (:python-sandbox environment)]
+    (when (realized? pending) @pending)))
+
+(defn python-context-if-built
+  "The environment's Python context ONLY when it already exists.
+
+   A context handed in directly always exists; a sandbox delay answers only once
+   something has forced it."
+  [environment]
+  (or (:python-context environment) (:python-context (sandbox-if-built environment))))
+
 (defn bind-and-bump!
   "Set `sym` -> `val` in the env's sandbox."
   [env sym val]
-  (set-python-binding! (:python-context env) sym val))
+  (set-python-binding! (python-context env) sym val))
 
 (defn bind-ctx!
   "Bind the standing context as the guest dict `session` — the same projection
@@ -1222,6 +1274,18 @@
     (swap! session-workers dissoc session)
     nil))
 
+(defn dispose-sandbox!
+  "Close the environment's sandbox without building it. Serialize with first
+   initialization so teardown cannot miss an interpreter still being created."
+  [environment]
+  (let [close! (fn []
+                 (when-let [retired (:python-context-retired-atom environment)]
+                   (reset! retired true))
+                 (dispose-python-context! (python-context-if-built environment)))]
+    (if-let [pending (:python-sandbox environment)]
+      (locking pending (close!))
+      (close!))))
+
 ;; =============================================================================
 ;; Session lifecycle the loop drives (dispose / probe / drain / interrupt)
 ;; =============================================================================
@@ -1230,12 +1294,18 @@
   "Can the loop still run guest code in this environment?
 
    False once the session was disposed or its worker was retired, or when the
-   environment carries no session at all."
+   environment carries no sandbox at all.
+
+   An environment whose sandbox is not built YET is enterable: entering is what
+   builds it. Answering this question must never start an interpreter, so a
+   sandbox that does not exist is judged by retirement alone — the disposed set
+   is keyed by session, and a session that was never created cannot be in it."
   [environment]
-  (boolean (when-let [session (:python-context environment)]
-             (and (not (contains? @disposed-sessions session))
-                  (not (true? (some-> (:python-context-retired-atom environment)
-                                      deref)))))))
+  (let [retired? (true? (some-> (:python-context-retired-atom environment)
+                                deref))]
+    (if-let [session (python-context-if-built environment)]
+      (and (not (contains? @disposed-sessions session)) (not retired?))
+      (boolean (and (:python-sandbox environment) (not retired?))))))
 
 (def ^:private guest-budget-ms
   "How long a between-turns guest call may hold the TURN thread.

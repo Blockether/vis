@@ -1004,3 +1004,93 @@
                (expect (= "<--continue>" output) output)
                (expect (not (str/includes? output "engine")) output))
              (finally (delete-tree! root))))))
+
+;; Regression: source launches accepted old Java and coupled users to the native-build pin.
+(defdescribe
+  java-runtime-selection-test
+  (it
+    "validates the selected Java version without a vendor restriction or installer"
+    (let [dir
+          (.toFile (Files/createTempDirectory "vis-java-test-" (make-array FileAttribute 0)))
+
+          java
+          (io/file dir "java")
+
+          body
+          (re-find #"(?ms)^ensure_java_runtime\(\) \{.*?^\}\n" (slurp "bin/vis-agent"))]
+
+      (try
+        (doseq [[version status]
+                [["24" 1] ["25" 0] ["26" 0] ["unknown" 1]]
+
+                vendor
+                ["Temurin" "GraalVM CE 25.3.4.1"]
+
+                selector
+                [:command :home :path :missing-command :missing-home]]
+
+          (write-executable! java
+                             (str "#!/bin/sh\nprintf '    java.specification.version = "
+                                  version
+                                  "\n    java.vendor.version = "
+                                  vendor
+                                  "\n' >&2\n"))
+          (let [selected
+                (case selector
+                  :command
+                  {"JAVA_CMD" (.getPath java) "JAVA_HOME" "/missing-jdk"}
+
+                  :home
+                  {"JAVA_HOME" (.getPath dir)}
+
+                  :missing-command
+                  {"JAVA_CMD" "/missing-java"}
+
+                  :missing-home
+                  {"JAVA_HOME" "/missing-jdk"}
+
+                  {})
+
+                ;; JAVA_HOME points to a JDK root, not its bin directory.
+                _
+                (do (.mkdirs (io/file dir "bin"))
+                    (io/copy java (io/file dir "bin/java"))
+                    (.setExecutable (io/file dir "bin/java") true))
+
+                expected
+                (if (#{:missing-command :missing-home} selector) 1 status)
+
+                {:keys [exit output]}
+                (run-bash
+                  ["bash" "-c"
+                   (str "warn() { :; }; "
+                        body
+                        "ensure_java_runtime; status=$?; printf '%s' \"$JAVA_CMD\"; exit $status")]
+                  (merge {"JAVA_CMD" ""
+                          "JAVA_HOME" ""
+                          "PATH" (str (.getPath dir) ":" (System/getenv "PATH"))}
+                         selected))]
+
+            (expect (= expected exit) (str selector " " version " " vendor " " output))
+            (when (zero? expected)
+              (expect (= (.getPath (if (= :home selector) (io/file dir "bin/java") java))
+                         output)))))
+        (finally (delete-tree! dir))))))
+
+;; Regression: launcher overwrote the operator's pip certificate configuration.
+(defdescribe pip-certificate-selection-test
+             (it "leaves pip's explicit CA selection to pip and the runtime"
+                 (let [body
+                       (re-find #"(?ms)^export_system_ca_bundle\(\) \{.*?^\}\n"
+                                (slurp "bin/vis-agent"))
+
+                       {:keys [exit output]}
+                       (run-bash ["bash" "-c"
+                                  (str body
+                                       "\nexport PIP_CERT=/custom.pem\n"
+                                       "export_system_ca_bundle /host.pem\n"
+                                       "printf '%s' \"$PIP_CERT\"\n")]
+                                 {})]
+
+                   (expect (= 0 exit))
+                   (expect (= "/custom.pem" output)))))

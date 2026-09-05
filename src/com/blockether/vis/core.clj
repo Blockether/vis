@@ -70,7 +70,6 @@
     [com.blockether.vis.internal.session.progress :as progress]
     [com.blockether.vis.internal.context.prompt :as prompt]
     [com.blockether.vis.internal.python.format :as pyfmt]
-    [com.blockether.vis.internal.python.worker :as python-worker]
     [com.blockether.vis.internal.python.extensions :as python-extensions]
     [com.blockether.vis.internal.python.test-runner :as python-test-runner]
     [com.blockether.vis.internal.provider.key-store :as provider-key-store]
@@ -847,12 +846,6 @@
 ;; library API.
 
 (defn -main
-  "The binary entry, with ONE detour: a process started with
-   `VIS_PYTHON_EXTENSION_SOCKET` set is not a CLI run at all — it is the
-   unconfined interpreter the parent spawned for extension Python, and the
-   socket is its whole instruction. It is read before argv because that process
-   HAS no argv."
+  "The binary entry; Python workers have their own entrypoint in the runtime."
   [& args]
-  (if-let [socket (System/getenv python-worker/socket-env)]
-    (python-worker/serve! socket)
-    (apply binary/-main args)))
+  (apply binary/-main args))

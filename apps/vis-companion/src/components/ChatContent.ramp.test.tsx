@@ -118,7 +118,7 @@ describe("a trace backfilling the turns a reader is scrolling into", () => {
     // frame per two segments.
     expect(segments).toBe(300);
     expect(frames).toBeLessThanOrEqual(20);
-  });
+  }, 20_000); // The frame-count assertion owns performance, not jsdom wall time.
 
   it("keeps the first paint small, so opening a session is not the whole turn", () => {
     const queue: FrameRequestCallback[] = [];

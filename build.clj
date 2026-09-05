@@ -399,11 +399,8 @@
                    (str/split-lines (slurp f)))))))
 
 (defn- assert-graal-pin!
-  "The `.graalvm-version` lock, enforced on the JVM side. The pin is LOCKED at
-  25.1.3 and nothing higher: 25.2.x's points-to analysis never converges on this
-  tree and OOMs the builder at every heap size, so a bump is refused here rather
-  than six minutes into `native`. The Dockerfile's `check-graal-pins` and
-  `bin/require-graalvm`'s `check_pins` are the same gate."
+  "Reject a half-updated native-build pin. The shell resolver and CI enforce
+   the same lock; ordinary JVM launches are independent of this build toolchain."
   []
   (when-let [{:strs [GRAAL_VERSION GRAAL_MAX_VERSION GRAAL_PIN_LOCKED]} @graal-pin]
     (when (and (= "true" GRAAL_PIN_LOCKED) (not= GRAAL_VERSION GRAAL_MAX_VERSION))
@@ -535,7 +532,7 @@
    usually minutes into the image build.
 
    `java.vendor.version` is the one property that separates all three
-   (\"GraalVM CE 25.1.3+9.1\" vs \"Oracle GraalVM 25.1.3+9.1\" vs \"Temurin-25…\").
+   (GraalVM CE vs Oracle GraalVM vs a stock JDK).
 
    Wrong JVM, in order: already installed → re-exec the task under it;
    not installed → install the pin with `bin/require-graalvm --install`, then
@@ -1130,6 +1127,8 @@
              ;; The two host doors (resources/vis-shims/*.py), slurped at session
              ;; creation via io/resource: `attach` and `ls`.
              "-H:IncludeResources=vis-shims/.*"
+             ;; Host modules are materialized for the runtime worker at first use.
+             "-H:IncludeResources=vis-guest/.*"
              ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/vis/*.py, on
              ;; :paths as a resource root): the body every extension context execs, and
              ;; the same file PyPI ships as `vis-agent`. `vis/VERSION` above is an
@@ -1222,7 +1221,7 @@
   "Build the private Vis Agent native runtime and its intermediate AOT jar:
      1. `target/vis.jar`  — build artifact, never a selectable distribution
      2. `target/vis`      — private native runtime behind `bin/vis-agent`
-   They share one AOT pass. Requires `native-image` on PATH (GraalVM CE 25.1.3)
+   They share one AOT pass. Requires the GraalVM CE pinned in `.graalvm-version`
    and ≥16 GB RAM for the builder JVM. Releases always package
    `bin/vis-agent` together with the native runtime.
 

@@ -49,6 +49,7 @@
             [com.blockether.vis.internal.channel.notifications :as notifications]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.contract.python-host :as contract]
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
@@ -773,8 +774,10 @@
   (let [effective-env
         (or (not-empty env) extension/*current-environment*)
 
+        ;; An extension CALL is guest work, so the sandbox it needs is built here
+        ;; if the session has not entered Python yet.
         worker
-        (:python-context effective-env)
+        (env/python-context effective-env)
 
         path
         (get (meta source-f) callable-path-key)]
@@ -837,7 +840,7 @@
          preserve-local?
          (and preserve-objects?
               (some-> effective-env
-                      :python-context
+                      env/python-context
                       pyext/worker-live?))]
 
      (extension/with-context

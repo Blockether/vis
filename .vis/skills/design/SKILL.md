@@ -1,224 +1,39 @@
 ---
 name: design
-description: >
-  The binding design contract for every Vis surface: companion web/iOS/Android and TUI. Read it
-  before changing or reviewing layout, controls, type, colour, motion, copy, stories, interactive
-  previews or screenshots, and again before calling the result done. Storybook and Lanterna's HTML
-  terminal render the shipped UI; Spel drives and verifies both; reviews receive self-contained HTML.
+description: Design or review Vis UI, including layout, controls, copy, states and visual artifacts.
 ---
 
 # Design
 
-This skill owns the taste that no test or single namespace can own. It does not own component
-implementation: `AGENTS.md`, the docstring above the component, and its tests do. Read those before
-changing the shape. The app builds with the closed vocabulary in `src/components/ui.tsx`; the TUI
-builds with the paint contracts under `extensions/channels/vis-channel-tui/`.
+This skill owns visual decisions shared by Companion and TUI, not general coding procedure.
+Use it for visual work; a non-visual backend change does not need it. Component docstrings own
+implementation contracts. Paths below are relative to `.vis/skills/design/`.
 
-## 1. Decide before drawing
+## Load only what the task needs
 
-Write four lines before UI code:
+- Visual decisions or screenshot review: [visual system](references/visual-system.md).
+- Companion UI implementation, rendering or artifacts: [Companion](references/companion.md).
+- TUI UI implementation, rendering or artifacts: [TUI](references/tui.md).
 
-1. **Lead** — the one element that wins the eye; subordinate everything else by size, weight, ink,
-   then position.
-2. **Type** — the allowed steps and family for each fact.
-3. **Structure** — bands, planes, shared left edge and the one edge that groups them.
-4. **Signature** — one memorable move that is true of this screen, not decoration.
+Read the visual system plus the affected surface for UI changes. A design explanation needs the
+visual rules, not browser setup. Do not reread unchanged documents just to satisfy a checklist.
 
-Compare that plan with a similar Vis screen. Anything unchanged merely because it is a familiar UI
-pattern is a reflex; revise it. A restyle may change paint and placement, never facts, states,
-controls or flow. A functional change is a separate decision.
+## Intent and boundaries
 
-## 2. The visual system is closed
+For a new screen or substantial restyle, establish the lead element, type hierarchy, grouping edge
+and distinctive functional choice; compare with a similar shipped screen. A small copy or spacing
+fix does not require a four-line design proposal. Restyling preserves facts, states, controls and
+flow unless the user also requested a behavior change.
 
-### Type
+Use production components, not a copied mockup or preview-only twin. Keep one-use fragments local;
+shared controls enter the existing vocabulary at their second real caller. Preserve accessibility,
+state information and input behavior while simplifying appearance.
 
-The app ships JetBrains Mono for every word and fact: prose, controls, paths, ids, counts, durations,
-models and code. The TUI uses the terminal face. Never add a second family or rely on a system
-fallback.
+## Completion
 
-| step | px/line | role |
-|---|---:|---|
-| `text-display` | 24/30 | one screen name |
-| `text-head` | 17/24 | screen or sheet title |
-| `text-subhead` | 15/22 | section lead; two-line touch-row title |
-| `text-title` | 13/20 | pointer-row lead; transcript body |
-| `text-body` | 12/18 | prose and descriptions |
-| `text-ui` | 11/16 | controls; metadata floor on touch |
-| `text-meta` | 10/16 | pointer-only metadata |
-| `text-chip` | 8/14 | a short tag, never the only copy |
-
-Use at most three steps in a row and four on a screen. Use weight and ink before another size. No
-literal type size, `leading-*`, synthesized face or all-caps sentence; caps are only for short tags.
-
-### Colour and marks
-
-- Use semantic theme tokens only. No literal colour, palette utility, gradient or decorative blur.
-- Measure against the surface the ink actually touches in every shipped theme: **4.5:1** for small
-  text, **3:1** for large/bold text and any meaningful icon, glyph or rule.
-- Colour repeats meaning; it never carries meaning alone. Pair state colour with shape, word or
-  position.
-- One accent and one filled primary verb per screen. Navigation is not a competing verb.
-- App marks come through `src/components/icons.tsx` from Lucide. No hand-drawn SVG, font glyph,
-  emoji or second icon family. TUI marks are cells and follow its own vocabulary.
-- Match the mark box to the adjacent type: 18px at `text-head`, 14px at `text-title`, 12px at
-  `text-ui`. Keep Lucide's stroke unchanged.
-
-### Geometry and density
-
-- Touch targets are at least **44×44px**; fine-pointer targets at least **28×28px**; adjacent targets
-  keep **8px** between them. The painted face may be smaller: invisible hit slop supplies the target.
-- Density follows the pointer (`mouse:`), never viewport width. An iPad remains touch-first.
-- One container edge per group. Prefer proximity, alignment and one inset hairline to nested cards.
-  Vis planes are square and hairline-ruled; a component may round only the face its contract owns.
-- Every column shares one left edge. Titles take spare width; metadata stays at the trailing edge.
-  Hover actions occupy a reserved slot and never reflow the row.
-- The row is the control. Do not add an `Open` button to a row that already opens.
-
-### States, motion and words
-
-- Every asynchronous surface has loading, empty, error and partial/stale paints. An error says what
-  failed and what to do; an empty state names what belongs there and offers the real verb.
-- A press responds within one frame. State motion is 120–200ms, never over 300ms, and becomes instant
-  under `prefers-reduced-motion`; lists do not animate on mount.
-- Destruction names the object and confirms with the verb, never `OK`.
-- Write from the user's side: sentence case, active voice, plain verbs, no filler. One act keeps one
-  name through control, progress and result. Every word in a story is product copy, not lorem text.
-
-## 3. Surface conventions
-
-- **Touch app:** honour safe areas, keyboard and 130% text scaling. A navigation bar carries
-  navigation, not the screen's primary verb. Two-line rows keep metadata at `text-ui` or larger.
-- **Pointer app:** prefer filter and keyboard navigation to pagination; `/` focuses search, `Esc`
-  leaves or clears, arrows move and Enter opens. Reveal actions without moving content. Truncated
-  facts expose their full value.
-- **TUI:** budget cells explicitly, leave at least one-cell gutters, assume eight colours and no
-  italics, and truncate at a known column. Box drawing belongs to the outer container, not every row.
-
-## 4. Reject generated slop
-
-Reject on sight:
-
-1. nested bordered or rounded cards;
-2. a centred hero on a working screen;
-3. decorative icons, gradients, glass or multiple shadow depths;
-4. repeated status text, chevrons on inert rows or labels that say nothing but “Manage”;
-5. fixed metadata columns that strand space;
-6. six type sizes or weak grey-on-grey text;
-7. a 44px painted face where only the target needed 44px;
-8. two primary verbs, two icon families or meaning carried only by colour;
-9. facts removed merely to make the screen look quiet;
-10. a control, token, font or behaviour drawn in a review that does not ship.
-
-## 5. Draw, verify and attach the product
-
-There is no hand-built mockup. A proposal is a small diff in production source, rendered from the
-app's own build, then kept or reverted. Companion uses stable Storybook for components and the
-running app for screens. TUI uses Lanterna `HtmlTerminalView` for one production GUI2 component and
-`HtmlTerminal` for the complete application. **Do not add MCP, a copied HTML implementation, or a
-second browser layer: Spel already navigates, measures and exercises both renderers.**
-
-Split by ownership, not line count or DOM shape. A screen owns routing, data loading and
-orchestration; a feature component may own one coherent interaction and all of its visible states so
-it can be rendered and tested alone. Keep a one-use screen fragment local. A generic control enters
-`ui.tsx` only at its second real call site, with both callers converted in the same commit. Never
-extract a wrapper, a speculative prop matrix or a preview-only twin of production markup.
-
-Every reusable companion visual component and meaningful state has a story in the same commit.
-Vocabulary controls live in `ui.stories.tsx`; data-heavy components use their colocated story and the
-one fixture module `src/dev/story-data.ts`. Stories never fetch, wait on timers or generate random
-data. Every reusable TUI state has a deterministic production-component `HtmlTerminalView` fixture.
-
-### Inspect the shipped render
-
-From `apps/vis-companion`:
-
-```bash
-npm run storybook                         # 127.0.0.1:6006
-# isolated shipped story, in a real theme:
-STORY='http://127.0.0.1:6006/iframe.html?id=<story-id>&viewMode=story&globals=theme:<theme-id>'
-SESSION="agent-$(date +%s)"
-spel --session "$SESSION" set device "iPhone 14" &&
-spel --session "$SESSION" --content-boundaries open "$STORY" &&
-spel --session "$SESSION" wait --text '<story-owned copy>' &&
-spel --session "$SESSION" --content-boundaries snapshot -i -c
-```
-
-For a fine pointer, replace device emulation with `set viewport 1280 800`. If the story id is unknown,
-open the Storybook manager, take `snapshot -i -c -a`, select the story through its fresh `@ref`, then
-open its isolated iframe route. Wait for copy or a role owned by the story — the preview shell and its
-spinner are not readiness. Use one unique Spel session for the whole task, re-snapshot after repaint,
-and close only that session when every comparison is finished. Read `spel <command> --help` before
-guessing an argument.
-
-Canonical companion review frames are phone 393×852, tablet 834×1194 and desktop 1280×800. At
-each relevant frame and theme, use `snapshot -i -c`, `get box` and `styles` to settle claims; exercise
-every changed interaction and inspect a screenshot yourself. A green build is not a visual review.
-
-For TUI, serve the exact production component with `HtmlTerminalView.serve(...)`, or launch the full
-channel with `vis-agent channels tui-html`. In one Spel session, test keyboard, paste, pointer, wheel,
-resize, focus, every changed show/hide transition and any image/video/audio layer. Inspect resolved
-cell boxes and computed SGR styles; `Ctrl+Shift+G` exposes the cell grid when geometry is disputed.
-CSS Grid is only the projection: the JVM's `GridLayout`/`LinearLayout` and terminal buffer must have
-already resolved every integer cell.
-
-### Attach the production render
-
-The default user-facing design artifact is a self-contained **`.html` attachment**, not a screenshot.
-Build it from current production source after the last design change, open it with Spel, and attach it.
-Generated HTML is temporary evidence and never enters the repository.
-
-#### Companion
-
-**One-to-one means one implementation, not similar pixels:**
-
-1. The artifact imports the exact production component or composed story from `src/**`; it never
-   copies JSX, serializes `outerHTML`, redraws a control or carries preview-only CSS.
-2. It uses the same story args and deterministic fixture, decorators/providers, theme, production
-   `index.css`, fonts, icons, viewport and input mode as the reviewed render. Tailwind scans both
-   `src/**` and the artifact entry so no production class silently disappears.
-3. Vite bundles React and inlines JS, CSS, fonts and images into one file. The result has no
-   `localhost`, network fetch, external script, stylesheet or asset dependency.
-4. A backend, gateway or native API may be replaced only at its existing boundary. Name that fixture
-   or adapter beside the attachment; never claim that boundary is live.
-5. Spel opens both the Storybook/running-app state and the standalone file at the same frame, then
-   checks accessible names and states, representative boxes and styles, and each important
-   interaction result. A mismatch rejects the artifact.
-
-This is exact production rendering and behaviour **inside the component boundary**, with explicit
-fixture data; it is not a claim that the attachment has the app's credentials or native shell.
-
-#### TUI
-
-1. The live review is the production `HtmlTerminal` backend: `HtmlTerminalView` for one GUI2
-   component, or the complete Vis `TerminalScreen` over `HtmlTerminal`. Never transcribe cells or
-   reimplement layout in HTML/CSS.
-2. Spel exercises the live loopback URL and verifies interaction, computed styles, geometry, Unicode
-   width and media persistence before export.
-3. Export the reviewed frame with `writeHtml(Path)` and attach that one self-contained file. It has no
-   token, loopback dependency or external asset. Because arbitrary terminal callbacks remain in the
-   JVM, call the attachment a portable exact frame, not a still-interactive application.
-4. HTML is the primary make/review artifact. After it passes, the real `DefaultVirtualTerminal` PNG
-   capture and terminal-grid assertions remain the final parity gate for terminal-specific glyph width
-   and back-buffer behaviour; the PNG is private verification evidence, not the review attachment.
-
-## 6. Review and finish
-
-Review in this order: accessibility → platform convention → hierarchy/density → visual system →
-states → words. Report only defects that survive the code's existing argument, with the measured
-value, the rule above and the smallest fix in the shipped vocabulary. Say what should stay.
-
-Done means:
-
-- exactly one lead and one signature; no generic reflex survived the comparison pass;
-- type, tokens, marks, contrast and targets satisfy §2 in every relevant theme and input mode;
-- loading, empty, error and partial/stale states exist; motion, 130% type and reduced motion survive;
-- every shown control and word ships from production source; each reusable companion state has a
-  deterministic story and each reusable TUI state has a deterministic `HtmlTerminalView` fixture;
-- app: relevant tests, `npm run lint`, `npm run test:storybook` and `npm run build` pass;
-- companion review: the attached HTML satisfies the one-to-one checks in §5 and its fixture seams
-  are named;
-- TUI review: live HTML passed Spel interaction/style/geometry checks, the exported HTML is attached,
-  and the final `DefaultVirtualTerminal` capture plus terminal-grid assertions pass;
-- the final artifact came from the production component or running app, never a drawing or copied
-  preview implementation;
-- one last pass removed anything that did not earn its place.
+For implementation, continue through rendering, inspecting changed interactions and fixing defects
+within scope. Review accessibility, platform behavior, hierarchy, visual rules, states and words.
+Use measurements to support visual claims, and say what should stay as well as what needs fixing.
+The affected surface reference specifies its verification and artifact requirements; an answer
+about design alone does not require a build or attachment. If verification is blocked, name the
+missing evidence rather than declaring the design done.

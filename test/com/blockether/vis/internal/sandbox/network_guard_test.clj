@@ -142,6 +142,7 @@
                                "    requests.get(url, timeout=5).text,\n"
                                "    httpx.get(url, timeout=5).text,\n"
                                "    aio_result,\n" "    pip_result]))"))))
+        ;; Regression: closing with an unread POST body discarded the 403 response.
         (expect (= 403
                    (python-json sandbox
                                 (str "import json, urllib.error, urllib.request\n"

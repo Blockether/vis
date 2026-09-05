@@ -44,7 +44,8 @@
                                  (fn []
                                    pol))
            (is (gs/registered? tok))
-           (is (= (assoc pol :reserved-loopback-ports #{}) (gs/resolve-policy tok)))
+           (is (= (assoc pol :reserved-loopback-ports (#'gs/reserved-loopback-ports))
+                  (gs/resolve-policy tok)))
            (is (:allow? (ep/decide (gs/resolve-policy tok) "GET" "example.com" "/")))
            (is (not (:allow? (ep/decide (gs/resolve-policy tok) "GET" "other.com" "/"))))))
        (testing "sessions are isolated — one token never resolves another's policy"

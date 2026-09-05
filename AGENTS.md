@@ -1,88 +1,115 @@
 # Vis repository guidance
 
-Only what you would otherwise get wrong: repo decisions, local traps, and contracts you cannot infer from the code in front of you. General engineering practice is assumed, not restated. A rule owned by ONE namespace lives in that namespace's docstring and is only POINTED AT from here — the copy far from the code is the one that goes stale. This file is the pushed doctrine and the repo's one authored skill is `.vis/skills/design/SKILL.md`, the design contract every surface is measured against, because no test can state taste and no namespace owns two surfaces; every other skill beside it is a third-party install kept verbatim from upstream, not repo doctrine. Otherwise a document nobody pulls rots, so a contract is a docstring beside its code, a test that fails, or a line here — and a line here is paid for by every task that never touches its area. **A new rule earns a line here only when no test can state it and no docstring owns it**; when a test can state it, write the test instead and let this file stay short.
+Keep only repository-specific decisions here. General engineering practice is assumed.
+Read area contracts when the task touches them, not as a mandatory repository tour.
+A namespace owns its API docstring; tests own enforceable invariants. Do not duplicate either here.
 
-## Hard rules
+## Scope and completion
 
-- **No profanity or vulgarity anywhere in the tree**, in every language — code, comments, docstrings, tests, test names, fixtures, commit messages, branch names, docs, UI copy, logs, error text, including scratch edits about to be deleted. **Quoting a bug report is not an exception:** paraphrase it (`;; Regression, issue #N: the dialog height jumped on toggle`), because the report's MEANING is what the comment owes the next reader. Remove any occurrence you find in the same commit as whatever brought you there.
-- **This repo is public: never document Blockether's own deployment.** The hosted gateway's public hostname, private bind address, ingress/Endpoints chain, server names, systemd units and playbooks belong only in the private `infrastructure` repo. Docs and examples use neutral placeholders: `127.0.0.1`, `10.0.0.5`, `gateway.example.com`, `visgw`. `test/com/blockether/vis/private_deployment_hygiene_test.clj` scans the whole tree and fails on a reference; delete the reference, never add an exception.
+Continue in-scope local edits, verification and fixes without asking at each step. Finish the
+requested behavior, not just a first implementation. If blocked, report the concrete blocker and
+what remains; do not substitute an adjacent fix or claim an unverified result.
 
-## Where a change goes
+Choose verification by the changed surface. Code changes need affected tests, formatting and lint
+(including reflection for Clojure); documentation-only changes need content, link and diff checks,
+not a full application build. Reproduce reported bugs before fixing them; reference the issue in
+regression-test comments when an issue exists. Use existing test infrastructure, not ad-hoc demos.
 
-One engine, one package. Read the owning docstring before editing an area — this table only says which area owns what.
+Commit, push, publish, close issues or mutate external systems only when the user requests it.
+Permission for local work is not permission to restart a live gateway or deploy. Confirm destructive
+actions and history rewrites; never bypass hooks. When committing, use the configured human identity,
+not `root`, and a conventional `type(scope): imperative summary` under 72 characters, with
+`Vis-Session: <bare-uuid>` as a trailer. Keep the body to the reason the diff cannot explain.
 
-| path | what it owns |
+## Repository decisions
+
+- No profanity or vulgarity in tracked content, including quoted reports, fixtures and commit text;
+  paraphrase reports instead.
+- This repository is public. Private deployment details and credentials belong in `infrastructure`,
+  never here. Examples use `127.0.0.1`, `10.0.0.5`, `gateway.example.com` and `visgw`.
+- No compatibility layers or migrations for obsolete APIs: update consumers and remove old paths.
+- One engine/package, organized by domain under `src/com/blockether/vis/internal/`; mirror tests
+  under `test/`. Add to an existing owner rather than another flat namespace or extension jar.
+  Registration order is the explicit vector in `resources/META-INF/vis/manifest.edn`, not classpath
+  discovery. `build.clj` derives native entrypoints from it.
+- Shared leaf primitives belong to `internal.util`; one-caller helpers stay local. Production outbound
+  Clojure HTTP uses `babashka.http-client`. Do not introduce Clojure `declare`.
+- Clojure formatting uses `.zprint.edn` and the Vis formatter: one blank line between top-level forms,
+  attached comments preserved, one final newline. `.clj-kondo/imports/` is tracked source, not cache.
+
+## Read only for the area being changed
+
+Paths below are relative to this repository. Internal namespace paths begin at
+`src/com/blockether/vis/internal/`.
+
+| Area | Canonical owner and non-obvious boundary |
 |---|---|
-| `src/` | the engine, one package (`com.blockether.vis.core`). `internal/` is grouped by DOMAIN, one directory per area with its entry namespace named `core` (`activity/core`, `view/core`, `speech/core`, `persistance/core`, `attachment/core`, `config/core`, `docs/core`, `extension/core`, `workspace/core`) and its neighbours beside it: `provider/{service,auth,oauth,key_store,limits,error}` plus `provider/vendor/<vendor>`, `sandbox/{jail,policy,egress_proxy,tls_mitm,gateway}`, `python/{env,worker,host,runtime,project,extensions,test_runner,format}`, `context/{engine,loop,renderer,prompt,prompt_templates,env_digest,agents}`, `session/{model,titling,iteration,cancellation,progress}`, `channel/{header,theme,render,form,notifications,events,slash,file_picker}`, `gateway/*`, `language/{clojure,python}`, `persistance/sqlite`, and `foundation/*` for the cross-cutting modules. Only namespaces with no owning area stay flat under `internal/` (`loop`, `main`, `util`, `paths`, `error`, `import`, `format`, `content`, `commandline`, `doctor`, `system_trust`, `jfr`). A test lives at the mirrored path under `test/`. Everything that used to be a separate extension jar still exposes an explicit `register!` Var listed in the one closed `resources/META-INF/vis/manifest.edn`; runtime never discovers manifests from the classpath, initialization follows that vector in order, and `build.clj` derives native reachability from the same entrypoints. A second persistence dialect is one more row in `persistance/backends`, not a jar |
-| `packages/vis-agent` | the Python half, published as `vis-agent` and imported as `vis`. `src/vis/__init__.py` is the very file the engine execs inside every extension context (`deps.edn` puts it on the classpath) — never mirror, re-declare or hand-sync it |
-| `packages/vis-contract` | the host contract itself: canonical JSON documents and same-named JSON Schemas live in `resources/vis-contract/`; Skjema validates them for Clojure, and the Python wheel packages those source files directly |
-| `resources/vis-docs/` | the docs site AND what `doc("<slug>")` answers. `resources/META-INF/vis/apropos/docs.edn` is the page catalog the root manifest names explicitly; `resources/vis-docs/site.edn` is the site's own navigation — the ONE place a page is titled, grouped and ordered, and the reason a record carries none of it. There is no separate docs discovery path |
-| `resources/vis-shims/`, `resources/vis-guest/` | the only Python Vis still ships: one file per shim, plus the guest modules staged for the interpreter. The sandbox runtime itself lives in `com.blockether/vis-python-runtime` (`resources/vis-python/` THERE), reached through the pin in `deps.edn` |
-| `apps/vis-companion`, `apps/vis-companion-relay` | the universal (web/iOS/Android) app, and the Cloudflare Worker that holds the APNs/FCM signing keys so a self-hosted gateway never has to |
-| `test/`, `test-native/`, `e2e/` | the JVM suite; the suite that runs against the BUILT binary; real-CLI editing scenarios |
-| `bin/`, `scripts/*.bb`, `build.clj` | shipped wrappers, babashka generators, tools.build tasks |
-| `audit/README.md` | GENERATED licensing record (`bb scripts/gen-audit.bb`, needs the network) — never hand-edit. `audit_inventory_test` is the offline gate: every in-house `com.blockether/*` coordinate the root `deps.edn` pins must appear at that exact version with a resolved license that agrees with the cached POM |
+| Python host API | `packages/vis-agent/src/vis/__init__.py` is also executed by the engine; never mirror it. |
+| Sandbox | `sandbox/` owns host policy and process integration; `python/` owns host execution. Interpreter, handles, descriptor limits and guest runtime Python belong in `vis-python-runtime`; read that repo's `AGENTS.md` before changing it. Vis keeps host-call doors in `resources/vis-shims/` and host guest modules in `resources/vis-guest/`, not runtime copies. |
+| Shims | `attach` and `ls` are host doors, not wheel replacements. Python docstrings in `resources/vis-shims/` generate the apropos resources; `apropos-resource-test/regenerate!` refreshes them. |
+| Contracts | `packages/vis-contract/resources/vis-contract/` owns canonical JSON documents and same-named schemas; Skjema validates portable shapes. Callbacks, IO and mutable state remain local. |
+| Tool declarations | `extension/core.clj` and its mirrored test own description/result/params, requiredness and wire keys. |
+| Gateway transport | `gateway/wire.clj` owns snake_case wire keys, kebab-case engine keys and total JSON encoding. Use `wire/->wire` and `wire/json-str`; a transport encoding failure can poison event replay. |
+| Config | `config/` owns merged configuration; toggle IDs are snake_case strings and reload from merged config. |
+| Docs | `resources/vis-docs/` serves both the site and `doc()`. `resources/META-INF/vis/apropos/docs.edn` is the catalog; `resources/vis-docs/site.edn` alone owns titles and navigation. |
+| UI | Load `.vis/skills/design/SKILL.md` for visual design, UI implementation or review. Companion controls are owned by `apps/vis-companion/src/components/ui.tsx`; TUI paint by `apps/vis-tui/`. |
+| Licensing | `audit/README.md` is generated by `bb scripts/gen-audit.bb` (network required), never hand-edited. `audit_inventory_test` checks dependency pins against it. |
 
-## Engineering defaults that differ from the usual ones
+### Gateway diagnostics
 
-- **Do not preserve backward compatibility.** Remove obsolete paths instead of adding compatibility layers, fallbacks or migrations. Decide for the long term — a stopgap meant to be replaced later is not acceptable here.
-- **All outbound HTTP in production Clojure uses `babashka.http-client`** — timeouts, HTTP versions, streaming, headers, non-throwing status. Never the JDK HTTP client, `URLConnection` or `HttpURLConnection`; keep direct JDK networking to URIs, sockets and embedded servers. `http_client_policy_test` scans every source root and names the offender.
-- **The shared primitives live in `com.blockether.vis.internal.util`** (alias `util`), the one leaf that requires nothing of vis: `now-ms`, `non-blank-string?`, `non-blank`, `env-val`, `utf8`, `bytes->hex`, `sha256`, `sha256-digest`, `sha256-hex`, plus the string helpers (`truncate`, `fenced`, `settled-thinking-text`). Require it instead of writing `System/currentTimeMillis`, another `MessageDigest/getInstance "SHA-256"`, another `.getBytes … UTF_8` or another `(and (string? x) (not (str/blank? x)))` — `util-test/shared-primitives-test` scans `src/` and names the file that re-rolled one. It is for what MANY namespaces share; a helper with one caller stays beside its caller.
-- **Never introduce Clojure `declare`.** Order definitions so every dependency precedes its consumers; refactor cycles instead of forward-declaring Vars.
-- **Feature toggles** use snake_case string IDs and hydrate from merged config so `/reload` respects project overrides; test registry, coercion and wire round-trips.
-- **A tool's doc page has ONE shape** — `:description` (what it does, what it REQUIRES, what an omitted key defaults to), `:result` (the raw value Python receives) and `:params` (every wire key a handler reads, in call order). Requiredness is `:required? true` and nothing else; a `:note` is a six-word label, prefixed `<pack> — ` when only one pack reads that key. `src/com/blockether/vis/internal/extension/core.clj` owns the runtime declaration and `test/com/blockether/vis/internal/extension/core_test.clj` enforces it over every live tool.
+Every agent-initiated gateway request uses the canonical Clojure client, including health checks:
 
-## Area contracts live beside the code
+```clojure
+(require '[com.blockether.vis.internal.gateway.client :as gateway-client])
+(gateway-client/request! :get "/healthz")
+```
 
-Read the owning docstring and the test that fails before working in the area; these are only the rules no single namespace can own.
+Use the route's actual method/path and optional `{:body … :headers … :timeout-ms …}`. The client
+resolves or starts the daemon, acquires a lease and supplies authentication. Do not read the gateway
+registry, copy secrets or hand-build curl/httpx authentication. Responses are non-throwing maps;
+4xx/5xx are data in `:status`. Print only fields needed for the diagnosis, never secret-bearing bodies.
 
-- **Contract shapes** — portable shapes and closed vocabularies are JSON documents with same-named JSON Schemas under `packages/vis-contract/resources/vis-contract/`. Skjema is the only contract validator. Runtime callback identity, IO and mutable state stay in their owning namespace and use ordinary local predicates where they cannot be JSON.
-- **Gateway HTTP** — **every agent-initiated call goes through the canonical Clojure client**: debugging, reproduction, setup, health checks, verification, diagnostics, no one-off exceptions. Never parse `~/.vis/gateway/registry`, copy a gateway secret, or hand-build `curl`/`httpx` authentication. Require `[com.blockether.vis.internal.gateway.client :as gateway-client]` and call `(gateway-client/request! :get "/healthz")` with the route's real method/path and optional `{:body … :headers … :timeout-ms …}`: it resolves or starts the daemon, registers the client lease, supplies protocol/auth headers and JSON-encodes through the production `babashka.http-client` transport. It returns the raw non-throwing response map — 4xx/5xx are data in `:status`. Inspect only what the check needs (normally `(select-keys response [:status :body])`) and never print token- or secret-bearing bodies.
-- **Gateway wire** — `src/com/blockether/vis/internal/gateway/wire.clj` is the deterministic boundary: wire keys are snake_case strings, engine keys mechanical kebab-case keywords, booleans `is_<foo>` / `:is-<foo>` and never `:foo?`. Use `wire/->wire` and `wire/json-str`, never hand-encoded keyword keys. Encoding is total — non-string keys, NaN and infinities must be rendered by `wire/->wire`/`persistance/->json` before transport, because a transport throw after `append-event!` poisons SSE and `/poll` replay for that session.
-- **Sandbox Python shims** — a shim is a HOST DOOR and nothing else: the sandbox runs a real CPython with pip, so anything a wheel provides is installed, never shimmed. The two that remain (`attach`, `ls`) each call Vis tools and could not live anywhere else. One lazy `shim_*.clj` per shim, its Python in `resources/vis-shims/<name>.py` (never a Clojure string), and the shim's prose lives in the PYTHON docstrings, harvested into the per-pack `resources/META-INF/vis/apropos/shim-<pack>.edn` resource its own manifest entry names — what `doc("attach")` answers from; regenerate with `apropos-resource-test/regenerate!` or `apropos_resource_test` fails on drift. The interpreter, its handle registry and its descriptor ceiling belong to `com.blockether/vis-python-runtime`; read that repository's guidance before changing sandbox runtime behaviour.
-- **TUI paint** — every paint contract is a docstring in `apps/vis-tui/` (`dialogs/draw-row-surface!`, `draw-field-row!` vs `draw-toggle-row!`, `draw-selectable-row!`/`p/selection-prefix`, `choice-mark`, `draw-dialog-chrome!`). Work in that app REPL against Lanterna `DefaultVirtualTerminal` and inspect its back-buffer. `apps/vis-tui/test/com/blockether/vis/tui/capture.clj` documents the ONE screenshot API, which hands back PNG PATHS and never buffers; the PNG is what you eyeball and the terminal-grid assertions are the regression gate — keep both.
-- **Companion UI** — the `src/components/ui.tsx` control vocabulary is CLOSED: use those components by name, never a hand-rolled `<button className="…">` that resembles one; at the second call site extract it in the same commit and pin it in `ui.test.tsx`. A call-site `className` may only POSITION (`absolute`, `flex-1`, `shrink-0`, a grid cell) — anything you can SEE is a prop or a variant, and `ui.test.tsx` fails on a paint utility handed to a `ui.tsx` control. Tailwind v4 tokens only (no component CSS, CSS modules, CSS-in-JS or inline styles); `sm:` answers "is there room" and owns layout, only `mouse:` may make a control tighter. **How a control is made is the module docstring at the top of `src/components/ui.tsx`** — read it before adding one. A design is LOOKED at, never asserted: stable Storybook renders the shipped component, Spel drives and verifies it, and companion review receives self-contained HTML built from the same production imports; no MCP or second browser layer. Every control ships with a deterministic story in the same commit — `ui.stories.tsx` for the vocabulary, `<Component>.stories.tsx` beside a control that needs data, fed from the ONE fixture module `src/dev/story-data.ts` (never a fetch, timer or random). Read props from the TypeScript source and rendered docs. The suite pins BEHAVIOUR plus whole-tree scans — never a size, spacing or paint token, because a positive class pin only fails when a design changed on purpose. Verify with `npm run lint`, `npm run test:storybook` and `npm run build`; never edit generated `ios/` or `android/` — native behavior goes in the idempotent `scripts/ios-prepare.mjs` / `scripts/android-prepare.mjs`.
-- **`PLAN.md`** — one plan in flight at the repo root, five parts in order and nothing else: title, catchy phrase, context (state before with `file:line`, the root problem, alternatives each with the reason it lost), `## Phase N` blocks carrying exactly Rationale / Data / Acceptance criteria / Unknowns, and the state of the plan, edited in the same commit as the work it records.
-- **Any design work goes through the one skill** — before UI code, a proposal, interactive preview, screenshot review or design answer, read `doc("design")` (`.vis/skills/design/SKILL.md`). It binds both companion and TUI: hierarchy, the closed type and colour systems, contrast, target geometry, one-edge structure, states, motion, words, component boundaries, the anti-slop list, and the Storybook + Spel make/review/done protocol. `ui.tsx` and TUI paint docstrings still decide what each surface builds with.
+### Tests and native builds
 
-## Clojure tests: Lazytest, not `clojure.test`
+Vis uses Lazytest, **not `clojure.test`** (which is silently undiscovered here):
+`[lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]`.
+Use `lazytest.core/set-ns-context!` and `around-each` instead of `use-fixtures`.
 
-- **Never require `clojure.test` — it is silently undiscovered**, so the tests appear to pass by not running. Use `[lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]`, and `lazytest.core/set-ns-context!` plus `around-each` instead of `use-fixtures`.
-- `run_tests` selects by `paths` — a test file, a directory, the source file whose `*-test` namespace should run, or a `<path>::<test-name>` node id for ONE var (`::my-test` finds it wherever it lives; the name may be the test var or the source var it covers). Prefer the smallest relevant path. Clojure ALSO takes the vocabulary `clojure -M:test` itself uses, resolved the same way: `ns`/`nses`/`namespace`/`namespaces` name a namespace (a source ns resolves to its `*-test`), `var`/`vars`/`only` name a test (`my.ns-test/my-test`, or bare for 'wherever it lives'). For tests-only verification call `run_tests` directly — its runner owns runtime setup. Use `repl_eval` when interactive inspection or stateful evaluation is part of the task.
-- `run_tests` NEVER starts a REPL: with none up it shells the project's own test command in a clean JVM, so the run sees the code on disk. It REUSES a REPL this session already has for that project, and that path reloads only the namespaces it RUNS — reload every changed PRODUCTION namespace, or stop the REPL, before rerunning. There is no restart op — `repl_stop` then `repl_start` when a clean load is safer.
-- Clean JVM: `clojure -M:test`, `--namespace my.ns-test`, `--var my.ns-test/my-test`.
-- **A `*_test.cljs` runs through the project's own shadow-cljs build** (the npm binary, a `thheller/shadow-cljs` dep in `deps.edn`, or lein), never the JVM; `build` picks between test builds. shadow-cljs exits 0 even when tests FAIL and when its CLI rejected an argument, so the verdict is the printed counts — and a `:browser-test` build, having no browser to connect, is refused rather than reported green.
-- **`.clj-kondo/imports/` is tracked source, not cache.** The configs clj-kondo copies out of dependencies ARE part of the lint rules — without them a fresh checkout resolves no `deftest`/`defdescribe`/`it` and `-M:lint` reports hundreds of unresolved symbols on CI alone. `lint_config_test` guards it; refresh with the command in `.gitignore`, never by ignoring the directory.
-- **`e2e/run.py` is a real-model gate, not part of "ready".** It drives the actual `vis-agent` CLI over seeded git repos, aggregating scenarios from the root and each language pack (`python3 e2e/run.py [id …]`, `VIS_MODELS=a,b` to demand every model pass). It costs tokens and time — run it when you changed the editing path or the tool surface, not for every patch.
+Use `run_tests` for the affected paths. A clean JVM runs `clojure -M:test`, optionally
+`--namespace my.ns-test` or `--var my.ns-test/my-test`. A reused REPL reloads test namespaces only:
+reload changed production namespaces or stop that REPL before rerunning. ClojureScript tests belong
+to the project's shadow-cljs build; inspect printed counts, not just its exit code.
 
-## Fixing a reported bug
+A green JVM suite or native build is not proof the binary runs. Interop changes need the relevant
+`test-native/` coverage against the built image (`-M:test-native`); reachability metadata lives inside
+jars under `META-INF/native-image/`. The engine metadata is pinned by `native_reachability_test`.
+Read `.graalvm-version` before changing the locked GraalVM CE pin; use `bin/require-graalvm` for setup.
+Never substitute Oracle GraalVM. Companion Android Gradle uses stock JDK 21 instead.
 
-Reproduce from the report's own steps first; if it does not reproduce, that IS the finding — narrow or refute the report instead of fixing something adjacent. Watch the test fail against the unfixed code **for the reported reason**, not for a typo or a missing require. The fix and its test ship in the same commit.
+`e2e/run.py` spends real-model tokens: use it for editing-path/tool-surface changes, not routine docs.
+Delimiter/Parinfer repair is syntax-only. A host/bootstrap/extension boundary change needs coverage
+across that boundary; do not drop required keys or validation just because one consumer ignores them.
 
-- **Every regression test names its issue in a comment on the test** — `;; Regression, issue #N: <what used to happen>` above the `defdescribe`/`it`. It describes the WRONG behavior, not what the code now does; after merge it is the only link back to the report.
-- **Keep extension layers proven and separate.** Clojure host, Python bootstrap and user-extension code are separate contracts. Begin in the layer the reproduction implicates; before crossing a language boundary, name the existing host callback, wire payload or failing end-to-end test that requires it, and add a test exercising the whole boundary. Never delete a semantic key, validation rule or requiredness marker because one path does not use it — trace its declaration, consumers and governing contract first.
-- **Delimiter repair is syntax-only.** Delimiter/Parinfer repair makes the smallest mechanical change that restores parseable source — never a semantic rewrite, a broadened feature or a cross-language change. Inspect the repaired diff; reject it if it escaped the intended enclosing form.
+### Skills and plans
 
-## The native image is a separate verdict
+`design` is the repository-authored skill. The other seven skills under `.vis/skills/` are upstream
+installs, kept verbatim rather than silently forked. Load them only when the user explicitly requests
+that skill or its specific workflow: ordinary coding does not activate Ponytail. Their style,
+persistence, test shortcuts and publishing recipes do not override repository contracts or the
+user's scope. Never infer authorization for remote actions from a skill.
 
-- **A green JVM suite does not mean a green binary.** Clojure interop whose argument types are not known at compile time goes through `clojure.lang.Reflector`: it just works on the JVM, so neither the suite nor the native BUILD fails — the image dies later, in a user's terminal, with `Cannot reflectively invoke …`. Measured: in v0.1.24 reading ANY YAML aborted every command. Registrations live in `resources/META-INF/native-image/com.blockether/vis/reachability-metadata.json` and are pinned by `native_reachability_test`; deleting one re-breaks the binary while every JVM test stays green. Native config travels INSIDE the jars (`META-INF/native-image/…`), never as an ad-hoc command-line flag, and `test-native/` (`-M:test-native`) is the suite that runs against the built binary.
-- **GraalVM CE 25.1.3 is locked.** `.graalvm-version` is the sole source of truth and carries the full rationale — read it before touching the pin. `GRAAL_PIN_LOCKED`, `GRAAL_MAX_VERSION`, `GRAAL_VERSION` stay equal at **25.1.3**; `bin/require-graalvm`, `build.clj`, the setup action and the pin test enforce it, so do not hardcode the JDK version elsewhere. **Community Edition, never Oracle GraalVM** (licensing: only CE's Classpath Exception frees the shipped binary) and **never 25.2.x** (native-image's points-to analysis does not converge in memory). A deliberate lift changes both keys, tag/assets/digests, `.sdkmanrc`, and requires a green `clojure -T:build native` first. Set up with `bin/require-graalvm --install`, `sdk env` or `eval "$(bin/require-graalvm --export)"`; native builds set their own `-J-Xmx`/`-J-Xms` (~12 GiB live set), and on a constrained runner `VIS_NATIVE_EXTRA_ARGS='-J-Xmx6g -J-Xms2g' clojure -T:build native` wins. **Only `apps/vis-companion`'s Android Gradle differs: stock JDK 21, never GraalVM.**
+Use `PLAN.md` for work that needs a maintained multi-phase plan, not every edit. When used, it has:
+title, phrase, context (current paths, problem and rejected alternatives), numbered phases with
+Rationale / Data / Acceptance criteria / Unknowns, then plan state. Update it with the work it tracks.
 
-## Releases
+### Releases (only when requested)
 
-`VIS_VERSION` at the repo root is the single version source for CLI, native image, iOS and Android; `npm run sync:version` in `apps/vis-companion` (`scripts/version.mjs`) mirrors it into `package.json`, `package-lock.json` and both `pyproject.toml`s, so never hand-edit a version field it owns or a store's marketing version. A product release is: bump, mirror, commit those five files as `chore(release): vX.Y.Z`, push `main`, then push the annotated `v<VIS_VERSION>` tag — that tag is what ships Clojars, the GitHub Release, the native distributions and both stores, and CI fails unless tag == `VIS_VERSION` == current `main`. **A pushed tag is spent**: never move or re-push it, fix forward with the next patch. An app-only rebuild leaves `VIS_VERSION` put (the store build number is `git rev-list --count HEAD`) and ships EITHER locally with `npm run release:ios:store` / `release:android:store`, which create no tag, OR through `npm run release:mobile`, the only thing allowed to create `companion-v<version>-build.<N>` — never `git tag` that by hand, and never both for one build number. `CHANGELOG.md` is authoritative and hand-edited; a release's notes section is written by CI.
+`VIS_VERSION` is the version source. `npm run sync:version` in `apps/vis-companion` mirrors it to
+package manifests and both pyproject files; do not hand-edit those version fields. Product releases
+bump, mirror, commit as `chore(release): vX.Y.Z`, push main, then push the annotated `v<VIS_VERSION>`
+tag. Tag, version and current main must agree. Pushed tags are spent: fix forward, never move them.
 
-## Shipping verified work
-
-- "Ready" is exactly: the smallest relevant `run_tests` namespaces pass, `lint_code` (clj-kondo + reflection) is clean, `format_code` has run, and the behavior is pinned by a suite test. Anything short of that stays uncommitted and is reported as unfinished.
-- Ready work is **committed and pushed to `main` in the same session without being asked again** — finished features must never be left sitting in the working tree. No scratch, notes or report files in a commit. Never pass `--no-verify`; the hooks are the gate.
-- When shipped work resolves a referenced GitHub issue, close it after the verified commit reaches `origin/main`; leave a brief comment naming the commit and verification. An issue left open means the work is not shipped.
-- **Push to `main` and closing an issue resolved by that pushed commit are the only automatic remote actions.** Tags, releases, store submissions, force pushes and history rewrites still require an explicit request.
-
-### Commit messages
-
-One conventional line, a body only where the WHY is missing, and the session that made it.
-
-- **Subject** — `type(scope): imperative summary` under 72 chars, no trailing period. Type is one of `feat fix docs refactor perf test build ci chore revert`; scope is the one-word area (`gateway`, `companion`, `tui`, `cli`, `docs`, `release`).
-- **Body** — optional, at most six non-blank lines, and only the WHY: constraint, trigger, trade-off. The diff already says WHAT; never narrate it.
-- **Trailer** — always `Vis-Session: <uuid>`, the bare session id of the work that produced the commit, so any commit traces back to its conversation. The key already names the value: the marked `vis_session_id#<uuid>` clipboard form (`src/com/blockether/vis/internal/channel/header.clj`) is refused here.
+App-only rebuilds keep the version and use the git commit count as build number. Choose either
+`npm run release:ios:store` / `release:android:store`, or `npm run release:mobile`; only the latter
+creates `companion-v<version>-build.<N>`. Never hand-tag it or submit the same build both ways.
+`CHANGELOG.md` is hand-authored; CI writes the release notes section.

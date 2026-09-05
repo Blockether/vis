@@ -65,31 +65,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Fail before writing anything rather than half-way through. curl fetches the
-# wrapper here; the rest is what the source runtime needs in step 2.
+# Acquisition needs curl and git. The launcher alone validates the selected JDK
+# when a JVM runtime is actually started (JAVA_CMD / JAVA_HOME / PATH).
 missing=()
-for cmd in curl git java; do
+for cmd in curl git; do
   command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
 done
 if (( ${#missing[@]} > 0 )); then
   echo "vis-agent install: missing required command(s): ${missing[*]}" >&2
-  echo "  The source runtime needs Java 25+, git, and curl." >&2
-  echo "  Vis installs the Clojure CLI automatically on first JVM use." >&2
+  echo "  Installation needs git and curl; JVM use additionally needs JDK 25+." >&2
   exit 1
 fi
 
-java_version_output="$(java -version 2>&1)" || {
-  echo "vis-agent install: java exists but failed to run: java -version" >&2
-  exit 1
-}
-java_version="$(printf '%s\n' "$java_version_output" | sed -n '1s/.*version "\([^"]*\)".*/\1/p')"
-java_major="${java_version%%.*}"
-[[ "$java_major" != "1" ]] || java_major="$(printf '%s' "$java_version" | cut -d. -f2)"
-if [[ ! "$java_major" =~ ^[0-9]+$ || "$java_major" -lt 25 ]]; then
-  echo "vis-agent install: Java 25 or newer is required (found: ${java_version:-unknown})." >&2
-  exit 1
-fi
-# The wrapper installs the official Clojure CLI when the source runtime is first used.
 
 if ! mkdir -p "$install_dir" 2>/dev/null || [[ ! -w "$install_dir" ]]; then
   echo "vis-agent install: cannot write to $install_dir" >&2
@@ -177,6 +164,8 @@ cat <<EOF
 Vis Agent is installed for this user:
   $install_dir/vis-agent          the command
   $vis_home/install/src           source runtime, at the newest commit on main
+
+  JVM use requires JDK 25+ (any distribution); set JAVA_CMD or JAVA_HOME if needed.
 
   vis-agent help
   vis-agent runtime               what is installed, and where

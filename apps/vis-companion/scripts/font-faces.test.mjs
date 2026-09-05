@@ -17,7 +17,8 @@ const css = readFileSync(
 );
 
 /** Every family the stylesheet pulls in, and whether its italic axis came too. */
-const families = ['inter', 'jetbrains-mono'];
+const families = [...css.matchAll(/@import ['"]@fontsource-variable\/([^/'"]+)['"]/g)]
+  .map((match) => match[1]);
 
 describe('web fonts', () => {
   it('synthesises nothing, so every slant must be a real face', () => {
@@ -25,6 +26,7 @@ describe('web fonts', () => {
   });
 
   it('imports the italic axis of every family it sets text in', () => {
+    expect(families.length).toBeGreaterThan(0);
     for (const family of families) {
       expect(css).toContain(`@import '@fontsource-variable/${family}';`);
       expect(css).toContain(

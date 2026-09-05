@@ -1345,12 +1345,25 @@
 
 (defdescribe
   environment-lifecycle-test
+  ;; Regression, user report: a cold disposed environment could start a new worker.
+  (it "never builds Python for creation, teardown, or entry after cold disposal"
+      (let [builds (atom 0)]
+        (with-redefs [env/create-python-context (fn [& _]
+                                                  (swap! builds inc)
+                                                  (throw (ex-info "unexpected build" {})))]
+          (let [environment (lp/create-environment ::router {:db :memory})]
+            (expect (nil? (env/python-context-if-built environment)))
+            (expect (zero? @builds))
+            (lp/dispose-environment! environment)
+            (expect (zero? @builds))
+            (expect (try (env/python-context environment) false (catch Throwable _ true)))
+            (expect (zero? @builds))))))
   (it "refuses the python session of an environment it disposed"
       (let [environment
             (lp/create-environment ::router {:db :memory})
 
             python-context
-            (:python-context environment)]
+            (env/python-context environment)]
 
         (lp/dispose-environment! environment)
         (expect (try (env/run-python-block python-context "1") false (catch Throwable _ true)))))
@@ -3922,7 +3935,7 @@
         (try
           ;; The model has no `set_session_title` binding; calling it raises
           ;; (NameError) and surfaces as a structured eval error.
-          (let [bad (env/run-python-block (:python-context env)
+          (let [bad (env/run-python-block (env/python-context env)
                                           "set_session_title(\"Liveness check\")")]
             (expect (some? (:error bad))))
           (finally (lp/dispose-environment! env))))))
@@ -8118,39 +8131,50 @@
                       (finally (System/setProperty "user.home" old-home)
                                (config/invalidate-config-cache!))))))
 
-(defdescribe
-  create-environment-failure-disposes-sandbox-test
-  ;; A sandbox is built ~130 lines before `create-environment` returns, and
-  ;; workspace resolution, extension registration and the defs restore all run after
-  ;; it. A throw in that stretch used to abandon it — and an abandoned sandbox is
-  ;; never reclaimed: its Python namespace is a reference cycle through every
-  ;; function defined in it, and the host half holds one closure per tool. So the
-  ;; FAILURE path leaked worse than success ever could, on exactly the runs a
-  ;; caller retries.
-  (it "closes the sandbox it built when a later step throws"
-      (let [disposed
-            (atom [])
+(defdescribe create-environment-failure-disposes-sandbox-test
+             ;; The defs restore and the extension symbol sync run AFTER the sandbox exists.
+             ;; A throw in that stretch must not abandon it — an abandoned sandbox is never
+             ;; reclaimed: its Python namespace is a reference cycle through every function
+             ;; defined in it, and the host half holds one closure per tool. So the FAILURE
+             ;; path leaks worse than success can, on exactly the runs a caller retries.
+             ;;
+             ;; The sandbox is built lazily, so this stretch no longer runs inside
+             ;; `create-environment`: it runs when something first enters Python, and the
+             ;; guarantee moved there with it. Forcing is what can fail, and forcing is
+             ;; what has to clean up.
+             (it "closes the sandbox it built when a later step throws"
+                 (let [disposed
+                       (atom [])
 
-            boom
-            (RuntimeException. "workspace exploded")]
+                       boom
+                       (RuntimeException. "workspace exploded")]
 
-        (with-redefs-fn {#'env/dispose-python-context! (fn [session]
-                                                         (swap! disposed conj session)
-                                                         nil)
-                         ;; A step that runs AFTER the sandbox exists, and fails.
-                         #'env/restore-session-defs! (fn [& _]
-                                                       (throw boom))}
-          (fn []
-            (let [thrown
-                  (try (lp/create-environment ::router {:db :memory}) nil (catch Throwable t t))]
-              (expect (identical? boom thrown) "the original failure must reach the caller")
-              (expect (= 1 (count @disposed))
-                      (str "create-environment abandoned its sandbox on the failure path"
-                           " (dispose calls: "
-                           (count @disposed)
-                           ")"))
-              (expect (some? (first @disposed))
-                      "the disposed value must be the session it built")))))))
+                   (with-redefs-fn {#'env/dispose-python-context! (fn [session]
+                                                                    (swap! disposed conj session)
+                                                                    nil)
+                                    ;; A step that runs AFTER the sandbox exists, and fails.
+                                    #'env/restore-session-defs! (fn [& _]
+                                                                  (throw boom))}
+                     (fn []
+                       (let [environment
+                             (lp/create-environment ::router {:db :memory})
+
+                             _
+                             (expect (empty? @disposed)
+                                     "creating a session must not build a sandbox to dispose")
+
+                             thrown
+                             (try (env/python-context environment) nil (catch Throwable t t))]
+
+                         (expect (identical? boom thrown)
+                                 "the original failure must reach the caller")
+                         (expect (= 1 (count @disposed))
+                                 (str "the sandbox was abandoned on the failure path"
+                                      " (dispose calls: "
+                                      (count @disposed)
+                                      ")"))
+                         (expect (some? (first @disposed))
+                                 "the disposed value must be the session it built")))))))
 
 (defdescribe
   filesystem-activity-rows-test

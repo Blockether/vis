@@ -67,9 +67,16 @@ try {
     await page.goto(`${base}/iframe.html?${query}`, { waitUntil: 'networkidle', timeout: 30_000 });
     await page.waitForSelector('#storybook-root > *', { timeout: 15_000 });
     await page.evaluate(() => document.fonts?.ready);
-    await page.addScriptTag({ content: axeSource });
-    const violations = await page.evaluate(async () => {
-      const result = await axe.run(document, {
+    const violations = await page.evaluate(async (source) => {
+      // Keep the scanner independent of Storybook's concurrent a11y addon.
+      const previousAxe = window.axe;
+      const module = { exports: {} };
+      try {
+        new Function('module', source)(module);
+      } finally {
+        window.axe = previousAxe;
+      }
+      const result = await module.exports.run(document, {
         iframes: false,
         runOnly: { type: 'rule', values: ['color-contrast'] },
       });
@@ -80,7 +87,7 @@ try {
           data: node.any[0]?.data ?? {},
         })),
       );
-    });
+    }, axeSource);
     failures.push(...violations.map((violation) => ({ id, theme, ...violation })));
   }
 

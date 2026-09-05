@@ -10,6 +10,10 @@
 // own `url`/`alts` and owns the reuse it takes on.
 import { render } from "@testing-library/react";
 
+// Resolve the lazy graph before measuring shell interactions, not Vite transforms.
+// The prefetch regression deliberately rejects this chunk; keep that rejection
+// cached so App still exercises its own failed-prefetch handling.
+await import("./screens/SessionScreen").catch(() => {});
 import { App } from "./App";
 import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL } from "./lib/compat";
 import { sessionsWindow } from "./screens/sessions-screen-harness";

@@ -415,7 +415,9 @@
                ;; config-driven indentation differs from stock defaults ...
                (expect (not= with-cfg default))
                ;; ... and equals formatting with the discovered opts
-               (expect (= with-cfg (fmt/format-string messy (fmt/cljfmt-opts-for (.getPath dir))))))
+               (expect (= with-cfg
+                          (fmt/normalize-top-level-spacing
+                            (fmt/format-string messy (fmt/cljfmt-opts-for (.getPath dir)))))))
              (finally (cleanup dir)))))
   (it "returns nil opts when no config file is found"
       (let [dir (tmp-dir)]

@@ -55,7 +55,7 @@ describe("a desk keeps the list beside the conversation", () => {
       view.restore();
       restoreDensity();
     };
-    await screen.findByText("Alpha one");
+    await screen.findByText("Alpha one", {}, { timeout: 5_000 });
 
     const main = view.baseElement.querySelector("main") as HTMLElement;
     const sidebar = main.firstElementChild as HTMLElement;

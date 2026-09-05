@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.python.worker
-  "ONE Python execution environment per session: a child of this same binary
+  "ONE Python execution environment per session: the runtime-owned worker
    holding the interpreter that session's sandbox AND its extensions run in.
 
    Why a process and not a namespace. Confinement, the thread cap and the
@@ -50,28 +50,19 @@
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
+            [com.blockether.vis.internal.python.worker-peer :as child]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis-python-runtime :as runtime]
             [taoensso.telemere :as tel])
   (:import (com.blockether.vispython Locations)
-           (java.io BufferedReader BufferedWriter File InputStreamReader OutputStreamWriter)
+           (java.io File)
            (java.lang.management ManagementFactory)
            (java.net StandardProtocolFamily UnixDomainSocketAddress)
-           (java.nio.channels Channels ServerSocketChannel SocketChannel)
-           (java.nio.charset StandardCharsets)
+           (java.nio.channels SelectionKey Selector ServerSocketChannel SocketChannel)
            (java.nio.file Files)
-           (java.util.concurrent Executors ExecutorService TimeUnit)
-           (java.util.concurrent.atomic AtomicLong)))
+           (java.util.concurrent TimeUnit)))
 
 (set! *warn-on-reflection* true)
-
-(def socket-env
-  "The environment variable that turns a fresh vis process into this host. A
-   process started with it set never reaches argv: the socket IS the whole
-   instruction, which is why no CLI command exposes this."
-  "VIS_PYTHON_WORKER_SOCKET")
-
-(def ^:private guest-source-env "VIS_PYTHON_GUEST_SOURCE_DIR")
 
 (defonce ^:private guest-source-directory
   (delay (let [dir (io/file (System/getProperty "user.home") ".vis" "python" "vis-guest")]
@@ -91,93 +82,6 @@
   []
   @guest-source-directory)
 
-;; The peer — one live connection, used identically on both sides
-
-(defn- peer-over
-  "A peer over `channel`: what to read, what to write, who is waiting for a
-   reply, and which of the peer's requests this side is still serving."
-  [^SocketChannel channel]
-  {:channel channel
-   :reader (BufferedReader. (InputStreamReader. (Channels/newInputStream channel)
-                                                StandardCharsets/UTF_8))
-   :writer (BufferedWriter. (OutputStreamWriter. (Channels/newOutputStream channel)
-                                                 StandardCharsets/UTF_8))
-   :pending (atom {})
-   :serving (atom {})
-   :seq (AtomicLong. 0)
-   :workers (Executors/newCachedThreadPool
-              (reify
-                java.util.concurrent.ThreadFactory
-                  (newThread [_ runnable]
-                    (doto (Thread. ^Runnable runnable "vis-python-worker") (.setDaemon true)))))})
-
-(defn- send-line!
-  "Write one message. Synchronized because both a reply and a fresh request can
-   be written from different threads and a torn line is unparseable."
-  [peer message]
-  (let [^BufferedWriter writer (:writer peer)]
-    (locking writer
-      (.write writer ^String (json/write-json-str message))
-      (.write writer "\n")
-      (.flush writer))))
-
-(defn- request!
-  "Ask the peer `message` and answer its reply value; its error throws here.
-   `timeout-ms` bounds CONTROL messages only; ordinary work waits for its real
-   result."
-  ([peer message] (request! peer message nil))
-  ([peer message timeout-ms]
-   (let [id
-         (.incrementAndGet ^AtomicLong (:seq peer))
-
-         waiting
-         (promise)]
-
-     (swap! (:pending peer) assoc id waiting)
-     (try (send-line! peer (assoc message "id" id))
-          (let [reply (if timeout-ms (deref waiting (long timeout-ms) ::timed-out) @waiting)]
-            (when (identical? ::timed-out reply)
-              (throw (ex-info (str "the python worker did not answer " (get message "op"))
-                              {:type :vis/python-worker-timeout
-                               :op (get message "op")
-                               :timeout-ms timeout-ms})))
-            (if (contains? reply "error")
-              (throw (ex-info (str (get reply "error"))
-                              {:type :vis/python-worker :op (get message "op")}))
-              (get reply "value")))
-          (finally (swap! (:pending peer) dissoc id))))))
-
-(defn- pump!
-  "Read this peer until it closes: a reply settles whoever waits for it, a
-   request goes to `serve` on a thread of its own — serving inline would stall
-   the pump behind a call that is itself waiting on this peer.
-
-   On close every pending call fails with `reason`, because a caller parked on a
-   child that has died would otherwise wait forever."
-  [peer serve reason]
-  (try (loop []
-
-         (when-let [line (.readLine ^BufferedReader (:reader peer))]
-           (when-not (str/blank? line)
-             (let [message (json/read-json line :key-fn identity)]
-               (if (contains? message "op")
-                 (.submit ^ExecutorService (:workers peer) ^Runnable #(serve peer message))
-                 (some-> (get @(:pending peer) (get message "id"))
-                         (deliver message)))))
-           (recur)))
-       (catch Throwable _ nil)
-       (finally (doseq [[_ waiting] @(:pending peer)]
-                  (deliver waiting {"error" (reason)}))
-                (.shutdownNow ^ExecutorService (:workers peer)))))
-
-(defn- claim-reply!
-  "True exactly once per served request `id`: whoever answers it first — the tool
-   that finished, or the interrupt that failed it — is the only answer the child
-   ever reads. A late answer for an id already claimed is dropped here, never sent."
-  [peer id]
-  (let [[before _] (swap-vals! (:serving peer) dissoc id)]
-    (contains? before id)))
-
 (defn- serve-host-call!
   "Answer one `host` request from the child on this thread, which is on record
    under the request's id for as long as the tool runs so an interrupt can find it."
@@ -187,7 +91,7 @@
     (let [value (python-host/dispatch (get message "session")
                                       (get message "tool")
                                       (get message "payload"))]
-      (when (claim-reply! peer id) (send-line! peer {"id" id "value" value})))))
+      (when (child/claim-reply! peer id) (child/send-line! peer {"id" id "value" value})))))
 
 (defn- fail-host-calls!
   "Fail every host call the child has in flight on `peer`: each guest thread
@@ -200,110 +104,8 @@
   (let [[before _] (swap-vals! (:serving peer) empty)]
     (doseq [[id ^Thread thread] before]
       (.interrupt thread)
-      (send-line! peer {"id" id "error" (str reason)}))
+      (child/send-line! peer {"id" id "error" (str reason)}))
     (count before)))
-
-;; The child half
-
-(defn- serve-op
-  "Run one request from the parent against this process's interpreter."
-  [peer message]
-  (let [{:strs [id op session code]} message]
-    (send-line!
-      peer
-      (try
-        {"id" id
-         "value" (case op
-                   "install-runtime"
-                   (runtime/install-runtime! session)
-
-                   "install-sync-tool"
-                   (runtime/install-sync-tool! session code)
-
-                   "install-tool"
-                   (runtime/install-tool! session code)
-
-                   "install-module"
-                   (runtime/install-module! session code)
-
-                   "exec"
-                   (do (runtime/exec! session code) nil)
-
-                   "run"
-                   (runtime/run session code)
-
-                   "run-block"
-                   (runtime/run-block session code)
-
-                   "eval"
-                   (runtime/eval-str session code)
-
-                   ;; Policy is the PROCESS's, and this process is one
-                   ;; session's, which is the whole reason the worker
-                   ;; exists: what used to be "every session in the
-                   ;; gateway" is now exactly this session.
-                   "confine"
-                   (let [{:strs [read write refusal]} (json/read-json code :key-fn identity)]
-                     (runtime/confine! (vec read) (vec write) (str refusal))
-                     nil)
-
-                   "network"
-                   (let [{:strs [enabled refusal]} (json/read-json code :key-fn identity)]
-                     (runtime/network! (boolean enabled) (str refusal))
-                     nil)
-
-                   "trust"
-                   (do (runtime/trust! session (= "1" code)) nil)
-
-                   "stdin"
-                   (do (runtime/stdin! code) nil)
-
-                   "interrupt"
-                   (runtime/interrupt!)
-
-                   "close"
-                   (do (runtime/trust! session false) (runtime/close-session! session))
-
-                   (throw (ex-info (str "no worker op named " op) {:op op})))}
-        (catch Throwable t {"id" id "error" (or (ex-message t) (str t))})))))
-
-(defn serve!
-  "BE a worker: connect back to the parent on `socket-path` and serve
-   it until it hangs up.
-
-   This process belongs to one gateway session. Its sandbox namespace and its
-   trusted extension namespaces share this interpreter; the runtime's unforgeable
-   per-namespace trust identity decides which side of the confinement boundary a
-   call occupies. Policy remains process-wide, while trust is namespace-wide."
-  [socket-path]
-  (let [channel
-        (SocketChannel/open (UnixDomainSocketAddress/of ^String socket-path))
-
-        peer
-        (peer-over channel)]
-
-    ;; This process resolves the interpreter for itself: it is a child JVM with
-    ;; its own classpath and no inherited resolution.
-    (python-runtime/ensure-library!)
-    (let [guest-dir (or (util/env-val guest-source-env)
-                        (throw (ex-info "The Python worker has no Vis guest source directory"
-                                        {:type :vis/python-worker-guest-source})))]
-      (runtime/initialize! {:source-paths [guest-dir]}))
-    ;; The caller is the CHILD interpreter's answer, forwarded whole: the parent
-    ;; authorizes against it, and a payload that names something else is the
-    ;; guest's word, not the interpreter's.
-    (runtime/bind-host! (fn [session tool payload]
-                          (request! peer
-                                    {"op" "host" "session" session "tool" tool "payload" payload})))
-    (pump! peer serve-op (constantly "the vis process that owns this host is gone"))
-    (.close channel)))
-
-(defn -main
-  "Entry for the JVM child, which is started as this namespace rather than as
-   the whole CLI: the socket comes from the environment either way."
-  [& _]
-  (serve! (System/getenv socket-env))
-  (shutdown-agents))
 
 ;; The parent half
 
@@ -341,17 +143,18 @@
   "shared")
 
 (defn- child-argv
-  "How to start the child. The native binary starts ITSELF (the environment
-   variable, read before argv, is what makes it the host); on the JVM the child
-   is this namespace alone rather than the whole CLI, because loading the facade
-   costs seconds a test run pays for nothing."
-  []
+  "Start the runtime worker, never a second copy of Vis. JVM development uses
+   the same Java entrypoint; native Vis requires the packaged runtime executable."
+  [library socket guest-dir]
   (if (util/native-image?)
-    (vec (discovery/base-argv))
+    (if-let [executable (runtime/resolve-worker {:path library})]
+      [executable socket guest-dir]
+      (throw (ex-info "The Python runtime archive has no worker executable"
+                      {:type :vis/python-worker-missing})))
     (vec (concat [(str (System/getProperty "java.home") File/separator "bin" File/separator "java")]
                  (.getInputArguments (ManagementFactory/getRuntimeMXBean))
-                 ["-cp" (System/getProperty "java.class.path") "clojure.main" "-m"
-                  "com.blockether.vis.internal.python.worker"]))))
+                 ["-cp" (System/getProperty "java.class.path") "com.blockether.vispython.Worker"
+                  socket guest-dir]))))
 
 (defn- worker-dir
   ^File [stamp]
@@ -416,6 +219,24 @@
     (.start thread)
     thread))
 
+(defn- await-worker-connection
+  "Wait only while the child can still connect. No blocked accept future survives
+   an early child exit or a startup timeout. The selector bounds exit detection."
+  [^ServerSocketChannel server ^Process process]
+  (.configureBlocking server false)
+  (with-open [selector (Selector/open)]
+    (.register server selector SelectionKey/OP_ACCEPT)
+    (let [deadline (+ (long (util/now-ms)) 60000)]
+      (loop []
+
+        (when (.isInterrupted (Thread/currentThread))
+          (throw (InterruptedException. "Python worker startup interrupted")))
+        (or (.accept server)
+            (when (and (.isAlive process) (< (long (util/now-ms)) deadline))
+              (.select selector 100)
+              (.clear (.selectedKeys selector))
+              (recur)))))))
+
 (defn- start!
   "Start `k` behind its live session policy and answer it connected. The parent
    binds first; the run directory is the worker's only host-owned writable grant."
@@ -451,31 +272,31 @@
                                      (.getAbsolutePath dir)
                                      (.getAbsolutePath socket)
                                      (boot-read-paths library guest-dir))
-              extra (cond-> {socket-env (.getAbsolutePath socket) guest-source-env guest-dir}
+              extra (cond-> {}
                       library
                       (assoc runtime/native-path-env (str library)))]
 
           (spit log "" :append true)
-          (let [^Process process (process-jail/spawn! (child-argv)
-                                                      nil
-                                                      policy
-                                                      {:extra-environment extra
-                                                       :merge-stderr? true})
+          (let [^Process process (process-jail/spawn!
+                                   (child-argv library (.getAbsolutePath socket) guest-dir)
+                                   nil
+                                   policy
+                                   {:extra-environment extra :merge-stderr? true})
                 _ (drain-output! process log)
-                accepted (deref (future (.accept server)) 60000 nil)]
+                accepted (await-worker-connection server process)]
 
             (when-not accepted
               (.destroy process)
               (throw (ex-info "the python worker did not start"
                               {:type :vis/python-worker :log (.getAbsolutePath log)})))
-            (let [peer (peer-over accepted)
+            (let [peer (child/peer-over accepted)
                   state {:process process :peer peer :log log}
                   thread (Thread. ^Runnable
-                                  #(pump! peer
-                                          serve-host-call!
-                                          (fn []
-                                            (str "the python worker exited; see "
-                                                 (.getAbsolutePath log))))
+                                  #(child/pump! peer
+                                                serve-host-call!
+                                                (fn []
+                                                  (str "the python worker exited; see "
+                                                       (.getAbsolutePath log))))
                                   "vis-python-extension-pump")]
 
               (.setDaemon thread true)
@@ -528,11 +349,11 @@
 (defn- ask
   ([k op session code] (ask k op session code nil))
   ([k op session code timeout-ms]
-   (request! (:peer (live k))
-             (cond-> {"op" op "session" session}
-               code
-               (assoc "code" code))
-             timeout-ms)))
+   (child/request! (:peer (live k))
+                   (cond-> {"op" op "session" session}
+                     code
+                     (assoc "code" code))
+                   timeout-ms)))
 
 (defn install-runtime! [k session] (ask k "install-runtime" session nil))
 

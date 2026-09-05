@@ -40,7 +40,8 @@
       (expect (.contains help "COMMANDS"))))
   (it "aligns every block: headings at column 0, rows at column 2, one gutter each"
       (let [^String help
-            (commandline/render-tree (#'main/root-command))
+            (binding [commandline/*color-enabled?* false]
+              (commandline/render-tree (#'main/root-command)))
 
             commands-at
             (.indexOf help "\nCOMMANDS\n")]

@@ -393,7 +393,8 @@ export_system_ca_bundle() {
   local bundle="$1"
   export VIS_SYSTEM_CA_CERT="$bundle"
   export CURL_CA_BUNDLE="$bundle" SSL_CERT_FILE="$bundle" REQUESTS_CA_BUNDLE="$bundle"
-  export NODE_EXTRA_CA_CERTS="$bundle" GIT_SSL_CAINFO="$bundle" PIP_CERT="$bundle"
+  export NODE_EXTRA_CA_CERTS="$bundle" GIT_SSL_CAINFO="$bundle"
+  # pip keeps its own explicit CA selection; runtime supplies the shared default.
   export AWS_CA_BUNDLE="$bundle" CARGO_HTTP_CAINFO="$bundle" DENO_CERT="$bundle"
 }
 
@@ -694,32 +695,31 @@ ensure_clojure_cli() {
   return 1
 }
 
+# Runtime selection is independent of the GraalVM native-image build toolchain.
+# Respect an explicit selector: a broken JAVA_CMD/JAVA_HOME is an error, not a fallback.
 ensure_java_runtime() {
-  if [[ -n "${JAVA_CMD:-}" ]] && {
-    [[ -x "$JAVA_CMD" ]] || command -v "$JAVA_CMD" >/dev/null 2>&1
-  }; then
-    return 0
+  local java_cmd properties major
+  if [[ -n "${JAVA_CMD:-}" ]]; then
+    java_cmd="$(command -v "$JAVA_CMD" 2>/dev/null || true)"
+  elif [[ -n "${JAVA_HOME:-}" ]]; then
+    java_cmd="$JAVA_HOME/bin/java"
+  else
+    java_cmd="$(command -v java 2>/dev/null || true)"
   fi
-  [[ -x "${JAVA_HOME:-}/bin/java" ]] && return 0
-  command -v java >/dev/null 2>&1 && return 0
-
-  case "${VIS_NO_AUTO_INSTALL:-}" in
-    1|true|TRUE|yes|YES|on|ON)
-      return 1
-      ;;
-  esac
-
-  local pinned_home
-  if pinned_home="$("$source_root/bin/require-graalvm" --install)"; then
-    export JAVA_HOME="$pinned_home"
-    export GRAALVM_HOME="$pinned_home"
-    export JAVA_CMD="$pinned_home/bin/java"
-    export PATH="$pinned_home/bin:$PATH"
-    hash -r 2>/dev/null || true
-    measure_log "selected pinned JVM $pinned_home"
-    return 0
+  if [[ -z "$java_cmd" || ! -x "$java_cmd" ]]; then
+    warn "Java not found; install a JDK 25+ or set JAVA_CMD / JAVA_HOME"
+    return 1
   fi
-  return 1
+  if ! properties="$("$java_cmd" -XshowSettings:properties -version 2>&1)"; then
+    warn "could not run Java: $java_cmd"
+    return 1
+  fi
+  major="$(printf '%s\n' "$properties" | sed -n 's/^ *java\.specification\.version = //p')"
+  if [[ ! "$major" =~ ^[0-9]+$ ]] || (( 10#$major < 25 )); then
+    warn "JDK 25+ required; selected Java reports '${major:-unknown}' ($java_cmd)"
+    return 1
+  fi
+  export JAVA_CMD="$java_cmd"
 }
 
 vis_runtime_usage() {
@@ -1180,62 +1180,18 @@ case "$runtime" in
       die "no Vis runtime is installed" \
           "Install it:  vis-agent update"
     fi
+    if ! ensure_java_runtime; then
+      die "the source runtime needs JDK 25+ (any distribution)" \
+          "Set JAVA_CMD or JAVA_HOME; GraalVM is required only to build native images"
+    fi
     if ! ensure_clojure_cli; then
       die "the source runtime needs the Clojure CLI" \
           "Automatic installation failed; set VIS_NO_AUTO_INSTALL=1 to disable it"
-    fi
-    if ! ensure_java_runtime; then
-      die "the source runtime needs a Java 25 runtime, and automatic installation failed" \
-          "Install manually with:  $source_root/bin/require-graalvm --install"
     fi
     ;;
 esac
 
 # ── JVM source launch ────────────────────────────────────────────────────────
-# A JVM launch must not inherit an incompatible GraalVM from a long-lived parent
-# (IDE, terminal multiplexer, service runner, …). Clojure's launcher prefers
-# JAVA_CMD / the `java` on PATH over JAVA_HOME, so merely running `sdk env` in a
-# newer shell does not repair an already-started runner.
-#
-# Stock JDKs are deliberately accepted: the embedded interpreter is a cdylib the
-# JVM loads through the FFM API, so a source launch runs anywhere. When the
-# selected JVM IS GraalVM, however, it must be the exact CE release pinned by
-# this source. Resolve an already-installed pin through the repository's single
-# JDK gate and export all three selectors that the Clojure CLI may consult.
-ensure_compatible_jvm_runtime() {
-  local java_cmd vendor pinned_home
-
-  if [[ -n "${JAVA_CMD:-}" ]]; then
-    java_cmd="$(command -v "$JAVA_CMD" 2>/dev/null || true)"
-  else
-    java_cmd="$(command -v java 2>/dev/null || true)"
-  fi
-  [[ -n "$java_cmd" ]] || return 0
-
-  vendor="$("$java_cmd" -XshowSettings:properties -version 2>&1 |
-    sed -n 's/^ *java\.vendor\.version = //p' | head -n1)"
-  [[ "$vendor" == *GraalVM* ]] || return 0
-
-  # shellcheck source=/dev/null
-  . "$source_root/.graalvm-version"
-  [[ "$vendor" == "$GRAAL_VENDOR_VERSION" ]] && return 0
-
-  if pinned_home="$("$source_root/bin/require-graalvm" 2>/dev/null)"; then
-    export JAVA_HOME="$pinned_home"
-    export GRAALVM_HOME="$pinned_home"
-    export JAVA_CMD="$pinned_home/bin/java"
-    export PATH="$pinned_home/bin:$PATH"
-    warn "JVM launcher replaced incompatible $vendor with $GRAAL_VENDOR_VERSION."
-    measure_log "selected pinned JVM $pinned_home"
-    return 0
-  fi
-
-  warn "incompatible JVM runtime: $vendor"
-  warn "this source embeds CPython $GRAAL_VERSION and requires $GRAAL_VENDOR_VERSION."
-  warn "install it with '$source_root/bin/require-graalvm --install', or run on a stock JDK 25."
-  return 1
-}
-
 absolute_project_classpath() {
   local project_root="$1" raw entry out=""
   shift
@@ -1254,7 +1210,6 @@ if (( tui_requested )); then
   [[ -f "$tui_root/deps.edn" ]] || die "the terminal UI is not installed" \
     "Run:  vis-agent update"
   measure_log "JVM TUI → $tui_root"
-  ensure_compatible_jvm_runtime || exit 1
   cd "$tui_root"
   tui_classpath="$(absolute_project_classpath "$tui_root" -Spath -M:run)" || exit 1
   run_measured_or_exec "process JVM TUI" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} -Scp "$tui_classpath" -M:run "$@"
@@ -1277,7 +1232,6 @@ fi
 # the selected source. Git dependencies compile their JVM bridges into their own
 # prep output; tools.deps skips work whose :deps/prep-lib :ensure path exists.
 measure_log "exec cold clojure -M:vis from $source_root"
-ensure_compatible_jvm_runtime || exit 1
 cd "$source_root"
 # `prep` compiles a git dependency's own JVM bridge, and tools.deps skips the work
 # when the :ensure path is already there — but finding that out costs a JVM start,

@@ -5,6 +5,11 @@
             [com.blockether.vis.internal.loop :as loop]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.python.worker :as worker]
+            [com.blockether.vis.internal.python.worker-peer :as worker-peer]
+            [com.blockether.vis.internal.python.runtime]
+            [com.blockether.vis.internal.sandbox.jail]
+            [com.blockether.vis.internal.util]
+            [com.blockether.vis-python-runtime]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.util.concurrent.atomic AtomicLong)))
 
@@ -33,6 +38,53 @@
     (try (f session) (finally (env/dispose-python-context! session)))))
 
 (defdescribe
+  worker-session-state-test
+  (it
+    "imports host modules and preserves globals between blocks in the runtime worker"
+    (with-worker-context
+      (fn [session]
+        (expect
+          (=
+            "41\n"
+            (:stdout
+              (env/run-python-block
+                session
+                "import vis_introspection, vis_autoinstall\nworker_value = 41\nprint(worker_value)"))))
+        (expect (= "42\n" (:stdout (env/run-python-block session "print(worker_value + 1)"))))))))
+
+(defdescribe worker-entrypoint-test
+             (it "launches the runtime Java worker with the control socket and host modules"
+                 (with-redefs [com.blockether.vis.internal.util/native-image? (constantly false)]
+                   (let [argv (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules")]
+                     (expect (= ["com.blockether.vispython.Worker" "/tmp/control.sock"
+                                 "/tmp/host-modules"]
+                                (vec (take-last 3 argv)))))))
+             (it "launches the runtime executable in native Vis"
+                 (with-redefs [com.blockether.vis.internal.util/native-image?
+                               (constantly true)
+
+                               com.blockether.vis-python-runtime/resolve-worker
+                               (fn [library]
+                                 (expect (= {:path "/runtime/libvispython.so"} library))
+                                 "/runtime/vis-python-worker")]
+
+                   (expect (= ["/runtime/vis-python-worker" "/tmp/control.sock" "/tmp/host-modules"]
+                              (#'worker/child-argv
+                               "/runtime/libvispython.so"
+                               "/tmp/control.sock"
+                               "/tmp/host-modules")))))
+             (it "refuses a native runtime without its worker instead of starting Vis again"
+                 (with-redefs [com.blockether.vis.internal.util/native-image?
+                               (constantly true)
+
+                               com.blockether.vis-python-runtime/resolve-worker
+                               (constantly nil)]
+
+                   (expect (= :vis/python-worker-missing
+                              (try (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules")
+                                   (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+
+(defdescribe
   worker-control-plane-test
   (it "bounds an interrupt whose child never replies"
       (let [pending
@@ -44,8 +96,8 @@
         (swap! @#'worker/workers assoc "session" {:peer peer})
         (with-redefs-fn {#'worker/alive? (fn [state]
                                            (= peer (:peer state)))
-                         #'worker/send-line! (fn [_ _]
-                                               nil)}
+                         #'worker-peer/send-line! (fn [_ _]
+                                                    nil)}
           (fn []
             (let [call
                   (future (try (worker/interrupt! "session" "sandbox")
@@ -257,3 +309,24 @@ time.sleep(30)")
                  (expect (false? @retired))
                  (expect (empty? @stopped))))
              (finally (deliver release-task true))))))
+
+;; Regression: a worker rejecting its arguments exited immediately, but startup
+;; still waited sixty seconds for a connection that could never arrive.
+(defdescribe worker-startup-exit-test
+             (it "reports an exited worker without waiting for the connection deadline"
+                 (let [process (.start (ProcessBuilder. ^java.util.List ["sh" "-c" "exit 2"]))]
+                   (.waitFor process)
+                   (with-redefs-fn {#'com.blockether.vis.internal.python.runtime/ensure-library!
+                                    (constantly nil)
+                                    #'com.blockether.vis.internal.python.worker/child-argv
+                                    (constantly ["unused"])
+                                    #'com.blockether.vis.internal.sandbox.jail/spawn! (fn [& _]
+                                                                                        process)}
+                     (fn []
+                       (let [task (future (try (#'com.blockether.vis.internal.python.worker/start!
+                                                worker/shared-key)
+                                               (catch clojure.lang.ExceptionInfo e (ex-data e))))]
+                         (try (let [result (deref task 2000 ::timeout)]
+                                (expect (not= ::timeout result))
+                                (expect (= :vis/python-worker (:type result))))
+                              (finally (future-cancel task)))))))))

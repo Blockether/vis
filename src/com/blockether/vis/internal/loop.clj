@@ -1495,51 +1495,59 @@
    forms with side effects MUST run their bodies on every
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
-  [{:keys [python-context sandbox-ns] :as environment} code & {:keys [timeout-ms tool-event-fn]}]
-  (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :execute-code})]
-    ;; Per-block-eval contract: feed original block source to `run-python-code`;
-    ;; it parses, repairs delimiter slips when safe, then evaluates parsed
-    ;; forms. Guard validators run against the repaired source when one exists
-    ;; so a stray close paren does not block repair before eval.
-    ;; Re-bind the live Python `context` snapshot BEFORE every eval. Sandbox
-    ;; bindings are installed once at session start, so a static value would go
-    ;; stale by iter 2; refreshing here keeps `context` aligned with the visible
-    ;; `<context>` block and reflects intra-iter changes across blocks.
-    ;; The snapshot is immutable/read-only — see ctx-loop/session-snapshot for
-    ;; the guarantee. Re-binding also erases any model-created shadow binding.
-    (when-let [snap (ctx-loop/session-snapshot environment)]
-      ;; the agent gets real dict ergonomics (.get / comprehensions / [k]).
-      (env/bind-ctx! python-context (ctx-renderer/project-ctx snap)))
-    (let [start-time (util/now-ms)
-          exec (try
-                 ;; The Python sandbox surfaces its own syntax/empty-block
-                 ;; errors via env/run-python-block.
-                 (run-with-timing python-context
-                                  code
-                                  sandbox-ns
-                                  timeout-ms
-                                  start-time
-                                  tool-event-fn
-                                  environment)
-                 (catch Throwable e
-                   {:lru {}
-                    :error (try (extension/ex->op-error e {:form-source code})
-                                (catch Throwable _
-                                  {:message (or (ex-message e) (.getName (class e)))
-                                   :type (-> e
-                                             ex-data
-                                             :type)}))
-                    :execution-started-at-ms start-time
-                    :execution-finished-at-ms (util/now-ms)
-                    :duration-ms (- (util/now-ms) start-time)
-                    :timeout? false}))]
+  [environment code & {:keys [timeout-ms tool-event-fn]}]
+  ;; Running a block is exactly what a sandbox is FOR, so this is the ask that
+  ;; builds one on a session whose first turn executes code.
+  (let [python-context
+        (env/python-context environment)
 
-      ;; Helper definitions outlive the PROCESS. The sandbox dies with the
-      ;; gateway, so this session's own `def`s are snapshotted after every block
-      ;; and re-created by `restore-session-defs!` in the next process's fresh
-      ;; sandbox. Best effort, after the outcome is in hand — never in its way.
-      (env/persist-session-defs! python-context (:session-id environment))
-      exec)))
+        sandbox-ns
+        (env/sandbox-ns environment)]
+
+    (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :execute-code})]
+      ;; Per-block-eval contract: feed original block source to `run-python-code`;
+      ;; it parses, repairs delimiter slips when safe, then evaluates parsed
+      ;; forms. Guard validators run against the repaired source when one exists
+      ;; so a stray close paren does not block repair before eval.
+      ;; Re-bind the live Python `context` snapshot BEFORE every eval. Sandbox
+      ;; bindings are installed once at session start, so a static value would go
+      ;; stale by iter 2; refreshing here keeps `context` aligned with the visible
+      ;; `<context>` block and reflects intra-iter changes across blocks.
+      ;; The snapshot is immutable/read-only — see ctx-loop/session-snapshot for
+      ;; the guarantee. Re-binding also erases any model-created shadow binding.
+      (when-let [snap (ctx-loop/session-snapshot environment)]
+        ;; the agent gets real dict ergonomics (.get / comprehensions / [k]).
+        (env/bind-ctx! python-context (ctx-renderer/project-ctx snap)))
+      (let [start-time (util/now-ms)
+            exec (try
+                   ;; The Python sandbox surfaces its own syntax/empty-block
+                   ;; errors via env/run-python-block.
+                   (run-with-timing python-context
+                                    code
+                                    sandbox-ns
+                                    timeout-ms
+                                    start-time
+                                    tool-event-fn
+                                    environment)
+                   (catch Throwable e
+                     {:lru {}
+                      :error (try (extension/ex->op-error e {:form-source code})
+                                  (catch Throwable _
+                                    {:message (or (ex-message e) (.getName (class e)))
+                                     :type (-> e
+                                               ex-data
+                                               :type)}))
+                      :execution-started-at-ms start-time
+                      :execution-finished-at-ms (util/now-ms)
+                      :duration-ms (- (util/now-ms) start-time)
+                      :timeout? false}))]
+
+        ;; Helper definitions outlive the PROCESS. The sandbox dies with the
+        ;; gateway, so this session's own `def`s are snapshotted after every block
+        ;; and re-created by `restore-session-defs!` in the next process's fresh
+        ;; sandbox. Best effort, after the outcome is in hand — never in its way.
+        (env/persist-session-defs! python-context (:session-id environment))
+        exec))))
 
 ;; Print-cap defaults for `fmt/bounded-value-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
@@ -5412,7 +5420,7 @@
                                            :duration-ms 0
                                            :op :vis/guard}
                           :else
-                          (if-let [err (literal-code-block-error (:python-context environment)
+                          (if-let [err (literal-code-block-error (env/python-context environment)
                                                                  expr)]
                             {:error (op-error err {:code expr :phase :vis/guard})
                              :duration-ms 0
@@ -10019,9 +10027,10 @@
                       (merge (forced-routing-for-pref (:router env) root-provider root-model))))
           db-info (:db-info env)
           custom-bindings (custom-bindings env)
-          python-context (:python-context env)
+          ;; Forces the sandbox only when there is something to bind: a turn with
+          ;; no custom bindings must not start an interpreter to install nothing.
           _ (doseq [[sym val] (or custom-bindings {})]
-              (when val (env/set-python-binding! python-context sym val)))
+              (when val (env/set-python-binding! (env/python-context env) sym val)))
           ;; Workspace pin lives on the env itself (set in create-environment).
           ;; Opts may carry namespaced `:workspace/*` overrides for unusual
           ;; per-turn cases; the bare `:workspace` key is not accepted
@@ -10337,6 +10346,75 @@
 ;; down (which returns the process-wide shared connection). The defn was
 ;; deleted to keep ONE canonical `db-info` symbol on this namespace.
 
+(defn sync-extension-symbols-into!
+  "The symbol sync itself, against a context handed in EXPLICITLY.
+
+   Separate from [[sync-active-extension-symbols!]] for one caller: the delay
+   that builds a session's sandbox runs this with its own fresh context. That
+   caller cannot reach the context through `environment`, because doing so
+   would re-enter the very delay it is running inside, and a Clojure delay
+   answers re-entry with a deadlock — the session's first turn would hang."
+  [python-context environment active-extensions]
+  (let [installed
+        (vec (or (some-> (:extensions environment)
+                         deref)
+                 []))
+
+        active-set
+        (set (map :ext/name active-extensions))]
+
+    (doseq [ext
+            installed
+
+            :let [alias
+                  (extension/ext-alias-symbol ext)
+
+                  exact-names?
+                  (extension/ext-exact-symbol-names? ext)
+
+                  by-sym
+                  (into {} (map (juxt :ext.symbol/symbol identity) (extension/ext-symbols ext)))]
+            [sym f]
+            (try (extension/wrap-extension ext environment) (catch Throwable _ nil))]
+
+      ;; Clojure extensions use `<alias>_<name>` in Python. Python-authored
+      ;; extensions declare their public names verbatim: the registry alias is
+      ;; metadata only, and dotted names become safe namespace objects in
+      ;; env/set-python-binding!. Builtins carry no alias and remain bare.
+      ;;
+      ;; Deactivated extensions get their members REMOVED, not nil'd:
+      ;; `putMember nil` parks a None under the name, which `apropos` kept
+      ;; listing and which called as 'NoneType is not callable' — a disabled
+      ;; tool must not exist in the sandbox at all.
+      (let [target (if (and alias (not exact-names?))
+                     (clojure.core/symbol (str alias "/" (name sym)))
+                     sym)]
+        ;; Bound only when the extension is active and the symbol's `:active-fn`
+        ;; holds for env — one gate for every Python binding.
+        (if (and (contains? active-set (:ext/name ext))
+                 (extension/symbol-active? (get by-sym sym) environment))
+          (do (env/set-python-binding! python-context target f)
+              ;; Seed this symbol's doc into `__vis_docs__` keyed by its bound
+              ;; py-name, so `doc(db_status)` / `doc(mcp_servers)` /
+              ;; `apropos("mcp")` carry real descriptions. ALIASED extensions
+              ;; bind here (per turn), NOT at context creation, so the eager
+              ;; `build-agent-context` seed never saw them.
+              (env/set-python-binding-doc! python-context
+                                           target
+                                           (extension/symbol-doc-text (get by-sym sym)))
+              ;; ...and its declared parameter list, so `inspect.signature` /
+              ;; `help` on an aliased tool answer with real parameters
+              ;; instead of the async trampoline's own `(*a, **k)`.
+              (env/set-python-binding-signature! python-context
+                                                 target
+                                                 (extension/symbol-signature (get by-sym sym)))
+              ;; ...and the keys its options dict must carry, so `doc(name)`
+              ;; states requiredness for an aliased tool too.
+              (env/set-python-binding-keys! python-context
+                                            target
+                                            (extension/symbol-keys-line (get by-sym sym))))
+          (env/remove-python-binding! python-context target))))))
+
 (defn sync-active-extension-symbols!
   "Make the Python sandbox's callable globals match active extension state.
 
@@ -10354,56 +10432,13 @@
   ([environment active-extensions]
    (when-let [active-atom (:active-extensions environment)]
      (reset! active-atom (vec (or active-extensions []))))
-   (when-let [python-context (:python-context environment)]
-     (let [installed (vec (or (some-> (:extensions environment)
-                                      deref)
-                              []))
-           active-set (set (map :ext/name active-extensions))]
-
-       (doseq [ext installed
-               :let [alias (extension/ext-alias-symbol ext)
-                     exact-names? (extension/ext-exact-symbol-names? ext)
-                     by-sym
-                     (into {} (map (juxt :ext.symbol/symbol identity) (extension/ext-symbols ext)))]
-               [sym f] (try (extension/wrap-extension ext environment) (catch Throwable _ nil))]
-
-         ;; Clojure extensions use `<alias>_<name>` in Python. Python-authored
-         ;; extensions declare their public names verbatim: the registry alias is
-         ;; metadata only, and dotted names become safe namespace objects in
-         ;; env/set-python-binding!. Builtins carry no alias and remain bare.
-         ;;
-         ;; Deactivated extensions get their members REMOVED, not nil'd:
-         ;; `putMember nil` parks a None under the name, which `apropos` kept
-         ;; listing and which called as 'NoneType is not callable' — a disabled
-         ;; tool must not exist in the sandbox at all.
-         (let [target (if (and alias (not exact-names?))
-                        (clojure.core/symbol (str alias "/" (name sym)))
-                        sym)]
-           ;; Bound only when the extension is active and the symbol's `:active-fn`
-           ;; holds for env — one gate for every Python binding.
-           (if (and (contains? active-set (:ext/name ext))
-                    (extension/symbol-active? (get by-sym sym) environment))
-             (do (env/set-python-binding! python-context target f)
-                 ;; Seed this symbol's doc into `__vis_docs__` keyed by its bound
-                 ;; py-name, so `doc(db_status)` / `doc(mcp_servers)` /
-                 ;; `apropos("mcp")` carry real descriptions. ALIASED extensions
-                 ;; bind here (per turn), NOT at context creation, so the eager
-                 ;; `build-agent-context` seed never saw them.
-                 (env/set-python-binding-doc! python-context
-                                              target
-                                              (extension/symbol-doc-text (get by-sym sym)))
-                 ;; ...and its declared parameter list, so `inspect.signature` /
-                 ;; `help` on an aliased tool answer with real parameters
-                 ;; instead of the async trampoline's own `(*a, **k)`.
-                 (env/set-python-binding-signature! python-context
-                                                    target
-                                                    (extension/symbol-signature (get by-sym sym)))
-                 ;; ...and the keys its options dict must carry, so `doc(name)`
-                 ;; states requiredness for an aliased tool too.
-                 (env/set-python-binding-keys! python-context
-                                               target
-                                               (extension/symbol-keys-line (get by-sym sym))))
-             (env/remove-python-binding! python-context target))))))
+   ;; Reads the sandbox WITHOUT building one. Per-env installation runs while a
+   ;; session is still cold, and starting an interpreter to seed symbols nobody
+   ;; asked for is exactly the wait this laziness exists to remove. A sandbox
+   ;; built later seeds itself: `create-environment`'s delay ends by calling
+   ;; `sync-extension-symbols-into!` with its own fresh context.
+   (when-let [python-context (env/python-context-if-built environment)]
+     (sync-extension-symbols-into! python-context environment active-extensions))
    environment))
 
 (defn install-extension!
@@ -10479,7 +10514,9 @@
       ;; The sandbox goes LAST and always. For a gateway session this kills its
       ;; worker process and releases both the sandbox and trusted extension
       ;; namespaces without entering a possibly wedged interpreter.
-      (try (env/dispose-python-context! (:python-context environment))
+      ;; A sandbox that was never built has no interpreter to kill, and building
+      ;; one here would start a process for the sole purpose of ending it.
+      (try (env/dispose-sandbox! environment)
            (catch Throwable t
              (tel/log! :error
                        ["gateway: sandbox dispose failed - session LEAKED"
@@ -10834,17 +10871,44 @@
             ;; gateway-proxy boundary as `shell` / subprocess, keyed per session.
             _register-repl-jail (when session-id
                                   (process-jail/register-session-jail! session-id jail-policy-fn))
-            {:keys [python-context python-engine sandbox-ns initial-ns-keys] :as sandbox}
-            (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
-                                       sandbox-roots-fn
-                                       network-opts
-                                       nil)
-            _ (vreset! pending sandbox)
-            ;; A gateway restart or a `/resume` in a new process builds a FRESH sandbox
-            ;; while the transcript still shows the helpers this session refined, so the
-            ;; next call would be a NameError against code the model can read. Re-create
-            ;; them from the snapshot `execute-code` wrote after every block.
-            _restored-defs (env/restore-session-defs! python-context session-id)
+            ;; The sandbox is a DELAY, not a value: an interpreter is what makes a
+            ;; session expensive to create, and a session that never runs Python
+            ;; never needs one. Whoever first enters Python pays for it, through
+            ;; `env/python-context`; teardown and liveness checks read the sandbox
+            ;; without building one (`env/sandbox-if-built`).
+            sandbox
+            (delay
+              (let [built (env/create-python-context (merge env-bindings
+                                                            (:custom-bindings @state-atom))
+                                                     sandbox-roots-fn
+                                                     network-opts
+                                                     nil)
+                    python-context (:python-context built)]
+
+                (vreset! pending built)
+                ;; Every step past the build carries its own teardown. `create-environment`'s
+                ;; try/catch used to cover this stretch; it has long returned by the time
+                ;; this delay runs, so the failure path has to live in here. An abandoned
+                ;; sandbox is never reclaimed — its Python namespace is a reference cycle
+                ;; through every function defined in it, and the host half holds one closure
+                ;; per tool — which is why the FAILURE path leaks worse than success can.
+                (try
+                  ;; A gateway restart or a `/resume` in a new process builds a FRESH sandbox
+                  ;; while the transcript still shows the helpers this session refined, so the
+                  ;; next call would be a NameError against code the model can read. Re-create
+                  ;; them from the snapshot `execute-code` wrote after every block.
+                  (env/restore-session-defs! python-context session-id)
+                  ;; Extensions installed while this sandbox was still cold skipped their
+                  ;; symbol sync; give them their globals now. The context goes in by hand
+                  ;; because reaching it through the environment would re-enter THIS delay.
+                  (when-let [environment @environment-atom]
+                    (sync-extension-symbols-into! python-context
+                                                  environment
+                                                  (prompt/active-extensions environment)))
+                  built
+                  (catch Throwable t
+                    (try (env/dispose-python-context! python-context) (catch Throwable _ nil))
+                    (throw t)))))
             env (cond-> {:environment-id environment-id
                          :session-id session-id
                          :session/state-id session-state-id
@@ -10906,16 +10970,16 @@
                   ;; provider prefix; stale checkpoints render a fresh canonical block.
                   :standing-ctx-atom (atom (:standing-ctx persisted-prompt-cache-state))
                   :state-atom state-atom
-                  :python-context python-context
+                  ;; The session's sandbox, unbuilt until something enters Python.
+                  ;; `env/python-context` / `env/sandbox-ns` force it; teardown and
+                  ;; liveness read it through `env/sandbox-if-built` and never do.
+                  ;; It also carries what used to sit beside it as `:python-engine`
+                  ;; and `:initial-ns-keys` — both come out of the same build.
+                  :python-sandbox sandbox
                   ;; A failed guest interrupt makes reuse permanently unsafe even
                   ;; while a probe can still enter around extension-owned host work.
                   ;; The next turn abandons this environment instead.
                   :python-context-retired-atom (atom false)
-                  ;; Owned by THIS env: `dispose-environment!` closes it right after the
-                  ;; context, which is what frees the session's Python heap.
-                  :python-engine python-engine
-                  :sandbox-ns sandbox-ns
-                  :initial-ns-keys initial-ns-keys
                   ;; Long-lived per-env LRU map: `{var-name-string →
                   ;; last-used-turn-pos}`. Merged from each iteration's
                   ;; `:lru` after eval.
@@ -11716,13 +11780,13 @@
 
     (let [m @cache]
       (cond (not (identical? entry (get m k))) false
-            (compare-and-set! cache m (dissoc m k)) (do (let [environment (:environment entry)]
-                                                          (retire-python-context-once!
-                                                            (:python-context environment)
-                                                            environment
-                                                            :environment-detached
-                                                            nil))
-                                                        true)
+            (compare-and-set! cache m (dissoc m k))
+            (do (let [environment (:environment entry)]
+                  (retire-python-context-once! (env/python-context-if-built environment)
+                                               environment
+                                               :environment-detached
+                                               nil))
+                true)
             :else (recur)))))
 
 (defn condemn-env!

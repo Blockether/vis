@@ -1,10 +1,10 @@
 (ns com.blockether.vis.internal.python.test-runner
   "Runs an extension author's Python tests (`test_*.py` / `*_test.py`) through
-   the built-in `pytest`-compat shim, each in its own TRUSTED Python session
+   real `pytest`, each in its own TRUSTED Python worker session
    (same trust level as the extension it covers). Tests import the extension's
    own package through the SAME `sys.path` sugar the loader gives `extension.py`,
    so an author ships real Python tests next to the code and runs them with the
-   project's own tooling. Pure Python end to end — the shim is stdlib-only, and
+   project's own tooling. The pytest collector emits structured records, and
    the test host refuses session live views so a test cannot publish artifacts.
 
    Split out of `python-extensions` (which owns loading/registration) so the
@@ -12,7 +12,7 @@
    trusted-context builder; the reverse `/test` wiring is resolved lazily there
    to avoid a require cycle.
 
-   The source of truth for the outcome is the shim's PER-TEST record list
+   The source of truth for the outcome is the collector's PER-TEST record list
    (nodeid, outcome, message). Counts and pass/fail are DERIVED from those
    records on the host side — never a separate tally that could drift, and
    never scraped from stdout."
@@ -185,7 +185,7 @@
     (str/join "::" (cons (last (str/split path #"/")) inner))))
 
 (defn- parse-report
-  "Parse the shim's serialized per-test record list into
+  "Parse the collector's serialized per-test record list into
    `[{:nodeid :outcome :message}]`. `error` → `:errored`. This is the ONE place
    an outcome becomes host data — counts are derived from it, so they cannot
    disagree with what actually ran."
@@ -224,6 +224,12 @@
 
           paths
           (test-sys-path scan-dir test-file sys-path)
+
+          _
+          (pyext/configure!
+            test-worker-key
+            (constantly {:roots-fn (constantly (vec (cons (.getCanonicalPath scan-dir) paths)))
+                         :net-enabled? false}))
 
           session
           (pyx/build-context test-worker-key (.getName test-file))]
@@ -268,7 +274,9 @@
               :output ""
               :tests [{:nodeid (.getName test-file) :outcome :errored :message (ex-message t)}]
               :error (ex-message t)})
-           (finally (pyx/close-context! session))))))
+           (finally (try (pyx/close-context! session)
+                         (finally (pyext/stop-worker! test-worker-key)
+                                  (pyext/forget-policy! test-worker-key))))))))
 
 (defn test-python-extensions!
   "Discover and run every Python test (`test_*.py` / `*_test.py`) across the

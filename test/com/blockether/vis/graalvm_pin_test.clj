@@ -1,5 +1,5 @@
 (ns com.blockether.vis.graalvm-pin-test
-  "The GraalVM pin is LOCKED at 25.1.3 and every consumer must agree with it.
+  "The GraalVM build pin and every consumer must agree.
 
    `.graalvm-version` is the single source of truth, but nothing in a unit test
    run touches `native-image`, so a half-finished bump (`.sdkmanrc` moved, the
@@ -26,12 +26,12 @@
 
 (defdescribe
   graalvm-pin-test
-  (it "is LOCKED at the maximum version — 25.1.3, nothing higher"
+  (it "locks the native build to the verified CE release"
       (expect (.isFile pin-file))
       (let [{:strs [GRAAL_VERSION GRAAL_MAX_VERSION GRAAL_PIN_LOCKED GRAAL_EDITION]} (parse-pin
                                                                                        pin-file)]
         (expect (= "true" GRAAL_PIN_LOCKED))
-        (expect (= "25.1.3" GRAAL_MAX_VERSION))
+        (expect (= "25.3.4.1" GRAAL_MAX_VERSION))
         (expect (= GRAAL_MAX_VERSION GRAAL_VERSION))
         ;; Community Edition, not Oracle: only CE's Classpath Exception keeps the
         ;; shipped binary redistributable (audit/README.md §4.1).
@@ -40,8 +40,8 @@
       (let [{:strs [GRAAL_VERSION GRAAL_TAG GRAAL_ASSET_VERSION GRAAL_SDKMAN_CANDIDATE
                     GRAAL_VENDOR_VERSION]}
             (parse-pin pin-file)]
-        (expect (= "graal-25.1.3" GRAAL_TAG))
-        (expect (= "25.1.3-graalce" GRAAL_SDKMAN_CANDIDATE))
+        (expect (= "graal-25.3.4.1" GRAAL_TAG))
+        (expect (= "25.3.4.1-graalce" GRAAL_SDKMAN_CANDIDATE))
         (expect (str/starts-with? GRAAL_VENDOR_VERSION (str "GraalVM CE " GRAAL_VERSION)))
         (doseq [v [GRAAL_TAG GRAAL_ASSET_VERSION GRAAL_SDKMAN_CANDIDATE GRAAL_VENDOR_VERSION]]
           (expect (not (str/includes? v "25.2"))))))
@@ -98,6 +98,6 @@
                        " prepares or builds on an unpinned JDK: "
                        (first (str/split-lines job)))))
         ;; And no workflow may name a GraalVM version other than the pin.
-        (doseq [[_ v] (re-seq #"GraalVM (?:CE )?(\d+\.\d+\.\d+)" src)]
+        (doseq [[_ v] (re-seq #"GraalVM (?:CE )?(\d+\.\d+\.\d+(?:\.\d+)?)" src)]
           (expect (= GRAAL_VERSION v)
                   (str (.getName wf) " mentions GraalVM " v ", pin is " GRAAL_VERSION)))))))

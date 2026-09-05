@@ -93,8 +93,9 @@
 
 (defn- delete-tree!
   [^File dir]
-  (doseq [^File f (reverse (file-seq dir))]
-    (io/delete-file f true)))
+  (with-open [walk (Files/walk (.toPath dir) (make-array java.nio.file.FileVisitOption 0))]
+    (doseq [^java.nio.file.Path path (reverse (vec (.toArray walk)))]
+      (Files/deleteIfExists path))))
 
 (defn- kill-tree!
   "Kills the process AND what it spawned. `script` lends the TUI a pty by forking
@@ -507,3 +508,115 @@
         (try (expect (= 0 exit) output)
              (expect (str/includes? output "seventy seven") output)
              (finally (delete-tree! dir))))))
+
+(defn- pip-wheel
+  "An offline pure-Python wheel, with no build backend or external dependency."
+  []
+  (let [out (java.io.ByteArrayOutputStream.)]
+    (with-open [zip (java.util.zip.ZipOutputStream. out)]
+      (doseq [[name text]
+              {"vis_cli_fixture/__init__.py" "VALUE = 42\n"
+               "vis_cli_fixture-1.0.dist-info/METADATA"
+               "Metadata-Version: 2.1\nName: vis-cli-fixture\nVersion: 1.0\n"
+               "vis_cli_fixture-1.0.dist-info/WHEEL"
+               "Wheel-Version: 1.0\nGenerator: vis-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+               "vis_cli_fixture-1.0.dist-info/RECORD" ""}]
+        (.putNextEntry zip (java.util.zip.ZipEntry. ^String name))
+        (.write zip (.getBytes ^String text StandardCharsets/UTF_8))
+        (.closeEntry zip)))
+    (.toByteArray out)))
+
+;; Regression: the public Python CLI was not tested with pip; an incompatible
+;; worker exited before connecting while Vis waited for the entire startup timeout.
+(defdescribe
+  native-wrapper-installs-python-wheels-test
+  (it
+    "installs from --index-url, -i and a wheel URL through the shipped wrapper"
+    (let [dir
+          (temp-dir "vis-native-pip")
+
+          wrapper
+          (io/file dir "vis-agent")
+
+          bin
+          (require-binary)
+
+          wheel
+          (pip-wheel)
+
+          requests
+          (atom [])
+
+          server
+          (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)
+
+          filename
+          "vis_cli_fixture-1.0-py3-none-any.whl"
+
+          run
+          (fn [args]
+            (with-redefs [native-environment (constantly {})]
+              (run-binary dir (into ["bash" (.getAbsolutePath wrapper)] args) 90)))]
+
+      (try (io/copy (io/file "bin/vis-agent") wrapper)
+           (Files/createSymbolicLink (.toPath (io/file dir "vis-agent-native"))
+                                     (.toPath (.getAbsoluteFile bin))
+                                     (make-array FileAttribute 0))
+           (Files/createSymbolicLink (.toPath (io/file dir "vis-agent-python"))
+                                     (.toPath (.getParentFile (.getAbsoluteFile (python-library
+                                                                                  bin))))
+                                     (make-array FileAttribute 0))
+           (.createContext
+             server
+             "/"
+             (reify
+               HttpHandler
+                 (handle [_ exchange]
+                   (let [path
+                         (.getPath (.getRequestURI ^HttpExchange exchange))
+
+                         _
+                         (swap! requests conj path)
+
+                         archive?
+                         (= path (str "/" filename))
+
+                         body
+                         (if archive?
+                           wheel
+                           (.getBytes (str "<a href='/" filename "'>wheel</a>")
+                                      StandardCharsets/UTF_8))]
+
+                     (.set (.getResponseHeaders ^HttpExchange exchange)
+                           "Content-Type"
+                           (if archive? "application/octet-stream" "text/html"))
+                     (.sendResponseHeaders ^HttpExchange exchange 200 (alength ^bytes body))
+                     (with-open [stream (.getResponseBody ^HttpExchange exchange)]
+                       (.write stream ^bytes body))))))
+           (.start server)
+           (let [base (str "http://127.0.0.1:" (.getPort (.getAddress server)))]
+             (doseq [[label args] [["long" ["--index-url" (str base "/simple") "vis-cli-fixture"]]
+                                   ["short" ["-i" (str base "/simple") "vis-cli-fixture"]]
+                                   ["wheel" [(str base "/" filename)]]
+                                   ["proxy"
+                                    ["--proxy" base "--index-url" "http://127.0.0.2:9/simple"
+                                     "vis-cli-fixture"]]]]
+               (let [dest (io/file dir label)
+                     result (run (into ["python" "-m" "pip" "--isolated" "install"
+                                        "--disable-pip-version-check" "--no-cache-dir" "--no-deps"
+                                        "--only-binary=:all:" "--target" (.getAbsolutePath dest)]
+                                       args))]
+
+                 (expect (= 0 (:exit result)) (str label ": " (:output result)))
+                 (expect (.isFile (io/file dest "vis_cli_fixture" "__init__.py"))
+                         (str label ": wheel was not installed"))
+                 (let [imported
+                       (run ["python" "-c"
+                             (str "import sys; sys.path.insert(0, "
+                                  (pr-str (.getAbsolutePath dest))
+                                  "); import vis_cli_fixture; print(vis_cli_fixture.VALUE)")])]
+                   (expect (= 0 (:exit imported)) (:output imported))
+                   (expect (str/includes? (:output imported) "42") (:output imported))))))
+           (expect (some #{"/simple/vis-cli-fixture/"} @requests))
+           (expect (some #{(str "/" filename)} @requests))
+           (finally (.stop server 0) (delete-tree! dir))))))

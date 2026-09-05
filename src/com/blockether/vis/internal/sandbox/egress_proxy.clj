@@ -998,6 +998,9 @@
           (not allow?)
           (do (on-log
                 {:phase :http :method method :host host :path path :allow? false :reason reason})
+              ;; Consume a bounded upload before closing: unread request bytes can
+              ;; reset the TCP connection and discard the denial response.
+              (when-not body-bytes (read-body-bytes (.getInputStream client) (content-length hmap)))
               (deny-response cout reason))
           blocked
           (do (on-log

@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.42] - 2026-09-05
+
 ### Changed
+- Consolidate Python worker execution in vis-python-runtime 0.4.2 and initialize session sandboxes lazily.
+- Share host certificate trust with native Python and preserve pip index, certificate and proxy options.
+- Build native releases with GraalVM CE 25.3.4.1; allow ordinary JVM launches on stock JDK 25+.
+- Package Python guest modules with the native distribution and verify wrapper-based wheel installation.
 - refactor(jail): state the confinement policy in Vis and let the runtime enforce it; `jail.mach_services` becomes the platform-neutral `jail.keychain: true`
 - feat(zai): make GLM-5.3-Flash the default Coding Plan model through svar 0.7.146
 - fix(live): answer a live-view tap without waiting out the provider tick
