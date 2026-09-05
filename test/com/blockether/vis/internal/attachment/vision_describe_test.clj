@@ -1,12 +1,12 @@
-(ns com.blockether.vis.internal.vision-describe-test
+(ns com.blockether.vis.internal.attachment.vision-describe-test
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.attachments :as attachments]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.runtime-settings :as rt]
-            [com.blockether.vis.internal.toggles :as toggles]
-            [com.blockether.vis.internal.vision-describe :as vd]
+            [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.context.prompt :as prompt]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.attachment.vision-describe :as vd]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
 (defn- throwaway-store
@@ -113,6 +113,7 @@
                 :pricing {:input 0.01 :output 0.02}
                 :speed :fast
                 :capabilities #{:chat :vision}}]}]))
+
 (defn- blind-fleet
   []
   (svar/make-router [{:id :blind
@@ -812,6 +813,7 @@
         (expect (= "cheap-seer" (:name (vd/sighted-model fleet))))
         (vd/remember-working-eye! :seeing-backup "backup-seer")
         (expect (= "backup-seer" (:name (vd/sighted-model fleet)))))))
+
 ;; Regression, T7: everything learned about which eyes work died with the process. The
 ;; registries were `defonce` atoms and nothing else, so a fleet whose cheapest providers
 ;; refuse pixels re-paid the same discovery — two ~20s TTFT timeouts, measured on a live

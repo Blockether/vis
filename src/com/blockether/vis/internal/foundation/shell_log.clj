@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.shell-log
+(ns com.blockether.vis.internal.foundation.shell-log
   "The output of ONE background shell, stored as a FILE and read by BYTE OFFSET.
 
    The file is the STORAGE and the in-memory ring buffer is only a VIEW. A ring
@@ -35,7 +35,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.persistance :as persistance])
+            [com.blockether.vis.internal.persistance.core :as persistance])
   (:import (java.io File InputStream OutputStream RandomAccessFile)
            (java.nio.charset StandardCharsets)))
 
@@ -275,6 +275,7 @@
           (= 10 (bit-and (aget buf (int i)) 0xFF))
           (if (>= (inc (long seen)) n) (- (inc i) head) (recur (inc i) (inc (long seen))))
           :else (recur (inc i) seen))))
+
 (defn read-chunk
   "Read shell `id`'s log `file` from `:offset` and answer a [[::log-chunk]].
 

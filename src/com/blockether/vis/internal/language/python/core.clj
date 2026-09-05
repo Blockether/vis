@@ -12,11 +12,11 @@
             [com.blockether.vis.internal.language.python.interpreter :as interpreter]
             [com.blockether.vis.internal.language.python.repl-manager :as repl]
             [com.blockether.vis.internal.language.python.ruff :as pyruff]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.python-project :as pyproj]
-            [com.blockether.vis.internal.python-test-runner :as ptr]
-            [com.blockether.vis.internal.runtime-settings :as rt]))
+            [com.blockether.vis.internal.python.project :as pyproj]
+            [com.blockether.vis.internal.python.test-runner :as ptr]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]))
 
 ;; Activation
 
@@ -514,7 +514,7 @@
           :always
           (conj "-o" "junit_family=xunit1" (str "--junitxml=" (.getPath junit))))
 
-        p
+        ^Process p
         (vis/session-process-spawn! session-id cmd dir {:merge-stderr? true})
 
         out

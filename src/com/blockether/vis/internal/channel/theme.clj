@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.theme
+(ns com.blockether.vis.internal.channel.theme
   "Internal, channel-agnostic Vis theme data.
 
    Keep this namespace pure data: no Lanterna, Swing, browser, or terminal
@@ -867,6 +867,7 @@
 (def tokyonight-moon-palette (tokyonight-palette :dark tokyonight-moon-colors))
 
 (def tokyonight-day-palette (tokyonight-palette :light tokyonight-day-colors))
+
 (defn- make-theme
   [id display-name mode palette]
   {:name id
@@ -913,6 +914,7 @@
 (def tokyonight-storm
   "tokyonight.nvim Storm theme."
   (make-theme "tokyonight-storm" "Tokyo Storm" :dark tokyonight-storm-palette))
+
 (def default-theme blockether-light)
 
 (def built-in-themes

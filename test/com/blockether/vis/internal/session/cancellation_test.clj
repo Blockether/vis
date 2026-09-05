@@ -1,12 +1,12 @@
-(ns com.blockether.vis.internal.cancellation-test
+(ns com.blockether.vis.internal.session.cancellation-test
   "Verify the on-cancel! callback contract: registered thunks fire on
    `cancel!`, late registration after cancellation still triggers
    immediately, and `dispose!` removes the hook cleanly without
    side-effects."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.cancellation :as cancellation]
-            [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.workspace.git :as git]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe on-cancel-callback-test
@@ -106,8 +106,9 @@
                    (expect (= :unspecified (cancellation/cancel-reason token)))
                    (expect (true? (cancellation/cancelled? token)))))
              (it "still cancels a hand-built token that carries no reason atom"
-                 (let [token {:com.blockether.vis.internal.cancellation/flag (atom false)
-                              :com.blockether.vis.internal.cancellation/callbacks (atom [])}]
+                 (let [token {:com.blockether.vis.internal.session.cancellation/flag (atom false)
+                              :com.blockether.vis.internal.session.cancellation/callbacks (atom
+                                                                                            [])}]
                    (cancellation/cancel! token :client-cancel-turn)
                    (expect (true? (cancellation/cancelled? token)))
                    (expect (nil? (cancellation/cancel-reason token)))))

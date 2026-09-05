@@ -341,6 +341,7 @@
        (invalidate-waiting-cache!)
        (catch Throwable t (tel/log! :debug ["gateway-bus: waiting clear failed" (ex-message t)])))
   nil)
+
 ;; sid-str -> this process's tail of that session's journal:
 ;;   {:lock Object   ; hydrate! (HTTP threads) vs drain-file! (tailer thread)
 ;;    :off  long     ; bytes already consumed

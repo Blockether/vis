@@ -69,7 +69,6 @@
   ^ByteBuffer [^bytes data]
   (doto (ByteBuffer/wrap data) (.order ByteOrder/LITTLE_ENDIAN)))
 
-
 (defn- unsupported-encoding!
   [detail]
   (throw (ex-info (str "That recording is " detail

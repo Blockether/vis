@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.pyfmt
+(ns com.blockether.vis.internal.python.format
   "Beautify model-emitted Python with ruff (com.blockether/ruff — in-process via
    the JDK FFM API, black-compatible) before it is shown. Used by the gateway's
    code renderer so the trace shows tidy, consistently-wrapped Python instead of

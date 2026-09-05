@@ -12,7 +12,6 @@
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
-
 (defn- add-keys!
   "Queue `keys` on the virtual terminal: `KeyType` members go through untouched,
    characters become plain keystrokes, so a transient's single-key commands
@@ -374,7 +373,6 @@
 
           (expect (nil? (provider/authenticate-provider! nil nil nil {:id :zai-coding-plan})))
           (expect (str/includes? (str (notes log)) "Authentication failed"))))))
-
 
 (def ^:private copilot-device-flow
   {"flow_id" "flow-1"

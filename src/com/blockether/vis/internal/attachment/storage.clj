@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.attachment-storage
+(ns com.blockether.vis.internal.attachment.storage
   "Attachment storage-offload rail: a registry of storage BACKENDS plus the
    pure OFFLOAD DECISION that routes one attachment's payload either INLINE
    (bytes in the `session_attachment.bytes` BLOB) or EXTERNAL (bytes handed to
@@ -30,7 +30,7 @@
    dimensions and frame count, else the original is kept), and it is why a
    matplotlib figure costs a fraction of a row."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.image-convert :as image-convert]
+            [com.blockether.vis.internal.attachment.image-convert :as image-convert]
             [com.blockether.vis.internal.util :as util])
   (:import (java.nio.file Files LinkOption OpenOption Path)
            (java.nio.file.attribute FileAttribute)
@@ -204,7 +204,7 @@
    Attachment PIXELS are stored verbatim: vis never resamples and never
    re-encodes what the user attached, so what replays is the same picture bit
    for bit. Its ENCODING is compacted losslessly on the way in -- see
-   [[com.blockether.vis.internal.image-convert/compact]]."
+   [[com.blockether.vis.internal.attachment.image-convert/compact]]."
   [atts]
   (mapv offload-attachment atts))
 

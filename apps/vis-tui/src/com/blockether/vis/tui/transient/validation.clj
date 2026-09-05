@@ -10,7 +10,6 @@
    in its typed exception."
   (:require [clojure.string :as str]))
 
-
 (def item-types
   "Every kind of row a transient offers, and what that kind MEANS:
 

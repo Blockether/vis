@@ -1,7 +1,7 @@
-(ns com.blockether.vis.internal.oauth-test
+(ns com.blockether.vis.internal.provider.oauth-test
   (:require [charred.api :as json]
             [clojure.java.io :as io]
-            [com.blockether.vis.internal.oauth :as oauth]
+            [com.blockether.vis.internal.provider.oauth :as oauth]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defdescribe

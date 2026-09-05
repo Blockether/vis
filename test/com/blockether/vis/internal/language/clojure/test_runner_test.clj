@@ -14,6 +14,7 @@
 
 (def ^:private run-via-repl
   @#'com.blockether.vis.internal.language.clojure.test-runner/run-via-repl)
+
 (def ^:private normalize-faults
   @#'com.blockether.vis.internal.language.clojure.test-runner/normalize-faults)
 
@@ -454,6 +455,7 @@
                                                   {:vars [{:ns "com.example.elsewhere-test"
                                                            :name "adds-test"}]})]
                    (expect (re-find #"no test var matched" (get result "error"))))))
+
 (def ^:private run-via-cli @#'com.blockether.vis.internal.language.clojure.test-runner/run-via-cli)
 
 (defn- with-cli-run
@@ -878,11 +880,12 @@
       (fn [root]
         (expect (= "test" (:build (shadow/run-steps root {}))))))))
 
-
 (def ^:private normalize-arg
   @#'com.blockether.vis.internal.language.clojure.test-runner/normalize-arg)
+
 (def ^:private cli-command-for
   @#'com.blockether.vis.internal.language.clojure.test-runner/cli-command-for)
+
 (def ^:private note-unapplied-aliases
   @#'com.blockether.vis.internal.language.clojure.test-runner/note-unapplied-aliases)
 

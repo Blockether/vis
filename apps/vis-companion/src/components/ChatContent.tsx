@@ -1661,7 +1661,7 @@ const FormTrace = memo(function FormTrace({
 const ENCRYPTED_REASONING_PLACEHOLDER =
   "[provider returned encrypted reasoning; plaintext reasoning is unavailable]";
 
-/** Mirrors com.blockether.vis.internal.render/normalize-reasoning. */
+/** Mirrors com.blockether.vis.internal.channel.render/normalize-reasoning. */
 function normalizeReasoning(value: string): string {
   return value
     .replace(/[ \t\r\f\v]+\r?\n/g, "\n")
@@ -1671,7 +1671,7 @@ function normalizeReasoning(value: string): string {
 }
 
 const REASONING_PREVIEW_LINES = 3;
-// Mirrors com.blockether.vis.internal.render/reasoning-collapse-min-hidden (3).
+// Mirrors com.blockether.vis.internal.channel.render/reasoning-collapse-min-hidden (3).
 // A disclosure that buys back one or two clipped rows is pure friction — you
 // uncollapse just to read one more line — so a barely-overflowing trace renders
 // inline, in full, with no toggle at all. Same rule as the TUI band and the

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider.github-copilot
+(ns com.blockether.vis.internal.provider.vendor.github-copilot
   "GitHub Copilot OAuth provider - device flow authentication + token lifecycle.
 
    Auth flow:
@@ -22,8 +22,8 @@
             [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.cancellation :as cancellation]
-            [com.blockether.vis.internal.oauth :as oauth]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.provider.oauth :as oauth]
             [taoensso.telemere :as tel]))
 
 ;; Constants
@@ -841,6 +841,7 @@
 ;; to swap providers without touching vis-runtime.
 
 (require '[com.blockether.vis.core :as vis])
+
 (require '[com.blockether.svar.core :as svar])
 
 (defn- interactive-auth!

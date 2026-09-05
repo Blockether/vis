@@ -1076,7 +1076,6 @@
           (touch! session-id dir)
           (attachment-entry att))))))
 
-
 (defn resolve-target!
   "Resolve the RUNNING REPL an eval should hit for `session-id`.
    `id` is an optional explicit resource id; `default-dir`

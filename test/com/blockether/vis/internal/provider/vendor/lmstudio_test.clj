@@ -1,11 +1,11 @@
-(ns com.blockether.vis.internal.provider.lmstudio-test
+(ns com.blockether.vis.internal.provider.vendor.lmstudio-test
   (:require [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.provider.lmstudio]
+            [com.blockether.vis.internal.provider.vendor.lmstudio]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (def ^:private enrich-models
-  (deref (requiring-resolve 'com.blockether.vis.internal.provider.lmstudio/enrich-models)))
+  (deref (requiring-resolve 'com.blockether.vis.internal.provider.vendor.lmstudio/enrich-models)))
 
 (defdescribe
   provider-lmstudio-test

@@ -28,11 +28,11 @@
    runs regardless of `:ext/activation-fn`, so the section fns must
    NOT assume `:db-info` or other env keys are present."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.format :as fmt]
-            [com.blockether.vis.internal.foundation.environment.agents :as agents]
+            [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
-            [com.blockether.vis.internal.image-convert :as image-convert])
+            [com.blockether.vis.internal.attachment.image-convert :as image-convert])
   (:import (java.nio.charset StandardCharsets)))
 
 ;; ::agents-md - project guidance presence

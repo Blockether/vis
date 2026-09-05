@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.registry
+(ns com.blockether.vis.internal.extension.registry
   "Three global registries in one place: channels, providers, commands.
 
    Each descriptor is checked by a local predicate before entering its process registry.
@@ -36,7 +36,7 @@
 
    Parsing / help rendering / dispatch utilities live in
    `com.blockether.vis.internal.commandline`. The closed initialization manifest
-   lives in `com.blockether.vis.internal.manifest`."
+   lives in `com.blockether.vis.internal.extension.manifest`."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))

@@ -6,6 +6,7 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private app-root (io/file "apps/vis-tui"))
+
 (def ^:private old-extension-root (io/file "extensions/channels/vis-channel-tui"))
 
 (defn- clojure-sources

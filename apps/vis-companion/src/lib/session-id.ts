@@ -8,7 +8,7 @@
  * straight to `read_session` / `get_session`, which strip the marker again.
  *
  * Mirrors `session-id-marker-prefix` in
- * `src/com/blockether/vis/internal/header.clj`; the two must stay identical.
+ * `src/com/blockether/vis/internal/channel/header.clj`; the two must stay identical.
  */
 export const SESSION_ID_MARKER_PREFIX = 'vis_session_id#';
 

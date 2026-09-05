@@ -1562,8 +1562,6 @@
 
 ;; Session exporter — DB → Markdown document
 
-
-
 ;; Block source rendering.
 ;;
 ;; `parse-block-display` is a pure helper that returns the block source as one

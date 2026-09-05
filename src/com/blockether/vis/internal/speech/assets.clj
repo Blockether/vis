@@ -22,7 +22,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.speech.files :as files])
   (:import [java.io File]))
 
@@ -60,6 +60,7 @@
   "A configured environment value, with blank treated as absent."
   [name]
   (config/extension-env-value name))
+
 (defn hf-token
   "The configured Hugging Face token, or nil. OPTIONAL by design: without one
    every entry still resolves, from the Vis asset pack. Returned only to the

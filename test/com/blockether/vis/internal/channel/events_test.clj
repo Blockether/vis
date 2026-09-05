@@ -1,5 +1,5 @@
-(ns com.blockether.vis.internal.channel-events-test
-  (:require [com.blockether.vis.internal.channel-events :as ce]
+(ns com.blockether.vis.internal.channel.events-test
+  (:require [com.blockether.vis.internal.channel.events :as ce]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defn- fresh-channel

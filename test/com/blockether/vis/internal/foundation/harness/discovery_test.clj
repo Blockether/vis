@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.foundation.harness.discovery-test
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.foundation.harness.discovery :as d]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe it expect]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))

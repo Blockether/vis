@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.extension-aggregate
+(ns com.blockether.vis.internal.extension.aggregate
   "Extension-owned durable sidecar API.
 
    Public ext-* helpers are for code running inside an extension callback.
@@ -7,8 +7,8 @@
 
    The db-* persistence facade remains the privileged/admin surface for
    inspecting rows across extensions."
-  (:require [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.persistance :as persistance]))
+  (:require [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.persistance.core :as persistance]))
 
 (defn- safe-deref [a] (when a (try @a (catch Throwable _ nil))))
 

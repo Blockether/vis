@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.process-jail
+(ns com.blockether.vis.internal.sandbox.jail
   "OS-level process CONTAINMENT — the 'jail' — that wraps the shell executors'
    argv so an allowed child is physically confined to the session workspace roots
    and, when network is off, cannot open a socket. This is a real containment
@@ -45,8 +45,8 @@
    there, beside the process launcher, so no enforcement text is assembled here."
   (:require [clojure.string :as str]
             [com.blockether.vis-python-runtime :as python-runtime]
-            [com.blockether.vis.internal.python-runtime :as vis-python-runtime]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.python.runtime :as vis-python-runtime]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.util :as util])
   (:import (java.util HashMap)))
 
@@ -147,7 +147,6 @@
   (when (and (not disabled?) (not keychain?) (keychain-denial? output))
     (str "Keychain lookup blocked by the sandbox: a confined child cannot reach the OS"
          " credential store by default. Set `jail.keychain: true` in config to grant it.")))
-
 
 (defn- java-proxy-options
   [{:keys [proxy-port java-trust-store java-trust-store-password java-proxy? loopback-port]}]
@@ -339,6 +338,7 @@
    decides what ELSE a child may keep."
   [policy]
   (merge (declared-env policy) (proxy-env policy)))
+
 (defn process-environment
   "Build the COMPLETE child environment for `policy`, then overlay trusted
    host-owned `extra`. Confined children start from the scrubbed allowlist;
@@ -534,6 +534,7 @@
         (map (fn [[k v]]
                [(str k) (if (nil? v) "unset" (subs (util/sha256-hex (str v)) 0 12))]))
         values))
+
 (defn env-difference
   "Variable NAMES whose value differs between the env a live process is running
    with and the one a new start asked for. Both sides are FINGERPRINTS, so this

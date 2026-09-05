@@ -77,7 +77,6 @@
                                 (str "sherpa-onnx-native-lib-osx-aarch64-v" sherpa/version ".jar")))
         (expect (not (str/includes? url "Blockether"))))))
 
-
 ;; Regression, user report: voice failed with a linker error after the model was installed and
 ;; kept failing until Vis was restarted. The JVM caches a failed static initializer, so that
 ;; state is real - what was missing is a refusal that says so instead of a stack trace.
@@ -104,7 +103,6 @@
                             (catch Throwable t t))]
           (expect (= :speech-tts/unknown-voice (:type (ex-data ordinary)))
                   "an engine's own refusal is not dressed up as a native failure")))))
-
 
 ;; ── the JNI's view of the API jar ────────────────────────────────────────────
 

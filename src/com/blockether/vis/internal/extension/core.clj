@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.extension
+(ns com.blockether.vis.internal.extension.core
   "Extension subsystem: spec, builders, hook execution, the global registry,
    and parse-error rescue.
 
@@ -24,15 +24,15 @@
             [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
             [com.blockether.vis.internal.activity.event :as activity-event]
-            [com.blockether.vis.internal.attachment-storage :as attachment-storage]
-            [com.blockether.vis.internal.cancellation :as cancellation]
-            [com.blockether.vis.internal.egress-proxy :as egress-proxy]
-            [com.blockether.vis.internal.manifest :as manifest]
+            [com.blockether.vis.internal.attachment.storage :as attachment-storage]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.sandbox.egress-proxy :as egress-proxy]
+            [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.registry :as registry]
-            [com.blockether.vis.internal.theme :as theme]
+            [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.channel.theme :as theme]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
   (:import (java.io ByteArrayOutputStream InputStream)
            (java.net URL)
@@ -120,7 +120,6 @@
    per `run-python-code` invocation, fed by every tool call in the
    block, which runs as one whole-block coroutine)."
   nil)
-
 
 (defn normalize-metadata
   "Fill timing keys on the `:metadata` map when absent. Returns a
@@ -353,10 +352,14 @@
 
       tool-error-data
       (assoc :data tool-error-data))))
+
 ;; Extension declaration validation
 (defn- vector-of? [pred x] (and (vector? x) (every? pred x)))
+
 (defn- set-of? [pred x] (and (set? x) (every? pred x)))
+
 (defn- unqualified-symbol? [x] (and (symbol? x) (nil? (namespace x))))
+
 (defn- map-values?
   [key-pred value-pred x]
   (and (map? x) (every? key-pred (keys x)) (every? value-pred (vals x))))
@@ -551,6 +554,7 @@
        (optional-field? x :registry-id symbol?)))
 
 (defn ext-symbols [ext] (vec (or (get-in ext [:ext/engine :ext.engine/symbols]) [])))
+
 (defn ext-sandbox-shims [ext] (vec (or (:ext/sandbox-shims ext) [])))
 
 (defn symbol-active?
@@ -561,10 +565,13 @@
     true))
 
 (defn ext-alias-symbol [ext] (get-in ext [:ext/engine :ext.engine/alias]))
+
 (defn ext-exact-symbol-names?
   [ext]
   (boolean (get-in ext [:ext/engine :ext.engine/exact-symbol-names?])))
+
 (defn ext-builtin? [ext] (boolean (get-in ext [:ext/engine :ext.engine/builtin?])))
+
 (defn ext-source-nses [ext] (vec (or (:ext/source-nses ext) [])))
 
 (defn- ns-alias-required-when-symbols?
@@ -1025,6 +1032,7 @@
                                                      (str " (" (str/join "; " header-notes) ")")))]
                                              body-lines
                                              extra-lines)))))
+
 ;; Normalization + validation
 (defn- normalize-prompt
   [prompt]
@@ -1086,6 +1094,7 @@
       (throw (ex-info (str "Invalid extension '" (:ext/name ext) "'")
                       {:type :extension/invalid-declaration :name (:ext/name ext) :extension ext})))
     (validate-symbol-op-tags! ext)))
+
 ;; Hook execution - runtime wrappers with output validation + logging
 (defn- validate-hook-return!
   [hook-name sym returned]
@@ -1245,7 +1254,6 @@
                     (catch Throwable _ nil))]
       (when-not (str/blank? (or line ""))
         (if (> (count line) 96) (str (subs line 0 93) "…") line)))))
-
 
 (defn- default-tool-op-keyword
   [ext sym-entry]
@@ -1488,6 +1496,7 @@
   [result]
   (when *tool-result-observer* (*tool-result-observer* result))
   (tool-result->public-value result))
+
 ;; ── GATE ops ────────────────────────────────────────────────────────────────
 ;; A gate is the one op shape that is ASKED rather than wrapped. Every hook
 ;; registered for it is consulted in registration order, none of them receives
@@ -2009,6 +2018,7 @@
                            (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
                   [sym (:ext.symbol/val sym-entry)]))))
           entries)))
+
 ;; Public API - extension builder
 (defn- derive-kind
   "Auto-derive `:ext/kind` for the categorical cases when the author
@@ -2091,6 +2101,7 @@
         (not (:ext/doctor-fn spec))
         (assoc :ext/doctor-fn (constantly [])))
       (validate!)))
+
 ;; Extension source markers
 ;; Hash + mtime primitives.
 (defn- read-stream-bytes
@@ -2102,6 +2113,7 @@
         (let [n (.read in buf)]
           (when (pos? n) (.write out buf 0 n) (recur)))))
     (.toByteArray out)))
+
 ;; Resolve one namespace -> entry map.
 (defn- ns->resource-path
   "Convert `clojure.core` to `clojure/core.clj`. Tries .clj first;
@@ -2215,6 +2227,7 @@
        (catch Throwable t
          (tel/log! {:level :warn :id ::resolve-failed :data {:url (str url) :error (ex-message t)}})
          nil)))
+
 ;; Public API.
 (defn resolve-markers
   "Resolve every namespace in `ns-syms` to its source on the classpath
@@ -2273,6 +2286,7 @@
    `vis/extension` macro stamps on every extension."
   [ext]
   (resolve-markers (vec (or (:ext/source-nses ext) []))))
+
 ;; Global Extension Registry
 (defonce ^:private extension-registry
   ;; Process-level atom holding all globally registered extensions.
@@ -2604,7 +2618,6 @@
              {}
              @reload-hooks))
 
-
 (defn- normalized-channel-contribution
   [slot contribution]
   (assoc contribution
@@ -2729,7 +2742,6 @@
    Color / glyph / layout remain pure channel concerns."
   [op]
   {:tag (op-tag op)})
-
 
 (defn- python-param-name
   "One declared parameter as a PYTHON identifier: kebab-case becomes snake_case
@@ -2882,6 +2894,7 @@
           (str "\n\nRaw result: " result))]
 
     (when (util/non-blank-string? text) text)))
+
 (defn sandbox-symbol-signatures
   "Map `{sandbox-symbol -> python-parameter-list}` for every engine-bound
    callable across the registered extensions, from `symbol-signature`. The
@@ -2931,6 +2944,7 @@
               :when (and sym line)]
 
           [sym line])))
+
 (defn sandbox-symbol-docs
   "Map `{sandbox-symbol -> doc-text}` for every engine-bound symbol across the
    registered extensions, keyed by the `:ext.symbol/symbol` as it is bound in
@@ -3008,6 +3022,7 @@
       (slurp u)
       (throw (ex-info (str "sandbox shim source not found on classpath: " res)
                       {:shim/name (:shim/name shim) :shim/source res})))))
+
 ;; CLI bridge -- the `vis-agent extension` parent lives in `internal.main` next to the
 ;; other top-level built-in parents (`providers`, `sessions`, `doctor`,
 ;; `update`). Extensions populate it via `:ext/cli` on `extension`;

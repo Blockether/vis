@@ -11,7 +11,6 @@
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [lazytest.core :refer [defdescribe expect it]]))
 
-
 (defn- seed!
   "Two-turn fixture exercising the full transcript surface: one
    clean turn with comment / stdout / a `(def ...)` var /

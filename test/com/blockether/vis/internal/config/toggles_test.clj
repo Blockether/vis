@@ -1,9 +1,9 @@
-(ns com.blockether.vis.internal.toggles-test
+(ns com.blockether.vis.internal.config.toggles-test
   "Feature-toggle registry contract: register, lookup, override,
    listener fan-out, persistence snapshot + hydrate, and the canonical
    internal toggles. Toggle ids are plain strings (no namespaces)."
   (:require [com.blockether.vis.contract.toggle :as toggle-contract]
-            [com.blockether.vis.internal.toggles :as t]
+            [com.blockether.vis.internal.config.toggles :as t]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-clean-state
@@ -70,7 +70,6 @@
                           (expect (true? (t/enabled? "test_delta"))))))
   (it "unknown ids resolve to false (fail-closed)"
       (expect (false? (t/enabled? "test_never_registered")))))
-
 
 (defdescribe listener-test
              (it "listener fires on value transitions and a disposer detaches it"

@@ -2,8 +2,8 @@
   "Direct Java sherpa-onnx integration for Parakeet TDT ASR."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.notifications :as notifications]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.channel.notifications :as notifications]
             [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
             [com.blockether.vis.internal.paths :as paths])

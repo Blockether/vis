@@ -103,7 +103,6 @@
                                          ["dist.tsbuildinfo" "{}"] ["app.jar.sha256" "deadbeef"]
                                          ["notes.md" "# what the run found\n"]]))))))
 
-
 (defdescribe display-cache-file-test
              (it "writes one content-addressed file and reuses it for identical bytes"
                  (let [dir

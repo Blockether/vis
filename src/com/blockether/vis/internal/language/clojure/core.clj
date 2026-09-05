@@ -23,7 +23,7 @@
             [com.blockether.vis.internal.language.clojure.nrepl-ctx :as nrepl-ctx]
             [com.blockether.vis.internal.language.clojure.repl-manager :as repl-manager]
             [com.blockether.vis.internal.language.clojure.test-runner :as test-runner]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.contract.surface :as contract]))
 
 ;; Activation
@@ -340,7 +340,6 @@
             ["repl_start(\"clojure\")" "repl_status(\"clojure\")"
              "repl_start(\"clojure\", {\"cwd\": \"apps/vis-tui\", \"aliases\": [\"dev\", \"test\"]})"
              "repl_stop(\"clojure\")"]}))))))
-
 
 (defn- coerce-eval-arg
   "Accept the call shapes the model is most likely to type:

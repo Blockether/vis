@@ -1,7 +1,7 @@
-(ns com.blockether.vis.internal.speech
+(ns com.blockether.vis.internal.speech.core
   "The gateway's fixed local speech engines and their shared asynchronous job lifecycle."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.speech.engine :as builtin-engine]
             [com.blockether.vis.internal.speech.synthesis :as synthesis])
@@ -230,6 +230,7 @@
               (merge (public-sample (voice-sample engine (:id entry))))))
           (catalogue))
     []))
+
 (defn import-voice!
   "Hand `engine` a recording and get back the voice it became, in the shape every
    surface reports. `clip` is `{:path :voice-name :language :text}`, where `:text` is
@@ -455,6 +456,7 @@
   (doseq [[id job] before]
     (when-not (contains? after id) (discard-audio! job)))
   nil)
+
 (defn job "The public job for `id`, or nil." [id] (public-job (get @jobs* id)))
 
 (defn job-audio-path

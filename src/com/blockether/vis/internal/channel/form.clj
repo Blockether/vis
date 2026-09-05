@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.form
+(ns com.blockether.vis.internal.channel.form
   "The canonical per-form DISPLAY contract — ONE source of truth for the fields a
    channel reads to render an executed form, live (via the gateway) and restored
    (via the DB).
@@ -13,7 +13,7 @@
    renamed) stay as explicit gateway overrides — they are not carried verbatim, so
    they are NOT in this set."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.pyfmt :as pyfmt]
+            [com.blockether.vis.internal.python.format :as pyfmt]
             [com.blockether.vis.internal.util :as util]))
 
 (def ^:private display-fields

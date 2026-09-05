@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.channel-events
+(ns com.blockether.vis.internal.channel.events
   "Process-local channel event bus.
 
    Extensions use this to talk to mounted channels without depending on their

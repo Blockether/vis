@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider.opencode-go
+(ns com.blockether.vis.internal.provider.vendor.opencode-go
   "OpenCode Go (https://opencode.ai/go) static-API-key provider.
 
   OpenCode Go is a flat-rate ($10/month) subscription gateway serving a curated
@@ -19,7 +19,7 @@
   endpoint, two wires.
 
   Authentication is the shared static-API-key shape, owned by
-  `com.blockether.vis.internal.provider-key-store` and declared by `BOOK` below:
+  `com.blockether.vis.internal.provider.key-store` and declared by `BOOK` below:
   lookup order, status, logout, the token envelope and the interactive
   `vis-agent providers auth opencode-go` flow all come from there.
 
@@ -78,7 +78,7 @@
 
 (def ^:private BOOK
   "OpenCode Go's slice of the shared static-API-key shape
-   (`com.blockether.vis.internal.provider-key-store`).
+   (`com.blockether.vis.internal.provider.key-store`).
 
    ONE subscription key covers both wire dialects, so `:file-shape :flat`:
    `~/.vis/opencode-auth.json` carries `api_key` / `saved_at` at its root, which

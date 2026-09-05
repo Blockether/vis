@@ -12,8 +12,8 @@
    changed since the fork. The block is stamped once per turn at engine
    start; ctx_renderer serialises it verbatim."
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.internal.git :as git-core]
-            [com.blockether.vis.internal.workspace :as workspace]))
+            [com.blockether.vis.internal.workspace.git :as git-core]
+            [com.blockether.vis.internal.workspace.core :as workspace]))
 
 (defn- canonical-path
   [dir]

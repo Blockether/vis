@@ -6,8 +6,8 @@
    not an envelope to unwrap), every failure is a Python exception a caller can
    catch, and the `:fs/access` gate still decides which trees may be seen."
   (:require [clojure.string :as string]
-            [com.blockether.vis.internal.env-python :as ep]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.python.env :as ep]
+            [com.blockether.vis.internal.extension.core :as extension]
             ;; Registers the shim, exactly as the built-in loader does in production.
             [com.blockether.vis.internal.foundation.shim-ls]
             [com.blockether.vis.test-python-context :as tpc]

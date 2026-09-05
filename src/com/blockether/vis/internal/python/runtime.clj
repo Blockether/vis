@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.python-runtime
+(ns com.blockether.vis.internal.python.runtime
   "Getting the embedded CPython onto THIS machine.
 
    The interpreter is a DIRECTORY — a cdylib plus the vendored standard library

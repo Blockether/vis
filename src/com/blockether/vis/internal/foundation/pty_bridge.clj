@@ -20,7 +20,7 @@
    `stty` for raw mode on the client side (the human's interactive shell always
    has it). No JNA, no new dep, native-image clean."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.cancellation :as cancellation])
+            [com.blockether.vis.internal.session.cancellation :as cancellation])
   (:import (java.io InputStream OutputStream)
            (java.net StandardProtocolFamily UnixDomainSocketAddress)
            (java.nio ByteBuffer)

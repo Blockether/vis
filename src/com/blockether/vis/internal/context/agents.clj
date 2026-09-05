@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.agents
+(ns com.blockether.vis.internal.context.agents
   "Project-guidance discovery — internal, no extension required.
 
    STACKED context files, pi-style: guidance is collected from THREE
@@ -34,7 +34,7 @@
    extension layer no longer owns it."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
 
 (defn- repo-cwd

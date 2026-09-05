@@ -1,13 +1,13 @@
-(ns com.blockether.vis.internal.provider.opencode-go-test
+(ns com.blockether.vis.internal.provider.vendor.opencode-go-test
   (:require [babashka.http-client :as http]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.provider.opencode-go :as opencode-go]
-            [com.blockether.vis.internal.provider-limits :as provider-limits]
+            [com.blockether.vis.internal.provider.vendor.opencode-go :as opencode-go]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- reload!
   []
-  (require 'com.blockether.vis.internal.provider.opencode-go :reload)
+  (require 'com.blockether.vis.internal.provider.vendor.opencode-go :reload)
   (opencode-go/register!))
 
 (defdescribe provider-registration-test
@@ -30,6 +30,7 @@
                    (expect (ifn? (:provider/get-token-fn provider)))
                    (expect (ifn? (:provider/auth-prompt-fn provider)))
                    (expect (ifn? (:provider/limits-fn provider))))))
+
 (defdescribe session-provider-kickoff-hook-test
              ;; Session identity is transport metadata owned by this provider extension,
              ;; not a provider-id branch in the engine loop.

@@ -41,9 +41,9 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
   (:import [java.io File RandomAccessFile]
            [java.nio ByteBuffer]
@@ -389,7 +389,6 @@
            (when-let [^Process pr @spawned]
              (.destroy pr))
            {:exit -1 :out "" :bytes (byte-array 0) :error (ex-message t)}))))
-
 
 (defn- git-repo-root
   [root]

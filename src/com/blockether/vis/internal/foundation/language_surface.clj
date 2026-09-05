@@ -10,7 +10,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.surface :as contract]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.environment.core :as environment]))
 
 (defn- normalize-language

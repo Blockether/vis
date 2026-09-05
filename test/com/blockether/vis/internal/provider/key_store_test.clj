@@ -1,5 +1,5 @@
-(ns com.blockether.vis.internal.provider-key-store-test
-  (:require [com.blockether.vis.internal.provider-key-store :as store]
+(ns com.blockether.vis.internal.provider.key-store-test
+  (:require [com.blockether.vis.internal.provider.key-store :as store]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private book

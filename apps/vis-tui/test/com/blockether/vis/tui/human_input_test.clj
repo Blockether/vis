@@ -1983,6 +1983,7 @@
                                                         {"name" "a" "label" "A"}]})))
                                40)]
         (expect (< 1 (count (filterv #(= :paragraph (:kind %)) rows)))))))
+
 ;;; ── The focused field's ring rides its own surface ───────────────────────────
 ;; Regression (reported from the TUI, photo of a transient band): the accent ring
 ;; `▎` a focused field wears was painted one column OUTSIDE the row's own

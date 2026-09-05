@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.credential-command
+(ns com.blockether.vis.internal.provider.credential-command
   "Command-backed provider credentials — the `api_key_command` config key.
 
    A static `api_key` (or a `${NAME}` reference to one) is only good for a
@@ -29,7 +29,7 @@
    unavailable (`providers/provider-status`, `doctor`) or to drop it from the
    router build, exactly as an unresolved `${NAME}` is handled today."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import (java.io ByteArrayOutputStream InputStream)

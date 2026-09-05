@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.gitignore
+(ns com.blockether.vis.internal.workspace.gitignore
   "Minimal, pure-Clojure `.gitignore` matcher — the JGit-free replacement for
    `IgnoreNode`. Parses ONE `.gitignore` file (the one at a walk root) into
    ordered rules and evaluates a `/`-separated relative path against them with

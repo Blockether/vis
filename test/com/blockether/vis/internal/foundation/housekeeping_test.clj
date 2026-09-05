@@ -9,7 +9,7 @@
    real `~/.vis`."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File]
            [java.nio.file Files LinkOption]

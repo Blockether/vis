@@ -6,7 +6,7 @@
    hand, and a mistake in it is refused AT THE BUILDER CALL with the engine's own
    one-line reason instead of in front of the human."
   (:require [com.blockether.vis.view :as hi]
-            [com.blockether.vis.internal.view :as engine]
+            [com.blockether.vis.internal.view.core :as engine]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- refusal

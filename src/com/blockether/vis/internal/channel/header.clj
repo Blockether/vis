@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.header
+(ns com.blockether.vis.internal.channel.header
   "Channel-agnostic header layout & content spec.
 
    Every channel — the terminal TUI and future surfaces —

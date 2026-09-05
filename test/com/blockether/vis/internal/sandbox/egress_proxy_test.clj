@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.egress-proxy-test
+(ns com.blockether.vis.internal.sandbox.egress-proxy-test
   "The shell-child egress proxy: the POLICY BRAIN (compile-policy + decide) is asserted
    as pure data — host allow/deny, per-host verb/path rules, presets, CONNECT host-only —
    so it runs on every OS (incl. Linux CI). Then one hermetic IN-PROCESS round-trip drives
@@ -7,8 +7,8 @@
   (:require [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis-python-runtime :as runtime]
-            [com.blockether.vis.internal.egress-proxy :as ep]
-            [com.blockether.vis.internal.tls-mitm :as tls])
+            [com.blockether.vis.internal.sandbox.egress-proxy :as ep]
+            [com.blockether.vis.internal.sandbox.tls-mitm :as tls])
   (:import (java.io BufferedReader InputStreamReader)
            (java.net InetSocketAddress Proxy Proxy$Type ServerSocket Socket URL HttpURLConnection)
            (java.security KeyStore)

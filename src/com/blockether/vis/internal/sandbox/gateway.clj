@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.gateway-sandbox
+(ns com.blockether.vis.internal.sandbox.gateway
   "Gateway-lifecycle SANDBOX CAPABILITY: ONE shared loopback egress proxy and ONE
    ephemeral MITM CA for the WHOLE daemon, keyed PER SESSION.
 
@@ -21,8 +21,8 @@
 
    Lazy: the proxy listener and the CA keygen happen only on first `ensure-proxy!` /
    `ensure-ca!` — a gateway that never jails a shell child opens neither."
-  (:require [com.blockether.vis.internal.egress-proxy :as egress]
-            [com.blockether.vis.internal.tls-mitm :as tls-mitm]))
+  (:require [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
+            [com.blockether.vis.internal.sandbox.tls-mitm :as tls-mitm]))
 
 ;; token -> 0-arg policy fn (returns the session's compiled policy value, or nil)
 (defonce ^:private registry (atom {}))

@@ -13,10 +13,15 @@
            [java.util.concurrent.atomic AtomicLong]))
 
 (def max-event-bytes (* 256 1024))
+
 (def max-summary-bytes 512)
+
 (def max-detail-bytes (* 2 1024))
+
 (def max-resources 8)
+
 (def max-diff-line-bytes 512)
+
 (def ^:private max-summary-nodes 128)
 
 (def ^:private secret-key?
@@ -226,6 +231,7 @@
       (if-let [idx (heaviest-diff-body (:diff-evidence event))]
         (recur (update-in event [:diff-evidence idx] assoc :lines [] :is-truncated true))
         (dissoc event :diff-evidence)))))
+
 (defn collector
   "Create a strict lifecycle collector. `accept!` returns each accepted event."
   []
@@ -395,6 +401,7 @@
    would put engine data structures where the row's own words belong."
   [result]
   (if (map? result) (not-empty (apply dissoc result activity-declaration-keys)) result))
+
 (defn- shell-presenter?
   [operation declared]
   (= :shell (presenter/presenter-for operation declared)))

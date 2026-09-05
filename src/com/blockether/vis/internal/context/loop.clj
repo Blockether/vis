@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.ctx-loop
+(ns com.blockether.vis.internal.context.loop
   "Loop integration layer for context management.
 
    The loop keeps a per-session `:ctx-atom` for stable model-facing context
@@ -8,10 +8,10 @@
    managed REPLs) are deliberately NOT part of ctx: a handle or `repl_status`
    answers for them, so nothing about them is reprinted on every request."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.ctx-engine :as eng]
-            [com.blockether.vis.internal.env-digest :as env-digest]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.prompt :as prompt]
+            [com.blockether.vis.internal.context.engine :as eng]
+            [com.blockether.vis.internal.context.env-digest :as env-digest]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.context.prompt :as prompt]
             [taoensso.telemere :as tel]))
 
 ;; Atom and constructor — ONE atom carries the entire engine state

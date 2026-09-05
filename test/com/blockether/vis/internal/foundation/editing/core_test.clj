@@ -20,13 +20,13 @@
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.foundation.editing.diff :as diff]
             [com.blockether.vis.internal.foundation.editing.escapes :as escapes]
             [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.env-python :as ep]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.python.env :as ep]
+            [com.blockether.vis.internal.extension.core :as extension]
             [lazytest.core :refer [defdescribe describe expect it throws?]]))
 
 (defn- private-var
@@ -68,7 +68,7 @@
 (defn- fff-index-fn
   "Same, for the canonical pooled-fff namespace the index lifecycle lives in."
   [name]
-  (deref (resolve (symbol "com.blockether.vis.internal.fff-index" name))))
+  (deref (resolve (symbol "com.blockether.vis.internal.workspace.fff-index" name))))
 
 (defn- temp-root
   "Cwd-relative path string for the shared temp root, idempotently
@@ -446,7 +446,7 @@
 
 (it "defers op classification to the engine contract (no editing-local copy)"
     ;; The classification table + presentation map live in
-    ;; `com.blockether.vis.internal.extension` (`op-tag`,
+    ;; `com.blockether.vis.internal.extension.core` (`op-tag`,
     ;; `op-presentation`). Editing used to keep a thin shim; that
     ;; shim is gone and callers go straight to the engine. Tags
     ;; collapsed to observation/mutation values; ops not in the
@@ -850,8 +850,6 @@
              (expect (not (string/includes? m home))))
            (finally (System/setProperty "user.home" prior))))))
 
-
-
 (defdescribe
   vis-rg-structured-shape-test
   (it "returns the content shape: :hits :truncated-by + breadth counts"
@@ -1169,7 +1167,6 @@
         (expect (contains? names "patch"))
         (expect (contains? names "grep")))))
 
-
 (defdescribe
   cat-returns-anchored-string-test
   (it "every line is addressable, blanks included"
@@ -1305,7 +1302,6 @@
         ;; Zero is still no line at all.
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool rel 0))))))
 
-
 ;; `patch` is ONE call per FILE — `(patch-file! path edits)`. These tests drive one
 ;; span at a time, so the helper wraps a single edit in the batch the verb takes;
 ;; `patch-batch-test` covers what only a batch can prove.
@@ -1316,7 +1312,6 @@
     [(cond-> {"from" from "replace" replacement}
        to
        (assoc "to" to))]))
-
 
 (defdescribe
   patch-spends-the-anchor-test
@@ -1445,7 +1440,6 @@
         (expect (= :anchor-malformed (:reason (ex-data thrown))))
         (expect (= "alpha\nbeta\n" (slurp rel))))))
 
-
 (defdescribe
   patch-parse-gate-test
   (it "a write that would break the parse beyond repair is refused and nothing lands"
@@ -1518,7 +1512,6 @@
         (expect (not (string/includes? (edit "patch/notes.md" "# One\n\ntwo\n" "TWO") "parse:")))
         (expect (string/includes? (edit "patch/code.py" "def f():\n    return 1\n" "    return 2")
                                   "parse: clean")))))
-
 
 (defdescribe
   patch-delimiter-repair-test
@@ -1698,7 +1691,6 @@
           (expect (string/includes? out "delimiters repaired: line 3 added `(`"))
           (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n" (slurp rel)))))))
 
-
 (defdescribe
   patch-newline-semantics-test
   ;; Regression: a span whose LAST line was BLANK grew one extra blank line on every
@@ -1752,7 +1744,6 @@
         (expect (string/includes?
                   out
                   (str (hashline/line-anchor 1 "ONE") " .. " (hashline/line-anchor 2 "")))))))
-
 
 (defdescribe
   patch-batch-shape-test
@@ -1833,7 +1824,6 @@
 
         (expect (string/includes? out "note: a replacement carries a `line:hash│ ` gutter"))
         (expect (= "alpha\n2:5f0│ BETA\n" (slurp rel))))))
-
 
 (defdescribe
   patch-batch-test
@@ -1949,7 +1939,6 @@
         (expect (string/includes? out "2 edits  4 → 3 lines (-1)"))
         (expect (string/includes? out "→ deleted")))))
 
-
 (defdescribe
   grep-returns-anchored-text-test
   (it "line 1 summarizes and every content row carries an anchor"
@@ -2052,7 +2041,6 @@
           "grep 'defdescribe'  50 hits · 11 of 136 files  capped by limit → next(r) or grep({…, \"offset\": 50})"
           head)))))
 
-
 (defdescribe a-grep-hit-is-a-patch-anchor-test
              ;; The point of the whole scheme: search, then edit, with NO read between.
              (it "a hit's anchor feeds patch directly"
@@ -2107,9 +2095,6 @@
                    (expect (string/includes? hit-row "│ ZZWHOLEZZ LINE"))
                    (expect (string/starts-with? out "patched "))
                    (expect (= "keep\nreplaced\nkeep\n" (slurp rel))))))
-
-
-
 
 (defdescribe
   patch-diff-text-test
@@ -2496,10 +2481,6 @@
         (expect (< ms 2500)
                 (str "decode of " (reduce + (map count blobs)) " characters took " ms " ms")))))
 
-
-
-
-
 (defn- mk-tmp-dir
   [prefix]
   (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
@@ -2628,8 +2609,6 @@
       ;; workspace write was never captured in the first place.
       (expect (empty? @sink)))))
 
-
-
 (defdescribe editing-native-contract-test
              (let [patch-description
                    (:ext.symbol/description editing/patch-symbol)
@@ -2656,16 +2635,7 @@
                    (expect (string/includes? patch-result "one row per edit"))
                    (expect (string/includes? patch-result "LIVE AFTER the write")))))
 
-
-
-
 ;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
-
-
-
-
-
-
 
 (defdescribe
   rg-tool-e2e-test
@@ -2914,10 +2884,6 @@
           (expect (= 2 (get-in r [:result "file_count"])))
           (expect (= [ghost] (mapv #(get % "requested") (get-in r [:result "missing_paths"])))))))))
 
-
-
-
-
 (defdescribe
   atomic-write-test
   "Every editor write lands as ONE atomic replacement: a sibling temp file the
@@ -2966,8 +2932,6 @@
             (expect (.canExecute ff))
             (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
                                     (fs/list-dir dir)))))))))
-
-
 
 (defdescribe
   find-files-op-name-test
@@ -3524,6 +3488,7 @@
                           "exclude" ["*_test.clj"]}))]
 
           (expect (= 1 (get out "hit_count")))))))
+
 (defdescribe
   find-relevance-filter-test
   "Regression: fff's native matcher returns a full page of loose subsequence
@@ -3672,7 +3637,6 @@
               out (find-search [{"query" "zzzqqq wwwvvv" "paths" [dir]}])]
 
           (expect (zero? (get out "item_count")))))))
-
 
 (defdescribe
   rg-sort-key-efficiency-test
@@ -4302,7 +4266,6 @@
         ;; a write moves it exactly once
         (expect (< idle after))
         (expect (= after (do (run) (.get synced))))))))
-
 
 (defdescribe
   ls-directory-fff-overlay-test
@@ -4954,7 +4917,6 @@
                      (try (safe-path (str secret "/c.txt"))
                           nil
                           (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
-
 
 ;; Regression: grep answers ONE anchored TEXT block, but the model-facing prose still
 ;; described a keyed map — the blank-path refusal told the model to use "the keys under

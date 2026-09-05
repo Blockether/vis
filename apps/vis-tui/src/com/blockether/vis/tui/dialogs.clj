@@ -26,7 +26,6 @@
 
 ;;; ── Shared dialog chrome & components ───────────────────────────────────────
 
-
 ;;; ── Default modal footprint ─────────────────────────────────────────────────
 ;;
 ;; Every modal in the TUI shares ONE default WIDTH. HEIGHT is now ADAPTIVE:
@@ -239,7 +238,6 @@
     (cond (< idx start) idx
           (>= idx (+ start visible-count)) (max 0 (- idx (dec visible-count)))
           :else start)))
-
 
 (defn- key-type [key] (when (instance? KeyStroke key) (.getKeyType ^KeyStroke key)))
 
@@ -2554,8 +2552,6 @@
                           :title (or (:title spec) title)
                           :read-option (region-option-reader screen g region))))))
 
-
-
 (defn- theme-choice-order
   []
   (try (mapv keyword (shared-theme/available-theme-ids))
@@ -2612,7 +2608,6 @@
                                                (str "  [" (titleize-label (name owner)) "]")))})))
                     (sort-by (comp str key) (group-by #(or (:group %) :other) specs))))))))
 
-
 (defn- settings-content-width [cols] (default-content-width cols))
 
 (defn- settings-content-height [rows] (default-content-height rows))
@@ -2628,7 +2623,6 @@
        (remove str/blank?)
        (map titleize-token)
        (str/join " ")))
-
 
 (def ^:private provider-inventory
   "Cached provider fleet plus each provider's gateway auth verdict, rendered
@@ -2902,7 +2896,6 @@
                (or (registry-toggle-rows) [])
                (or (provider-settings-rows) [])
                (or (mcp-settings-rows) []))))
-
 
 (defn- settings-option-label
   [{:keys [key label type choices toggle-id]} values]
@@ -3298,7 +3291,6 @@
       (preview! selected)
       (preview! original))))
 
-
 (defn- activate-settings-row!
   [^TerminalScreen screen g region values callbacks row]
   (case (:type row)
@@ -3501,6 +3493,7 @@
                            :active? (and (>= (long selected) (long start))
                                          (< (long selected) end))}))
                       sec-idxs))))
+
 (defn- settings-pane-geometry
   "Use a TOC rail only when its 14 columns, divider, and a useful 17-column
    settings pane all fit. Narrow dialogs become one pane instead of painting
@@ -4638,6 +4631,7 @@
                     "is_awaiting_input" (true? (get frame "is_awaiting_input"))
                     "current_turn_id" (get frame "current_turn_id")))))
             held))))
+
 (defn- navigator-row-matches?
   [row query]
   (let [needle (str/lower-case (str/trim (or query "")))]
@@ -5494,7 +5488,6 @@
                           (fn [g region]
                             (band-frame! screen g region spec)
                             (read-chord-key! screen))))
-
 
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str}. The `:id` is the

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.session-model
+(ns com.blockether.vis.internal.session.model
   "Persistent, channel-NEUTRAL per-session model preference.
 
    ONE source of truth — `session_soul.llm_pref_provider` + `llm_pref_model`
@@ -19,7 +19,7 @@
    Values are `{:provider <id-string-or-nil> :model <name>}` or nil. Keyed by
    the session-soul id (the gateway's `sid` and the engine env's `:session-id`)."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import (java.util.concurrent Executors
@@ -150,6 +150,7 @@
                       :id ::model-listener-failed
                       :data {:session-id (str sid) :error (ex-message t)}}
                      (str "Session-model listener threw: " (ex-message t)))))))
+
 (defn set-model!
   "Set (or clear, with blank model) the PROVIDER + MODEL preference for session
    `sid`. Takes effect IMMEDIATELY for reads; the DB write is debounced so

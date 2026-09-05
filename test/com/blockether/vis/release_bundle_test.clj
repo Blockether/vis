@@ -383,6 +383,7 @@
         ;; Provenance, never a version: `--version` still reports VIS_VERSION alone.
         (expect (str/includes? build-clj "(spit vfile version)") build-clj)
         (expect (str/includes? stage "vis-agent-native.build") stage))))
+
 (defn- fake-tools!
   "A PATH directory whose `uname` claims `os`/`arch`, plus a container engine that
   answers `--version`/`info`/`run` without a VM. Lets the host-target and
@@ -974,7 +975,6 @@
              (expect (str/includes? launcher "-Scp \"$vis_classpath\" -M:vis")
                      "launch line hands -Scp over")
              (finally (delete-tree! dir))))))
-
 
 ;; Regression: the public `vis-agent tui` command fell through to the one-shot
 ;; prompt shortcut, so asking for the terminal client sent "tui" to a model.

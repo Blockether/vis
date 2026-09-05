@@ -44,7 +44,7 @@
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis-python-runtime :as runtime]
-            [com.blockether.vis.internal.env-python :as env-python]))
+            [com.blockether.vis.internal.python.env :as env-python]))
 
 (defn new-context
   "A fresh sandbox result map, with `create-python-context`'s arguments in its own

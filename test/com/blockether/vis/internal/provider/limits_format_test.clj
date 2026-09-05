@@ -1,6 +1,6 @@
-(ns com.blockether.vis.internal.limits-format-test
+(ns com.blockether.vis.internal.provider.limits-format-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.limits-format :as lf]
+            [com.blockether.vis.internal.provider.limits-format :as lf]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe format-limit-number-test

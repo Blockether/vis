@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider.openai-codex
+(ns com.blockether.vis.internal.provider.vendor.openai-codex
   "OpenAI Codex (ChatGPT OAuth) provider.
 
    This mirrors Codex CLI / ChatGPT OAuth:
@@ -24,7 +24,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.oauth :as oauth]
+            [com.blockether.vis.internal.provider.oauth :as oauth]
             [taoensso.telemere :as tel])
   (:import [java.net URLDecoder URLEncoder]
            [java.security SecureRandom]
@@ -845,6 +845,7 @@
       (authenticated-limits-report!))))
 
 (require '[com.blockether.vis.core :as vis])
+
 (require '[com.blockether.svar.core :as svar])
 
 (vis/register-toggle! {:id "codex_fast_mode"

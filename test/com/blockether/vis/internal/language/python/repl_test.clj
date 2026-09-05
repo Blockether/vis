@@ -7,8 +7,8 @@
             [com.blockether.vis.internal.language.python.core :as core]
             [com.blockether.vis.internal.language.python.interpreter :as interp]
             [com.blockether.vis.internal.language.python.repl-manager :as repl]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.process-jail :as process-jail]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -24,6 +24,7 @@
       (.delete f))))
 
 (def ^:private on-path? @#'interp/on-path?)
+
 (def ^:private test-session-id "python-pack-test")
 
 (process-jail/register-session-jail! test-session-id

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider-limits
+(ns com.blockether.vis.internal.provider.limits
   "Normalized provider limits surface.
 
    Providers may optionally expose `:provider/limits-fn` in the global
@@ -19,7 +19,7 @@
      provider-specific implementation is absent or malformed."
   (:require [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.contract.provider :as contract-provider]
-            [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.util :as util]))
 
 (defn- static-limits

@@ -3,8 +3,8 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
-            [com.blockether.vis.internal.process-jail :as process-jail]
-            [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
+            [com.blockether.vis.internal.gateway.resources :as resources]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- fake-env

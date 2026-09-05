@@ -8,7 +8,7 @@
             [com.blockether.vis.internal.language.clojure.nrepl-client :as nrepl-client]
             [com.blockether.vis.internal.language.clojure.repl-manager :as rm]
             [com.blockether.vis.internal.language.clojure.shadow-repl :as shadow-repl]
-            [com.blockether.vis.internal.process-jail :as process-jail]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Files)
            (java.nio.file.attribute FileAttribute)))
@@ -748,7 +748,6 @@
                      (core/clj-eval-fn {:workspace/root (tmp-dir) :session-id "s"}
                                        {"code" "(+ 1 1)"})
                      (expect (= ["devbox.internal" 4001] @captured))))))
-
 
 (def ^:private shadow-watching
   "What `shadow-repl/probe!` answers for a live `shadow-cljs watch app`: the ids

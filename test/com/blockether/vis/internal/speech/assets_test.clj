@@ -257,7 +257,6 @@
                    ;; the transcript rides along, because the clone is given the words
                    (expect (seq (:clip-text voice)) (:id entry)))))
 
-
 (defn- repo-document
   "The generated document at the repository root, found by walking up from the
    working directory so the test does not care where the runner starts."

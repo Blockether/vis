@@ -2,19 +2,19 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.env-python :as ep]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.python.env :as ep]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis-python-runtime :as runtime]
-            [com.blockether.vis.internal.process-jail :as process-jail]
-            [com.blockether.vis.internal.resources :as resources]
-            [com.blockether.vis.internal.runtime-settings :as rt]
-            [com.blockether.vis.internal.shell-log :as shell-log]
-            [com.blockether.vis.internal.toggles :as toggles]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
+            [com.blockether.vis.internal.gateway.resources :as resources]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.internal.foundation.shell-log :as shell-log]
+            [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -59,7 +59,6 @@
 (def ^:private shell* @#'shell/shell-dispatch)
 
 (def ^:private keys-label @#'shell/keys-label)
-
 
 (defn- with-shell-on
   "Shell is unconditionally available now; kept as a thin pass-through so the
@@ -186,7 +185,6 @@
                                    "printf %s \"$VIS_TEST_DOTENV\"")]
                  (expect (= "from-the-project-file" (get r "out")))))
              (finally (io/delete-file env-path true))))))
-
 
 ;; ONE call's own `env`: the delta a spawning verb carries as an ARGUMENT of the
 ;; call, over the project environment. Never an ambient scope — the record of
@@ -917,7 +915,6 @@
                            (expect (= "running" (get registered "status")))))))
                    (finally (deliver release true) (resources/stop-all! sid)))))))))
 
-
 (defdescribe shell-send-test
              (it "types into a running background shell's stdin and the program reads it"
                  (with-shell-on
@@ -1004,6 +1001,7 @@
                                       {"op" "logs" "id" sid "command" {"op" "wait" "id" "wrong"}}))]
                (expect (= "logs" (get r "stage"))))
              (finally (resources/stop-all! sid))))))
+
 (defdescribe shell-keys-label-test
              (it "names every control character a send typed"
                  ;; `keys` is RESULT data, not paint: a send is frequently ENTIRELY
@@ -1445,7 +1443,6 @@
                                                       {"op" "logs" "id" "nope" "offset" -0.5})))
                                "whole number")))))
 
-
 (defdescribe shell-one-command-test
              (it "runs the ONE command and answers with a flat result"
                  ;; Regression, one-command refactor: `commands` was an ordered batch with
@@ -1878,7 +1875,6 @@
                                  "s = b.stop()\n" "[b['stage'], l['stage'], s['stage']]"))))
              (finally (resources/stop-all! sid))))))
 
-
 (defn- interrupt-during
   "Run `code` in a fresh session's own context on its own thread, let it reach the
    host wait, then cancel it the way the loop does: interrupt the guest THREAD and
@@ -1915,7 +1911,6 @@
          :reusable (= 2 (py c "1 + 1"))})
       (finally (resources/stop-all! sid)))))
 
-
 (defdescribe shell-wait-cancel-test
              "A cancel reaches the block THROUGH the host wait it is parked in."
              ;; Regression (session 7df808ff): a cancel could not reach a block parked in
@@ -1931,7 +1926,6 @@
                    (expect (:landed result))
                    (expect (= :unwound (:outcome result)))
                    (expect (:reusable result)))))
-
 
 (defdescribe shell-run-cancel-test
              "A cancel reaches a FOREGROUND run — the longest host wait in the product."
@@ -1971,7 +1965,6 @@
                    (Thread/sleep 700)
                    (expect (= at-cancel (.length marker)))
                    (.delete marker))))
-
 
 (def ^:private fd-exhaustion? @#'shell/fd-exhaustion?)
 
@@ -2131,7 +2124,6 @@
                                 (finally (resources/stop-all! sid)
                                          (shell-log/delete-session-logs! sid)))))))))
 
-
 (defdescribe
   no-wait-knob-test
   ;; Regression, Phase 11: `wait` on the REQUEST was a number that selected a MODE
@@ -2217,7 +2209,6 @@
   (it "keeps one public constructor and four handle methods"
       (expect (= ["shell" "_shell_logs" "_shell_wait" "_shell_type" "_shell_stop"]
                  (mapv :ext.symbol/name shell/shell-symbols)))))
-
 
 (defdescribe
   shell-failure-visibility-test

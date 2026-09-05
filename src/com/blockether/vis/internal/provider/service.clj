@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.providers
+(ns com.blockether.vis.internal.provider.service
   "Channel-neutral provider management service.
 
    Everything a channel needs to render and mutate the provider fleet
@@ -17,13 +17,13 @@
   (:require [babashka.http-client :as http]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.cancellation :as cancel]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.session.cancellation :as cancel]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.format :as format]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.limits-format :as limits-format]
-            [com.blockether.vis.internal.provider-limits :as provider-limits]
-            [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.provider.limits-format :as limits-format]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.util :as util])
   (:import [java.net ConnectException URI]
            [java.util Date]))
@@ -501,7 +501,6 @@
                 :demoted (mapv :id bad)}
                {:router router :demoted []}))))
        (catch Throwable _ {:router router :demoted []})))
-
 
 (defn initial-provider-status
   "Placeholder status while a real probe runs in the background. A credential gap

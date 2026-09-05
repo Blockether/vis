@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.config
+(ns com.blockether.vis.internal.config.core
   "Configuration: paths, JVM lifecycle, provider presets, svar-native
    coercion, config file I/O, and the active-provider state every
    channel reads through.
@@ -23,10 +23,10 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.internal.router :as svar-router]
-            [com.blockether.vis.internal.config-validation :as config-validation]
-            [com.blockether.vis.internal.credential-command :as cred]
+            [com.blockether.vis.internal.config.validation :as config-validation]
+            [com.blockether.vis.internal.provider.credential-command :as cred]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]
             [taoensso.trove :as trove]
@@ -438,6 +438,7 @@
       (config-validation/normalize-api-style runtime)
       template
       (when-not (str/blank? responses-path) :openai-compatible-responses)))
+
 (defn provider-base-url
   "Resolve base-url for a provider: explicit field on the provider
    map first (so user-supplied URLs win), then the merged catalog."
@@ -519,7 +520,6 @@
                                "ms")
                           {:type :vis/token-timeout :provider pid})))
       v)))
-
 
 (defonce
   ^{:doc

@@ -31,12 +31,19 @@
 ;; GCM authentication tag. Keep the protocol's limits in one place rather than
 ;; scattering magic numbers through the encryption and dispatch paths.
 (def ^:private MAX_PAYLOAD_BYTES 4079)
+
 (def ^:private RECORD_SIZE 4096)
+
 (def ^:private KEY_FILE "vapid.p8")
+
 (def ^:private PUBLIC_FILE "vapid.pub")
+
 (def ^:private DEFAULT_SUBJECT "mailto:vis@localhost")
+
 (def ^:private KEY_INFO_PREFIX "WebPush: info\0")
+
 (def ^:private AES_INFO "Content-Encoding: aes128gcm\0")
+
 (def ^:private NONCE_INFO "Content-Encoding: nonce\0")
 
 ;; SubjectPublicKeyInfo for an uncompressed P-256 public key. Browsers hand us
@@ -510,12 +517,6 @@
 
 (defonce ^:private http-client (delay (http/client {:connect-timeout 10000 :version :http2})))
 
-
-
-
-
-
-
 (defn- push-request
   "Build the authenticated encrypted request sent to a browser push service."
   [cfg pair subscription ^bytes body]
@@ -541,7 +542,6 @@
   "Convert an HTTP response into the gateway's stable push result map."
   [{:keys [status body]}]
   {:status status :reason (if (str/blank? body) "" body)})
-
 
 (defn- post!
   "Send one encrypted request and turn transport failures into status zero."

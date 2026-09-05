@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.file-picker
+(ns com.blockether.vis.internal.channel.file-picker
   "Backend for file-picking UIs (the `@` mention picker, TUI + web).
 
    Everything here rides the ONE canonical pooled fff index
@@ -12,9 +12,9 @@
    picker and the search tools would rank and see different files."
   (:require [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.fff :as fff]
-            [com.blockether.vis.internal.fff-index :as fff-index])
+            [com.blockether.vis.internal.workspace.fff-index :as fff-index])
   (:import [java.nio.file Path]))
 
 (def ^:const max-results 200)

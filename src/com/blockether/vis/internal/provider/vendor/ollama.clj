@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider.ollama
+(ns com.blockether.vis.internal.provider.vendor.ollama
   "Ollama local provider preset extension."
   (:require [com.blockether.vis.core :as vis]))
 

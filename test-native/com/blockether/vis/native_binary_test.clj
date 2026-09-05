@@ -139,7 +139,6 @@
      :exit (when finished? (.exitValue process))
      :output (if (.exists log) (slurp log) "")}))
 
-
 ;; ── a provider that answers on loopback ──────────────────────────────────────
 
 (defn- json-chunk
@@ -260,7 +259,6 @@
                    (try (expect (= 0 exit) output)
                         (expect (re-find #"(?m)^vis-agent\s+\S+" output) output)
                         (finally (delete-tree! dir))))))
-
 
 (defdescribe native-binary-runs-a-whole-agent-turn-test
              ;; The one-shot entrypoint boots the session store, the tool registry, config
@@ -454,9 +452,7 @@
              (expect (str/includes? output "pocket-tts") output)
              (finally (delete-tree! dir))))))
 
-
 ;; ── the embedded CPython, inside the linked image ────────────────────────────
-
 
 (defn- run-python
   "`vis-agent python -c CODE` against the private binary under the release wrapper's environment."

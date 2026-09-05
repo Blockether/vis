@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.python-test-runner
+(ns com.blockether.vis.internal.python.test-runner
   "Runs an extension author's Python tests (`test_*.py` / `*_test.py`) through
    the built-in `pytest`-compat shim, each in its own TRUSTED Python session
    (same trust level as the extension it covers). Tests import the extension's
@@ -19,10 +19,10 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.env-python :as env]
-            [com.blockether.vis.internal.python-extensions :as pyx]
-            [com.blockether.vis.internal.python-worker :as pyext]
-            [com.blockether.vis.internal.python-runtime :as python-runtime])
+            [com.blockether.vis.internal.python.env :as env]
+            [com.blockether.vis.internal.python.extensions :as pyx]
+            [com.blockether.vis.internal.python.worker :as pyext]
+            [com.blockether.vis.internal.python.runtime :as python-runtime])
   (:import [java.io File]))
 
 (set! *warn-on-reflection* true)

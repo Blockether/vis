@@ -159,7 +159,6 @@
 
 (def code-border-fg (rgb :code-border-fg))
 
-
 (def iteration-header-fg (rgb :iteration-header-fg))
 
 (def iteration-header-bg (rgb :iteration-header-bg))

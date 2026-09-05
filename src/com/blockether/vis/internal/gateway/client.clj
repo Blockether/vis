@@ -15,8 +15,8 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
-            [com.blockether.vis.internal.cancellation :as cancellation]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.runtime :as protocol]
             [com.blockether.vis.contract.wire :as wire]
@@ -67,6 +67,7 @@
   (let [^ReentrantLock lock (ensure-lock-for db)]
     (.lock lock)
     (try (f) (finally (.unlock lock)))))
+
 ;; Freshness debounce: `ensure-gateway!` verifies the daemon with a full HTTP
 ;; GET /healthz probe on EVERY call. The TUI footer/poll loop calls it dozens of
 ;; times a second, so that doubled every gateway request (probe + real call) and
@@ -706,6 +707,7 @@
           (do (.destroyForcibly ^java.lang.ProcessHandle handle)
               {:signal :kill :stopped? (await-port-free! host port 3000)})))
     {:signal nil :stopped? false}))
+
 (defn stop-daemon!
   "Stop the daemon registered for this DB, escalating when it stops answering.
    `POST /v1/admin/stop` first; when that is met with silence from a daemon that
@@ -786,6 +788,7 @@
         (number? x) (max 0 (long x))
         (string? x) (try (max 0 (Long/parseLong (str/trim x))) (catch Exception _ nil))
         :else nil))
+
 (defn daemon-idle?
   "THE one definition of \"this daemon may be bounced\", read off an admin status
    map (canonical STRING keys, e.g. from [[status]]).
@@ -854,6 +857,7 @@
             :stopped? (not= "orphaned" (:status res))
             :stop res))
         (assoc verdict :stopped? false)))))
+
 (defn stale-bounce-verdict
   "THE rule for replacing a daemon that is merely OLD - a pure decision over what
    the two halves advertise about themselves and an admin status map (canonical
@@ -1095,6 +1099,7 @@
          (when (= 200 (:status response))
            (vec (get (wire/parse-json (:body response)) "artifacts" []))))
        (catch Throwable _ nil)))
+
 (defn toggle-setting!
   "Atomically flip one boolean setting in the gateway and return its refreshed
    string-keyed settings row. The gateway owns both persistence and live runtime
@@ -1781,7 +1786,7 @@
 
 ;; --- Input Views (a run in the DAEMON blocked on the operator) ---
 ;;
-;; `internal.view` parks the extension thread that raised the request and
+;; `internal.view.core` parks the extension thread that raised the request and
 ;; publishes it on the in-process channel bus. That bus never leaves the JVM, so
 ;; a client process — the TUI attached to a serve daemon — can only reach the
 ;; input View over these routes.
@@ -2423,6 +2428,7 @@
                    (write-temp-audio! (:body audio)))
                  (finally (request! :delete (speech-job-path sid :synthesize job-id "")))))
           :else (do (parsed-response! response) nil))))
+
 (defn- open-sse-events!
   "Open ONE SSE connection for `sid` from `cursor` and read it with
    [[read-sse-frames!]]. For each parsed event: advance `cursor*` (highest `:seq`
@@ -2759,6 +2765,7 @@
           (try (.close ^java.io.Closeable in) (catch Throwable _ nil)))
         (future-cancel fut)
         nil))))
+
 (defn sse-event-action
   "Pure classifier for one parsed SSE event while blocking on `wanted-turn-id`.
    Returns `[action event']`:

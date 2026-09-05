@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.process-jail-test
+(ns com.blockether.vis.internal.sandbox.jail-test
   "The OS process jail as Vis owns it: a session's configuration, live roots and
    proxy endpoint become ONE platform-neutral policy VALUE plus the complete
    child environment, and — on a host that can enforce — a real wrapped `bash`
@@ -10,8 +10,8 @@
             [lazytest.experimental.interfaces.clojure-test :refer
              [deftest is testing thrown? thrown-with-msg?]]
             [com.blockether.vis-python-runtime :as runtime]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.process-jail :as pj]))
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.sandbox.jail :as pj]))
 
 (deftest runtime-policy-value
   (testing "live roots + read-write grants are read-write, read-only stays read-only"
@@ -140,6 +140,7 @@
            (finally (when (.exists outside) (io/delete-file outside true))
                     (doseq [file (reverse (file-seq root))]
                       (io/delete-file file true)))))))
+
 (deftest proxy-env-vars
   (testing "no proxy endpoint, no additions — the confinement marker is the runtime's"
     (is (= {} (pj/proxy-env {})))
@@ -228,6 +229,7 @@
            (is (= "managed" (slurp (.getInputStream process))))
            (is (pos? (.pid process))))
          (finally (pj/unregister-session-jail! "t-sid")))))
+
 (deftest env-scrub-allowlist
   (testing
     "a confined child inherits ONLY the non-secret allowlist plus the RESOLVED

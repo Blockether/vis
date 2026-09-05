@@ -1,4 +1,4 @@
-/** The Activity projection against `internal.activity`'s own bounded snapshot. */
+/** The Activity projection against `internal.activity.core`'s own bounded snapshot. */
 import { describe, expect, it } from 'vitest';
 import { activityProjectionFromWire } from './activity';
 

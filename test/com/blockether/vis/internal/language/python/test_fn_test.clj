@@ -6,10 +6,10 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.language.python.core :as core]
             [com.blockether.vis.internal.language.python.interpreter :as interp]
-            [com.blockether.vis.internal.process-jail :as process-jail]
-            [com.blockether.vis.internal.python-extensions :as pyx]
-            [com.blockether.vis.internal.python-project :as pyproj]
-            [com.blockether.vis.internal.python-worker :as pyext]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
+            [com.blockether.vis.internal.python.extensions :as pyx]
+            [com.blockether.vis.internal.python.project :as pyproj]
+            [com.blockether.vis.internal.python.worker :as pyext]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))

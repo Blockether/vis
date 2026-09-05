@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.persistance
+(ns com.blockether.vis.internal.persistance.core
   "Persistence facade: the backend table, connection lifecycle, and every
    delegated `store-*`/`db-*` fn.
 

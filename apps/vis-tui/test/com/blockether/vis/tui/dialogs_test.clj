@@ -20,6 +20,7 @@
 ;; is verified indirectly: pasting into the API key field no longer
 ;; leaks PUA marker chars (\uE200, \uE201) into the stored value.
 (defn has-provider? [& _] false)
+
 (defdescribe smoke-test
              (it "dialogs namespace loads and text-input-dialog! is public"
                  (expect (fn? (var-get #'dlg/text-input-dialog!)))))
@@ -36,7 +37,6 @@
                               (dlg/normalize-modal-key
                                 (KeyStroke. (Character/valueOf \g) true false false)))))
       (expect (not (dlg/modal-escape-key? (KeyStroke. (Character/valueOf \g) false false false))))))
-
 
 (defn- wheel-down [] (MouseAction. MouseActionType/SCROLL_DOWN 0 (TerminalPosition. 10 10)))
 
@@ -215,8 +215,6 @@
                         (expect (= {:action :switch :id "5"}
                                    (dlg/session-picker-dialog! screen sessions nil)))
                         (finally (.stopScreen screen))))))
-
-
 
 (defdescribe reusable-table-test
              (it "table rows keep fixed width and expose shared filtering"
@@ -642,7 +640,6 @@
       (Thread/sleep 300)
       (expect (zero? @asked))
       (expect (nil? @result)))))
-
 
 (defdescribe settings-dialog-footprint-and-indent-test
              (it "shared dialogs use the same footprint as settings"
@@ -1244,11 +1241,13 @@
         (expect (= held
                    (apply-frame held {"type" "session.status" "session_id" "zz" "is_live" true})))
         (expect (= held (apply-frame held {"type" "heartbeat" "session_id" "a"}))))))
+
 (def ^:private wide-hints
   "A hint bar too wide for a narrow dialog — the fixture `fit-hint-pairs` clips."
   [["↑/↓" "move"] ["n/p" "section"] ["TAB" "fold"] ["RET" "visit"] ["s/u" "select"] ["S/U" "all"]
    ["x/k" "drop"] ["c" "confirm"] ["l" "list"] ["C-w" "copy"] ["P" "send"] ["F" "fetch"]
    ["f" "find"] ["b" "back"] ["z" "undo"] ["g" "refresh"] ["Esc" "close"]])
+
 (defdescribe
   fit-hint-pairs-test
   "The hint bar must CLIP to the dialog's content width by dropping whole
@@ -1737,6 +1736,7 @@
             (feed! \z \z :enter)
             (expect (= "zz" ((:read-option questions) {:label "Token" :prompt "Token:"} nil))))
           (finally (.stopScreen screen))))))
+
 ;; Regression, issue: an API-key sign-in band advertised `-k  API key` and pressing
 ;; `k` did nothing at all — the band's own `:transient!` handed the spec to the
 ;; component WITHOUT the `:read-option` reader beside it, so `tr/run!` fell back to
@@ -1773,7 +1773,6 @@
                ;; …and the credential itself never landed on the screen.
                (expect (not (str/includes? (str/join "\n" (term/grid terminal)) "sk-secret"))))
              (finally (.stopScreen screen))))))
-
 
 ;; Regression (reported from the TUI, with a screenshot): a band asked its
 ;; follow-up question on its own hint row while its COMMAND rows stayed painted
@@ -1936,6 +1935,7 @@
             (expect (str/includes? (str/join "\n" (map :text (term/painted-rows terminal)))
                                    "Alpha band"))))
         (finally (.stopScreen screen))))))
+
 ;;; ── A field's ring belongs INSIDE the frame ──────────────────────────────────
 ;; Regression (reported from the TUI, photo of a commit band): the accent
 ;; ring `▎` a focused field wears was painted in the frame's OWN border column,

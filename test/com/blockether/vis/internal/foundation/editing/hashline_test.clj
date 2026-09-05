@@ -62,7 +62,6 @@
       (expect (hashline/anchor-string? "120:7f2│ alpha"))
       (expect (not (hashline/bare-anchor-string? "120:7f2│ alpha")))))
 
-
 (defdescribe
   resolve-one-anchor-write-contract-test
   ;; Regression (session 633cdc58): a line number from one line and a nearby hash
@@ -114,7 +113,6 @@
                  (get-in (hashline/resolve-anchor-range content (anchor-of 4) (anchor-of 2))
                          [:error :reason])))))
 
-
 (defdescribe read-tolerant-resolution-test
              ;; A READ is non-destructive, so a stale hash must not block the look the way
              ;; it (correctly) blocks a write.
@@ -144,7 +142,6 @@
                  (let [r (hashline/resolve-anchor-range-read content (anchor-of 4) (anchor-of 2))]
                    (expect (= 2 (:from-line r)))
                    (expect (= 4 (:to-line r))))))
-
 
 (defdescribe
   edit-span-newline-semantics-test
@@ -199,7 +196,6 @@
 
         (expect (= "alpha\nbeta\n\nTAIL\n" updated)))))
 
-
 (defdescribe
   render-hashline-block-test
   (it "renders one addressable row per tuple, indent included"
@@ -222,6 +218,7 @@
         (expect (every? #(string/starts-with? % "  ") (string/split-lines indented)))
         ;; The gutter never occurs in source, so splitting on it is exact.
         (expect (= "beta" (second (string/split (second (string/split-lines block)) #"│ " 2)))))))
+
 ;; Regression: a CRLF file's rendered lines kept their `\r`, so the text a model
 ;; sliced off `cat` output ended in a carriage return and writing it back grew a
 ;; SECOND one. The hash never saw it — `line-hash` trims — so the anchor is the

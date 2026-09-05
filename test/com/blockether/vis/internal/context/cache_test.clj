@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.ctx-cache-test
+(ns com.blockether.vis.internal.context.cache-test
   "Repro + spec for prompt-cache-STABLE context rendering.
 
    The standing `session = {…}` block rides in the CACHED system prefix. For
@@ -19,13 +19,13 @@
 
    These tests pin the mechanism the fix relies on."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.ctx-engine :as ctx-engine]
-            [com.blockether.vis.internal.ctx-renderer :as cr]
+            [com.blockether.vis.internal.context.engine :as ctx-engine]
+            [com.blockether.vis.internal.context.renderer :as cr]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.ctx-loop :as ctx-loop]
-            [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.env-digest :as env-digest]
+            [com.blockether.vis.internal.context.loop :as ctx-loop]
+            [com.blockether.vis.internal.context.prompt :as prompt]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.context.env-digest :as env-digest]
             [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]]))
 

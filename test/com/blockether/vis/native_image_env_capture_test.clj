@@ -16,7 +16,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.commandline :as commandline]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.config.core :as config]
             [lazytest.core :refer [defdescribe expect it]]))
 
 ;; A tiny top-level-form reader (no classpath, no tools.reader: the scan must see

@@ -13,7 +13,7 @@
    - We need stable per-node identifiers so selection / hover / click
      can map a glyph back to its IR node.
 
-   Canonical-IR invariants we rely on (see internal.render docstring):
+   Canonical-IR invariants we rely on (see internal.channel.render docstring):
    - text only inside `:span` / raw bodies of `:code` / `:c` / `:kbd`;
    - no '\\n' inside `:span`;
    - hard breaks are explicit `[:br {}]`;

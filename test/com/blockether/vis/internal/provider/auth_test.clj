@@ -1,11 +1,11 @@
-(ns com.blockether.vis.internal.provider-auth-test
+(ns com.blockether.vis.internal.provider.auth-test
   "The daemon-side OAuth broker. These tests pin the two properties the wire
    depends on: a flow's SECRET (PKCE verifier, device code) can never reach a
    client, and a flow id cannot be replayed once it settles."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.provider-auth :as pauth]
-            [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.provider.auth :as pauth]
+            [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- eventually
@@ -153,6 +153,7 @@
           (let [{:keys [flow]} (pauth/start-auth! :fake-pkce)]
             (expect (= true (:ok? (pauth/complete-auth! (:flow-id flow) "https://cb?code=abc"))))
             (expect (= 1 @rebuilds)))))))
+
 (defdescribe provider-auth-lifecycle-test
              (it "cancels a flow idempotently"
                  (with-redefs [registry/provider-by-id

@@ -17,9 +17,9 @@
    boundary does. A tool that legitimately FAILS here (no MCP server, no session
    DB) is not a boundary bug and is reported as such; only a boundary violation
    fails the test."
-  (:require [com.blockether.vis.internal.env-python :as env-python]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.manifest :as manifest]
+  (:require [com.blockether.vis.internal.python.env :as env-python]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- extensions

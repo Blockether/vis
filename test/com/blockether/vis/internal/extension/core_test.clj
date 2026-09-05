@@ -1,9 +1,9 @@
-(ns com.blockether.vis.internal.extension-test
+(ns com.blockether.vis.internal.extension.core-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.loop :as vis-loop]
-            [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.context.prompt :as prompt]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- sample-channel-fn [& _] nil)
@@ -319,7 +319,7 @@
                                                                   (fn []
                                                                     nil)))))))
 
-(def ^:private folded->pos #'com.blockether.vis.internal.extension/folded-kwargs->positional)
+(def ^:private folded->pos #'com.blockether.vis.internal.extension.core/folded-kwargs->positional)
 
 (defdescribe
   folded-kwargs->positional-test
@@ -503,7 +503,8 @@
                  ;; name is how per-tool cards grew back last time: one lookup, then a
                  ;; declaration per verb to feed it.
                  (let [nm 'finish-call-renderers-by-name]
-                   (expect (nil? (ns-resolve 'com.blockether.vis.internal.extension nm)) (str nm))))
+                   (expect (nil? (ns-resolve 'com.blockether.vis.internal.extension.core nm))
+                           (str nm))))
              (it "binds every doc-bearing symbol under a bare Python name"
                  (let [docs
                        (extension/sandbox-symbol-docs)
@@ -620,8 +621,7 @@
               (filter #(re-matches #"[a-z][a-z0-9_]{2,}" %)))
         (re-seq #"`([^`]+)`" (str result))))
 
-
- ;; Regression, doc quality: a tool page used to be prose alone — 17 of the bound
+;; Regression, doc quality: a tool page used to be prose alone — 17 of the bound
  ;; tools never showed a single call, and an options-dict tool stated its required
  ;; keys nowhere `doc(name)` could reach, so the model learned them from refusals.
  ;; Call and key lines are structure rendered by `doc-corpus/entry-text`; the
@@ -761,7 +761,6 @@
         (doseq [k ["is_pass" "pass" "fail" "errored" "skipped" "total" "failures" "message"
                    "output"]]
           (expect (contains? named k) (str "run_tests never names `" k "`: " result))))))
-
 
 (defn activity-success-probe
   "Observed test operation that returns one canonical successful envelope."

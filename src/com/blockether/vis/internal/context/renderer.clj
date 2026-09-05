@@ -1,12 +1,12 @@
-(ns com.blockether.vis.internal.ctx-renderer
+(ns com.blockether.vis.internal.context.renderer
   "Pure renderer for the standing agent-facing `session` snapshot.
 
    `render-ctx-static` projects the session view and serializes it as a Python
    literal with pure JVM code. The live sandbox `session` dict is built from the
    same boundary projection, and `render-ctx-delta` emits executable updates."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.ctx-engine :as eng]
-            [com.blockether.vis.internal.env-python :as env]))
+            [com.blockether.vis.internal.context.engine :as eng]
+            [com.blockether.vis.internal.python.env :as env]))
 
 ;; Knobs
 

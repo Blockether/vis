@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.compaction-verbs-test
+(ns com.blockether.vis.internal.context.compaction-verbs-test
   "Compaction/`fold_session` coverage at three layers:
      1. Raw-Python integration — drive `fold_session` THROUGH the Python sandbox
         so the real argument marshalling (Python list/dict → `->clj`) and the
@@ -14,8 +14,8 @@
         as two string leaves: `folds` (stable gists, one structural delta per fold)
         and `now` (volatile position + budget + live, re-emitted each iteration),
         via `ctx-engine/folds-view` → `ctx-renderer/render-ctx-delta`."
-  (:require [com.blockether.vis.internal.ctx-engine :as eng]
-            [com.blockether.vis.internal.ctx-renderer :as cr]
+  (:require [com.blockether.vis.internal.context.engine :as eng]
+            [com.blockether.vis.internal.context.renderer :as cr]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.loop :as lp]
             [clojure.string :as str]
@@ -29,7 +29,6 @@
 (def ^:private apply-summaries (var-get #'lp/apply-summaries))
 
 (def ^:private expand-through (var-get #'eng/expand-through))
-
 
 (def ^:private irm (var-get #'lp/iteration-results-message))
 
@@ -466,7 +465,6 @@
                  (:intent (eng/fold-key "-t1/i5, t3/i2-")))))
   (it "every refusal carries the whole grammar, so the caller reads it at once"
       (expect (str/includes? (:error (eng/fold-key "nonsense")) eng/fold-key-grammar))))
-
 
 ;; ── layer 2: selector resolution against a live universe ─────────────────────
 
@@ -1023,7 +1021,6 @@
 
 (def ^:private conversation-suffix (var-get #'lp/conversation-suffix))
 
-
 (def ^:private messages-wire-tokens (var-get #'lp/messages-wire-tokens))
 
 (def ^:private priced-model
@@ -1095,7 +1092,6 @@
                                          [collapsed]
                                          {:model priced-model :replay-target priced-target})
                    (expect (zero? (long (get (get @a "engine_iter_weights") "t1/i1")))))))
-
 
 ;; ── layer 6: the human-facing fold CARD (tokens saved + context level) ───────
 

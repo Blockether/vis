@@ -21,6 +21,7 @@
                   (.getCharacter terminal (TerminalPosition. (int col) (int row))))
                 (range cols)))
         (range rows)))
+
 (deftest screen-accepts-a-transport-neutral-html-terminal-test
   (with-open [terminal (-> (HtmlTerminal/builder)
                            (.build))]
@@ -151,6 +152,7 @@
           (str "sections are contiguous at " cols " columns"))
       (is (= 40 (reduce + (map :rows bounds)))
           (str "sections fill every row at " cols " columns")))))
+
 (deftest laid-out-section-painters-stay-inside-their-grid-cell-test
   (let [terminal
         (DefaultVirtualTerminal. (TerminalSize. 12 5))

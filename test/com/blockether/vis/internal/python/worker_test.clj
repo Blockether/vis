@@ -1,10 +1,10 @@
-(ns com.blockether.vis.internal.python-worker-test
+(ns com.blockether.vis.internal.python.worker-test
   "The session-worker process boundary: control messages are bounded and a
    retired interpreter can never be entered again."
-  (:require [com.blockether.vis.internal.env-python :as env]
+  (:require [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.loop :as loop]
-            [com.blockether.vis.internal.python-host :as python-host]
-            [com.blockether.vis.internal.python-worker :as worker]
+            [com.blockether.vis.internal.python.host :as python-host]
+            [com.blockether.vis.internal.python.worker :as worker]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.util.concurrent.atomic AtomicLong)))
 

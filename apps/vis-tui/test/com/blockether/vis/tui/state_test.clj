@@ -10,7 +10,7 @@
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
 
-;; `"verbosity"` is a BUILTIN toggle (`internal/toggles.clj`), not a provider
+;; `"verbosity"` is a BUILTIN toggle (`internal/config/toggles.clj`), not a provider
 ;; extension's, because `text.verbosity` belongs to the OpenAI Responses WIRE
 ;; rather than to one vendor. Nothing is registered here: these events resolve
 ;; against the very registry production uses.
@@ -1695,7 +1695,6 @@
                      (expect (= "new idea" (input/input->text (:input acked))))
                      (expect (nil? (:submitted-input acked)))))))
 
-
 (defdescribe
   failed-turn-refill-test
   ;; A provider-FAILURE terminal (overloaded / rate-limited, retries
@@ -1751,7 +1750,6 @@
                       {:status :failed :client-turn-id pending-id}]))]
 
           (expect (= "new idea" (input/input->text (:input out))))))))
-
 
 (defdescribe
   cancel-self-heal-test
@@ -3144,6 +3142,7 @@
 
         (expect (= "/reload" (input/input->text (:input first-up))))
         (expect (= "older prompt" (input/input->text (:input second-up)))))))
+
 (defdescribe
   cancel-restores-pending-to-input-test
   (it "message-received on CANCEL routes the backlog to the editor, not a drain"
@@ -5385,7 +5384,6 @@
                    (expect (< (long hint-row) (- rows (long prompt-h))))
                    ;; and it never climbs over the header
                    (expect (= 4 min-row)))))
-
 
 ;; Reported over the settings screen: the `speech` FEATURE TOGGLE was the wrong shape.
 ;; A machine-wide on/off cannot answer the only question a human asks - should THIS

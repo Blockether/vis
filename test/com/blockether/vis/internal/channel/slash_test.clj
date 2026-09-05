@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.slash-test
+(ns com.blockether.vis.internal.channel.slash-test
   "Slash dispatch tests.
 
    Slash specs are declarative — every test builds a tiny env map
@@ -6,9 +6,9 @@
    `:ext/slash-commands` carry the fixtures. `active-slashes` and
    `dispatch` walk that env exactly the same way the live engine
    does at turn start."
-  (:require [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
-            [com.blockether.vis.internal.slash :as slash]
+  (:require [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.channel.slash :as slash]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- ext

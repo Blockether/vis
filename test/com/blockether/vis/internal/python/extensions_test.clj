@@ -1,28 +1,28 @@
-(ns com.blockether.vis.internal.python-extensions-test
+(ns com.blockether.vis.internal.python.extensions-test
   "Python extension host — load fixture `.py` files into trusted CPython
    contexts and assert on the registry + adapter contracts. Boots real
    Python sessions (on the shared engine), no model in the loop."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.channel-events :as channel-events]
-            [com.blockether.vis.internal.egress-proxy :as egress]
-            [com.blockether.vis.internal.env-python :as ep]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.agents :as agents]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.view :as human-input]
-            [com.blockether.vis.internal.persistance :as ps]
-            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
-            [com.blockether.vis.internal.provider-auth :as pauth]
-            [com.blockether.vis.internal.provider-limits :as provider-limits]
-            [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.limits-format :as limits-format]
-            [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.channel.events :as channel-events]
+            [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
+            [com.blockether.vis.internal.python.env :as ep]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.context.agents :as agents]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.view.core :as human-input]
+            [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.provider.auth :as pauth]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
+            [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.internal.provider.limits-format :as limits-format]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.foundation.shell :as shell]
-            [com.blockether.vis.internal.python-extensions :as pyx]
+            [com.blockether.vis.internal.python.extensions :as pyx]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.registry :as registry]
-            [com.blockether.vis.internal.python-test-runner :as runner]
+            [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.python.test-runner :as runner]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.lang ProcessHandle]
            [java.nio.file Files]
@@ -483,6 +483,7 @@ raise RuntimeError(' | '.join(errors))
                  (expect (= {:stdout "False\n"}
                             (ep/run-python-block ctx "print('glms_jenkins' in globals())"))))
                (finally (ep/dispose-python-context! ctx))))))))
+
 (def ^:private one-interpreter-py
   "import os
 import sys
@@ -1223,6 +1224,7 @@ vis.extension(
           (expect (= :openai-compatible-responses
                      (:api-style ((:provider/get-token-fn (registry/provider-by-id
                                                             :tokendialect))))))))))
+
 ;; Reload + project-over-global precedence
 
 (defdescribe
@@ -1513,7 +1515,6 @@ vis.extension(
                    (expect (str/includes? report "test_beta"))))
                (finally (ps/db-dispose-connection! store)))))))
 
-
 ;; Providers — a `vis.provider(...)` registers a first-class provider descriptor
 
 (def ^:private provider-py
@@ -1803,6 +1804,7 @@ vis.extension(
                          (expect (not (contains? offered :corp-managed)))
                          (expect (contains? bound :corp-managed))
                          (expect (not (contains? bound :corp-byok)))))))))
+
 ;; Regression, issue #113: ordinary extension process calls from process-level
 ;; provider callbacks were redirected into the session-only jail and returned nil.
 (defn- jail-wait

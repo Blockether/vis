@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.capability
+(ns com.blockether.vis.internal.extension.capability
   "What THIS machine can actually run, asked once and answered as data.
 
    A pack that REGISTERED exists in this process. Whether the machine behind it

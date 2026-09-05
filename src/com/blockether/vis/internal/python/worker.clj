@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.python-worker
+(ns com.blockether.vis.internal.python.worker
   "ONE Python execution environment per session: a child of this same binary
    holding the interpreter that session's sandbox AND its extensions run in.
 
@@ -47,9 +47,9 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
-            [com.blockether.vis.internal.python-host :as python-host]
-            [com.blockether.vis.internal.process-jail :as process-jail]
-            [com.blockether.vis.internal.python-runtime :as python-runtime]
+            [com.blockether.vis.internal.python.host :as python-host]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis-python-runtime :as runtime]
             [taoensso.telemere :as tel])
@@ -351,7 +351,7 @@
     (vec (concat [(str (System/getProperty "java.home") File/separator "bin" File/separator "java")]
                  (.getInputArguments (ManagementFactory/getRuntimeMXBean))
                  ["-cp" (System/getProperty "java.class.path") "clojure.main" "-m"
-                  "com.blockether.vis.internal.python-worker"]))))
+                  "com.blockether.vis.internal.python.worker"]))))
 
 (defn- worker-dir
   ^File [stamp]
@@ -535,14 +535,23 @@
              timeout-ms)))
 
 (defn install-runtime! [k session] (ask k "install-runtime" session nil))
+
 (defn install-sync-tool! [k session tool-name] (ask k "install-sync-tool" session tool-name))
+
 (defn install-tool! [k session tool-name] (ask k "install-tool" session tool-name))
+
 (defn install-module! [k session module] (ask k "install-module" session module))
+
 (defn exec! [k session code] (ask k "exec" session code))
+
 (defn run [k session code] (ask k "run" session code))
+
 (defn run-block [k session code] (ask k "run-block" session code))
+
 (defn eval-str [k session code] (ask k "eval" session code))
+
 (defn close-session! [k session] (ask k "close" session nil))
+
 (defn interrupt!
   "Interrupt whatever `k`'s interpreter is running for `session` and answer
    whether the child acknowledged it. A guest parked in a host call cannot take
@@ -557,7 +566,9 @@
         (fail-host-calls!
           (:peer state)
           "the block was interrupted while this host call was still running; its result is discarded")))))
+
 (defn stdin! [k session text] (ask k "stdin" session (str text)))
+
 (defn trust! [k session trusted?] (ask k "trust" session (if trusted? "1" "0")))
 
 (defn confine!

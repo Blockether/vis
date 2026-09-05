@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.slash-integration-test
+(ns com.blockether.vis.internal.channel.slash-integration-test
   "Engine loop integration of slash dispatch.
 
    Asserts that `run-turn!` short-circuits the LLM round-trip when
@@ -9,12 +9,12 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.content :as content]
-            [com.blockether.vis.internal.ctx-loop :as ctx-loop]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.context.loop :as ctx-loop]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-store

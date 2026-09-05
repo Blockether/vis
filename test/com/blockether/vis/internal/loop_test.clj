@@ -4,33 +4,33 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
-            [com.blockether.vis.internal.activity :as activity]
+            [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.content :as content]
-            [com.blockether.vis.internal.ctx-loop :as ctx-loop]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.form :as form]
+            [com.blockether.vis.internal.context.loop :as ctx-loop]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.python-host :as python-host]
-            [com.blockether.vis.internal.python-worker :as python-worker]
-            [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.ctx-engine :as eng]
-            [com.blockether.vis.internal.titling :as titling]
-            [com.blockether.vis.internal.runtime-settings :as rt]
-            [com.blockether.vis.internal.cancellation :as cancellation]
-            [com.blockether.vis.internal.view :as hi]
-            [com.blockether.vis.internal.channel-events :as ce]
-            [com.blockether.vis.internal.provider-error :as perr]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.registry :as registry]
-            [com.blockether.vis.internal.env-python :as env]
-            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.internal.python.host :as python-host]
+            [com.blockether.vis.internal.python.worker :as python-worker]
+            [com.blockether.vis.internal.context.prompt :as prompt]
+            [com.blockether.vis.internal.context.engine :as eng]
+            [com.blockether.vis.internal.session.titling :as titling]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.view.core :as hi]
+            [com.blockether.vis.internal.channel.events :as ce]
+            [com.blockether.vis.internal.provider.error :as perr]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.python.env :as env]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [taoensso.telemere :as tel]
-            [com.blockether.vis.internal.session-model :as session-model]
-            [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.session.model :as session-model]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.vision-describe :as vision-describe]
+            [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
             [lazytest.core :refer [defdescribe describe it expect throws?]]))
 
 (defn- helper-router
@@ -75,7 +75,6 @@
 (defn- captured-llm-text-opts [opts] (captured-svar-ask-code-opts #(lp/llm-text! opts)))
 
 (def ^:private provider-error-explanation perr/provider-error-explanation)
-
 
 (def ^:private turn-eval-evidence (deref #'lp/turn-eval-evidence))
 
@@ -940,6 +939,7 @@
                                        {:id :anthropic}]}
                           shared-router)))
              (finally (lp/dispose-environment! first-env) (lp/dispose-environment! second-env))))))
+
 (defdescribe
   session-provider-kickoff-router-refresh-test
   (it "kicks off a provider added to a live session router"
@@ -972,6 +972,7 @@
                           {:providers [{:id :opencode-go :llm-headers {"existing" "kept"}}
                                        {:id :anthropic}]})))
              (finally (lp/dispose-environment! environment))))))
+
 (defdescribe
   codex-stateful-session-test
   (it
@@ -1438,7 +1439,7 @@
 (defdescribe
   permission-config-snapshot-test
   (it "keeps every process-jail and network grant immutable until environment rebuild"
-      (require 'com.blockether.vis.internal.config-validation :reload)
+      (require 'com.blockether.vis.internal.config.validation :reload)
       (require 'com.blockether.vis.internal.loop :reload)
       (let [cfg
             (atom
@@ -1513,8 +1514,6 @@
 
 (def ^:private max-tokens-exceeded-error? (deref #'lp/max-tokens-exceeded-error?))
 
-
-
 (def ^:private next-retry-counters (deref #'lp/next-retry-counters))
 
 (def ^:private emergency-fold-projection (deref #'lp/emergency-fold-projection))
@@ -1527,7 +1526,6 @@
 
 (def ^:private provider-output-chunk? (deref #'lp/provider-output-chunk?))
 
-
 (def ^:private bumped-max-tokens-extra-body (deref #'lp/bumped-max-tokens-extra-body))
 
 (def ^:private llm-provider-error-context (deref #'lp/llm-provider-error-context))
@@ -1537,6 +1535,7 @@
 (def ^:private previous-turn-context (deref #'lp/previous-turn-context))
 
 (def ^:private previous-request-usage (deref #'lp/previous-request-usage))
+
 (def ^:private run-normal-turn! (deref #'lp/run-normal-turn!))
 
 (def ^:private maybe-auto-title! (deref #'titling/maybe-auto-title!))
@@ -1611,7 +1610,6 @@
                (expect (= "anthropic" (:from-provider ev)))
                (expect (= "claude-x" (:from-model ev)))))
            (finally (lp/dispose-environment! env))))))
-
 
 ;; Regression: svar speaks its own session notices on the SAME streaming callback as
 ;; routing events, and every chunk carrying `:event/type` was labelled
@@ -2032,6 +2030,7 @@
                           (expect (nil? (:error form-res)))
                           (expect (str/includes? (str (:stdout form-res)) "42"))))
                       (finally (lp/dispose-environment! env))))))
+
 (defdescribe
   activity-ownership-boundary-test
   (it
@@ -2075,8 +2074,6 @@
             (expect (seq (:rows activity)))
             (expect (empty? (:attachments block)))))
         (finally (lp/dispose-environment! env))))))
-
-
 
 (defdescribe
   previous-turn-context-test
@@ -2759,6 +2756,7 @@
         (let [result (run-normal-turn! env "follow up" {})]
           (expect (= "turn-3" (:session-turn-id result)))
           (expect (= "turn-3" (:turn-id @seen))))))))
+
 ;; Regression, issue #71: cancelling a foreground turn launched the deferred LLM title request.
 (defdescribe
   cancelled-turn-titling-test
@@ -3136,7 +3134,6 @@
       (expect (str/includes? (:content (second messages)) "continue"))
       (expect (string? (:content (last messages))))
       (expect (str/includes? (:content (last messages)) "item_count")))))
-
 
 ;; 1x1 red PNG — REAL pixels. Every image block the loop emits is decoded at
 ;; SEND time, so a placeholder payload is (correctly) refused and never reaches
@@ -3627,6 +3624,7 @@
           (expect (str/includes? (:content note) "a red pixel on white"))
           (expect (str/includes? (:content note) "seer"))
           (expect (not (str/includes? (pr-str suffix) "image_url")))))))
+
 (defdescribe
   replay-image-describer-test
   "The describer is resolved from the SESSION's own fleet, so a session with nothing
@@ -3664,6 +3662,7 @@
           (toggles/set-value! "vision_fallback_describe" false)
           (try (expect (nil? ((describer) {:router router} "ctx" :seeing)))
                (finally (toggles/reset-to-default! "vision_fallback_describe")))))))
+
 (defdescribe
   conversation-suffix-image-budget-test
   "An image is never REFERENCED by a later request, it is re-uploaded in full on
@@ -3846,6 +3845,7 @@
                      (merge (provider-body projected :anthropic-coding-plan) caller-body)))
           (expect (= {:service_tier "auto" :max_tokens 1024}
                      (sanitize {:service_tier "auto" :max_tokens 1024})))))))
+
 (defdescribe ask-code-block-observation-test
              (it "reports the block count (lenient mode: only the count is meaningful)"
                  (expect (= {:form-count 1}
@@ -4135,7 +4135,6 @@
 
 ;; def-sink -> vars-snapshot (per-var precise source extraction)
 
-
 (defdescribe
   iteration-summarize-test
   "summarize/drop operate at ITERATION (tN/iN) granularity: a summarized step
@@ -4197,7 +4196,6 @@
     (it "no summaries ⇒ trailer-iters unchanged"
         (let [tis [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "x"}]}]]]
           (expect (= tis (apply-summaries tis [])))))))
-
 
 (defdescribe
   failed-block-keeps-its-output-test
@@ -4657,6 +4655,7 @@
                (expect (true? (:vis/user-error data))) (expect (str/includes? (ex-message thrown)
                                                                               "openai-codex"))
                (expect (str/includes? (ex-message thrown) "gpt-5.6-sol"))))))))
+
 (defdescribe
   prepare-turn-model-preference-test
   (let [prepare
@@ -4825,6 +4824,7 @@
             (expect (nil? (:session-turn-id ctx)))
             (expect (not (contains? (captured-opts (assoc ctx :environment {}))
                                     :session-turn-id))))))))
+
 (defdescribe
   context-overflow-terminal-breaker-test
   "Typed context overflow must never be fed back into an unreachable next model call."
@@ -4933,6 +4933,7 @@
                                                          {:iteration 3
                                                           :messages [{:role "user"
                                                                       :content "hi"}]})))))))
+
 (defdescribe
   stream-watchdog-terminal-error-test
   "Stream watchdog failures that reach here have spent BOTH svar's bounded
@@ -4964,6 +4965,7 @@
 
         (expect (contains? result :com.blockether.vis.internal.loop/iteration-error))
         (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))
+
 ;; The reply is ONE program: multiple fences a provider splits out collapse to a
 ;; single code-entry so the form cap spans the whole reply and r["…/fF"] numbers
 ;; continuously (no per-fence f1 collision).
@@ -5023,7 +5025,6 @@
           (expect (str/includes? m "#"))
           (expect (not (str/includes? m ";;")))))))
 
-
 (defdescribe only-python-execution-is-advertised-test
              ;; ONE tool reaches the provider. Every other capability is already a bare Python
              ;; name inside that sandbox — found with `apropos(pattern)`, read with `doc(name)`,
@@ -5075,7 +5076,6 @@
                                "close what you KEEP" "VIS_PY_MAX_OPEN_FILES"]]
                    (expect (str/includes? (:description tool) fact))))))
 
-
 ;; ── post-refresh propagation backoff (gateway-wide OAuth-401 storm guard) ──
 (def ^:private auth-last-refreshed (deref #'lp/auth-last-refreshed))
 
@@ -5093,7 +5093,6 @@
   []
   (ex-info "boom"
            {:status 401 :body "{\"error\":{\"message\":\"Invalid authentication credentials\"}}"}))
-
 
 (defdescribe
   auth-provider-fallback-routing-test
@@ -5528,6 +5527,7 @@
              (expect (= #{} (cooled)))
              (expect (nil? (get @cooldown :rbi-genai)))
              (finally (reset! cooldown {}))))))
+
 ;; Regression, issue #154: nothing let a human REFUSE the rescue. Every automatic route
 ;; off the picked model — the cooldown exclusion, the post-refresh rescue, the refusal
 ;; switch — happened unasked, answered from a model they had not chosen, and started that
@@ -5690,6 +5690,7 @@
           (expect (= :refusal (:reason ev)))
           (expect (= "claude-opus-5" (:from-model ev)))
           (expect (= "claude-opus-4-8" (:to-model ev)))))))
+
 ;; Regression, issue #154: a turn rescued onto a peer kept being MEASURED against the model
 ;; it had left. `session["routing"]` named the provider that failed and `session_utilization`
 ;; priced the pin's context window, so a 1M-window pin rescued onto a 128K peer read ~90%
@@ -5779,7 +5780,6 @@
         (let [enriched (ctx-loop/enrich-ctx {:routing {"provider" "pinned" "model" "big"}}
                                             {"session_turn" 2})]
           (expect (= {"provider" "pinned" "model" "big"} (get enriched "session_routing")))))))
-
 
 ;; Regression, issue #154: Vis recomputed and restored a stale prompt-cache ratio instead
 ;; of rendering the current, route-scoped status already measured by Svar.
@@ -5914,6 +5914,7 @@
         (expect (= router (materialise router nil "glm-4.8")))
         (expect (= router (materialise router :zai-coding-plan "   ")))
         (expect (= router (materialise router :zai-coding-plan nil))))))
+
 (defdescribe
   post-refresh-propagation-backoff-test
   (describe
@@ -7906,6 +7907,7 @@
                      (expect (identical? entry e))
                      (expect (zero? @opened)))))
                (finally (swap! env-cache dissoc k)))))))
+
 (defdescribe voice-projection-prompt-test
              (it "activates the voice projection instructions only for the requested turn"
                  (let [projected (#'lp/voice-system-prompt "base" {"voice_projection" true})]
@@ -8074,7 +8076,6 @@
                      (:cost written)))
           (expect (= card (:error written)))
           (expect (= :error (:status result))))))))
-
 
 ;; Regression: `set-provider!` handed `save-config!` a map holding ONLY
 ;; `:providers`, so persisting one provider replaced the whole machine store —

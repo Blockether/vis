@@ -432,6 +432,7 @@
   "A progress node with no fraction: started, size unknown. Not an empty state —
    a bar nobody has measured still counts what it finished."
   "_working_")
+
 (defn- invalid-view!
   "Refuse a view the engine may not paint: one line naming what to fix, thrown
    where the view was declared."
@@ -474,6 +475,7 @@
   (cond value (double value)
         (and done total (pos? (long total))) (/ (double done) (double total))
         :else nil))
+
 (defn- cell-text
   "One table cell, made safe for a pipe table: a newline would end the row, a
    pipe would invent a column, and padding is the rail's, so it is trimmed off
@@ -744,6 +746,7 @@
                             (let [items (long (or (:elided (meta node)) 0))]
                               (when (pos? items) {:node-id (:id node) :items items}))))
                     budgeted)})))
+
 (defn- verdict-line
   "The first thing the document says: how the view ended, before anything it
    painted. `->markdown` sets it apart in a `>` block, and the error carries a

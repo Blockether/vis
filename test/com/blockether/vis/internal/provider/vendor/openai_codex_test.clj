@@ -1,10 +1,10 @@
-(ns com.blockether.vis.internal.provider.openai-codex-test
+(ns com.blockether.vis.internal.provider.vendor.openai-codex-test
   (:require [charred.api :as json]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.provider.openai-codex :as codex]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.provider.vendor.openai-codex :as codex]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.providers :as providers]
+            [com.blockether.vis.internal.provider.service :as providers]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- jwt

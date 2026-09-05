@@ -1,9 +1,9 @@
-(ns com.blockether.vis.internal.resources-test
+(ns com.blockether.vis.internal.gateway.resources-test
   "Health contract of the session resource registry: `list-resources` probes
    every health-capable resource (`:health-fn`, parallel with a hard timeout)
    and flips the stored `status` to reality; a throwing or wedged health-fn can
    neither hang a render nor corrupt the stored status."
-  (:require [com.blockether.vis.internal.resources :as resources]
+  (:require [com.blockether.vis.internal.gateway.resources :as resources]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- fresh-sid [] (str "res-test-" (java.util.UUID/randomUUID)))
@@ -122,7 +122,7 @@
           (fresh-sid)
 
           normalize-var
-          (ns-resolve 'com.blockether.vis.internal.resources 'normalize-patch)
+          (ns-resolve 'com.blockether.vis.internal.gateway.resources 'normalize-patch)
 
           original-normalize
           (var-get normalize-var)
@@ -300,7 +300,7 @@
   (it
     "tears down a session that first appears while an earlier stop callback is blocked"
     (let [teardown
-          (var-get (ns-resolve 'com.blockether.vis.internal.resources 'teardown-sessions!))
+          (var-get (ns-resolve 'com.blockether.vis.internal.gateway.resources 'teardown-sessions!))
 
           sid-a
           (fresh-sid)

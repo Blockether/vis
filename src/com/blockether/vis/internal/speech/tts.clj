@@ -168,6 +168,7 @@
                    :family :pocket-tts
                    :asset-id (:id entry)
                    :notice (:notice entry)})))
+
 (defn- piper-asset-for
   "The manifest entry whose voice is `voice-id`, or the default when none is
    named."
@@ -271,6 +272,7 @@
    (sherpa/ensure-native!)
    (mapv #(assets/install! % on-progress)
          (remove assets/installed? (required-assets family voice-id)))))
+
 ;; Synthesis
 
 (defn- num-threads ^long [] (max 1 (long (.availableProcessors (Runtime/getRuntime)))))

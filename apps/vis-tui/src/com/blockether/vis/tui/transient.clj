@@ -305,6 +305,7 @@
     (mapv (fn [pane]
             (into (vec pane) (repeat (- h (count pane)) {:kind :blank})))
           ps)))
+
 (defn panes
   "PURE: `spec`'s groups dealt into `n` side-by-side panes, in order.
 
@@ -501,6 +502,7 @@
         (when region (pane-widths region dealt))]
 
     {:panes (if ws (pad-to-tallest (mapv wrap-headings dealt ws)) dealt) :pane-ws ws}))
+
 (def ^:private chrome-rows
   "Rows of the popup's OWN chrome above its body: the opening separator, and
    nothing else. A transient band carries NO title row — its first row is the

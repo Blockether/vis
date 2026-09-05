@@ -36,16 +36,19 @@
   (some-> value
           wire/->engine
           restore-values))
+
 (defn live-view<-wire
   [value]
   (some-> value
           wire/->engine
           restore-values))
+
 (defn live-patch<-wire
   [value]
   (some-> value
           wire/->engine
           restore-values))
+
 (defn live-result<-wire
   [value]
   (some-> value

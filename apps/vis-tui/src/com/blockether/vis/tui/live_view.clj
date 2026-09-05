@@ -333,7 +333,6 @@
         (assoc :is-following true
                :offset 0))))
 
-
 (defn run-row
   "The transcript receipt for a settled extension run, anchored at its form.
 
@@ -1427,7 +1426,6 @@
                   :view-id (view-id pane)
                   :enabled? true}))))
 
-
 (defn- band-title "The Live View title." [pane now-ms] (title-line pane now-ms))
 
 (defn- band-shape
@@ -1631,7 +1629,6 @@
               :total total
               :visible body-visible
               :widths (:widths (meta rows-plan))})))))))
-
 
 (defn paint!
   "Paint the newest expanded Live View."

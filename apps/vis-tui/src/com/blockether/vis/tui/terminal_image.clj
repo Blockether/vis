@@ -85,6 +85,7 @@
   (try (requiring-resolve (symbol (str video-ns) (str sym))) (catch Throwable _ nil)))
 
 (def ^:private v-poster (delay (video-var 'poster)))
+
 (def ^:private v-probe (delay (video-var 'probe)))
 
 (defn video-mime?
@@ -318,7 +319,6 @@
 
       nil)))
 
-
 (defn kitty-transmit
   "Kitty `a=t` transmit-ONLY sequence: upload PNG `data` (base64 String or RAW
    bytes) under client image id `id` WITHOUT displaying it, chunked into
@@ -360,7 +360,6 @@
    transmit cache evicts a long-off-screen image to bound terminal-side memory."
   [id]
   (TerminalImage/freeKittyImage (int id)))
-
 
 (defn- video-paste-descriptor
   "Descriptor for a dropped VIDEO path, in exactly the shape a dropped picture
@@ -419,7 +418,6 @@
                            "tui-attachments")]
     (.mkdirs dir)
     dir))
-
 
 (defn materialize-attachment
   "Decode ONE persisted user image attachment (canonical wire map, STRING keys

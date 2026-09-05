@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider.lmstudio
+(ns com.blockether.vis.internal.provider.vendor.lmstudio
   "LM Studio local provider preset extension."
   (:require [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]))

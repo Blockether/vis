@@ -1,9 +1,9 @@
 (ns com.blockether.vis.internal.doctor-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.doctor :as doctor]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.speech.cli :as speech-cli]
             [lazytest.core :refer [defdescribe expect it]]))
 

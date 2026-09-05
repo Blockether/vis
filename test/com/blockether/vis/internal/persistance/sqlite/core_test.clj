@@ -17,8 +17,8 @@
             [com.blockether.vis.internal.persistance.sqlite.core :as sqlite-core]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h :refer
              [raw-count raw-query]]
-            [com.blockether.vis.internal.attachments :as attachments]
-            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [honey.sql :as sql]
             [lazytest.core :refer [defdescribe it expect]]
             [next.jdbc :as jdbc])
@@ -36,7 +36,6 @@
 (defn- table-columns
   [store table]
   (set (map :name (jdbc/execute! (:datasource store) [(str "PRAGMA table_info(" table ")")]))))
-
 
 (def ^:private migration-checksum-mismatch? (private-core-fn "migration-checksum-mismatch?"))
 
@@ -351,7 +350,6 @@
       ;; Unknown id -> nil.
       (expect (nil? (vis/db-read-attachment s (str (java.util.UUID/randomUUID))))))))
 
-
 ;; Regression, session 55ed67f6: the sandbox now hands the producer an
 ;; artifact's id INSIDE the block that made it, so a row minted with a fresh
 ;; uuid at store time turned that id into a dangling reference one iteration
@@ -406,6 +404,7 @@
       (expect (string? (:id (get by-name "unstamped.png"))))
       (expect (not= given-id (:id (get by-name "unstamped.png"))))
       (expect (= 1 (:version (get by-name "unstamped.png")))))))
+
 (defdescribe
   session-attachment-rollup-test
   (it
@@ -2666,7 +2665,6 @@
         (expect (= "(+ 1 1)" (:code iteration)))
         (expect (= "2\n" (:stdout form)))))))
 
-
 (defdescribe
   log-test
   (it "inserts into log table with FK scope"
@@ -3042,6 +3040,7 @@
       (expect (= (:id other) (:project-id (rows guest))))
       (expect (= 0 (:project-position (rows guest))))
       (expect (nil? (rows missing))))))
+
 (defdescribe
   full-text-search-facade-test
   (it "implements db-search across prompts, answers, and thinking"
@@ -3208,6 +3207,7 @@
                                                   (vis/db-list-session-attachments-meta s cid))))))
         (expect (= "buy milk"
                    (:transcription (vis/db-read-attachment s (:id (get by-name "memo.m4a")))))))))
+
 (defdescribe
   late-transcript-reaches-its-row-test
   "The words a recording holds arrive AFTER the turn is written down - staging a
@@ -3793,7 +3793,6 @@
         (expect (= "vis-store://bucket/key" (:storage_uri cols)))
         (expect (nil? (:bytes cols)))
         (expect (= 999999 (:size_bytes cols))))))
-
 
 (defdescribe
   wal-size-limit-test

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.cancellation
+(ns com.blockether.vis.internal.session.cancellation
   "Cancellation token - leaf module.
 
    The cancellation token is a tiny two-atom record that lets a UI

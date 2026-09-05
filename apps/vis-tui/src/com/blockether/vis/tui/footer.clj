@@ -196,7 +196,6 @@
          (str " " bits))
        ")"))
 
-
 (defn- git-footer-spans
   [{:strs [is_workspace] :as status}]
   (cond
@@ -484,7 +483,6 @@
 ;;; ── Segment list ───────────────────────────────────────────────────────────
 (comment
   "Channel statuses and transient notifications render in the header; footer owns model, git, and budgets only.")
-
 
 (defn- build-segments
   "Vector of `{:text :fg :bold? :region :priority}`.

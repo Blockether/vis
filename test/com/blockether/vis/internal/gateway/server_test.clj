@@ -4,8 +4,8 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
-            [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
@@ -13,13 +13,13 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
-            [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.resources :as resources]
-            [com.blockether.vis.internal.python-extensions :as python-extensions]
-            [com.blockether.vis.internal.slash :as slash]
-            [com.blockether.vis.internal.workspace :as workspace]
-            [com.blockether.vis.internal.toggles :as toggles]
-            [com.blockether.vis.internal.speech :as speech]
+            [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.internal.gateway.resources :as resources]
+            [com.blockether.vis.internal.python.extensions :as python-extensions]
+            [com.blockether.vis.internal.channel.slash :as slash]
+            [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.speech.core :as speech]
             [com.blockether.vis.internal.loop :as lp]
             [reitit.ring :as rr]
             [ring.adapter.jetty9 :as jetty]
@@ -148,6 +148,7 @@
                                           (get-in @(server-state) [:sse-clients :browser :close!])))
                           (server/unregister-contributed-sse! :browser)
                           (is (empty? (:sse-clients @(server-state))))))))
+
 (deftest mcp-management-handlers-are-sanitized-and-route-mutations-test
   (let [body
         {"name" "filesystem" "enabled" true "server" {"transport" "stdio" "command" "npx"}}
@@ -620,6 +621,7 @@
                                                (is (wait-until-slow #(pos? @stops))
                                                    "shutdown is still evaluated after a throw")
                                                (is (pos? @sweeps)))))))))
+
 (deftest closing-an-sse-stream-unblocks-a-pump-parked-on-the-heartbeat
   (testing "the writer must exit at once, not at the next 15s keepalive"
     (let [out
@@ -1414,6 +1416,7 @@
                                         (is (= 425 (:status response)))
                                         (is (= "downloading" (get body "status")))
                                         (is (= 42 (get body "progress")))))))))))
+
 ;; Regression: the global slash endpoint resolved project skills against the gateway
 ;; process cwd, so nested-project sessions neither saw their own skills nor their children.
 (deftest slashes-handler-uses-the-session-workspace-and-includes-native-commands
@@ -1456,6 +1459,7 @@
         (is (= ["/help" "/new-session" "/sessions"] (mapv :name (second @seen))))
         (is (= (.getCanonicalPath (io/file root)) (nth @seen 2)))
         (is (some #(= "/rename" (get % "name")) (get body "commands")))))))
+
 ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: gateway startup
 ;; loaded Python before listening, while the TUI separately loaded the same files.
 (deftest slashes-handler-loads-python-on-demand-for-the-tui
@@ -2512,6 +2516,7 @@
                (deliver release :go)
                (is (= "data: last" (read-frame)))))
            (finally (.stop ^org.eclipse.jetty.server.Server server))))))
+
 (deftest sse-cursor-clamps-a-client-ahead-of-the-gateway-counter
   ;; A client keeps its replay cursor as a monotonic max across reconnects, but
   ;; the gateway's seq counter is per-process: a restarted daemon (or a session
@@ -3369,6 +3374,7 @@
       (testing "and so is a project, which is bounded by the project"
         ((rv 'list-sessions-handler) {:query-params {"project_id" "p1"}})
         (is (nil? (:limit (second @seen))))))))
+
 ;; Regression, issue #146: `wrap-errors` answered EVERY throwable with a generic
 ;; `engine-error` 500, so a request that failed only because no AI provider was
 ;; configured reached the TUI as an ordinary crash — `vis-agent tui` printed a
@@ -3486,6 +3492,7 @@
 
     (is (= 400 (:status response)))
     (is (= "clip-not-wav" (get body "reason")))))
+
 (deftest voices-hang-off-the-machine-not-off-a-session
   ;; An imported clip is stored on the machine and every session on it speaks with the
   ;; same catalogue, so the one screen that manages voices - settings, which is looking

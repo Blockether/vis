@@ -1,7 +1,7 @@
-(ns com.blockether.vis.internal.titling-test
+(ns com.blockether.vis.internal.session.titling-test
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.titling :as titling]
+            [com.blockether.vis.internal.session.titling :as titling]
             [lazytest.core :refer [defdescribe it expect]]))
 
 ;; The interesting fns are private; reach them the way loop-test does.

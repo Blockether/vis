@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.git
+(ns com.blockether.vis.internal.workspace.git
   "Shared workspace inspection, backed by the native `git` binary.
 
    UI surfaces and extensions depend on this namespace instead of embedding
@@ -9,13 +9,13 @@
    already on the user's PATH, so behaviour matches their shell exactly.
 
    Workspace lifecycle mutations stay in
-   `com.blockether.vis.internal.workspace`."
+   `com.blockether.vis.internal.workspace.core`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.cancellation :as cancellation]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.util.concurrent TimeUnit]))
@@ -123,7 +123,6 @@
                         :args (vec (map str args))
                         :error (ex-message t)}])
             {:exit nil :out "" :err "" :timed-out? false :duration-ms (- (util/now-ms) t0)})))))
-
 
 (defn- git-ok
   "stdout of `git <args>` when it exits 0, else nil."

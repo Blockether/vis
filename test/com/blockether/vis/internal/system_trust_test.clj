@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.system-trust-test
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.system-trust :as system-trust]
-            [com.blockether.vis.internal.tls-mitm :as tls-mitm]
+            [com.blockether.vis.internal.sandbox.tls-mitm :as tls-mitm]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]

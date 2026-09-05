@@ -12,7 +12,7 @@ consumer uses.
   sandbox and execution internals at `core.clj:42-80`; its View exports at `core.clj:792-815` resolve
   a second implementation namespace dynamically.
 - `src/com/blockether/vis/view.clj:112-340` separately owns semantic View builders, while
-  `internal/view.clj:1-15,1720-1950,2382` combines Human Input and Live View lifecycle, secrets,
+  `internal/view/core.clj:1-15,1720-1950,2382` combines Human Input and Live View lifecycle, secrets,
   materialization, storage, wire and Python entry points in 2 672 lines. The same primitive therefore
   has multiple public entrances and names exposing implementation modes.
 - The TUI declares a dependency on the whole engine at
@@ -45,7 +45,7 @@ consumer uses.
   release/build/runtime discovery. `gateway/state.clj:1-5536`, `server.clj:1-5019` and
   `client.clj:1-2719` each combine multiple owners.
 - `src/com/blockether/vis/internal/loop.clj:1-12120` owns block execution, iterations, turns,
-  environment lifetime and session caches. `internal/activity.clj:1-406` and its children reduce
+  environment lifetime and session caches. `internal/activity/core.clj:1-406` and its children reduce
   tool observations but sit beside Core even though Activity is execution trace data.
 - `resources/META-INF/vis/manifest.edn:2-54` registers 25 namespaces called `foundation`, and
   `src/com/blockether/vis/internal/foundation/` contains 56 implementation files: environment
@@ -62,7 +62,7 @@ consumer uses.
   `package.json` or npm workspace: `apps/vis-companion` is standalone, and its `scripts/version.mjs` is
   the only thing allowed to write `VIS_VERSION` into package, lock and `pyproject` manifests.
 - The Phase 1 diagnostic baseline records source bytes / public Vars for the largest current owners:
-  `core` 46 304 / 516, `internal.view` 118 995 / 47, `internal.loop` 609 757 / 69, Activity 13 341 /
+  `core` 46 304 / 516, `internal.view.core` 118 995 / 47, `internal.loop` 609 757 / 69, Activity 13 341 /
   11, gateway state 255 276 / 86, server 229 328 / 9, client 122 037 / 104, wire 10 885 / 17 and
   protocol 23 471 / 21. Excluding generated/cache trees, package-source baselines are `vis-contract`
   137 007 bytes, `vis-agent` 437 750, Companion `src/lib` 1 278 122 and TUI `src` 2 254 956. These
@@ -465,7 +465,7 @@ stable commands and read models; they do not expose Core mutable state.
 
 **Acceptance criteria.**
 
-- Move `internal.activity`, `activity.event` and `activity.presenter` under
+- Move `internal.activity.core`, `activity.event` and `activity.presenter` under
   `internal.core.execution.tool-activity`; collapse the presenter registry if it is only a reducer
   detail.
 - Preserve replay, bounding, coalescing, resource references and late-failure behavior; Activity

@@ -260,7 +260,6 @@
                    (expect (every? #(str/starts-with? (str %) p/MARKER_ERR_RESULT) err-lines))
                    (expect (not-any? #(str/starts-with? (str %) p/MARKER_CODE) err-lines)))))
 
-
 (defmacro ^:private with-raw-code-on
   [& body]
   ;; The TUI now renders the model's raw `:code` unconditionally — the same
@@ -2276,8 +2275,6 @@
                    (expect (not (str/includes? painted p/INLINE_CODE_ON)))
                    (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
 
-
-
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Loose-bullet coalesce - multi-paragraph list items render as one bullet
 ;;
@@ -3626,6 +3623,7 @@
                    (expect (not= (fp base) (fp hydrated)))
                    (expect (not= (fp hydrated)
                                  (fp (assoc hydrated :iteration-id "iteration-2")))))))
+
 (defdescribe form-fingerprint-pending-display-test
              ;; Regression: the live progress body is memoized by `form-fingerprint`.
              ;; A RUNNING block paints its formatted band (`:display-code` /
@@ -3895,6 +3893,7 @@
         (let [txt (:text
                     (render/format-answer-markdown-data ast 76 (opts {[sid paste-node-id] true})))]
           (expect (not (str/includes? txt "buy milk")))))))
+
 (defdescribe
   image-disclosure-render-test
   ;; A dropped image renders NON-collapsible: the `[Image #N: ...]` token is a
@@ -4761,7 +4760,6 @@ h = 8"
           (expect (not (str/includes? text "**")))
           (expect (not (str/includes? text "ERROR:")))))))
 
-
 ;; Regression, issue #167: the terminal received the upstream status on the
 ;; canonical error block, then dropped it while projecting that block to Markdown.
 (defdescribe
@@ -4823,6 +4821,7 @@ h = 8"
                    (str/index-of text "provider_rate_limit")))
         (expect (not (str/includes? text "Flattened fallback")))
         (expect (not (str/includes? text "**"))))))
+
 ;; Every collapsible band NAMES itself on its disclosure row, and that name is
 ;; the control: `PYTHON`, `THINKING` and `RESULT` paint in caps and BOLD while
 ;; the `+N more` tally beside them stays at body weight. The three used to

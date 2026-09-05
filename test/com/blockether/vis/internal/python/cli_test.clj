@@ -1,15 +1,15 @@
-(ns com.blockether.vis.internal.python-cli-test
+(ns com.blockether.vis.internal.python.cli-test
   "End-to-end cover for the `vis-agent python` standalone interpreter helpers
    (`python-cli-context` / `run-python-source!`). Drives the SAME
    `env/*` machinery the native binary runs, so these assertions hold on
    both the JVM and the native image. Boots ONE no-network sandbox for the
    ns (context creation is expensive) and captures the real-terminal
    output by rebinding `config/original-stdout`."
-  (:require [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.env-python :as env]
+  (:require [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.main]
-            [com.blockether.vis.internal.python-project]
-            [com.blockether.vis.internal.python-test-runner]
+            [com.blockether.vis.internal.python.project]
+            [com.blockether.vis.internal.python.test-runner]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -34,7 +34,7 @@
 (def ^:private ensure-pytest!
   "Install the real `pytest` for the sandbox once, so a `-m pytest` case runs on a
    machine that has never had it."
-  #'com.blockether.vis.internal.python-test-runner/ensure-pytest!)
+  #'com.blockether.vis.internal.python.test-runner/ensure-pytest!)
 
 (defn- scratch-dir!
   "A throwaway directory INSIDE the process's working directory, which is exactly
@@ -289,7 +289,7 @@
              (expect (re-find #"1 passed" (.toString baos "UTF-8"))))
            (finally (env/dispose-python-context! ctx) (delete-tree! dir))))))
 
-(def ^:private python-project-import-roots com.blockether.vis.internal.python-project/import-roots)
+(def ^:private python-project-import-roots com.blockether.vis.internal.python.project/import-roots)
 
 (defn- write-project!
   "Materialise a throwaway project: `pyproject.toml` plus the `dirs` that its

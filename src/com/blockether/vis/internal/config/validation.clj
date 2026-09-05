@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.config-validation
+(ns com.blockether.vis.internal.config.validation
   "Validates raw configuration with the contract JSON Schema and derives runtime policy maps."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.config :as contract-config]
@@ -18,13 +18,17 @@
         :else x))
 
 (def api-style-values contract-config/api-style-values)
+
 (def api-style-aliases
   (into {}
         (map (fn [[alias normalized]]
                [alias (keyword normalized)]))
         contract-config/api-style-aliases))
+
 (def workspace-access-values contract-config/workspace-access-values)
+
 (def workspace-draft-values contract-config/workspace-draft-values)
+
 (def workspace-os-values contract-config/workspace-os-values)
 
 (defn normalize-api-style
@@ -34,10 +38,13 @@
     (get api-style-aliases (if (or (keyword? value) (symbol? value)) (name value) value))))
 
 (defn explain-data [config] (contract-config/config-explain-data config))
+
 (defn valid? [config] (contract-config/config-valid? config))
+
 (defn providers-valid?
   [providers]
   (contract-config/definition-valid? "config" {"providers" providers}))
+
 (defn environment-valid?
   [environment]
   (contract-config/definition-valid? "environment" environment))
@@ -171,6 +178,7 @@
                    vec)))
 
 (def derived-machine-keys #{"vision_memory"})
+
 (def project-scoped-config-keys #{"workspace" "jail" "environment"})
 
 (defn without-project-scoped
@@ -225,7 +233,9 @@
        (or (str/starts-with? value "/") (= value "~") (str/starts-with? value "~/"))))
 
 (defn- rooted-path-list? [value] (and (vector? value) (every? rooted-path? value)))
+
 (defn- port? [value] (and (integer? value) (<= 1 value 65535)))
+
 (defn- string-map?
   [value]
   (and (map? value) (every? string? (keys value)) (every? string? (vals value))))
@@ -308,7 +318,6 @@
     :not-allowed
 
     :shared))
-
 
 (defn host-os
   "This host's `when.os` token: `macos`, `windows`, `wsl` (Linux under WSL),

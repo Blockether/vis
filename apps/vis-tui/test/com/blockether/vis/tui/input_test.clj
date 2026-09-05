@@ -6,7 +6,6 @@
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
-
 (defdescribe input-buffer-test
              (it "empty-input is one empty line, cursor at 0,0"
                  (let [s (input/empty-input)]
@@ -353,9 +352,6 @@
         (expect (= {:action :continue :state line-gone}
                    (input/handle-key (ctrl-key (Character. \u)) state))))))
 
-
-
-
 (defdescribe
   placeholder-format-test
   (it "multi-line paste shows lines AND bytes"
@@ -583,7 +579,6 @@
                  (expect (some? (input/clipboard-copy! "")))
                  (expect (some? (input/clipboard-copy! "line1\nline2\nline3")))
                  (expect (some? (input/clipboard-copy! "tab\there\u00e9 \u4e2d\u6587")))))
-
 
 (defdescribe file-mention-expand-test
              (it "replaces inline @mentions via the file-expander helper"

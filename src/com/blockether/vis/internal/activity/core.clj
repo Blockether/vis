@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.activity
+(ns com.blockether.vis.internal.activity.core
   "Pure bounded reducer from immutable lifecycle events to channel-neutral Activity.
 
    Wrapper-entry sequence owns row placement and terminal events update rows in place."
@@ -7,7 +7,9 @@
             [com.blockether.vis.contract.wire :as wire]))
 
 (def max-rows 128)
+
 (def max-receipt-bytes (* 64 1024))
+
 (def empty-state
   "Initial rendered Activity state.
 

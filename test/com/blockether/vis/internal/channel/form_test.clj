@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.form-test
+(ns com.blockether.vis.internal.channel.form-test
   "Guard: the canonical per-form DISPLAY set survives the gateway round-trip.
 
    This is the regression net for the whole class of bug that motivated
@@ -8,7 +8,7 @@
    `form/display-keys` but a boundary stops carrying it, `survives-the-gateway`
    fails — no more chasing it through tmux."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.form :as form]
+            [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.gateway.state :as gw]
             [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -66,6 +66,7 @@
       (let [body (apply str (repeat (* 2 (long form/MAX_FORM_WIRE_CHARS)) "x"))]
         (expect (str/ends-with? (form/clip-to-wire body "narrow next time.")
                                 " chars — narrow next time.")))))
+
 (defdescribe
   form-gateway-roundtrip-test
   (it "every display key survives loop chunk -> gateway block.output -> wire -> <-wire"

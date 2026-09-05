@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider-auth
+(ns com.blockether.vis.internal.provider.auth
   "Headless, resumable OAuth for registered providers — the daemon-side engine
    behind `POST /v1/providers/:id/auth/{start,complete,poll}`.
 
@@ -21,9 +21,9 @@
    as the interactive path does — no token, verifier, or refresh token is ever
    serialized to a client. `public-view` is an allowlist, not a redaction pass."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.provider-limits :as provider-limits]
-            [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
+            [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 

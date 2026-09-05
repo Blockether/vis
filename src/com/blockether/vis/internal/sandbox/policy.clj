@@ -1,11 +1,11 @@
-(ns com.blockether.vis.internal.security-policy
+(ns com.blockether.vis.internal.sandbox.policy
   "Canonical immutable security-policy snapshots and their model-facing view.
 
    A snapshot is created once for a root environment, inherited unchanged by
    child environments, and replaced only by an explicit environment rebuild.
    Enforcement and context both derive from this value."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.config-validation :as config-validation]
+            [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
   (:import [java.nio.file Files LinkOption Path Paths]))

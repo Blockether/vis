@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.attachment-fixtures
+(ns com.blockether.vis.internal.attachment.fixtures
   "Small real media payloads shared by attachment boundary tests."
   (:import [java.util Base64]))
 

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.view
+(ns com.blockether.vis.internal.view.core
   "The one lifecycle for every operator-facing View.
 
    A View has a CLOSED semantic document, a stable id, and the same `open`, `patch`
@@ -25,14 +25,14 @@
    and is readable only through [[reveal-secret]] from the trusted extension side."
   (:require [charred.api :as json]
             [clojure.string :as str]
-            [com.blockether.vis.internal.channel-events :as channel-events]
+            [com.blockether.vis.internal.channel.events :as channel-events]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.view.materializer :as materializer]
             [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.contract.view :as view-spec]
             [com.blockether.vis.internal.view.validation :as validation]
-            [com.blockether.vis.internal.runtime-settings :as rt]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
@@ -673,7 +673,7 @@
    to go. Resolved late and defensively — the View subsystem must stay loadable
    (and testable) without the extension runtime."
   []
-  (try (when-let [v (resolve 'com.blockether.vis.internal.extension/*current-environment*)]
+  (try (when-let [v (resolve 'com.blockether.vis.internal.extension.core/*current-environment*)]
          (let [env (var-get v)
                env (if (instance? clojure.lang.IDeref env) (deref env) env)]
 
@@ -1665,6 +1665,7 @@
    session event carries."
   [wire]
   (live<-wire-checked "verdict" view-spec/live-result-error wire))
+
 (defn- publish!
   "Publish `event` on every channel in `channel-ids` and return how many
    listeners it actually reached across all of them."
@@ -2567,7 +2568,6 @@
          request!
          answer->wire
          json/write-json-str))))
-
 
 (def ^:private live-ops
   "The live verb operation grammar declared by validated `python-host.json`."

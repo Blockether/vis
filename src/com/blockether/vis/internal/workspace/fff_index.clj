@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.fff-index
+(ns com.blockether.vis.internal.workspace.fff-index
   "THE canonical way vis talks to fff.
 
    Every fff instance in this process is born here and lives in ONE pool keyed
@@ -90,8 +90,8 @@
    searching an already-scanned index is cheap and needs no permit, so the
    permit is dropped the moment the scan is ready — maximizing scan overlap."
   [thunk]
-  (.acquire scan-semaphore)
-  (try (thunk) (finally (.release scan-semaphore))))
+  (.acquire ^java.util.concurrent.Semaphore scan-semaphore)
+  (try (thunk) (finally (.release ^java.util.concurrent.Semaphore scan-semaphore))))
 
 (def max-content-file-size
   "Largest file whose CONTENT the pooled index will read, in bytes (256 MiB).

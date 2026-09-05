@@ -35,7 +35,6 @@
   (:import [com.googlecode.lanterna.terminal.image TerminalImage]
            [java.io File]))
 
-
 ;; ── Tunables ────────────────────────────────────────────────────────────────
 
 (def default-max-frames

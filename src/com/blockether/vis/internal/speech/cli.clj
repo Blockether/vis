@@ -4,7 +4,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.speech.attribution :as attribution])
@@ -12,6 +12,7 @@
            [java.nio.charset StandardCharsets]))
 
 (defn- cli-out! [s] (.println ^java.io.PrintStream config/original-stdout (str s)))
+
 (defn- enc [x] (URLEncoder/encode (str x) StandardCharsets/UTF_8))
 
 (defn- response-text

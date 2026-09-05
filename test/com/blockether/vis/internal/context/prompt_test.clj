@@ -1,10 +1,10 @@
-(ns com.blockether.vis.internal.prompt-test
+(ns com.blockether.vis.internal.context.prompt-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.agents :as agents]
-            [com.blockether.vis.internal.env-python :as env-python]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.manifest :as manifest]
-            [com.blockether.vis.internal.prompt :as prompt]
+            [com.blockether.vis.internal.context.agents :as agents]
+            [com.blockether.vis.internal.python.env :as env-python]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.manifest :as manifest]
+            [com.blockether.vis.internal.context.prompt :as prompt]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe prompt-assembly-test
@@ -31,6 +31,7 @@
                    (expect (str/includes? text "Addendum line\n\n  Nested addendum line"))
                    (expect (str/includes? text "Extension line\n\n  Nested extension line"))
                    (expect (not (str/includes? text "\n\n\n"))))))
+
 (defdescribe core-prompt-grep-regex-test
              ;; Regression, user report: §3 ordered grep but omitted the content-regex switch.
              (it "names grep's regex mode where it teaches the call"
@@ -71,7 +72,8 @@
         (expect (not (str/includes? text "Session titles are host-generated")))))
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
-    (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
+    (let [text (var-get (ns-resolve 'com.blockether.vis.internal.context.prompt
+                                    'CORE_SYSTEM_PROMPT))]
       ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.7k.
       ;; The ratchet must never squeeze out §7's teardown rule again: compressing it to a
       ;; bare "finish clean" is how sessions started leaking REPLs. The budget moved 4.5k →
@@ -728,6 +730,7 @@
           ;; The image rides; the stale description is not printed anywhere.
           (expect (vector? blocks))
           (expect (not (str/includes? (pr-str blocks) "a red pixel")))))))
+
 (defdescribe
   resume-message-cache-stability-test
   (it "appends each completed turn as its own stable message"
@@ -776,7 +779,6 @@
         (expect (str/includes? block "<turn_cancelled>"))
         (expect (str/includes? block "persisted results remain valid; do not repeat settled work"))
         (expect (not (str/includes? block "INTERRUPTED before it finished"))))))
-
 
 (defdescribe core-prompt-routes-text-edits-to-patch-test
              ;; The verbs exist only if the prompt spends them. Before this, the core

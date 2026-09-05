@@ -18,9 +18,9 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.fff :as fff]
-            [com.blockether.vis.internal.fff-index :as fff-index]
+            [com.blockether.vis.internal.workspace.fff-index :as fff-index]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace :as workspace]))
+            [com.blockether.vis.internal.workspace.core :as workspace]))
 
 ;; Frontmatter parsing — minimal, no YAML dependency
 
@@ -132,7 +132,6 @@
   ^java.io.File []
   (try (.getCanonicalFile (workspace/cwd))
        (catch Throwable _ (io/file (System/getProperty "user.dir")))))
-
 
 (defn- walk-dirs
   "`<d>/<parts…>` for the active workspace and its project ancestors, nearest
@@ -272,6 +271,7 @@
        (remove #(= "SKILL.md" (peek (str/split % #"/"))))
        (sort)
        (vec)))
+
 ;; Discovery (filesystem → deduped entries)
 
 (defn discover-agents

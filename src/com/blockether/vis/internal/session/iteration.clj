@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.iteration
+(ns com.blockether.vis.internal.session.iteration
   "Canonical iteration-entry shape — the single source of truth shared by
    the LIVE progress tracker (`internal/progress`) and the RESUME projection
    (`channel-tui/chat`).

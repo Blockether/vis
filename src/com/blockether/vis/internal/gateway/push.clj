@@ -160,7 +160,6 @@
 
 (defn configured? "True when this gateway can deliver an APPLE push." [] (:is-configured (config)))
 
-
 ;; ES256 provider token (JWT)
 
 (defn- b64url ^String [^bytes b] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b))

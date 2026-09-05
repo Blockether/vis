@@ -1527,7 +1527,7 @@ The remaining accepted keys are **declarative registrations**: the host applies 
 | `:ext/theme` | theme overrides. |
 | `:ext/source-nses` | the namespaces the extension is built from. |
 
-The authoritative, complete list is the `::extension` spec in `com.blockether.vis.internal.extension`.
+The authoritative, complete list is the `::extension` spec in `com.blockether.vis.internal.extension.core`.
 
 ### Tools: symbols
 
@@ -1551,7 +1551,7 @@ The rules:
 - **`:tag` is required**: `:observation` for pure reads, `:mutation` for anything that writes.
 - **Arguments** arrive as plain values; a Python dict of options becomes a Clojure map with keyword keys (`weather_lookup("Oslo", {"units": "metric"})` → `[city {:units "metric"}]`). Use multiple arities for optional args.
 - **Return an envelope.** `extension/success {:result value}` on success; on failure either throw (`ex-info` is converted for you) or return `extension/failure {:result nil :error {:message "…" :hint "…"}}`. The model sees only the `:result` payload — map keys convert kebab→snake automatically — and failures surface as normal Python exceptions.
-- Envelope constructors live in `com.blockether.vis.internal.extension` (`success` / `failure`); the spec/registration API is `com.blockether.vis.core` (aliased `vis`).
+- Envelope constructors live in `com.blockether.vis.internal.extension.core` (`success` / `failure`); the spec/registration API is `com.blockether.vis.core` (aliased `vis`).
 
 Useful `vis/symbol` opts beyond `:symbol` and `:tag`: `:before-fn` (e.g. inject the turn's `env` as the first argument), `:hidden?` (bind but don't advertise), `:description` — one compact paragraph that REPLACES the docstring in `doc(name)` when the docstring is a developer note rather than the model's contract — and `:params`, the options-dict vocabulary (below).
 
@@ -1840,7 +1840,7 @@ refused when the site renders: a page no reader can reach does not exist.
   "Weather lookups under the `weather_` alias."
   (:require
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.extension :as extension]))
+   [com.blockether.vis.internal.extension.core :as extension]))
 
 (defn- lookup-fn
   "Implementation for a current-conditions lookup."
@@ -1892,7 +1892,7 @@ Vis uses [lazytest](https://github.com/NoahTheDuke/lazytest); test tool function
 ```clojure
 (ns com.acme.ext.weather.core-test
   (:require
-   [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.extension.core :as extension]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe lookup-test

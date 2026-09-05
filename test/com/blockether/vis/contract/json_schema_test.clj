@@ -45,7 +45,7 @@
                  (set (get-in (document/schema-document "config") ["$defs" "apiStyle" "enum"])))))
   (it "does not mirror the configuration schema in engine predicates"
       (expect (nil? (re-find #"\(def(?:n)?\s+[^\s]+-schema\b"
-                             (slurp "src/com/blockether/vis/internal/config_validation.clj")))))
+                             (slurp "src/com/blockether/vis/internal/config/validation.clj")))))
   (it "has no Clojure Spec dependency in repository code"
       (let [dependency-name
             (str "clojure." "spec.alpha")

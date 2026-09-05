@@ -1,6 +1,6 @@
-(ns com.blockether.vis.internal.persistance-test
+(ns com.blockether.vis.internal.persistance.core-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe

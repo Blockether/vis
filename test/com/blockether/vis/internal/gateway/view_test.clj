@@ -13,11 +13,11 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.activity :as activity]
+            [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.view :as gw-hi]
-            [com.blockether.vis.internal.view :as hi]
+            [com.blockether.vis.internal.view.core :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.contract.view :as hi-spec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
@@ -602,6 +602,7 @@
    patch; how long the window is, is [[gw-hi/live-flush-ms]]'s own business."
   [f]
   (with-redefs-fn {live-flush-ms (* 60 1000)} f))
+
 (deftest the-app-watches-a-live-view-test
   (gw-hi/install!)
   (recorded
@@ -702,6 +703,7 @@
                          (is (= 1 (count frames)))
                          (is (= ["one"] (get-in event ["patch" "ops" 0 "lines"])))))
                      (finally (hi/close-live! view-id)))))))))))
+
 (deftest the-app-reads-a-live-view-back-over-http-test
   (gw-hi/install!)
   (recorded

@@ -225,6 +225,7 @@
   "Rehydrate a view's verdict from a `view.close` session event."
   [wire]
   (engine/live-result<-wire wire))
+
 (defn session-id
   "The gateway session whose run this form parks, or nil. A form built from a
    session event must be answered over the gateway that owns it."
@@ -1005,7 +1006,6 @@
             buttons)
     nil))
 
-
 (defn- paint-row!
   "Paint one plan row. Every focusable row of the form — typed line, digit boxes,
    option, checkbox, slider — goes through the SHARED field painters
@@ -1180,10 +1180,6 @@
    loses the characters that fall past the cut."
   ^long [^long row-w]
   (max 1 (- row-w 3)))
-
-
-
-
 
 (defn paint!
   "Draw the human-input band for `form` INSIDE the session's own frame. Returns

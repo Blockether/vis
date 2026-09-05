@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider.anthropic
+(ns com.blockether.vis.internal.provider.vendor.anthropic
   "Anthropic providers.
 
    Providers:
@@ -16,7 +16,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.oauth :as oauth])
+            [com.blockether.vis.internal.provider.oauth :as oauth])
   (:import [java.net URLDecoder URLEncoder]
            [java.security SecureRandom]
            [java.time Instant]
@@ -42,6 +42,7 @@
    build time, which would bake the builder's home directory into the binary."
   ^String []
   (str (System/getProperty "user.home") "/.vis/anthropic-auth.json"))
+
 ;; base-url + default-models come from svar (single source of truth).
 (def ^:private ^:const refresh-margin-ms 300000)
 

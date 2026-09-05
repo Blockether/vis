@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.config-test
+(ns com.blockether.vis.internal.config.core-test
   "Coverage for the Vis-side config helpers. Pure helpers (`router-opts`) plus a
    disk-isolated round-trip for `save-config!`/`load-config` — the persistence
    the first-run welcome and the provider manager both rely on (a connected
@@ -6,9 +6,9 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [lazytest.core :refer [defdescribe it expect]]
             [taoensso.telemere :as tel]
             [taoensso.trove :as trove])
@@ -418,6 +418,7 @@
                (expect (not (str/includes? written "this-repo")))
                (expect (str/includes? written "prov-a"))))
            (finally (rm-rf! (io/file tmp)))))))
+
 (defdescribe
   provider-persistence-test
   "save-config! / load-config round-trip backing onboarding. The first-run
@@ -1051,6 +1052,7 @@
                                                       :api-style :openai
                                                       :responses-path "/responses"
                                                       :models [{:name "m"}]}))))))
+
 (defn- with-declared-environment
   "Run `f` with `block` DECLARED as the active config's `environment:` block."
   [block f]
@@ -1302,7 +1304,7 @@
                (expect (= {"system_prompt" "Prefer RST."} raw))
                (expect (every? #(nil? (get raw %)) config/user-only-config-keys))
                ;; the developer is TOLD, by file and by key, and is not failed
-               (expect (= :com.blockether.vis.internal.config/project-root-routing-keys-ignored
+               (expect (= :com.blockether.vis.internal.config.core/project-root-routing-keys-ignored
                           (:id signal)))
                (expect (= (.getPath root-yml)
                           (-> signal
@@ -1486,7 +1488,6 @@
            (finally (System/setProperty "user.home" old-home)
                     (System/setProperty "user.dir" old-dir)
                     (config/invalidate-config-cache!))))))
-
 
 ;; Regression, issue: two writers of `~/.vis/state.yml` read the whole map,
 ;; changed one key and wrote it back. Nothing was ever corrupt — the second

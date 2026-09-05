@@ -12,7 +12,7 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.view :as hi]
+            [com.blockether.vis.internal.view.core :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
             [lazytest.core :refer [defdescribe expect it]]))
 

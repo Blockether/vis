@@ -1,5 +1,5 @@
-(ns com.blockether.vis.internal.capability-test
-  (:require [com.blockether.vis.internal.capability :as capability]
+(ns com.blockether.vis.internal.extension.capability-test
+  (:require [com.blockether.vis.internal.extension.capability :as capability]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- counting

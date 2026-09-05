@@ -1,6 +1,6 @@
-(ns com.blockether.vis.internal.provider.openai-test
+(ns com.blockether.vis.internal.provider.vendor.openai-test
   (:require [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.provider.openai]
+            [com.blockether.vis.internal.provider.vendor.openai]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe provider-openai-test

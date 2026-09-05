@@ -4,7 +4,6 @@
 
 (set! *unchecked-math* :warn-on-boxed)
 
-
 (defn clamp-index
   [idx total]
   (let [total (long (max 0 (long (or total 0))))]

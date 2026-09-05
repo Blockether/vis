@@ -44,13 +44,13 @@
             [com.blockether.vis.internal.foundation.editing.escapes :as escapes]
             [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
             [com.blockether.vis.internal.foundation.editing.parse :as parse]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.fff-index :as fff-index]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.workspace.fff-index :as fff-index]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.workspace.git :as git]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import (java.io File)
            (java.nio.file AtomicMoveNotSupportedException
@@ -103,9 +103,6 @@
    sweep. When the budget is exhausted `total_file_count` is a LOWER bound
    (`total_file_count_is_exact` false)."
   5000)
-
-
-
 
 (defn- rg-needle-hostile-to-fff?
   "True when a needle is meaningless to fff's FUZZY PATH search — it honors
@@ -323,7 +320,6 @@
                {})
        vals
        vec))
-
 
 (def ^:private default-find-limit 50)
 
@@ -611,7 +607,6 @@
                             anc
                             (assoc "searched" (rel-path anc))))))))))
         paths))
-
 
 (defn- resolve-search-roots
   "Resolve grep `paths` into
@@ -946,7 +941,7 @@
                 {:env env :fn f :args args}))
             out))))))
 
-;; Engine contract lives in `com.blockether.vis.internal.extension`:
+;; Engine contract lives in `com.blockether.vis.internal.extension.core`:
 ;;   `extension/op-tag`          - canonical op-keyword -> :observation | :mutation value.
 ;;   `extension/op-presentation` - `:info` metadata `{:tag ...}` embedded in tool envelopes.
 ;; The iteration loop's final-answer gate rejects any registered extension op
@@ -1013,7 +1008,6 @@
    is a native crossing, and rows are filtered as they arrive (`fff-ls-scan`), so a
    wide page costs no extra retained memory."
   4096)
-
 
 (defn- fff-ignore-overlay
   "The ignore OVERLAY handed to fff for a search, or nil when there is nothing
@@ -2479,7 +2473,6 @@
       (if (and (vector? parsed) (seq parsed) (every? string? parsed)) parsed raw))
     raw))
 
-
 (defn- has-upper?
   "True when `s` contains an uppercase letter — the smart-case trigger."
   [^String s]
@@ -3454,10 +3447,10 @@
                       {:type :ext.foundation.editing/path-protected :owner (:owner refusal)})))
     (mapv ls-one specs)))
 
-
 ;; One row per edit, and a batch is one write: a 300-edit refactor still answers in
 ;; a block a reader can hold, with the middle counted rather than shown.
 (def ^:private ^:const patch-edit-rows-max 60)
+
 ;; Symbol declarations
 ;;
 ;; Underlying `xxx-tool` defs retain developer docs + arglists. Each symbol
@@ -3482,7 +3475,6 @@
 ;; The read is forgiving; the WRITE is exact. Every endpoint's line and hash must
 ;; still agree, or the entire batch is refused with the current anchor. A parse
 ;; break is refused too, and neither failure writes anything.
-
 
 (defn- positional-only!
   "Refuse an options MAP in a slot that takes a positional argument. `cat` and

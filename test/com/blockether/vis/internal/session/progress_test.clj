@@ -1,5 +1,5 @@
-(ns com.blockether.vis.internal.progress-test
-  (:require [com.blockether.vis.internal.progress :as progress]
+(ns com.blockether.vis.internal.session.progress-test
+  (:require [com.blockether.vis.internal.session.progress :as progress]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -84,6 +84,7 @@
                        :forms
                        first
                        :activity))))))
+
 ;; Regression, reported as "I send and nothing happens for seconds": the provider
 ;; wait is the longest silence in a turn (measured on one machine: 6.4s median
 ;; from submit to the first painted token, 10.5s at p90), and everything a channel

@@ -48,7 +48,6 @@
   [^KeyStroke key]
   (or (alt-modifier? key) (shift-modifier? key)))
 
-
 (defn bare-escape?
   "True for a plain Escape KeyStroke (not a MouseAction)."
   [k]
@@ -85,7 +84,6 @@
   [k]
   (if (ctrl-abort-key? k) (KeyStroke. KeyType/Escape) k))
 
-
 (defn set-default-bg!
   "Set the terminal's DEFAULT background color via OSC 11. Modern
    emulators (iTerm2, kitty, ghostty, wezterm, alacritty, foot, vscode)
@@ -106,8 +104,6 @@
    gets its original background back."
   [^java.io.OutputStream out]
   (try (.write out (.getBytes "\u001B]111\u0007" "UTF-8")) (.flush out) (catch Throwable _ nil)))
-
-
 
 ;;; ── Clipboard (shell helpers) ───────────────────────────────────────────────
 ;;

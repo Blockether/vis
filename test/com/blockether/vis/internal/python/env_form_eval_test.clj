@@ -1,10 +1,10 @@
-(ns com.blockether.vis.internal.env-python-form-eval-test
+(ns com.blockether.vis.internal.python.env-form-eval-test
   "Vis-owned error mapping and host-surface checks for Python block execution.
    Parsing, per-form evaluation, async execution, persistence, protected names and
    boundary marshalling are tested exhaustively by vis-python-runtime."
   (:require [clojure.set :as set]
             [clojure.string :as str]
-            [com.blockether.vis.internal.env-python :as ep]
+            [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -67,7 +67,6 @@
         (expect (nil? (get-in r [:data :non-ascii-in-code?])))
         (expect (true? (get-in r [:data :prose-leading?]))))))
 
-
 (defdescribe facade-verb-name-guard-test
              ;; Drift guard: the language facade verbs must NEVER regress to the bare
              ;; collision-prone names. `test`/`format` collide with the commonest variable
@@ -86,7 +85,6 @@
                    (expect (= #{"format_code" "lint_code" "run_tests" "repl_eval" "repl_start"
                                 "repl_status" "repl_stop" "repl_connect"}
                               facade)))))
-
 
 (defdescribe
   probe-path-binding-test
@@ -133,7 +131,6 @@
         (expect (str/includes? (get-in (ep/run-python-block ctx "probe_path('dynamic.txt')" "t1/i4")
                                        [:error :message])
                                "`probe_path` is not defined")))))
-
 
 (defdescribe
   no-auto-repair-test

@@ -11,7 +11,7 @@
    title mutation point."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.titling :as titling]))
+            [com.blockether.vis.internal.session.titling :as titling]))
 
 (defn- render-transcript
   "Render a session's transcript as Markdown (`:md`) or a STANDALONE,

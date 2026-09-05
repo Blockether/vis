@@ -290,7 +290,6 @@
   (let [v (max 0 (long (or visible 0)))]
     (max 1 (min (long wheel-step-rows) (Math/round (* (double wheel-step-frac) (double v)))))))
 
-
 (defn to-y
   "Scrollbar drag/track click → `offset` (already mapped from cursor row).
    1:1, so SNAP (no ease). The very bottom re-enters FOLLOW."

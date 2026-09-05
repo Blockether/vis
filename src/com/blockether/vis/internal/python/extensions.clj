@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.python-extensions
+(ns com.blockether.vis.internal.python.extensions
   "Project-local Python extensions — trusted-context plug-ins.
 
    Vis extensions are normally Clojure libraries baked into the binary at
@@ -39,22 +39,22 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.agents :as agents]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.config-validation :as config-validation]
-            [com.blockether.vis.internal.egress-proxy :as egress]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.extension-aggregate :as aggregate]
+            [com.blockether.vis.internal.context.agents :as agents]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.validation :as config-validation]
+            [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.aggregate :as aggregate]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.notifications :as notifications]
-            [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
-            [com.blockether.vis.internal.python-host :as python-host]
+            [com.blockether.vis.internal.channel.notifications :as notifications]
+            [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.contract.python-host :as contract]
-            [com.blockether.vis.internal.security-policy :as security-policy]
-            [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.sandbox.policy :as security-policy]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.python-worker :as pyext]
+            [com.blockether.vis.internal.python.worker :as pyext]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.nio.file Files]
@@ -585,7 +585,7 @@
                             (when (some? verdict)
                               (json/read-json (str verdict) :key-fn identity)))))]
 
-              ((requiring-resolve 'com.blockether.vis.internal.view/request-json!)
+              ((requiring-resolve 'com.blockether.vis.internal.view.core/request-json!)
                 request-json
                 validators-json
                 run))))
@@ -597,15 +597,16 @@
           ;; the opposite of `request_input`, which parks until a human
           ;; answers.
           (fn [envelope]
-            ((requiring-resolve 'com.blockether.vis.internal.view/live-json!) envelope)))
+            ((requiring-resolve 'com.blockether.vis.internal.view.core/live-json!) envelope)))
     (put! g
           "__vis_host_reveal_secret__"
           (fn [handle]
-            ((requiring-resolve 'com.blockether.vis.internal.view/reveal-secret) (str handle))))
+            ((requiring-resolve 'com.blockether.vis.internal.view.core/reveal-secret)
+              (str handle))))
     (put! g
           "__vis_host_forget_secret__"
           (fn [handle]
-            (boolean ((requiring-resolve 'com.blockether.vis.internal.view/forget-secret!)
+            (boolean ((requiring-resolve 'com.blockether.vis.internal.view.core/forget-secret!)
                        (str handle)))))
     ;; DECLARED ENV: one JSON list of names in, one JSON object of the values
     ;; the host could resolve out. Backed by `resolve-declared-env`, so an
@@ -853,7 +854,6 @@
 
     (:session/id sctx)
     (assoc :session-id (:session/id sctx))))
-
 
 (defn- op-hook-payload
   "STRINGS-ONLY `{'op' 'args' ['result']}` payload for a Python op hook.
@@ -1560,7 +1560,7 @@
     (cond-> {:ext/name ext-name
              :ext/description (str (get reg "description"))
              :ext/kind (str (or (get reg "kind") "python"))
-             :ext/source-nses ['com.blockether.vis.internal.python-extensions]
+             :ext/source-nses ['com.blockether.vis.internal.python.extensions]
              :ext/engine (cond-> {:ext.engine/symbols symbols :ext.engine/exact-symbol-names? true}
                            alias-sym
                            (assoc :ext.engine/alias alias-sym))}
@@ -1595,7 +1595,6 @@
       (assoc :ext/env declared-env))))
 
 ;; Loader
-
 
 (defonce ^:private failures
   ;; [{:file :error}] from the most recent scan.
@@ -2362,13 +2361,13 @@
   (when (compare-and-set! loader-registered? false true)
     ;; `/test` lives in the sibling `python-test-runner` namespace. Resolve it
     ;; lazily because the runner depends on this namespace's trusted-context builder.
-    (let [test-slash (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-slash)]
+    (let [test-slash (requiring-resolve 'com.blockether.vis.internal.python.test-runner/test-slash)]
       (extension/register-extension!
         {:ext/name "python-extensions"
          :ext/description
          "Loads Python extensions from ~/.vis/extensions and <project>/.vis/extensions."
          :ext/kind "host"
-         :ext/source-nses ['com.blockether.vis.internal.python-extensions]
+         :ext/source-nses ['com.blockether.vis.internal.python.extensions]
          :ext/slash-commands
          [{:slash/name "reload"
            :slash/doc

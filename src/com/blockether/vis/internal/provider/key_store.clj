@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider-key-store
+(ns com.blockether.vis.internal.provider.key-store
   "The STATIC API-KEY provider shape, owned once.
 
    A vendor that authenticates with a plain key per plan (Alibaba Model Studio,

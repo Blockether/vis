@@ -81,7 +81,7 @@
    uses one code path for live and resumed traces.
 
    The display metadata is projected through `vis/form->display` — the ONE
-   canonical display-key projection (`internal/form.clj`) the live wire and the
+   canonical display-key projection (`internal/channel/form.clj`) the live wire and the
    gateway also use. Canonical `:stdout` remains on the record; every channel
    derives presentation locally. On top of the shared projection we layer only
    bounded output/error, duration/channel, computed op metadata, and restore-only
@@ -107,6 +107,7 @@
     ;; program and its result survive, the chronology under them does not.
     (some? (:activity block))
     (assoc :activity (:activity block))))
+
 (defn- hydrate-error
   "Rehydrate an error and the gateway-owned provider presentation attached to it."
   ([raw] (when (some? raw) (if (map? raw) (vis/wire->engine raw) raw)))
@@ -114,6 +115,7 @@
    (cond-> (hydrate-error raw)
      (and (map? raw) (map? provider-info))
      (assoc :provider-error-info (vis/wire->engine provider-info)))))
+
 (defn- it->iteration-entry
   "Turn one persisted iteration row into the same shape the live
    progress tracker produces — a map carrying `:thinking`, `:forms`,
@@ -308,8 +310,6 @@
         "message" (vis/error-message (get result "error"))
         "retryable" false}])))
 
-
-
 (defn- provider-attempt->text
   "One canonical provider attempt as `provider/model: status reason`."
   [attempt]
@@ -378,6 +378,7 @@
                  (when (seq facts) (str/join " · " (map #(str "`" % "`") facts)))
                  (when (seq diagnostics)
                    (str "**Diagnostics**\n\n" (str/join "\n\n" diagnostics)))]))))
+
 (defn content->markdown
   "Disposable Markdown projection of canonical content blocks."
   [blocks]
@@ -904,7 +905,6 @@
 
       (event-get raw :cause-class)
       (assoc :cause-class (event-get raw :cause-class)))))
-
 
 (defn- provider-retry-event->chunk
   "Project a canonical `provider.retry` gateway event into the progress reset

@@ -3,9 +3,9 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.python-host :as contract]
             [com.blockether.vis.internal.foundation.shell :as fshell]
-            [com.blockether.vis.internal.python-extensions :as pyx]
-            [com.blockether.vis.internal.python-worker :as pyext]
-            [com.blockether.vis.internal.view :as view]
+            [com.blockether.vis.internal.python.extensions :as pyx]
+            [com.blockether.vis.internal.python.worker :as pyext]
+            [com.blockether.vis.internal.view.core :as view]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- host-door-names

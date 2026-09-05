@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.runtime-settings
+(ns com.blockether.vis.internal.config.runtime-settings
   "Per-eval / per-call runtime knobs for the loop: Python-sandbox eval timeouts
    (with clamping and a shell-timeout-aware widener), the `svar/ask-code!` stream
    watchdog defaults, and the dynamic vars the loop binds per call.
@@ -341,6 +341,7 @@
   (if-let [hold *blocking-wall-hold*]
     (hold)
     (fn [])))
+
 (defn parkable-wall
   "One MOVABLE wall clock for a bounded execution that began at `start` with
    `timeout-ms` of budget.

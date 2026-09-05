@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.attachment-storage-test
+(ns com.blockether.vis.internal.attachment.storage-test
   "The storage-offload rail: a registry of storage backends + the pure offload
    DECISION that routes an attachment either INLINE (bytes in the BLOB) or
    EXTERNAL (bytes in a backend, `storage_uri` in the row). Covers the registry
@@ -9,7 +9,7 @@
    reference `file://` backend round-trip, and the LOSSLESS compaction every
    store-bound image payload goes through on the way in."
   (:require [com.blockether.imaging :as imaging]
-            [com.blockether.vis.internal.attachment-storage :as as]
+            [com.blockether.vis.internal.attachment.storage :as as]
             [lazytest.core :refer [defdescribe describe expect it throws?]])
   (:import (java.nio.file Files)
            (java.nio.file.attribute FileAttribute)

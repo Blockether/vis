@@ -22,9 +22,9 @@
    Skills and commands have no user toggle; the layer is always active."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.foundation.harness.discovery :as d]))
 
 ;; Small utilities

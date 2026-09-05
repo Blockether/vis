@@ -1,8 +1,8 @@
 (ns com.blockether.vis.internal.foundation.core
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.docs.corpus :as doc-corpus]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.doctor :as doctor]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
@@ -13,7 +13,7 @@
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.foundation.workspace-ctx :as workspace-ctx]
             [com.blockether.vis.internal.foundation.workspace-slashes :as workspace-slashes]
-            [com.blockether.vis.internal.workspace :as workspace]))
+            [com.blockether.vis.internal.workspace.core :as workspace]))
 
 (defn- combined-prompt
   "Render the dynamic language matrix and toggle-gated core guidance."
@@ -63,7 +63,7 @@
    boundary).
 
    The slim auto-pin `\"session_env\"` digest (host / project / extensions)
-   moved to `internal.env-digest` — it's core functionality, not
+   moved to `internal.context.env-digest` — it's core functionality, not
    extension-owned. Workspace/VCS truth lives in `\"session_workspace\"`.
    The old redundant `(:project ctx)` contribution is gone; slim digest
    covers it."

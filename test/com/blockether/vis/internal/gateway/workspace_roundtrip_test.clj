@@ -10,7 +10,7 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.workspace :as ws]
+            [com.blockether.vis.internal.workspace.core :as ws]
             [lazytest.core :refer [defdescribe expect it]]
             [next.jdbc :as jdbc]))
 
@@ -63,7 +63,6 @@
       ["INSERT INTO session_state (id, session_soul_id, workspace_id, version, created_at) VALUES (?,?,?,?,?)"
        state-id sid workspace-id 0 1])
     {:sid sid :state-id state-id}))
-
 
 (defn- draft-list-shape
   "The exact per-draft map `state/list-drafts` emits (before the wire hop): the

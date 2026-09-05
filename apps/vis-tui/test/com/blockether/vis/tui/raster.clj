@@ -62,7 +62,6 @@
   ^String [[r g b]]
   (format "#%02x%02x%02xff" (int r) (int g) (int b)))
 
-
 (defn- io-file ^File [x] (if (instance? File x) x (File. (str x))))
 
 (def ^:private mono-family

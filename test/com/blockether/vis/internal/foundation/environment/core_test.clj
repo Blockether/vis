@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.foundation.environment.core-test
-  (:require [com.blockether.vis.internal.env-python :as env-python]
+  (:require [com.blockether.vis.internal.python.env :as env-python]
             [com.blockether.vis.internal.foundation.environment.core :as env-core]
             [lazytest.core :refer [defdescribe expect it]]))
 

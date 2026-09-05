@@ -1,12 +1,12 @@
-(ns com.blockether.vis.internal.attachments-test
+(ns com.blockether.vis.internal.attachment.core-test
   "User-message image attachment collection: path extraction from
    drop-shaped text, magic-byte MIME sniffing, and the size/count caps."
   (:require [clojure.java.io :as io]
             [com.blockether.imaging :as imaging]
             [clojure.string :as str]
-            [com.blockether.vis.internal.attachments :as attachments]
-            [com.blockether.vis.internal.attachment-fixtures :as fixtures]
-            [com.blockether.vis.internal.image-convert :as image-convert]
+            [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.attachment.fixtures :as fixtures]
+            [com.blockether.vis.internal.attachment.image-convert :as image-convert]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [java.awt.image BufferedImage]
            [java.io ByteArrayInputStream File]
@@ -201,6 +201,7 @@
 
         (expect (= ["audio/mp4"] (mapv :media-type (:attached out))))
         (expect (empty? (:skipped out))))))
+
 (defdescribe
   detect-video-mime-test
   "MP4/QuickTime are attachable media, but ONLY when the bytes really are a clip:
@@ -611,6 +612,7 @@
         (expect (attachments/hidden-from-model? attachment))
         (expect (true? (:readable-blind? blind)))
         (expect (str/includes? (:reason blind) "read_attachment")))))
+
 (defdescribe
   provider-safe-media-type-test
   "Intake STORES, it does not decide. The wire's four containers are still the

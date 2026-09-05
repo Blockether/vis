@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.image-convert
+(ns com.blockether.vis.internal.attachment.image-convert
   "Container conversion for attachment payloads -- NOT optimization.
 
    vis stores and replays the attachment PICTURE verbatim: whatever the user
@@ -252,7 +252,7 @@
    This is the ONE place a byte SIZE is allowed to matter here, and it earns the
    exception: the alternative is not \"keep the original\", it is DROP -- the
    picture is refused and the model is told a file it can see on disk cannot be
-   shown ([[com.blockether.vis.internal.attachments/wire-verdict]]). A payload
+   shown ([[com.blockether.vis.internal.attachment.core/wire-verdict]]). A payload
    that already fits is returned ITSELF, so the verbatim-bytes contract holds for
    every attachment the wire can take as it stands.
 

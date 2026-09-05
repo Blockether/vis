@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.env-python
+(ns com.blockether.vis.internal.python.env
   "The agent's action substrate: an embedded CPython the model writes Python for.
 
    A SESSION here owns one worker process and one embedded interpreter. Its
@@ -29,14 +29,14 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis-python-runtime :as runtime]
-            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.docs.corpus :as doc-corpus]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.python-host :as python-host]
-            [com.blockether.vis.internal.python-runtime :as python-runtime]
-            [com.blockether.vis.internal.python-worker :as pyext]
+            [com.blockether.vis.internal.python.host :as python-host]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
+            [com.blockether.vis.internal.python.worker :as pyext]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
@@ -164,7 +164,6 @@
     ;; sandbox and trusted namespace without waiting behind a wedged interpreter.
     (pyext/stop-worker! k)
     (runtime/close-session! session)))
-
 
 (defn boundary-violation!
   "Throw on a keyword/symbol trying to cross the Clojure->Python boundary.
@@ -541,7 +540,6 @@
   ["json" "shlex" "re" "hashlib" "glob" "os" "sys" "collections" "Counter" "pathlib" "Path"
    "textwrap" "base64" "math" "socket" "builtins" "time" "datetime"])
 
-
 ;; =============================================================================
 ;; Sandbox bindings
 ;; =============================================================================
@@ -736,6 +734,7 @@
    keeps the name searchable; `doc()` reads the live module instead of printing
    this."
   "sandbox shim capability")
+
 (defn- sandbox-corpus
   "Merge what a SESSION can reach with the ordered document corpus. Live
    contracts win name collisions; documents retain corpus order.
@@ -925,6 +924,7 @@
 ;; =============================================================================
 
 (defonce ^:private interpreter-started (atom false))
+
 (defonce ^:private interpreter-lock (Object.))
 
 (defn ensure-interpreter!
@@ -1008,7 +1008,7 @@
    `network_filter(fn)` over a SYNTHETIC request — no socket, nothing sent."
   [session]
   (when-let [report-fn (requiring-resolve
-                         'com.blockether.vis.internal.python-extensions/net-probe-report)]
+                         'com.blockether.vis.internal.python.extensions/net-probe-report)]
     (python-host/install-tools! session
                                 {"__vis_net_probe__" (fn [method target headers body]
                                                        (report-fn method target headers body))}
@@ -1215,7 +1215,7 @@
     ;; Close those while the process is still alive; the registry itself remains
     ;; gateway-wide and outlives every one of these per-session realizations.
     (when-let [close-extensions
-               (resolve 'com.blockether.vis.internal.python-extensions/close-session-contexts!)]
+               (resolve 'com.blockether.vis.internal.python.extensions/close-session-contexts!)]
       (try (close-extensions session) (catch Throwable _ nil)))
     (try (py-close-session! session) (catch Throwable _ nil))
     (pyext/forget-policy! session)
@@ -1272,7 +1272,7 @@
   (when-let [k (worker-of session)]
     (pyext/retire-worker! k "its control plane stopped answering an interrupt")
     (when-let [close-extensions
-               (resolve 'com.blockether.vis.internal.python-extensions/close-session-contexts!)]
+               (resolve 'com.blockether.vis.internal.python.extensions/close-session-contexts!)]
       (try (close-extensions session) (catch Throwable _ nil))))
   (try (python-host/forget-session! session) (catch Throwable _ nil))
   nil)

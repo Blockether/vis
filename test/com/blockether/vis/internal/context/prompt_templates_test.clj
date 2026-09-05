@@ -1,10 +1,10 @@
-(ns com.blockether.vis.internal.prompt-templates-test
+(ns com.blockether.vis.internal.context.prompt-templates-test
   "File-based prompt templates: frontmatter, discovery precedence,
    `$ARGUMENTS` expansion, and provider-contributed dynamic templates."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
-            [com.blockether.vis.internal.prompt-templates :as templates]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.context.prompt-templates :as templates]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-tmp-dir*

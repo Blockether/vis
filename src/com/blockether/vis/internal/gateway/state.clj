@@ -14,26 +14,26 @@
    records, subscribers), nothing else."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
-            [com.blockether.vis.internal.attachment-storage :as attachment-storage]
-            [com.blockether.vis.internal.attachments :as attachments]
-            [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.attachment.storage :as attachment-storage]
+            [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.content :as content]
-            [com.blockether.vis.internal.form :as form]
+            [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.format :as fmt]
-            [com.blockether.vis.internal.git :as git]
-            [com.blockether.vis.internal.view :as view]
-            [com.blockether.vis.internal.session-model :as smodel]
-            [com.blockether.vis.internal.ctx-loop :as ctx-loop]
+            [com.blockether.vis.internal.workspace.git :as git]
+            [com.blockether.vis.internal.view.core :as view]
+            [com.blockether.vis.internal.session.model :as smodel]
+            [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.titling :as titling]
-            [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.provider-error :as provider-error]
-            [com.blockether.vis.internal.resources :as resources]
-            [com.blockether.vis.internal.shell-log :as shell-log]
+            [com.blockether.vis.internal.session.titling :as titling]
+            [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.provider.error :as provider-error]
+            [com.blockether.vis.internal.gateway.resources :as resources]
+            [com.blockether.vis.internal.foundation.shell-log :as shell-log]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
 
 (def ^:private EVENT_RING_MAX
@@ -650,6 +650,7 @@
          (finally (update-existing-session! sid
                                             (fn [entry]
                                               (dissoc entry :is-hydrating)))))))
+
 (defn subscribe!
   "Register an SSE sink and return the replay vector (canonical string-keyed
    events with `\"seq\"` > `cursor`) ATOMICALLY with the registration, so no
@@ -933,6 +934,7 @@
               acc))
           {:turns 0 :seq 0}
           (vals @registry)))
+
 (defn session-busy?
   "True when `sid` still has work the daemon owns: a live `:current-turn`, or a
    turn parked in the queue. THE guard for view-close teardown — a session is
@@ -1383,7 +1385,7 @@
               ;; …and WHY there are none when there are none, so a client can paint
               ;; "transcribing…" under the player instead of a band that reads the
               ;; same as a recording nobody ever spoke into
-              ;; ([[com.blockether.vis.internal.audio-transcribe/statuses]]).
+              ;; ([[com.blockether.vis.internal.attachment.audio-transcribe/statuses]]).
               (not-empty (str transcription-status))
               (assoc :transcription_status (str transcription-status)))))
         rows))
@@ -2445,6 +2447,7 @@
          pause-queue!
          resume-queue!
          after-turn-terminal!)
+
 (def ^:private TURN_STALL_TIMEOUT_MS
   "Daemon backstop: force-cancel a turn wedged with NO meaningful progress for
    this long. Set ABOVE svar's 5-minute semantic stream timeout so it fires ONLY
@@ -2608,7 +2611,6 @@
       output?
       (assoc :produced? true))))
 
-
 (defonce ^:private turn-terminal-claims
   ;; `[sid tid]` -> the claim key of the run that owns the turn's one terminal
   ;; landing. The token identity prevents racing worker/watchdog/cancel paths
@@ -2662,6 +2664,7 @@
             :else (.replace claims k prev claim)))))
 
 #_{:clj-kondo/ignore [:unused-private-var]}
+
 (defn- release-turn-terminal-claim!
   "Forget `tid`'s terminal claim. Used only to isolate tests; production turns are
    single-use and are never re-queued under the same id."
@@ -3625,6 +3628,7 @@
   (drain-next-queued! sid))
 
 (defn- count-queued [entry] (count (filter #(= "queued" (:status %)) (vals (:turns entry)))))
+
 (defn- pause-queue!
   "Hold the distinct queued backlog after a failed turn. The failed turn remains
    terminal and is never re-queued; only an explicit resume may start the next
@@ -5425,7 +5429,7 @@
   "Force the persistence backend + shared connection on the CALLER's
    thread. The gateway runs this on its single-threaded boot path so
    the heavyweight backend namespace never lazy-loads under request
-   concurrency (see require-backend-ns! in internal/persistance.clj)."
+   concurrency (see require-backend-ns! in internal/persistance/core.clj)."
   []
   (try (lp/db-info)
        true

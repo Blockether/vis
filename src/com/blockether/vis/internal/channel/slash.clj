@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.slash
+(ns com.blockether.vis.internal.channel.slash
   "Channel-agnostic slash dispatch.
 
    Slashes are DECLARATIVE: every extension carries `:ext/slash-commands`
@@ -40,9 +40,9 @@
       :slash/actions [{:label :slash}]   ;; optional follow-ups
       :slash/data    arbitrary payload (workspace-id, sha, ...)}"
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.context.prompt :as prompt]
+            [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
             [taoensso.telemere :as tel]))
 
 ;; Aggregation

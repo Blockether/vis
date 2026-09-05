@@ -24,7 +24,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.persistance.sqlite.maintenance :as maintenance]
             [com.blockether.vis.internal.persistance.sqlite.migration :as migration]
-            [com.blockether.vis.internal.attachments :as attachments]
+            [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.core :as vis]
             [honey.sql :as sql]
@@ -329,12 +329,14 @@
 
 (defn- migration-monitor
   ^java.util.concurrent.locks.ReentrantLock [^String canonical-dir]
-  (or (.get migration-monitors canonical-dir)
+  (or (.get ^java.util.concurrent.ConcurrentHashMap migration-monitors canonical-dir)
       (let [m
             (java.util.concurrent.locks.ReentrantLock.)
 
             prev
-            (.putIfAbsent migration-monitors canonical-dir m)]
+            (.putIfAbsent ^java.util.concurrent.ConcurrentHashMap migration-monitors
+                          canonical-dir
+                          m)]
 
         (or prev m))))
 
@@ -348,7 +350,7 @@
   [^String canonical-dir f]
   (let [^java.util.concurrent.locks.ReentrantLock monitor (migration-monitor canonical-dir)]
     (.lock monitor)
-    (try (let [lock-file (File. canonical-dir DB_MIGRATION_LOCK_FILENAME)
+    (try (let [lock-file (File. canonical-dir ^String DB_MIGRATION_LOCK_FILENAME)
                raf (RandomAccessFile. lock-file "rw")
                channel (.getChannel raf)
                lock (try (.lock channel)
@@ -414,7 +416,7 @@
         (raw-sqlite-datasource (str "jdbc:sqlite:" file))
 
         pool
-        (pooled-datasource raw (str "vis-rlm-disk-" (.incrementAndGet pool-counter)))]
+        (pooled-datasource raw (str "vis-rlm-disk-" (.incrementAndGet ^AtomicLong pool-counter)))]
 
     (try (with-migration-lock! path #(install-schema! pool))
          (maintenance/vacuum-async! pool file)
@@ -525,13 +527,13 @@
   ;; tests; the pool's `minimumIdle 1` keeps the shared-cache DB
   ;; alive.
   (let [db-name
-        (str "vis_mem_" (.incrementAndGet mem-counter))
+        (str "vis_mem_" (.incrementAndGet ^AtomicLong mem-counter))
 
         raw
         (raw-sqlite-datasource (str "jdbc:sqlite:file:" db-name "?mode=memory&cache=shared"))
 
         pool
-        (pooled-datasource raw (str "vis-rlm-mem-" (.incrementAndGet pool-counter)))]
+        (pooled-datasource raw (str "vis-rlm-mem-" (.incrementAndGet ^AtomicLong pool-counter)))]
 
     (install-schema! pool)
     {:datasource pool
@@ -769,7 +771,6 @@
 
 ;; Workspace - trunk-native work units
 
-
 (defn- row->workspace
   "Project a `workspace` row from SQLite into the canonical Clojure shape
    used by the workspace facade. Keys mirror `db-get-session` style
@@ -820,7 +821,6 @@
       ;; `{trunk, clone, fork_ms, backend, policy}` maps.
       (:filesystem_roots row)
       (assoc :filesystem-roots (or (<-json (:filesystem_roots row)) [])))))
-
 
 (defn db-workspace-insert!
   "Insert a workspace row. Returns the inserted record (canonical shape).
@@ -904,7 +904,6 @@
           (execute! tx-info {:update :workspace :set {:label label} :where [:= :id id]})
           (row->workspace (query-one! tx-info
                                       {:select [:*] :from :workspace :where [:= :id id]})))))))
-
 
 (defn db-workspace-touch-focus!
   "Stamp `last_focused_at_ms` to now-ms on the workspace row. Called by
@@ -1255,7 +1254,6 @@
                                  :where [:= :s2.session_soul_id :cs.id]}]]
                               (when-not all? [[:= :cs.channel ch]]))
                  :order-by [[:cs.project_position :asc] [:cs.created_at :desc]]})))))
-
 
 (def ^:private transcript-hits-per-session
   "Snippets kept per matching session. The old shape collapsed a session to ONE
@@ -1894,7 +1892,6 @@
             (.clear usage-rollup-cache))
           (.put usage-rollup-cache sref {:fingerprint fingerprint :tally tally})
           tally)))))
-
 
 (defn db-session-usage-stats
   "ONE session's whole-life USAGE rollup, or nil when the session has no turns:
@@ -2707,6 +2704,7 @@
 
           (execute! tx-info {:update :session_soul :set {:favorite_rank rank} :where [:= :id id]})
           rank)))))
+
 ;; Turn - session_turn_soul + session_turn_state
 
 (defn- attachment-payload-cols
@@ -2893,10 +2891,6 @@
                      :where [:and [:= :id (->ref parent-session-id)] [:= :claimed_at nil]]})
           soul-id)))))
 
-
-
-
-
 (defn- row->attachment
   "Project ONE `session_attachment` row into the returned envelope. `:source` is
    DERIVED - a row carrying an iteration is a `tool` artifact, a NULL iteration
@@ -2927,7 +2921,6 @@
              :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}
       (:view_id row)
       (assoc :view-id (:view_id row)))))
-
 
 (defn db-list-turn-attachments
   "Ordered INBOUND user images persisted for one `session_turn_soul` (the `user`
@@ -3173,7 +3166,6 @@
                        :turn-soul-id (:session_turn_soul_id row)
                        :iteration-id (:session_turn_iteration_id row))))
              vec)))))
-
 
 (defn db-read-attachment
   "Read ONE persisted attachment by its bare row id (as returned by the
@@ -3816,7 +3808,6 @@
           (query! db-info
                   (session-turn-soul+state-query [:= :qst.status (normalize-status status)])))
     []))
-
 
 (defn- attach-prior-outcome
   [row->turn-map]
@@ -4571,7 +4562,7 @@
 ;;
 ;; This ns is the `:sqlite` entry of the persistance facade's backend table;
 ;; the facade requires it on the first real DB op (see
-;; `com.blockether.vis.internal.persistance/require-backend-ns!`), so commands
+;; `com.blockether.vis.internal.persistance.core/require-backend-ns!`), so commands
 ;; that never touch the DB skip its ~480 ms of class loading on a cold JVM.
 (defn db-load-ctx-history
   "Return a sorted-by-turn vec of `[turn-n ctx-map]` pairs for the session.
@@ -4602,6 +4593,7 @@
                    :when (some? decoded)]
 
                [(long (:position row)) decoded]))))))
+
 (defn- fts5-quote [value] (str "\"" (str/replace (str value) "\"" "\"\"") "\""))
 
 (declare render-search-query)

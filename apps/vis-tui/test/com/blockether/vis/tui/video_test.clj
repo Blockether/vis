@@ -23,8 +23,11 @@
            [org.jcodec.common.model ColorSpace Picture]))
 
 (def ^:private clip-w 64)
+
 (def ^:private clip-h 48)
+
 (def ^:private clip-frames 10)
+
 (def ^:private clip-fps 8)
 
 (def ^:private block-px "Width of the moving bar, and so the stride of its position per frame." 8)

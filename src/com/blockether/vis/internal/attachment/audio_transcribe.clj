@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.audio-transcribe
+(ns com.blockether.vis.internal.attachment.audio-transcribe
   "Borrowed EARS: a recording somebody attached, as text.
 
    No provider wire carries audio. A voice memo dropped into a message is therefore
@@ -8,7 +8,7 @@
    that decides everything about where it runs: the transcript is not a second-hand
    report bought from another provider, it is the recording's own WORDS, produced
    locally by the speech engine this build already carries
-   (`com.blockether.vis.internal.speech`, normally Parakeet on this machine). It costs
+   (`com.blockether.vis.internal.speech.core`, normally Parakeet on this machine). It costs
    no quota, it leaves no bytes on anybody's wire, and it is true of the file forever.
 
    WHEN it runs is the whole design. A surface that STAGES a recording — the composer
@@ -38,10 +38,10 @@
 
    A LEAF: attachments + voice + toggles, never back on the loop."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.attachments :as attachments]
-            [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.speech :as speech]
+            [com.blockether.vis.internal.speech.core :as speech]
             [taoensso.telemere :as tel])
   (:import [java.io File FileOutputStream]
            [java.nio.charset StandardCharsets]

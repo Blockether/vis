@@ -74,6 +74,7 @@
     "glsl" "haxe" "hlsl" "json5" "jsonnet" "kdl" "matlab" "nim" "objc" "odin" "pascal" "pkl"
     "powershell" "prisma" "proto" "purescript" "racket" "rego" "rescript" "ron" "scheme" "solidity"
     "starlark" "systemverilog" "tcl" "thrift" "typespec" "v" "verilog" "vhdl" "wat" "wgsl" "zsh"})
+
 (defn guarded-language
   "The detected language for `path` when Vis treats its parse errors as real syntax
    failures, otherwise nil. This is the single policy boundary shared by `patch` and
@@ -81,7 +82,6 @@
   [path]
   (let [lang (detect-language (str path))]
     (when (contains? code-languages lang) lang)))
-
 
 (defn- byte-slice
   ^String [^bytes bs ^long start ^long end]

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.native-preload
+(ns com.blockether.vis.internal.extension.native-preload
   "Build-time reachability for everything the engine loads DYNAMICALLY.
 
    The manifest resolves an entrypoint with `requiring-resolve`, a pack reaches
@@ -23,7 +23,7 @@
    (see `native-classpath` in build.clj)."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.manifest :as manifest]))
+            [com.blockether.vis.internal.extension.manifest :as manifest]))
 
 (def ^:private compiled-package
   "The one package tree this distribution compiles: core and every internal

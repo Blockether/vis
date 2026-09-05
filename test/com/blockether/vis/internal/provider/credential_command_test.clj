@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.credential-command-test
+(ns com.blockether.vis.internal.provider.credential-command-test
   "Contract tests for command-backed provider credentials (`api_key_command`).
 
    The helper is a real executable script in a temp dir, so every assertion here
@@ -6,11 +6,11 @@
    cached, and never persisted or logged."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.credential-command :as cred]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.provider.credential-command :as cred]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.provider-error :as perr]
-            [com.blockether.vis.internal.providers :as providers]
+            [com.blockether.vis.internal.provider.error :as perr]
+            [com.blockether.vis.internal.provider.service :as providers]
             [lazytest.core :refer [defdescribe expect it]]
             [yamlstar.core :as yamlstar]))
 

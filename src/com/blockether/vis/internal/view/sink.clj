@@ -21,7 +21,7 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.attachment-storage :as attachment-storage]
+            [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
@@ -108,6 +108,7 @@
   (attachment-storage/register-backend! record-backend))
 
 (record-rail!)
+
 (defn- append-line!
   "One line, flushed and closed. A live view writes rarely (a patch is a human's
    heartbeat, not a byte stream), and a handle held open for the length of a CI

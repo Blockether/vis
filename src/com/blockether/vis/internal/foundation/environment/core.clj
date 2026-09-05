@@ -19,16 +19,16 @@
    `cwd` changes between calls, and explicitly by the HOST-ONLY
    `refresh!` — which `/reload` runs and the sandbox cannot call."
   (:require [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.foundation.environment.agents :as agents]
+            [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.foundation.environment.git :as git]
             [com.blockether.vis.internal.foundation.environment.host :as host]
             [com.blockether.vis.internal.foundation.environment.languages :as languages]
             [com.blockether.vis.internal.foundation.environment.monorepo :as monorepo]
             [com.blockether.vis.internal.foundation.environment.render :as render]
             [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
 
 ;; Snapshot cache. Keyed by canonical cwd so we recompute on

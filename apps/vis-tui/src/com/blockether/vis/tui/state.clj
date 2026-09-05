@@ -919,7 +919,6 @@
       (when-let [sid (get-in db [:session :id])]
         (try (vis/gateway-session-model-cached sid) (catch Throwable _ nil)))))
 
-
 (defn- session-model-info
   "Resolved model map for the model THIS SESSION routes to.
 
@@ -942,7 +941,7 @@
 (def untitled-session-label
   "Default workspace label for a session without a title yet.
 
-   Aliases the channel-agnostic value in `internal/header` so the TUI
+   Aliases the channel-agnostic value in `internal/channel/header` so the TUI
    and other channels all show the same placeholder. Kept exported
    here for callers (and tests) that already reach in via the state
    namespace."
@@ -2891,7 +2890,6 @@
 (reg-event-db :live-view-expand
               (fn [db [_ view-id node-id]]
                 (update-live-pane db view-id #(lv/expanded % node-id))))
-
 
 (reg-event-db :live-view-painted
               ;; Pushed back by the render thread with what the frame measured, the

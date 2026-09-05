@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider.openrouter
+(ns com.blockether.vis.internal.provider.vendor.openrouter
   "OpenRouter static-API-key provider (https://openrouter.ai/api/v1).
 
    OpenRouter is a multi-provider gateway speaking the OpenAI chat wire, so no
@@ -7,7 +7,7 @@
    `openai/gpt-5.1`, ...).
 
    Authentication is the shared static-API-key shape, owned by
-   `com.blockether.vis.internal.provider-key-store` and declared by `BOOK` below:
+   `com.blockether.vis.internal.provider.key-store` and declared by `BOOK` below:
    lookup order, status, logout, the token envelope and the interactive
    `vis-agent providers auth openrouter` flow all come from there.
 
@@ -37,7 +37,7 @@
 
 (def ^:private BOOK
   "OpenRouter's slice of the shared static-API-key shape
-   (`com.blockether.vis.internal.provider-key-store`).
+   (`com.blockether.vis.internal.provider.key-store`).
 
    ONE credential, so `:file-shape :flat`: `~/.vis/openrouter-auth.json` carries
    `api_key` / `saved_at` at its root, which is exactly where every build that

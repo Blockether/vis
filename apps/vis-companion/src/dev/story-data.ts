@@ -173,7 +173,7 @@ export const ACTIVITY_CHRONOLOGY = projection({
         { type: 'file', id: 'src/components/ActivityPanel.tsx' },
         { type: 'file', id: 'src/components/ChatContent.tsx' },
         { type: 'file', id: 'src/index.css' },
-        { type: 'file', id: 'src/com/blockether/vis/internal/render.clj' },
+        { type: 'file', id: 'src/com/blockether/vis/internal/channel/render.clj' },
         { type: 'file', id: 'src/lib/activity.ts' },
         { type: 'file', id: 'src/components/ui.tsx' },
       ],

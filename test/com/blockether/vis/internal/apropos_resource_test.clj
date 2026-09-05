@@ -13,9 +13,9 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.env-python :as ep]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.manifest :as manifest]
+            [com.blockether.vis.internal.python.env :as ep]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 

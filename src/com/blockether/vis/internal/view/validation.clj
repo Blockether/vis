@@ -16,7 +16,7 @@
 
    Validation is code, not data, and it never crosses the wire. The ENGINE is
    the only authority: it runs every validator when a form is CONFIRMED
-   ([[com.blockether.vis.internal.view/submit!]]) and hands the surfaces
+   ([[com.blockether.vis.internal.view.core/submit!]]) and hands the surfaces
    the errors it found, keyed by field. Neither the TUI band nor the companion
    app owns a validation rule or re-checks anything as the operator types —
    they show the engine's verdict, and drop a field's error the moment that

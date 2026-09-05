@@ -9,7 +9,6 @@
             [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as contract]))
 
-
 (defn release-version
   "Human release version of this build: the `vis/VERSION` resource written at
    build time from the repo-root VIS_VERSION, verbatim (`0.1.28`), else
@@ -140,6 +139,7 @@
     (let [[sha & marks] (str/split c #"-")]
       (when (re-matches #"[0-9a-f]{7,40}" sha)
         (str/join "-" (cons (subs sha 0 (min 12 (count sha))) marks))))))
+
 (defn- checkout-build-id
   "The identity of a SOURCE run: the short `HEAD` sha of the checkout this process
    loaded its code from.
@@ -217,7 +217,6 @@
    (contract/header :client) (str client-name)
    (contract/header :client-version) (release-version)})
 
-
 (defn request->client
   "Read the client's advertised protocol from a Ring request's normalized headers."
   [request]
@@ -237,7 +236,6 @@
      :version (some-> (get h (contract/header :client-version))
                       str
                       not-empty)}))
-
 
 (defn gateway-verdict
   "The gateway's own judgement of one inbound request: [[contract/verdict]] with

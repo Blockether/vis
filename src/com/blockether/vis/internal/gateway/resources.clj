@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.resources
+(ns com.blockether.vis.internal.gateway.resources
   "Canonical in-memory registry of gateway-managed stateful resources. Every
    long-lived thing vis spawns registers here so the agent, footer, and shutdown
    all share one live view. Resources are deliberately not persisted: their

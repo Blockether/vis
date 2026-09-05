@@ -58,7 +58,6 @@
   [audio-file throwable message]
   (tel/log! (voice-asr-failed-signal audio-file throwable message) message))
 
-
 (defn- recording-failure-text
   "What the human is told when voice fails. An engine that named a REMEDIATION -
    install espeak-ng, restart Vis after a linker failure - has already done the

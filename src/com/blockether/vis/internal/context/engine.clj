@@ -1,10 +1,10 @@
-(ns com.blockether.vis.internal.ctx-engine
+(ns com.blockether.vis.internal.context.engine
   "Pure helpers for the model-facing context snapshot.
 
    The mutable session state lives outside this namespace; these functions advance
    the turn/iteration cursor and compute utilization metadata."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.form :as form]))
+            [com.blockether.vis.internal.channel.form :as form]))
 
 (def DEFAULT_PROMPT_BUDGET_TOKENS
   "Soft per-call operating budget surfaced to the model as
@@ -13,6 +13,7 @@
    limit remains the hard ceiling. Compared against provider-reported input
    tokens (no local tokenizer) — see `utilization`."
   200000)
+
 ;; Scope parsing — deterministic, regex-driven
 ;; Iteration scope is `tN/iM`. The legacy per-form `/fK` tail is OPTIONAL (and no
 ;; longer emitted — one record = one tool call, keyed by `:svar/tool-call-id`).
@@ -29,6 +30,7 @@
       "session_scope" (-> cursor
                           (update "iter" inc)
                           (assoc "next_form" 1)))))
+
 (def prompt-cache-status-key
   "Engine-only slot for Svar's latest provider prompt-cache status. The value is
    already a complete metric; Vis only projects it into `session_utilization`."
@@ -68,6 +70,7 @@
                 gc-pass)
       turn-changed?
       (dissoc prompt-cache-status-key))))
+
 ;; Empty-ctx constructor — used by tests + scenario replayer
 (defn empty-ctx
   "A minimal CTX scaffold with all model-facing keys filled by empty /
@@ -102,6 +105,7 @@
           (remove (fn [[k _]]
                     (and (string? k) (str/starts-with? k "engine_"))))
           ctx)))
+
 ;; Iter-scope parsing + comparator
 (defn compact-src
   "One-line, length-capped form source for the `you ran:` scope index
@@ -208,6 +212,7 @@
     (when (and (map? stamp)
                (= (long (or (get stamp "turn") -1)) (long (or (get ctx "session_turn") 0))))
       (not-empty (select-keys stamp ["provider" "model"])))))
+
 (def model-facing-keys
   "EXACT set of `session_*` keys the model is meant to see. Security access is
    included as an environment-derived value; engine bookkeeping remains hidden."
@@ -388,7 +393,6 @@
   (when (map? s)
     (let [flat (select-keys s ["through" "from" "to" "since"])]
       (into (if (seq flat) [flat] []) (filter map?) (get s "ranges")))))
-
 
 (defn expand-through
   "Resolve every fold SELECTOR on each summary against `universe` (the caller's
@@ -905,6 +909,7 @@
      (cond-> (select-keys ctx model-facing-keys)
        (seq util)
        (assoc "session_utilization" util)))))
+
 ;; Form tag classification — derive :tag from the form source string
 (def ^:private py-head-name-re
   "Matches the head call NAME of a Python top-level form: any number of
@@ -937,6 +942,7 @@
    resolver. Keeping the core set pure of tool names stops the engine from
    owning extension policy."
   #{})
+
 ;; UI hiding of engine chrome is structural and explicit; it is not inferred
 ;; from a call-head name or a magic execution result.
 (defn classify-form-tag
@@ -960,6 +966,7 @@
    (let [nm (form-head-name src)]
      (or (when (and nm head-tag-resolver) (try (head-tag-resolver nm) (catch Throwable _ nil)))
          (if (and nm (contains? core-mutation-heads nm)) :mutation :observation)))))
+
 ;; blocks→forms — project per-form data captured by the loop's eval pipeline
 ;; into the canonical engine envelope shape
 (defn block->envelope

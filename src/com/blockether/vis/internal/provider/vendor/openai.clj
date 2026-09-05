@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider.openai
+(ns com.blockether.vis.internal.provider.vendor.openai
   "OpenAI provider preset extension. API keys are configured by channels."
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.svar.core :as svar]))

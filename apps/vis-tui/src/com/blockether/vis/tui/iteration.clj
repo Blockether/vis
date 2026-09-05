@@ -1,6 +1,6 @@
 (ns com.blockether.vis.tui.iteration
   "Canonical iteration-entry shape — the single source of truth shared by
-   the LIVE progress tracker (`internal/progress`) and the RESUME projection
+   the LIVE progress tracker (`internal/session/progress`) and the RESUME projection
    (`channel-tui/chat`).
 
    Background: the live-vs-resume split was the root cause of every TUI

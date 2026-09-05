@@ -4,7 +4,7 @@
    Native descriptor ownership, terminal setup, process groups, waiting and
    signals live in `vis-python-runtime`; this namespace keeps only the handle
    map consumed by shell and its passthrough bridge."
-  (:require [com.blockether.vis.internal.process-jail :as process-jail]))
+  (:require [com.blockether.vis.internal.sandbox.jail :as process-jail]))
 
 (defn- tee-input
   [^java.io.InputStream raw listeners]

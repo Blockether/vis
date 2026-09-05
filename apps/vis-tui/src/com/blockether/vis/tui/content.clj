@@ -9,7 +9,6 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.util :as util]))
 
-
 (defn assert-block!
   [block]
   (if (content-contract/block-valid? block)

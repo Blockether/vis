@@ -4,7 +4,7 @@
    (`\"git\"` inside a repo, else `\"none\"`) — never `\"rift\"` (a non-VCS)."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.foundation.workspace-ctx :as wctx]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- temp-dir

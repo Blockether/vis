@@ -19,7 +19,6 @@
    (vec (for [x (range cols)]
           (cell (if (< (long x) (.length s)) (.charAt s (int x)) \space) fg bg bold)))))
 
-
 (defn- png!
   "One captured grid straight to a PNG path, through the shared capture helper."
   [nm grid]

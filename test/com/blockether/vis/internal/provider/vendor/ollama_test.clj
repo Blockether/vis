@@ -1,6 +1,6 @@
-(ns com.blockether.vis.internal.provider.ollama-test
+(ns com.blockether.vis.internal.provider.vendor.ollama-test
   (:require [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.provider.ollama]
+            [com.blockether.vis.internal.provider.vendor.ollama]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe provider-ollama-test

@@ -8,18 +8,10 @@
   com.blockether.vis.core/validator-fn clojure.core/fn
   ;; `fff-index/with-index` leases a pooled fff index: `[binding (lease …)]`,
   ;; exactly a `let` binding pair, so kondo resolves the bound index symbol.
-  com.blockether.vis.internal.fff-index/with-index clojure.core/let
-  ;; Four sandbox LEASES, each `[binding (create …)] & body` — exactly a `let`
-  ;; binding pair, so kondo resolves the bound symbol (and a destructuring map)
-  ;; in the body instead of calling every use of it an unresolved symbol.
-  com.blockether.vis.internal.sandbox-resources/with-sandbox clojure.core/let
-  com.blockether.vis.internal.sandbox-resources/keeping-sandbox clojure.core/let}
+  com.blockether.vis.internal.workspace.fff-index/with-index clojure.core/let}
 
- ;; `with-python-context` (sandbox-shim tests) is an anaphoric macro that binds
- ;; `python-context`; tell kondo the symbol is intentional, not a typo.
  :linters
- {:unresolved-symbol {:exclude [python-context]}
-  ;; Telemere generates these vars through macros, so dependency analysis cannot
+ {;; Telemere generates these vars through macros, so dependency analysis cannot
   ;; discover them even though they resolve at compile time.
   :unresolved-var
   {:exclude [taoensso.telemere/handler:file
@@ -38,7 +30,7 @@
    ;; Without this hook every `defdelegate` call shows up as an
    ;; unresolved-symbol error because clj-kondo can't expand the
    ;; runtime resolution. See the hook for details.
-   com.blockether.vis.internal.persistance/defdelegate
+   com.blockether.vis.internal.persistance.core/defdelegate
    hooks.com.blockether.vis.defdelegate/defdelegate
 
    ;; In-house `import-vars`/`import-var` re-export the public facade
@@ -48,14 +40,6 @@
    hooks.com.blockether.vis.import-vars/import-vars
    com.blockether.vis.internal.import/import-var
    hooks.com.blockether.vis.import-vars/import-var
-   ;; Per-file `with-tmp` fixtures used by vis-foundation tests:
-   ;; bind a fresh tmp-dir path to the symbol passed in. Without
-   ;; the hook every `(with-tmp root ...)` call lights every `root`
-   ;; reference in the body up as `unresolved-symbol`.
-   com.blockether.vis.internal.foundation.environment.agents-test/with-tmp
-   hooks.com.blockether.vis.with-tmp/with-tmp
-   com.blockether.vis.internal.foundation.environment.skills-test/with-tmp
-   hooks.com.blockether.vis.with-tmp/with-tmp
 
    ;; The sandbox leases: `[sym & create-python-context args]`, which is NOT a
    ;; `let` binding vector — linting it as one reads the roots argument as a

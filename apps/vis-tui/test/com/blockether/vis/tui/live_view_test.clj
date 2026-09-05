@@ -105,6 +105,7 @@
         (apply str (map :ch row))]
 
     (nth row (+ (long (str/index-of text needle)) (long idx)))))
+
 ;;; ── Tests ───────────────────────────────────────────────────────────────────
 
 (deftest live-view-plan-test
@@ -752,7 +753,6 @@
 
 ;;; ── The width the band has, and who stands in it ────────────────────────────
 
-
 ;; A table that hugs its widest word leaves the band half empty and the eye
 ;; hunting across the gap: the surface IS the width the run was given, so the
 ;; table takes all of it — and takes it inside a drawn box, because a live table
@@ -987,6 +987,7 @@
               (str "on " rows " rows the watched run owns four fifths of the available surface"))
           (is (<= (height rows) available)
               (str "on " rows " rows the composer remains outside the band")))))))
+
 ;; Phase 5 of the live-view plan: a view used to vanish the moment it ended, so
 ;; the log the human had been watching became unreachable one frame after it
 ;; finished. What a finished run leaves now is a ROW OF THE TRANSCRIPT, in the

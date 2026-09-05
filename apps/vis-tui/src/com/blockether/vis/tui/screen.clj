@@ -253,7 +253,6 @@
   "Upper bound for per-loop drag auto-scroll amplification."
   8)
 
-
 (defn- smooth-wheel!
   "Store one surface's wheel momentum while Lanterna owns the smoothing protocol.
    Returns `{:old-mom :new-mom :eff}`; `:eff` is nil when inertia-tail jitter was absorbed."
@@ -610,7 +609,6 @@
         [:live-view-scroll (lv/view-id pane)
          (* (scroll/wheel-step (:visible pane)) (long wheel-delta))]))))
 
-
 (defn- select-live-row!
   "Select one clicked table row through the shared View action without blocking input.
 
@@ -734,6 +732,7 @@
          (when-let [view (hi/live-view<-wire wire)]
            (state/dispatch [:live-view-open view])))
        (catch Throwable _ nil)))
+
 (defn- human-input-key!
   "Feed one keystroke to the open human-input dialog and act on its verdict.
 
@@ -1005,7 +1004,6 @@
                 (when (= text full) {:slash-text full :prompt prompt}))))
           (vis/registered-slashes))))
 
-
 (defn- slash-suggestions-for-input
   ([screen input-state] (slash-suggestions-for-input screen input-state 0))
   ([screen input-state selected-index]
@@ -1216,7 +1214,6 @@
     (some #(str/starts-with? line (str % selection-output-indent))
           selection-output-indent-markers)))
 
-
 (defn- bubble-line-text-col
   [message bubble-left line]
   (cond (or (= :user (:role message)) (error-card-row-geometry? message))
@@ -1294,8 +1291,6 @@
                      :id id}))
                 {:out [] :prev nil :id -1}
                 ranges)))
-
-
 
 (defn- bubble-selectable-ranges
   "Return absolute screen-cell ranges for visible transcript message content.
@@ -2378,7 +2373,6 @@
 (defn- paint-composer!
   [g input input-top text-rows cols]
   (render/draw-input-box! g input input-top text-rows cols nil))
-
 
 (defn- draw-bottom-chrome!
   "Paint the bottom screen chrome — attachment rail, composer, echo area, and
@@ -4548,7 +4542,6 @@
   [session-id]
   (try (vis/gateway-session-workspace session-id) (catch Throwable _ nil)))
 
-
 (defn- abbrev-home
   "Shorten an absolute path by replacing the user's home dir with `~`."
   [^String p]
@@ -4761,7 +4754,6 @@
                                             (compare-and-set! persist-tabs-running* false true))
                                    (recur)))))))))
 
-
 (defn- resolve-prefix!
   "C-x is a HYDRA, not a dead prefix: the moment `input/handle-key` arms it, the
    band (`keymap/prefix-spec` painted by `dlg/prefix-band!`) goes up over the
@@ -4892,7 +4884,6 @@
     (or (chat/resume-session cid)
         (throw (ex-info (format-session-not-found cid) {:vis/user-error true :id cid})))))
 
-
 (defn- authenticated-provider-config
   "Return a runtime provider config when OAuth presets are already authenticated.
    Their credentials live outside config, so a missing config file is not a missing provider."
@@ -4931,7 +4922,6 @@
                     (some-> (latest-project-session-id)
                             chat/resume-session)
                     (chat/make-session config)))))
-
 
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
@@ -7287,7 +7277,6 @@
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 (def ^:private tui-usage
   "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue]")
-
 
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 

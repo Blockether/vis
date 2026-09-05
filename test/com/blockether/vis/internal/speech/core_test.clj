@@ -1,7 +1,7 @@
-(ns com.blockether.vis.internal.speech-test
+(ns com.blockether.vis.internal.speech.core-test
   "The fixed gateway speech engines and their shared job lifecycle."
   (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
-            [com.blockether.vis.internal.speech :as speech]))
+            [com.blockether.vis.internal.speech.core :as speech]))
 
 (defn- with-only-engines!
   "Run `f` against a fixed test engine set without adding a production registry."

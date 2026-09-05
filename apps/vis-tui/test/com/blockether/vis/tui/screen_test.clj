@@ -40,18 +40,15 @@
 
 (def ^:private parse-args (deref #'screen/parse-args))
 
-
 (def ^:private quit-tui! (deref #'screen/quit-tui!))
 
 (def ^:private release-workspace-sessions! (deref #'screen/release-workspace-sessions!))
-
 
 (def ^:private live-progress-only-change? (deref #'screen/live-progress-only-change?))
 
 (def ^:private partial-live-frame? (deref #'screen/partial-live-frame?))
 
 (def ^:private input-only-change? (deref #'screen/input-only-change?))
-
 
 (def ^:private coalesced-drag-scroll-amount (deref #'screen/coalesced-drag-scroll-amount))
 
@@ -62,6 +59,7 @@
 (def ^:private smooth-wheel! (deref #'screen/smooth-wheel!))
 
 (def ^:private release-wheel-momentum! (deref #'screen/release-wheel-momentum!))
+
 (def ^:private activate-live-region! (deref #'screen/activate-live-region!))
 
 (def ^:private header-hover-only-change? (deref #'screen/header-hover-only-change?))
@@ -188,6 +186,7 @@
                                       "modal-close-bounds" "(defn- stty!" "IEXTEN" "IXON"
                                       "\u001B[?100" "\\u001B[?100"]]
                      (expect (not (str/includes? source duplicate)))))))
+
 (defdescribe terminal-cell-size-probe-test
              ;; Regression, issue td-03018d: cmux's trailing CSI 18 t reply was typed into the composer.
              (it
@@ -310,7 +309,6 @@
                                                 nil
                                                 header-region))))))
 
-
 ;; Reported in Vis session 22b3489b-336f-42d0-9bc8-806dff2de86f: scrolling a live view
 ;; with a MacBook trackpad crawled at a third of the speed of the transcript beside it,
 ;; and the gesture's own inertia tail bounced the pane back against the reader.
@@ -368,6 +366,7 @@
                                (* 2 (long MouseAction/WHEEL_MOMENTUM_HOLD_MILLIS))))
                    (release-wheel-momentum! mom at :live-view)
                    (expect (zero? (long @mom))))))
+
 ;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: wheel input
 ;; accelerated when it crossed into the live table, its rows had no TUI action, and
 ;; the live transient had no minimize/restore action.
@@ -581,7 +580,6 @@
                    (activate-tab-entry-hit! #(swap! refreshes conj %)
                                             {:kind :workspace-entry :index 1})
                    (expect (= [false] @refreshes)))))
-
 
 (defdescribe terminal-interrupt-test
              (it "configures Lanterna to trap Ctrl+C instead of exiting inside pollInput"
@@ -2190,7 +2188,6 @@ therapy line 2"
       ;; The broad fallback really is the complete turn pasted in the report; the
       ;; per-thinking hit above is what must win before it.
       (expect (str/includes? (force (:text whole-bubble-hit)) second-thinking)))))
-
 
 ;; Regression (user report, from the TUI): ArrowUp recalled `/reload` out of the
 ;; input history and the slash overlay opened over the composer — and while it

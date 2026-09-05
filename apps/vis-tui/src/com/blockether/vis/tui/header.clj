@@ -203,7 +203,6 @@
   [db entries]
   (or (:active-tab-id db) (:id (some #(when (:active? %) %) entries)) (:id (first entries))))
 
-
 (defn header-rows
   "Rows needed by the fixed standalone-app header."
   ([_db] header-rows-base)

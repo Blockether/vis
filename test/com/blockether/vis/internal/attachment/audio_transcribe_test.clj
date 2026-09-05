@@ -1,9 +1,9 @@
-(ns com.blockether.vis.internal.audio-transcribe-test
+(ns com.blockether.vis.internal.attachment.audio-transcribe-test
   "A recording is text the moment it arrives, or it SAYS why it is not."
-  (:require [com.blockether.vis.internal.audio-transcribe :as at]
-            [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.toggles :as toggles]
-            [com.blockether.vis.internal.speech :as speech]
+  (:require [com.blockether.vis.internal.attachment.audio-transcribe :as at]
+            [com.blockether.vis.internal.context.prompt :as prompt]
+            [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.speech.core :as speech]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]])
   (:import [java.util Base64]))
 

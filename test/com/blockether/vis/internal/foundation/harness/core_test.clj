@@ -2,8 +2,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.harness.core :as core]
             [com.blockether.vis.internal.foundation.harness.discovery :as d]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe it expect]]))
 
 (def ^:private skill-template-text @#'core/skill-template-text)

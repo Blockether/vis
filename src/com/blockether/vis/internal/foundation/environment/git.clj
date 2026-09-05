@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.foundation.environment.git
   "Git introspection for the environment block, backed by the native `git`
-   binary (via `internal.git`).
+   binary (via `internal.workspace.git`).
 
    Returns a snapshot map for the repository that contains `start`
    (typically the JVM working directory). nil when `start` is not inside any
@@ -12,7 +12,7 @@
    the system-prompt build."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.git :as vis-git])
+            [com.blockether.vis.internal.workspace.git :as vis-git])
   (:import (java.io File)))
 
 (def ^:const default-status-timeout-ms

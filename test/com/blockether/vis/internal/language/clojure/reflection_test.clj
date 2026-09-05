@@ -107,7 +107,6 @@
                                             "<stdin>")]
         (expect (= 3 (get (first fs) "row"))))))
 
-
 (def dependency-loads
   "Counts compile-time dependency loads triggered by [[dependency-loading-code]]."
   (atom 0))

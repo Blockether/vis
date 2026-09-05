@@ -1,6 +1,6 @@
-(ns com.blockether.vis.internal.provider.mistral-test
+(ns com.blockether.vis.internal.provider.vendor.mistral-test
   (:require [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.provider.mistral]
+            [com.blockether.vis.internal.provider.vendor.mistral]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe provider-mistral-test

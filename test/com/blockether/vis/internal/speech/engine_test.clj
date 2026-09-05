@@ -34,7 +34,6 @@
       (.write out header))
     (.getPath file)))
 
-
 ;; Regression, user report: voice worked again only after restarting Vis. A class whose static
 ;; initializer already met a missing library can never load again in the same JVM, so the
 ;; refusal has to SAY restart - repeating the linker error taught nobody anything.

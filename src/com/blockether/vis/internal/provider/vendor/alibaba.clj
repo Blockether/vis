@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider.alibaba
+(ns com.blockether.vis.internal.provider.vendor.alibaba
   "Alibaba Model Studio static-API-key providers. Each plan is registered as its own extension:
 
      :alibaba-coding-plan -> Coding Plan subscription
@@ -45,7 +45,7 @@
 
 (def ^:private BOOK
   "Alibaba's slice of the shared static-API-key shape
-   (`com.blockether.vis.internal.provider-key-store`): one file, one plan table,
+   (`com.blockether.vis.internal.provider.key-store`): one file, one plan table,
    and the strings a message needs.
 
    The map key is the LOCAL plan tag used inside the persisted auth file

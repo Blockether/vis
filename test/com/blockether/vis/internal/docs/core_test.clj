@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.docs-test
+(ns com.blockether.vis.internal.docs.core-test
   "Docs renderer: cross-page markdown links must resolve in BOTH output
    modes (live `/docs/<slug>`, static `<slug>.html`), and the live
    handler tolerates literal `<slug>.md` deep links with a redirect.
@@ -6,7 +6,7 @@
    what `doc(name)` renders, what an `apropos` row previews, and how a live view is
    driven from Python."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.docs :as docs]
+            [com.blockether.vis.internal.docs.core :as docs]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private rewrite-md-links @#'docs/rewrite-md-links)

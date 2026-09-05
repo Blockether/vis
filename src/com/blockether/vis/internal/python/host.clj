@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.python-host
+(ns com.blockether.vis.internal.python.host
   "THE door from the sandbox back into Vis, and the only one.
 
    The embedded interpreter calls out through ONE function it was handed, so
@@ -20,7 +20,7 @@
    block sits inside it."
   (:require [charred.api :as json]
             [clojure.string :as str]
-            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis-python-runtime :as runtime]
             [taoensso.telemere :as tel]))
 
@@ -141,6 +141,7 @@
       (clojure.lang.Var/resetThreadBindingFrame frame)
       (try (answer tool f args) (finally (clojure.lang.Var/resetThreadBindingFrame held))))
     (answer tool f args)))
+
 (defn dispatch
   "Serve one call from the sandbox: WHO called, `payload` in, reply JSON out.
 
@@ -270,6 +271,7 @@
   ([session tools install-one]
    (swap! registry update door-session merge tools)
    (install-sync-tools! session tools install-one)))
+
 (defn forget-tools!
   "Drop `names` from `session`'s registry, answering nothing.
 

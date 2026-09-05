@@ -1,5 +1,5 @@
-(ns com.blockether.vis.internal.activity-test
-  (:require [com.blockether.vis.internal.activity :as activity]
+(ns com.blockether.vis.internal.activity.core-test
+  (:require [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as event]
             [lazytest.core :refer [defdescribe expect it]]))
 

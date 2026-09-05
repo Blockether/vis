@@ -1,5 +1,5 @@
-(ns com.blockether.vis.internal.header-test
-  (:require [com.blockether.vis.internal.header :as vh]
+(ns com.blockether.vis.internal.channel.header-test
+  (:require [com.blockether.vis.internal.channel.header :as vh]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe

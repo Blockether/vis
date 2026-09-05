@@ -1,6 +1,6 @@
-(ns com.blockether.vis.internal.gitignore-test
+(ns com.blockether.vis.internal.workspace.gitignore-test
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.internal.gitignore :as gi]
+            [com.blockether.vis.internal.workspace.gitignore :as gi]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))

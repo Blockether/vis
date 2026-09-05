@@ -1,9 +1,9 @@
-(ns com.blockether.vis.internal.provider.anthropic-test
+(ns com.blockether.vis.internal.provider.vendor.anthropic-test
   (:require [babashka.http-client :as http]
             [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.provider.anthropic :as anthropic]
+            [com.blockether.vis.internal.provider.vendor.anthropic :as anthropic]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (anthropic/register!)

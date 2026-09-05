@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.foundation.mcp.core-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.ctx-renderer :as renderer]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.context.renderer :as renderer]
             [com.blockether.vis.internal.foundation.mcp.client :as client]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]

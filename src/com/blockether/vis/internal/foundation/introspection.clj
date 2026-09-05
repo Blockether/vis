@@ -21,18 +21,16 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.header :as header]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.channel.header :as header]
             [com.blockether.vis.internal.util :as util]))
-
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers - derive ids, deref atoms, normalize sym args.
 ;; ---------------------------------------------------------------------------
 
 (defn- current-session-id [env] (:session-id env))
-
 
 (defn- same-uuid?
   "True when two values denote the same UUID. Accepts UUID instances
@@ -498,7 +496,6 @@
           (integer? c) (- (long c))
           :else 0)
     0))
-
 
 (defn- search-tags
   "The where-it-hit half of a search row, in the same vocabulary the gateway
@@ -1148,7 +1145,6 @@
          :tool-errors-truncated? tool-errors-truncated?
          :routing routing}))))
 
-
 (defn- safe-call
   [f default]
   (try (let [v (f)]
@@ -1197,6 +1193,7 @@
                        (cond-> turn
                          (seq (:iterations turn))
                          (update :iterations (partial mapv model-iteration))))))))
+
 (defn- foundation-inspect-data
   "Canonical session-state data surface. One read returns the
    navigation summary, live current turn, classified failures,
@@ -1433,7 +1430,6 @@
        "String-keyed rows `{id, channel, title, turn_count, created_at, modified_at}`; a matched "
        "row adds `rank`, `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` and the "
        "`request_snippet`/`reply_snippet` windows.")}))
-
 
 ;; Session introspection is part of foundation-core, but its callable symbols and
 ;; prompt guidance remain behind the default-off `introspection` toggle.

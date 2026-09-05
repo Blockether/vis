@@ -1,9 +1,8 @@
-(ns com.blockether.vis.internal.config-validation-test
+(ns com.blockether.vis.internal.config.validation-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.config-validation :as config-validation]
+            [com.blockether.vis.internal.config.validation :as config-validation]
             [lazytest.core :refer [defdescribe expect it]]))
-
 
 (def full-config
   {"default_provider" "anthropic"
@@ -249,12 +248,12 @@
         (expect (not (.contains (pr-str data) "secret")))
         (expect (.contains (pr-str data) "<redacted>"))))
   (it "validates parser output before any runtime adaptation"
-      (require 'com.blockether.vis.internal.config :reload)
+      (require 'com.blockether.vis.internal.config.core :reload)
       (let [file
             (io/file "target/invalid-vis-config.yml")
 
             read-yaml
-            (var-get (ns-resolve 'com.blockether.vis.internal.config 'read-yaml-config-map))]
+            (var-get (ns-resolve 'com.blockether.vis.internal.config.core 'read-yaml-config-map))]
 
         (try (.mkdirs (.getParentFile file))
              (spit file "jail:\n  filesystem:\n    allow_reed:\n      - ../escape\n")
@@ -267,12 +266,12 @@
   ;; different one — and `sandbox: false` next to `jail:` was quietly ignored.
   ;; The parser normalizes NOTHING now; the closed schema refuses both by name.
   (it "refuses a top-level sandbox: / filesystem: instead of folding it into jail:"
-      (require 'com.blockether.vis.internal.config :reload)
+      (require 'com.blockether.vis.internal.config.core :reload)
       (let [file
             (io/file "target/invalid-key-vis-config.yml")
 
             read-yaml
-            (var-get (ns-resolve 'com.blockether.vis.internal.config 'read-yaml-config-map))
+            (var-get (ns-resolve 'com.blockether.vis.internal.config.core 'read-yaml-config-map))
 
             refused
             (fn [yaml]
@@ -360,6 +359,7 @@
                                       {"providers" [{"id" "p"
                                                      "models" [{"name" "m" "api_style" "gpt"}]}]}))
                              "is not a wire dialect"))))
+
 ;; ── Conditional mounts (#89) ─────────────────────────────────────────────────
 ;; One catalog is shared by every machine: a mac laptop, a Linux box, and a host
 ;; where half the sibling repos are simply not checked out.

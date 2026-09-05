@@ -22,8 +22,8 @@
             [com.blockether.vis.internal.language.clojure.shadow-cljs :as shadow]
             [com.blockether.vis.contract.surface :as surface]
             [com.blockether.vis.contract.test-runner :as contract]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.runtime-settings :as rt]))
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]))
 
 (def ^{:private true} run-form
   "Code evaled on the target nREPL. Loads each REQUESTED namespace FROM SOURCE

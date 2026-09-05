@@ -24,7 +24,7 @@ boundaries**. There are four:
 - **Python *extensions*** — trusted by design: they run in a HOST-owned
   interpreter process with confinement lifted and full filesystem reach;
   `subprocess` / `os.system` route through `vis.shell` under the session
-  `wrap-argv` policy (`src/com/blockether/vis/internal/python_extensions.clj`).
+  `wrap-argv` policy (`src/com/blockether/vis/internal/python/extensions.clj`).
   A dropped `.py` extension still has no meaningful confinement — the real blast
   radius if a hostile extension is installed.
 - **Shell layer** — arbitrary `bash -lc`, **default ON** behind the user-owned `shell`
@@ -40,7 +40,7 @@ Legend: **status** is `fixed` / `open` / `accepted` (documented design choice).
 
 | # | Finding | Location | Status |
 |---|---------|----------|--------|
-| 3 | **Provider API keys persisted world-readable.** `save-config!` did `.mkdirs` + `spit` on the `~/.vis` config store with no permission tightening; the file holds the provider API key in plaintext at the process umask (typically `644`). Contrast the gateway token, deliberately `chmod rw-------`. On a shared host any local user could read the LLM provider keys. | `src/com/blockether/vis/internal/config.clj` (`save-config!`, today `~/.vis/state.yml`) | **fixed** |
+| 3 | **Provider API keys persisted world-readable.** `save-config!` did `.mkdirs` + `spit` on the `~/.vis` config store with no permission tightening; the file holds the provider API key in plaintext at the process umask (typically `644`). Contrast the gateway token, deliberately `chmod rw-------`. On a shared host any local user could read the LLM provider keys. | `src/com/blockether/vis/internal/config/core.clj` (`save-config!`, today `~/.vis/state.yml`) | **fixed** |
 | 4 | **Non-constant-time token comparison.** The bearer token was compared with `=`, a timing side-channel once auth is enabled (non-loopback). | `gateway/server.clj` (`wrap-auth`) | **fixed** |
 | 6 | **Unbounded request-body slurp.** `body-json` does `(slurp (:body request))` with no size cap on any JSON endpoint → heap-exhaustion DoS from a large POST. | `gateway/server.clj:356` | **open** (fix: cap Content-Length / bounded read) |
 

@@ -82,7 +82,6 @@
       (is (= {:mode :at :offset 40 :pos 90} (scroll/settle {:mode :at :offset 40 :pos 90}))))
     (testing "missing/legacy scroll settles to FOLLOW" (is (= scroll/follow (scroll/settle nil))))))
 
-
 ;; Reported in Vis session 22b3489b-336f-42d0-9bc8-806dff2de86f: the live band scrolled
 ;; one row per wheel row while the transcript beside it scrolled three.
 (deftest wheel-step-scales-with-the-surface

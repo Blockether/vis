@@ -62,18 +62,18 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.cancellation :as cancellation]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.egress-proxy :as egress]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
-            [com.blockether.vis.internal.process-jail :as process-jail]
-            [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.sandbox.gateway :as gateway-sandbox]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
+            [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.runtime-settings :as rt]
-            [com.blockether.vis.internal.security-policy :as security-policy]
-            [com.blockether.vis.internal.shell-log :as shell-log]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
+            [com.blockether.vis.internal.sandbox.policy :as security-policy]
+            [com.blockether.vis.internal.foundation.shell-log :as shell-log]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.foundation.pty :as pty]
             [com.blockether.vis.internal.foundation.pty-bridge :as pty-bridge]
             [com.blockether.vis.internal.util :as util])
@@ -122,7 +122,6 @@
    `cat big.bin`) would otherwise let a line builder grow one unbounded line
    in memory; we force a break at this width instead."
   16000)
-
 
 ;; Small helpers
 
@@ -487,6 +486,7 @@
                (try (spawn)
                     (catch Throwable t2
                       (throw (ex-info fd-exhausted-message {:type ::fd-exhausted} t2)))))))))
+
 (defn- cleanup-jail-policy!
   [policy]
   (when-let [cleanup (::cleanup policy)]
@@ -503,7 +503,7 @@
   "What EVERY shell child is handed, pty or not, confined or not.
 
    `GIT_OPTIONAL_LOCKS=0` is this extension's half of the index-lock contract
-   `internal.git/git-argv` keeps for Vis' own calls. A plain `git status` or
+   `internal.workspace.git/git-argv` keeps for Vis' own calls. A plain `git status` or
    `git diff` REFRESHES the index, and refreshing WRITES it through
    `.git/index.lock` — so an agent-run status competed for the one lock the
    repo has against the footer poll, the environment snapshot and the rewind
@@ -888,7 +888,6 @@
       (throw (ex-info "shell needs a non-blank command." {:type ::blank-command})))
     line))
 
-
 ;; BACKGROUND — Python sandbox: `await shell({"command": "npm run dev", "id": "dev"})`
 
 (defonce ^:private bg-procs
@@ -1172,7 +1171,6 @@
           (some (fn [[id entry]]
                   (when (= token (:claim entry)) id))
                 (get committed sk))))))
-
 
 (defn- push-line!
   [buffer line]
@@ -2596,7 +2594,6 @@
                     {:type ::no-session})))
   (shell-dispatch (assoc env :shell-origin "jailed-session") opts))
 
-
 ;; Env injection — the before-fn hands the impl its env as first arg
 
 (defn- op-label
@@ -2663,7 +2660,6 @@
   {:arglists '([command] [command opts])}
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["command"] args) "op" "run")))
-
 
 (defn shell-logs
   "`page = sh.logs()` — read a background shell's log from a byte offset, or the
@@ -2748,7 +2744,6 @@
     (let [hits (into [] (keep #(get % id)) (vals @bg-procs))]
       (when (= 1 (count hits)) (present-str (:script (first hits)))))))
 
-
 (defn- shell-ticker
   "LIVE-TICKER phrase for one shell call — what the bubble says while the call is
    still in flight, completing `Vis is …`. The spawn and every method on its
@@ -2824,7 +2819,6 @@
 
       (if (seq script) (str verb ": " (clip-chip script shell-chip-max)) (str verb " the shell")))))
 
-
 (def shell-symbol
   (vis/symbol
     #'shell
@@ -2871,7 +2865,6 @@
      :tag :mutation
      :presenter :shell
      :on-error-fn (shell-on-error :shell)}))
-
 
 (def shell-logs-symbol
   (vis/symbol

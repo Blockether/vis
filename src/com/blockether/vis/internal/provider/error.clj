@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider-error
+(ns com.blockether.vis.internal.provider.error
   "Single source of truth for provider-error presentation.
 
    Typed provider-error content and per-iteration trace rows derive their wording
@@ -210,6 +210,7 @@
       (:provider-id data)
       (into (keep identity
                   [(row (:provider-id data) (:model data) (image-rejection-scope err))])))))
+
 (defn output-budget-too-small-error?
   "True when a provider rejected the request because the OUTPUT-token budget it
    was given is below that model's minimum — e.g. `gpt-5.6-terra` 400s on
@@ -355,6 +356,7 @@
   [err]
   (contains? failure/STREAM_WATCHDOG_ERROR_TYPES
              (or (:type (:data err)) (:type err) (:type (ex-data err)))))
+
 (def CONTEXT_OVERFLOW_TYPES
   "Every typed context-window failure svar can raise.
 
@@ -482,7 +484,6 @@
                                              (mapcat (fn [a]
                                                        [(:reason a) (:error a)])
                                                      (provider-error-attempts err)))))))))
-
 
 (defn upstream-timeout-phase
   "`:connect` (the request never reached the model), `:read` (it did, and the
@@ -679,7 +680,6 @@
                                   provider-message)
       :else (str "WHAT HAPPENED: "
                  (or (:summary (svar-classification err)) "the provider call failed.")))))
-
 
 (defn provider-error-title
   "A SHORT headline for the failure, by kind — the card title on every surface."
@@ -966,8 +966,6 @@
                   :stream-interrupted
 
                   (if (unroutable-error? err) :unroutable :generic)))))
-
-
 
 (defn provider-error-retryable?
   "Svar's canonical retry-safety verdict, exposed to Vis presentation surfaces.

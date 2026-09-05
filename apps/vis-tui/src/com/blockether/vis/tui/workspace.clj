@@ -13,6 +13,7 @@
         :else (str (cwd))))
 
 (defn root [] (workspace-root *workspace-root*))
+
 (defn session [] nil)
 
 (defn ancestor-roots

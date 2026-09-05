@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.python-project
+(ns com.blockether.vis.internal.python.project
   "What a Python project DECLARES about its own layout: import roots (the `src`
    layout every packaging backend spells differently) and pytest's `testpaths`.
 
@@ -15,10 +15,10 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.python-extensions :as pyx]
-            [com.blockether.vis.internal.python-worker :as pyext])
+            [com.blockether.vis.internal.python.extensions :as pyx]
+            [com.blockether.vis.internal.python.worker :as pyext])
   (:import [java.io File]))
 
 (set! *warn-on-reflection* true)

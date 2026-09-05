@@ -69,6 +69,7 @@
    keeps and the memory one drop can cost, nothing on any wire. The same 32MB
    ceiling a clip answers to covers a long voice memo or an interview take."
   (* 32 1024 1024))
+
 (def max-image-count
   "Attachment count cap per user message. Guards against a pathological
    message (e.g. a pasted directory listing) ballooning the request."
@@ -235,6 +236,7 @@
    as a video, and the send-time gate then tries to sample frames out of a file
    that has none."
   #{"m4a " "m4b " "m4p " "m4r " "f4a " "f4b " "aac "})
+
 (defn detect-video-mime
   "Sniff a supported video MIME type from the leading bytes of a file.
    Returns \"video/mp4\" | \"video/quicktime\", or nil.
@@ -381,7 +383,6 @@
   "Why an otherwise readable image was not attached, in the user's words."
   [media-type]
   (str media-type " is not a provider-supported image format (JPEG, PNG, GIF, WebP)"))
-
 
 (defn sniff-file-mime
   "Read a file head and return its sniffed attachment media type. nil on any
@@ -784,6 +785,7 @@
    but nothing is missing from the turn, so the model must not be told to go and
    open a file it has already been given the contents of."
   "a recording for the human — its transcript is quoted below, so it is not attached")
+
 (def audiences
   "The CLOSED vocabulary of an attachment's AUDIENCE — who the artifact is for:
 
@@ -794,7 +796,6 @@
 
    One word, three routes; there is no fourth and no second copy of this table."
   #{"both" "user" "model"})
-
 
 (defn human-only-media-type?
   "True when `media-type` names a file from [[human-only-media-types]]. Media-type
@@ -816,6 +817,7 @@
    the bytes for the human and TELL the model the file is there."
   [media-type]
   (or (human-only-media-type? media-type) (audio-media-type? media-type)))
+
 (defn normalize-audience
   "Coerce whatever the shim bridge, a wire payload or a DB row carries into a
    member of [[audiences]], defaulting to `\"both\"`. An unknown word falls back
@@ -1100,6 +1102,7 @@
    drift apart."
   [{:keys [path filename]}]
   (or (not-empty (str path)) (not-empty (str filename)) "image"))
+
 (defn wire-images
   "[[wire-image]] over a whole user message's attachments, keeping the
    `{:attached [...] :skipped [{:path :reason}]}` shape the prompt manifest

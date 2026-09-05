@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.gateway-sandbox-test
+(ns com.blockether.vis.internal.sandbox.gateway-test
   "The SHARED gateway egress proxy/CA (internal.gateway-sandbox): the session REGISTRY
    + token-keyed policy resolution are asserted as pure data (FAIL-CLOSED on an unknown
    or absent token), then one hermetic in-process wire round-trip proves a registered
@@ -7,8 +7,8 @@
   (:require [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis-python-runtime :as runtime]
-            [com.blockether.vis.internal.egress-proxy :as ep]
-            [com.blockether.vis.internal.gateway-sandbox :as gs])
+            [com.blockether.vis.internal.sandbox.egress-proxy :as ep]
+            [com.blockether.vis.internal.sandbox.gateway :as gs])
   (:import (java.io BufferedReader InputStreamReader)
            (java.net InetSocketAddress ServerSocket Socket)
            (java.util Base64)))

@@ -516,13 +516,13 @@ describe("the axis says a thing once", () => {
       summary: "one file",
       state: "succeeded" as const,
       resources: [
-        { type: "file", id: "src/com/blockether/vis/internal/render.clj" },
+        { type: "file", id: "src/com/blockether/vis/internal/channel/render.clj" },
       ],
       evidence: [],
     });
 
     const path = document.querySelector(
-      '[data-path="src/com/blockether/vis/internal/render.clj"]',
+      '[data-path="src/com/blockether/vis/internal/channel/render.clj"]',
     );
     const name = path?.lastElementChild;
 

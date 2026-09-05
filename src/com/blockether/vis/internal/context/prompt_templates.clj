@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.prompt-templates
+(ns com.blockether.vis.internal.context.prompt-templates
   "File-based prompt templates — pi-style slash-expandable markdown prompts.
 
    A template is a `*.md` file whose body becomes the user message when
@@ -29,7 +29,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
 
 ;; Frontmatter — minimal `---` fenced `key: value`, no YAML dependency

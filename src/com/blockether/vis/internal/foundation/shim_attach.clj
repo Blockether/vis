@@ -24,7 +24,7 @@
    shim-matplotlib): its `:ext/sandbox-shims` entry autoloads `attach` into
    every sandbox."
   (:require [com.blockether.imaging :as imaging]
-            [com.blockether.vis.internal.attachments :as attachments]
+            [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [charred.api :as json]
@@ -247,7 +247,6 @@
             (throw (ex-info (str "show_attachment: no active attachment reader — call it "
                                  "inside a python_execution block")
                             {}))))))})
-
 
 (def vis-extension
   (vis/extension

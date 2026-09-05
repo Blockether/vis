@@ -1,7 +1,7 @@
-(ns com.blockether.vis.internal.provider-error-test
+(ns com.blockether.vis.internal.provider.error-test
   "Provider-error presentation and canonical typed error content."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.provider-error :as perr]
+            [com.blockether.vis.internal.provider.error :as perr]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private exhausted-err
@@ -16,7 +16,6 @@
             :reason :rate-limit
             :error "rate limited"}
            {:provider "openai" :model "gpt-5" :status 401 :reason :auth :error "unauthorized"}]}})
-
 
 ;; Regression, issue #167: the upstream status survived classification but the
 ;; canonical block flattened the diagnosis into prose, leaving channels to lose
@@ -43,6 +42,7 @@
                    (expect (= 429 (get block "status")))
                    (expect (= "req_167" (get block "request_id")))
                    (expect (= "anthropic" (get block "provider"))))))
+
 (defdescribe
   provider-error-attempts-test
   (it "reads the per-provider attempts from the ex-data"
@@ -241,7 +241,6 @@
                                  :data {:status 400
                                         :body "{\"error\":{\"message\":\"bad\"}}"}}))))))
 
-
 (defdescribe
   tool-schema-rejection-test
   (let
@@ -389,6 +388,7 @@
       (expect (false? (perr/pre-output-stream-abort?
                         (ex-info "cancelled" {:type :svar.core/stream-cancelled}))))
       (expect (false? (perr/pre-output-stream-abort? {:data {:status 429}})))))
+
 (defdescribe
   stream-timeout-kind-test
   (it "typed :svar.core/stream-semantic-timeout → honest stall card, never 'Provider unavailable'"

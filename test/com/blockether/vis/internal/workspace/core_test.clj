@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.workspace-test
+(ns com.blockether.vis.internal.workspace.core-test
   "Workspace primitive tests — rift CoW clones, git-free.
 
    The `*workspace-root*` binding contract is pure. The mutation paths
@@ -7,7 +7,7 @@
    the live repo and ~/.rifts are never touched."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
-            [com.blockether.vis.internal.workspace :as ws]
+            [com.blockether.vis.internal.workspace.core :as ws]
             [lazytest.core :refer [defdescribe expect it]]
             [next.jdbc :as jdbc]))
 
@@ -303,7 +303,6 @@
                     (expect (try (ws/apply! store {:workspace-id "nope"})
                                  false
                                  (catch clojure.lang.ExceptionInfo _ true)))))))
-
 
 ;; Regression, reported Rift clean issue: the clone kept the copied Git index,
 ;; exposing staged and intermediate source state instead of one exact commit.
@@ -668,7 +667,6 @@
            (expect (= [".yarn/releases/old.cjs"]
                       (ws/deleted-paths clone trunk (System/currentTimeMillis))))
            (finally (delete-tree! trunk) (delete-tree! clone))))))
-
 
 (defdescribe
   draft-isolation-test

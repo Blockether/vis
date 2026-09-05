@@ -6,7 +6,7 @@
    system interpreter."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.foundation.editing.parse :as parse]
             [com.blockether.vis.internal.paths :as paths]))
 

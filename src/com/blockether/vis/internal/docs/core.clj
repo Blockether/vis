@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.docs
+(ns com.blockether.vis.internal.docs.core
   "Embedded documentation from the explicit records listed by
    `META-INF/vis/manifest.edn`.
 
@@ -46,7 +46,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
+            [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.util :as util])
   (:import [java.io ByteArrayOutputStream]
            [java.util.zip GZIPOutputStream]
@@ -56,7 +56,6 @@
            [org.commonmark.ext.gfm.strikethrough StrikethroughExtension]))
 
 (set! *warn-on-reflection* true)
-
 
 ;; commonmark markdown -> HTML
 
@@ -72,7 +71,9 @@
       (.extensions extensions)
       (.build)))
 
-(defn md->html ^String [^String md] (.render md-renderer (.parse md-parser md)))
+(defn md->html
+  ^String [^String md]
+  (.render ^HtmlRenderer md-renderer (.parse ^Parser md-parser md)))
 
 (defn- first-h1
   [^String md]

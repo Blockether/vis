@@ -9,48 +9,48 @@
     [com.blockether.svar.internal.llm :as svar-llm]
     [com.blockether.svar.internal.router :as svar-router]
     [com.blockether.svar.internal.util :as svar-util]
-    [com.blockether.vis.internal.activity :as activity]
+    [com.blockether.vis.internal.activity.core :as activity]
     [com.blockether.vis.internal.activity.event :as activity-event]
-    [com.blockether.vis.internal.attachments :as attachments]
-    [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
-    [com.blockether.vis.internal.config :as config]
-    [com.blockether.vis.internal.security-policy :as security-policy]
-    [com.blockether.vis.internal.cancellation :as cancellation]
+    [com.blockether.vis.internal.attachment.core :as attachments]
+    [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
+    [com.blockether.vis.internal.config.core :as config]
+    [com.blockether.vis.internal.sandbox.policy :as security-policy]
+    [com.blockether.vis.internal.session.cancellation :as cancellation]
     [com.blockether.vis.contract.content :as content-contract]
     [com.blockether.vis.internal.content :as content]
-    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
-    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
+    [com.blockether.vis.internal.context.engine :as ctx-engine]
+    [com.blockether.vis.internal.context.loop :as ctx-loop]
     [com.blockether.vis.contract.wire :as wire]
-    [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
-    [com.blockether.vis.internal.env-python :as env]
-    [com.blockether.vis.internal.egress-proxy :as egress]
-    [com.blockether.vis.internal.form :as form]
-    [com.blockether.vis.internal.view :as view]
+    [com.blockether.vis.internal.context.renderer :as ctx-renderer]
+    [com.blockether.vis.internal.python.env :as env]
+    [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
+    [com.blockether.vis.internal.channel.form :as form]
+    [com.blockether.vis.internal.view.core :as view]
     [com.blockether.vis.internal.view.materializer :as live]
-    [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
-    [com.blockether.vis.internal.process-jail :as process-jail]
-    [com.blockether.vis.internal.attachment-storage :as attachment-storage]
+    [com.blockether.vis.internal.sandbox.gateway :as gateway-sandbox]
+    [com.blockether.vis.internal.sandbox.jail :as process-jail]
+    [com.blockether.vis.internal.attachment.storage :as attachment-storage]
     [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
-    [com.blockether.vis.internal.extension :as extension]
-    [com.blockether.vis.internal.manifest :as manifest]
-    [com.blockether.vis.internal.python-extensions :as python-extensions]
-    [com.blockether.vis.internal.render :as render]
-    [com.blockether.vis.internal.persistance :as persistance]
-    [com.blockether.vis.internal.session-model :as session-model]
-    [com.blockether.vis.internal.prompt :as prompt]
-    [com.blockether.vis.internal.prompt-templates :as prompt-templates]
-    [com.blockether.vis.internal.provider-error :as perr]
-    [com.blockether.vis.internal.providers :as providers]
-    [com.blockether.vis.internal.registry :as registry]
-    [com.blockether.vis.internal.runtime-settings :as rt]
-    [com.blockether.vis.internal.resources :as resources]
-    [com.blockether.vis.internal.shell-log :as shell-log]
-    [com.blockether.vis.internal.slash :as slash]
+    [com.blockether.vis.internal.extension.core :as extension]
+    [com.blockether.vis.internal.extension.manifest :as manifest]
+    [com.blockether.vis.internal.python.extensions :as python-extensions]
+    [com.blockether.vis.internal.channel.render :as render]
+    [com.blockether.vis.internal.persistance.core :as persistance]
+    [com.blockether.vis.internal.session.model :as session-model]
+    [com.blockether.vis.internal.context.prompt :as prompt]
+    [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
+    [com.blockether.vis.internal.provider.error :as perr]
+    [com.blockether.vis.internal.provider.service :as providers]
+    [com.blockether.vis.internal.extension.registry :as registry]
+    [com.blockether.vis.internal.config.runtime-settings :as rt]
+    [com.blockether.vis.internal.gateway.resources :as resources]
+    [com.blockether.vis.internal.foundation.shell-log :as shell-log]
+    [com.blockether.vis.internal.channel.slash :as slash]
     [com.blockether.vis.internal.util :as util]
-    [com.blockether.vis.internal.titling :as titling]
-    [com.blockether.vis.internal.toggles :as toggles]
-    [com.blockether.vis.internal.vision-describe :as vision-describe]
-    [com.blockether.vis.internal.workspace :as workspace]
+    [com.blockether.vis.internal.session.titling :as titling]
+    [com.blockether.vis.internal.config.toggles :as toggles]
+    [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
+    [com.blockether.vis.internal.workspace.core :as workspace]
     [taoensso.telemere :as tel])
   (:import [java.util.concurrent ExecutionException ExecutorService Future ThreadFactory]))
 
@@ -147,11 +147,13 @@
 (defn- format-exception
   [^Throwable t & [{:keys [context]}]]
   (merge (format-exception-short t) {:data (ex-data t) :context context}))
+
 (def ^:private CONSECUTIVE_EMPTY_REPLY_LIMIT
   "Maximum consecutive clean-stop replies with no text or tool call. Svar treats
    those as legitimate completions, so Vis may continue a thinking-only blip, but
    caps the sequence to avoid consuming the full iteration budget without output."
   3)
+
 (def ^:private MAX_PRE_OUTPUT_STREAM_RETRIES
   "How many times Vis re-issues a request a stream watchdog aborted BEFORE any
    output arrived. Two: one for the ordinary blip, one for the blip that repeats,
@@ -214,6 +216,7 @@
           (= result ::retry-auth-refresh) [(inc attempt) max-tokens-attempt]
           (= result ::retry-pre-output-stream) [(inc attempt) max-tokens-attempt]
           (= result ::retry-auth-backoff) [(inc attempt) max-tokens-attempt])))
+
 (defn- provider-retry-event
   [{:keys [provider model reason attempt delay-ms error status]}]
   (cond-> {:event/type :llm.routing/provider-retry
@@ -495,6 +498,7 @@
       (assoc :provider
         (:provider resolved-model) :model
         model-name))))
+
 (defn- pin-routing-to-provider
   "Routing a REFUSAL switch cannot walk out of.
 
@@ -597,7 +601,6 @@
   (cond (not (github-copilot-claude-model? resolved-model)) reasoning-level
         (casual-user-request? user-request) nil
         :else reasoning-level))
-
 
 (defn- copilot-llm-headers
   [resolved-model initiator]
@@ -1799,7 +1802,6 @@
   [_environment]
   {})
 
-
 ;; Parsed form helpers
 
 ;; Replay-dedup keys hash via `util/sha256-hex` — the ONE
@@ -2190,6 +2192,7 @@
   "True for a semantic extension-owned live-view record."
   [attachment]
   (= live-record-media-type (or (:media-type attachment) (:media_type attachment))))
+
 (defn- live-record-context-line
   "Tell a later model where one settled live-view record can be reopened."
   [att]
@@ -2457,6 +2460,7 @@
     (swap! ctx-atom ctx-engine/stamp-served-route
       (:llm-provider iteration-result)
       (:llm-model iteration-result))))
+
 (defn- estimator-undercount
   "How far the local message estimate undercounts the provider on the same request.
 
@@ -2572,6 +2576,7 @@
 (defn- block-duration-ms [block] (or (form/envelope-duration-ms (:envelope block)) 0))
 
 (defn- nil-or-boolean? [x] (or (nil? x) (boolean? x)))
+
 (defn- iteration-envelope?
   [envelope]
   (and (map? envelope)
@@ -2620,7 +2625,6 @@
     blocks))
 
 ;; run-iteration
-
 
 (defn reasoning-effort-configurable?
   "True when a model accepts a CALLER-selected reasoning effort.
@@ -3353,7 +3357,6 @@
                (str "folded " label note (when g (str " → " g)))))
            (str "fold_session: nothing to fold — " ctx-engine/fold-key-grammar))))}))
 
-
 (defn- apply-summaries
   "Wire-only rewrite of `trailer-iters` applying `fold_session` intents at
    iteration granularity. A summary carries concrete `scopes`, an optional
@@ -3476,7 +3479,6 @@
       (cond-> (str "✗ " (when phase (str phase " ")) "error: " msg)
         (and hint (not (str/includes? (str msg) (str hint))))
         (str "\nhint: " hint)))))
-
 
 (defn- elide-table-fences
   "Drop the ROWS out of every ````vis-table` fence in model-facing output.
@@ -3720,7 +3722,6 @@
            tool-calls))}
       ;; Text-only iteration with no tool calls.
       (not (str/blank? fallback-content)) {:role "user" :content fallback-content})))
-
 
 (defn- strip-assistant-thinking
   "Cross-provider/model-SAFE version of a canonical assistant replay: drop
@@ -4219,7 +4220,6 @@
 
       (str fs-part " " net-part))))
 
-
 (defn- python-execution-tool
   "The engine-level `python_execution` tool schema — the ONLY tool the provider
    is given. Batched, transformed, filtered, chained and structural workflows all
@@ -4251,7 +4251,6 @@
             :required ["code"]
             :additionalProperties false}})
 
-
 (defn- model-facing-tools
   "The ONE provider-visible tool. `python_execution` IS the model-facing surface:
    every other capability is already a bare Python name inside that sandbox, so a
@@ -4268,7 +4267,6 @@
     [(-> tool
          (assoc :description (str description "\n\nRaw result: " result))
          (dissoc :result))]))
-
 
 (def ^:private tool-protocol-leak-re
   "A LONE closing tool-call tag. `invoke`/`parameter` are the provider's own
@@ -4373,7 +4371,6 @@
    string keys and must NOT re-check a keyword variant."
   [tool-calls]
   (mapv #(update % :input normalize-tool-input) (vec tool-calls)))
-
 
 ;; Use Anthropic's four cache breakpoints on the final system message and last three
 ;; transcript messages. This keeps the standing context and prior write anchors reusable;
@@ -4540,7 +4537,6 @@
       (when-not (or (str/blank? fenced-stripped)  ;; prose was ONLY fenced code
                     (= (squash p) (squash code))) ;; prose IS the code verbatim
         p))))
-
 
 (defn- provider-call-reason
   "WHY this provider request exists. The FIRST call of a turn answers the human's
@@ -5669,6 +5665,7 @@
 ;; Core helpers
 
 (defn- stream-output-overflow? [err] (output-budget-exhausted-data? (:data err)))
+
 (def ^:private MAX_AUTH_REFRESH_RETRIES
   "Max transparent auth-401 retries per iteration. Attempt 0 forces ONE OAuth
    refresh-token exchange (the stored access token was invalidated server-side,
@@ -5677,6 +5674,7 @@
    not a dead credential — so the remaining attempts back off and retry the
    SAME token (no re-mint) to let it settle, per [[auth-propagation-backoff-ms]]."
   4)
+
 (def ^:private MAX_MAX_TOKENS_EXCEEDED_RETRIES
   "Max transparent retries for `:svar.llm/max-tokens-exceeded` per
    iteration. Each retry bumps `:extra-body {:max_tokens N}` by
@@ -5798,7 +5796,7 @@
                 (str "Original request: " user-request)))))
 
 ;; Provider-error presentation moved to
-;; `com.blockether.vis.internal.provider-error` (shared with the TUI trace
+;; `com.blockether.vis.internal.provider.error` (shared with the TUI trace
 ;; renderer so a failure reads identically on every surface).
 
 ;; Router lifecycle + model helpers (turn single-file API)
@@ -6028,7 +6026,6 @@
                :root (:name hit))]
             (remove #(= provider-id (:id %)))
             provider-entries))))
-
 
 (defn- honor-config-roots!
   "Make the explicit provider/model tags the router's effective roots: the
@@ -7097,6 +7094,7 @@
     (when n
       (let [d (double n)]
         (when (and (not (Double/isNaN d)) (not (Double/isInfinite d)) (pos? d)) (long d))))))
+
 (defn- iteration-context-limit
   "Per-call input ceiling the pressure hint and `session_utilization` measure
    against. Walks four sources in priority order:
@@ -7135,6 +7133,7 @@
 
       (if (< limit default-budget) (max 1 (quot (* limit 9) 10)) default-budget))
     ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))
+
 (defn router-for-model
   "Return a router variant whose provider/model ORDER reflects a model PREFERENCE,
    so svar's router picks + falls back accordingly — WE don't pick one model, we
@@ -9084,6 +9083,7 @@
   (cond-> {:parent-session-id (:session-id env) :user-request user-request :status :running}
     (some? (:session-turn-id loop-opts))
     (assoc :session-turn-id (:session-turn-id loop-opts))))
+
 (defn- run-slash-turn!
   "Persist a slash-only turn: one `session_turn_soul` + state + ONE
    synthetic `session_turn_iteration` whose forms vec carries the slash
@@ -10445,7 +10445,7 @@
    Every env owns its DB connection, so disposing one always closes it."
   [environment]
   ;; Drop this session from the SHARED gateway egress proxy's registry. The shared
-  ;; proxy + CA are daemon-lifetime (internal.gateway-sandbox/shutdown!), not
+  ;; proxy + CA are daemon-lifetime (internal.sandbox.gateway/shutdown!), not
   ;; per-session, so nothing is stopped here — only this session's policy is removed.
   ;; EVERY step before the sandbox is best-effort AND cannot skip it. These run
   ;; first because they need the environment intact, but not one of them is worth
@@ -10872,7 +10872,7 @@
                          ;; no sandbox roots exist. Shell/subprocess executors consult it per spawn; see process-jail.
                          :jail-policy-fn jail-policy-fn
                          ;; This session's unguessable token for the SHARED gateway egress proxy /
-                         ;; MITM CA (internal.gateway-sandbox). Registered at env build; dropped from
+                         ;; MITM CA (internal.sandbox.gateway). Registered at env build; dropped from
                          ;; the proxy's session registry in dispose-environment!.
                          :sandbox-token sandbox-token
                          :repl-sandbox-token repl-sandbox-token}
@@ -11249,7 +11249,7 @@
 
 (defn- mem-log-enabled?
   "Master switch for memory-observability logging, shared conceptually with the
-   per-block heap sample in `internal.env-python`. Enabled unless VIS_MEM_LOG is a
+   per-block heap sample in `internal.python.env`. Enabled unless VIS_MEM_LOG is a
    falsey token (0/false/off/no) — one flag silences the reaper sweep summary."
   []
   (let [raw (some-> (System/getenv "VIS_MEM_LOG")

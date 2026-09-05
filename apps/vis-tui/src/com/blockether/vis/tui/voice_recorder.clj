@@ -14,6 +14,7 @@
             DataLine$Info TargetDataLine]))
 
 (def ^:private sample-rate 16000.0)
+
 (def ^:private external-startup-ms 150)
 
 (defn audio-format [] (AudioFormat. sample-rate 16 1 true false))

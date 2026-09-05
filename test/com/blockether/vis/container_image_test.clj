@@ -130,7 +130,6 @@
         (expect (str/includes? stage "/home/vis/.config/git") stage)
         (expect (str/includes? stage "test \"$(stat -c '%U' /home/vis/.config)\" = 'vis'") stage))))
 
-
 (defdescribe compose-passes-no-second-version-source-test
              (it "leaves the version to the image it builds"
                  (let [compose (slurp "docker-compose.yml")]
@@ -437,7 +436,6 @@ printf '%s' '"
                      (:output second-run)))
            (finally (doseq [file (reverse (file-seq tmp))]
                       (io/delete-file file true)))))))
-
 
 (defdescribe
   wrapper-wsl-system-trust-test

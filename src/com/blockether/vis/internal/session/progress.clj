@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.progress
+(ns com.blockether.vis.internal.session.progress
   "Streaming progress tracker - leaf module.
 
    Channels (TUI, CLI agent) consume the iteration loop's
@@ -84,8 +84,8 @@
    only in memory (never persisted), and resumed bubbles re-render
    from this single flat layout. One layout path is enough."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.form :as form]
-            [com.blockether.vis.internal.iteration :as iteration]
+            [com.blockether.vis.internal.channel.form :as form]
+            [com.blockether.vis.internal.session.iteration :as iteration]
             [com.blockether.vis.internal.util :as util]))
 
 (defn- empty-iteration-entry

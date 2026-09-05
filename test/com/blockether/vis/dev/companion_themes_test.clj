@@ -7,7 +7,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.dev.companion-themes :as companion-themes]
-            [com.blockether.vis.internal.theme :as theme]
+            [com.blockether.vis.internal.channel.theme :as theme]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
 (defn- generated [file-name] (slurp (io/file companion-themes/default-dir file-name)))
@@ -36,6 +36,7 @@
         (is (= bg (get css-vars "--bg")) id)
         (is (= surface (get css-vars "--surface")) id)
         (is (= fg (get css-vars "--fg")) id)))))
+
 (deftest every-built-in-theme-is-paintable-without-a-gateway
   (let [css
         (companion-themes/stylesheet)

@@ -22,7 +22,7 @@
    shells out and never throws; errors land in the returned result map."
   (:require [babashka.process :as process]
             [clojure.string :as str]
-            [com.blockether.vis.internal.workspace :as workspace])
+            [com.blockether.vis.internal.workspace.core :as workspace])
   (:import (java.io File)
            (java.nio.file Path Paths)))
 

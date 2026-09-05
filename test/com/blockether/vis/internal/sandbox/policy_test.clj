@@ -1,8 +1,8 @@
-(ns com.blockether.vis.internal.security-policy-test
-  (:require [com.blockether.vis.internal.config-validation :as config-validation]
+(ns com.blockether.vis.internal.sandbox.policy-test
+  (:require [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.security-policy :as policy]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.sandbox.policy :as policy]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]))
 

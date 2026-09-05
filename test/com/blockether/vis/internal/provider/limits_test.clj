@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider-limits-test
+(ns com.blockether.vis.internal.provider.limits-test
   "Anti-stampede contract for the provider limits cache.
 
    `:provider/limits-fn` is an upstream HTTP call and every channel reads limits
@@ -7,8 +7,8 @@
    must drop it immediately."
   (:require [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
-            [com.blockether.vis.internal.provider-limits :as provider-limits]
-            [com.blockether.vis.internal.registry :as registry]))
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
+            [com.blockether.vis.internal.extension.registry :as registry]))
 
 (defn- counting-provider
   [calls]

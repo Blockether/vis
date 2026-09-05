@@ -12,9 +12,13 @@
 ;; canonicalizes at the source), so every fixture below exercises the ONE
 ;; canonical transcript shape a channel actually sees — in-process AND over HTTP.
 (defn db-info [] nil)
+
 (defn db-list-session-turns [& _] [])
+
 (defn db-list-session-turn-iterations [& _] [])
+
 (defn preflight-error [& _] nil)
+
 (defn wire-canonical
   "Recursively shape test data like the gateway's JSON boundary: string snake_case keys."
   [value]
@@ -468,7 +472,6 @@
                "code" "provider_unroutable"
                "message" "No provider could take this request\n\nWHAT HAPPENED: ..."}])))))
 
-
 ;; Regression, issue #167: typed provider blocks carried an upstream HTTP status,
 ;; request id and attempts, but the TUI's disposable Markdown retained only the
 ;; machine code and flattened message.
@@ -513,6 +516,7 @@
                    (expect (str/includes? rendered "Route openai-codex"))
                    (expect (not (str/includes? rendered "Provider openai-codex")))
                    (expect (not (str/includes? rendered "HTTP"))))))
+
 (defdescribe gateway-event-chunk-test
              ;; The gateway wire event ships the raw `:code`; the TUI renders it directly
              ;; (the canonical web `block-code` contract), so the projection just carries
@@ -910,6 +914,7 @@
                                                  :source "user"}]))]
 
                    (expect (str/includes? out "[Attachment #1: brief.html]")))))
+
 (defdescribe explicit-turn-attachment-test
              (it "passes explicit inline attachments to the canonical gateway request"
                  (let [sent

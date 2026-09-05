@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.render
+(ns com.blockether.vis.internal.channel.render
   "Transient Markdown parsing and renderer projections.
 
    Canonical answers are role-labelled, string-keyed content blocks from
@@ -10,7 +10,7 @@
    projections; none of their intermediate trees are canonical message data."
   (:require [clojure.string :as str]
             [clojure+.walk :as cwalk]
-            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.util :as util])
   (:import [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
            [org.commonmark.ext.gfm.tables TableBlock TableCell TablesExtension]
@@ -747,7 +747,7 @@
          (string? text) (binding [*soft-break* (or soft-break *soft-break*)]
                           (let [prepared
                                 (if (= :hard *soft-break*) text (ensure-table-blank-lines text))
-                                doc (.parse md-parser ^String prepared)
+                                doc (.parse ^Parser md-parser ^String prepared)
                                 blocks (vec (mapcat cm->blocks (cm-children-seq doc)))]
 
                             (->ast (into [:ast {}] blocks))))

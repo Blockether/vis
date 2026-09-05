@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.git-test
+(ns com.blockether.vis.internal.workspace.git-test
   "Invocation contracts for the shared Git helpers.
 
    These are a thin wrapper around the `git` binary, so nothing here builds a
@@ -10,7 +10,7 @@
    reaped. The one spawn below needs no repository state."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.workspace.git :as git]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private parse-invocation #'git/parse-invocation)
@@ -18,7 +18,6 @@
 (def ^:private git-argv #'git/git-argv)
 
 (def ^:private index-changing-commit-arg #'git/index-changing-commit-arg)
-
 
 (defdescribe
   exact-commit-args-test

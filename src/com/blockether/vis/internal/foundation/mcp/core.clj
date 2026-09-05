@@ -36,9 +36,9 @@
    the session object already carries."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.docs.corpus :as doc-corpus]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as mcp-oauth]
             [com.blockether.vis.internal.util :as util]
@@ -70,7 +70,6 @@
     "streamable_http"
 
     "stdio"))
-
 
 (defn- interpolate-env
   "Substitute `${VAR}` in `s` from the host environment; leave unknowns intact.
@@ -1033,8 +1032,6 @@
 ;; Public vars retain developer examples and fallback docs. Native symbols
 ;; below own compact model-facing semantics and exact schemas. Under alias
 ;; `mcp` the Python names use one underscore; direct native names use two.
-
-
 
 (def
   ^{:doc

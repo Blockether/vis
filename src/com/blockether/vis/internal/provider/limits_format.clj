@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.limits-format
+(ns com.blockether.vis.internal.provider.limits-format
   "Channel-neutral `{:dynamic {:limits [...]}}` row formatters.
 
    Hoisted from the TUI extension (`channel_tui/limits_fmt.clj`) so

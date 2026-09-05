@@ -18,7 +18,7 @@
      6. exchange code → access + refresh tokens; persist to
         `~/.vis/mcp-tokens/<server>.edn`;
      7. on later expiry / 401, refresh the token single-flight through
-        `com.blockether.vis.internal.oauth/make-file-refresher`.
+        `com.blockether.vis.internal.provider.oauth/make-file-refresher`.
 
    The returned `bearer-fn` is a 0/1-arg function: 0-arg yields the current
    bearer token; 1-arg (with the token the server just rejected) forces a
@@ -29,7 +29,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
-            [com.blockether.vis.internal.oauth :as oauth]
+            [com.blockether.vis.internal.provider.oauth :as oauth]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import (com.sun.net.httpserver HttpHandler HttpServer)
@@ -180,7 +180,6 @@
 
 ;; Loopback callback (PKCE authorization-code)
 
-
 (defn- start-loopback!
   "Bind a one-shot loopback callback listener on 127.0.0.1. Returns
    `{:server :port :redirect-uri :result}`; `result` is a promise delivered with
@@ -233,7 +232,6 @@
      :port port
      :redirect-uri (str "http://127.0.0.1:" port "/mcp-callback")
      :result result}))
-
 
 ;; Token store — one EDN file per server under ~/.vis/mcp-tokens/
 
@@ -392,7 +390,6 @@
                               :token-endpoint token-url
                               :authorization-server as-url
                               :resource resource}))))
-
 
 (defn- refresh-token-exchange!
   "Refresh an access token via the token endpoint. May rotate the refresh token."

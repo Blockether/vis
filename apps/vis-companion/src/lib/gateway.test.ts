@@ -966,7 +966,7 @@ describe('GatewayClient speech engines', () => {
   });
 
   it('carries the refusal the gateway wrote, and what failed to load with it', async () => {
-    const reasons = ['com.blockether.vis.internal.speech: UnsatisfiedLinkError'];
+    const reasons = ['com.blockether.vis.internal.speech.core: UnsatisfiedLinkError'];
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(

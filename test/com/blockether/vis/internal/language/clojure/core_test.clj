@@ -13,7 +13,7 @@
             [com.blockether.vis.internal.language.clojure.paren-repair :as repair]
             [com.blockether.parinferish.balance :as balance]
             [com.blockether.vis.internal.foundation.editing.parse :as parse]
-            [com.blockether.vis.internal.runtime-settings :as rt]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Files)
            (java.nio.file.attribute FileAttribute)))
@@ -261,7 +261,6 @@
       ;; sentinels pass through untouched
       (expect (= "<stdin>" (rp root "<stdin>"))))))
 
-
 (defdescribe
   single-relative-path-lint-test
   (it "resolves a RELATIVE {\"path\"} against the workspace root, not the process CWD"
@@ -422,7 +421,6 @@
       (let [dir (tmp-dir)]
         (try (expect (nil? (fmt/cljfmt-opts-for (.getPath dir)))) (finally (cleanup dir))))))
 
-
 (defdescribe test-runner-timeout-test
              ;; The pack holds no budget of its own: a second literal beside
              ;; `RUN_TESTS_TIMEOUT_MS` is exactly the drift that knob prevents.
@@ -582,6 +580,7 @@
             (when (= k (long n)) s)))]
 
     (when kept (str kept tail))))
+
 (defn- inside-drops
   "Every way to drop ONE delimiter from `line` that is not one of its trailing closers:
    a closer omitted in the MIDDLE, which the caller's indentation cannot place — it

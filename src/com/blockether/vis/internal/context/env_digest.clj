@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.env-digest
+(ns com.blockether.vis.internal.context.env-digest
   "Slim `\"session_env\"` digest. Internal, not extension-owned. STRING-KEYED —
    crosses the Python boundary as `session[\"env\"]`, so keys AND enum values
    (os/shell/kind/primary_language) are strings, never keywords.
@@ -22,9 +22,9 @@
    project shape from a single directory peek. AGENTS.md / CLAUDE.md
    contents ride in their own system block (`internal.prompt`), not here."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.workspace :as workspace])
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.context.prompt :as prompt]
+            [com.blockether.vis.internal.workspace.core :as workspace])
   (:import [java.io File]
            [java.time ZoneId ZonedDateTime]
            [java.time.format DateTimeFormatter]))

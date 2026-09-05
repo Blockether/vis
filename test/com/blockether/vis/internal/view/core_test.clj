@@ -1,15 +1,15 @@
-(ns com.blockether.vis.internal.view-test
+(ns com.blockether.vis.internal.view.core-test
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.attachment-storage :as attachment-storage]
-            [com.blockether.vis.internal.channel-events :as ce]
+            [com.blockether.vis.internal.attachment.storage :as attachment-storage]
+            [com.blockether.vis.internal.channel.events :as ce]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl]
-            [com.blockether.vis.internal.view :as hi]
+            [com.blockether.vis.internal.view.core :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.view.sink :as live-sink]
             [com.blockether.vis.contract.view :as hs]
-            [com.blockether.vis.internal.runtime-settings :as rt]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
             [lazytest.core :refer [defdescribe expect it throws?]]
             [taoensso.telemere :as tel]))
 
@@ -1201,7 +1201,7 @@
   (it "the closed vocabulary has ONE home"
       ;; Two copies of the type table drift, and the copy the normalizer reads
       ;; is the one that decides what a surface is asked to paint.
-      (expect (nil? (ns-resolve 'com.blockether.vis.internal.view 'field-types)))
+      (expect (nil? (ns-resolve 'com.blockether.vis.internal.view.core 'field-types)))
       (expect (= #{:plaintext :password :multiline :select :multiselect :checkbox :range :otp}
                  (set (vals hs/field-types))))
       (expect (str/includes? (refusal #(hi/normalize-field {:name "a" :type "slider"}))
@@ -1348,7 +1348,7 @@
         ;; One home for the vocabulary, as with the field and group tables.
         (expect (= #{:heading :paragraph} (set (vals hs/decor-types))))
         (expect (not (contains? (set (vals hs/field-types)) :heading)))
-        (expect (nil? (ns-resolve 'com.blockether.vis.internal.view 'decor-types)))
+        (expect (nil? (ns-resolve 'com.blockether.vis.internal.view.core 'decor-types)))
         (expect (nil? (hs/decor-error head)))
         (expect (some? (hs/field-error head)))
         (expect (some? (hs/group-error head)))
@@ -1373,7 +1373,6 @@
         (expect (nil? (hs/request-error (hi/normalize-request (spec {"type" "heading" "text" "H"}
                                                                     {"type" "heading" "text" "H"}
                                                                     {"name" "host"}))))))))
-
 
 (defn- live-view
   "A legal normalized live view carrying one node of every keyed kind, so a test

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.manifest
+(ns com.blockether.vis.internal.extension.manifest
   "The one closed distribution manifest.
 
    `META-INF/vis/manifest.edn` carries exactly one key:

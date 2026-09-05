@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.python-runtime-test
+(ns com.blockether.vis.internal.python.runtime-test
   "Getting the interpreter onto a machine that has none.
 
    The download itself is not exercised here — a suite that fetched 25 MB to
@@ -8,7 +8,7 @@
    is never touched."
   (:require [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
-            [com.blockether.vis.internal.python-runtime :as python-runtime]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))

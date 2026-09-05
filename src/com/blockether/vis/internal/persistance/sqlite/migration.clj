@@ -82,7 +82,6 @@
                               (boolean (some #(str/ends-with? fname %) suffixes)))))
               res))))))
 
-
 (defn- repairable-validation-error?
   "True when Flyway rejected the applied migration metadata during validation.
    The canonical V1 is intentionally edited in place, and historical V2+ rows
@@ -242,7 +241,6 @@
          (not (re-find #"\bREFERENCES\b" u))
          (or (not (re-find #"\bNOT\s+NULL\b" u)) (boolean (re-find #"\bDEFAULT\b" u))))))
 
-
 (defn- existing-columns
   "Lower-cased column names of `table`, or an empty set when it does not exist."
   [^java.sql.Connection conn ^String table]
@@ -266,6 +264,7 @@
     (.setString st 1 table)
     (with-open [rs (.executeQuery st)]
       (if (.next rs) (get (canonical-columns (or (.getString rs "sql") "")) table []) []))))
+
 (defn- reconcile-canonical-columns!
   "Additively realign a database that was created by an EARLIER copy of the
    canonical V1 with the V1 shipped now.
@@ -574,6 +573,7 @@
                  (.commit conn)
                  (catch Throwable _ (try (.rollback conn) (catch Throwable _ nil)))
                  (finally (try (.setAutoCommit conn auto) (catch Throwable _ nil))))))))))
+
 (defn migrate!
   "Install the single canonical V1 schema.
 

@@ -1,9 +1,9 @@
-(ns com.blockether.vis.internal.doc-corpus-test
+(ns com.blockether.vis.internal.docs.corpus-test
   "The corpus behind `apropos`/`doc`: one record per document, a usable first
    line, and a regular-expression filter over names."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.doc-corpus :as dc]
+            [com.blockether.vis.internal.docs.corpus :as dc]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
@@ -66,7 +66,7 @@ Whole skill body."}
   "A skill is a DOCUMENT: the corpus reads the discovery registry directly, so
    `apropos`/`doc` can neither activate nor mark anything."
   (it "never reaches the harness verb namespace"
-      (let [src (slurp (io/resource "com/blockether/vis/internal/doc_corpus.clj"))]
+      (let [src (slurp (io/resource "com/blockether/vis/internal/docs/corpus.clj"))]
         (expect (not (str/includes? src "harness.core")))
         (expect (not (str/includes? src "harness-core"))))))
 

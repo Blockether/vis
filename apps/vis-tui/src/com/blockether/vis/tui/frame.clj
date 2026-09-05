@@ -193,7 +193,6 @@
   ^TextGraphics [^Screen screen cols rows]
   (view-graphics (.newTextGraphics screen) cols rows))
 
-
 (defn bounds
   "Return a laid-out component's integer cell rectangle."
   [^Component component]

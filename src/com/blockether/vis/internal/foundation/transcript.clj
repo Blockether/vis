@@ -55,7 +55,7 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.content :as content]
-            [com.blockether.vis.internal.form :as form]
+            [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.format :as fmt])
   (:import [java.util Locale]
            [java.time ZoneId]
@@ -280,6 +280,7 @@
 (defn- block-duration-ms
   [block]
   (or (form/envelope-duration-ms (:envelope block)) (:duration-ms block) 0))
+
 (defn- event-status
   [error success? timeout?]
   (cond timeout? :timeout
@@ -530,7 +531,6 @@
         (fence-delimiter s)]
 
     (if (str/blank? s) "" (str fence (or lang "") "\n" s "\n" fence "\n"))))
-
 
 (defn- render-block-code-segments
   [code render-segments]
@@ -1114,7 +1114,7 @@
    three ticks) aligned with the Markdown serializer instead of maintaining a
    second, regex-only parser here."
   [md]
-  (.render md-renderer (.parse md-parser (str md))))
+  (.render ^HtmlRenderer md-renderer (.parse ^Parser md-parser (str md))))
 
 (def ^:private transcript-html-styles
   "Standalone stylesheet layered AFTER `web-css-root` so it consumes the

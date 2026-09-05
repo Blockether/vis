@@ -33,34 +33,34 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.commandline :as commandline]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.doctor :as doctor]
             [com.blockether.vis.internal.speech.cli :as speech-cli]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis-python-runtime :as pyrt]
-            [com.blockether.vis.internal.env-python :as env]
+            [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.error :as error]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.python-extensions :as python-extensions]
+            [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.format :as fmt]
-            [com.blockether.vis.internal.form :as form]
+            [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
-            [com.blockether.vis.internal.manifest :as manifest]
-            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.extension.manifest :as manifest]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.python-project :as pyproj]
-            [com.blockether.vis.internal.workspace :as workspace]
-            [com.blockether.vis.internal.progress :as progress]
-            [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.python.project :as pyproj]
+            [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.internal.session.progress :as progress]
+            [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.system-trust :as system-trust]
-            [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [taoensso.telemere :as tel]))
 
 ;; Persistence-backed Telemere :db handler
@@ -160,7 +160,7 @@
    stays narrow:
 
      com.blockether.vis.internal.foundation.core         -> v/foundation.core
-     com.blockether.vis.internal.provider.github-copilot -> v/provider.github-copilot
+     com.blockether.vis.internal.provider.vendor.github-copilot -> v/provider.github-copilot
 
    Anything that doesn't start with the canonical prefix is returned
    unchanged."
@@ -2000,7 +2000,6 @@
     (stdout! (str "Deleted session " (:id session)))
     (shutdown-agents)))
 
-
 (defn- cli-fork-session-command!
   [parsed _residual]
   (config/init-cli!)
@@ -2633,16 +2632,6 @@
           (stdout! (str "\n  " (count exts) " extension(s)\n")))))
   (shutdown-agents))
 
-
-
-
-
-
-
-
-
-
-
 (defn- cli-gateway-start!
   "Run the HTTP/SSE gateway daemon. Lazy resolve keeps
    Ring/Jetty class loading off every other command's startup path."
@@ -3072,8 +3061,6 @@
   (let [name (require-mcp-name! parsed)]
     ((requiring-resolve 'com.blockether.vis.internal.gateway.client/mcp-auth-logout!) name)
     (stdout! (str "Signed out of MCP server \"" name "\" (tokens forgotten)."))))
-
-
 
 ;;; ── `vis-agent python` — standalone CPython interpreter ────────────────────────
 ;;
@@ -3641,7 +3628,6 @@
      :cmd/run-fn cli-mcp-auth-logout!}]]
   (registry/register-cmd! spec))
 
-
 ;;; ── `vis-agent providers` subcommands ─────────────────────────────────────────
 
 (doseq [spec [{:cmd/name "list"
@@ -3841,7 +3827,7 @@
    `:db` handler always on (so the loop's `tel/with-ctx+ {:db-info ...}`
    bindings land in the session_log table), and the
    `:default/console` handler is OFF by default - it was removed by
-   `internal.registry` at namespace load so boot-time registration
+   `internal.extension.registry` at namespace load so boot-time registration
    logs never spray to stdout. We re-add it here only when `--debug`
    / `--verbose` / `-v` / `VIS_DEBUG=1` is set. Idempotent."
   [args]
@@ -3997,7 +3983,6 @@
               str/trim
               not-empty)
       "dev"))
-
 
 (defn- help-request?
   "True when args request help at any command depth. We can usually render
@@ -4203,7 +4188,6 @@
                          "http(s)://HOST[:PORT] (or set VIS_GATEWAY_URL).")
                     {:vis/user-error true})))
   (gateway-client/connect-remote! {:url url :token token}))
-
 
 (defn- rewrite-ext-alias
   "Back-compat: rewrite a leading `ext` into the canonical `extension`

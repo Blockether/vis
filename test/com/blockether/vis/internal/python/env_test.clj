@@ -1,13 +1,13 @@
-(ns com.blockether.vis.internal.env-python-test
+(ns com.blockether.vis.internal.python.env-test
   "Vis-owned integration at the embedded-CPython boundary. Exhaustive interpreter
    semantics live in vis-python-runtime; this suite pins only host wiring and surfaces."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
-            [com.blockether.vis.internal.env-python :as ep]
-            [com.blockether.vis.internal.extension :as ext]
+            [com.blockether.vis.internal.docs.corpus :as doc-corpus]
+            [com.blockether.vis.internal.python.env :as ep]
+            [com.blockether.vis.internal.extension.core :as ext]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.python-runtime :as python-runtime]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -50,7 +50,6 @@
                               "print([name for name in names if not hasattr(builtins, name)])"))]
 
                    (expect (= "[]\n" (:stdout result))))))
-
 
 (defdescribe
   block-error-fidelity-test
@@ -311,7 +310,6 @@
           (expect (not (str/includes? out "`ntr`")))
           (expect (not (str/includes? out "# saved:")))))))
 
-
 (defdescribe persist-session-defs-budget-test
              ;; Regression: `persist-session-defs!` runs on the turn thread right after EVERY
              ;; block and one line BEFORE the turn's outcome is persisted, and "best effort"
@@ -345,6 +343,7 @@
                             (< elapsed 15000)
                             (str "persist-session-defs! held the turn thread for " elapsed "ms"))
                           (finally (.delete (io/file (paths/sandbox-defs-file sid)))))))))
+
 (defdescribe
   sandbox-open-flush-test
   ;; Bytes a block wrote must be on disk before the tool that reads them runs.
@@ -411,7 +410,6 @@
            (expect (nil? (:error held)))
            (expect (= "held-bytes\n" (:stdout held)))
            (finally (run! #(.delete ^java.io.File %) [end-file mid-file held-file dir]))))))
-
 
 ;; A BARE sandbox verb (`_shell_logs`) is called from Python with no schema in
 ;; front of it — so `doc(name)` is the only place its result keys are stated.
@@ -549,10 +547,12 @@ Follow every fixture step without truncation."}]))
                        (let [out (str (:stdout (ep/run-python-block ctx "print(doc('ls'))")))]
                          (expect (pos? @reads))
                          (expect (str/includes? out "ls("))))))))
+
 (comment
  ;; Dynamic skill and MCP sources are read at call time because the Python
  ;; context outlives reloads of those sources.
 )
+
 (defdescribe
   the-document-corpus-is-read-live-test
   (it "answers a document that appeared after the context was built, and drops it when it goes"
@@ -625,9 +625,6 @@ Follow every fixture step without truncation."}]))
                                                  "print(kw, mapped)\n"))]
 
                    (expect (= "called:1 called:1\n" (:stdout result))))))
-
-
-
 
 (defdescribe
   defs-verb-test
@@ -703,7 +700,6 @@ Follow every fixture step without truncation."}]))
         (expect (str/includes? found "listed=False"))
         ;; It is still readable by name — `defs()` is the catalogue that addresses it.
         (expect (str/includes? found "page=True"))))))
-
 
 (defdescribe
   ensure-interpreter-second-caller-test

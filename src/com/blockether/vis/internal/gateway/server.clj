@@ -20,13 +20,13 @@
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.openapi :as openapi-contract]
             [com.blockether.vis.contract.toggle :as toggle-contract]
-            [com.blockether.vis.internal.attachments :as attachments]
-            [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
-            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.docs :as docs]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.file-picker :as file-picker]
+            [com.blockether.vis.internal.docs.core :as docs]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.channel.file-picker :as file-picker]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.view :as gw-view]
             [com.blockether.vis.internal.gateway.pairing :as pairing]
@@ -35,17 +35,17 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
-            [com.blockether.vis.internal.registry :as registry]
-            [com.blockether.vis.internal.provider-auth :as provider-auth]
-            [com.blockether.vis.internal.provider-limits :as provider-limits]
-            [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
-            [com.blockether.vis.internal.resources :as resources]
-            [com.blockether.vis.internal.python-extensions :as python-extensions]
-            [com.blockether.vis.internal.slash :as slash]
-            [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.provider.auth :as provider-auth]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
+            [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.internal.sandbox.gateway :as gateway-sandbox]
+            [com.blockether.vis.internal.gateway.resources :as resources]
+            [com.blockether.vis.internal.python.extensions :as python-extensions]
+            [com.blockether.vis.internal.channel.slash :as slash]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.speech :as speech]
+            [com.blockether.vis.internal.speech.core :as speech]
             [reitit.ring :as rr]
             [ring.adapter.jetty9 :as jetty]
             [ring.core.protocols :as ring-protocols]
@@ -65,7 +65,6 @@
            [org.eclipse.jetty.server ConnectionFactory HttpConfiguration HttpConnectionFactory
             Server ServerConnector]
            [org.eclipse.jetty.server.handler.gzip GzipHandler]))
-
 
 (def ^:private DEFAULT_PORT 7890)
 
@@ -92,6 +91,7 @@
    sandbox is never mistaken for one; short enough that a wedged daemon releases
    the port while a human is still looking at it."
   60000)
+
 (def ^:private CLIENT_LEASE_TTL_MS
   "How long a lease that carries NO pid may go without a single request before this
    daemon stops counting it as a client.
@@ -123,6 +123,7 @@
 ;; was: `{:marker {:turns n :seq n} :since ms}`. Sampled once per reap sweep, so
 ;; the stall clock measures the TURN and not the moment the last watcher left.
 (defonce ^:private turn-progress-watch (atom nil))
+
 (defn- log-client-lease-warning!
   "Emit rare lease-compaction warnings to BOTH telemetry and the managed
    gateway's stderr log. The explicit stderr line remains visible when the
@@ -417,7 +418,9 @@
   (* 10 60 1000))
 
 (def ^:private pending-upload-budget-bytes (* 320 1024 1024))
+
 (def ^:private pending-upload-count-limit 64)
+
 (defonce ^:private pending-uploads (atom {}))
 
 (defn- reap-uploads!
@@ -566,6 +569,7 @@
   (cond (str/starts-with? (str media-type) "video/") attachments/max-video-bytes
         (str/starts-with? (str media-type) "audio/") attachments/max-audio-bytes
         :else attachments/max-upload-image-bytes))
+
 (defn- upload->attachment
   [{:keys [filename media-type bytes]}]
   {:filename filename
@@ -3417,6 +3421,7 @@
                                                                     [:path-params :node-id]))
                                                        (query-long request "from")
                                                        (query-long request "limit"))))))
+
 (defn- reachable-addresses
   "Every base URL this gateway answers on, most durable first (Tailscale before
    LAN — see [[pairing/candidate-hosts]]).
@@ -3865,6 +3870,7 @@
                 :body f}))
            (catch Throwable t
              (json-response 502 {:error (or (ex-message t) "could not prepare a sample")}))))))
+
 (def ^:private JOB_QUEUE_CAP
   "Per-connection queue of job states. A transcription or a synthesis reports a handful
    of percentages per second at most, so anything the writer cannot keep up with is a
@@ -4949,6 +4955,7 @@
        installed))))
 
 #_{:clj-kondo/ignore [:unused-private-var]}
+
 (defn- restore-signal-forensics!
   "Undo [[install-signal-forensics!]] by re-installing the captured handlers."
   [installed]

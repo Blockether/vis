@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.workspace
+(ns com.blockether.vis.internal.workspace.core
   "Backend-neutral workspaces, DB-pinned to session_state 1:1.
 
    The user's real cwd is *trunk* — Vis never mutates it, and Vis no
@@ -24,9 +24,9 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.rift :as rift]
-            [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.persistance :as p]
+            [com.blockether.vis.internal.persistance.core :as p]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [java.io File]
@@ -805,7 +805,6 @@
   (let [{:keys [exit out]} (git* dir args)]
     (if (= 0 exit) (into [] (remove str/blank?) (str/split-lines (str out))) [])))
 
-
 (defn- discard-root!
   [backend-id root]
   (when (and root (not= :live backend-id)) (rift-discard! {:root (file-path root)})))
@@ -1515,7 +1514,6 @@
                 (when (and clone (not= clone trunk)) {:backend backend :root clone})))
         (extra-root-entries ws)))
 
-
 (defn- file-lines
   "Text lines of `f`, or `[]` when it does not exist. Never throws — a binary
    or unreadable file degrades to an empty line-set, so its diff stat comes out
@@ -1570,7 +1568,7 @@
                       (diff-stats dst src)]
 
                   (io/make-parents dst)
-                  (Files/copy (.toPath src) (.toPath dst) copy-opts)
+                  (Files/copy (.toPath src) (.toPath dst) ^"[Ljava.nio.file.CopyOption;" copy-opts)
                   (merge {:status status :path path :root trunk} stats)))
               (changed-paths clone fork-ms))
 

@@ -12,9 +12,9 @@
    vocabulary and capability checks."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
-            [com.blockether.vis.internal.channel-events :as channel-events]
+            [com.blockether.vis.internal.channel.events :as channel-events]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.view :as view]
+            [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.contract.view :as view-spec])
   (:import [java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit]))
@@ -24,7 +24,6 @@
 (def channel-id "Channel the companion app is served on." :app)
 
 (def ^:private listener-id ::gateway)
-
 
 (defn- session-of
   "Session id a request view / close event belongs to, as a string, or nil."
@@ -223,7 +222,6 @@
                   node-id
                   (max 0 (long (or from 0)))
                   (min (long live-log-page) (max 1 (long (or limit live-log-page))))))
-
 
 (defn on-channel-event!
   "Project one canonical `:app` View event into the session journal."

@@ -5,8 +5,11 @@
             [clojure.tools.build.api :as b]))
 
 (def ^:private class-dir "target/native-classes")
+
 (def ^:private binary "target/vis-tui")
+
 (def ^:private source-dirs ["src" "../../packages/vis-contract/src"])
+
 (def ^:private resource-dirs ["resources" "../../packages/vis-contract/resources"])
 
 (defn clean [_] (b/delete {:path "target"}))

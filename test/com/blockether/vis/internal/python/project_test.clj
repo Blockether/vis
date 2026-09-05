@@ -1,10 +1,10 @@
-(ns com.blockether.vis.internal.python-project-test
+(ns com.blockether.vis.internal.python.project-test
   "Layout reads degrade LOUDLY. A CPython read that FAILS is retried once and then
    reported as a `:warning`, instead of pretending the project declares no import
    roots — silent degradation surfaces as bogus `No module named <pkg>` errors in
    the user's own tests (Blockether/vis#98)."
-  (:require [com.blockether.vis.internal.python-extensions :as pyx]
-            [com.blockether.vis.internal.python-project :as pyproj]
+  (:require [com.blockether.vis.internal.python.extensions :as pyx]
+            [com.blockether.vis.internal.python.project :as pyproj]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private tmp (System/getProperty "java.io.tmpdir"))

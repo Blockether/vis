@@ -36,9 +36,9 @@
    ;; (`reachability-metadata.json`, pinned by `sherpa-test`)."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.capability :as capability]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.notifications :as notifications]
+            [com.blockether.vis.internal.extension.capability :as capability]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.channel.notifications :as notifications]
             [com.blockether.vis.internal.speech.files :as files])
   (:import [java.io File]
            [java.util.zip ZipFile]))

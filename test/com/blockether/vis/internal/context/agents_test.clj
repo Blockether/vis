@@ -1,10 +1,10 @@
-(ns com.blockether.vis.internal.agents-test
+(ns com.blockether.vis.internal.context.agents-test
   "Contract tests for the core project-guidance reader."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
-            [com.blockether.vis.internal.agents :as agents]
+            [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-tmp-root*

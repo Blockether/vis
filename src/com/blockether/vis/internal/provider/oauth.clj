@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.oauth
+(ns com.blockether.vis.internal.provider.oauth
   "Unified OAuth token-refresh facade, shared by every provider.
 
    WHY THIS EXISTS — Providers whose token endpoint ROTATES the

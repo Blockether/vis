@@ -18,8 +18,8 @@
        :error); 2 if any :error.
      - TTY-detected ANSI colors. UTF-8 icons by default."
   (:require [clojure.string :as string]
-            [com.blockether.vis.internal.config-validation :as config-validation]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.config.validation :as config-validation]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.speech.cli :as speech-cli]
             [com.blockether.vis.internal.format :as fmt]
             [taoensso.telemere :as tel]))
@@ -253,7 +253,8 @@
    on the config loader and a broken config downgrades to \"no report\"."
   [environment]
   (or (:config environment)
-      (try (when-let [f (requiring-resolve 'com.blockether.vis.internal.config/load-config-raw)]
+      (try (when-let [f (requiring-resolve
+                          'com.blockether.vis.internal.config.core/load-config-raw)]
              (f))
            (catch Throwable _ nil))))
 
@@ -293,7 +294,7 @@
 
 (defn- fleet-model-names
   [provider]
-  (let [model-name (resolve-fn 'com.blockether.vis.internal.config/model-name)]
+  (let [model-name (resolve-fn 'com.blockether.vis.internal.config.core/model-name)]
     (into #{}
           (keep #(some-> (if model-name (model-name %) (or (:name %) (get % "name")))
                          str
@@ -385,14 +386,16 @@
 
     (when config
       (let [fleet
-            (or (safe-call 'com.blockether.vis.internal.providers/picker-fleet nil) [])
+            (or (safe-call 'com.blockether.vis.internal.provider.service/picker-fleet nil) [])
 
             registered
             (into {}
                   (keep (fn [p]
                           (when-let [id (provider-id-str (:provider/id p))]
                             [id p])))
-                  (or (safe-call 'com.blockether.vis.internal.registry/registered-providers nil)
+                  (or (safe-call
+                        'com.blockether.vis.internal.extension.registry/registered-providers
+                        nil)
                       []))
 
             configured-ids

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.egress-proxy
+(ns com.blockether.vis.internal.sandbox.egress-proxy
   "Gateway-hosted loopback EGRESS PROXY — the one door a jailed shell child may use
    to reach the network. Paired with the OS jail's *net-off-except-loopback* wall
    (`process-jail`), it turns vis.yml `:network` (allowed/denied domains + verb/path
@@ -122,7 +122,6 @@
     (mapv (fn [[h {:keys [methods allow ports]}]]
             {"host" h "methods" methods "allow" allow "ports" ports})
           acc)))
-
 
 (defn compile-policy
   "Compile raw network-opts `{:allowed-domains :denied-domains :rules}`
@@ -581,7 +580,6 @@
                        (when-not (str/blank? user) user))
                      (catch Throwable _ nil))))))
         headers))
-
 
 (def ^:private HANDSHAKE_READ_TIMEOUT_MS
   "Read deadline for the request line + headers (or SOCKS greeting) a freshly

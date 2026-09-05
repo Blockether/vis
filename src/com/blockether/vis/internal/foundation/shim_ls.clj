@@ -23,7 +23,7 @@
    a tree hides it from the listing exactly as it hides it from every read."
   (:require [charred.api :as json]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.editing.core :as editing]))
 
 (def ^:private error-kinds

@@ -28,9 +28,9 @@
    no row at all, and journal files are removed directly — and every direct
    delete is confined to a path under the drafts store or the events dir."
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.internal.persistance :as p]
+            [com.blockether.vis.internal.persistance.core :as p]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace :as workspace])
+            [com.blockether.vis.internal.workspace.core :as workspace])
   (:import [java.io File]
            [java.nio.file FileVisitResult Files LinkOption Path SimpleFileVisitor]
            [java.nio.file.attribute BasicFileAttributes]))
@@ -396,7 +396,6 @@
      (.setDaemon true)
      (.setPriority Thread/MIN_PRIORITY)
      (.start))))
-
 
 ;; Drafts
 

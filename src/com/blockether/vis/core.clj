@@ -41,55 +41,56 @@
   (:gen-class)
   (:require
     [charred.api :as json]
-    [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
-    [com.blockether.vis.internal.cancellation :as cancellation]
-    [com.blockether.vis.internal.capability :as capability]
+    [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
+    [com.blockether.vis.internal.session.cancellation :as cancellation]
+    [com.blockether.vis.internal.extension.capability :as capability]
     [com.blockether.vis.internal.commandline :as commandline]
-    [com.blockether.vis.internal.config :as config]
-    [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
+    [com.blockether.vis.internal.config.core :as config]
+    [com.blockether.vis.internal.context.renderer :as ctx-renderer]
     [com.blockether.vis.internal.doctor :as doctor]
-    [com.blockether.vis.internal.env-python :as env]
+    [com.blockether.vis.internal.python.env :as env]
     [com.blockether.vis.internal.error :as error]
-    [com.blockether.vis.internal.extension :as extension]
-    [com.blockether.vis.internal.extension-aggregate :as extension-aggregate]
-    [com.blockether.vis.internal.form :as form]
+    [com.blockether.vis.internal.extension.core :as extension]
+    [com.blockether.vis.internal.extension.aggregate :as extension-aggregate]
+    [com.blockether.vis.internal.channel.form :as form]
     [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
     [com.blockether.vis.internal.import :refer [import-vars]]
     [com.blockether.vis.internal.format :as fmt]
     [com.blockether.vis.internal.gateway.client :as gateway-client]
     [com.blockether.vis.internal.gateway.server :as gateway]
     [com.blockether.vis.contract.wire :as wire]
-    [com.blockether.vis.internal.limits-format :as limits-format]
+    [com.blockether.vis.internal.provider.limits-format :as limits-format]
     [com.blockether.vis.internal.loop :as lp]
-    [com.blockether.vis.internal.manifest :as manifest]
-    [com.blockether.vis.internal.titling :as titling]
+    [com.blockether.vis.internal.extension.manifest :as manifest]
+    [com.blockether.vis.internal.session.titling :as titling]
     [com.blockether.vis.internal.main :as binary]
-    [com.blockether.vis.internal.render :as ir]
-    [com.blockether.vis.internal.notifications :as notifications]
-    [com.blockether.vis.internal.persistance :as persistance]
-    [com.blockether.vis.internal.progress :as progress]
-    [com.blockether.vis.internal.prompt :as prompt]
-    [com.blockether.vis.internal.pyfmt :as pyfmt]
-    [com.blockether.vis.internal.python-worker :as python-worker]
-    [com.blockether.vis.internal.python-extensions :as python-extensions]
-    [com.blockether.vis.internal.python-test-runner :as python-test-runner]
-    [com.blockether.vis.internal.provider-key-store :as provider-key-store]
-    [com.blockether.vis.internal.provider-limits :as provider-limits]
-    [com.blockether.vis.internal.providers :as providers]
-    [com.blockether.vis.internal.session-model :as session-model]
-    [com.blockether.vis.internal.registry :as registry]
-    [com.blockether.vis.internal.resources :as resources]
-    [com.blockether.vis.internal.process-jail :as process-jail]
-    [com.blockether.vis.internal.slash :as slash]
-    [com.blockether.vis.internal.theme :as theme]
-    [com.blockether.vis.internal.toggles :as toggles]
+    [com.blockether.vis.internal.channel.render :as ir]
+    [com.blockether.vis.internal.channel.notifications :as notifications]
+    [com.blockether.vis.internal.persistance.core :as persistance]
+    [com.blockether.vis.internal.session.progress :as progress]
+    [com.blockether.vis.internal.context.prompt :as prompt]
+    [com.blockether.vis.internal.python.format :as pyfmt]
+    [com.blockether.vis.internal.python.worker :as python-worker]
+    [com.blockether.vis.internal.python.extensions :as python-extensions]
+    [com.blockether.vis.internal.python.test-runner :as python-test-runner]
+    [com.blockether.vis.internal.provider.key-store :as provider-key-store]
+    [com.blockether.vis.internal.provider.limits :as provider-limits]
+    [com.blockether.vis.internal.provider.service :as providers]
+    [com.blockether.vis.internal.session.model :as session-model]
+    [com.blockether.vis.internal.extension.registry :as registry]
+    [com.blockether.vis.internal.gateway.resources :as resources]
+    [com.blockether.vis.internal.sandbox.jail :as process-jail]
+    [com.blockether.vis.internal.channel.slash :as slash]
+    [com.blockether.vis.internal.channel.theme :as theme]
+    [com.blockether.vis.internal.config.toggles :as toggles]
     [com.blockether.vis.internal.paths :as paths]
     [com.blockether.vis.internal.util :as util]
-    [com.blockether.vis.internal.workspace :as workspace]))
+    [com.blockether.vis.internal.workspace.core :as workspace]))
 
 ;; The one closed distribution manifest, read-only: an extension can ask whether
 ;; its own initializer is listed, and in which order the engine runs it.
 (import-vars [manifest-initializers manifest/initializers])
+
 ;; Gateway (HTTP/SSE server over the session/turn runtime)
 ;;
  ;; `gateway-register-routes!` is the route-contribution seam. Initializers in
@@ -173,6 +174,7 @@
 (import-vars [audio-transcribe-request! audio-transcribe/request-attachments!]
              [audio-transcribe-outcome audio-transcribe/outcome]
              [audio-transcribe-statuses audio-transcribe/statuses])
+
 (import-vars [gateway-events-since gateway-client/events-since]
              [gateway-toggle-setting! gateway-client/toggle-setting!]
              [gateway-cycle-setting! gateway-client/cycle-setting!]
@@ -199,6 +201,7 @@
              [gateway-provider-auth-cancel! gateway-client/provider-auth-cancel!]
              [gateway-provider-logout! gateway-client/provider-logout!]
              [gateway-provider-remove! gateway-client/provider-remove!])
+
 ;; MCP lives on the GATEWAY: it owns the pool, the child processes, and the OAuth
 ;; tokens. Channels inspect, kill/start, and drive headless auth through these.
 (import-vars [gateway-mcp-servers gateway-client/mcp-servers]
@@ -213,6 +216,7 @@
              [gateway-mcp-auth-poll! gateway-client/mcp-auth-poll!]
              [gateway-mcp-auth-cancel! gateway-client/mcp-auth-cancel!]
              [gateway-mcp-auth-logout! gateway-client/mcp-auth-logout!])
+
 ;; Channel-neutral per-session model preference (shared store). The TUI uses
 ;; these directly; the gateway aliases above delegate to the same store, so
 ;; web + TUI route a session through the same persisted model.
@@ -247,6 +251,7 @@
              ;; tests: the registry is process-wide by design, so one such test would otherwise
              ;; answer every later test in that JVM from memory.
              [capability-forget-verdicts! capability/forget-verdicts!])
+
 ;; Feature toggles (channels + extensions read this; TUI settings flips it)
 (import-vars [register-toggle! toggles/register-toggle!]
              [register-toggles! toggles/register-toggles!]
@@ -373,8 +378,9 @@
 (import-vars [session->markdown ir/session->markdown])
 
 (import-vars [render ir/render] [->ast ir/->ast])
+
 ;; Canonical per-form DISPLAY contract — channels project the whole form-display
-;; field set through ONE list (see internal/form.clj): `->display` outbound,
+;; field set through ONE list (see internal/channel/form.clj): `->display` outbound,
 ;; `<-wire` inbound (tolerant of the gateway wire's snake_case + keyword values).
 (import-vars [form->display form/->display]
              [form-with-display form/with-display]
@@ -382,18 +388,22 @@
              [result-card form/result-card])
 
 (import-vars [markdown->ast ir/markdown->ast])
+
 ;; Shared unified-diff line classifier — TUI maps the kind to ANSI, web to a CSS
 ;; class, so a diff fence colours identically in both from ONE source.
 (import-vars [diff-line-kind ir/diff-line-kind])
+
 ;; Shared reasoning/thinking formatting — every channel (TUI bubble + web
 ;; thinking card) MUST render traces through these so they stay identical.
 (import-vars [normalize-reasoning ir/normalize-reasoning]
              [reasoning->ast ir/reasoning->ast]
              [reasoning-preview-line-limit ir/reasoning-preview-line-limit]
              [reasoning-collapse-min-hidden ir/reasoning-collapse-min-hidden])
+
 ;; ruff-beautify model Python before display (gateway code blocks). Cached +
 ;; falls back to verbatim source when ruff is unavailable.
 (import-vars [beautify-python pyfmt/beautify-python])
+
 ;; Canonical `contract.wire/->wire` JSON shape: snake keys,
 ;; keywords as strings). The pretty variant is for human-facing views.
 (import-vars [wire-json-str wire/json-str])
@@ -402,8 +412,10 @@
   "Pretty-print canonical wire JSON for human-facing views."
   ^String [x]
   (json/write-json-str (wire/->wire x) :indent-str "  "))
+
 ;; Canonical gateway values use snake_case STRING keys at every depth.
 (import-vars [wire-canonical wire/canonical])
+
 ;; ONE key policy: keyword/symbol key -> canonical snake_case STRING
 ;; (namespace dropped, `foo?` -> `is_foo`) — the exact spelling `->wire`
 ;; emits, for readers that project canonical maps back by engine keyword.
@@ -458,7 +470,7 @@
              [provider-limits provider-limits/provider-limits]
              [all-provider-limits provider-limits/all-provider-limits])
 
-;; Provider management service (channel-neutral; internal/providers.clj)
+;; Provider management service (channel-neutral; internal/provider/service.clj)
 ;;
 ;; The SAME primitives behind the TUI Router dialog and the web
 ;; Providers modal: fleet, presets, status probing, account limits,
@@ -499,7 +511,7 @@
              [update-config-provider! providers/update-config-provider!]
              [remove-provider! providers/remove-provider!])
 
-;; Channel-neutral limits row formatting (internal/limits_format.clj):
+;; Channel-neutral limits row formatting (internal/provider/limits_format.clj):
 ;; the compact quota summaries every surface (TUI footer + cards, web
 ;; cards) renders identically.
 (import-vars [limits-dynamic-summary limits-format/dynamic-summary]
@@ -618,7 +630,7 @@
              [channel-contributions-for extension/channel-contributions-for])
 
 ;; Project-local Python extensions (`~/.vis/extensions` + `.vis/extensions`,
-;; trusted Python sessions — see `internal.python-extensions`).
+;; trusted Python sessions — see `internal.python.extensions`).
 (import-vars [load-python-extensions! python-extensions/load-python-extensions!]
              [reload-python-extensions! python-extensions/reload-python-extensions!]
              [python-extension-load-failures python-extensions/load-failures]
@@ -697,7 +709,7 @@
 
 ;; Stateful-resource registry — the canonical interface owners use to register a
 ;; long-lived thing vis manages (nREPL, daemon, watch…). Session-scoped: every
-;; verb takes the owning session id. See `internal.resources`.
+;; verb takes the owning session id. See `internal.gateway.resources`.
 
 (import-vars [register-resource! resources/register!]
              [update-resource! resources/update!]
@@ -776,36 +788,39 @@
              [assemble-stable-prompt-messages prompt/assemble-stable-prompt-messages]
              [build-system-prompt prompt/build-system-prompt]
              [stable-prompt-text prompt/stable-prompt-text])
+
 ;; `vis.core/build-iteration-context` is intentionally NOT re-exported:
 ;; callers must use `prompt/build-iteration-context` directly.
 
 (import-vars [assemble-initial-messages prompt/assemble-initial-messages])
+
 ;; Channel event bus
 (def add-channel-event-listener!
-  (requiring-resolve 'com.blockether.vis.internal.channel-events/add-channel-event-listener!))
+  (requiring-resolve 'com.blockether.vis.internal.channel.events/add-channel-event-listener!))
 
 (def remove-channel-event-listener!
-  (requiring-resolve 'com.blockether.vis.internal.channel-events/remove-channel-event-listener!))
+  (requiring-resolve 'com.blockether.vis.internal.channel.events/remove-channel-event-listener!))
 
 (def publish-channel-event!
-  (requiring-resolve 'com.blockether.vis.internal.channel-events/publish-channel-event!))
+  (requiring-resolve 'com.blockether.vis.internal.channel.events/publish-channel-event!))
 
 (def channel-event-listeners
-  (requiring-resolve 'com.blockether.vis.internal.channel-events/channel-event-listeners))
+  (requiring-resolve 'com.blockether.vis.internal.channel.events/channel-event-listeners))
 
 ;; Human input — the typed pause an extension uses to ask the operator
 ;;
 ;; `request-human-input!` BLOCKS the calling extension until an operator action,
 ;; timeout, or interruption settles it. Rendering is a channel concern: every
 ;; surface receives `:view/open` and answers through the same `view-action!` seam.
-(def request-human-input! (requiring-resolve 'com.blockether.vis.internal.view/request!))
+(def request-human-input! (requiring-resolve 'com.blockether.vis.internal.view.core/request!))
 
-(def view-action! (requiring-resolve 'com.blockether.vis.internal.view/action!))
+(def view-action! (requiring-resolve 'com.blockether.vis.internal.view.core/action!))
 
 (def pending-human-input-request
-  (requiring-resolve 'com.blockether.vis.internal.view/pending-request))
+  (requiring-resolve 'com.blockether.vis.internal.view.core/pending-request))
 
-(def reveal-human-input-secret (requiring-resolve 'com.blockether.vis.internal.view/reveal-secret))
+(def reveal-human-input-secret
+  (requiring-resolve 'com.blockether.vis.internal.view.core/reveal-secret))
 
 ;; Live views — the picture the human WATCHES while an extension works
 ;;
@@ -813,15 +828,15 @@
 ;; interruption enter through `view-action!`, exactly like input submit/cancel.
 ;; Reach for `with-live-view!`: a run that dies mid-flight would otherwise leave
 ;; a picture nobody updates on the human's screen and no verdict for the model.
-(def with-live-view! (requiring-resolve 'com.blockether.vis.internal.view/with-live!))
+(def with-live-view! (requiring-resolve 'com.blockether.vis.internal.view.core/with-live!))
 
-(def open-live-view! (requiring-resolve 'com.blockether.vis.internal.view/open-live!))
+(def open-live-view! (requiring-resolve 'com.blockether.vis.internal.view.core/open-live!))
 
-(def patch-live-view! (requiring-resolve 'com.blockether.vis.internal.view/patch-live!))
+(def patch-live-view! (requiring-resolve 'com.blockether.vis.internal.view.core/patch-live!))
 
-(def live-view (requiring-resolve 'com.blockether.vis.internal.view/live-view))
+(def live-view (requiring-resolve 'com.blockether.vis.internal.view.core/live-view))
 
-(def live-views (requiring-resolve 'com.blockether.vis.internal.view/live-views))
+(def live-views (requiring-resolve 'com.blockether.vis.internal.view.core/live-views))
 
 ;; Binary entry point
 ;;

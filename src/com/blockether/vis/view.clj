@@ -8,7 +8,7 @@
    things a hand-typed map gets wrong cannot happen. The node TYPE is the
    function you called, so `:type \"plaintxt\"` is a compile-time unresolved
    symbol instead of a refused request at run time; and the node is VALIDATED
-   the moment it is built, by the engine's own [[com.blockether.vis.internal.view/normalize-node]]
+   the moment it is built, by the engine's own [[com.blockether.vis.internal.view.core/normalize-node]]
    seam, so a bad `:default`, an unknown key or a `:select` with no options
    throws at the line that built it rather than in front of the human.
 
@@ -53,7 +53,7 @@
    Python extensions get the SAME names on the `vis` module —
    `vis.select('env', ['staging', 'prod'], label='Environment')` — built by
    the same engine seam across the JSON boundary."
-  (:require [com.blockether.vis.internal.view :as engine]))
+  (:require [com.blockether.vis.internal.view.core :as engine]))
 
 (set! *warn-on-reflection* true)
 
@@ -229,7 +229,7 @@
 ;; Live views — the picture the human WATCHES while the work runs
 ;;
 ;; Nodes are built and checked exactly like fields, through the engine's own
-;; [[com.blockether.vis.internal.view/normalize-live-node]] seam. The four
+;; [[com.blockether.vis.internal.view.core/normalize-live-node]] seam. The four
 ;; STATE ops (`set`, `append`, `clear`, `remove`) deliberately get no builder:
 ;; each is a two-key map the engine already refuses by name against its closed
 ;; table, and an invented `set-node` here would mint a second vocabulary beside

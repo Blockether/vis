@@ -1,10 +1,10 @@
-(ns com.blockether.vis.internal.notifications-test
+(ns com.blockether.vis.internal.channel.notifications-test
   "Notifications are process-global mutable state shared by every channel, so
    each test here starts and ends by clearing the store rather than relying on
    ordering. What matters to callers: the id you get back is the id you dismiss
    with, an entry expires on its own deadline, `:ttl-ms nil` means sticky, and
    bad input is refused loudly instead of pushing a broken entry to every UI."
-  (:require [com.blockether.vis.internal.notifications :as notif]
+  (:require [com.blockether.vis.internal.channel.notifications :as notif]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-clean-store

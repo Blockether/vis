@@ -6,10 +6,10 @@
    and persists one synthetic iteration whose form owns the command's stdout."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
-            [com.blockether.vis.internal.ctx-loop :as ctx-loop]
+            [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-store

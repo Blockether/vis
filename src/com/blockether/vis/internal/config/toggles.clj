@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.toggles
+(ns com.blockether.vis.internal.config.toggles
   "Process-wide feature-toggle registry.
 
    Replaces the two parallel toggle plumbings we had drifting apart:
@@ -445,6 +445,7 @@
             (choices-of id)))
 
     nil))
+
 (defn hydrate-from-config!
   "Bulk-apply values from the string-keyed YAML `toggles` map. Keyword-keyed
    internal maps remain accepted for callers that do not originate at YAML."

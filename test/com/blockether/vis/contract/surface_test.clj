@@ -4,7 +4,6 @@
   (:require [com.blockether.vis.contract.surface :as contract]
             [lazytest.core :refer [defdescribe expect it]]))
 
-
 (def ^:private lint-ok
   {"error" 0
    "warning" 1

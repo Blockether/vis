@@ -1,10 +1,10 @@
-(ns com.blockether.vis.internal.tls-mitm-test
+(ns com.blockether.vis.internal.sandbox.tls-mitm-test
   "Pure-JVM ephemeral CA + per-host leaf minting for the egress proxy's MITM tier —
    asserted as crypto facts, no network: a self-signed CA, a leaf that carries the
    requested host in its SAN and verifies under the CA, per-host context caching,
    and the ephemeral CA-PEM lifecycle. Cross-platform (runs on Linux CI too)."
   (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
-            [com.blockether.vis.internal.tls-mitm :as tls])
+            [com.blockether.vis.internal.sandbox.tls-mitm :as tls])
   (:import (java.io File FileInputStream)
            (java.security KeyStore)
            (java.security.cert X509Certificate)

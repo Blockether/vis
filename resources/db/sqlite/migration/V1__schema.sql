@@ -665,7 +665,7 @@ CREATE INDEX idx_log_iteration
 -- exactly one is set.
 --
 -- `audience` says WHO the artifact was attached FOR (see the audience gate in
--- com.blockether.vis.internal.attachments): 'both' is the default and reaches
+-- com.blockether.vis.internal.attachment.core): 'both' is the default and reaches
 -- the human and the wire; 'user' is stored and rendered for the human but NEVER
 -- turned into a wire image block (the model is told it exists and can pull it
 -- deliberately with `read_attachment` / `show_attachment`); 'model'

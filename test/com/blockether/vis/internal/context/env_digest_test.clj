@@ -1,15 +1,15 @@
-(ns com.blockether.vis.internal.env-digest-test
+(ns com.blockether.vis.internal.context.env-digest-test
   "Internal `\"session_env\"` digest contract (STRING-KEYED).
 
    The digest is core functionality (drives the per-iter `;; ctx`),
    not extension-owned. Tests stub upstream agents + prompt readers so
    the contract stays independent of the running JVM / repo state."
   (:require [babashka.fs :as fs]
-            [com.blockether.vis.internal.agents :as agents]
-            [com.blockether.vis.internal.env-digest :as env-digest]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.context.agents :as agents]
+            [com.blockether.vis.internal.context.env-digest :as env-digest]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.context.prompt :as prompt]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-tmp-root*

@@ -1,23 +1,23 @@
-(ns com.blockether.vis.internal.providers-test
+(ns com.blockether.vis.internal.provider.service-test
   "Fleet snapshot cache behavior for `configured-providers-cached` (issue #29):
    the footer-frequency read must never re-run the full config enumeration on
    a warm caller, a stale snapshot must refresh OFF the calling thread, and
    every same-process fleet mutation must invalidate the snapshot."
   (:require [lazytest.core :as lt]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
-            [com.blockether.vis.internal.cancellation :as cancel]
+            [com.blockether.vis.internal.session.cancellation :as cancel]
             [clojure.string :as str]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.provider-limits :as provider-limits]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.registry :as registry]
-            [com.blockether.vis.internal.workspace :as workspace]))
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.workspace.core :as workspace]))
 
 (defn- rv
   "Resolve a (possibly private) var in the providers namespace."
   [sym]
-  (ns-resolve 'com.blockether.vis.internal.providers sym))
+  (ns-resolve 'com.blockether.vis.internal.provider.service sym))
 
 (defn- await-value
   "Wait for a background refresh to publish its expected snapshot."
@@ -310,7 +310,7 @@
   ;; business/individual by zai/mistral (top, middle, then stranded at the
   ;; bottom). Guard the whole family stays a single contiguous run.
   (let [order
-        @(ns-resolve 'com.blockether.vis.internal.config 'PRESET_ORDER)
+        @(ns-resolve 'com.blockether.vis.internal.config.core 'PRESET_ORDER)
 
         idxs
         (mapv #(.indexOf ^java.util.List order %)
@@ -469,6 +469,7 @@
       (is (= ["glm-5.2" "minimax-m3"] defaults))
       (is (= ["glm-5.2" "minimax-m3" "ox-alpha-free"]
              (:models (providers/model-options provider defaults true)))))))
+
 (deftest fallback-selection-is-explicit-and-always-on-another-provider
   (let [fleet
         [{:id :openai :models [{:name "gpt-5"}]}

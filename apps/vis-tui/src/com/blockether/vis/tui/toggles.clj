@@ -5,7 +5,7 @@
      - hard-coded TUI booleans (`:show-thinking`, `:show-iterations`,
        `:show-silent`) wired into `state/default-settings`,
      - per-render `if (some-flag …) … else …` checks scattered through
-       `internal/render.clj` and channel-tui's render layer.
+       `internal/channel/render.clj` and channel-tui's render layer.
 
    A toggle has stable metadata (`id`, label, description, default,
    owner) and a current ON/OFF value. Anyone — internal modules,
@@ -445,6 +445,7 @@
             (choices-of id)))
 
     nil))
+
 (defn hydrate-from-config!
   "Bulk-apply values from the string-keyed YAML `toggles` map. Keyword-keyed
    internal maps remain accepted for callers that do not originate at YAML."

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.image-convert-test
+(ns com.blockether.vis.internal.attachment.image-convert-test
   "Container conversion, and above all the GEOMETRY of it.
 
    vis never optimizes an image, but a vector document has no pixels at all, so
@@ -13,7 +13,7 @@
    a mirrored, offset or stretched drawing, so the content is checked where it
    must land."
   (:require [com.blockether.imaging :as imaging]
-            [com.blockether.vis.internal.image-convert :as image-convert]
+            [com.blockether.vis.internal.attachment.image-convert :as image-convert]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import (java.awt.image BufferedImage)
            (java.io ByteArrayInputStream ByteArrayOutputStream)
@@ -75,7 +75,9 @@
     (imaging/encode img (keyword fmt))))
 
 (def ^:private white "ffffff")
+
 (def ^:private red "ff0000")
+
 (def ^:private blue "0000ff")
 
 ;; Declared size -> raster size

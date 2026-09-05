@@ -44,7 +44,6 @@
   (let [{matches true others false} (group-by (comp boolean pred) xs)]
     (into (vec matches) others)))
 
-
 (defn- build-model-list
   "Build the model selection list from the gateway's LIVE catalog.
    Preferred/default models are presented first. Appends the 'Show all models...'
@@ -65,8 +64,6 @@
     (if (and (not show-all?) (pos? (long hidden-count)))
       (conj items {:label "Show all models..." :id :show-all})
       items)))
-
-
 
 (def ^:private default-model-configs vis/provider-default-model-configs)
 
@@ -89,7 +86,6 @@
   [provider-id]
   (try (boolean (get (vis/gateway-provider-status provider-id) "is_authenticated"))
        (catch Exception _ false)))
-
 
 (def ^:private device-wait-timeout-ms (* 6 60 1000))
 
@@ -304,18 +300,9 @@
               :no-label "Not now"})
        (boolean (gateway-pkce-login! q :anthropic-coding-plan "Anthropic"))))))
 
-
-
 ;;; ── Reuse dialog infrastructure from dialogs.clj ───────────────────────────
 ;; dlg/dlg/draw-dialog-chrome!, dlg/dlg/dialog-layout, dlg/dlg/draw-hint-bar!,
 ;; dlg/dlg/ellipsize, p/clamp, dlg/visible-window-start, dlg/clear-screen!
-
-
-
-
-
-
-
 
 (defn- tagged?
   "True when `provider` carries the tag in `selection` — either role's
@@ -324,9 +311,6 @@
   [provider selection]
   (boolean (and (some? (:provider-id selection))
                 (same-id? (:id provider) (:provider-id selection)))))
-
-
-
 
 ;; Channel-neutral status / limits / persistence shapes — the core
 ;; provider service (channel-neutral). Aliased privately so
@@ -338,8 +322,6 @@
   [provider]
   (vis/gateway-add-provider! (:id provider) (:base-url provider))
   provider)
-
-
 
 (def gateway-probe-timeout-ms
   "Wall for ONE gateway provider diagnostics call, in milliseconds.
@@ -394,10 +376,6 @@
                    :dynamic {:limits []}
                    :error {:message message}})))
 
-
-
-
-
 (defn- provider-authenticated?
   ([provider] (boolean (get (gateway-provider-status-safe provider) "is_authenticated")))
   ([_provider status] (boolean (get status "is_authenticated"))))
@@ -422,7 +400,6 @@
    `Authenticate` on either only advertises a verb that has to refuse."
   [provider]
   (and (not (contains? local-no-auth-provider-ids (:id provider))) (not (:is-managed provider))))
-
 
 (defn provider-action-items
   "Actions for one provider row.
@@ -586,8 +563,6 @@
                         :commands
                         (when show-all?
                           [{:key "*" :type :action :id :show-all :label "Show every model"}])}))))
-
-
 
 (defn- run-paged-transient!
   "Run a `paged-key-groups` band until one of its items is chosen, paging in

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.doc-corpus
+(ns com.blockether.vis.internal.docs.corpus
   "The one ordered document corpus behind `apropos(pattern)` and `doc(name)`.
 
    Static resources and live sources contribute the same closed record shape.
@@ -13,7 +13,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
-            [com.blockether.vis.internal.manifest :as manifest]
+            [com.blockether.vis.internal.extension.manifest :as manifest]
             [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
@@ -26,7 +26,6 @@
    `SKILL.md`, `local` a callable this session defined that carries no contract at
    all — reachable by name through `doc`, never returned by `apropos`."
   #{"function" "class" "module" "tool" "doc" "skill" "local"})
-
 
 ;; Rendering a gist, comparing a name
 
@@ -68,7 +67,6 @@
            (> (count line) (long max-len)) (str (subs line 0 (dec (long max-len))) "…")
            :else line))))
 
-
 (def ^:private body-max-len
   "Characters of a document's own opening that an `apropos` row carries. One
    sentence of a docstring — enough to choose between two hits, short enough that
@@ -91,6 +89,7 @@
     (if (> (count s) (long body-max-len))
       (str (str/trim (subs s 0 (dec (long body-max-len)))) "…")
       s)))
+
 (defn normalize-name
   "Coerce a caller's target to a comparable handle: unwrap the map/kwargs shape,
    trim, drop a trailing `.md` (pages cross-link by filename), lower-case. This
@@ -230,6 +229,7 @@
         (discovery/skills)))
 
 (register-source! :manifest-apropos #'manifest-records)
+
 (register-source! :skills #'skill-entries)
 
 (defn- dedupe-by-name

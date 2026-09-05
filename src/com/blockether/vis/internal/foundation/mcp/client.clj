@@ -26,9 +26,9 @@
             [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
-            [com.blockether.vis.internal.process-jail :as process-jail]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import (java.io BufferedReader)

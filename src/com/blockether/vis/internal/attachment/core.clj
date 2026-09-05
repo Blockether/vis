@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.attachments
+(ns com.blockether.vis.internal.attachment.core
   "User-message image, video, audio, document and gzip attachments.
 
    Dropping a file onto the terminal pastes its PATH into the input (the
@@ -34,7 +34,7 @@
    the same row is simply dropped and the session keeps working."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.format :as fmt]
-            [com.blockether.vis.internal.image-convert :as image-convert]
+            [com.blockether.vis.internal.attachment.image-convert :as image-convert]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
   (:import [java.io File RandomAccessFile]
@@ -69,6 +69,7 @@
    keeps and the memory one drop can cost, nothing on any wire. The same 32MB
    ceiling a clip answers to covers a long voice memo or an interview take."
   (* 32 1024 1024))
+
 (def max-image-count
   "Attachment count cap per user message. Guards against a pathological
    message (e.g. a pasted directory listing) ballooning the request."
@@ -235,6 +236,7 @@
    as a video, and the send-time gate then tries to sample frames out of a file
    that has none."
   #{"m4a " "m4b " "m4p " "m4r " "f4a " "f4b " "aac "})
+
 (defn detect-video-mime
   "Sniff a supported video MIME type from the leading bytes of a file.
    Returns \"video/mp4\" | \"video/quicktime\", or nil.
@@ -381,7 +383,6 @@
   "Why an otherwise readable image was not attached, in the user's words."
   [media-type]
   (str media-type " is not a provider-supported image format (JPEG, PNG, GIF, WebP)"))
-
 
 (defn sniff-file-mime
   "Read a file head and return its sniffed attachment media type. nil on any
@@ -784,6 +785,7 @@
    but nothing is missing from the turn, so the model must not be told to go and
    open a file it has already been given the contents of."
   "a recording for the human — its transcript is quoted below, so it is not attached")
+
 (def audiences
   "The CLOSED vocabulary of an attachment's AUDIENCE — who the artifact is for:
 
@@ -794,7 +796,6 @@
 
    One word, three routes; there is no fourth and no second copy of this table."
   #{"both" "user" "model"})
-
 
 (defn human-only-media-type?
   "True when `media-type` names a file from [[human-only-media-types]]. Media-type
@@ -816,6 +817,7 @@
    the bytes for the human and TELL the model the file is there."
   [media-type]
   (or (human-only-media-type? media-type) (audio-media-type? media-type)))
+
 (defn normalize-audience
   "Coerce whatever the shim bridge, a wire payload or a DB row carries into a
    member of [[audiences]], defaulting to `\"both\"`. An unknown word falls back
@@ -945,7 +947,7 @@
 (defn- video-verdict
   "The send verdict for a CLIP, which no vision wire accepts in any container.
    The clip is sampled across its whole length into a small animated GIF
-   ([[com.blockether.vis.internal.image-convert/video->wire-gif]]) -- a format
+   ([[com.blockether.vis.internal.attachment.image-convert/video->wire-gif]]) -- a format
    every provider reads as an image -- so a dropped screen recording is
    something the model can actually WATCH instead of a filename it is told
    about. Refused only when the track cannot be decoded (HEVC/AV1/VP9, a
@@ -1100,6 +1102,7 @@
    drift apart."
   [{:keys [path filename]}]
   (or (not-empty (str path)) (not-empty (str filename)) "image"))
+
 (defn wire-images
   "[[wire-image]] over a whole user message's attachments, keeping the
    `{:attached [...] :skipped [{:path :reason}]}` shape the prompt manifest
@@ -1134,12 +1137,12 @@
                                   :else user-only-reason)
                     :readable-blind? true
                     ;; The recording's own WORDS, when something transcribed it
-                    ;; ([[com.blockether.vis.internal.audio-transcribe]]). The manifest
+                    ;; ([[com.blockether.vis.internal.attachment.audio-transcribe]]). The manifest
                     ;; quotes them where the audio cannot go.
                     :transcription (not-empty (str (:transcription att)))
                     ;; …and WHY there are none, when there are none — `pending`,
                     ;; `unavailable`, `silent`
-                    ;; ([[com.blockether.vis.internal.audio-transcribe/statuses]]).
+                    ;; ([[com.blockether.vis.internal.attachment.audio-transcribe/statuses]]).
                     ;; A recording nothing could read and a recording with no speech
                     ;; in it are different facts, and neither is a blank.
                     :transcription-status (not-empty (str (:transcription-status att)))})

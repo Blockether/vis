@@ -1,12 +1,12 @@
-(ns com.blockether.vis.internal.network-guard-test
+(ns com.blockether.vis.internal.sandbox.network-guard-test
   "The Vis-owned Python network stack: the runtime enforces the binary capability,
    while a session worker receives the host proxy and CA environment before CPython
    starts. A real urllib request proves the worker can reach only that proxy door."
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis-python-runtime :as runtime]
-            [com.blockether.vis.internal.egress-proxy :as egress]
-            [com.blockether.vis.internal.env-python :as env]
+            [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
+            [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io BufferedReader InputStreamReader)
@@ -65,6 +65,7 @@
               (reset! running false)
               (.close server)
               (future-cancel serve))}))
+
 (defdescribe
   network-runtime-configuration-test
   (it "passes the disabled network capability to the runtime"

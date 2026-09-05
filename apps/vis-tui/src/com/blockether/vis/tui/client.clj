@@ -22,12 +22,19 @@
            (java.nio.charset StandardCharsets)))
 
 (def ^:private default-host "127.0.0.1")
+
 (def ^:private default-port 7890)
+
 (def ^:private url-env "VIS_GATEWAY_URL")
+
 (def ^:private token-env "VIS_GATEWAY_TOKEN")
+
 (def ^:private client-label "vis-tui")
+
 (def ^:private health-probe-timeout-ms 3000)
+
 (def ^:private channel-read-timeout-ms 5000)
+
 (def ^:private slash-catalog-timeout-ms 120000)
 
 (defonce ^:private http-client
@@ -35,15 +42,25 @@
                        :connect-timeout 2000
                        :version :http1.1
                        :request {:headers {"accept" "*/*"}}})))
+
 (defonce ^:private target* (atom nil))
+
 (defonce ^:private target-checked? (atom false))
+
 (defonce ^:private client-id (atom nil))
+
 (defonce ^:private slash-cache* (atom []))
+
 (defonce ^:private channel-listeners* (atom {}))
+
 (defonce ^:private title-listeners* (atom {}))
+
 (defonce ^:private release-hook-installed? (atom false))
+
 (defonce ^:private subscriptions (atom {}))
+
 (defonce ^:private client-finalizing? (atom false))
+
 (defonce ^:private mux (atom {:subs {} :epoch 0 :future nil :stream nil}))
 
 (defn now-ms ^long [] (System/currentTimeMillis))
@@ -115,6 +132,7 @@
   @target*)
 
 (defn- base-url [entry] (:base-url entry))
+
 (defn- enc [x] (URLEncoder/encode (str x) StandardCharsets/UTF_8))
 
 (defn- gw-send!
@@ -300,6 +318,7 @@
          (when (= 200 (:status response))
            (vec (get (wire/parse-json (:body response)) "artifacts" []))))
        (catch Throwable _ nil)))
+
 (defn toggle-setting!
   "Atomically flip one boolean setting in the gateway and return its refreshed
    string-keyed settings row. The gateway owns both persistence and live runtime
@@ -992,7 +1011,7 @@
 
 ;; --- Input Views (a run in the DAEMON blocked on the operator) ---
 ;;
-;; `internal.view` parks the extension thread that raised the request and
+;; `internal.view.core` parks the extension thread that raised the request and
 ;; publishes it on the in-process channel bus. That bus never leaves the JVM, so
 ;; a client process — the TUI attached to a serve daemon — can only reach the
 ;; input View over these routes.
@@ -1587,6 +1606,7 @@
                    (write-temp-audio! (:body audio)))
                  (finally (request! :delete (speech-job-path sid :synthesize job-id "")))))
           :else (do (parsed-response! response) nil))))
+
 (defn- open-sse-events!
   "Open ONE SSE connection for `sid` from `cursor` and read it with
    [[read-sse-frames!]]. For each parsed event: advance `cursor*` (highest `:seq`
@@ -1923,6 +1943,7 @@
           (try (.close ^java.io.Closeable in) (catch Throwable _ nil)))
         (future-cancel fut)
         nil))))
+
 (defn sse-event-action
   "Pure classifier for one parsed SSE event while blocking on `wanted-turn-id`.
    Returns `[action event']`:
@@ -2034,76 +2055,144 @@
 
 ;; Names consumed by the terminal application. The transport API itself keeps route-oriented names.
 (def gateway-assign-project! assign-project!)
+
 (def gateway-attach-turn-sync! attach-turn-sync!)
+
 (def gateway-cancel-current-turn! cancel-current-turn!)
+
 (def gateway-cancel-turn! cancel-turn!)
+
 (def gateway-capabilities capabilities)
+
 (def gateway-close-session! close-session!)
+
 (def gateway-create-project! create-project!)
+
 (def gateway-create-session! create-session!)
+
 (def gateway-current-seq current-seq)
+
 (def gateway-cycle-setting! cycle-setting!)
+
 (def gateway-delete-queued-turn! delete-queued-turn!)
+
 (def gateway-drain-idle! drain-idle!)
+
 (def gateway-ensure-project-for-root! ensure-project-for-root!)
+
 (def gateway-fleet-subscribe! fleet-subscribe!)
+
 (def gateway-input-views input-views)
+
 (def gateway-iteration-attachment-bytes iteration-attachment-bytes)
+
 (def gateway-list-projects list-projects)
+
 (def gateway-list-sessions list-sessions)
+
 (def gateway-list-sessions-page list-sessions-page)
+
 (def gateway-list-turns list-turns)
+
 (def gateway-live-views live-views)
+
 (def gateway-mcp-auth-cancel! mcp-auth-cancel!)
+
 (def gateway-mcp-auth-complete! mcp-auth-complete!)
+
 (def gateway-mcp-auth-logout! mcp-auth-logout!)
+
 (def gateway-mcp-auth-poll! mcp-auth-poll!)
+
 (def gateway-mcp-auth-start! mcp-auth-start!)
+
 (def gateway-mcp-delete-server! mcp-delete-server!)
+
 (def gateway-mcp-kill-server! mcp-kill-server!)
+
 (def gateway-mcp-save-server! mcp-save-server!)
+
 (def gateway-mcp-servers mcp-servers)
+
 (def gateway-mcp-set-server-enabled! mcp-set-server-enabled!)
+
 (def gateway-mcp-start-server! mcp-start-server!)
+
 (def gateway-mcp-test-server! mcp-test-server!)
+
 (def gateway-mux-subscribe! mux-subscribe!)
+
 (def gateway-provider-auth-cancel! provider-auth-cancel!)
+
 (def gateway-provider-auth-complete! provider-auth-complete!)
+
 (def gateway-provider-auth-poll! provider-auth-poll!)
+
 (def gateway-provider-auth-start! provider-auth-start!)
+
 (def gateway-provider-auth-submit-key! provider-auth-submit-key!)
+
 (def gateway-provider-limits provider-limits)
+
 (def gateway-provider-model-options provider-models)
+
 (def gateway-provider-remove! provider-remove!)
+
 (def gateway-provider-status provider-status)
+
 (def gateway-reconcile-running-turns! reconcile-running-turns!)
+
 (def gateway-release-session! release-session!)
+
 (def gateway-release-session-runtime! release-session-runtime!)
+
 (def gateway-reorder-project-sessions! reorder-project-sessions!)
+
 (def gateway-router-fleet router)
+
 (def gateway-search-session-matches search-session-matches)
+
 (def gateway-session-artifacts session-artifacts)
+
 (def gateway-session-model session-model)
+
 (def gateway-session-model-cached session-model-cached)
+
 (def gateway-session-slashes session-slashes)
+
 (def gateway-session-workspace session-workspace-info)
+
 (def gateway-set-router-default! set-router-default!)
+
 (def gateway-set-router-fallback! set-router-fallback!)
+
 (def gateway-set-session-model! set-session-model!)
+
 (def gateway-soul soul)
+
 (def gateway-submit-turn! submit-turn!)
+
 (def gateway-submit-turn-sync! submit-turn-sync!)
+
 (def gateway-synthesize-speech! synthesize-speech!)
+
 (def gateway-toggle-setting! toggle-setting!)
+
 (def gateway-transcribe-audio! transcribe-audio!)
+
 (def gateway-transcript transcript)
+
 (def gateway-transcript-md transcript-md)
+
 (def gateway-transcript-page transcript-page)
+
 (def gateway-turn-trace turn-trace)
+
 (def gateway-view-action! view-action!)
 
 ;; App-facing projections over the gateway's string-keyed provider payload.
 (defonce ^:private router-cache* (atom nil))
+
 (def ^:private router-cache-ttl-ms 30000)
 
 (defn- invalidate-router-cache! [] (reset! router-cache* nil))
@@ -2160,6 +2249,7 @@
 (defn configured-providers-cached [] (mapv provider-entry (router-cached)))
 
 (defn authenticated-preset-providers [] [])
+
 (defn picker-fleet [] (configured-providers-cached))
 
 (defn get-router [] {:providers (configured-providers-cached)})
@@ -2218,14 +2308,21 @@
 (defn verbosity-configurable? [model] (some? (:verbosity-style model)))
 
 (defn model-routing-status [& _] nil)
+
 (defn router-initialized? [] (some? @router-cache*))
+
 (defn rebuild-router! [& _] (invalidate-router-cache!) (get-router))
+
 (defn refresh-cached-routers! [& _] (invalidate-router-cache!) nil)
+
 (defn reload-config! [] (invalidate-router-cache!) nil)
 
 (defn load-config-raw [] (config/load-raw))
+
 (defn update-machine-config! [f] (config/update! f))
+
 (defn save-toggles! [snapshot] (config/save-toggles! snapshot))
+
 (defn save-config! [value] (config/update! (constantly value)))
 
 (defn load-config
@@ -2292,22 +2389,27 @@
 (def provider-local-no-auth-ids #{:ollama :lm-studio})
 
 (defn provider-default-model-configs [provider] (vec (:models provider)))
+
 (defn provider-default-model-names [provider] (mapv model-name (:models provider)))
+
 (defn provider-config-with-models [provider models] (assoc provider :models (vec models)))
+
 (defn provider-managed?
   [provider-id]
   (boolean (:is-managed (some #(when (= (keyword provider-id) (:id %)) %)
                               (configured-providers-cached)))))
+
 (defn provider-command-minted? [provider] (some? (:api-key-command provider)))
+
 (defn provider-by-id
   [provider-id]
   (some #(when (= (keyword provider-id) (:id %)) %) (configured-providers-cached)))
+
 (defn display-label
   [provider-id]
   (-> (name provider-id)
       (str/replace #"[-_]" " ")
       str/capitalize))
-
 
 (defn provider-status-md
   [provider status limits]
@@ -2322,58 +2424,103 @@
 
 " message))))
 
-
 (defn structurally-silent? [block] (boolean (:vis/structurally-silent? block)))
 
 ;; Pure client-side projections and process-local UI state.
 (def abbreviate-home paths/abbreviate-home)
+
 (defn workspace-normalize-root [path] (.getCanonicalPath (io/file (str path))))
+
 (def format-date fmt/format-date)
+
 (def format-duration fmt/format-duration)
+
 (def format-meta-line fmt/format-meta-line)
+
 (def meta-fallback-note fmt/meta-fallback-note)
+
 (def meta-summary-line fmt/meta-summary-line)
+
 (def display-model-name fmt/display-model-name)
+
 (def markdown->ast presentation/markdown->ast)
+
 (def reasoning->ast presentation/reasoning->ast)
+
 (def reasoning-preview-line-limit presentation/reasoning-preview-line-limit)
+
 (def reasoning-collapse-min-hidden presentation/reasoning-collapse-min-hidden)
+
 (def parse-block-display presentation/parse-block-display)
+
 (def extract-text presentation/extract-text)
+
 (def result-card form/result-card)
+
 (def form->display form/->display)
+
 (def form-with-display form/with-display)
+
 (def form<-wire form/<-wire)
+
 (def non-blank util/non-blank)
+
 (def utf8 util/utf8)
+
 (def wire-key wire/wire-key)
+
 (def wire->engine wire/->engine)
+
 (def error-message error/error-message)
+
 (def format-error error/format-error)
+
 (def make-progress-tracker progress/make-progress-tracker)
+
 (def worker-future cancellation/worker-future)
+
 (def cancellation-token cancellation/cancellation-token)
+
 (def cancellation-set-future! cancellation/cancellation-set-future!)
+
 (def cancellation? cancellation/cancellation?)
+
 (def cancel! cancellation/cancel!)
+
 (def notifications notifications/notifications)
+
 (def notify! notifications/notify!)
+
 (def watch-notifications! notifications/watch!)
+
 (def unwatch-notifications! notifications/unwatch!)
+
 (def register-toggle! toggles/register-toggle!)
+
 (def registered-toggles toggles/registered-toggles)
+
 (def toggles-for-channel toggles/toggles-for-channel)
+
 (def toggle-spec toggles/toggle-spec)
+
 (def toggle-value toggles/value-of)
+
 (def toggle-enabled? toggles/enabled?)
+
 (def toggle-set-value! toggles/set-value!)
+
 (def toggle-cycle-value! toggles/cycle-value!)
+
 (def toggle-reset-to-default! toggles/reset-to-default!)
+
 (def toggles-snapshot toggles/snapshot)
+
 (def toggles-hydrate-from-config! toggles/hydrate-from-config!)
+
 (def toggle-add-listener! toggles/add-listener!)
 
 (defn registered-slashes [] @slash-cache*)
+
 (defn slash-parse
   [text]
   (when-let [command (some-> (str text)
@@ -2395,22 +2542,27 @@
   [channel id listener]
   (swap! channel-listeners* assoc-in [channel id] listener)
   id)
+
 (defn remove-channel-event-listener!
   [channel id]
   (swap! channel-listeners* update channel dissoc id)
   nil)
+
 (defn add-title-listener!
   [sid listener]
   (swap! title-listeners* assoc-in [(str sid) :settled] listener)
   listener)
+
 (defn remove-title-listener!
   [sid _listener]
   (swap! title-listeners* update (str sid) dissoc :settled)
   nil)
+
 (defn add-title-pending-listener!
   [sid listener]
   (swap! title-listeners* assoc-in [(str sid) :pending] listener)
   listener)
+
 (defn remove-title-pending-listener!
   [sid _listener]
   (swap! title-listeners* update (str sid) dissoc :pending)
@@ -2419,9 +2571,13 @@
 ;; The real terminal and the real stdout belong to `tui.tty`; every consumer
 ;; reaches them through this namespace, so keep these as plain aliases.
 (def tty-in tty/tty-in)
+
 (def tty-out tty/tty-out)
+
 (def original-stdout tty/original-stdout)
+
 (defn init! [& _] true)
+
 (defn shutdown!
   []
   (reset! client-finalizing? true)

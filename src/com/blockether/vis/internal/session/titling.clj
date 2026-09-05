@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.titling
+(ns com.blockether.vis.internal.session.titling
   "Session-title subsystem, lifted out of the loop namespace: the three listener
    registries (per-session value, global, and the pending/spinner channel), the
    single `set-title-with-broadcast!` mutation point, and the async auto-title
@@ -7,9 +7,9 @@
    never back on the loop."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.runtime-settings :as rt]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 

@@ -1,11 +1,11 @@
-(ns com.blockether.vis.internal.provider.alibaba-test
+(ns com.blockether.vis.internal.provider.vendor.alibaba-test
   (:require [com.blockether.vis.core :as vis]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
   provider-registration-test
   (it "registers both Alibaba plans as separate provider extension entries"
-      (require 'com.blockether.vis.internal.provider.alibaba :reload)
+      (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
       (let [coding
             (vis/provider-by-id :alibaba-coding-plan)
 
@@ -30,7 +30,7 @@
         (expect (ifn? (:provider/auth-prompt-fn coding)))
         (expect (ifn? (:provider/auth-prompt-fn token)))))
   (it "presets the models each endpoint actually serves, with a window for the uncatalogued one"
-      (require 'com.blockether.vis.internal.provider.alibaba :reload)
+      (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
       (let [coding-models
             (get-in (vis/provider-by-id :alibaba-coding-plan) [:provider/preset :default-models])
 
@@ -48,7 +48,7 @@
 (defdescribe
   auth-prompt-test
   (it "exposes static API-key guidance per plan"
-      (require 'com.blockether.vis.internal.provider.alibaba :reload)
+      (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
       (let [coding-lines
             ((:provider/auth-prompt-fn (vis/provider-by-id :alibaba-coding-plan)))
 
@@ -68,7 +68,7 @@
              ;; shared key store (`provider-key-store-test`); what this pack owns is that
              ;; its two plans are wired to their OWN provider ids.
              (it "detects the TUI/config API key used by runtime model calls"
-                 (require 'com.blockether.vis.internal.provider.alibaba :reload)
+                 (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
                  (with-redefs-fn {#'vis/current-config (constantly {:providers
                                                                     [{:id :alibaba-token-plan
                                                                       :api-key "config-key"}]})}
@@ -84,7 +84,7 @@
 (defdescribe
   limits-test
   (it "reports :unsupported with a console note - no endpoint verifies the key"
-      (require 'com.blockether.vis.internal.provider.alibaba :reload)
+      (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
       (with-redefs-fn {#'vis/provider-key-detect (constantly {:api-key "k" :source :auth-file})}
         (fn []
           (let [report (vis/provider-limits :alibaba-token-plan)]
@@ -93,7 +93,7 @@
             (expect (= [] (get-in report [:dynamic :limits])))
             (expect (re-find #"Model Studio console" (get-in report [:dynamic :note])))))))
   (it "reports :unauthenticated when the plan key is absent"
-      (require 'com.blockether.vis.internal.provider.alibaba :reload)
+      (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
       (with-redefs-fn {#'vis/provider-key-detect (constantly nil)}
         (fn []
           (let [report ((:provider/limits-fn (vis/provider-by-id :alibaba-coding-plan)))]

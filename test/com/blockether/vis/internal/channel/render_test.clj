@@ -1,6 +1,6 @@
-(ns com.blockether.vis.internal.render-test
+(ns com.blockether.vis.internal.channel.render-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.render :as render]
+            [com.blockether.vis.internal.channel.render :as render]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe

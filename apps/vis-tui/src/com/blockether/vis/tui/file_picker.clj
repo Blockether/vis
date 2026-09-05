@@ -3,9 +3,11 @@
   (:require [com.blockether.vis.tui.client :as client]))
 
 (def ^:dynamic *session-id* nil)
+
 (defonce ^:private warm? (atom false))
 
 (defn index-warm? [] @warm?)
+
 (defn prewarm-index! [] (reset! warm? true))
 
 (defn fuzzy-file-rows

@@ -3,13 +3,13 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.env-python :as env-python]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.python.env :as env-python]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
-            [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.prompt]
+            [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.context.prompt]
             [com.blockether.vis.internal.foundation.core :as foundation]
-            [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -430,7 +430,7 @@
               (introspection/prompt {}))
 
             core
-            (var-get #'com.blockether.vis.internal.prompt/CORE_SYSTEM_PROMPT)]
+            (var-get #'com.blockether.vis.internal.context.prompt/CORE_SYSTEM_PROMPT)]
 
         (expect (str/includes? text "~/.vis/gateway/events/<id>.ndjson"))
         (expect (str/includes? text "await read_session()"))

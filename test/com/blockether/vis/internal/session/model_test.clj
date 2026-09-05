@@ -1,7 +1,7 @@
-(ns com.blockether.vis.internal.session-model-test
+(ns com.blockether.vis.internal.session.model-test
   "The session's model pick and the listeners that mirror it onto every attached surface."
-  (:require [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.session-model :as smodel]
+  (:require [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.session.model :as smodel]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-quiet-store

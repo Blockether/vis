@@ -6,9 +6,9 @@
    loop persists as `:attachments`), with the media-type sniffed from magic bytes
    / extension / a utf-8 probe. No stdout fence, no parsing."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
-            [com.blockether.vis.internal.env-python :as ep]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.docs.corpus :as doc-corpus]
+            [com.blockether.vis.internal.python.env :as ep]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
             [com.blockether.vis.test-python-context :as tpc]
@@ -41,6 +41,7 @@
        "        if str(format).upper() in ('JPEG', 'JPG'):\n"
        "            target.write(b'\\xff\\xd8\\xff\\xe0' + b'\\x00' * 32)\n"
        "        else:\n" "            target.write(_png(*self.size))\n"))
+
 (defn- temp-root
   ^String []
   (str (.toAbsolutePath (Files/createTempDirectory "vis-attach-test"
@@ -795,7 +796,6 @@
           ;; ...and on the `doc()` entry the model actually looks up.
           (expect (true? (ev pctx (str "'SAME DOCUMENT, SAME NAME' in doc('" n "')")))
                   (str "doc('" n "') must state the same-name rule"))))))
-
 
 ;; Regression, session 55ed67f6 (iOS companion work): `attach` returned None and
 ;; the artifact it had just stored was invisible to `list_attachments`,

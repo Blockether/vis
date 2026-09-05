@@ -92,6 +92,7 @@
            (str/join " "
                      [version (if dirty? (str commit "-dirty") commit) (release-track)
                       (str (java.time.Instant/now))]))))
+
 ;; Package catalog
 
 (def ^:private subproject-patterns
@@ -370,6 +371,7 @@
   []
   (spit (str native-bin ".build") (str @build-stamp "\n"))
   (println "-> stamped" (str native-bin ".build") (str "(" @build-stamp ")")))
+
 (defn- native-image-command
   "The native-image launcher to invoke via `b/process` (Java ProcessBuilder).
    Resolve the concrete launcher from GRAALVM_HOME / JAVA_HOME
@@ -632,7 +634,6 @@
 
     (filterv #(.exists (io/file %)) dirs)))
 
-
 (defn- write-migration-indexes!
   "Flyway discovers migrations by LISTING its classpath location dir — which
    native-image can't do. For every `**/migration/` dir of `.sql` we copied,
@@ -834,6 +835,7 @@
       (->> (keys deps)
            (mapcat jars-by-artifact)
            vec))))
+
 (def ^:private python-sidecar-dir
   "The embedded CPython distribution, staged BESIDE the image as
    `target/vis-agent-python/`: a cdylib plus a vendored interpreter tree that
@@ -934,6 +936,7 @@
             (throw (ex-info "Could not unpack the CPython sidecar."
                             {:archive (str archive) :exit exit}))))))
     (println "->" python-sidecar-dir)))
+
 (defn- sherpa-native-jars
   "The BUILD HOST's sherpa-onnx native jar, at the version `basis` pins for the
    API jar. Core depends on that 187 KB API jar ALONE — its five platform jars
@@ -1109,7 +1112,7 @@
              ;; top-level form then loads every entrypoint the manifest names —
              ;; the explicit form of what used to happen by accident, through a
              ;; dependency's build-time preload chain.
-             "--initialize-at-build-time=com.blockether.vis.internal.native_preload__init"
+             "--initialize-at-build-time=com.blockether.vis.internal.extension.native_preload__init"
              "-H:IncludeResources=META-INF/vis/.*" "-H:IncludeResources=.*\\.edn$"
              ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
              "-H:IncludeResources=vis/VERSION"

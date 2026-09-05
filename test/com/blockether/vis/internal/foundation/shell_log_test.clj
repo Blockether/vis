@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.shell-log-test
+(ns com.blockether.vis.internal.foundation.shell-log-test
   "The storage contract of a background shell's output: a FILE plus a byte cursor.
 
    Every test here reads with the cursor the model is told to use — start where
@@ -8,7 +8,7 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
-            [com.blockether.vis.internal.shell-log :as shell-log]
+            [com.blockether.vis.internal.foundation.shell-log :as shell-log]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io File)))
 
@@ -278,6 +278,7 @@
              (expect (= 200 (long (:next-offset c))))
              (expect (false? (:is-eof c))))
            (finally (shell-log/delete-session-logs! sid))))))
+
 (defdescribe
   tee-test
   (it "writes through every byte the pump reads"

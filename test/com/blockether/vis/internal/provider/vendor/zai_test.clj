@@ -1,14 +1,14 @@
-(ns com.blockether.vis.internal.provider.zai-test
+(ns com.blockether.vis.internal.provider.vendor.zai-test
   (:require [babashka.http-client :as http]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.provider.zai :as zai]
+            [com.blockether.vis.internal.provider.vendor.zai :as zai]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
   provider-registration-test
   (it "registers both Z.ai plans as separate provider extension entries"
-      (require 'com.blockether.vis.internal.provider.zai :reload)
+      (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
       (zai/register!)
       (let [coding
             (vis/provider-by-id :zai-coding-plan)
@@ -35,7 +35,7 @@
 (defdescribe
   auth-prompt-test
   (it "exposes static API-key guidance for the coding plan"
-      (require 'com.blockether.vis.internal.provider.zai :reload)
+      (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
       (let [lines ((:provider/auth-prompt-fn (vis/provider-by-id :zai-coding-plan)))]
         (expect (some #(= "  Z.ai (Coding Plan) requires a static API key." %) lines))
         (expect (some #(= "  Create one at https://z.ai/manage-apikey/apikey-list." %) lines))
@@ -45,7 +45,7 @@
 
 (defdescribe auth-detection-test
              (it "detects the TUI/config API key used by runtime model calls"
-                 (require 'com.blockether.vis.internal.provider.zai :reload)
+                 (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
                  (with-redefs-fn {#'vis/current-config (constantly {:providers
                                                                     [{:id :zai-coding-plan
                                                                       :api-key "config-key"}]})}
@@ -56,7 +56,7 @@
 (defdescribe
   limits-test
   (it "reports live 5h and 7d coding-plan quota when the coding-plan key is available"
-      (require 'com.blockether.vis.internal.provider.zai :reload)
+      (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
       (with-redefs-fn {#'vis/provider-key-detect (fn [_book plan-tag]
                                                    (when (= :coding plan-tag)
                                                      {:api-key "k" :source :auth-file}))
@@ -93,7 +93,7 @@
             (expect (= {:kind :rolling :unit :day :size 7 :resets-at-ms 1770848402389}
                        (get-in report [:dynamic :limits 1 :window])))))))
   (it "reports :unauthenticated when the coding-plan key is absent"
-      (require 'com.blockether.vis.internal.provider.zai :reload)
+      (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
       (with-redefs-fn {#'vis/provider-key-detect (constantly nil)}
         (fn []
           (let [report ((:provider/limits-fn (vis/provider-by-id :zai-coding-plan)))]
@@ -101,7 +101,7 @@
             (expect (= :unauthenticated (:status report)))
             (expect (= [] (get-in report [:dynamic :limits])))))))
   (it "treats an application-level 401 quota response as rejected credentials"
-      (require 'com.blockether.vis.internal.provider.zai :reload)
+      (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
       (with-redefs-fn
         {#'vis/provider-key-detect (fn [_book plan-tag]
                                      (when (= :coding plan-tag)
@@ -120,7 +120,7 @@
 
 (defdescribe pass-limits-test
              (it "keeps a saved Pass key unverified when no live quota endpoint exists"
-                 (require 'com.blockether.vis.internal.provider.zai :reload)
+                 (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
                  (with-redefs-fn {#'vis/provider-key-detect (fn [_book plan-tag]
                                                               (when (= :pass plan-tag)
                                                                 {:api-key "saved-key"

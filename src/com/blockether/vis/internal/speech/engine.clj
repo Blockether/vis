@@ -11,7 +11,6 @@
 
 (def engine-id :parakeet-local)
 
-
 (def ^:private filler-tokens #{"ah" "eh" "er" "erm" "hm" "hmm" "mm" "uh" "um" "huh"})
 
 (defn- comparable-token

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.vision-describe
+(ns com.blockether.vis.internal.attachment.vision-describe
   "Borrowed EYES for a blind target model.
 
    A session routes to ONE model, and that model may have no `:vision` capability
@@ -30,12 +30,12 @@
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
-            [com.blockether.vis.internal.attachments :as attachments]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.provider-error :as perr]
-            [com.blockether.vis.internal.runtime-settings :as rt]
+            [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.provider.error :as perr]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [taoensso.telemere :as tel])
   (:import [java.time Instant]
            [java.util Base64]))

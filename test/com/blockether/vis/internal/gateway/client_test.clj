@@ -133,6 +133,7 @@
              (is (= [:post :post :get :get :delete] (mapv first @calls)))
              (is (= {:text "hello" :voice "amy"} (get-in @calls [1 2 :body])))
              (finally (.delete audio)))))))
+
 ;; Regression: the TUI spoke raw gateway HTTP for these two reads, so a channel
 ;; extension had to reach past the facade into this namespace to make either one.
 (deftest channel-reads-answer-data-or-nil-when-the-daemon-cannot
@@ -160,6 +161,7 @@
       (fn []
         (is (nil? (client/session-artifacts "session-1")))
         (is (nil? (client/capabilities)))))))
+
 (defn- await-value
   "Wait for a background cache refresh to publish its expected value."
   [read expected]
@@ -249,7 +251,6 @@
              (is (= 1 @calls))))
          (finally (reset! client-id-atom previous)))))
 
-
 ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: concurrent
 ;; TUI startup callbacks each entered gateway discovery and repeated the full wait.
 (deftest concurrent-gateway-ensure-is-single-flight-per-database
@@ -300,6 +301,7 @@
                (is (= 1 @calls) "one process performs discovery while peers reuse its result"))))
          (finally (reset! cached-atom previous-cached)
                   (reset! fresh-until-atom previous-fresh-until)))))
+
 (deftest authenticated-loopback-orphan-is-stopped-and-replaced
   (let [token-file
         (java.io.File/createTempFile "vis-gateway-token-" ".txt")
@@ -698,6 +700,7 @@
       (finally (reset! guard false)
                (reset! handshake previous-handshake)
                (reset! cached previous-entry)))))
+
 ;; Regression (reported: a gateway that stopped answering had to be killed by hand):
 ;; `stop-daemon!` reported a live orphan and handed the human an `lsof` line, with
 ;; the daemon's pid sitting in the registry entry it had just read.
@@ -731,6 +734,7 @@
            (with-redefs-fn {#'discovery/pid-alive? (constantly false)}
              (fn []
                ((rv 'kill-registered-daemon!) "/tmp/x/vis.db" fake-entry)))))))
+
 (deftest provider-limits-restores-engine-shape-from-gateway-wire
   (let [request (atom nil)]
     (with-redefs-fn {(rv 'ensure-gateway-serving!) (fn [path]
@@ -1119,6 +1123,7 @@
               (Thread/sleep 400)
               (is (= after-stop (count @calls))
                   "stopping ends the watch instead of reconnecting"))))))))
+
 (deftest mux-finalization-barrier-forbids-new-subscriptions
   (let [mux-var
         (rv 'mux)

@@ -15,7 +15,6 @@
                                        :errored :selected :skipped :failures :output]
                                       contract/result-keys)))))
 
-
 (defdescribe split-node-id-test
              (describe
                "split-node-id - one entry -> {:path :var}"

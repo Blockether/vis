@@ -43,8 +43,11 @@
   "│ ")
 
 (defn hash? [x] (and (string? x) (boolean (re-matches #"[0-9a-f]{3}" x))))
+
 (defn line? [x] (pos-int? x))
+
 (defn anchor? [x] (and (string? x) (boolean (re-matches #"\d+:[0-9a-f]{3}" x))))
+
 (defn parsed? [x] (and (map? x) (line? (:line x)) (hash? (:hash x))))
 
 ;; Blob <-> coordinates

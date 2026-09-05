@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider.mistral
+(ns com.blockether.vis.internal.provider.vendor.mistral
   "Mistral.ai provider preset extension. API keys are configured by channels."
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.svar.core :as svar]))

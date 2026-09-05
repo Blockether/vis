@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.iteration-test
+(ns com.blockether.vis.internal.session.iteration-test
   "Canonical iteration-entry projections — block-level scope / merged code /
    status / duration / error, plus the stdout display surface.
 
@@ -7,7 +7,7 @@
    system: tool output is now shown purely as the program's stdout. What
    remains are the PURE projections off an iteration entry that already
    carries `:forms`."
-  (:require [com.blockether.vis.internal.iteration :as iteration]
+  (:require [com.blockether.vis.internal.session.iteration :as iteration]
             [lazytest.core :refer [defdescribe expect it]]))
 
 ;; Fixture: a plain iteration entry carrying `:forms` (no ops/sink shape).

@@ -6,7 +6,7 @@
    session's primary live root within that grant."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.paths :as paths]
-            [com.blockether.vis.internal.workspace :as workspace]))
+            [com.blockether.vis.internal.workspace.core :as workspace]))
 
 (defn- ctx-session-state-id [ctx] (:session/state-id ctx))
 

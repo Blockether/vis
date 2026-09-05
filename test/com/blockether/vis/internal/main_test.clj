@@ -4,11 +4,11 @@
             [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.main :as main]
-            [com.blockether.vis.internal.manifest :as manifest]
-            [com.blockether.vis.internal.python-extensions :as python-extensions]
-            [com.blockether.vis.internal.registry :as registry]
-            [com.blockether.vis.internal.toggles :as toggles]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.extension.manifest :as manifest]
+            [com.blockether.vis.internal.python.extensions :as python-extensions]
+            [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (toggles/register-toggle!
@@ -528,7 +528,6 @@
           (expect (= [] (:kept-session-ids result)))
           (expect (= pid (:project-id result)))))))
 
-
 (defdescribe
   gateway-status-staleness-test
   ;; `gateway status` is what gets asked when an update looks like it did nothing,
@@ -580,6 +579,7 @@
                      (expect (str/includes? text "stdout"))
                      (expect (str/includes? text "hello"))
                      (expect (not (str/includes? text "nil")))))))
+
 ;; Regression: the CLI answered `Authenticated:  yes` from `is_authenticated`
 ;; alone, so a key that was merely SAVED read as proven -- while the dialog
 ;; beside it already said "saved, not verified".

@@ -1,7 +1,7 @@
-(ns com.blockether.vis.internal.manifest-test
+(ns com.blockether.vis.internal.extension.manifest-test
   "The distribution has one closed manifest and no ambient discovery format."
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.internal.manifest :as manifest]
+            [com.blockether.vis.internal.extension.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defn- parsed

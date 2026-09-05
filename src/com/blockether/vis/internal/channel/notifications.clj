@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.notifications
+(ns com.blockether.vis.internal.channel.notifications
   "Cross-channel ephemeral notifications.
 
    A single in-memory pub-sub the host runtime, every extension, and

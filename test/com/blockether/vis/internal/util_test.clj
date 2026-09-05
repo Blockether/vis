@@ -65,7 +65,6 @@
                  (expect (= "```\n42\n```" (util/fenced 42)))
                  (expect (= (util/fenced "x") (util/fenced "x" nil)))))
 
-
 ;; Regression: Anthropic's summarized extended thinking ends every block with a
 ;; `thinking_delta` whose whole payload is `…`, so a two-word summary was
 ;; persisted and painted as `I need…` — reading exactly like Vis had truncated

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.tls-mitm
+(ns com.blockether.vis.internal.sandbox.tls-mitm
   "Ephemeral CA + per-host leaf minting for the egress proxy's TLS-terminating
    (MITM) tier — the piece that gives a jailed shell child GET-not-POST fidelity
    over HTTPS, matching what the interpreter method-guard already does pre-TLS.

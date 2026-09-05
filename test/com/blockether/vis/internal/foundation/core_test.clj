@@ -1,12 +1,12 @@
 (ns com.blockether.vis.internal.foundation.core-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
-            [com.blockether.vis.internal.foundation.environment.agents :as agents]
+            [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.rewind :as rewind]
             [com.blockether.vis.internal.foundation.shell :as shell]
-            [com.blockether.vis.internal.manifest :as manifest]
+            [com.blockether.vis.internal.extension.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -46,7 +46,7 @@
           (expect (< (count prompt) 1000)))))
   (it "contributes only the workspace block through ctx now"
       ;; `:session/env` (host / project / extensions digest) moved to
-      ;; `internal.env-digest` — it's core functionality, not extension-
+      ;; `internal.context.env-digest` — it's core functionality, not extension-
       ;; owned. Foundation-core's `:ext/ctx-fn` keeps only the workspace
       ;; block; `(:project ctx)` is gone for good.
       (let [ctx ((:ext/ctx-fn foundation/vis-extension) {})]

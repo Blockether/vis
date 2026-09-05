@@ -2,7 +2,7 @@
   "CLI command parsing, lookup, help rendering, dispatch.
 
    The command spec, builder, and global registry now live in
-   `com.blockether.vis.internal.registry` alongside the channel and provider
+   `com.blockether.vis.internal.extension.registry` alongside the channel and provider
    registries. This namespace provides the operations OVER those
    command maps:
 
@@ -26,9 +26,9 @@
 
    The registry surface (`command`, `register-cmd!`, `deregister-cmd!`,
    `registered-commands`, `registered-under`, `resolve-subcommands`)
-   is reachable through `com.blockether.vis.internal.registry`."
+   is reachable through `com.blockether.vis.internal.extension.registry`."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.registry :as registry]))
+            [com.blockether.vis.internal.extension.registry :as registry]))
 
 ;; Lookup
 
@@ -267,6 +267,7 @@
 (defn- ansi [code s] (if (color-enabled?) (str "\u001b[" code "m" s "\u001b[0m") (str s)))
 
 (defn- bold [s] (ansi "1" s))
+
 ;; Bright-black (`90`) instead of dim (`2`) - the standard ANSI "dim"
 ;; renders almost invisibly on most terminal themes (especially dark
 ;; ones with low-contrast palettes). Bright-black is the universal

@@ -4,7 +4,7 @@
    behaviour instead of a modal on one side and an inline picker on the
    other.
 
-   Ranking is powered by fff (`internal.file-picker/fuzzy-file-rows`) — the
+   Ranking is powered by fff (`internal.channel.file-picker/fuzzy-file-rows`) — the
    very same engine behind the `find_files` tool and the gateway
    `/v1/sessions/:sid/suggest` service — so `@fpick` fuzzily finds
    `file_picker.clj` (typo-tolerant subsequence match ranked by frecency),
@@ -18,7 +18,7 @@
    - `@@` escapes to a literal `@` and suppresses the popup;
    - selection is advisory — nothing is rewritten unless the user picks.
 
-   Ranking rides the POOLED fff index leased from `internal.fff-index` (via
+   Ranking rides the POOLED fff index leased from `internal.workspace.fff-index` (via
    `file-picker/fuzzy-file-rows`), the very same instance the `grep` /
    `find_files` tools and the gateway suggest service search — one index per
    workspace, not a private one per popup. This ns owns and closes NOTHING;

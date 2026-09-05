@@ -1092,7 +1092,6 @@
     [text (if accent? t/header-active-tab-accent base-color)
      (boolean (or base-bold? (contains? style :bold)))]))
 
-
 (defn- md-wrapped-rows
   "Wrap Markdown `text` to `w` `columns` through the renderer-local Markdown
   layout walker. Styled runs become `[text color bold?]` `segments`; the first

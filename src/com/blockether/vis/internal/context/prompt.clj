@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.prompt
+(ns com.blockether.vis.internal.context.prompt
   "Prompt assembly.
 
    Provider messages are explicit blocks in send order: core system rules,
@@ -8,14 +8,14 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.agents :as agents]
-            [com.blockether.vis.internal.attachments :as attachments]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.env-python :as env-python]
-            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.context.agents :as agents]
+            [com.blockether.vis.internal.attachment.core :as attachments]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.python.env :as env-python]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
 
 ;; Iteration context assembly

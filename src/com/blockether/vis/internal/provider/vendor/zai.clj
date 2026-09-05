@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.provider.zai
+(ns com.blockether.vis.internal.provider.vendor.zai
   "Z.ai (ZhipuAI) static-API-key provider helpers. Each plan is registered as its own extension:
 
      :zai-coding-plan -> coding-plan subscription
@@ -38,7 +38,7 @@
 
 (def ^:private BOOK
   "Z.ai's slice of the shared static-API-key shape
-   (`com.blockether.vis.internal.provider-key-store`): one file, one plan table,
+   (`com.blockether.vis.internal.provider.key-store`): one file, one plan table,
    and the strings a message needs.
 
    The map key is the LOCAL plan tag used inside the persisted auth file

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.python-host-test
+(ns com.blockether.vis.internal.python.host-test
   "The door from the sandbox back into Vis, measured from both sides.
 
    The envelope cases call the door directly, because the reply shape is a
@@ -9,8 +9,8 @@
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis-python-runtime :as runtime]
-            [com.blockether.vis.internal.python-host :as python-host]
-            [com.blockether.vis.internal.python-runtime :as python-runtime]
+            [com.blockether.vis.internal.python.host :as python-host]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
 (defn- reply

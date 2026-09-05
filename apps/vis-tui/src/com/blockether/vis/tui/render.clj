@@ -1434,6 +1434,7 @@
     iteration-pad-marker execution-summary-marker code-marker code-ok-marker code-err-marker
     code-pad-marker code-ok-pad-marker code-err-pad-marker result-marker err-result-marker
     activity-marker})
+
 (defn- ansi-code->fg
   [code current-fg base-fg]
   ;; `(long code)` is what keeps this a constant-time tableswitch: the tests are
@@ -5060,6 +5061,7 @@
           (activity-inline-text (subs text (count "running: ")) summary-format)
           (or (str/blank? text) (= (str/lower-case text) (str/lower-case op))) nil
           :else (activity-inline-text text summary-format))))
+
 (defn- activity-row-state
   [{:keys [state]}]
   (keyword (or (some-> state
@@ -5356,7 +5358,6 @@
    in; the rest are one press away, behind the same fold the paths already carry."
   4)
 
-
 (defn- activity-counts-visible-files?
   "True when a step's own summary only counts the paths already listed under it: `4 files`
    printed over four visible paths counts a list the eye is already on."
@@ -5364,6 +5365,7 @@
   (boolean (and (pos? shown)
                 (when-let [match (re-matches #"(\d+) files?" (str/trim (str summary)))]
                   (= shown (parse-long (second match)))))))
+
 (defn- activity-text-col
   "Column the words of a row at `depth` start in, counted from the paper's edge. The
    margin, the rail, the tick, the mark and one gap fill the columns before them at
@@ -7440,7 +7442,6 @@
                           (str/includes? answer explanation)))))
                trace))))
 
-
 (defn format-answer-with-thinking-data*
   "Uncached Markdown layout. Returns `{:text :lines :line-meta}` so the
    bubble painter can keep clickable summary-row metadata aligned with the
@@ -7731,8 +7732,6 @@
 ;; ^ Convenience: the total horizontal gutter consumed on each row.
 ;; `bubble-w = cols - MESSAGE_SIDE_PAD`. Both this file's painter and
 ;; `screen.clj`'s height calculator MUST use this exact derivation.
-
-
 
 (defn draw-messages-area!
   "Draw structured chat messages as left-aligned blocks inside a clean,

@@ -6,15 +6,15 @@
    same failure as an op card — the web thread painted that failure twice."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.content :as content]
-            [com.blockether.vis.internal.form :as form]
+            [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.session-model :as smodel]
+            [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.session.model :as smodel]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -177,6 +177,7 @@
             (expect (nil? (cancellation/cancel-reason token)))
             (expect (= "active-turn" (get-in @registry [sid :current-turn])))
             (expect (= "running" (get-in @registry [sid :turns "active-turn" :status]))))))))
+
 (defdescribe
   soul-model-pin-test
   "The session's model PIN rides the soul, so ONE `GET /v1/sessions` already says
@@ -298,6 +299,7 @@
            {"id" "idle" "modified_at" "2026-01-03T00:00:00Z"}]]
       (expect (= ["idle" "live-now" "parked"]
                  (mapv #(get % "id") (#'state/order-session-summaries rows)))))))
+
 (defdescribe
   thinking-newline-normalization-test
   "Gateway-owned thinking normalization keeps live SSE, poll/replay, and session
@@ -965,7 +967,6 @@
   (it "is nil for an unknown turn"
       (expect (nil? (state/turn-attachments (str (java.util.UUID/randomUUID)) "nope")))))
 
-
 (defdescribe
   session-artifacts-test
   "A client's gallery used to be derived from the transcript rows it happened to
@@ -1460,7 +1461,8 @@
              {:turns {"t-q" {:turn_id "t-q" :status "queued"}}}
              idle-sid
              {:turns {"t-done" {:turn_id "t-done" :status "completed"}}})
-           (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.resources/stop-all!)
+           (with-redefs-fn {(requiring-resolve
+                              'com.blockether.vis.internal.gateway.resources/stop-all!)
                             (fn [sid]
                               (swap! calls conj [:stop-all sid]))
                             #'lp/close! (fn [sid]
@@ -2420,6 +2422,7 @@
         (expect (not (contains? row "first_request")))
         (expect (not (contains? row "external_id")))
         (expect (not (contains? row "owner_id"))))))
+
 ;; Regression, same report: a project header carried the GATEWAY's tally while the rows
 ;; under it were the client's own filtered list, so the header said 1034 over pages that
 ;; held 763 - the two numbers could only agree by accident.
@@ -2486,6 +2489,7 @@
                    (expect (= 2 (:total got)))))
              (it "leaves the list whole when the window asks nothing of it"
                  (expect (= 3 (:total (three-session-window {}))))))
+
 ;; Regression, user report (paraphrased: "clicking a session suddenly makes it the
 ;; freshest thing and it jumps to the top, and after the gateway restarts the empty
 ;; report: the navigator key read the registry's `:last-active` TOUCH clock -
@@ -2514,6 +2518,7 @@
                  (let [recency #'state/record-recency-ms]
                    (expect (= 2000 (recency {:created-at 1000} {:latest-turn-at 2000})))
                    (expect (= 1000 (recency {:created-at 1000} nil))))))
+
 (defdescribe
   running-turn-start-cursor-test
   "A live-only join to a session with a turn already running (started in the TUI
@@ -2657,7 +2662,6 @@
                (expect (= ["queue.resumed" :drained] (mapv first @evs)))
                (expect (nil? (state/queue-paused-info sid)))))
            (finally (swap! reg dissoc sid))))))
-
 
 (defdescribe
   gateway-resource-bounds-test
@@ -3353,6 +3357,7 @@
              (@on-chunk {:phase :reasoning :iteration 2 :thinking "too late"})
              (expect (= before (:events (get @registry sid)))))
            (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid))))))
+
 (defdescribe
   cancel-terminal-backstop-test
   "A cancelled turn ALWAYS lands a terminal, even when its worker cannot.
@@ -3779,7 +3784,8 @@
           (promise)]
 
       (try (swap! registry assoc sid {:turns {}})
-           (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.resources/stop-all!)
+           (with-redefs-fn {(requiring-resolve
+                              'com.blockether.vis.internal.gateway.resources/stop-all!)
                             (fn [_sid]
                               ;; a slow stop-fn: a background shell that takes its time dying
                               (deref release 2000 :timeout)
@@ -3788,7 +3794,7 @@
                                           (deliver closed true))
                             #'lp/db-info (constantly :db)
                             (requiring-resolve
-                              'com.blockether.vis.internal.workspace/discard-session-clones!)
+                              'com.blockether.vis.internal.workspace.core/discard-session-clones!)
                             (fn [_db _sid]
                               nil)
                             #'persistance/db-delete-session-tree! (fn [_db id]
@@ -4038,7 +4044,6 @@
                       (finally (deliver release-callback true)))
                  (expect (= {:status "cancelling"} (deref cancel-call 1000 ::blocked))))))
            (finally (deliver release-callback true) (swap! registry dissoc sid))))))
-
 
 (defdescribe
   stall-force-cancel-does-not-replay-test
@@ -4423,7 +4428,6 @@
           (expect (false? (get row "live")))
           (expect (= "idle" (get row "status")))))))
 
-
 (defdescribe
   silent-reasoning-opens-no-block-test
   "A reasoning block exists only when the provider actually said something.
@@ -4521,7 +4525,6 @@
                             :thinking "I found…"
                             :error {:type :provider :message "boom"}})]
         (expect (nil? (:thinking payload))))))
-
 
 ;; Regression, user report (paraphrased: switching gateways flickered the project
 ;; list and then the numbers inside it): the counts were derived client-side from

@@ -22,7 +22,6 @@
   (let [v (get-in response [:headers name])]
     (if (sequential? v) (first v) v)))
 
-
 (defn- open-stream!
   "GET `url` as a stream, following redirects BY HAND so that `headers` — which
    may carry a bearer token — are DROPPED the moment the host changes. Hugging
