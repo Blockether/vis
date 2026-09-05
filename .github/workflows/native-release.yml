@@ -227,7 +227,10 @@ jobs:
           out="$(target/release-bundle/vis-agent providers status anthropic 2>&1 || true)"
           echo "$out"
           if printf '%s\n' "$out" | grep -q 'did not become ready'; then
-            echo '::error::gateway daemon failed to boot — the route table is broken'
+            echo '::error::gateway daemon failed to boot'
+            # Run the same entrypoint in the foreground to expose startup errors.
+            timeout 15 target/release-bundle/vis-agent gateway start 2>&1 |
+              grep -E 'Exception|Error|Caused by|Cannot|No matching' || true
             exit 1
           fi
           target/release-bundle/vis-agent gateway stop >/dev/null 2>&1 || true
