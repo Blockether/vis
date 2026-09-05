@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { ComposerButton, MetaButton } from "./ui";
+import { Button, ComposerButton, MetaButton, Modal } from "./ui";
 import { NewSessionButton } from "./SessionNavigator";
 import { renderSessionScreen } from "../screens/session-screen-harness";
 
@@ -144,5 +145,42 @@ describe("the app controls under a finger", () => {
 
     fireEvent.click(dial);
     expect(press).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Regression, issue #boox-settings: the settings sheet opened on pointer-up, then
+// its newly-mounted scrim received the synthetic click and immediately dismissed it.
+describe("a modal opened by a touch", () => {
+  function OpeningButton() {
+    const [isOpen, setIsOpen] = useState(false);
+    return (
+      <>
+        <Button onClick={() => setIsOpen(true)}>Open settings</Button>
+        {isOpen && (
+          <Modal onDismiss={() => setIsOpen(false)}>
+            <p>Settings</p>
+          </Modal>
+        )}
+      </>
+    );
+  }
+
+  it("does not dismiss from the opening tap's synthetic click", () => {
+    render(<OpeningButton />);
+    tap(screen.getByRole("button", { name: "Open settings" }));
+    const scrim = screen.getAllByRole("presentation")[0];
+    fireEvent.click(scrim);
+
+    expect(screen.getByText("Settings")).toBeInTheDocument();
+  });
+
+  it("dismisses when the touch began on the scrim", () => {
+    render(<OpeningButton />);
+    tap(screen.getByRole("button", { name: "Open settings" }));
+    const scrim = screen.getAllByRole("presentation")[0];
+    fireEvent.pointerDown(scrim);
+    fireEvent.click(scrim);
+
+    expect(screen.queryByText("Settings")).toBeNull();
   });
 });

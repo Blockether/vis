@@ -1850,6 +1850,7 @@ export function Modal({
   children: ReactNode;
 }) {
   const { host: portalHost, position } = overlayLayer();
+  const dismissOnClick = useRef(false);
 
   return createPortal(
     <div
@@ -1857,7 +1858,13 @@ export function Modal({
         size === 'fit' ? 'items-end' : 'items-stretch'
       }`}
       role="presentation"
-      onClick={onDismiss}
+      onPointerDown={(event) => {
+        dismissOnClick.current = event.target === event.currentTarget;
+      }}
+      onClick={(event) => {
+        if (dismissOnClick.current && event.target === event.currentTarget) onDismiss();
+        dismissOnClick.current = false;
+      }}
     >
       {/* ONE SIZE. On the phone a full dialog IS the screen — full bleed, full height,
           so a list inside it gets every pixel the glass has and the verbs at its
