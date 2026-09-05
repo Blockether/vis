@@ -5,6 +5,10 @@
       "methods": [{"name": "<init>", "parameterTypes": []}]
     },
     {
+      "type": "org.eclipse.jetty.http.pathmap.PathSpecSet",
+      "methods": [{"name": "<init>", "parameterTypes": []}]
+    },
+    {
       "type": "ring.adapter.jetty9.handlers.sync__init"
     },
     {

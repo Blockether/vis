@@ -78,9 +78,11 @@
                  (expect (.isFile metadata-file))
                  (expect (vector? (reflection-entries))))
              ;; Regression, CI run 33988584650: the native gateway could not
-             ;; construct its HashSet while starting the HTTP server.
-             (it "registers the HashSet constructor used during gateway startup"
-                 (expect (registered-constructor? (reflection-entries) "java.util.HashSet" [])))
+             ;; construct IncludeExcludeSet's concrete sets during HTTP startup.
+             ;; CI run 33989745234 also exposed the PathSpecSet constructor.
+             (it "registers the collection constructors used during gateway startup"
+                 (doseq [type ["java.util.HashSet" "org.eclipse.jetty.http.pathmap.PathSpecSet"]]
+                   (expect (registered-constructor? (reflection-entries) type []))))
              (it "registers BigInteger(String) — every YAML integer needs it"
                  (expect (registered-constructor? (reflection-entries)
                                                   "java.math.BigInteger"
