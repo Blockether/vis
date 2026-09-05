@@ -358,4 +358,3 @@
   (it "a clean eval carries no error and no excerpt"
       (let [r (ep/run-python-block (py-ctx) "print(1 + 2)")]
         (expect (nil? (:error r))))))
-

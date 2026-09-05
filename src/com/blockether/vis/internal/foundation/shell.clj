@@ -54,8 +54,6 @@
    false / 0 instead of absent, so model Python indexes any of them without a
    KeyError, and a run answers with its `command` and that command's own bytes at
    the TOP level — there is no entry to unwrap and no second shape to learn.
-
-
    The `shell` toggle is registered HERE and owned by Vis core. It closes the
    MODEL's door only: an installed extension keeps its own trusted process boundary
    (`vis.shell`, `subprocess`), which the toggle does not gate."

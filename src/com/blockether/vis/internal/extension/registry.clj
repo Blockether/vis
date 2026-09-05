@@ -32,8 +32,6 @@
                               registered with `:cmd/parent [\"channels\"]`.
                               Loading this ns also registers the
                               `vis-agent channels` parent itself.
-
-
    Parsing / help rendering / dispatch utilities live in
    `com.blockether.vis.internal.commandline`. The closed initialization manifest
    lives in `com.blockether.vis.internal.extension.manifest`."

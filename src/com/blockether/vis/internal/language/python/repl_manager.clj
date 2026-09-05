@@ -346,4 +346,3 @@ _main()
            (catch Throwable _ nil)))
     (swap! processes dissoc dir)
     {"result" (if info "stopped" "not-managed") "cwd" dir "status" "down"}))
-

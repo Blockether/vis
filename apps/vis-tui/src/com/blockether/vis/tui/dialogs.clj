@@ -5883,4 +5883,3 @@
                 KeyType/ArrowDown (do (swap! scroll #(min max-scroll (inc (long %)))) (recur))
                 KeyType/Character (recur)
                 (recur)))))))))
-

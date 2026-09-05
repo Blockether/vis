@@ -135,6 +135,12 @@
   (it "leaves same-line neighbours and the inside of forms alone"
       (let [src "(def a 1) ;; one\n\n(defn f\n  []\n\n\n  1)\n"]
         (expect (= src (fmt/normalize-top-level-spacing src)))))
+  (it "starts on the first form and ends with exactly one newline"
+      (expect (= "(def a 1)\n\n(def b 2)\n"
+                 (fmt/normalize-top-level-spacing "\n\n(def a 1)\n(def b 2)")))
+      (expect (= "(def a 1)\n" (fmt/normalize-top-level-spacing "(def a 1)\n\n\n")))
+      (expect (= ";; a\n(def a 1)\n\n;; tail\n"
+                 (fmt/normalize-top-level-spacing ";; a\n(def a 1)\n;; tail\n\n"))))
   (it "returns unparseable source unchanged"
       (expect (= "(def a" (fmt/normalize-top-level-spacing "(def a"))))
   (it "runs after the backend in format-source"

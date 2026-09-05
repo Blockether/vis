@@ -24,6 +24,7 @@
             [cljfmt.config :as cljfmt-config]
             [cljfmt.core :as cljfmt]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [rewrite-clj.node :as node]
             [rewrite-clj.parser :as parser]
             [zprint.config :as zprint-config]
@@ -167,11 +168,18 @@
           after-comment? (when (> newlines 2) (node/newlines 1))
           :else (when (not= newlines 2) (node/newlines 2)))))
 
+(defn- trim-edges
+  "`source` with no blank line before the first form and exactly one newline
+   after the last: the file's edges follow the same one-line rule as its middle."
+  ^String [^String source]
+  (str (str/replace (str/replace source #"\A\s*\n" "") #"\s+\z" "") \newline))
+
 (defn normalize-top-level-spacing
   "`source` with exactly ONE blank line between top-level forms. A comment
    directly above a form stays attached to it, runs of blank lines collapse to
-   one, and neighbours sharing a line are left alone. Whitespace INSIDE a form
-   is never touched; returns `source` unchanged when it does not parse."
+   one, neighbours sharing a line are left alone, and the file starts on its
+   first form and ends with exactly one newline. Whitespace INSIDE a form is
+   never touched; returns `source` unchanged when it does not parse."
   ^String [^String source]
   (try (let [forms (parser/parse-string-all source)]
          (loop [[n & more] (node/children forms)
@@ -179,8 +187,7 @@
                 ws []
                 out (transient [])]
 
-           (cond (nil? n) (node/string (node/replace-children forms
-                                                              (persistent! (reduce conj! out ws))))
+           (cond (nil? n) (trim-edges (node/string (node/replace-children forms (persistent! out))))
                  (node/whitespace? n) (recur more prev (conj ws n) out)
                  :else (let [run (if-some [sep (when prev (separator prev ws))]
                                    [sep]

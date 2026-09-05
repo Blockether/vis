@@ -1112,4 +1112,3 @@
                      (.refresh ^TerminalScreen screen)))})]
       (is (str/ends-with? png "vis-live-view-settled.png"))
       (is (pos? (long (cap/ink png))) "the band belongs entirely to the run still going"))))
-

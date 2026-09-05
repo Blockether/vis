@@ -424,4 +424,3 @@
                     (vec (str/split-lines after))]
 
                 (if (affordable? a b) (delta-line-counts a b) (window-line-counts a b)))))
-

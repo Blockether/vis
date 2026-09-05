@@ -1062,4 +1062,3 @@
                         "Add provider"
                         #(preset-transient-spec available % (band-page-size region)))]
          (add-preset-provider! screen g region (first (filter #(= pid (:id %)) available))))))))
-
