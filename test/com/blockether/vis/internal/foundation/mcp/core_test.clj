@@ -179,7 +179,11 @@
             tool-count
             (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'tool-count)]
 
-        (with-redefs-fn {#'config/load-global-config-raw (constantly machine)
+        ;; Regression, CI run 33990746062: this inventory-only fixture launched
+        ;; an "owned" connection after its mocks had escaped into the next test.
+        (with-redefs-fn {#'com.blockether.vis.internal.foundation.mcp.core/reconcile-async!
+                         (constantly nil)
+                         #'config/load-global-config-raw (constantly machine)
                          #'config/load-config-raw (constantly merged)}
           (fn []
             (let [rows (get (mcp/gateway-servers) "servers")]

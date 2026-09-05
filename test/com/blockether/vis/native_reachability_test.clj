@@ -81,7 +81,8 @@
              ;; construct IncludeExcludeSet's concrete sets during HTTP startup.
              ;; CI run 33989745234 also exposed the PathSpecSet constructor.
              (it "registers the collection constructors used during gateway startup"
-                 (doseq [type ["java.util.HashSet" "org.eclipse.jetty.http.pathmap.PathSpecSet"]]
+                 (doseq [type ["java.util.HashSet" "org.eclipse.jetty.http.pathmap.PathSpecSet"
+                               "org.eclipse.jetty.util.AsciiLowerCaseSet"]]
                    (expect (registered-constructor? (reflection-entries) type []))))
              (it "registers BigInteger(String) — every YAML integer needs it"
                  (expect (registered-constructor? (reflection-entries)

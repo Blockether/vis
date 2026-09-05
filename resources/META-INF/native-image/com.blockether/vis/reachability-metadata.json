@@ -9,6 +9,10 @@
       "methods": [{"name": "<init>", "parameterTypes": []}]
     },
     {
+      "type": "org.eclipse.jetty.util.AsciiLowerCaseSet",
+      "methods": [{"name": "<init>", "parameterTypes": []}]
+    },
+    {
       "type": "ring.adapter.jetty9.handlers.sync__init"
     },
     {
