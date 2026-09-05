@@ -3,11 +3,12 @@
    directories `sweep-stale!` deletes on its own.
 
    Everything here runs against throwaway directories bound through
-   `workspace/*drafts-home*` and — for every sweep test, ALL FOUR at once via
-   `with-homes` — `housekeeping/*logs-home*`, `*cache-home*`, `*rewind-home*`
-   and `*events-home*`; no test may read, let alone delete, anything under the
-   real `~/.vis`."
+   `workspace/*drafts-home*` and — for every sweep test, ALL FIVE at once via
+   `with-homes` — `housekeeping/*logs-home*`, `*cache-home*`, `*rewind-home*`,
+   `*python-home*` and `*events-home*`; no test may read, let alone delete,
+   anything under the real `~/.vis`."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
@@ -25,6 +26,11 @@
 
 (def ^:private day-ms 86400000)
 
+(defn- age-ms
+  "The mtime of something `age-days` old."
+  ^long [age-days]
+  (- (System/currentTimeMillis) (* (long age-days) (long day-ms))))
+
 (defn- touch!
   "Write `content` to `path` and stamp it `age-days` old. The mtime is what
    staleness is judged on, so tests state the age directly instead of sleeping."
@@ -32,7 +38,7 @@
   (let [f (io/file dir path)]
     (io/make-parents f)
     (spit f content)
-    (.setLastModified f (- (System/currentTimeMillis) (* (long age-days) day-ms)))
+    (.setLastModified f (age-ms age-days))
     f))
 
 (defn- draft-dir!
@@ -84,7 +90,7 @@
             (draft-dir! drafts "repo" "busy" 90)]
 
         (touch! dir "fresh.txt" 0 "still in use")
-        (.setLastModified dir (- (System/currentTimeMillis) (* 90 day-ms)))
+        (.setLastModified dir (age-ms 90))
         (binding [workspace/*drafts-home*
                   (.getPath drafts)
 
@@ -214,22 +220,31 @@
   [report id]
   (first (filter #(= id (:id %)) (:targets report))))
 
+(defn- seam-path
+  "`dir` as a path, or a fresh throwaway directory named `prefix`."
+  ^String [^File dir ^String prefix]
+  (let [^File d (or dir (tmp-dir prefix))]
+    (.getPath d)))
+
 (defn- with-homes
-  "Call `f` with ALL FOUR sweep seams pointed at throwaway directories. A test
+  "Call `f` with ALL FIVE sweep seams pointed at throwaway directories. A test
    that bound only the seam it cares about would leave the other targets
    resolving to the operator's real `~/.vis` — and this sweep deletes."
-  [{:keys [logs cache rewind events]} f]
+  [{:keys [logs cache rewind events python]} f]
   (binding [housekeeping/*logs-home*
-            (.getPath ^File (or logs (tmp-dir "vis-hk-idle-logs")))
+            (seam-path logs "vis-hk-idle-logs")
 
             housekeeping/*cache-home*
-            (.getPath ^File (or cache (tmp-dir "vis-hk-idle-cache")))
+            (seam-path cache "vis-hk-idle-cache")
 
             housekeeping/*rewind-home*
-            (.getPath ^File (or rewind (tmp-dir "vis-hk-idle-rewind")))
+            (seam-path rewind "vis-hk-idle-rewind")
+
+            housekeeping/*python-home*
+            (seam-path python "vis-hk-idle-python")
 
             housekeeping/*events-home*
-            (.getPath ^File (or events (tmp-dir "vis-hk-idle-events")))]
+            (seam-path events "vis-hk-idle-events")]
 
     (f)))
 
@@ -368,7 +383,8 @@
                                #(housekeeping/sweep-stale! nil))]
         (expect (zero? (:deleted report)))
         (expect (zero? (:bytes report)))
-        (expect (= [:logs :gateway-events :display :tui-attachments :rewind]
+        (expect (= [:logs :gateway-events :display :tui-attachments :rewind :python-runtimes
+                    :python-sources :python-archives]
                    (mapv :id (:targets report))))))
   (it "sweeps off-thread with the caller's bindings conveyed"
       (let [logs (tmp-dir "vis-hk-logs-async")]
@@ -378,4 +394,87 @@
         ;; bindings visible to the sweeper thread; without it the thread would
         ;; fall back to the root bindings and sweep the REAL `~/.vis`.
         (with-homes {:logs logs} #(.join ^Thread (housekeeping/sweep-stale-async! nil) 5000))
-        (expect (= ["new.log"] (mapv #(.getName ^File %) (.listFiles logs)))))))
+        (expect (= ["new.log"] (mapv #(.getName ^File %) (.listFiles logs))))))
+  (it
+    "deletes the Python runtimes and sources of versions this binary no longer pins"
+    (let [python
+          (tmp-dir "vis-hk-python")
+
+          age!
+          (fn [^File d days]
+            (.setLastModified d (age-ms days)))
+
+          version-dir!
+          (fn [kind version days]
+            (let [f
+                  (touch!
+                    python
+                    (str kind File/separator version File/separator "lib" File/separator "x.py")
+                    1
+                    "x")
+
+                  d
+                  (.getParentFile (.getParentFile f))]
+
+              (age! d days)
+              d))
+
+          stale-runtime
+          (version-dir! "runtime" "0.1.5" 40)
+
+          fresh-runtime
+          (version-dir! "runtime" "0.3.9" 2)
+
+          pinned-runtime
+          (version-dir! "runtime" "0.4.1" 400)
+
+          stale-sources
+          (version-dir! "sources" "0.1.1" 40)
+
+          pinned-sources
+          (version-dir! "sources" "0.4.1" 400)
+
+          archive
+          (touch! python
+                  (str "archives" File/separator "vis-python-runtime-linux-x64-0.1.5.tar.gz")
+                  40
+                  "tar")
+
+          report
+          (with-homes {:python python} #(housekeeping/sweep-stale! {:runtime-version "0.4.1"}))]
+
+      (expect (= 3 (:file-count (target report :python-runtimes))))
+      (expect (= 1 (:deleted (target report :python-runtimes))))
+      (expect (= 1 (:deleted (target report :python-sources))))
+      (expect (= 1 (:deleted (target report :python-archives))))
+      (expect (not (.exists stale-runtime)))
+      (expect (not (.exists stale-sources)))
+      (expect (not (.exists archive)))
+      ;; the pinned version is kept however old its install is
+      (expect (.exists pinned-runtime))
+      (expect (.exists pinned-sources))
+      ;; a version installed this fortnight may still be a daemon's
+      (expect (.exists fresh-runtime))))
+  (it "keeps the runtime version the binary itself pins when none is named"
+      (let [python
+            (tmp-dir "vis-hk-python-pinned")
+
+            old!
+            (fn [version]
+              (let [d (.getParentFile (touch!
+                                        python
+                                        (str "runtime" File/separator version File/separator "x")
+                                        1
+                                        "x"))]
+                (.setLastModified d (age-ms 400))
+                d))
+
+            pinned
+            (old! runtime/version)
+
+            other
+            (old! "0.0.0")]
+
+        (with-homes {:python python} #(housekeeping/sweep-stale! nil))
+        (expect (.exists pinned))
+        (expect (not (.exists other))))))
