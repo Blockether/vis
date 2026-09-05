@@ -119,3 +119,24 @@
                             (expect (< (count (str/split-lines wide))
                                        (count (str/split-lines narrow))))))
                         (finally (run! #(.delete ^java.io.File %) [cfg src-file dir]))))))
+
+;; Every backend is followed by `normalize-top-level-spacing`: a formatted file
+;; carries exactly one blank line between top-level forms, a comment stays glued
+;; to the form under it, and nothing inside a form moves.
+(defdescribe
+  top-level-spacing-test
+  (it "inserts the missing blank line and collapses runs of them"
+      (expect (= "(def a 1)\n\n(def b 2)\n\n(def c 3)\n"
+                 (fmt/normalize-top-level-spacing "(def a 1)\n(def b 2)\n\n\n\n(def c 3)\n"))))
+  (it "keeps a comment attached to the form below it"
+      (expect (= "(def a 1)\n\n;; b\n(def b 2)\n\n;; c\n\n(def c 3)\n"
+                 (fmt/normalize-top-level-spacing
+                   "(def a 1)\n;; b\n(def b 2)\n;; c\n\n\n(def c 3)\n"))))
+  (it "leaves same-line neighbours and the inside of forms alone"
+      (let [src "(def a 1) ;; one\n\n(defn f\n  []\n\n\n  1)\n"]
+        (expect (= src (fmt/normalize-top-level-spacing src)))))
+  (it "returns unparseable source unchanged"
+      (expect (= "(def a" (fmt/normalize-top-level-spacing "(def a"))))
+  (it "runs after the backend in format-source"
+      (fmt/clear-result-cache!)
+      (expect (= "(def a 1)\n\n(def b 2)\n" (fmt/format-source "(def a 1)\n(def b 2)\n" nil)))))

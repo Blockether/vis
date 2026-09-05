@@ -24,6 +24,8 @@
             [cljfmt.config :as cljfmt-config]
             [cljfmt.core :as cljfmt]
             [clojure.java.io :as io]
+            [rewrite-clj.node :as node]
+            [rewrite-clj.parser :as parser]
             [zprint.config :as zprint-config]
             [zprint.core :as zprint]))
 
@@ -137,8 +139,56 @@
      source
      (try (zprint/zprint-file-str source "vis" (or opts {})) (catch Throwable _ source)))))
 
-;; ── transparent dispatch ─────────────────────────────────────────────────────
+;; ── top-level spacing ────────────────────────────────────────────────────────
 
+(defn- gap-newlines
+  "How many line breaks the whitespace run `ws` (rewrite-clj nodes between two
+   top-level neighbours) spans. A comment node carries its own trailing newline,
+   so `after-comment?` adds the one the run does not show."
+  ^long [ws after-comment?]
+  (+ (if after-comment? 1 0)
+     (long (reduce + 0 (map #(count (filter #{\newline} (node/string %))) ws)))))
+
+(defn- separator
+  "The whitespace to put between top-level neighbours `prev` and `next`, given
+   the run `ws` that sits there now, or nil to keep the run as written:
+
+     * on the same line (a trailing `;; comment`, `#_` discards) — untouched;
+     * comment above a form — stays attached; 2+ blank lines collapse to one;
+     * form above a form or a comment — exactly one blank line."
+  [prev ws]
+  (let [after-comment?
+        (node/comment? prev)
+
+        newlines
+        (gap-newlines ws after-comment?)]
+
+    (cond (zero? newlines) nil
+          after-comment? (when (> newlines 2) (node/newlines 1))
+          :else (when (not= newlines 2) (node/newlines 2)))))
+
+(defn normalize-top-level-spacing
+  "`source` with exactly ONE blank line between top-level forms. A comment
+   directly above a form stays attached to it, runs of blank lines collapse to
+   one, and neighbours sharing a line are left alone. Whitespace INSIDE a form
+   is never touched; returns `source` unchanged when it does not parse."
+  ^String [^String source]
+  (try (let [forms (parser/parse-string-all source)]
+         (loop [[n & more] (node/children forms)
+                prev nil
+                ws []
+                out (transient [])]
+
+           (cond (nil? n) (node/string (node/replace-children forms
+                                                              (persistent! (reduce conj! out ws))))
+                 (node/whitespace? n) (recur more prev (conj ws n) out)
+                 :else (let [run (if-some [sep (when prev (separator prev ws))]
+                                   [sep]
+                                   ws)]
+                         (recur more n [] (conj! (reduce conj! out run) n))))))
+       (catch Throwable _ source)))
+
+;; ── transparent dispatch ─────────────────────────────────────────────────────
 ;; ── formatted-result cache ───────────────────────────────────────────────────
 
 (def ^:private result-cache-limit
@@ -191,7 +241,9 @@
    applied), otherwise cljfmt (with the nearest `.cljfmt.edn` opts, or cljfmt
    defaults when neither config exists). zprint WINS when both configs are
    present. TRANSPARENT to callers — they just format; the magic of which
-   formatter to run lives here. Returns `source` unchanged on any failure.
+   formatter to run lives here. Either backend is followed by
+   `normalize-top-level-spacing`, so a formatted file always carries exactly one
+   blank line between top-level forms. Returns `source` unchanged on any failure.
 
    Memoized through `result-cache` on (backend, config file + mtime, source),
    so re-formatting content this JVM has already formatted is a hash, not a
@@ -218,9 +270,9 @@
 
        (if-some [hit (get @result-cache k)]
          hit
-         (let [out (if zcf
-                     (zprint-string source (zprint-opts-for path))
-                     (format-string source (cljfmt-opts-for path)))]
+         (let [out (normalize-top-level-spacing (if zcf
+                                                  (zprint-string source (zprint-opts-for path))
+                                                  (format-string source (cljfmt-opts-for path))))]
            (cache-put! k out)
            ;; Fixed point: formatting `out` again yields `out`. Seeding it here
            ;; makes the next format of the file we just rewrote a cache hit.
