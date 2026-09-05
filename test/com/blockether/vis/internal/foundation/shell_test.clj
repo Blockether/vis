@@ -1792,24 +1792,31 @@
                                  " up['out'] == down['out'],"
                                  " up['next_offset'] == down['next_offset']]"))))
              (finally (resources/stop-all! sid)))))
-  (it "reports status as data on the run's OWN answer, with no second call"
-      ;; The handle once carried a `status()` verb, so "has it finished" became a
-      ;; separate question. Its data attribute may only alias the map value already returned.
-      (let [sid
-            (str "py-status-" (System/nanoTime))
+  (it
+    "reports status as data on the run's OWN answer, with no second call"
+    ;; The handle once carried a `status()` verb, so "has it finished" became a
+    ;; separate question. Its data attribute may only alias the map value already returned.
+    ;; Regression, CI run 33988580937: macOS can sample zero resident pages
+    ;; immediately after spawn; this assertion covers the returned data shape.
+    (let [sid
+          (str "py-status-" (System/nanoTime))
 
-            c
-            (py-ctx {:session-id sid})]
+          c
+          (py-ctx {:session-id sid})]
 
-        (try (expect (= [true false true "running" true true true true]
-                        (py c
-                            (str "sh = __vis_settle__(shell('sleep 30', {'id':'stat'}))\n"
-                                 "sh.stop()\n"
-                                 "[hasattr(sh, 'status'), callable(sh.status),"
-                                 " sh.status == sh['status'], sh['status'], sh['exit'] is None,"
-                                 " sh['log_path'].endswith('stat.log'),"
-                                 " sh['rss_bytes'] > 0, sh['started_at'] > 0]"))))
-             (finally (resources/stop-all! sid)))))
+      (try
+        (expect
+          (=
+            [true false true "running" true true true true]
+            (py
+              c
+              (str
+                "sh = __vis_settle__(shell('sleep 30', {'id':'stat'}))\n" "sh.stop()\n"
+                "[hasattr(sh, 'status'), callable(sh.status),"
+                " sh.status == sh['status'], sh['status'], sh['exit'] is None,"
+                " sh['log_path'].endswith('stat.log'),"
+                " isinstance(sh['rss_bytes'], int) and sh['rss_bytes'] >= 0, sh['started_at'] > 0]"))))
+        (finally (resources/stop-all! sid)))))
   (it "removes the binding when the shell toggle is off"
       (let [before
             (toggles/enabled? "shell")

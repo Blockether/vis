@@ -77,6 +77,10 @@
              (it "ships reachability metadata that parses"
                  (expect (.isFile metadata-file))
                  (expect (vector? (reflection-entries))))
+             ;; Regression, CI run 33988584650: the native gateway could not
+             ;; construct its HashSet while starting the HTTP server.
+             (it "registers the HashSet constructor used during gateway startup"
+                 (expect (registered-constructor? (reflection-entries) "java.util.HashSet" [])))
              (it "registers BigInteger(String) — every YAML integer needs it"
                  (expect (registered-constructor? (reflection-entries)
                                                   "java.math.BigInteger"
