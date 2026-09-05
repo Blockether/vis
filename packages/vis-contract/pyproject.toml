@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vis-contract"
-version = "0.1.41"
+version = "0.1.42"
 description = "The Vis contract — View, gateway, and host semantics as portable data."
 readme = "python/README.md"
 requires-python = ">=3.11"
