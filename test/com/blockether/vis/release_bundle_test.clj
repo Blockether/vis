@@ -761,11 +761,8 @@
                     (map second (re-seq #"(?:&&|\|\|)\s*'([^']+)'" value))
                     [(str/trim value)])]
           (expect (contains? tracks t) (str wf ": " value))))))
-  ;; A low-memory override is only useful if it can finish: GitHub's free
-  ;; macOS arm64 class is 3 cores / 7 GiB RAM / 14 GiB disk, so a heap above
-  ;; physical RAM has no volume to swap into and native-image exits on the
-  ;; first OutOfMemoryError. An explicit override shrinks the build, not the promise.
-  (it "sizes an explicitly selected low-memory macOS runner instead of swapping"
+  ;; Hosted macOS needs a heap below physical RAM; dry runs may use quick build.
+  (it "sizes the low-memory hosted macOS runner without swapping"
       (let [stable
             (slurp ".github/workflows/native-release.yml")
 
@@ -781,90 +778,58 @@
         ;; Quick build produces a slower binary, so it is for dry runs only.
         (expect (str/includes? fallback "-Ob") fallback)
         (expect (str/includes? fallback "steps.target.outputs.publish") fallback)
-        ;; One dispatch input can still select a different runner for a targeted
-        ;; experiment without changing the self-hosted default.
-        (expect (str/includes? stable "inputs.runner || vars.VIS_MACOS_ARM64_RUNNER") stable)
-        (expect (str/includes? stable "'vis-macos-arm64'") stable)))
-  ;; Regression, release v0.1.40: GitHub's free hosted Mac spent 5 h 51 min in
-  ;; native-image before the timeout killed it, so the tag had no macOS asset.
-  ;; Our own Apple-silicon runner has the 36 GiB that covers the measured
-  ;; ~13.7 GiB analysis live set, and costs nothing per minute.
-  (it
-    "builds the macOS asset on our own Apple-silicon runner, and fails fast if it does not start"
-    (let [stable
-          (slurp ".github/workflows/native-release.yml")
+        (expect (str/includes? stable "runs-on: macos-26") stable)))
+  (it "builds the macOS asset on GitHub-hosted ARM64 and bounds queue waiting"
+      (let [stable
+            (slurp ".github/workflows/native-release.yml")
 
-          macos-job
-          (->> (str/split-lines stable)
-               (drop-while #(not (str/starts-with? % "  macos:")))
-               (take-while #(not (str/starts-with? % "  macos-pickup:")))
-               (str/join "\n"))
+            macos-job
+            (->> (str/split-lines stable)
+                 (drop-while #(not (str/starts-with? % "  macos:")))
+                 (take-while #(not (str/starts-with? % "  macos-pickup:")))
+                 (str/join "\n"))
 
-          pickup
-          (->> (str/split-lines stable)
-               (drop-while #(not (str/includes? % "macos-pickup:")))
-               (take 25)
-               (str/join "\n"))]
+            pickup
+            (->> (str/split-lines stable)
+                 (drop-while #(not (str/includes? % "macos-pickup:")))
+                 (take 25)
+                 (str/join "\n"))]
 
-      (expect (str/includes? macos-job "vars.VIS_MACOS_ARM64_RUNNER || 'vis-macos-arm64'")
-              macos-job)
-      ;; A clean macOS image does not include espeak-ng's phoneme tables;
-      ;; without this dependency the built binary reaches test-native and fails.
-      (expect (str/includes? macos-job "brew install espeak-ng") macos-job)
-      ;; That builder is somebody's workstation: a release build must never write
-      ;; into the real ~/.vis it finds there.
-      (expect (str/includes? macos-job "runner.environment == 'self-hosted'") macos-job)
-      ;; Six hours was the undersized hosted Mac's price for not finishing;
-      ;; a stalled cloud build should still return capacity the same morning.
-      ;; (The Linux matrix keeps its 6 h cap: a swapping analysis there is slow.)
-      (expect (not (str/includes? macos-job "timeout-minutes: 350")) macos-job)
-      (expect (seq pickup) "no job watches the macOS queue")
-      ;; The watchdog must never wait on the runner class it is watching.
-      (expect (str/includes? pickup "runs-on: ubuntu-latest") pickup)
-      ;; `contents: write` at the top of that file REPLACES the default token
-      ;; scopes, so reading this run's job list has to be granted explicitly.
-      (expect (str/includes? pickup "actions: read") pickup)
-      (expect (str/includes? pickup "DEADLINE_MINUTES") pickup)
-      (expect (str/includes? stable "::error::No runner labelled") stable)))
-  ;; Scope guard: no test, iOS or Linux job should move when the native macOS
-  ;; image moves, and the billed third-party macOS class is gone for good.
-  (it "routes only the native image and CI's macOS leg to our own runner"
-      (let [workflows
-            (->> (file-seq (io/file ".github/workflows"))
-                 (filter #(str/ends-with? (.getName ^java.io.File %) ".yml")))
+        (expect (str/includes? macos-job "runs-on: macos-26") macos-job)
+        ;; A clean macOS image does not include espeak-ng's phoneme tables;
+        ;; without this dependency the built binary reaches test-native and fails.
+        (expect (str/includes? macos-job "brew install espeak-ng") macos-job)
+        ;; Six hours was the undersized hosted Mac's price for not finishing;
+        ;; a stalled cloud build should still return capacity the same morning.
+        ;; (The Linux matrix keeps its 6 h cap: a swapping analysis there is slow.)
+        (expect (not (str/includes? macos-job "timeout-minutes: 350")) macos-job)
+        (expect (seq pickup) "no job watches the macOS queue")
+        ;; The watchdog must never wait on the runner class it is watching.
+        (expect (str/includes? pickup "runs-on: ubuntu-latest") pickup)
+        ;; `contents: write` at the top of that file REPLACES the default token
+        ;; scopes, so reading this run's job list has to be granted explicitly.
+        (expect (str/includes? pickup "actions: read") pickup)
+        (expect (str/includes? pickup "DEADLINE_MINUTES") pickup)
+        (expect (str/includes? stable "::error::No runner labelled") stable)))
+  (it "keeps all workflows off private runners and removes routing overrides"
+      (doseq [wf
+              (->> (file-seq (io/file ".github/workflows"))
+                   (filter #(str/ends-with? (.getName ^java.io.File %) ".yml")))
 
-            named
-            (->> workflows
-                 (filter #(str/includes? (slurp %) "vis-macos-arm64"))
-                 (map #(.getName ^java.io.File %))
-                 set)
+              :let [body
+                    (slurp wf)
 
-            rented
-            (->> workflows
-                 (filter #(str/includes? (str/lower-case (slurp %)) "blacksmith"))
-                 (map #(.getName ^java.io.File %))
-                 set)]
+                    directives
+                    (->> (str/split-lines body)
+                         (remove #(str/starts-with? (str/trim %) "#"))
+                         (str/join "\n"))]]
 
-        (expect (= #{"ci.yml" "native-release.yml"} named) (pr-str named))
-        (expect (empty? rented) (pr-str rented))))
-  ;; CI's macOS leg moved onto our own runner because GitHub's hosted
-  ;; Apple-silicon pool left main without a verdict for hours at a time. A FORK
-  ;; pull request is untrusted code and must stay on the hosted image, and an iOS
-  ;; release still signs on an ephemeral hosted one.
-  (it "keeps fork pull requests and iOS releases on GitHub-hosted macOS"
-      (let [ci
-            (slurp ".github/workflows/ci.yml")
-
-            mobile
-            (slurp ".github/workflows/mobile-release.yml")]
-
-        (expect (str/includes? ci "'macos-latest' || 'vis-macos-arm64'") ci)
-        (expect (str/includes? ci "head.repo.full_name != github.repository") ci)
-        ;; A run on the workstation runner may never overwrite the real ~/.vis.
-        (expect (str/includes? ci "runner.environment == 'self-hosted'") ci)
-        (expect (str/includes? mobile "runs-on: macos-26") mobile)
-        (expect (not (str/includes? mobile "VIS_IOS_RUNNER")) mobile)
-        (expect (not (str/includes? mobile "vis-macos-arm64")) mobile)))
+        (doseq [forbidden ["self-hosted" "vis-macos-arm64" "inputs.runner" "VIS_MACOS_ARM64_RUNNER"
+                           "VIS_IOS_RUNNER"]]
+          (expect (not (str/includes? directives forbidden)) (str wf ": " forbidden)))))
+  (it "uses the same hosted macOS class for CI and iOS"
+      (expect (str/includes? (slurp ".github/workflows/ci.yml") "host: macos-26"))
+      (expect (str/includes? (slurp ".github/workflows/mobile-release.yml") "runs-on: macos-26")))
   ;; The tuning history in native-release.yml records runs labelled "no extra
   ;; args" that still carried build.clj's computed `-J-Xmx`/`-J-Xms` pair, so
   ;; native-image's OWN sizing has never actually been measured for this image.

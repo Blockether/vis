@@ -24,12 +24,8 @@ name: Beta Native
 # and the AOT job that fails on a reflection or boxed-math warning) has a
 # SUCCESSFUL run for that exact sha. Nothing is built otherwise.
 #
-# NEVER ON THE SELF-HOSTED MAC. native-release.yml builds macOS arm64 on our own
-# Apple-silicon machine because no hosted macOS class can hold the ~13.7 GiB
-# analysis; that machine is a workstation, and a build pins every core and
-# ~15 GiB for its duration. A beta every few hours would take it away from the
-# person using it, so betas run ONLY on free GitHub-hosted Linux runners and the
-# beta track has no macOS asset. macOS ships on stable tags.
+# Betas stay on GitHub-hosted Linux. The macOS native build remains
+# dispatch-only in native-release.yml until its memory requirements are proven.
 #
 # The `beta` tag is deliberately not `v*`: a beta must never look like a stable
 # release to any workflow that keys off `v*`.
