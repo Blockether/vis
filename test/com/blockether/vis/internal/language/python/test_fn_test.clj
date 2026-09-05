@@ -131,7 +131,7 @@
                (expect (:success? r))
                (expect (= "vispython" (get res "runner")))
                (expect (= 1 (get res "files")))
-               (expect (= 1 (get res "pass")))
+               (expect (= 1 (get res "pass")) (pr-str res))
                (expect (= 1 (get res "fail")))
                (expect (false? (get res "is_pass")))
                ;; the removed pytest vocabulary — the pack folds its own words

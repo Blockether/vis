@@ -192,7 +192,7 @@
    read-only, not session roots."
   [library guest-dir]
   (->> (concat [(System/getProperty "user.dir") (System/getProperty "java.home")
-                (Locations/packagesDir) guest-dir]
+                (runtime/packages-dir) guest-dir]
                (str/split (System/getProperty "java.class.path" "")
                           (re-pattern (java.util.regex.Pattern/quote File/pathSeparator)))
                (when library
@@ -267,12 +267,20 @@
                                         :id ::no-library-to-hand-over
                                         :data {:error (ex-message t)}})
                              nil))
+              packages (some-> (runtime/packages-dir)
+                               io/file)
+              _ (when packages
+                  (Files/createDirectories (.toPath packages)
+                                           (make-array java.nio.file.attribute.FileAttribute 0)))
               guest-dir (guest-source-dir)
               policy (launch-policy! k
                                      (.getAbsolutePath dir)
                                      (.getAbsolutePath socket)
                                      (boot-read-paths library guest-dir))
               extra (cond-> {}
+                      packages
+                      (assoc Locations/PACKAGES_ENV (.getCanonicalPath packages))
+
                       library
                       (assoc runtime/native-path-env (str library)))]
 

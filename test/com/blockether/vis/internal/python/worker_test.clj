@@ -52,6 +52,40 @@
                 "import vis_introspection, vis_autoinstall\nworker_value = 41\nprint(worker_value)"))))
         (expect (= "42\n" (:stdout (env/run-python-block session "print(worker_value + 1)"))))))))
 
+;; Regression, CI run 33987564965: the first pip install was invisible to
+;; a worker whose package directory did not exist when its jail was installed.
+(defdescribe
+  cold-package-directory-test
+  (it
+    "imports a package installed after a cold worker starts"
+    (let [base
+          (java.nio.file.Files/createTempDirectory (.toPath (java.io.File. "target"))
+                                                   "cold-worker-packages-"
+                                                   (make-array java.nio.file.attribute.FileAttribute
+                                                               0))
+
+          packages
+          (.resolve base "packages")
+
+          module
+          (.resolve packages "cold_release_module.py")]
+
+      (try
+        (with-redefs [com.blockether.vis-python-runtime/packages-dir (constantly (str packages))]
+          (with-worker-context
+            (fn [session]
+              (expect (.isDirectory (.toFile packages)))
+              (spit (.toFile module) "answer = 42\n")
+              (expect
+                (=
+                  "42\n"
+                  (:stdout
+                    (env/run-python-block
+                      session
+                      "import importlib; importlib.invalidate_caches(); import cold_release_module; print(cold_release_module.answer)")))))))
+        (finally (doseq [path [module packages base]]
+                   (java.nio.file.Files/deleteIfExists path)))))))
+
 (defdescribe worker-entrypoint-test
              (it "launches the runtime Java worker with the control socket and host modules"
                  (with-redefs [com.blockether.vis.internal.util/native-image? (constantly false)]
