@@ -2,6 +2,21 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.42 (5395) — 2026-09-06
+<!-- commit: e4baada06375f657cac8e08b8075f72c60802ba2 -->
+
+- Show persisted session health in app metrics
+- Reopen only the transcript the app died on
+- V0.1.42
+- Consolidate Python workers in the runtime
+- Preserve touch-opened dialogs
+- Group internal namespaces by domain
+- Match the diagnostics band height
+- Compact the diagnostics panel
+- Shrink queued message remove faces
+- Fill starred session marks
+- Record companion build 5358
+
 ## 0.1.41 (5358) — 2026-09-04
 <!-- commit: 6d94cf3156300f57a750c3ac179d4d38fa56159b -->
 
