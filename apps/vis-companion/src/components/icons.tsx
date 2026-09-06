@@ -62,12 +62,16 @@ const NAMES_A_SIZE = /(?:^|\s)(?:size|[hw])-/;
 /**
  * Every mark on the same terms: this app's size floor, and `aria-hidden`,
  * because an icon inside an already-labelled control is decoration. Everything
- * else — grid, fill, stroke, caps, joins — is the library's, untouched.
+ * else — grid, stroke, caps, joins — is the library's, untouched.
+ *
+ * `fill` defaults to the library's own "none" HERE, never to `undefined`: Lucide
+ * spreads the caller's props after its defaults, so an undefined fill erased the
+ * attribute and every outline mark shipped as a filled silhouette (build 5395).
  */
 function Mark({
   icon: Drawn,
   className,
-  fill,
+  fill = "none",
 }: {
   icon: LucideIcon;
   className?: string;

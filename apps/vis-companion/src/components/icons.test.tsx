@@ -254,6 +254,30 @@ describe("the icon set", () => {
     );
   });
 
+  // Regression, user report (phone screenshot after build 5395: "the microphone
+  // looks like a rose", the search, gear and chevron marks were solid blobs):
+  // `Mark` forwarded `fill={undefined}` for every plain icon. Lucide spreads the
+  // caller's props AFTER its `fill="none"` default, so the undefined value ERASED
+  // that attribute, React dropped it, and the SVG painted its own default fill —
+  // every outline mark shipped as a filled silhouette. A plain mark must carry
+  // `fill="none"` on the element itself, exactly like the un-starred star does.
+  it("keeps every plain mark an outline: fill=\"none\" on the svg element", () => {
+    const plain = [
+      <MicIcon key="mic" />,
+      <SettingsIcon key="settings" />,
+      <ChevronIcon key="chevron" />,
+      <CircleCheckIcon key="check" />,
+      <CircleXIcon key="x" />,
+      <PlusIcon key="plus" />,
+      <CloseIcon key="close" />,
+    ];
+    for (const mark of plain) {
+      const html = renderToStaticMarkup(mark);
+      expect(html).toContain('fill="none"');
+      expect(html).not.toContain('fill="currentColor"');
+    }
+  });
+
   // Regression, in the set this file used to draw by hand: every icon was drawn to
   // its own extent inside the shared viewBox, so the paperclip (corner to corner)
   // came out half again as big as the close cross (the middle third) at the very
