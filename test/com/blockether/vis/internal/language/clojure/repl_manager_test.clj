@@ -877,6 +877,20 @@
         (expect (= "no-port" (get r "result")))
         (expect (str/includes? (get r "message") ".shadow-cljs/nrepl.port"))
         (expect (str/includes? (get r "message") "shadow-cljs watch app"))))
+  ;; Issue #157: repair instructions must preserve the project's tools.deps aliases.
+  (it "names the deps launcher when shadow is absent or unreachable"
+      (let [dir (tmp-dir)]
+        (spit (io/file dir "shadow-cljs.edn") "{:deps {:aliases [:frontend]}}")
+        (spit (io/file dir "deps.edn")
+              (pr-str {:aliases {:frontend {:extra-deps {'thheller/shadow-cljs {:mvn/version
+                                                                                "3.5.0"}}}}}))
+        (with-redefs [nrepl-client/probe! (fn [_]
+                                            {:status :down})]
+          (doseq [opts [{:build "app"} {:build "app" :port 9999}]]
+            (let [r (rm/connect! "s-shadow-deps-hint" dir opts)]
+              (expect (str/includes? (get r "message")
+                                     "clojure -M:frontend -m shadow.cljs.devtools.cli watch app"))
+              (expect (empty? (rm/session-repls "s-shadow-deps-hint"))))))))
   (it "reads the port the watch published when the caller gives none"
       (let [sid
             "s-shadow-portfile"

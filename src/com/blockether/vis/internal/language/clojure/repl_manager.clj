@@ -36,6 +36,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.language.clojure.nrepl-client :as nrepl-client]
             [com.blockether.vis.internal.language.clojure.shadow-repl :as shadow-repl]
+            [com.blockether.vis.internal.language.clojure.shadow-cljs :as shadow-cljs]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.core :as vis])
   (:import (java.io RandomAccessFile)
@@ -788,6 +789,17 @@
                  "status" "down"
                  "message" "No Vis-managed nREPL for this directory in this session."})))
 
+(defn- shadow-watch-command
+  "Project-local repair command, preserving tools.deps aliases and Lein profiles."
+  [dir build]
+  (let [{:keys [argv]} (when dir (shadow-cljs/launcher dir))]
+    (str/join " "
+              (map (fn [arg]
+                     (if (re-matches #"[a-zA-Z0-9_./:+,-]+" arg)
+                       arg
+                       (str "'" (str/replace arg "'" "'\"'\"'") "'")))
+                   (concat (or argv ["shadow-cljs"]) ["watch" (str build)])))))
+
 (defn connect!
   "Attach THIS session to an EXTERNAL nREPL the USER already runs (their editor
    jack-in, a `clj -M:nrepl`, a `shadow-cljs watch`) — the OPT-IN inverse of
@@ -845,8 +857,8 @@
                                   (str/join "/" shadow-repl/port-file-path)
                                   " under "
                                   (home-relativize (str dir))
-                                  " — start `shadow-cljs watch "
-                                  build
+                                  " — start `"
+                                  (shadow-watch-command dir build)
                                   "` (it publishes its nREPL port there), or pass {\"port\": N}.")}
       (not= :up (:status (nrepl-client/probe! {:host host :port port :timeout-ms 3000})))
       {"result" "unreachable"
@@ -854,8 +866,13 @@
        "cwd" dir
        "host" host
        "port" port
-       "message"
-       (str "No nREPL answering at " host ":" port " — is it running? Nothing was registered.")}
+       "message" (str "No nREPL answering at " host
+                      ":" port
+                      " — is it running? Nothing was registered."
+                      (when build
+                        (str " For the project under this cwd, run `"
+                             (shadow-watch-command dir build)
+                             "`, then connect again.")))}
       :else
       (let [;; Attaching DEFINES this session's starting state, so the cached
             ;; connection goes first. A connection already SELECTED on a build
@@ -883,8 +900,8 @@
                     port
                     " is a plain Clojure one — shadow-cljs is not loaded in it, so there is no"
                     " build to select. Connect without \"build\" for a JVM REPL, or point at the"
-                    " port `shadow-cljs watch "
-                    build
+                    " port `"
+                    (shadow-watch-command dir build)
                     "` published in "
                     (str/join "/" shadow-repl/port-file-path)
                     ".")}
@@ -912,8 +929,8 @@
                "message" (str "shadow-cljs build \""
                               build
                               "\" has no watch running. A REPL selects a build's RUNNING worker, so"
-                              " start `shadow-cljs watch "
-                              build
+                              " start `"
+                              (shadow-watch-command dir build)
                               "` first, then connect again.")}
               :else
               (let [sel (when build (shadow-repl/select! {:host host :port port :build build}))]
@@ -1151,8 +1168,8 @@
         {"build" build
          "error_message" (str "shadow-cljs build \"" build
                               "\" could not be selected: " (:message r))
-         "message" (str "Is `shadow-cljs watch "
-                        build
+         "message" (str "Is `"
+                        (shadow-watch-command (:dir target) build)
                         "` still running? Reattach with"
                         " repl_connect(\"clojure\", {\"build\": \""
                         build

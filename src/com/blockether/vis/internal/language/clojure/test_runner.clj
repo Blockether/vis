@@ -534,8 +534,7 @@
   (conj jvm-test-exts cljs-test-ext))
 
 (defn- cljs-file?
-  "True when `f` is ClojureScript-only source — the ONE fact that routes a run to
-   shadow-cljs instead of the JVM."
+  "A .cljs source requires a JS runtime; shared .cljc files can use either runtime."
   [^java.io.File f]
   (boolean (and f (str/ends-with? (.getName f) cljs-test-ext))))
 
@@ -555,18 +554,34 @@
                         (str/ends-with? (.getName f) (str "_test" ext)))
                       test-file-exts))))
 
+(defn- index-test-file
+  "Keep one unambiguous file per namespace. Never overwrite a JVM/JS or nested
+   project collision: callers can name a precise file/project instead."
+  [index ns-str ^java.io.File file]
+  (when-let [^java.io.File previous (get index ns-str)]
+    (when (and file (not= (.getCanonicalPath previous) (.getCanonicalPath file)))
+      (throw (ex-info (str "ambiguous test namespace "
+                           ns-str
+                           " in "
+                           previous
+                           " and "
+                           file
+                           "; select a specific file/project instead")
+                      {:type :clj/bad-args}))))
+  (assoc index ns-str (or file (get index ns-str))))
+
 (defn- all-test-files
   "Index every test file under root by its declared ns string, built once per
    run so SOURCE paths can be resolved to their corresponding test namespace —
    and so a namespace NAME can be traced back to the file that decides which
    runtime runs it."
-  [root]
-  (into {}
-        (keep (fn [^java.io.File f]
-                (when (test-source-file? f)
-                  (when-let [ns (ns-of-file f)]
-                    [ns f]))))
-        (file-seq (io/file root))))
+  [root test-file?]
+  (reduce (fn [index ^java.io.File f]
+            (if-let [ns-str (when (test-file? f) (ns-of-file f))]
+              (index-test-file index ns-str f)
+              index))
+          {}
+          (file-seq (io/file root))))
 
 (defn- path->nses
   "Resolve ONE file/dir to `{:ns :file}` entries. A test file -> its own ns. A
@@ -578,7 +593,7 @@
    file needs. Every entry carries the FILE it was read from, because that
    file's extension decides whether the namespace runs on the JVM or in
    shadow-cljs."
-  [^java.io.File f test-index]
+  [^java.io.File f test-index test-file?]
   (let [entry
         (fn [^java.io.File file]
           (when-let [n (ns-of-file file)]
@@ -592,9 +607,9 @@
                       {:ns tn :file tf}))
                   (source-ns->test-nses src-ns))))]
 
-    (cond (test-source-file? f) (keep identity [(entry f)])
+    (cond (test-file? f) (keep identity [(entry f)])
           (clj-source-file? f) (keep identity [(test-entry f)])
-          (.isDirectory f) (let [test-files (filter test-source-file? (file-seq f))]
+          (.isDirectory f) (let [test-files (filter test-file? (file-seq f))]
                              (if (seq test-files)
                                (keep entry test-files)
                                (->> (file-seq f)
@@ -667,7 +682,7 @@
    namespace key — read as the path it obviously is, rather than as a namespace
    that could never load. A name the workspace index does not know keeps a nil
    :file: it still runs, on the JVM path that has always required it."
-  [root {ns-str :ns var-name :var} test-index]
+  [root {ns-str :ns var-name :var} test-index test-file?]
   (let [with-files (fn [nses]
                      (mapv (fn [n]
                              {:ns n :file (get @test-index n)})
@@ -675,8 +690,8 @@
     (if (nil? ns-str)
       {:entries [] :var var-name}
       (let [^java.io.File f (under-root root ns-str)]
-        (cond (or (clj-file-name? ns-str) (.exists f)) {:entries (vec (path->nses f test-index))
-                                                        :var var-name}
+        (cond (or (clj-file-name? ns-str) (.exists f))
+              {:entries (vec (path->nses f test-index test-file?)) :var var-name}
               (and (nil? var-name) (str/includes? ns-str "/"))
               (let [[n v] (str/split ns-str #"/" 2)]
                 {:entries (with-files (ns->test-nses n test-index)) :var (not-empty v)})
@@ -701,9 +716,9 @@
    whole-workspace default) decide where to look. Paths are relative to root or
    absolute; files AND directories are accepted, and SOURCE files/dirs map to
    their *_test namespaces."
-  [root path-entries ns-entries]
+  [root path-entries ns-entries test-file?]
   (let [test-index
-        (delay (all-test-files root))
+        (delay (all-test-files root test-file?))
 
         ;; One entry's resolved namespaces plus the name it narrows to. A name with
         ;; no namespace of its own stays `{:ns nil}` — 'wherever it lives'.
@@ -712,7 +727,12 @@
           (let [nses (mapv :ns entries)]
             (cond-> (-> acc
                         (update :nses into nses)
-                        (update :ns-files into (map (juxt :ns :file) entries)))
+                        (update :ns-files
+                                (fn [index]
+                                  (reduce (fn [m {:keys [ns file]}]
+                                            (index-test-file m ns file))
+                                          index
+                                          entries))))
               var
               (update :vars
                       into
@@ -724,14 +744,19 @@
 
         acc
         (reduce (fn [acc {:keys [path var]}]
-                  (let [entries (when path (vec (path->nses (under-root root path) test-index)))]
+                  (let [entries (when path
+                                  (vec (path->nses (under-root root path) test-index test-file?)))]
+                    (when (and path (.exists (under-root root path)) (empty? entries))
+                      (throw (ex-info (str "run_tests(clojure) found no test namespaces under "
+                                           (pr-str path))
+                                      {:type :clj/bad-args})))
                     (add acc entries var)))
                 {:nses [] :vars [] :files [] :ns-files {}}
                 path-entries)
 
         acc
         (reduce (fn [acc entry]
-                  (let [{:keys [entries var]} (resolve-ns-entry root entry test-index)]
+                  (let [{:keys [entries var]} (resolve-ns-entry root entry test-index test-file?)]
                     (-> (add acc entries var)
                         (update :files into (keep :file entries)))))
                 acc
@@ -819,9 +844,9 @@
    names a NAMESPACE is speaking `clojure -M:test --namespace` / `--var`, which
    is a real selection and not a mistake: `ns` / `nses` / `namespace` /
    `namespaces` and `var` / `vars` / `only` carry into `:ns-selectors` and run,
-    and `path` is read alongside `paths`. `build` names ONE shadow-cljs build
-   when a ClojureScript run could pick from several, and `aliases` names EXTRA
-   deps.edn aliases for the clean-JVM command (`-M:test:<name>`)."
+   and `path` is read alongside `paths`. `build` selects a ClojureScript build,
+   including for .cljc tests. `aliases` adds classpath or selects an executable
+   deps.edn runner for the clean-JVM command; its focus adapter follows that runner."
   [arg]
   (cond
     (or (string? arg) (symbol? arg)) (contract/normalize-selectors {:paths [(str arg)]})
@@ -976,16 +1001,45 @@
     (str/join "\n" (take-last 40 lines))))
 
 (defn- summary-counts
-  "The tally a shelled runner prints. clojure.test, lazytest and cljs.test all
-   close on `Ran N test…` plus an `F failures, E errors.` line — the only count a
-   CLI run offers, and the one every mode reports. A nil `:cases` means NO
-   summary was printed at all, which is a different fact from zero tests."
-  [^String out]
-  (let [n (fn [re]
-            (some-> (re-find re (str out))
-                    second
-                    parse-long))]
-    {:cases (n #"Ran (\d+) test") :fails (n #"(\d+) failures?") :errs (n #"(\d+) errors?")}))
+  "Read complete, anchored reporter summaries. Never splice counts from unrelated
+   log lines, or let a later passing suite erase an earlier failure. cljs.test
+   requires both failure and error counts; Lazytest can omit the error count."
+  ([out] (summary-counts out false))
+  ([out require-errors?]
+   (let [out
+         (strip-ansi (str out))
+
+         conventional
+         (re-seq #"(?m)^Ran (\d+) test[^\r\n]*\r?\n(\d+) failures?(?:, (\d+) errors?)?\.\r?$" out)
+
+         kaocha
+         (re-seq
+           #"(?m)^(\d+) tests?, \d+ assertions?, ((?:\d+ (?:failures?|errors?)(?:, )?)+)\.\r?$"
+           out)
+
+         reports
+         (concat (keep (fn [[_ cases fails errs]]
+                         (when (or (not require-errors?) errs)
+                           {:cases (parse-long cases)
+                            :fails (parse-long fails)
+                            :errs (if errs (parse-long errs) 0)}))
+                       conventional)
+                 (when-not require-errors?
+                   (map (fn [[_ cases counts]]
+                          (let [n (fn [pattern]
+                                    (or (some-> (re-find pattern counts)
+                                                second
+                                                parse-long)
+                                        0))]
+                            {:cases (parse-long cases)
+                             :fails (n #"(\d+) failures?")
+                             :errs (n #"(\d+) errors?")}))
+                        kaocha)))
+
+         headers
+         (count (re-seq #"(?m)^(?:Ran \d+ test|\d+ tests?, \d+ assertions?,)" out))]
+
+     (when (and (seq reports) (= headers (count reports))) (apply merge-with + reports)))))
 
 (defn- lazytest-selector-args
   "Translate resolved selectors into lazytest.main CLI flags.
@@ -1019,140 +1073,282 @@
                       ["--exclude" (str t)])
                     exclude))))
 
-(defn- lazytest-cli?
-  "True when :test uses Lazytest’s CLI and accepts its selector flags."
-  [root]
-  (try (let [f (io/file root "deps.edn")]
-         (when (.isFile f)
-           (let [edn (edn/read-string (slurp f))
-                 main-opts (get-in edn [:aliases :test :main-opts])]
+(defn- runner-entry
+  "Classify an alias's executable entry point, not its name or dependencies.
+   Unknown entry points can run a whole suite, but have no focus adapter."
+  [{:keys [main-opts exec-fn]}]
+  (let [main (some (fn [[flag arg]]
+                     (when (and (#{"-m" "-e"} flag) (not (str/blank? arg)))
+                       (if (= "-m" flag) arg "<expression>")))
+                   (partition 2 1 main-opts))]
+    (cond main {:mode "-M"
+                :entry main
+                :framework ({"lazytest.main" :lazytest "kaocha.runner" :kaocha} main)}
+          (qualified-symbol? exec-fn)
+          {:mode "-X" :entry (str exec-fn) :framework ({'kaocha.runner/exec-fn :kaocha} exec-fn)})))
 
-             (boolean (some #{"lazytest.main"} main-opts)))))
-       (catch Throwable _ false)))
+(defn- focused?
+  "An explicit selector, as opposed to the index discovered for an unfiltered run."
+  [sel]
+  (if (contains? sel :focused?)
+    (:focused? sel)
+    (boolean (some seq ((juxt :nses :vars :include :exclude) sel)))))
+
+(defn- runner-selector-args
+  "Translate focus using the detected runner's API. Kaocha -X takes EDN config,
+   not main's CLI flags. Never silently broaden unsupported selector combinations."
+  [{:keys [framework mode]} sel]
+  (cond
+    (not (focused? sel)) {:args []}
+    (nil? framework) {:error "this runner has no supported focus adapter; no tests started"}
+    (and (= :kaocha framework)
+         (or (and (seq (:include sel)) (or (seq (:nses sel)) (seq (:vars sel))))
+             (and (seq (:exclude sel))
+                  (or (seq (:nses sel)) (seq (:vars sel)) (seq (:include sel))))))
+    {:error
+     "Kaocha combines focus/metadata filters differently; this selector combination is unsupported, so no tests started"}
+    :else (let [pairs (partition 2 (lazytest-selector-args sel))]
+            {:args (vec
+                     (case framework
+                       :lazytest
+                       (mapcat identity pairs)
+
+                       :kaocha
+                       (if (= "-X" mode)
+                         (mapcat (fn [[k entries]]
+                                   [(str k) (pr-str (mapv (comp symbol second) entries))])
+                                 (sort-by (comp str key)
+                                          (group-by (fn [[flag _]]
+                                                      ({"--namespace" :kaocha.filter/focus
+                                                        "--var" :kaocha.filter/focus
+                                                        "--include" :kaocha.filter/focus-meta
+                                                        "--exclude" :kaocha.filter/skip-meta}
+                                                       flag))
+                                                    pairs)))
+                         (mapcat (fn [[flag value]]
+                                   [({"--namespace" "--focus"
+                                      "--var" "--focus"
+                                      "--include" "--focus-meta"
+                                      "--exclude" "--skip-meta"}
+                                     flag) value])
+                                 pairs))))})))
+
+(defn- inherited-runner-error
+  "A one-shot operation cannot watch, or append selectors to inherited filters
+   whose union/precedence may change the request. Leave such aliases untouched."
+  [runner opts sel]
+  (let [main
+        (:main-opts opts)
+
+        exec
+        (:exec-args opts)
+
+        flag?
+        (fn [pattern]
+          (some #(re-find pattern (str %)) main))
+
+        filter-keys
+        [:kaocha.filter/focus :kaocha.filter/skip :kaocha.filter/focus-meta
+         :kaocha.filter/skip-meta]]
+
+    (cond
+      (or (flag? #"^(?:--watch|-w)(?:=true)?$") (and (= "-X" (:mode runner)) (:kaocha/watch? exec)))
+      "the selected runner enables watch mode; run_tests requires a one-shot runner, so no tests started"
+      (and (focused? sel)
+           (or (flag?
+                 #"^--(?:focus|focus-meta|skip|skip-meta|namespace|var|include|exclude)(?:=|$)")
+               (and (= "-X" (:mode runner)) (some #(seq (get exec %)) filter-keys))))
+      "the selected runner already has focus/metadata filters; use an unfiltered runner alias to honor this selection")))
+
+(defn- deps-command
+  "Discover a runnable deps.edn alias. Keep :test when declared for its classpath;
+   prefer an explicitly supplied runner, then executable :test, then a unique
+   recognized entry point. Never guess an unrelated -X build/deploy function."
+  [root sel requested]
+  (let [aliases
+        (:aliases (edn/read-string (slurp (io/file root "deps.edn"))))
+
+        requested
+        (mapv keyword requested)
+
+        unknown
+        (remove #(contains? aliases %) requested)
+
+        entries
+        (into {}
+              (keep (fn [[k v]]
+                      (when-let [entry (runner-entry v)]
+                        [k entry])))
+              aliases)
+
+        explicit
+        (last (filter entries requested))
+
+        candidates
+        (sort-by str
+                 (keep (fn [[k v]]
+                         (when (:framework v) k))
+                       entries))
+
+        picked
+        (or explicit
+            (when (entries :test) :test)
+            (when (= 1 (count candidates)) (first candidates)))]
+
+    (cond
+      (seq unknown) {:error (str "unknown deps.edn aliases: " (pr-str (vec unknown)))}
+      (nil? picked)
+      {:error
+       (if (seq candidates)
+         (str "multiple executable test runners "
+              (pr-str (vec candidates))
+              " — select one with aliases; no tests started")
+         "deps.edn has no executable test runner (:main-opts or a supported :exec-fn); a classpath-only :test alias would open a REPL, so no tests started")}
+      :else
+      (let [active
+            (vec (distinct (concat (when (contains? aliases :test) [:test])
+                                   (when-not explicit [picked])
+                                   requested)))
+
+            combined
+            (assoc (apply merge (map aliases active))
+              :exec-args (apply merge
+                           (keep #(when (map? (:exec-args %)) (:exec-args %))
+                                 (map aliases active))))
+
+            mode
+            (:mode (entries picked))
+
+            runner
+            (runner-entry
+              (if (= "-X" mode) (select-keys combined [:exec-fn]) (dissoc combined :exec-fn)))
+
+            {:keys [args error]}
+            (runner-selector-args runner sel)
+
+            jflags
+            (mapv #(str "-J" %) (repl-manager/inherited-jvm-opts (io/file root) active))]
+
+        (cond (nil? runner)
+              {:error "selected aliases override the executable runner options; no tests started"}
+              (inherited-runner-error runner combined sel)
+              {:error (inherited-runner-error runner combined sel)}
+              error {:error (str (:entry runner) ": " error)}
+              :else {:tool :clj
+                     :framework (:framework runner)
+                     :cmd (into (into ["clojure"] jflags) (cons (str mode (apply str active)) args))
+                     :selectors? (boolean (:framework runner))})))))
 
 (defn- cli-command-for
-  "Pick the CLI test command for `root` by build file, so the fallback is not
-   hardcoded to `clojure -M:test`. Returns {:tool kw :cmd [strings] :selectors? bool}
-   or nil when no known Clojure build manifest is present:
-     deps.edn    -> clojure -M:test  (selectors passed through to lazytest.main
-                    when the :test alias actually mains lazytest.main)
-     project.clj -> lein test        (whole suite; selectors do NOT apply)
-     bb.edn      -> bb test          (whole suite; selectors do NOT apply)
-   `sel` is the resolved selector map {:nses :vars :include :exclude}.
-   `aliases` are the caller's EXTRA deps.edn aliases: APPENDED to the mandatory
-   `:test` (never replacing it) so the command reads `-M:test:bench`, and their
-   own `:jvm-opts` are inherited alongside `:test`'s. deps.edn only — `lein test`
-   and `bb test` take no such vocabulary, which `run-via-cli` refuses rather than
-   running the suite without the classpath the caller asked for."
+  "Choose the project's executable test command and translate supported focus.
+   aliases add classpath or select a runner; a declared :test is retained, not
+   invented. Unsupported focus is refused before any process starts."
   [root sel aliases]
-  (let [present?
-        (fn [n]
-          (.isFile (io/file root n)))
-
-        ;; A NESTED project whose deps.edn declares no :jvm-opts for :test inherits
-        ;; the workspace's, passed as -J flags so the CLI suite runs with the same
-        ;; JVM options as the managed nREPL (native-access / preview / unsafe-memory).
-        jflags
-        (mapv #(str "-J" %)
-              (repl-manager/inherited-jvm-opts (io/file root) (into [:test] (map keyword) aliases)))
-
-        ;; `:test` first and ALWAYS: caller aliases add deps/paths to the run,
-        ;; they never replace the alias that mains the test runner.
-        main-flag
-        (str "-M:test" (apply str (map #(str ":" %) aliases)))]
-
-    (cond (present? "deps.edn")
-          (if (lazytest-cli? root)
-            {:tool :clj
-             :cmd (into (into ["clojure"] jflags) (into [main-flag] (lazytest-selector-args sel)))
-             :selectors? true}
-            {:tool :clj :cmd (into (into ["clojure"] jflags) [main-flag]) :selectors? false})
+  (let [present? (fn [n]
+                   (.isFile (io/file root n)))]
+    (cond (present? "deps.edn") (try (deps-command root sel aliases)
+                                     (catch Exception e
+                                       {:error (str "cannot read test runner configuration: "
+                                                    (ex-message e))}))
           (present? "project.clj") {:tool :lein :cmd ["lein" "test"] :selectors? false}
           (present? "bb.edn") {:tool :bb :cmd ["bb" "test"] :selectors? false}
           :else nil)))
 
 (defn- run-via-cli
-  "Fallback when no nREPL is reachable: shell the build-tool's test command. For a
-   deps.edn project whose :test alias mains lazytest.main, the normalized selectors
-   are PASSED THROUGH as lazytest CLI flags (-n/-v/-i/-e) so cli mode honors them
-   just like the repl path; otherwise the whole suite runs.
-   The full shell command lives on :command, and the runner's own summary line is
-   read into the COUNTS every mode shares — :total, :fail and its erroring subset
-   :errored — instead of being retold as a sentence the caller has to parse.
-   `norm` is the resolved selector map {:nses :vars :include :exclude}, plus the
-   :aliases the caller asked to add to `clojure -M:test`."
+  "Run the discovered command in a clean JVM. Exit zero is insufficient: require
+   a nonempty test summary, preserve effective namespace focus, and report the
+   executed test count as selected (the common numeric result contract)."
   [root norm]
-  (let [ns-str
-        (str/join " " (:nses norm))
-
-        sel
-        (select-keys norm [:nses :vars :include :exclude])
+  (let [sel
+        (cond-> (select-keys norm [:nses :vars :include :exclude :focused?])
+          (and (false? (:namespace-focus? norm)) (empty? (:vars norm)))
+          (assoc :nses []))
 
         aliases
-        (:aliases norm)]
+        (:aliases norm)
 
-    (if-let [{:keys [tool cmd]} (cli-command-for root sel aliases)]
-      (if (and (seq aliases) (not= :clj tool))
-        ;; deps.edn aliases mean nothing to `lein test` / `bb test`: shelling it
-        ;; anyway would answer green for a classpath the caller never got.
-        {"mode" "cli"
-         "ns" ns-str
-         "tool" (name tool)
-         "command" (str/join " " cmd)
-         "error" (str "aliases " (pr-str (vec aliases))
-                      " are deps.edn aliases, spliced into `clojure -M:test`, but " root
-                      " is a " (name tool)
-                      " project whose test command takes none — drop `aliases`, or point"
-                      " `cwd` at the deps.edn project that declares them.")}
-        (let [res (try (apply shell/sh (concat cmd [:dir (str root)]))
-                       (catch Throwable t {:exit -1 :out "" :err (str (.getMessage t))}))
-              out (str (:out res) (:err res))
-              exit (long (or (:exit res) -1))
-              ;; clojure.test and lazytest both close on "Ran N test…" plus an
-              ;; "F failures, E errors." line — the only tally a shelled runner
-              ;; offers, and the cli path reports it as the SAME counts the repl
-              ;; path does.
-              {:keys [cases fails errs]} (summary-counts out)
-              ;; A PASS demands a "Ran N test…" summary, not merely a 0 exit: a
-              ;; deps.edn with no :test alias drops `clojure -M:test` into a bare
-              ;; REPL that reads EOF and exits 0 having run ZERO tests. Counting
-              ;; that as green silently hid whole suites (a real false green).
-              ran? (some? cases)]
+        {:keys [tool cmd error framework selectors?] :as plan}
+        (cli-command-for root sel aliases)
 
-          ;; "is_pass" (exit-code verdict) is a DISTINCT key from the repl path's
-          ;; "pass" (a count) — render-test-result reads both.
-          (cond-> {"mode" "cli"
-                   "ns" ns-str
-                   "tool" (name tool)
-                   "command" (str/join " " cmd)
-                   "exit" exit
-                   "is_pass"
-                   (and (zero? exit) ran? (zero? (+ (long (or fails 0)) (long (or errs 0)))))
-                   "output" (cli-tail out)}
-            cases
-            (assoc "total" cases)
+        base
+        (cond-> {"mode" "cli" "ns" (str/join " " (:nses sel)) "is_pass" false}
+          tool
+          (assoc "tool" (name tool))
 
-            (or fails errs)
-            (assoc "fail" (+ (long (or fails 0)) (long (or errs 0))))
+          cmd
+          (assoc "command" (str/join " " cmd))
 
-            errs
-            (assoc "errored" errs)
+          framework
+          (assoc "framework" (name framework)))]
 
-            (and (zero? exit) (not ran?))
-            (assoc "error"
-              (str "test command exited 0 but printed no \"Ran N test…\" summary"
-                   " — no tests actually ran (often a missing/misconfigured "
-                   (name tool)
-                   " :test alias, so `"
-                   (str/join " " cmd)
-                   "` fell"
-                   " through to a bare REPL). Reported as NOT passing to avoid a"
-                   " false green.")))))
-      {"mode" "cli"
-       "ns" ns-str
-       "error" (str "no nREPL reachable, and no deps.edn / project.clj / bb.edn in "
-                    root
-                    " to run tests via CLI")})))
+    (cond
+      error (assoc base "error" error)
+      (nil? plan) (assoc base
+                    "error" (str "no nREPL reachable, and no deps.edn / project.clj / bb.edn in "
+                                 root
+                                 " to run tests via CLI"))
+      (and (seq aliases) (not= :clj tool)) (assoc base
+                                             "error" (str "aliases "
+                                                          (pr-str (vec aliases))
+                                                          " are deps.edn aliases, but "
+                                                          root
+                                                          " is a "
+                                                          (name tool)
+                                                          " project; no tests started"))
+      (and (focused? sel) (not selectors?))
+      (assoc base "error" "this runner has no supported focus adapter; no tests started")
+      :else
+      (let [res
+            (try (apply shell/sh (concat cmd [:dir (str root)]))
+                 (catch Throwable t {:exit -1 :out "" :err (ex-message t)}))
+
+            out
+            (str (:out res) (:err res))
+
+            exit
+            (long (or (:exit res) -1))
+
+            {:keys [cases fails errs]}
+            (summary-counts out)
+
+            faults
+            (+ (long (or fails 0)) (long (or errs 0)))
+
+            ran?
+            (and (some? cases) (or (some? fails) (some? errs)))
+
+            ignored-focus?
+            (and (= :kaocha framework) (str/includes? out "No tests found with metadata key"))]
+
+        (cond-> (assoc base
+                  "exit" exit
+                  "output" (cli-tail out)
+                  "is_pass" (boolean (and (zero? exit)
+                                          ran?
+                                          (pos? (long cases))
+                                          (zero? faults)
+                                          (not ignored-focus?))))
+          (some? cases)
+          (assoc "total"
+            cases "selected"
+            cases)
+
+          ran?
+          (assoc "fail"
+            faults "errored"
+            (long (or errs 0)))
+
+          (and (zero? exit) (not ran?))
+          (assoc "error"
+            "test command exited 0 but printed no test summary — no verified test run (possibly a bare REPL or unsupported reporter)")
+
+          (and (some? cases) (zero? (long cases)))
+          (assoc "error"
+            "test command ran 0 tests; check the selected namespaces and runner configuration")
+
+          ignored-focus?
+          (assoc "error"
+            "Kaocha ignored an unmatched metadata filter; the requested focus was not verified"))))))
 
 (defn- shadow-tail
   "shadow-cljs boots a JVM whose Unsafe/deprecation warnings are four lines of
@@ -1168,62 +1364,163 @@
                   line))
         (str/split-lines (str out))))))
 
-(defn- run-via-shadow
-  "Run ClojureScript test namespaces through the project's own shadow-cljs build —
-   the only runtime that can run a `*_test.cljs`, since the JVM cannot load one.
-   Each step's argv is shelled in order and the run stops at the first non-zero
-   exit. The verdict is the COUNTS, not the exit code: shadow-cljs exits ZERO
-   even when tests fail and even when its CLI rejected an argument, so an
-   exit-code verdict would report a red suite — or a suite that never ran — as
-   green. Compiling but running NOTHING is likewise an error, because that is
-   what a namespace outside the build's `:source-paths` looks like.
-   `shadow-cljs/run-steps` answers `{:error …}` for every project this cannot
-   run (no build, no installed shadow-cljs, a browser build with no runtime), and
-   that error is REPORTED — never thrown, never silently passed."
-  [root nses norm]
-  (let [{:keys [error steps build]}
-        (shadow/run-steps root {:nses nses :build (:build norm)})
+(defn- karma-summary-counts
+  "Karma reports TOTAL or completed per-browser progress. Keep earlier failures,
+   aggregate browsers/batches, and refuse partial or contradictory reports."
+  [out]
+  (let [out
+        (strip-ansi (str out))
 
-        base
-        {"mode" "cli" "tool" "shadow-cljs" "framework" "cljs.test" "ns" (str/join " " nses)}]
+        n
+        (fn [pattern s]
+          (some-> (re-find pattern (str s))
+                  second
+                  parse-long))
+
+        totals
+        (mapv (fn [[_ tail]]
+                (let [failed
+                      (n #"(\d+) FAILED" tail)
+
+                      passed
+                      (n #"(\d+) SUCCESS" tail)]
+
+                  {:cases (+ (long (or failed 0)) (long (or passed 0)))
+                   :fails (or failed 0)
+                   :complete? (or (some? failed) (some? passed))}))
+              (re-seq #"(?m)^TOTAL: ([^\r\n]+)" out))
+
+        browsers
+        (reduce (fn [reports [_ browser executed expected tail]]
+                  (let [cases
+                        (parse-long executed)
+
+                        failed
+                        (n #"(\d+) FAILED" tail)]
+
+                    (assoc reports
+                      browser
+                      {:cases cases
+                       :fails (max (long (or failed 0)) (long (get-in reports [browser :fails] 0)))
+                       :complete? (and (= (+ (long cases) (long (or (n #"(\d+) skipped" tail) 0)))
+                                          (parse-long expected))
+                                       (or (some? failed) (str/includes? tail "SUCCESS")))})))
+                {}
+                (re-seq #"(?m)^([^\r\n]+?): Executed (\d+) of (\d+)([^\r\n]*)" out))
+
+        reports
+        (if (seq totals) totals (vals browsers))
+
+        failures
+        (reduce + 0 (map :fails reports))]
+
+    (when (and (seq reports)
+               (every? :complete? reports)
+               ;; TOTAL is authoritative for counts, but cannot erase a browser failure.
+               (<= (reduce + 0 (map :fails (vals browsers))) failures))
+      {:cases (reduce + 0 (map :cases reports)) :fails failures})))
+
+(defn- run-via-shadow*
+  "Use the project's own shadow launcher and build. Never silently broaden
+   unsupported var/tag selectors or classpath aliases. A pass requires actual
+   tests reported by the final execution step, including Karma's own reporter."
+  [root nses norm output-root]
+  (let
+    [nses
+     (if (focused? (assoc norm :nses nses)) nses [])
+
+     unsupported
+     (cond
+       (seq (:aliases norm))
+       "configure :deps {:aliases [...]} in shadow-cljs.edn; run_tests aliases cannot change the build's classpath"
+       (some seq ((juxt :vars :include :exclude) norm))
+       "the Vis shadow-cljs adapter currently supports namespace focus, not var or metadata selectors; no tests started")
+
+     {:keys [error steps build target]}
+     (if unsupported
+       {:error unsupported}
+       (shadow/run-steps root {:nses nses :build (:build norm) :output-root output-root}))
+
+     base
+     {"mode" "cli"
+      "tool" "shadow-cljs"
+      "framework" "cljs.test"
+      "ns" (str/join " " nses)
+      "is_pass" false}]
 
     (if error
-      (assoc base
-        "error" error
-        "is_pass" false)
-      (let [ran
-            (reduce (fn [acc {:keys [argv]}]
-                      (let [res
-                            (try (apply shell/sh (concat argv [:dir (str root)]))
-                                 (catch Throwable t {:exit -1 :out "" :err (str (.getMessage t))}))
+      (assoc base "error" error)
+      (let
+        [ran
+         (reduce
+           (fn [acc {:keys [argv compile?]}]
+             (let
+               [res
+                (try (apply shell/sh (concat argv [:dir (str root)]))
+                     (catch Throwable t {:exit -1 :out "" :err (ex-message t)}))
 
-                            acc
-                            (-> acc
-                                (update :out str (:out res) (:err res))
-                                (update :cmds conj (str/join " " argv))
-                                (assoc :exit (long (or (:exit res) -1))))]
+                out
+                (str (:out res) (:err res))
 
-                        (if (zero? (long (:exit acc))) acc (reduced acc))))
-                    {:out "" :exit 0 :cmds []}
-                    steps)
+                acc
+                (-> acc
+                    (update :out str out)
+                    (update :cmds conj (str/join " " argv))
+                    (assoc :last-out out
+                           :exit (long (or (:exit res) -1))))
 
-            exit
-            (long (:exit ran))
+                compiled?
+                (or (not compile?)
+                    (re-find (re-pattern (str "\\[:"
+                                              (java.util.regex.Pattern/quote build)
+                                              "\\] Build completed\\."))
+                             (strip-ansi out)))
 
-            {:keys [cases fails errs]}
-            (summary-counts (:out ran))
+                acc
+                (cond-> acc
+                  (and (zero? (:exit acc)) (not compiled?))
+                  (assoc :error
+                    "shadow-cljs did not confirm compilation; nothing verified and no stale JavaScript executed"))]
 
-            faults
-            (+ (long (or fails 0)) (long (or errs 0)))]
+               (if (and (zero? (long (:exit acc))) (not (:error acc))) acc (reduced acc))))
+           {:out "" :exit 0 :cmds []}
+           steps)
+
+         exit
+         (long (:exit ran))
+
+         {:keys [cases fails errs]}
+         (if (= :karma target)
+           (karma-summary-counts (:last-out ran))
+           (summary-counts (:last-out ran) true))
+
+         faults
+         (+ (long (or fails 0)) (long (or errs 0)))
+
+         complete?
+         (and (some? cases) (or (some? fails) (some? errs)))
+
+         reported-nses
+         (set (map second (re-seq #"(?m)^Testing ([^\r\n ]+)\r?$" (strip-ansi (:last-out ran)))))
+
+         missing-nses
+         (when (= :node-test target) (remove reported-nses nses))]
 
         (cond-> (assoc base
                   "build" build
                   "command" (str/join " && " (:cmds ran))
                   "exit" exit
                   "output" (shadow-tail (:out ran))
-                  "is_pass" (and (zero? exit) (pos? (long (or cases 0))) (zero? faults)))
-          cases
-          (assoc "total" cases)
+                  "is_pass" (boolean (and (zero? exit)
+                                          (not (:error ran))
+                                          (empty? missing-nses)
+                                          complete?
+                                          (pos? (long cases))
+                                          (zero? faults))))
+          (some? cases)
+          (assoc "total"
+            cases "selected"
+            cases)
 
           (or fails errs)
           (assoc "fail" faults)
@@ -1231,24 +1528,38 @@
           errs
           (assoc "errored" errs)
 
-          (seq (:vars norm))
-          (assoc "note"
-            (str "shadow-cljs narrows by NAMESPACE — the name filter selected"
-                 " the namespaces it lives in, not that single var."))
-
-          (and (zero? exit) (nil? cases))
+          (seq missing-nses)
           (assoc "error"
-            (str "shadow-cljs exited 0 but printed no \"Ran N test…\" summary — nothing ran."
-                 " Its CLI exits 0 after printing help for an argument it rejected, so this is"
-                 " reported as NOT passing to avoid a false green."))
+            (str "Node did not report all requested namespaces: " (str/join ", " missing-nses)))
 
-          (and (some? cases) (zero? (long cases)) (seq nses))
+          (:error ran)
+          (assoc "error" (:error ran))
+
+          (and (zero? exit) (not (:error ran)) (not complete?))
           (assoc "error"
-            (str "shadow-cljs ran 0 tests for "
-                 (count nses)
-                 " selected namespace(s) — are they on build "
+            "shadow-cljs exited 0 but printed no completed test summary — nothing verified; compilation or CLI help is not a test run")
+
+          (and (some? cases) (zero? (long cases)))
+          (assoc "error"
+            (str "shadow-cljs ran 0 tests for build "
                  build
-                 "'s :source-paths in shadow-cljs.edn?")))))))
+                 " — check the namespace selection and the configured source paths/classpath")))))))
+
+(defn- run-via-shadow
+  "Own one run's output directory through compilation and Node execution.
+   Keep it under the project so Node still resolves project dependencies. Never
+   traverse symlinks during cleanup or delete the user's watch output."
+  [root nses norm]
+  (let [dir (java.nio.file.Files/createTempDirectory
+              (.toPath (io/file root))
+              ".vis-shadow-run-"
+              (make-array java.nio.file.attribute.FileAttribute 0))]
+    (try (run-via-shadow* root nses norm (str dir))
+         (finally (with-open [paths (java.nio.file.Files/walk
+                                      dir
+                                      (make-array java.nio.file.FileVisitOption 0))]
+                    (doseq [^java.nio.file.Path path (reverse (vec (.toArray paths)))]
+                      (java.nio.file.Files/deleteIfExists path)))))))
 
 (defn- recover-if-unusable
   "Recovery seam for run_tests: what happens when the REUSED nREPL lets a run down.
@@ -1335,19 +1646,21 @@
 (defn- effective-shadow-root
   "The shadow-cljs project the requested ClojureScript tests belong to: the
    nearest `shadow-cljs.edn` ancestor SHARED by every selected test file.
-   Returns `root` when they disagree or none is nested."
+   Refuse independent projects instead of falling back to an unrelated parent."
   ^java.io.File [^java.io.File root locations]
   (let [roots (distinct (map (fn [location]
                                (nearest-shadow-root root location))
                              locations))]
+    (when (> (count roots) 1)
+      (throw
+        (ex-info
+          "selection spans multiple shadow-cljs projects; run each project separately with cwd/paths"
+          {:type :clj/bad-args})))
     (if (= 1 (count roots)) (first roots) root)))
 
 (defn- note-unapplied-aliases
-  "run_tests `aliases` only reach the CLEAN-JVM path, where they are spliced into
-   `clojure -M:test`. A REUSED nREPL already booted with the aliases `repl_start`
-   gave it, and a shadow-cljs build reads shadow-cljs.edn — neither picks them up
-   mid-run. Such a run SAYS the aliases did not apply, instead of letting a green
-   result read as proof the alias was on the classpath."
+  "A reused nREPL cannot change its startup classpath. Say that explicitly when
+   aliases were supplied; CLI runs have already applied or refused them."
   [aliases result]
   (if (or (empty? aliases) (= "cli" (get result "mode")))
     result
@@ -1358,10 +1671,7 @@
                  " `repl_start` booted it with — repl_stop(\"clojure\") first for a clean"
                  " JVM, or restart that REPL with these aliases")
 
-            "shadow"
-            "a shadow-cljs build reads shadow-cljs.edn, not deps.edn aliases"
-
-            "this run did not shell `clojure -M:test`")
+            "this run did not invoke the deps.edn CLI")
 
           note
           (str "aliases " (pr-str (vec aliases)) " did NOT apply: " why ".")]
@@ -1372,42 +1682,29 @@
                 (if (str/blank? (str n)) note (str note " " n)))))))
 
 (defn clj-test-fn
-  "Run clojure tests. The arg names PATHS — files, directories, or
-   `<path>::<test-name>` node ids: this is where a path becomes a test namespace
-   and a name becomes ONE var. A test file (`*_test.clj` / `*_test.cljc` /
-   `*_test.cljs`) is read
-   for the ns it declares, a SOURCE file maps to its `*-test` ns when that test
-   file exists, and a
-   directory is walked for both; the `::name` half then keeps just that var,
-   matching the test var itself (`adds-test`) or the SOURCE var it covers
-   (`adds`), and `::name` with no path finds it wherever it lives.
-   A NAMESPACE may be named instead — `ns` / `nses` / `namespace` / `namespaces`,
-   and `var` / `vars` / `only` for a test name — because that is the vocabulary
-   `clojure -M:test` itself takes; each entry gets the same translation (a source
-   ns resolves to its `*-test` ns) and roots the run at the project its test file
-   lives in, so the spelling a model reaches for RUNS instead of being refused.
-   When NO LOCATION is requested the whole workspace is scanned for test files
-   and every test namespace runs — empty selectors mean 'run everything', not
-   'run nothing'. Two calls error, and each says which mistake it was: a path
-   that is NOT ON DISK is a typo, answered with the deepest part of it that does
-   exist rather than with 'no tests under it', and explicit-but-empty is a
-   location that IS there yet holds no test namespace (a real 'nothing to run
-   there', not a 'run all' intent) — likewise a `::name` that matched no var.
-   The FILE each namespace was read from picks the RUNTIME: a selection that is
-   all ClojureScript runs in the project's own shadow-cljs build (`build` names
-   which one when several could), and any selection the JVM can load takes the
-   JVM path, dropping the `.cljs` namespaces it could never require.
-   The run is rooted at the tests' OWN project — the nearest deps.edn / project.clj /
-   bb.edn at or below the workspace root, or the nearest shadow-cljs.edn for a
-   ClojureScript run — so a NESTED project is tested against its
-   own build file. run_tests NEVER starts a REPL: it reuses THIS session's REPL for
-   that project when one is already up, and otherwise shells the project's own test
-   command in a clean JVM.
-   `aliases` adds EXTRA deps.edn aliases to that clean-JVM command
-   (`clojure -M:test:<name>`, `:test` always kept); they cannot reach a REUSED
-   nREPL or a shadow-cljs build, and a run that took either path says so on :note.
-   The result :mode says which path ran; :language is always clojure so the result is self-describing
-   across the language / framework / tool / mode axes."
+  "Run tests selected by paths, namespaces or vars. Source paths map to their
+   nearest *-test namespace; JS/shared files also recognize the configured
+   shadow-cljs :ns-regexp/:namespaces instead of requiring a _test filename.
+   Missing paths and explicit-but-empty selections fail instead of running all.
+
+   The files and an optional build choose the runtime. .cljs cannot run on the
+   JVM, .clj cannot run in JS, and .cljc can accompany either. An explicit build
+   selects JS for shared tests. Mixed JVM/JS selections are refused, never
+   silently trimmed. The nearest project manifest roots the command.
+
+   No REPL is started: reuse this session's JVM REPL or shell an executable
+   project runner. aliases add classpath or select that runner. Lazytest/Kaocha
+   receive their own focus arguments; unsupported focus fails before launch.
+   A reused REPL cannot apply aliases and says so. JS uses the project's own
+   shadow launcher/config; no shadow dependency is loaded into Vis. JS var/tag
+   selectors are refused instead of widened to namespace runs.
+
+   An unfiltered CLI run leaves suite discovery to the project runner/build;
+   local filename discovery does not override its configured suite. A reused
+   REPL still uses the local index, loading only the test namespaces (callers
+   must reload changed production dependencies or stop that REPL themselves).
+   CLI verdicts require nonempty test summaries; selected is the executed test
+   count, while ns/command identify effective focus. Language stays clojure."
   ([env arg]
    (let [;; An explicit `cwd` (the run_tests `cwd` param) roots the run — and thus
          ;; nREPL selection — at THAT project instead of the workspace root, so a
@@ -1428,13 +1725,26 @@
          {:keys [paths ns-selectors] :as norm}
          (normalize-arg arg)
 
-         ;; The ONE translation: requested entries -> the test namespaces declared
-         ;; under them (:nses), the var filter their `::name` / `ns/var` halves name
-         ;; (:vars), the test FILE a namespace entry resolved to (:files), which is
-         ;; the only location a `{"ns": ...}` call carries, and :ns-files, the file
-         ;; behind EVERY selected namespace.
+         ;; Cache each nested project's config for this discovery pass. Only JS
+         ;; and shared sources use shadow's namespace rules; JVM discovery stays
+         ;; independent of the JavaScript toolchain.
+         shadow-config
+         (memoize (fn [dir]
+                    (shadow/config dir)))
+
+         test-file?
+         (fn [^java.io.File file]
+           (or (test-source-file? file)
+               (and (clj-source-file? file)
+                    (not (str/ends-with? (.getName file) ".clj"))
+                    (when-let [ns-str (ns-of-file file)]
+                      (shadow/test-namespace?
+                        (shadow-config (.getPath (nearest-shadow-root (io/file root) file)))
+                        (:build norm)
+                        ns-str)))))
+
          resolved
-         (resolve-selection root paths ns-selectors)
+         (resolve-selection root paths ns-selectors test-file?)
 
          ;; Locations the caller EXPLICITLY asked for — used ONLY to find the tests'
          ;; own project root. Empty for a bare "run everything" call (and for a
@@ -1452,31 +1762,44 @@
          ;; empty list [] counts as "not given" (empty? is total on nil), so [] and
          ;; nil behave identically here.
          selection
-         (if (or (some :path paths) (some :ns ns-selectors))
-           (select-keys resolved [:nses :ns-files])
-           (let [index (all-test-files root)]
-             {:nses (vec (sort (keys index))) :ns-files index}))
+         (cond (or (some :path paths) (some :ns ns-selectors)) (select-keys resolved
+                                                                            [:nses :ns-files])
+               (:build norm) {:nses [] :ns-files {}}
+               :else (let [index (all-test-files root test-file?)]
+                       {:nses (vec (sort (keys index))) :ns-files index}))
 
-         ;; ONE run, ONE runtime. `.cljs` namespaces are the shadow-cljs run;
-         ;; everything else (including a namespace no index knows) is the JVM's. A
-         ;; selection holding both takes the JVM path and drops the ClojureScript
-         ;; namespaces it could never require, instead of failing the whole run on
-         ;; the first `require` of a file the JVM cannot read.
+         ;; An explicit build selects JS, including shared .cljc tests. Otherwise
+         ;; only .clj is JVM-only; .cljc can accompany either runtime. Never drop
+         ;; half a mixed selection and call the remaining half a passing run.
          cljs-nses
          (filterv (fn [n]
                     (cljs-file? (get (:ns-files selection) n)))
            (:nses selection))
 
          jvm-nses
-         (vec (remove (set cljs-nses) (:nses selection)))
+         (filterv (fn [n]
+                    (if-let [^java.io.File file (get (:ns-files selection) n)]
+                      (str/ends-with? (.getName file) ".clj")
+                      (not (:build norm))))
+           (:nses selection))
+
+         shadow-root
+         (when (or (:build norm) (seq cljs-nses) (empty? jvm-nses))
+           (effective-shadow-root (io/file root) (vals (:ns-files selection))))
 
          cljs?
-         (and (seq cljs-nses) (empty? jvm-nses))
+         (or (:build norm)
+             (seq cljs-nses)
+             (and shadow-root (shadow-config (.getPath ^java.io.File shadow-root))))
 
          {:keys [nses] :as norm}
          (assoc norm
            :vars (:vars resolved)
-           :nses (if cljs? cljs-nses jvm-nses))
+           :nses (:nses selection)
+           :namespace-focus? (boolean (or (some :path paths) (some :ns ns-selectors)))
+           :focused?
+           (boolean
+             (or (seq paths) (seq ns-selectors) (seq (:include norm)) (seq (:exclude norm)))))
 
          sel
          (select-keys norm [:vars :include :exclude])
@@ -1487,8 +1810,7 @@
          ;; build file is honored. Falls back to the workspace root when the
          ;; request is at the top level or spans several projects.
          eff-root
-         (cond cljs? (.getPath (effective-shadow-root (io/file root)
-                                                      (keep (:ns-files selection) cljs-nses)))
+         (cond cljs? (.getPath ^java.io.File shadow-root)
                (seq req-locations) (.getPath (effective-test-root (io/file root) req-locations))
                :else root)
 
@@ -1514,7 +1836,15 @@
                                                     (str " — exists up to " (pr-str exists)))))
                                            missing)))
                        {:type :clj/bad-args :got arg :missing (mapv :path missing)})))
-     (when (empty? nses)
+     (when (and cljs? (seq jvm-nses))
+       (throw
+         (ex-info
+           "selection contains JVM and ClojureScript tests; run each runtime separately with paths/ns (or a build without JVM paths)"
+           {:type :clj/bad-args})))
+     (when (and (empty? nses)
+                (or (:namespace-focus? norm)
+                    (seq (:vars norm))
+                    (not (or cljs? (has-build-file? (io/file eff-root))))))
        (let [named (into (vec (keep :path paths)) (keep :ns ns-selectors))]
          (throw
            (ex-info

@@ -2,7 +2,8 @@
   "Unit tests for the in-REPL test path's failure handling — specifically that a
    server that vanishes mid-run surfaces as a structured result the model can act
    on, never a raw connect exception that eats the turn."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
             [com.blockether.vis.contract.surface :as contract]
@@ -243,15 +244,12 @@
                     (fn [root]
                       (expect (= ["com.example.thing-test"] (:nses (run-capturing root {})))))))
   (it "errors on a location that EXISTS yet holds no tests, never falling back to everything"
-      (with-project
-        (assoc thing-test-file "src/com/example/lonely.clj" "(ns com.example.lonely)\n")
-        (fn [root]
-          (let [e (try (run-capturing root {"paths" ["src"]})
-                       (catch clojure.lang.ExceptionInfo e e))]
-            (expect (= :clj/bad-args (:type (ex-data e))))
-            (expect (re-find
-                      #"no test namespaces \(\*_test\.clj / \*_test\.cljc / \*_test\.cljs\) under"
-                      (ex-message e)))))))
+      (with-project (assoc thing-test-file "src/com/example/lonely.clj" "(ns com.example.lonely)\n")
+                    (fn [root]
+                      (let [e (try (run-capturing root {"paths" ["src"]})
+                                   (catch clojure.lang.ExceptionInfo e e))]
+                        (expect (= :clj/bad-args (:type (ex-data e))))
+                        (expect (re-find #"no test namespaces.*under" (ex-message e)))))))
   ;; Regression, user report (paraphrased: ONE directory segment of an otherwise
   ;; correct path was misspelled, and the runner answered "no *_test.clj
   ;; namespaces under <that very test file>" — so the caller read it as a project
@@ -571,9 +569,11 @@
             (temp-project! {"test/vis/fixture/core_test.clj" metadata-test-source})
 
             selected
-            (resolve-selection (.getPath root)
-                               [{:path "test/vis/fixture/core_test.clj" :var nil}]
-                               [])]
+            (resolve-selection
+              (.getPath root)
+              [{:path "test/vis/fixture/core_test.clj" :var nil}]
+              []
+              #'com.blockether.vis.internal.language.clojure.test-runner/test-source-file?)]
 
         (expect (= {:nses ["vis.fixture.core-test"] :vars [] :files []}
                    (dissoc selected :ns-files)))
@@ -588,10 +588,14 @@
          {"test/vis/fixture/core_test.clj" metadata-test-source
           "src/vis/fixture/core.clj"
           "(ns ^{:clj-kondo/config '{:linters {:unused-public-var {:level :off}}}}\n    vis.fixture.core)\n"})]
-      (expect (= ["vis.fixture.core-test"]
-                 (:nses (resolve-selection (.getPath root)
-                                           [{:path "src/vis/fixture/core.clj" :var nil}]
-                                           []))))))
+      (expect
+        (= ["vis.fixture.core-test"]
+           (:nses
+             (resolve-selection
+               (.getPath root)
+               [{:path "src/vis/fixture/core.clj" :var nil}]
+               []
+               #'com.blockether.vis.internal.language.clojure.test-runner/test-source-file?))))))
   (it "finds a namespace declared after a leading form"
       (let [root (temp-project!
                    {"test/vis/fixture/late_test.clj"
@@ -666,14 +670,13 @@
         (fn [root]
           (expect (= "ci-test"
                      (:build (run-capturing-cljs root {"paths" ["test"] "build" "ci-test"})))))))
-  (it "keeps the JVM path for a mixed selection, dropping the namespaces it could never require"
-      ;; One runtime per run: a JVM `require` of a .cljs file is a hard failure,
-      ;; so the JVM run takes what it CAN load rather than dying on the first one.
+  (it "refuses a mixed JVM/JS selection instead of silently dropping tests"
       (with-project (assoc cljs-project "test/repro/jvm_test.clj" "(ns repro.jvm-test)\n")
                     (fn [root]
-                      (let [seen (run-capturing-cljs root {"paths" ["test"]})]
-                        (expect (= ["repro.jvm-test"] (:cli-nses seen)))
-                        (expect (nil? (:nses seen)))))))
+                      (let [e (try (run-capturing-cljs root {"paths" ["test"]})
+                                   (catch clojure.lang.ExceptionInfo e e))]
+                        (expect (instance? clojure.lang.ExceptionInfo e))
+                        (expect (str/includes? (ex-message e) "JVM and ClojureScript"))))))
   (it "runs the issue's own call: a `cwd` project plus a path relative to it"
       (with-project
         cljs-project
@@ -698,12 +701,16 @@
   @#'com.blockether.vis.internal.language.clojure.test-runner/run-via-shadow)
 
 (defn- sh-answering
-  "A `clojure.java.shell/sh` stand-in that answers `out` with `exit`, recording
-   every argv it was handed."
+  "Record commands and answer the execution result. Shadow compile steps get a
+   successful compiler report; tests of compiler failure stub shell/sh directly."
   [calls exit out]
   (fn [& args]
     (swap! calls conj (vec (take-while string? args)))
-    {:exit exit :out out :err ""}))
+    (if-let [build (second (drop-while #(not= "compile" %) args))]
+      {:exit 0 :out (str "[:" build "] Build completed. (1 files)\n") :err ""}
+      {:exit exit
+       :out (if (= "node" (first args)) (str "Testing repro.core-test\n" out) out)
+       :err ""})))
 
 (defdescribe
   run-via-shadow-verdict-test
@@ -725,7 +732,7 @@
                             (expect (= 0 (get r "fail")))
                             (expect (= "test" (get r "build")))
                             (expect (= "shadow-cljs" (get r "tool")))
-                            (expect (= 1 (count @calls)))))))))
+                            (expect (= 2 (count @calls)))))))))
   (it "FAILS a run whose tests failed, even though shadow-cljs exited 0"
       (let [calls (atom [])]
         (with-redefs [shell/sh (sh-answering
@@ -746,7 +753,7 @@
                         (fn [root]
                           (let [r (run-via-shadow root ["repro.core-test"] {})]
                             (expect (false? (get r "is_pass")))
-                            (expect (str/includes? (get r "error") "nothing ran"))))))))
+                            (expect (str/includes? (get r "error") "nothing verified"))))))))
   (it "names the build when the selected namespaces compiled but ran nothing"
       (let [calls (atom [])]
         (with-redefs [shell/sh (sh-answering
@@ -757,7 +764,7 @@
                         (fn [root]
                           (let [r (run-via-shadow root ["repro.core-test"] {})]
                             (expect (false? (get r "is_pass")))
-                            (expect (str/includes? (get r "error") ":source-paths"))))))))
+                            (expect (str/includes? (get r "error") "classpath"))))))))
   (it "reports a project it cannot run as data, and shells nothing"
       (let [calls (atom [])]
         (with-redefs [shell/sh (sh-answering calls 0 "")]
@@ -772,7 +779,7 @@
   shadow-cljs-command-test
   "Which command runs the tests: how shadow-cljs is INSTALLED here, which build
    is the test build, and the `--config-merge` that both runs it and narrows it."
-  (it "autoruns the node-test build through the npm binary, focused on the selected namespaces"
+  (it "compiles the focused node-test build and executes Node with its own exit status"
       (with-project cljs-project
                     (fn [root]
                       (let [{:keys [steps build target kind]}
@@ -782,18 +789,17 @@
                             (vec (:argv (first steps)))]
 
                         (expect (= ["test" :node-test :npm] [build target kind]))
-                        (expect (= 1 (count steps)))
+                        (expect (= 2 (count steps)))
                         (expect (str/ends-with? (first argv) "node_modules/.bin/shadow-cljs"))
                         (expect (= ["compile" "test" "--config-merge"] (subvec argv 1 4)))
-                        ;; `:autorun` is what makes `compile` RUN, and the regexp is printed
-                        ;; with pr-str because `\.` is not a legal EDN escape — shadow-cljs
-                        ;; answers an argument it cannot read by printing help and exiting 0.
-                        (expect (= "{:autorun true, :ns-regexp \"^(repro\\\\.core-test)$\"}"
+                        ;; Autorun loses Node's exit status. Run Node separately and print
+                        ;; the regexp with pr-str so shadow reads legal EDN, not CLI help.
+                        (expect (= "{:autorun false, :ns-regexp \"^(repro\\\\.core-test)$\"}"
                                    (peek argv)))))))
-  (it "narrows to nothing when no namespace was selected"
+  (it "leaves namespace discovery to the build when no namespace was selected"
       (with-project cljs-project
                     (fn [root]
-                      (expect (= "{:autorun true}"
+                      (expect (= "{:autorun false}"
                                  (peek (vec (:argv (first (:steps (shadow/run-steps root
                                                                                     {})))))))))))
   (it "anchors the regexp so a namespace never drags in its longer neighbours"
@@ -889,6 +895,216 @@
 (def ^:private note-unapplied-aliases
   @#'com.blockether.vis.internal.language.clojure.test-runner/note-unapplied-aliases)
 
+;; Issue #157: a classpath alias is not an executable runner, and selecting
+;; a runner must not discard namespace/var focus.
+(defdescribe
+  executable-runner-discovery-test
+  (it "discovers Kaocha by its entry point, not an alias name"
+      (with-project {"deps.edn" (pr-str {:aliases {:test {:extra-paths ["test"]}
+                                                   :verify {:main-opts ["-m" "kaocha.runner"]}}})}
+                    (fn [root]
+                      (let [picked (cli-command-for root {:nses ["sample.core-test"]} [])]
+                        (expect (= ["-M:test:verify" "--focus" "sample.core-test"]
+                                   (vec (take-last 3 (:cmd picked)))))))))
+  (it "keeps focus and reports selected tests with explicit runner aliases"
+      (with-project
+        {"deps.edn" (pr-str {:aliases {:test {:extra-paths ["test"]}
+                                       :runner {:main-opts ["-m" "kaocha.runner"]}}})}
+        (fn [root]
+          (let [calls (atom [])]
+            (with-redefs [shell/sh
+                          (sh-answering calls 0 "3 tests, 5 assertions, 0 failures, 0 errors.\n")]
+              (let [r (run-via-cli root {:nses ["sample.core-test"] :aliases ["runner"]})]
+                (expect (str/includes? (get r "command") "--focus sample.core-test"))
+                (expect (true? (get r "is_pass")))
+                (expect (= 3 (get r "selected")))))))))
+  (it "refuses a non-executable alias before opening a REPL"
+      (with-project {"deps.edn" "{:aliases {:test {:extra-paths [\"test\"]}}}"}
+                    (fn [root]
+                      (let [calls (atom [])]
+                        (with-redefs [shell/sh (sh-answering calls 0 "Clojure 1.12\nuser=>\n")]
+                          (expect (string? (get (run-via-cli root {}) "error")))
+                          (expect (empty? @calls)))))))
+  (it "refuses unsupported focus before launching a custom runner"
+      (with-project
+        {"deps.edn" "{:aliases {:test {:main-opts [\"-m\" \"custom.runner\"]}}}"}
+        (fn [root]
+          (let [calls (atom [])]
+            (with-redefs [shell/sh
+                          (sh-answering
+                            calls
+                            0
+                            "Ran 100 tests containing 100 assertions.\n0 failures, 0 errors.\n")]
+              (expect (string? (get (run-via-cli root {:nses ["sample.core-test"]}) "error")))
+              (expect (empty? @calls)))))))
+  (it "does not call a zero-test focused run a pass"
+      (with-project
+        {"deps.edn" "{:aliases {:test {:main-opts [\"-m\" \"lazytest.main\"]}}}"}
+        (fn [root]
+          (with-redefs [shell/sh (sh-answering (atom []) 0 "Ran 0 test cases.\n0 failures.\n")]
+            (expect (false? (get (run-via-cli root {:nses ["missing.ns-test"]}) "is_pass"))))))))
+
+(defdescribe
+  runner-configuration-matrix-test
+  (it
+    "supports arbitrary runner names and Kaocha exec-fn selectors"
+    (doseq [[aliases supplied expected] [[{:checks {:main-opts ["-m" "lazytest.main"]}} []
+                                          ["-M:checks" "--namespace" "sample.core-test"]]
+                                         [{:checks {:exec-fn 'kaocha.runner/exec-fn}} []
+                                          ["-X:checks" ":kaocha.filter/focus" "[sample.core-test]"]]
+                                         [{:test {:main-opts ["-m" "lazytest.main"]}
+                                           :verify {:main-opts ["-m" "kaocha.runner"]}} ["verify"]
+                                          ["-M:test:verify" "--focus" "sample.core-test"]]]]
+      (with-project {"deps.edn" (pr-str {:aliases aliases})}
+                    (fn [root]
+                      (expect (= expected
+                                 (vec (take-last 3
+                                                 (:cmd (cli-command-for root
+                                                                        {:nses ["sample.core-test"]}
+                                                                        supplied))))))))))
+  (it "refuses ambiguous, unknown, cancelled and unrelated entry points"
+      (doseq [[aliases supplied]
+              [[{:one {:main-opts ["-m" "kaocha.runner"]} :two {:main-opts ["-m" "lazytest.main"]}}
+                []] [{:test {:main-opts ["-m" "lazytest.main"]}} ["missing"]]
+               [{:test {:main-opts ["-m" "lazytest.main"]} :empty {:main-opts []}} ["empty"]]
+               [{:test {:extra-paths ["test"]} :deploy {:exec-fn 'app/deploy!}} []]]]
+        (with-project {"deps.edn" (pr-str {:aliases aliases})}
+                      (fn [root]
+                        (expect (string? (:error (cli-command-for root {} supplied))))))))
+  (it "translates vars and metadata using Kaocha's vocabulary"
+      (with-project
+        {"deps.edn" "{:aliases {:check {:main-opts [\"-m\" \"kaocha.runner\"]}}}"}
+        (fn [root]
+          (expect (= ["--focus" "sample.core-test/adds-test"]
+                     (vec (take-last 2
+                                     (:cmd (cli-command-for root
+                                                            {:nses ["sample.core-test"]
+                                                             :vars [{:ns "sample.core-test"
+                                                                     :name "adds-test"}]}
+                                                            []))))))
+          (expect (= ["--focus-meta" "slow"]
+                     (vec (take-last 2 (:cmd (cli-command-for root {:include ["slow"]} []))))))
+          (expect (string? (:error (cli-command-for root
+                                                    {:nses ["sample.core-test"] :include ["slow"]}
+                                                    [])))))))
+  (it
+    "preserves focused path selection across the public language-pack boundary"
+    (with-project
+      (assoc thing-test-file
+        "deps.edn"
+        "{:aliases {:test {:extra-paths [\"test\"]} :runner {:main-opts [\"-m\" \"kaocha.runner\"]}}}")
+      (fn [root]
+        (let [calls (atom [])]
+          (with-redefs [repl-manager/live-repl-for-dir (constantly nil)
+                        shell/sh (sh-answering calls 0 "1 tests, 1 assertions, 0 failures.\n")]
+
+            (tr/clj-test-fn {:workspace/root root}
+                            {"paths" ["test/com/example/thing_test.clj"] "aliases" ["runner"]})
+            (expect (some #{"--focus"} (first @calls)))
+            (expect (some #{"com.example.thing-test"} (first @calls)))))))))
+
+(defdescribe
+  cljs-configuration-selection-test
+  (it
+    "uses configured namespace patterns instead of requiring a _test filename"
+    (with-project
+      (assoc (dissoc cljs-project "test/repro/core_test.cljs")
+        "shadow-cljs.edn"
+        "{:source-paths [\"spec\"] :builds {:checks {:target :node-test :ns-regexp \"-spec$\" :output-to \"out/checks.js\"}}}"
+        "spec/sample/core_spec.cljs" "(ns sample.core-spec)\n")
+      (fn [root]
+        (doseq [arg [{"path" "spec/sample/core_spec.cljs"} {"path" "spec"}
+                     {"ns" "sample.core-spec"}]]
+          (expect (= ["sample.core-spec"] (:nses (run-capturing-cljs root arg))))))))
+  (it "runs shared cljc tests in JS alongside cljs, or when build is explicit"
+      (with-project (assoc cljs-project "test/repro/shared_test.cljc" "(ns repro.shared-test)\n")
+                    (fn [root]
+                      (expect (= ["repro.core-test" "repro.shared-test"]
+                                 (:nses (run-capturing-cljs root {"path" "test"}))))
+                      (expect (= ["repro.shared-test"]
+                                 (:nses (run-capturing-cljs root
+                                                            {"path" "test/repro/shared_test.cljc"
+                                                             "build" "test"})))))))
+  (it "lets an unfiltered build run its configured namespaces without local filename discovery"
+      (with-project (dissoc cljs-project "test/repro/core_test.cljs")
+                    (fn [root]
+                      (expect (= root (:root (run-capturing-cljs root {"build" "test"})))))))
+  (it "refuses var/tag/alias selectors not implemented by the Vis adapter, before spawning"
+      (with-project
+        cljs-project
+        (fn [root]
+          (doseq [norm [{:vars [{:ns "repro.core-test" :name "one-test"}]} {:include ["slow"]}
+                        {:exclude ["slow"]} {:aliases ["frontend"]}]]
+            (let [calls (atom [])]
+              (with-redefs [shell/sh (sh-answering calls 0 "Ran 1 tests.\n0 failures, 0 errors.\n")]
+                (expect (string? (get (run-via-shadow root ["repro.core-test"] norm) "error")))
+                (expect (empty? @calls)))))))))
+
+(defdescribe
+  shadow-build-shapes-test
+  (it "accepts shadow's vector build configuration"
+      (with-project (assoc cljs-project
+                      "shadow-cljs.edn"
+                      "{:builds [{:id :checks :target :node-test :output-to \"out/checks.js\"}]}")
+                    (fn [root]
+                      (expect (= "checks" (:build (shadow/run-steps root {})))))))
+  (it
+    "does not broaden focus when :namespaces overrides :ns-regexp"
+    (with-project
+      (assoc cljs-project
+        "shadow-cljs.edn"
+        "{:builds {:checks {:target :node-test :namespaces [repro.core-test repro.other-test] :output-to \"out/checks.js\"}}}")
+      (fn [root]
+        (expect (string? (:error (shadow/run-steps root {:nses ["repro.core-test"]})))))))
+  (it "reads Karma's own completed summary, not an imagined cljs.test summary"
+      (with-project
+        (assoc cljs-project
+          "shadow-cljs.edn" "{:builds {:checks {:target :karma :output-to \"out/checks.js\"}}}"
+          "node_modules/.bin/karma" "#!/bin/sh\n")
+        (fn [root]
+          (doseq [[out pass? n faults]
+                  [["HeadlessChrome: Executed 2 of 2 SUCCESS (0.01 secs / 0.01 secs)\n" true 2 0]
+                   ["TOTAL: 1 FAILED, 2 SUCCESS\n" false 3 1]
+                   ;; Issue #157: a later browser/batch must not erase an earlier failure.
+                   ["Chrome: Executed 1 of 1 (1 FAILED)\nFirefox: Executed 1 of 1 SUCCESS\n" false 2
+                    1] ["TOTAL: 1 FAILED, 0 SUCCESS\nTOTAL: 1 SUCCESS\n" false 2 1]
+                   ["Chrome: Executed 1 of 2 SUCCESS\nFirefox: Executed 1 of 1 SUCCESS\n" false nil
+                    nil] ["Chrome: Executed 1 of 1 (1 FAILED)\nTOTAL: 1 SUCCESS\n" false nil nil]]]
+            (with-redefs [shell/sh (sh-answering (atom []) 0 out)]
+              (let [r (run-via-shadow root ["repro.core-test"] {})]
+                (expect (= pass? (get r "is_pass")))
+                (expect (= n (get r "selected")))
+                (expect (= faults (get r "fail"))))))))))
+
+;; The shadow-cljs user guide specifies that :deps/:lein own the classpath,
+;; and that :node-test/:karma/:browser-test are different JS runtimes.
+(defdescribe
+  shadow-configuration-regression-test
+  (it "keeps every configured deps alias, even when shadow is a root dependency"
+      (with-project {"shadow-cljs.edn" "{:deps {:aliases [:frontend :checks]} :builds {}}"
+                     "deps.edn" (pr-str {:deps {'thheller/shadow-cljs {:mvn/version "2.28.20"}}
+                                         :aliases {:frontend {:extra-paths ["src"]}
+                                                   :checks {:extra-paths ["test"]}}})}
+                    (fn [root]
+                      (expect (= ["clojure" "-M:frontend:checks" "-m" "shadow.cljs.devtools.cli"]
+                                 (:argv (shadow/launcher root)))))))
+  (it "honors :lein instead of an unrelated deps.edn"
+      (with-project {"shadow-cljs.edn" "{:lein {:profile \"+frontend\"} :builds {}}"
+                     "project.clj" "(defproject sample \"0.1.0\")"
+                     "deps.edn" "{:deps {thheller/shadow-cljs {:mvn/version \"2.28.20\"}}}"}
+                    (fn [root]
+                      (expect (= ["lein" "with-profile" "+frontend" "run" "-m"
+                                  "shadow.cljs.devtools.cli"]
+                                 (:argv (shadow/launcher root)))))))
+  (it "does not guess between independently configured test builds"
+      (expect (string? (:error (shadow/test-build {:builds {:unit {:target :node-test}
+                                                            :integration {:target :node-test}}}
+                                                  nil)))))
+  (it "escapes regex metacharacters in namespace focus"
+      (let [pattern (re-pattern (shadow/ns-regexp ["sample.price$-test"]))]
+        (expect (re-matches pattern "sample.price$-test"))
+        (expect (nil? (re-matches pattern "sample.price-test"))))))
+
 ;; A project whose tests need more than its `:test` alias declares had no way to
 ;; say so: run_tests shelled a hardcoded `clojure -M:test`, and `aliases` existed
 ;; only on repl_start.
@@ -909,19 +1125,22 @@
       (expect (= ["bench"] (:aliases (normalize-arg {"aliases" ":bench"}))))
       (expect (= ["dev" "bench"] (:aliases (normalize-arg {"aliases" [":dev" "bench"]}))))
       (expect (= [] (:aliases (normalize-arg {"paths" ["test"]})))))
-  (it "APPENDS them to the mandatory :test in the clean-JVM command"
+  (it "appends classpath aliases to a declared executable :test"
       (let [root
-            (temp-project! {"deps.edn" "{:deps {}}\n"})
+            (temp-project! {"deps.edn" (pr-str {:aliases {:test {:main-opts ["-m" "lazytest.main"]}
+                                                          :bench {}
+                                                          :dev {}}})})
 
             picked
             (cli-command-for (.getPath root) {} ["bench" "dev"])]
 
         (expect (= :clj (:tool picked)))
         (expect (some #{"-M:test:bench:dev"} (:cmd picked)))
-        ;; :test is the alias that MAINS the runner — never replaced.
+        ;; The declared :test remains the runner when extras only add classpath.
         (expect (not (some #{"-M:bench:dev"} (:cmd picked))))))
   (it "leaves the command alone when no alias was asked for"
-      (let [root (temp-project! {"deps.edn" "{:deps {}}\n"})]
+      (let [root (temp-project! {"deps.edn" (pr-str {:aliases {:test {:main-opts
+                                                                      ["-m" "lazytest.main"]}}})})]
         (expect (some #{"-M:test"} (:cmd (cli-command-for (.getPath root) {} []))))))
   (it "refuses deps.edn aliases for a lein / bb project instead of running without them"
       (with-redefs [com.blockether.vis.internal.language.clojure.test-runner/cli-command-for
@@ -968,3 +1187,384 @@
           (tr/clj-test-fn {:workspace/root (.getPath root)}
                           {"paths" ["test/vis/fixture/alias_test.clj"] "aliases" [":bench"]}))
         (expect (= ["bench"] @seen)))))
+
+;; Issue #157 cross-validation: refuse selections/configurations we cannot execute faithfully.
+(defdescribe
+  cross-validation-regression-test
+  (it "does not append focus to an alias that already focuses another suite"
+      (with-project {"deps.edn" (pr-str {:aliases {:test {:main-opts ["-m" "kaocha.runner" "--focus"
+                                                                      "other.core-test"]}}})}
+                    (fn [root]
+                      (expect (string?
+                                (:error (cli-command-for root {:nses ["sample.core-test"]} [])))))))
+  (it "refuses persistent watch commands for a one-shot test operation"
+      (doseq [opts [{:main-opts ["-m" "kaocha.runner" "--watch"]}
+                    {:exec-fn 'kaocha.runner/exec-fn :exec-args {:kaocha/watch? true}}]]
+        (with-project {"deps.edn" (pr-str {:aliases {:test opts}})}
+                      (fn [root]
+                        (expect (string? (:error (cli-command-for root {} []))))))))
+  (it "does not combine inherited exec metadata focus with requested namespace focus"
+      (with-project
+        {"deps.edn" (pr-str {:aliases {:test {:exec-fn 'kaocha.runner/exec-fn
+                                              :exec-args {:kaocha.filter/focus-meta ['slow]}}}})}
+        (fn [root]
+          (expect (string? (:error (cli-command-for root {:nses ["sample.core-test"]} [])))))))
+  (it "routes nested shared tests using their own shadow manifest"
+      (with-project
+        {"apps/web/shadow-cljs.edn" "{:builds {:test {:target :node-test :output-to \"out.js\"}}}"
+         "apps/web/test/shared_test.cljc" "(ns shared-test)"}
+        (fn [root]
+          (expect (= (str root "/apps/web")
+                     (:root (run-capturing-cljs root
+                                                {"path" "apps/web/test/shared_test.cljc"})))))))
+  (it "refuses same-named JVM and JS test namespaces rather than overwriting an index entry"
+      (with-project {"shadow-cljs.edn"
+                     "{:builds {:test {:target :node-test :output-to \"out.js\"}}}"
+                     "test/shared_test.clj" "(ns shared-test)"
+                     "test/shared_test.cljs" "(ns shared-test)"}
+                    (fn [root]
+                      (doseq [arg [{"path" "test"} {"ns" "shared-test"} {}]]
+                        (expect (try (run-capturing-cljs root arg)
+                                     false
+                                     (catch clojure.lang.ExceptionInfo _ true)))))))
+  (it "refuses a selection spanning independent shadow projects"
+      (with-project
+        {"shadow-cljs.edn" "{:builds {:test {:target :node-test :output-to \"out.js\"}}}"
+         "apps/a/shadow-cljs.edn" "{:builds {:test {:target :node-test :output-to \"out.js\"}}}"
+         "apps/b/shadow-cljs.edn" "{:builds {:test {:target :node-test :output-to \"out.js\"}}}"
+         "apps/a/test/a_test.cljs" "(ns a-test)"
+         "apps/b/test/b_test.cljs" "(ns b-test)"}
+        (fn [root]
+          (expect (try (run-capturing-cljs root {"paths" ["apps/a/test" "apps/b/test"]})
+                       false
+                       (catch clojure.lang.ExceptionInfo _ true))))))
+  (it
+    "does not let an unrelated later count erase failures in a completed report"
+    (with-redefs
+      [shell/sh
+       (sh-answering
+         (atom [])
+         0
+         "Ran 2 tests containing 2 assertions.\n1 failures, 0 errors.\nfixture log: 0 failures\n")]
+      (with-project cljs-project
+                    (fn [root]
+                      (expect (false? (get (run-via-shadow root [] {}) "is_pass")))))))
+  (it
+    "does not pass a later green summary after an earlier failing node run"
+    (with-redefs
+      [shell/sh
+       (sh-answering
+         (atom [])
+         0
+         "Ran 1 tests containing 1 assertions.\n1 failures, 0 errors.\nRan 1 tests containing 1 assertions.\n0 failures, 0 errors.\n")]
+      (with-project cljs-project
+                    (fn [root]
+                      (expect (false? (get (run-via-shadow root [] {}) "is_pass")))))))
+  (it "requires the complete cljs.test failure/error pair"
+      (with-redefs [shell/sh (sh-answering (atom [])
+                                           0
+                                           "Ran 2 tests containing 2 assertions.\n0 failures.\n")]
+        (with-project cljs-project
+                      (fn [root]
+                        (expect (false? (get (run-via-shadow root [] {}) "is_pass"))))))))
+
+(defdescribe
+  node-execution-boundary-test
+  (it
+    "uses Node's exit status even after a passing printed summary"
+    (with-project
+      cljs-project
+      (fn [root]
+        (with-redefs
+          [shell/sh
+           (fn [& args]
+             (if (= "node" (first args))
+               {:exit 1
+                :out "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors.\n"
+                :err "late runtime error"}
+               {:exit 0
+                :out
+                "[:test] Build completed. (1 files)\nRan 1 tests containing 1 assertions.\n0 failures, 0 errors.\n"
+                :err ""}))]
+          (expect (false? (get (run-via-shadow root [] {}) "is_pass")))))))
+  (it "does not execute stale JavaScript after shadow prints help with exit zero"
+      (with-project cljs-project
+                    (fn [root]
+                      (let [calls (atom [])]
+                        (with-redefs [shell/sh (fn [& args]
+                                                 (swap! calls conj (first args))
+                                                 {:exit 0 :out "shadow-cljs - HELP\n" :err ""})]
+                          (expect (false? (get (run-via-shadow root [] {}) "is_pass")))
+                          (expect (= 1 (count @calls))))))))
+  (it
+    "disables autorun even in :dev and executes the effective :output-to"
+    (with-project
+      (assoc cljs-project
+        "shadow-cljs.edn"
+        "{:builds {:test {:target :node-test :output-to \"out.js\" :dev {:autorun true :output-to \"dev-out.js\"}}}}")
+      (fn [root]
+        (let [steps (:steps (shadow/run-steps root {}))]
+          (expect (= ["node" "dev-out.js"] (:argv (second steps))))))))
+  (it
+    "refuses a dynamic output path instead of mistaking an environment variable name for JavaScript"
+    (with-project (assoc cljs-project
+                    "shadow-cljs.edn"
+                    "{:builds {:test {:target :node-test :output-to #shadow/env \"TEST_OUTPUT\"}}}")
+                  (fn [root]
+                    (expect (string? (:error (shadow/run-steps root {}))))))))
+
+(defdescribe
+  shadow-output-isolation-test
+  (it "isolates output/dev paths and cleans successful, failed and throwing invocations"
+      ;; Issue #157: never execute or remove a watch-owned bundle.
+      (with-project
+        (assoc cljs-project
+          "watch.js" "watch-owned"
+          "shadow-cljs.edn" (pr-str {:builds {:test {:target :node-test
+                                                     :output-to "watch.js"
+                                                     :dev {:autorun true
+                                                           :output-to "watch.js"
+                                                           :output-dir "watch-out"}}}}))
+        (fn [root]
+          (let [outputs (atom [])]
+            (doseq [outcome [:pass :compile-failure :node-failure :throw]]
+              (let [calls (atom [])]
+                (with-redefs
+                  [shell/sh
+                   (fn [& args]
+                     (swap! calls conj (first args))
+                     (if (= "node" (first args))
+                       (do (expect (= (last @outputs) (second args)))
+                           (if (= :throw outcome)
+                             (throw (ex-info "fixture launch failure" {}))
+                             {:exit (if (= :node-failure outcome) 1 0)
+                              :out "Ran 1 tests containing 1 assertions.\n0 failures, 0 errors.\n"
+                              :err ""}))
+                       (let [overrides (edn/read-string
+                                         (second (drop-while #(not= "--config-merge" %) args)))
+                             output (:output-to overrides)]
+
+                         (swap! outputs conj output)
+                         (expect (str/includes? output ".vis-shadow-run-"))
+                         (expect (str/starts-with? (:output-dir overrides)
+                                                   (str (.getParent (io/file output)) "/")))
+                         (expect (= (dissoc overrides :dev) (:dev overrides)))
+                         (expect (false? (:autorun overrides)))
+                         (spit output "fixture bundle")
+                         {:exit (if (= :compile-failure outcome) 1 0)
+                          :out "[:test] Build completed.\n"
+                          :err ""})))]
+                  (expect (= (= :pass outcome) (get (run-via-shadow root [] {}) "is_pass"))))
+                (expect (not (.exists (.getParentFile (io/file (last @outputs))))))
+                (when (= :compile-failure outcome) (expect (= 1 (count @calls))))))
+            (expect (= "watch-owned" (slurp (io/file root "watch.js"))))
+            (expect (= 4 (count (set @outputs)))))))))
+
+;; Opt-in real toolchain checks. Only the throwaway fixture depends on shadow-cljs.
+;; Run with VIS_TEST_SHADOW_CLJS=<npm/Maven version> and --var .../live-shadow-toolchain-test.
+(when-let [version (System/getenv "VIS_TEST_SHADOW_CLJS")]
+  (defdescribe
+    live-shadow-toolchain-test
+    (it
+      "cross-validates npm/deps launchers and build shapes against a real shadow compiler"
+      (with-project
+        {"package.json"
+         (str "{\"private\":true,\"devDependencies\":{\"shadow-cljs\":\"" version "\"}}")
+         "test/repro/core_test.cljs"
+         "(ns repro.core-test (:require [cljs.test :refer-macros [deftest is]]))\n(deftest passes (is (= 2 (+ 1 1))))\n"
+         "test/repro/fail_test.cljs"
+         "(ns repro.fail-test (:require [cljs.test :refer-macros [deftest is]]))\n(deftest fails (is (= 3 (+ 1 1))))\n"
+         "spec/repro/core_spec.cljs"
+         "(ns repro.core-spec (:require [cljs.test :refer-macros [deftest is]]))\n(deftest passes (is true))\n"}
+        (fn [root]
+          (let [install (shell/sh "npm" "install"
+                                  "--ignore-scripts" "--no-audit"
+                                  "--no-fund" "--no-package-lock"
+                                  :dir root)
+                build {:target :node-test :output-to "out/tests.js"}
+                cfg {:source-paths ["test" "spec"] :builds {:test build}}
+                run! (fn [config arg passed total]
+                       (spit (io/file root "shadow-cljs.edn") (pr-str config))
+                       (let [response (tr/clj-test-fn {:workspace/root root
+                                                       :session-id "live-shadow-test"}
+                                                      arg)
+                             r (:result response)]
+
+                         (when-not (and (:success? response) (map? r))
+                           (throw (ex-info "invalid test result envelope" {:response response})))
+                         (when (or (not= passed (get r "is_pass")) (not= total (get r "selected")))
+                           (throw (ex-info (str "real shadow-cljs result disagrees with selection "
+                                                (pr-str arg)
+                                                ": " (get r "error")
+                                                "\n" (get r "output"))
+                                           {:request arg :result r})))
+                         (expect (= passed (get r "is_pass")))
+                         (expect (= total (get r "selected")))))]
+
+            (when-not (zero? (:exit install))
+              (throw (ex-info "fixture npm install failed"
+                              (select-keys install [:exit :out :err]))))
+            (run! cfg {} false 2)
+            (run! cfg {"path" "test/repro/core_test.cljs"} true 1)
+            (run! (assoc cfg
+                    :builds [(assoc build
+                               :id :test
+                               :ns-regexp "-spec$")])
+                  {"path" "spec/repro/core_spec.cljs"}
+                  true
+                  1)
+            (run! (assoc-in cfg [:builds :test :dev] {:autorun true :output-to "out/dev-tests.js"})
+                  {"ns" "repro.core-test"}
+                  true
+                  1)
+            (spit (io/file root "deps.edn")
+                  (pr-str {:aliases {:frontend {:extra-paths ["test" "spec"]
+                                                :extra-deps {'thheller/shadow-cljs {:mvn/version
+                                                                                    version}}}}}))
+            (let [deps-cfg (assoc cfg :deps {:aliases [:frontend]})]
+              (run! deps-cfg {"ns" "repro.core-test"} true 1)
+              (io/delete-file (io/file root "node_modules/.bin/shadow-cljs"))
+              (run! deps-cfg {"ns" "repro.core-test"} true 1)
+              ;; Issue #157: a focused CLI run must not reconfigure an existing watch.
+              (let [log (io/file root "server.log")
+                    server (.start (doto (ProcessBuilder. ^java.util.List
+                                                          ["clojure" "-M:frontend" "-m"
+                                                           "shadow.cljs.devtools.cli" "server"])
+                                     (.directory (io/file root))
+                                     (.redirectErrorStream true)
+                                     (.redirectOutput log)))]
+
+                (try
+                  (let
+                    [port-file (io/file root ".shadow-cljs/nrepl.port")
+                     deadline (+ (System/currentTimeMillis) 180000)
+                     port (loop []
+
+                            (cond (.isFile port-file) (parse-long (str/trim (slurp port-file)))
+                                  (or (not (.isAlive server))
+                                      (> (System/currentTimeMillis) deadline))
+                                  (throw (ex-info "fixture shadow server did not start"
+                                                  {:output (slurp log)}))
+                                  :else (do (Thread/sleep 100) (recur))))
+                     eval! (fn [code]
+                             (let [r
+                                   (nc/eval!
+                                     {:host "127.0.0.1" :port port :timeout-ms 180000 :code code})]
+                               (when (or (get r "ex") (get r "timed_out"))
+                                 (throw (ex-info "fixture shadow eval failed" r)))
+                               (get r "value")))
+                     snapshot
+                     "(let [w (shadow.cljs.devtools.api/get-worker :test)] [(System/identityHashCode w) (select-keys @(:state-ref w) [:build-config :autobuild])])"]
+
+                    (expect
+                      (=
+                        ":watching"
+                        (eval!
+                          "(do (require 'shadow.cljs.devtools.api) (shadow.cljs.devtools.api/watch :test))")))
+                    (let [before (eval! snapshot)]
+                      (expect (string? before))
+                      ;; Force the watch write into the compile/Node gap, not a timing lottery.
+                      (let [real-sh shell/sh
+                            interposed? (atom false)]
+
+                        (with-redefs
+                          [shell/sh (fn [& args]
+                                      (when (and (= "node" (first args))
+                                                 (compare-and-set! interposed? false true))
+                                        (spit
+                                          (io/file root "test/repro/fail_test.cljs")
+                                          "\n;; Force a watch rebuild at the execution boundary.\n"
+                                          :append
+                                          true)
+                                        (eval! "(shadow.cljs.devtools.api/watch-compile! :test)"))
+                                      (apply real-sh args))]
+                          (run! deps-cfg {"ns" "repro.core-test"} true 1))
+                        (expect @interposed?))
+                      ;; Both compilers must finish before either Node starts. This also
+                      ;; exercises shadow's shared compiler cache under overlapping runs.
+                      (dotimes [_ 3]
+                        (let [real-sh shell/sh
+                              ready (java.util.concurrent.CountDownLatch. 2)
+                              outputs (atom [])]
+
+                          (with-redefs [shell/sh
+                                        (fn [& args]
+                                          (when (= "node" (first args))
+                                            (swap! outputs conj (second args))
+                                            (.countDown ready)
+                                            (when-not (.await ready
+                                                              180
+                                                              java.util.concurrent.TimeUnit/SECONDS)
+                                              (throw (ex-info "parallel Node barrier timed out"
+                                                              {}))))
+                                          (apply real-sh args))]
+                            (let [runs (mapv (fn [ns-name]
+                                               (future (:result (tr/clj-test-fn {:workspace/root
+                                                                                 root}
+                                                                                {"ns" ns-name}))))
+                                             ["repro.core-test" "repro.fail-test"])]
+                              (try (doseq [[run passed] (map vector runs [true false])]
+                                     (let [r (deref run 240000 ::timeout)]
+                                       (expect (not= ::timeout r))
+                                       (expect (= passed (get r "is_pass")))
+                                       (expect (= 1 (get r "selected")))))
+                                   (finally (doseq [run runs]
+                                              (future-cancel run))))))
+                          (expect (= 2 (count (set @outputs))))
+                          (doseq [output @outputs]
+                            (expect (not (.exists (.getParentFile (io/file output))))))))
+                      (expect (.isAlive server))
+                      (expect (= before (eval! snapshot)))
+                      (expect (= ":ok" (eval! "(shadow.cljs.devtools.api/watch-compile! :test)")))
+                      (let [full (shell/sh "node" "out/tests.js" :dir root)]
+                        (expect (not (zero? (:exit full))))
+                        (expect (str/includes? (:out full) "Testing repro.fail-test"))
+                        (expect (str/includes? (:out full) "Ran 2 tests")))))
+                  (finally
+                    ;; Only the fixture-owned process tree is terminated.
+                    (with-open [children (.descendants server)]
+                      (doseq [^java.lang.ProcessHandle child (reverse (vec (.toArray children)))]
+                        (.destroyForcibly child)))
+                    (.destroyForcibly server)
+                    (.waitFor server 10 java.util.concurrent.TimeUnit/SECONDS)))))))))))
+
+(defdescribe
+  effective-configuration-boundaries-test
+  (it
+    "merges all :extra-deps before applying the combined :replace-deps classpath"
+    (with-project
+      {"shadow-cljs.edn" "{:deps {:aliases [:shadow :isolated]}}"
+       "deps.edn"
+       "{:aliases {:shadow {:extra-deps {thheller/shadow-cljs {:mvn/version \"3.5.0\"}}} :isolated {:replace-deps {org.clojure/clojure {:mvn/version \"1.12.0\"}}}}}"}
+      (fn [root]
+        (expect (= :deps (:kind (shadow/launcher root)))))))
+  (it
+    "does not guess the effective build when global shadow configuration can override dev settings"
+    (with-project (assoc cljs-project
+                    ".shadow-cljs/config.edn"
+                    "{:build-defaults {:dev {:output-to \"different.js\"}}}")
+                  (fn [root]
+                    (let [home (System/getProperty "user.home")]
+                      (try (System/setProperty "user.home" root)
+                           (expect (string? (:error (shadow/run-steps root {}))))
+                           (finally (System/setProperty "user.home" home)))))))
+  (it "does not silently drop one explicit path that contains no matching tests"
+      (with-project
+        (assoc cljs-project "empty/README.txt" "No test sources here.")
+        (fn [root]
+          (expect (try (run-capturing-cljs root {"paths" ["test/repro/core_test.cljs" "empty"]})
+                       false
+                       (catch clojure.lang.ExceptionInfo _ true))))))
+  (it
+    "does not pass partially matched Node namespace focus"
+    (with-project
+      cljs-project
+      (fn [root]
+        (with-redefs
+          [shell/sh
+           (sh-answering
+             (atom [])
+             0
+             "Testing repro.core-test\nRan 1 tests containing 1 assertions.\n0 failures, 0 errors.\n")]
+          (expect (false? (get (run-via-shadow root ["repro.core-test" "repro.missing-test"] {})
+                               "is_pass"))))))))
