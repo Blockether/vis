@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.42 (5397) — 2026-09-06
+<!-- commit: 48d1b443c46e526638964b35aec1a6a9ca91d211 -->
+
+- Keep outline icons unfilled
+- Record companion build 5395
+
 ## 0.1.42 (5395) — 2026-09-06
 <!-- commit: e4baada06375f657cac8e08b8075f72c60802ba2 -->
 
