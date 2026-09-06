@@ -1280,8 +1280,14 @@ def _archive_selection_snapshots(view, payload, log_of, cache):
         if "steps" in nodes:
             nodes["steps"]["steps"] = [dict(step) for step in shape["steps"]]
         lines = _selection_log_lines(shape, log_of, cache, LOG_TAIL_LINES)
+        # A snapshot is materialized by nobody: it must carry every key a live log node
+        # has, or the engine refuses the whole ending the moment no pane was live.
         log = vis.output(
-            "output", label=_log_label(shape), lines=lines, total_lines=len(lines)
+            "output",
+            label=_log_label(shape),
+            lines=lines,
+            window_lines=LOG_TAIL_LINES,
+            total_lines=len(lines),
         )
         if "output" in nodes:
             nodes["output"].update(log)

@@ -398,6 +398,47 @@ def test_the_settled_pane_is_one_photograph(watched):
     assert node(snapshots[-1]["view"], "output")["lines"] == failing_log()
 
 
+def test_a_late_log_still_archives_complete_log_pictures(recorder):
+    # Regression, session 559544cd-1fd3-456e-82d2-edcf53d97c52: the selected job's log
+    # was not published yet when the run settled, so no live log pane was ever added,
+    # and the ending's per-job snapshots built their log node from scratch — without
+    # `window_lines` — which the engine rejected as an invalid selection snapshot after
+    # the watch had already succeeded.
+    final = fixture("run-final.json")
+    final["conclusion"] = "success"
+    for job in final["jobs"]:
+        job["status"] = "completed"
+        job["conclusion"] = "success"
+    polls = [fixture("run-mid.json"), final]
+    unpublished = str(final["jobs"][-1]["databaseId"])
+
+    result = gh.watch(
+        TITLE,
+        DESCRIPTION,
+        lambda: polls.pop(0) if len(polls) > 1 else polls[0],
+        lambda job_id, lines: [] if job_id == unpublished else failing_log(),
+    )
+
+    assert result.conclusion == "success"
+    added = [op for op in recorder.patched() if op.get("op") == "add-node"]
+    assert [op["node_spec"]["id"] for op in added] == []
+    snapshots = recorder.said[-1]["ending"]["selection_snapshots"]
+    assert len(snapshots) == len(final["jobs"])
+    pictured = [
+        log
+        for one in snapshots
+        for log in one["view"]["nodes"]
+        if log["id"] == "output"
+    ]
+    assert len(pictured) == len(final["jobs"])
+    assert [log["lines"] for log in pictured if log["lines"] == []] == [[]]
+    for log in pictured:
+        assert log["type"] == "log"
+        assert log["lines"] in ([], failing_log())
+        assert log["total_lines"] == len(log["lines"])
+        assert 1 <= log["window_lines"] <= 100000
+
+
 def test_a_log_is_asked_of_the_job_not_of_the_run(monkeypatch):
     asked = []
 
