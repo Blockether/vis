@@ -335,21 +335,22 @@
       (expect (str/includes? (:note (get connect "port")) "build"))
       (expect (str/includes? (:ext.symbol/description language-surface/connect-repl-symbol)
                              "CLOJURE only"))
-      ;; `build` selects a shadow-cljs build to ATTACH to or to run cljs tests
-      ;; in — it never starts one, so it is a repl_connect/run_tests key.
+      ;; `build` selects a shadow-cljs build: repl_connect attaches to it,
+      ;; while run_tests compiles and runs it using the project launcher.
       (expect (contains? connect "build"))
       (expect (contains? tests "build"))
       (expect (not (contains? start "build")))
-      ;; `aliases` is the deps.edn escape hatch on BOTH verbs that boot a JVM:
-      ;; repl_start's REPL and run_tests' clean-JVM `clojure -M:test`. It ADDS —
-      ;; a note reading "default" invites a caller to believe naming one REPLACES
-      ;; :dev/:test and drops the test alias off its own classpath.
+      ;; `aliases` adds deps.edn aliases on BOTH verbs that boot a JVM.
+      ;; run_tests retains a declared :test for its classpath, but chooses
+      ;; execution and focus from the effective runner entry point.
       (expect (contains? start "aliases"))
       (expect (contains? tests "aliases"))
       (expect (str/includes? (:note (get start "aliases")) "EXTRA"))
       (expect (str/includes? (:ext.symbol/description language-surface/repl-start-symbol) "ADDS"))
       (expect (str/includes? (:note (get tests "aliases")) "EXTRA"))
-      (expect (str/includes? (:ext.symbol/description language-surface/test-symbol) "-M:test"))
+      (expect (str/includes? (:ext.symbol/description language-surface/test-symbol)
+                             "executable test runner"))
+      (expect (str/includes? (:ext.symbol/description language-surface/test-symbol) "Kaocha -X"))
       (expect (nil? (:required? (get tests "aliases"))))
       (expect (str/includes? (:ext.symbol/description language-surface/repl-start-symbol)
                              "`repl_connect`"))

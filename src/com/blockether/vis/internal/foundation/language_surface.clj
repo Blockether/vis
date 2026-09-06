@@ -560,17 +560,20 @@
    is a path string or a map: `paths` (files, directories, or `<path>::<test-name>`
    node ids — the selector every language shares; `::<test-name>` alone finds that
    test wherever it lives) selects; clojure ALSO takes `ns` / `nses` (a namespace
-   name, or `ns/var` for one test) and resolves it the same way, and runs
-   `*_test.cljs` through the project's own shadow-cljs build (`build` names which one
-   when several could); `include` / `exclude` narrow by metadata tag; `cwd` chooses
+   name, or `ns/var` for one test) and resolves it the same way. JS tests run
+   through the project's shadow-cljs build; `build` selects one explicitly and
+   chooses JS for .cljc tests too. `include` / `exclude` narrow by metadata tag; `cwd` chooses
    the project directory and defaults to the WORKSPACE ROOT, which is where a relative
    `paths` entry resolves; `runner` picks the python backend
    (`\"project\"` for the project interpreter's own pytest, else the hermetic sandbox).
-   `aliases` (clojure) adds EXTRA deps.edn aliases to that clean-JVM command —
-   `clojure -M:test:<name>`, `:test` always kept — for a project whose tests need
-   more than `:test` declares; they cannot reach an already-running REPL, and a
-   run that reused one says so on its note.
-   List selectors stay lists, even one."
+   `aliases` (clojure) adds deps.edn classpath aliases or selects an executable
+   runner; a declared :test is kept but never invented. Lazytest/Kaocha focus
+   follows the runner's entry point, including Kaocha -X. Unsupported focus and
+   ambiguous shadow builds fail before launch. The JS adapter supports namespace,
+   not var/tag focus; classpath belongs to shadow-cljs.edn's :deps/:lein. Node tests
+   compile without autorun, then execute separately. External shadow config and
+   dynamic output/selection settings are refused rather than guessed. A reused
+   JVM REPL cannot apply aliases and says so. List selectors stay lists, even one."
   [env & args]
   (let [started-at
         (System/nanoTime)
@@ -717,9 +720,15 @@
        "`include`/`exclude` (clojure) narrow by metadata tag; `cwd` selects the project directory and "
        "defaults to the WORKSPACE ROOT, which is where a relative `paths` entry resolves; `runner` "
        "(python) selects `project` — the interpreter's own pytest "
-       "— over the hermetic sandbox. `aliases` (clojure) ADDS deps.edn aliases to the clean-JVM "
-       "`clojure -M:test:<name>` when `:test` alone does not carry the classpath the tests need; "
-       "a run that REUSED a REPL cannot apply them and says so. "
+       "— over the hermetic sandbox. `aliases` (clojure) adds deps.edn classpath or selects an "
+       "executable test runner; a declared :test is retained, not assumed executable. Lazytest/Kaocha "
+       "get runner-specific focus, including Kaocha -X; unsupported focus fails before launch. "
+       "`build` selects the project's shadow-cljs test build (also for .cljc); ambiguous builds "
+       "require it. Unfiltered JS runs keep the build's configured suite. JS var/tag filters and "
+       "mixed JVM/JS selections are refused, never silently broadened or trimmed. Configure JS "
+       "classpath in shadow-cljs.edn, not aliases. Node compilation and execution are separate; "
+       "external shadow config and dynamic output/selection settings are refused rather than guessed. "
+       "A reused JVM REPL cannot apply aliases and says so. "
        "NOTHING is required: omit `path` and `paths` to run everything.")
      :params [{:name "language" :note "inferred; name it when ambiguous"}
               {:name "path" :note "one test target"}
@@ -730,7 +739,7 @@
               {:name "cwd" :note "default workspace ROOT"} {:name "root" :note "alias of `cwd`"}
               {:name "project" :note "alias of `cwd`"} {:name "project_root" :note "alias of `cwd`"}
               {:name "build" :note "clojure — shadow-cljs build id"}
-              {:name "aliases" :note "clojure — EXTRA deps.edn aliases"}
+              {:name "aliases" :note "clojure — EXTRA deps.edn aliases / runner selection"}
               {:name "runner" :note "python — \"project\" for its pytest"}]
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
