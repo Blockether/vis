@@ -1051,6 +1051,50 @@
     {
       "audience": "sdk",
       "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/speech"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        },
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/speech/jobs/:job-id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "binary"
+        }
+      },
+      "path": "/v1/speech/jobs/:job-id/audio"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "sse"
+        }
+      },
+      "path": "/v1/speech/jobs/:job-id/events"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "get": {
           "request": "none",
           "response": "json"
@@ -1095,6 +1139,40 @@
         }
       },
       "path": "/v1/speech/voices/:voice-id/sample"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "binary",
+          "response": "json"
+        }
+      },
+      "path": "/v1/voice"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "delete": {
+          "request": "none",
+          "response": "json"
+        },
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/voice/jobs/:job-id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "sse"
+        }
+      },
+      "path": "/v1/voice/jobs/:job-id/events"
     },
     {
       "audience": "sdk",

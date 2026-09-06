@@ -1212,6 +1212,72 @@
                                   (is (empty? (get speech "engines")))
                                   (is (nil? (get speech "selected"))))))))
 
+ ;; Regression, user report: local speech required an AI provider just to create a conversation.
+(deftest local-speech-routes-need-no-conversation
+  (let [app
+        (rr/ring-handler ((rv 'router) "token" []))
+
+        paths
+        (atom [])
+
+        transport
+        (fn [method path & [opts]]
+          (swap! paths conj path)
+          (let [[uri query]
+                (str/split path #"\?" 2)
+
+                response
+                (app (merge {:request-method method :uri uri :query-string query}
+                            (when-let [body (:body opts)]
+                              (if (:raw-body? opts) {:body body} (json-body body)))))
+
+                out
+                (java.io.ByteArrayOutputStream.)]
+
+            (ring-protocols/write-body-to-stream (:body response) response out)
+            (assoc response
+              :body (case (:as opts)
+                      :stream
+                      (java.io.ByteArrayInputStream. (.toByteArray out))
+
+                      :bytes
+                      (.toByteArray out)
+
+                      (.toString out "UTF-8")))))]
+
+    (with-redefs [state/soul
+                  (fn [_]
+                    (throw (ex-info "Session must not be loaded" {})))
+
+                  lp/get-router
+                  (fn []
+                    (throw (ex-info "No AI provider" {})))
+
+                  client/request!
+                  transport]
+
+      (with-only-engine! {:id :listener
+                          :label "Listener"
+                          :transcribe (constantly "hello")
+                          :model-state (constantly {:state :ready})}
+                         (fn []
+                           (with-only-speech-engine!
+                             (speaking-engine)
+                             (fn []
+                               (doseq [text ["hello" (apply str (repeat 60 "hello "))]]
+                                 (let [audio (client/synthesize-speech! nil text {})]
+                                   (try (is (= (seq (spoken-wav (str/trim text)))
+                                               (seq (body-bytes audio))))
+                                        (is (= "hello" (client/transcribe-audio! nil audio {})))
+                                        (finally (.delete audio)))))
+                               (is (every? #(not (str/includes? % "/sessions/")) @paths))
+                               (is (some #(str/ends-with? % "/audio") @paths)))))))
+    (with-redefs [state/soul (constantly nil)]
+      (doseq [sid ["not-a-uuid" (str (random-uuid))]]
+        (is (= 404
+               (:status (app (merge {:request-method :post :uri (str "/v1/sessions/" sid "/speech")}
+                                    (json-body {:text "hello"}))))))))))
+
 (deftest speech-post-speaks-a-short-line-on-the-same-connection
   ;; A spoken acknowledgement that costs a job, a stream and a second fetch is a spinner
   ;; where a sentence should have been.

@@ -2336,15 +2336,16 @@
 
           (do (Thread/sleep (long speech-model-poll-ms)) (recur :get)))))))
 
+(defn- speech-path
+  "A nil session selects the machine's local speech service, without creating a conversation."
+  [sid direction]
+  (str "/v1/"
+       (when sid (str "sessions/" (enc sid) "/"))
+       (if (= :transcribe direction) "voice" "speech")))
+
 (defn- speech-job-path
   [sid direction job-id suffix]
-  (str "/v1/sessions/"
-       (enc sid)
-       "/"
-       (if (= :transcribe direction) "voice" "speech")
-       "/jobs/"
-       (enc job-id)
-       suffix))
+  (str (speech-path sid direction) "/jobs/" (enc job-id) suffix))
 
 (defn- await-speech-job!
   [sid direction job-id on-progress]
@@ -2368,14 +2369,14 @@
 (defn transcribe-audio!
   "Upload a WAV to the gateway-owned transcription engine, stream its progress,
    and return the transcript. `audio-path` is read by this client only; Sherpa and
-   its model live solely in the gateway process."
+   its model live solely in the gateway process. A nil `sid` needs no conversation."
   [sid audio-path {:keys [engine-id on-progress]}]
   (prepare-speech-model! :transcribe {:engine-id engine-id :on-progress on-progress})
   (let [query
         (speech-query engine-id nil)
 
         path
-        (str "/v1/sessions/" (enc sid) "/voice" query)]
+        (str (speech-path sid :transcribe) query)]
 
     (with-open [in (io/input-stream (io/file (str audio-path)))]
       (let [job (parsed-response! (request! :post
@@ -2398,7 +2399,7 @@
 
 (defn synthesize-speech!
   "Ask the gateway-owned speech engine to synthesize `text` and return a temporary
-   WAV file owned by the caller. Progress is streamed for asynchronous jobs."
+   WAV file owned by the caller. Progress is streamed for asynchronous jobs. A nil `sid` needs no conversation."
   [sid text {:keys [engine-id voice-id on-progress]}]
   (prepare-speech-model! :synthesize
                          {:engine-id engine-id :voice-id voice-id :on-progress on-progress})
@@ -2406,7 +2407,7 @@
         (speech-query engine-id nil)
 
         path
-        (str "/v1/sessions/" (enc sid) "/speech" query)
+        (str (speech-path sid :synthesize) query)
 
         response
         (request! :post

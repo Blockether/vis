@@ -1,6 +1,41 @@
 (ns com.blockether.vis.internal.speech.cli-test
   (:require [com.blockether.vis.internal.speech.cli :as speech]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.gateway.client :as client]
             [lazytest.core :refer [defdescribe expect it]]))
+
+ ;; Regression, user report: local speech required an AI provider to create a temporary session.
+(defdescribe local-speech-without-a-session-test
+             (it "synthesizes and transcribes without creating a conversation"
+                 (let [calls
+                       (atom [])
+
+                       audio
+                       (java.io.File/createTempFile "vis-speech-cli-test" ".wav")]
+
+                   (try (with-redefs [config/init-cli!
+                                      (fn [])
+
+                                      client/create-session!
+                                      (fn [_]
+                                        (throw (ex-info "No AI provider" {})))
+
+                                      client/synthesize-speech!
+                                      (fn [sid text opts]
+                                        (swap! calls conj [:say sid text opts])
+                                        audio)
+
+                                      client/transcribe-audio!
+                                      (fn [sid path opts]
+                                        (swap! calls conj [:transcribe sid path opts])
+                                        "hello")]
+
+                          (#'speech/speech-say-command {"text" "hello"} [])
+                          (#'speech/speech-transcribe-command {"file" "recording.wav"} [])
+                          (expect (= [[:say nil "hello" {:engine-id "piper-local" :voice-id nil}]
+                                      [:transcribe nil "recording.wav" {}]]
+                                     @calls)))
+                        (finally (.delete audio))))))
 
 (defdescribe
   speech-command-test

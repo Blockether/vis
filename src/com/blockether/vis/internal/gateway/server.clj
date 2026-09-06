@@ -3195,15 +3195,18 @@
         (json-response 501
                        {:status "unavailable" :error (str "no " noun " engine is available")})))))
 
-(defn- with-direction-engine
-  "[[with-engine]] for the routes whose work belongs to a SESSION: 404 first when nobody
-   knows that id.
+(defn- unknown-speech-session?
+  "Machine speech routes need no conversation. Session routes still reject unknown or malformed ids."
+  [request]
+  (and (contains? (:path-params request) :sid)
+       (not (when-let [sid (path-sid request)]
+              (state/soul sid)))))
 
-   Both directions refuse in the same shape on purpose - a client that learned it from
-   `/voice` reads a `/speech` refusal without a second code path."
+(defn- with-direction-engine
+  "Resolve a local speech engine, validating the session when the route names one."
   [direction request f]
   (let [sid (path-sid request)]
-    (if-not (and sid (state/soul sid))
+    (if (unknown-speech-session? request)
       (json-response 404 {:status "unavailable" :error "unknown session"})
       (with-engine direction
                    request
@@ -3714,10 +3717,7 @@
    it: asking `/speech/jobs/` for a transcription is a client bug, answered 404 rather
    than leaking the other half of the store."
   [direction request]
-  (let [sid
-        (path-sid request)
-
-        job-id
+  (let [job-id
         (get-in request [:path-params :job-id])
 
         job
@@ -3729,7 +3729,7 @@
         unknown
         {:error (str "unknown " (speech/direction-nouns direction) " job")}]
 
-    (cond (not (and sid (state/soul sid))) (json-response 404 {:error "unknown session"})
+    (cond (unknown-speech-session? request) (json-response 404 {:error "unknown session"})
           ;; DELETE stays idempotent — an id nobody knows is already forgotten — but it
           ;; never reaches across into the other direction's job.
           (= :delete (:request-method request)) (if (and job (not mine?))
@@ -3751,16 +3751,13 @@
    while that job lives. A job that has not produced audio yet answers 425 with its own
    state, so a client that raced its stream retries instead of caching an error."
   [request]
-  (let [sid
-        (path-sid request)
-
-        job-id
+  (let [job-id
         (get-in request [:path-params :job-id])
 
         job
         (speech/job job-id)]
 
-    (cond (not (and sid (state/soul sid))) (json-response 404 {:error "unknown session"})
+    (cond (unknown-speech-session? request) (json-response 404 {:error "unknown session"})
           (not= "synthesize" (:direction job))
           (json-response 404 {:error "unknown speech synthesis job"})
           :else (let [^java.io.File f (some-> (speech/job-audio-path job-id)
@@ -3935,16 +3932,13 @@
    tick; this is the same job resource, streamed. The stream ENDS itself on the
    terminal frame, so the client neither polls nor guesses when to stop reading."
   [direction request]
-  (let [sid
-        (path-sid request)
-
-        job-id
+  (let [job-id
         (get-in request [:path-params :job-id])
 
         job
         (speech/job job-id)]
 
-    (cond (not (and sid (state/soul sid))) (json-response 404 {:error "unknown session"})
+    (cond (unknown-speech-session? request) (json-response 404 {:error "unknown session"})
           (not= (name direction) (:direction job))
           (json-response 404 {:error (str "unknown " (speech/direction-nouns direction) " job")})
           :else {:status 200
@@ -4250,6 +4244,13 @@
         ["/providers/:provider-id/auth/poll" {:post provider-auth-poll-handler}]
         ["/providers/:provider-id/auth/cancel" {:post provider-auth-cancel-handler}]
         ["/providers/:provider-id/logout" {:post provider-logout-handler}]
+        ["/voice" {:post voice-handler}]
+        ["/voice/jobs/:job-id" {:get voice-job-handler :delete voice-job-handler}]
+        ["/voice/jobs/:job-id/events" {:get voice-job-events-handler}]
+        ["/speech" {:post speech-handler}]
+        ["/speech/jobs/:job-id" {:get speech-job-handler :delete speech-job-handler}]
+        ["/speech/jobs/:job-id/events" {:get speech-job-events-handler}]
+        ["/speech/jobs/:job-id/audio" {:get speech-job-audio-handler}]
         ["/speech/voices" {:get speech-voices-handler :post speech-voices-handler}]
         ["/speech/voices/:voice-id" {:delete speech-voice-handler}]
         ["/speech/voices/:voice-id/sample" {:get speech-voice-sample-handler}]

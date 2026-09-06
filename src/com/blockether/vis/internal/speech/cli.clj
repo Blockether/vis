@@ -197,17 +197,6 @@
     (response-json! :delete (str "/v1/speech/voices/" (enc id) "?engine=" (enc "pocket-tts-local")))
     (cli-out! (str "forgot " id))))
 
-(defn- with-temporary-session
-  [f]
-  (let [session
-        (gateway-client/create-session!
-          {:channel "cli" :title "Speech diagnostic" :root (System/getProperty "user.dir")})
-
-        sid
-        (get session "id")]
-
-    (try (f sid) (finally (gateway-client/request! :delete (str "/v1/sessions/" (enc sid)))))))
-
 (defn- speech-say-command
   [parsed residual]
   (config/init-cli!)
@@ -215,32 +204,28 @@
         (str/trim (str (or (get parsed "text") (str/join " " residual))))
 
         engine-id
-        (if (get parsed "pocket-tts") "pocket-tts-local" "piper-local")]
+        (if (get parsed "pocket-tts") "pocket-tts-local" "piper-local")
 
-    (with-temporary-session
-      (fn [sid]
-        (let [audio
-              (gateway-client/synthesize-speech! sid
-                                                 text
-                                                 {:engine-id engine-id
-                                                  :voice-id (get parsed "voice")})
+        audio
+        (gateway-client/synthesize-speech! nil
+                                           text
+                                           {:engine-id engine-id :voice-id (get parsed "voice")})
 
-              out
-              (some-> (get parsed "out")
-                      io/file)]
+        out
+        (some-> (get parsed "out")
+                io/file)]
 
-          (if out
-            (do (io/copy audio out)
-                (io/delete-file audio true)
-                (cli-out! (str "spoke to " (.getAbsolutePath ^java.io.File out))))
-            (cli-out! (str "spoke to " (.getAbsolutePath ^java.io.File audio)))))))))
+    (if out
+      (try (io/copy audio out)
+           (cli-out! (str "spoke to " (.getAbsolutePath ^java.io.File out)))
+           (finally (io/delete-file audio true)))
+      (cli-out! (str "spoke to " (.getAbsolutePath ^java.io.File audio))))))
 
 (defn- speech-transcribe-command
   [parsed residual]
   (config/init-cli!)
   (let [path (or (get parsed "file") (first residual))]
-    (with-temporary-session #(cli-out! (str/trim
-                                         (str (gateway-client/transcribe-audio! % path {})))))))
+    (cli-out! (str/trim (str (gateway-client/transcribe-audio! nil path {}))))))
 
 (def command
   {:cmd/name "speech"
