@@ -474,6 +474,15 @@
 
     (str/join "\n\n" (into [base] extras))))
 
+(defn- text-chars
+  ^long [content]
+  (if (string? content)
+    (count content)
+    (reduce (fn [^long n part]
+              (+ n (count (or (:text part) ""))))
+            0
+            content)))
+
 (defn- project-instructions-block
   "Inline primary-workspace guidance and a metadata-only index of added-root
    guidance. Added-root file contents enter the conversation only when the model
@@ -525,8 +534,15 @@
                                 added))
                  "\nBefore any action in an added root, read its exact guidance path in `python_execution`; then obey it for that root. The read result activates those rules in the conversation. Never mutate, run commands, or use browser automation there before that read."))]
 
-            (prompt-block "project-instructions"
-                          (str/join "\n\n" (keep identity [header primary-body added-body])))))))
+            {:content (prompt-block "project-instructions"
+                                    (str/join "\n\n"
+                                              (keep identity [header primary-body added-body])))
+             :parts (mapv (fn [f]
+                            {:label (str (if (= :project (:scope f)) "Main " "Workspace ")
+                                         (if (= :claude-md (:source f)) "CLAUDE.md" "AGENTS.md"))
+                             :path (paths/abbreviate-home (:path f))
+                             :chars (count (:content f))})
+                          files)}))))
     (catch Throwable t
       (tel/log! {:level :warn :id ::project-instructions-error :data {:error (ex-message t)}}
                 "project-instructions-block read failed")
@@ -812,5 +828,65 @@
         (not-empty (some-> session-context
                            str/trim))]
 
-    (vec (keep stable-prompt-message
-               [core-block cli-block project-block turn-system-block session-context-block]))))
+    (vec (keep identity
+               [(stable-prompt-message core-block) (stable-prompt-message cli-block)
+                (when-let [m (stable-prompt-message (:content project-block))]
+                  (with-meta m {::parts (:parts project-block)}))
+                (when-let [m (stable-prompt-message turn-system-block)]
+                  (with-meta m
+                    {::parts [{:label "Tools, skills and runtime"
+                               :chars (text-chars turn-system-block)}]}))
+                (stable-prompt-message session-context-block)]))))
+
+(defn request-health
+  "Compact, content-free provenance for the logical request sent to Svar.
+
+   Part estimates use four text characters per token, not a provider tokenizer.
+   Images, native reasoning and protocol overhead are excluded, so parts need not
+   sum to provider input. Message metadata attributes primary guidance without
+   rescanning files or counting it again as system text. Tool-result guidance stays
+   in conversation: no read receipt means UNKNOWN, never 'not loaded'."
+  [environment messages tools]
+  (let [parts
+        (mapcat (fn [message]
+                  (let [known
+                        (::parts (meta message))
+
+                        chars
+                        (+ (long (text-chars (:content message)))
+                           (long (if-let [calls (:tool_calls message)]
+                                   (count (pr-str calls))
+                                   0)))
+
+                        remainder
+                        (max 0 (- chars (long (reduce + 0 (map :chars known)))))]
+
+                    (cond-> (vec known)
+                      (pos? remainder)
+                      (conj {:label (if (#{"system" "developer"} (:role message))
+                                      "System instructions"
+                                      "Conversation and tool results")
+                             :chars remainder}))))
+                messages)
+
+        parts
+        (cond-> (vec parts)
+          (seq tools)
+          (conj {:label "Tool declarations" :chars (count (pr-str tools))}))
+
+        groups
+        (group-by (juxt :label :path) parts)
+
+        own
+        (get-in environment [:workspace :root])]
+
+    {:breakdown (mapv (fn [key]
+                        (let [rows (get groups key)]
+                          (assoc (select-keys (first rows) [:label :path])
+                            :tokens (quot (+ 3 (reduce + 0 (map :chars rows))) 4))))
+                      (distinct (map (juxt :label :path) parts)))
+     :roots (into []
+                  (comp (remove #(or (:denied? %) (= own (:clone %)) (= own (:trunk %))))
+                        (map #(hash-map :path (paths/abbreviate-home (:clone %))))
+                        (distinct))
+                  (workspace/env-filesystem-roots environment))}))

@@ -1893,6 +1893,54 @@
           (.put usage-rollup-cache sref {:fingerprint fingerprint :tally tally})
           tally)))))
 
+(defn- session-request-health
+  [db-info join where]
+  (let [scope
+        {:from [[:session_turn_iteration :qti]]
+         :join (into [[:session_turn_state :sts] [:= :sts.id :qti.session_turn_state_id]] join)}
+
+        measured
+        (query-one! db-info
+                    (assoc scope
+                      :select [:qti.input_tokens :qti.request_health [:ts.position :turn]
+                               [:qti.position :iteration] :qti.created_at]
+                      :where (conj where [:> :qti.input_tokens 0])
+                      :order-by [[:ts.position :desc] [:qti.position :desc]]
+                      :limit 1))]
+
+    (when measured
+      (let [through
+            [:or [:< :ts.position (:turn measured)]
+             [:and [:= :ts.position (:turn measured)] [:<= :qti.position (:iteration measured)]]]
+
+            ordinal
+            (query-one! db-info
+                        (assoc scope
+                          :select [[[:count :qti.id] :n]]
+                          :where (conj where through)))
+
+            latest
+            (query-one! db-info
+                        {:select [[[:max :ts.position] :turn]]
+                         :from [[:session_turn_state :sts]]
+                         :join join
+                         :where where})
+
+            newer
+            (query-one! db-info
+                        (assoc scope
+                          :select [[[:count :qti.id] :n]]
+                          :where (conj where [:not through])))]
+
+        (merge (<-blob (:request_health measured))
+               {:last-request-tokens (long (:input_tokens measured))
+                :call (long (:n ordinal))
+                :turn (long (:turn measured))
+                :iteration (long (:iteration measured))
+                :measured-at (long (:created_at measured))
+                :stale (or (> (long (:turn latest)) (long (:turn measured)))
+                           (pos? (long (:n newer))))})))))
+
 (defn db-session-usage-stats
   "ONE session's whole-life USAGE rollup, or nil when the session has no turns:
 
@@ -1902,7 +1950,11 @@
      :prompt-cache-sample-count :prompt-cache-estimated-sample-count
      :prompt-cache-rebuild-count :prompt-cache-expired-count :output-tokens
      :output-reasoning-tokens :cost-usd :first-turn-at :last-turn-at :provider
-     :model :tool-call-count :fold-count}`
+      :model :tool-call-count :fold-count :health}`
+
+   `:health` describes the latest measured request in the same current chain.
+   Provider input is authoritative; budget and prompt provenance exist only for
+   calls that recorded them. It never reconstructs old instructions from disk.
 
    Token, cost and cache facts are ONE skinny SQL aggregate over the session's
    `session_turn_iteration` rows — the LLM calls themselves — and never over the
@@ -2005,6 +2057,9 @@
               counts
               (usage-tally db-info soul-id-s iter-ids)
 
+              health
+              (session-request-health db-info join where)
+
               folds
               (long (or (:folds counts) 0))]
 
@@ -2027,6 +2082,9 @@
                    :cost-usd (double (or (:cost_usd calls) 0))
                    :tool-call-count (long (reduce + 0 (vals (:tools counts))))
                    :fold-count folds}
+            health
+            (assoc :health health)
+
             (:first_at agg)
             (assoc :first-turn-at (long (:first_at agg)))
 
@@ -3726,6 +3784,9 @@
                         (some? cost-usd)
                         (assoc :cost_usd (double cost-usd))
 
+                        (and (pos? (long (or (get tokens "input") 0))) (:request-health opts))
+                        (assoc :request_health (->blob (:request-health opts)))
+
                         (seq routing)
                         (merge (routing-summary-columns routing)))]})
           (store-iteration-attachments! tx-info
@@ -4140,6 +4201,9 @@
 
       (some? forms-vec)
       (assoc :forms forms-vec)
+
+      (some? (:request_health row))
+      (assoc :request-health (<-blob (:request_health row)))
 
       (some? (:eval_duration_ms row))
       (assoc :duration-ms (:eval_duration_ms row))

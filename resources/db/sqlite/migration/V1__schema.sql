@@ -363,6 +363,8 @@ CREATE TABLE session_turn_iteration (
   llm_full_duration_ms            INTEGER CHECK (
                                     llm_full_duration_ms IS NULL OR llm_full_duration_ms >= 0
                                   ),
+  -- Request-aligned context budget and text estimates; never prompt contents.
+  request_health                 BLOB,
   llm_thinking                    TEXT,
   -- Model markdown PROSE returned ALONGSIDE a tool call. NULL = no prose.
   llm_assistant_prose             TEXT,

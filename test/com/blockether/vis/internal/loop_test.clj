@@ -83,6 +83,52 @@
 (def ^:private log-stage-level (deref #'lp/log-stage-level))
 
 (defdescribe
+  request-health-persistence-test
+  (it
+    "persists the served request's input and ceiling, leaving unknown model limits absent"
+    (let [router
+          (svar/make-router [{:id :lmstudio
+                              :base-url "http://127.0.0.1:1234/v1"
+                              :api-key "test"
+                              :models [{:name "pinned" :input-limit 1000000}
+                                       {:name "small" :input-limit 128000}]}])
+
+          environment
+          (lp/create-environment router {:db :memory})
+
+          db
+          (:db-info environment)
+
+          sid
+          (:session-id environment)]
+
+      (try (doseq [[model input expected-limit expected-budget]
+                   [["small" 32000 128000 115200] ["not-in-catalog" 4000 nil 200000]]]
+             (let [tid (persistance/db-store-session-turn! db
+                                                           {:parent-session-id sid
+                                                            :user-request "measure"})]
+               (with-redefs [svar/ask-code! (fn [_ _]
+                                              {:stop-reason :end
+                                               :tool-calls []
+                                               :content "done"
+                                               :routed/provider-id :lmstudio
+                                               :routed/model model
+                                               :api-usage {:input-tokens input :output-tokens 1}
+                                               :tokens {}})]
+                 (lp/iteration-loop environment "measure" {:session-turn-id tid}))
+               (let [usage (persistance/db-session-usage-stats db sid)
+                     health (:health usage)]
+
+                 (expect (= input (:last-request-tokens health)))
+                 (expect (= expected-limit (:model-input-limit health)))
+                 (expect (= expected-budget (:budget-tokens health)))
+                 (expect (= (* 3/4 expected-budget) (:reminder-tokens health)))
+                 (expect (seq (:breakdown health)))
+                 (expect (false? (:stale health))))))
+           (expect (= 36000 (:input-tokens (persistance/db-session-usage-stats db sid))))
+           (finally (lp/dispose-environment! environment))))))
+
+(defdescribe
   loop-stage-logging-test
   (it "keeps routine telemetry debug-only but logs failed turns and timeouts at error level"
       (expect (= :debug (log-stage-level :provider-call/stop {:duration-ms 12})))
@@ -123,6 +169,33 @@
         (expect (= 0 @provider-calls))
         (expect (= :vis/unsupported-reasoning-effort (:type (ex-data thrown))))
         (expect (= ["high" "max"] (:supported (ex-data thrown))))))
+  (it "returns content-free health for the request actually handed to the provider"
+      (let [environment
+            (lp/create-environment {:providers [{:id :lmstudio}]} {:db :memory})
+
+            messages
+            [{:role "system" :content "core"} {:role "user" :content "abcdefgh"}]
+
+            seen
+            (atom nil)]
+
+        (try (with-redefs [svar/ask-code! (fn [_ opts]
+                                            (reset! seen opts)
+                                            {:stop-reason :end
+                                             :tool-calls []
+                                             :content "done"
+                                             :api-usage {:input-tokens 300 :output-tokens 1}
+                                             :tokens {}})]
+               (let [result (lp/run-iteration environment
+                                              messages
+                                              {:iteration 0
+                                               :resolved-model {:provider :lmstudio
+                                                                :name "local-model"}})]
+                 (expect (= (:request-health result)
+                            (prompt/request-health environment (:messages @seen) (:tools @seen))))
+                 (expect (seq (get-in result [:request-health :breakdown])))
+                 (expect (not (str/includes? (pr-str (:request-health result)) "abcdefgh")))))
+             (finally (lp/dispose-environment! environment)))))
   (it
     "does not inject a prompt for models without native reasoning"
     (let [environment

@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Banner, ConfirmRow, LIST_EDGE } from "./ui";
+import { SessionHealth, type SessionHealthSnapshot } from "./SessionHealth";
 import {
   EditableNameField,
   HeaderActions,
@@ -523,11 +524,27 @@ export function SessionStatsPanel({
   session,
   usage,
   phase,
+  health,
 }: {
   session: Session;
   usage: SessionUsage | null;
   phase: "loading" | "ready" | "error";
+  health?: SessionHealthSnapshot;
 }) {
+  const measured = usage?.health;
+  const snapshot = health ?? (measured && {
+    lastRequestTokens: measured.last_request_tokens,
+    budgetTokens: measured.budget_tokens,
+    reminderTokens: measured.reminder_tokens,
+    modelInputLimit: measured.model_input_limit,
+    call: measured.call,
+    stale: measured.stale,
+    breakdown: measured.breakdown,
+    roots: measured.roots?.map((item) => ({
+      path: item.path,
+      instructionsLoaded: item.instructions_loaded,
+    })),
+  });
   const cacheReadShare = usage?.cache_read_share_percent;
   const reuseCoverage = usage?.reusable_prefix_coverage_percent;
   // The coverage number is only as good as the calls it was measured on, so the
@@ -539,33 +556,36 @@ export function SessionStatsPanel({
 
   return (
     <div
-      className={`border-t border-dialog-edge bg-panel-2 py-2.5 ${LIST_EDGE} ${LIST_EDGE_END}`}
+      className={`max-w-2xl border-t border-dialog-edge bg-panel-2 py-4 font-mono ${LIST_EDGE} ${LIST_EDGE_END}`}
     >
       {phase === "loading" && (
-        <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-          Reading usage…
+        <p role="status" className="text-ui text-dialog-hint">
+          Reading session metrics…
         </p>
       )}
       {phase === "error" && (
-        <p className="font-mono text-chip uppercase tracking-[0.08em] text-warn">
-          Usage unavailable
+        <p role="alert" className="text-ui text-warn">
+          Session metrics unavailable. Close and reopen details to retry.
         </p>
       )}
       {phase === "ready" && !usage && (
-        <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-          No turns yet
+        <p className="text-ui text-dialog-hint">
+          No measured calls yet. Metrics appear after the first model response.
         </p>
       )}
       {phase === "ready" && usage && (
         <>
-          <dl className="grid grid-cols-4 gap-x-3 gap-y-2">
-            <Stat label="Turns" value={compactCount(usage.turn_count)} />
-            <Stat label="Iters" value={compactCount(usage.iteration_count)} />
-            <Stat label="Tools" value={compactCount(usage.tool_call_count)} />
-            <Stat label="Folds" value={compactCount(usage.fold_count)} />
-            <Stat label="In" value={compactCount(usage.input_tokens)} />
-            <Stat label="Out" value={compactCount(usage.output_tokens)} />
+          <SessionHealth snapshot={snapshot} folds={usage.fold_count} />
+          <h3 className="border-t border-dialog-edge pt-4 text-title font-bold text-white">Session totals</h3>
+          <p className="mt-1 text-ui text-dialog-hint">Across all calls, including repeated context.</p>
+          <dl className="mt-3 grid grid-cols-4 gap-x-3 gap-y-3">
+            <Stat label="Total input" value={compactCount(usage.input_tokens)} />
+            <Stat label="Total output" value={compactCount(usage.output_tokens)} />
             <Stat label="Cost" value={formatUsd(usage.cost_usd)} />
+            <Stat label="Folds" value={compactCount(usage.fold_count)} />
+            <Stat label="Turns" value={compactCount(usage.turn_count)} />
+            <Stat label="Calls" value={compactCount(usage.iteration_count)} />
+            <Stat label="Tools" value={compactCount(usage.tool_call_count)} />
           </dl>
           <dl
             aria-label="Prompt cache"
@@ -621,10 +641,10 @@ export function SessionStatsPanel({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <dt className="truncate font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+      <dt className="text-ui text-dialog-hint">
         {label}
       </dt>
-      <dd className="truncate font-mono text-chip font-bold tabular-nums text-white">
+      <dd className="mt-1 text-body font-bold tabular-nums text-white">
         {value}
       </dd>
     </div>
@@ -642,13 +662,13 @@ function CacheStat({
 }) {
   return (
     <div className="min-w-0">
-      <dt className="truncate font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+      <dt className="text-ui text-dialog-hint">
         {label}
       </dt>
-      <dd className="truncate font-mono text-chip font-bold tabular-nums text-white">
+      <dd className="mt-1 text-body font-bold tabular-nums text-white">
         {value}
       </dd>
-      <dd className="mt-0.5 text-balance font-mono text-chip text-dialog-hint">
+      <dd className="mt-1 text-pretty text-ui text-dialog-hint">
         {explanation}
       </dd>
     </div>
@@ -669,10 +689,10 @@ function Meta({
 }) {
   return (
     <div className="flex min-w-0 items-baseline gap-1.5" title={title}>
-      <dt className="shrink-0 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+      <dt className="shrink-0 text-ui text-dialog-hint">
         {label}
       </dt>
-      <dd className="min-w-0 truncate font-mono text-meta font-bold text-white">
+      <dd className="min-w-0 break-all text-ui font-bold text-white">
         {value}
       </dd>
     </div>

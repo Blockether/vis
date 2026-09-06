@@ -3810,6 +3810,7 @@ describe("every control is drawn in the gallery", () => {
   // Naming the owner keeps the exception closed: a new component module must either
   // get its own story or say which existing frame actually exercises it.
   const indirectStoryOwner: Record<string, string> = {
+    SessionHealth: "./SessionStats.stories.tsx",
     AnnotationLayer: "./MarkdownArtifact.stories.tsx",
     ChatContent: "./LiveView.stories.tsx",
     HumanInputPrompt: "../dev/humanInput.stories.tsx",

@@ -40,6 +40,29 @@
                     "prompt_cache_sample_count" 7}
                    (state/session-usage-info "session"))))))
 
+(defdescribe
+  session-health-wire-test
+  (it "ships measured request health as snake-case without replacing it with cumulative usage"
+      (with-redefs [lp/db-info
+                    (constantly ::db)
+
+                    persistance/db-session-usage-stats
+                    (constantly {:input-tokens 900000
+                                 :health {:last-request-tokens 32000
+                                          :budget-tokens 200000
+                                          :call 5
+                                          :stale true
+                                          :roots [{:path "/linked"}]}})]
+
+        (let [usage (state/session-usage-info "session")]
+          (expect (= 900000 (get usage "input_tokens")))
+          (expect (= {"last_request_tokens" 32000
+                      "budget_tokens" 200000
+                      "call" 5
+                      "stale" true
+                      "roots" [{"path" "/linked"}]}
+                     (get usage "health")))))))
+
 (def ^:private tool-error
   {:message "rg spec has unknown keys: spec."
    :data {:phase :python/host :type :vis/tool-failure :symbol :rg}})

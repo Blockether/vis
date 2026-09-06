@@ -25,6 +25,108 @@
   (:import (java.io File)
            (java.util.concurrent CountDownLatch TimeUnit)))
 
+(defdescribe
+  session-health-test
+  (it
+    "keeps request input separate from totals and later unmeasured calls"
+    (let [s
+          (h/store)
+
+          sid
+          (h/store-session! s {:channel :api})
+
+          tid
+          (persistance/db-store-session-turn! s
+                                              {:parent-session-id (str sid)
+                                               :user-request "measure"})
+
+          snapshot
+          {:budget-tokens 200000
+           :reminder-tokens 150000
+           :model-input-limit 272000
+           :breakdown [{:label "Main AGENTS.md" :tokens 42 :path "/work/AGENTS.md"}]
+           :roots [{:path "/work/linked"}]}]
+
+      (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 90000 "output" 2}})
+      (h/store-iteration!
+        s
+        {:session-turn-id tid :code "" :tokens {"input" 32000 "output" 3} :request-health snapshot})
+      (let [usage (persistance/db-session-usage-stats s (str sid))]
+        (expect (= 122000 (:input-tokens usage)))
+        (expect (= (assoc snapshot
+                     :last-request-tokens 32000
+                     :call 2
+                     :turn 1
+                     :iteration 2
+                     :stale false)
+                   (dissoc (:health usage) :measured-at)))
+        (expect (pos? (get-in usage [:health :measured-at])))
+        (expect (= snapshot
+                   (:request-health (last (persistance/db-list-session-turn-iterations s tid))))))
+      (h/store-iteration! s {:session-turn-id tid :code "" :error {:message "No measurement"}})
+      (expect (true? (get-in (persistance/db-session-usage-stats s (str sid)) [:health :stale])))
+      (expect (= 2 (get-in (persistance/db-session-usage-stats s (str sid)) [:health :call])))))
+  (it "marks the last measured request stale when a new turn has not answered"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :api})
+
+            tid
+            (persistance/db-store-session-turn! s
+                                                {:parent-session-id (str sid)
+                                                 :user-request "first"})]
+
+        (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 8000 "output" 1}})
+        (persistance/db-store-session-turn! s {:parent-session-id (str sid) :user-request "next"})
+        (let [health (:health (persistance/db-session-usage-stats s (str sid)))]
+          (expect (= 8000 (:last-request-tokens health)))
+          (expect (= 1 (:turn health)))
+          (expect (true? (:stale health))))))
+  (it "never pairs a retry's input with a superseded request's metadata"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :api})
+
+            tid
+            (persistance/db-store-session-turn! s
+                                                {:parent-session-id (str sid)
+                                                 :user-request "retry"})]
+
+        (h/store-iteration! s
+                            {:session-turn-id tid
+                             :code ""
+                             :tokens {"input" 8000 "output" 1}
+                             :request-health {:budget-tokens 200000}})
+        (persistance/db-retry-session-turn! s tid {:status :running})
+        (expect (nil? (:health (persistance/db-session-usage-stats s (str sid)))))
+        (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 4000 "output" 1}})
+        (let [health (:health (persistance/db-session-usage-stats s (str sid)))]
+          (expect (= 4000 (:last-request-tokens health)))
+          (expect (= 1 (:call health)))
+          (expect (not (contains? health :budget-tokens))))))
+  (it
+    "does not invent a budget for historical input or a measurement for zero input"
+    (let [s
+          (h/store)
+
+          sid
+          (h/store-session! s {:channel :api})
+
+          tid
+          (persistance/db-store-session-turn! s {:parent-session-id (str sid) :user-request "old"})]
+
+      (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 0 "output" 0}})
+      (expect (nil? (:health (persistance/db-session-usage-stats s (str sid)))))
+      (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 4000 "output" 1}})
+      (let [health (:health (persistance/db-session-usage-stats s (str sid)))]
+        (expect (= 4000 (:last-request-tokens health)))
+        (expect (not (contains? health :budget-tokens)))
+        (expect (not (contains? health :roots)))))))
+
 ;; ─── from db_test.clj ───
 
 (h/use-mem-store!)

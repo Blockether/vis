@@ -5183,6 +5183,7 @@
           ;; surfaced on the routing trace, same as an empty-reply resend.
           refusal-fallback-events (atom [])
           provider-tools (model-facing-tools (:sandbox-caps environment))
+          request-health (prompt/request-health environment messages provider-tools)
           ask-opts
           (rt/with-default-ask-code-idle-timeout
             (cond-> {;; ONE tool on the wire: the model takes every action
@@ -5604,6 +5605,7 @@
                                             {:code "(final-answer-validation)"
                                              :phase :vis/final-answer-validation})}])
              :final-result nil
+             :request-health request-health
              :api-usage api-usage
              :prompt-cache (:prompt-cache ask-result)
              :prompt-cache-reusable-tokens prompt-cache-reusable-tokens
@@ -5625,6 +5627,7 @@
             {:thinking thinking
              :blocks blocks
              :final-result {:final? true :answer value}
+             :request-health request-health
              :api-usage api-usage
              :prompt-cache (:prompt-cache ask-result)
              :prompt-cache-reusable-tokens prompt-cache-reusable-tokens
@@ -5649,6 +5652,7 @@
          :blocks blocks
          :tool-calls tool-calls
          :final-result nil
+         :request-health request-health
          :api-usage api-usage
          :prompt-cache (:prompt-cache ask-result)
          :prompt-cache-reusable-tokens prompt-cache-reusable-tokens
@@ -8738,8 +8742,33 @@
                           ;; model's rates.
                           (let [tc (iteration-token-cost (:api-usage iteration-result)
                                                          (:llm-model iteration-result)
-                                                         (:llm-provider iteration-result))]
+                                                         (:llm-provider iteration-result))
+                                served (resolve-model-info (:router environment)
+                                                           (:llm-provider iteration-result)
+                                                           (:llm-model iteration-result))
+                                ;; Resolution falls back to the router root for missing entries;
+                                ;; that is not evidence of the serving model's input window.
+                                known-served? (and (:llm-provider iteration-result)
+                                                   (:llm-model iteration-result)
+                                                   (= (name (:llm-provider iteration-result))
+                                                      (some-> (:provider served)
+                                                              name))
+                                                   (= (str (:llm-model iteration-result))
+                                                      (str (:name served))))
+                                limit (or (token-limit max-context-tokens)
+                                          (when known-served?
+                                            (or (token-limit (:input-limit served))
+                                                (token-limit (:context served)))))
+                                budget (context-fold-budget limit)]
+
                             (cond-> {:session-turn-id session-turn-id
+                                     :request-health
+                                     (cond-> (assoc (:request-health iteration-result)
+                                               :budget-tokens budget
+                                               :reminder-tokens (long (Math/ceil
+                                                                        (* 0.75 (double budget)))))
+                                       limit
+                                       (assoc :model-input-limit limit))
                                      :code (or block-code "")
                                      :forms forms-vec
                                      :attachments (attachment-storage/offload-attachments

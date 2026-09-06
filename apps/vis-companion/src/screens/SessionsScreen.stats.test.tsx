@@ -15,6 +15,15 @@ afterEach(() => restore());
 // them back.
 describe("the expanded session card", () => {
   const usage = {
+    health: {
+      last_request_tokens: 32_000,
+      budget_tokens: 200_000,
+      reminder_tokens: 150_000,
+      model_input_limit: 272_000,
+      call: 5,
+      breakdown: [{ label: "Main AGENTS.md", tokens: 1_200, path: "/work/AGENTS.md" }],
+      roots: [{ path: "/work/linked", instructions_loaded: false }],
+    },
     turn_count: 2,
     iteration_count: 5,
     tool_call_count: 59,
@@ -52,6 +61,19 @@ describe("the expanded session card", () => {
     );
     return view;
   };
+
+  it("renders the measured request from the usage endpoint, not lifetime totals", async () => {
+    const view = await open();
+    expect(await screen.findByRole("meter", { name: "Context budget" })).toBeTruthy();
+    expect(screen.getByText("16%")).toBeTruthy();
+    expect(screen.getByText("32k")).toBeTruthy();
+    expect(screen.getByText("85k")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /Context breakdown/ }));
+    expect(screen.getByText("/work/AGENTS.md")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /Linked filesystems/ }));
+    expect(screen.getByText("Instructions not loaded")).toBeTruthy();
+    expect(view.requests.filter((r) => r.path.endsWith("/usage"))).toHaveLength(1);
+  });
 
   it("keeps the totals and drops the tool and error rankings", async () => {
     await open();
@@ -98,11 +120,11 @@ describe("the expanded session card", () => {
     expect(value.parentElement?.className).not.toContain("justify-between");
   });
 
-  it("uses the compact type step for both cache values", async () => {
+  it("keeps each cache value attached to its label", async () => {
     await open();
     const cacheValue = await screen.findByText("77%");
-    expect(cacheValue.classList.contains("text-chip")).toBe(true);
-    expect(cacheValue.classList.contains("text-meta")).toBe(false);
+    expect(cacheValue.tagName).toBe("DD");
+    expect(cacheValue.previousElementSibling?.textContent).toBe("Cached input");
   });
 
   it("leaves no warn-coloured value behind on the card", async () => {

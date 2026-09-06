@@ -651,6 +651,41 @@ export const STORY_SESSION_USAGE: SessionUsage = {
   model: 'claude-opus-5',
 };
 
+/** Design-only telemetry at the SessionStatsPanel prop boundary, not live gateway data. */
+export const STORY_SESSION_HEALTH: import('../components/SessionHealth').SessionHealthSnapshot = {
+  lastRequestTokens: 138_020,
+  budgetTokens: 200_000,
+  reminderTokens: 150_000,
+  modelInputLimit: 272_000,
+  call: 23,
+  breakdown: [
+    { label: 'System instructions', tokens: 9_400 },
+    { label: 'Main AGENTS.md', tokens: 3_100, path: '~/vis/AGENTS.md' },
+    { label: 'Linked AGENTS.md', tokens: 1_900, path: '~/spel/AGENTS.md' },
+    { label: 'Tools and skills', tokens: 7_600 },
+    { label: 'Conversation and tool results', tokens: 116_020 },
+  ],
+  roots: [
+    { path: '~/spel', instructionsLoaded: true },
+    { path: '~/svar', instructionsLoaded: false },
+    { path: '~/vis-python-runtime', instructionsLoaded: false },
+  ],
+};
+
+export const STORY_HEALTH_USAGE: SessionUsage = {
+  turn_count: 1,
+  iteration_count: 23,
+  tool_call_count: 41,
+  fold_count: 0,
+  input_tokens: 2_089_615,
+  output_tokens: 18_420,
+  cache_read_share_percent: 93.2,
+  cost_usd: 21.86,
+  duration_ms: 840_000,
+  model: 'gpt-6-astra',
+  provider: 'openai-codex',
+};
+
 /**
  * THE ENGINE'S OWN VIEW. `live-view.fixture.json` is the projection
  * `gateway/human_input_test.clj` pins, so the panel here paints what a real run

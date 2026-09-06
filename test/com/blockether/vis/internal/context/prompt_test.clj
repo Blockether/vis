@@ -7,6 +7,45 @@
             [com.blockether.vis.internal.context.prompt :as prompt]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defdescribe
+  request-health-test
+  (it "attributes sent primary guidance once without rereading it"
+      (with-redefs [agents/primary-instructions
+                    (constantly {:files [{:scope :project
+                                          :source :agents-md
+                                          :path "/work/AGENTS.md"
+                                          :content "abcdabcd"}]})
+
+                    agents/added-root-guidance-index
+                    (constantly [])]
+
+        (let [messages
+              (prompt/assemble-stable-prompt-messages {} {:active-extensions []})
+
+              health
+              (prompt/request-health {} (conj messages {:role "user" :content "abcdefgh"}) [])
+
+              rows
+              (:breakdown health)]
+
+          (expect (= {:label "Main AGENTS.md" :tokens 2 :path "/work/AGENTS.md"}
+                     (first (filter #(= "Main AGENTS.md" (:label %)) rows))))
+          (expect
+            (= 2 (:tokens (first (filter #(= "Conversation and tool results" (:label %)) rows)))))
+          (expect (not (contains? health :last-request-tokens)))
+          (expect (every? #(not (contains? % :content)) rows)))))
+  (it "ignores image bytes and keeps unknown guidance status unknown"
+      (let [health (prompt/request-health
+                     {:workspace {:root "/work"}
+                      :filesystem-roots [{:trunk "/linked" :clone "/linked" :draft :shared}]}
+                     [{:role "user"
+                       :content [{:type "text" :text "abcd"}
+                                 {:type "image_url"
+                                  :image_url {:url "data:image/png;base64,AAAA"}}]}]
+                     [])]
+        (expect (= [{:label "Conversation and tool results" :tokens 1}] (:breakdown health)))
+        (expect (every? #(not (contains? % :instructions-loaded)) (:roots health))))))
+
 (defdescribe prompt-assembly-test
              (it "normalizes core addendum and extension prompt text"
                  (let [ext

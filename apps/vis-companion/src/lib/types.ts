@@ -119,12 +119,28 @@ export interface BrowseListing {
   entries: BrowseEntry[];
 }
 
+/** A persisted request measurement. Missing optional fields were not recorded. */
+export interface SessionHealthData {
+  last_request_tokens: number;
+  budget_tokens?: number;
+  reminder_tokens?: number;
+  model_input_limit?: number;
+  call: number;
+  turn?: number;
+  iteration?: number;
+  measured_at?: number;
+  stale?: boolean;
+  breakdown?: { label: string; tokens: number; path?: string }[];
+  roots?: { path: string; instructions_loaded?: boolean }[];
+}
+
 /**
  * GET /v1/sessions/:sid/usage — the whole-life rollup for one session. Fetched
  * on demand only and deliberately absent from the session list; the gateway
  * memoizes each decoded iteration's tool-call tally.
  */
 export interface SessionUsage {
+  health?: SessionHealthData;
   turn_count?: number;
   iteration_count?: number;
   tool_call_count?: number;
