@@ -2,7 +2,7 @@ name: Native Release
 
 # Companion to release.yml (which cuts the GitHub Release + Clojars deploy). A
 # dispatch can build native engine and terminal-client artifacts per platform.
-# Linux and macOS ARM64 use GitHub-hosted runners.
+# Linux uses GitHub-hosted runners; macOS ARM64 uses the self-hosted builder.
 #
 #   vis-agent-<os>-<arch>-community.tar.gz — engine wrapper, native runtime and CPython
 #   vis-tui-<os>-<arch>.tar.gz              — standalone HTTP/SSE terminal client
@@ -262,17 +262,22 @@ jobs:
           fail_on_unmatched_files: true
 
   # ── macOS arm64 ────────────────────────────────────────────────────────────
-  # Hosted ARM64 macOS only. Native-image memory pressure remains a separate
-  # build gate; tag publishing stays disabled until every platform is proven.
+  # Self-hosted ARM64 macOS. Tag publishing stays disabled until every platform is proven.
   macos:
     name: native / vis-agent-macos-arm64-community.tar.gz
     if: inputs.only != 'linux'
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, ARM64, vis-macos-arm64]
     timeout-minutes: 120
     env:
       VIS_ASSET: vis-agent-macos-arm64-community.tar.gz
       VIS_TUI_ASSET: vis-tui-macos-arm64.tar.gz
     steps:
+      # Native smoke tests must not attach to the user's live gateway.
+      - name: Create isolated build home
+        run: |
+          mkdir -p "$RUNNER_TEMP/vis-native-home"
+          echo "HOME=$RUNNER_TEMP/vis-native-home" >> "$GITHUB_ENV"
+          echo "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-native-home" >> "$GITHUB_ENV"
       # WHERE this build lands, decided once and read by the attach step.
       # A v* ref (a tag push, or a dispatch naming an existing tag) PUBLISHES:
       # the asset is attached to that tag's release, so a CI-only fix can still
@@ -336,7 +341,7 @@ jobs:
       # no-op on a runner that already has it.
       - name: Install native test dependencies
         run: brew install espeak-ng
-      # Persist dependency and build caches between ephemeral hosted runners.
+      # Restore dependencies into the isolated build home.
       - uses: actions/cache@v6
         with:
           path: |
@@ -404,7 +409,7 @@ jobs:
           fail_on_unmatched_files: true
 
   # ── macOS runner pickup guard ──────────────────────────────────────────────
-  # An offline or busy runner, a misspelled override, or a label no machine
+  # An offline or busy runner, or a label no machine
   # carries leaves the job queued, and GitHub waits up to 24 h before failing it.
   # Watch from an unrelated free Linux runner and report the routing problem while
   # the release can still be re-dispatched. This does not cancel a late build; if
@@ -421,7 +426,7 @@ jobs:
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
-      MACOS_RUNNER: macos-26
+      MACOS_RUNNER: vis-macos-arm64
       TARGET_REF: ${{ inputs.tag || github.ref_name }}
       DEADLINE_MINUTES: "25"
     steps:

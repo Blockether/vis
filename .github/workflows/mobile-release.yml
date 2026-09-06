@@ -93,11 +93,8 @@ jobs:
   ios:
     # A tag ships to TestFlight; a manual run only when iOS was asked for.
     if: ${{ github.event_name == 'push' || inputs.platforms != 'android' }}
-    # App Store Connect requires Xcode 26 (iOS 26 SDK) for uploads after April
-    # 2026. Pin the GitHub-hosted macOS 26 image: signing material stays on an
-    # ephemeral GitHub runner, and neither inputs nor repository variables can
-    # route a release onto a self-hosted machine.
-    runs-on: macos-26
+    # The self-hosted Apple-silicon builder must have Xcode 26+ (iOS 26 SDK).
+    runs-on: [self-hosted, macOS, ARM64, vis-macos-arm64]
     timeout-minutes: 90
     steps:
       # Version code is `git rev-list --count HEAD`, so a shallow clone would produce a
@@ -211,15 +208,20 @@ jobs:
           export VIS_ASC_KEY_PATH="$RUNNER_TEMP/AuthKey_${VIS_ASC_KEY_ID}.p8"
           npm run release:ios:store -- --audience ${{ inputs.audience || 'all' }}
 
-      # Delete every materialised credential and restore the temporary runner's
-      # keychain state whether the build passes or fails.
+      # Restore persistent runner state even when certificate import fails midway.
       - name: Restore the runner keychain state
-        if: always() && steps.keychain.outcome == 'success'
+        if: always()
         run: |
           set +e
-          security default-keychain -d user -s $(cat "$RUNNER_TEMP/vis-default-keychain-before")
-          security list-keychain -d user -s $(cat "$RUNNER_TEMP/vis-keychains-before")
-          security delete-keychain "$RUNNER_TEMP/vis-signing.keychain-db"
+          if [ -s "$RUNNER_TEMP/vis-default-keychain-before" ]; then
+            security default-keychain -d user -s $(cat "$RUNNER_TEMP/vis-default-keychain-before")
+          fi
+          if [ -s "$RUNNER_TEMP/vis-keychains-before" ]; then
+            security list-keychain -d user -s $(cat "$RUNNER_TEMP/vis-keychains-before")
+          fi
+          if [ -f "$RUNNER_TEMP/vis-signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/vis-signing.keychain-db"
+          fi
           rm -f "$RUNNER_TEMP/vis-distribution.p12" "$RUNNER_TEMP"/AuthKey_*.p8 \
                 "$RUNNER_TEMP/vis-keychains-before" "$RUNNER_TEMP/vis-default-keychain-before"
 

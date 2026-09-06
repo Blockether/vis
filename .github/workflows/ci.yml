@@ -24,7 +24,7 @@ jobs:
   # native binary is built with. JVM users may use any JDK 25+ distribution.
   # fail-fast false so each OS reports independently. Windows is not supported.
   #
-  # Both trusted pushes and fork pull requests use ephemeral GitHub-hosted runners.
+  # Only main pushes use the local Mac; all pull requests stay on hosted runners.
   tests:
     name: tests / ${{ matrix.name }}
     runs-on: ${{ matrix.host }}
@@ -34,8 +34,14 @@ jobs:
       matrix:
         include:
           - { name: linux, host: ubuntu-latest }
-          - { name: macos, host: macos-26 }
+          - name: macos
+            host: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","ARM64","vis-macos-arm64"]') || 'macos-26' }}
     steps:
+      # CI fixtures must never overwrite the self-hosted user's Vis state.
+      - name: Create isolated CI home
+        run: |
+          mkdir -p "$RUNNER_TEMP/vis-ci-home"
+          echo "HOME=$RUNNER_TEMP/vis-ci-home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
       # Oracle GraalVM's 25.1 feature train is GDS-token gated (not on the free
       # download channel) and setup-graalvm's CE resolver predates the 25.1
