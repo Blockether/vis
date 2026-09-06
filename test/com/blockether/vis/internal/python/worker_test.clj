@@ -147,36 +147,41 @@
               (deref call 1000 nil)
               (swap! @#'worker/workers dissoc "session")
               (expect (= :vis/python-worker-timeout (:type observed))))))))
-  (it "fails a host call in flight so an interrupted guest parked in it unwinds"
-      (with-worker-context
-        (fn [session]
-          (let [dispatch
-                (deref #'python-host/dispatch)
+  (it
+    "fails a host call in flight so an interrupted guest parked in it unwinds"
+    (with-worker-context
+      (fn [session]
+        (let [dispatch
+              (deref #'python-host/dispatch)
 
-                released
-                (promise)]
+              entered
+              (promise)
 
-            (with-redefs-fn {#'python-host/dispatch (fn [caller tool payload]
-                                                      (if (= "slow" tool)
-                                                        (do (deref released 30000 nil) "\"late\"")
-                                                        (dispatch caller tool payload)))}
-              (fn []
-                (let [block (future
-                              (env/run-python-block
-                                session
-                                "import vis_runtime\nprint(vis_runtime.host_call('slow', '{}'))"))]
-                  (try (Thread/sleep 500)
-                       (expect (true? (env/interrupt-guest! session)))
-                       (let [answer (deref block 5000 ::parked)]
-                         (expect (not= ::parked answer))
-                         ;; The failed host call lets the guest run Python again,
-                         ;; where the pending KeyboardInterrupt lands; either
-                         ;; spelling is the block ending for the right reason.
-                         (expect (re-find #"(?i)interrupt" (str answer))))
-                       (expect (worker/worker-live? session))
-                       ;; The same worker, its tools intact, serves the next block.
-                       (expect (= "ok\n" (:stdout (env/run-python-block session "print('ok')"))))
-                       (finally (deliver released true))))))))))
+              released
+              (promise)]
+
+          (with-redefs-fn {#'python-host/dispatch
+                           (fn [caller tool payload]
+                             (if (= "slow" tool)
+                               (do (deliver entered true) (deref released 30000 nil) "\"late\"")
+                               (dispatch caller tool payload)))}
+            (fn []
+              (let [block (future
+                            (env/run-python-block
+                              session
+                              "import vis_runtime\nprint(vis_runtime.host_call('slow', '{}'))"))]
+                (try (expect (true? (deref entered 5000 false)))
+                     (expect (true? (env/interrupt-guest! session)))
+                     (let [answer (deref block 5000 ::parked)]
+                       (expect (not= ::parked answer))
+                       ;; The failed host call lets the guest run Python again,
+                       ;; where the pending KeyboardInterrupt lands; either
+                       ;; spelling is the block ending for the right reason.
+                       (expect (re-find #"(?i)interrupt" (str answer))))
+                     (expect (worker/worker-live? session))
+                     ;; The same worker, its tools intact, serves the next block.
+                     (expect (= "ok\n" (:stdout (env/run-python-block session "print('ok')"))))
+                     (finally (deliver released true))))))))))
   (it "refuses to restart a retired worker until its session is rebuilt"
       (with-worker-context (fn [session]
                              (expect (= "1\n" (:stdout (env/run-python-block session "print(1)"))))
@@ -256,13 +261,15 @@
                                                     [self 424242 424242])}
           #(expect (= [self 424242] (vec ((deref #'loop/runtime-pids))))))))
   (it
-    "kills the real session process when native sleep does not unwind"
-    (let [entered
-          (promise)
+    "kills the real session process when a native wait does not unwind"
+    (let [marker
+          (java.io.File/createTempFile "vis-native-wait-" ".ready")
+
+          _
+          (.delete marker)
 
           made
-          (env/create-python-context {(symbol "entered") (fn []
-                                                           (deliver entered true))}
+          (env/create-python-context {}
                                      (constantly [])
                                      {:worker? true
                                       :jail-enabled? false
@@ -281,13 +288,26 @@
           retired
           (atom false)
 
+          ;; The notifier acquires the condition only after the main thread
+          ;; releases it in wait: interruption cannot overtake the native wait.
           execution
-          (future (try (env/run-python-block session "entered()
-import time
-time.sleep(30)")
-                       (catch Throwable _ :stopped)))]
+          (future (env/run-python-block
+                    session
+                    (str "import threading\n"
+                         "condition = threading.Condition()\n"
+                         "def notify_waiting():\n"
+                         "    with condition:\n"
+                         "        with open("
+                         (pr-str (str marker))
+                         ", 'w') as ready_file:\n"
+                         "            ready_file.write('ready')\n" "with condition:\n"
+                         "    threading.Thread(target=notify_waiting, daemon=True).start()\n"
+                         "    condition.wait(30)\n")))]
 
-      (try (expect (true? (deref entered 5000 false)))
+      (try (expect (loop [remaining 500]
+                     (cond (.exists marker) true
+                           (or (zero? remaining) (realized? execution)) false
+                           :else (do (Thread/sleep 10) (recur (dec remaining))))))
            (expect (true? ((deref #'loop/interrupt-block!)
                             session
                             execution
@@ -296,7 +316,8 @@ time.sleep(30)")
            (expect (true? @retired))
            (expect (false? (worker/worker-live? session)))
            (expect (false? (.isAlive process)))
-           (finally (try (env/dispose-python-context! session) (catch Throwable _ nil))))))
+           (finally (try (env/dispose-python-context! session) (catch Throwable _ nil))
+                    (.delete marker)))))
   (it "reclaims a condemned environment's worker before detaching it"
       (let [retired
             (atom false)

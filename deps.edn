@@ -171,10 +171,8 @@
   :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}
   ;; The whole-repo suite. The two path lists below carry the same test roots and
   ;; must stay in step: :extra-paths puts them on the CLASSPATH, the bare paths
-  ;; after `lazytest.main` are what lazytest WALKS (`dev` is classpath-only). The
-  ;; alias has to keep mainng lazytest.main — `run_tests` appends its own selector
-  ;; flags (--namespace / --var) to `clojure -M:test`.
-  :test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+  ;; after `lazytest.main` are what Lazytest walks (`dev` is classpath-only).
+  :test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}}
          :extra-paths ["test" "dev"]
          :jvm-opts ["-Xmx2g" "-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
                     "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
@@ -190,7 +188,7 @@
   ;;   clojure -T:build native && clojure -M:test-native
   ;; No network hook: its only socket is the loopback provider stub it serves itself,
   ;; and the binary under test is a separate process the hook cannot see.
-  :test-native {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+  :test-native {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}}
                 :extra-paths ["test-native"]
                 :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
                            "--enable-preview" "--sun-misc-unsafe-memory-access=allow"]

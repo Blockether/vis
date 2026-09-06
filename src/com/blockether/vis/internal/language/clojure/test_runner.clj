@@ -1020,14 +1020,14 @@
                     exclude))))
 
 (defn- lazytest-cli?
-  "True when root's deps.edn :test alias mains lazytest.main, so selector flags\n   appended to `clojure -M:test` reach lazytest's own CLI parser. Guards the\n   pass-through: only deps.edn projects whose :test alias actually runs\n   lazytest.main share the contract vocabulary."
+  "True when :test uses Lazytest’s CLI and accepts its selector flags."
   [root]
   (try (let [f (io/file root "deps.edn")]
          (when (.isFile f)
            (let [edn (edn/read-string (slurp f))
                  main-opts (get-in edn [:aliases :test :main-opts])]
 
-             (boolean (some (fn* [p1__44725#] (= "lazytest.main" p1__44725#)) main-opts)))))
+             (boolean (some #{"lazytest.main"} main-opts)))))
        (catch Throwable _ false)))
 
 (defn- cli-command-for

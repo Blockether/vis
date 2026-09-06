@@ -71,20 +71,15 @@
         (expect (str/includes? (:message err) "ValueError: probe-real"))
         (expect (= :python/runtime (:phase (:data err))))))
   (it "keeps the real exception when the position walk itself fails"
-      (let [ctx
-            (tpc/shared)
-
-            _
-            (ep/run-python-block ctx
-                                 (str "def __vis_err_pos_now__():\n"
-                                      "    raise RuntimeError('simulated fault')\n"
-                                      "globals()['__vis_err_pos_now__'] = __vis_err_pos_now__\n"))
-
-            err
-            (:error (ep/run-python-block ctx "raise ValueError('probe-degraded')"))]
-
-        (expect (str/includes? (:message err) "ValueError: probe-degraded"))
-        (expect (not (str/includes? (:message err) "host call returned null"))))))
+      (tpc/with-own
+        [ctx {}]
+        (ep/run-python-block ctx
+                             (str "def __vis_err_pos_now__():\n"
+                                  "    raise RuntimeError('simulated fault')\n"
+                                  "globals()['__vis_err_pos_now__'] = __vis_err_pos_now__\n"))
+        (let [err (:error (ep/run-python-block ctx "raise ValueError('probe-degraded')"))]
+          (expect (str/includes? (:message err) "ValueError: probe-degraded"))
+          (expect (not (str/includes? (:message err) "host call returned null")))))))
 
 (defdescribe python-binding-aliases-test
              ;; A host verb is reachable in the sandbox under its canonical Python name
@@ -310,39 +305,43 @@
           (expect (not (str/includes? out "`ntr`")))
           (expect (not (str/includes? out "# saved:")))))))
 
-(defdescribe persist-session-defs-budget-test
-             ;; Regression: `persist-session-defs!` runs on the turn thread right after EVERY
-             ;; block and one line BEFORE the turn's outcome is persisted, and "best effort"
-             ;; covered only a THROW. A session whose guest snapshot never comes back - one
-             ;; interpreter, one GIL, so the snapshot waits on whatever the guest is still
-             ;; running - held the turn worker forever: no terminal ever reached the durable
-             ;; turn row, the turn stayed `:running` in every listing, and the next cancel was
-             ;; refused as `:not-running`, so pressing stop did nothing.
-             (it "returns within its budget when the guest snapshot never returns"
-                 (tpc/with-own
-                   [ctx {}]
-                   (let [sid
-                         (str "vis-test-defs-budget-" (System/nanoTime))
+(defdescribe
+  persist-session-defs-budget-test
+  ;; Regression: `persist-session-defs!` runs on the turn thread right after EVERY
+  ;; block and one line BEFORE the turn's outcome is persisted, and "best effort"
+  ;; covered only a THROW. A session whose guest snapshot never comes back - one
+  ;; interpreter, one GIL, so the snapshot waits on whatever the guest is still
+  ;; running - held the turn worker forever: no terminal ever reached the durable
+  ;; turn row, the turn stayed `:running` in every listing, and the next cancel was
+  ;; refused as `:not-running`, so pressing stop did nothing.
+  (it "returns within its budget when the guest snapshot never returns"
+      (let [entered
+            (promise)
 
-                         _
-                         (ep/run-python-block ctx
-                                              (str "import time\n" "def __vis_defs_snapshot__():\n"
-                                                   "    time.sleep(30)\n" "    return ''\n"))
+            released
+            (promise)]
 
-                         started
-                         (System/currentTimeMillis)
+        (tpc/with-own
+          [ctx
+           {(symbol "snapshot_wait") (fn []
+                                       (deliver entered true)
+                                       (deref released 30000 nil))}]
+          (let [sid (str "vis-test-defs-budget-" (System/nanoTime))]
+            (try (ep/run-python-block
+                   ctx
+                   "def __vis_defs_snapshot__():\n    snapshot_wait()\n    return ''\n")
+                 (let [started (System/nanoTime)
+                       out (ep/persist-session-defs! ctx sid)
+                       elapsed (/ (- (System/nanoTime) started) 1000000.0)]
 
-                         out
-                         (ep/persist-session-defs! ctx sid)
-
-                         elapsed
-                         (- (System/currentTimeMillis) started)]
-
-                     (try (expect (nil? out))
-                          (expect
-                            (< elapsed 15000)
-                            (str "persist-session-defs! held the turn thread for " elapsed "ms"))
-                          (finally (.delete (io/file (paths/sandbox-defs-file sid)))))))))
+                   (expect (realized? entered))
+                   (expect (nil? out))
+                   (expect (< elapsed 15000)
+                           (str "persist-session-defs! held the turn thread for " elapsed "ms")))
+                 (finally
+                   ;; Release the real guest before teardown, not after a 30s sleep.
+                   (deliver released true)
+                   (.delete (io/file (paths/sandbox-defs-file sid))))))))))
 
 (defdescribe
   sandbox-open-flush-test

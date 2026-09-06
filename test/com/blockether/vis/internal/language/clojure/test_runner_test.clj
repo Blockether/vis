@@ -894,6 +894,16 @@
 ;; only on repl_start.
 (defdescribe
   run-tests-aliases-test
+  (it "passes selectors through the upstream Lazytest CLI"
+      (let [root
+            (temp-project! {"deps.edn" (pr-str {:aliases {:test {:main-opts ["-m"
+                                                                             "lazytest.main"]}}})})
+
+            picked
+            (cli-command-for (.getPath root) {:nses ['suite.a]} [])]
+
+        (expect (:selectors? picked))
+        (expect (= ["--namespace" "suite.a"] (vec (take-last 2 (:cmd picked)))))))
   (it "reads `aliases` as alias NAMES — colon or not, scalar or list"
       (expect (= ["bench"] (:aliases (normalize-arg {"aliases" "bench"}))))
       (expect (= ["bench"] (:aliases (normalize-arg {"aliases" ":bench"}))))

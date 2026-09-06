@@ -19,7 +19,7 @@
            :ns-default vis-tui.build}
   :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}
   :run {:main-opts ["-m" "com.blockether.vis.tui.main"]}
-  :test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
+  :test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}
                       org.jcodec/jcodec {:mvn/version "0.2.5"}}
          :extra-paths ["test"]
          :main-opts ["-m" "lazytest.main" "test"]}}}
