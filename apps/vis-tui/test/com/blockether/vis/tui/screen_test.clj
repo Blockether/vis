@@ -190,41 +190,26 @@
 (defdescribe terminal-cell-size-probe-test
              ;; Regression, issue td-03018d: cmux's trailing CSI 18 t reply was typed into the composer.
              (it
-               "drains delayed terminal-size replies after finding the cell dimensions"
+               "drains separately delivered terminal-size replies after finding the cell dimensions"
+               ;; A sleeping writer can wake after the probe's quiet window on macOS.
+               ;; Bound each read to one reply instead: returning after the first parsed
+               ;; dimensions must still leave the second reply unread and fail this test.
                (with-open [terminal-in
-                           (java.io.PipedInputStream.)
-
-                           reply-out
-                           (java.io.PipedOutputStream. terminal-in)
+                           (proxy [java.io.ByteArrayInputStream]
+                             [(.getBytes "\u001b[6;20;10t\u001b[8;76;132t" "UTF-8")]
+                             (available [] (min 10 (proxy-super available))))
 
                            terminal-out
                            (java.io.ByteArrayOutputStream.)]
 
-                 (let [dimensions
-                       (atom nil)
-
-                       reply-writer
-                       (future (.write reply-out (.getBytes "\u001b[6;20;10t" "UTF-8"))
-                               (.flush reply-out)
-                               (Thread/sleep 10)
-                               (.write reply-out (.getBytes "\u001b[8;76;132t" "UTF-8"))
-                               (.flush reply-out))]
-
-                   (with-redefs [vis/tty-in
-                                 (delay terminal-in)
-
-                                 vis/tty-out
-                                 (delay terminal-out)
-
-                                 timg/graphical-terminal?
-                                 (constantly true)
-
-                                 timg/set-cell-dimensions!
-                                 (fn [w h]
-                                   (reset! dimensions {:w w :h h}))]
+                 (let [dimensions (atom nil)]
+                   (with-redefs [vis/tty-in (delay terminal-in)
+                                 vis/tty-out (delay terminal-out)
+                                 timg/graphical-terminal? (constantly true)
+                                 timg/set-cell-dimensions! (fn [w h]
+                                                             (reset! dimensions {:w w :h h}))]
 
                      (probe-terminal-cell-size!))
-                   @reply-writer
                    (expect (= {:w 10 :h 20} @dimensions))
                    (expect (zero? (.available terminal-in)))))))
 
