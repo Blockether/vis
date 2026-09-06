@@ -475,3 +475,73 @@ describe("what this device found dark outlives the app", () => {
     expect(told).toEqual([]);
   });
 });
+
+// Regression, user report (paraphrased: "sometimes it shows a gateway as active even
+// though it is off — as if some leftover state were saved on iOS"): a machine this
+// device had answered for came back on the next launch wearing a solid mark over its
+// cached rows, and a laptop closed in between does not refuse the socket, it blackholes
+// it — so the mark stayed solid for the transport's whole 30s deadline. The cached rows
+// are paint, not proof: until the machine speaks this run its mark is an outline that
+// says it is being checked, and nine seconds of silence is the verdict.
+describe("a machine painted from cache has not been heard from", () => {
+  const strip = () => within(screen.getByLabelText("Machines"));
+
+  /** Let every poll, probe and repaint that fits inside `ms` happen. */
+  const settle = async (ms = 0) => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  };
+
+  it("says so until it speaks, and calls it dark on nine seconds of silence", async () => {
+    const beta: MachineFixture = {
+      label: "beta",
+      sessions: [listSession({ id: "b1", title: "Second", workspace: { root: "/w/two" } })],
+    };
+    const view = renderSessionsScreen({ machines: [fleet()[0], beta] });
+    restore = view.restore;
+    // It answered here, so this device now holds beta's list — and its tile says nothing
+    // about being checked once the machine has spoken.
+    await userEvent.click(strip().getByRole("button", { name: /^beta/ }));
+    await screen.findByText("Second");
+    expect(strip().getByRole("button", { name: /^beta/ }).getAttribute("title")).toBeNull();
+    view.unmount();
+
+    // The relaunch: the same beta, now closed and taking the socket without answering.
+    vi.useFakeTimers();
+    const again = renderSessionsScreen({
+      machines: [fleet()[0], { ...beta, hangs: true }],
+      at: view.conns,
+    });
+    restore = () => {
+      vi.useRealTimers();
+      again.restore();
+      view.restore();
+    };
+    await settle(50);
+    const tile = () => strip().getByRole("button", { name: /^beta/ });
+    // Still a place to go, but not yet a machine that is there: the tile says so.
+    expect(tile().getAttribute("aria-pressed")).toBe("false");
+    expect(tile().getAttribute("title")).toBe("Checking beta…");
+    expect(strip().queryByRole("button", { name: /^Reconnect to beta/ })).toBeNull();
+    expect(machineOutage(view.conns[1].url)).toBeNull();
+
+    // Not the transport's half minute: nine seconds of silence is the answer.
+    await settle(8_000);
+    expect(tile().getAttribute("title")).toBe("Checking beta…");
+    await settle(1_500);
+    const retry = strip().getByRole("button", { name: /^Reconnect to beta/ });
+    expect(retry.getAttribute("title")).toBe("beta is not answering — silent for 9s");
+    expect(machineOutage(view.conns[1].url)).toBe("silent for 9s");
+  });
+
+  it("does not question a machine that answered this run", async () => {
+    const view = renderSessionsScreen({ machines: fleet() });
+    restore = view.restore;
+    await screen.findByText("First");
+    // Both answered: neither tile is being checked, neither is a retry.
+    for (const name of [/^alpha/, /^beta/])
+      expect(strip().getByRole("button", { name }).getAttribute("title")).toBeNull();
+    expect(strip().queryByRole("button", { name: /^Reconnect to/ })).toBeNull();
+  });
+});

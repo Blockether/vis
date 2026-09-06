@@ -22,10 +22,13 @@ import {
   onGatewayIncompatible,
 } from "./lib/gateway";
 import {
+  forgetOpenSession,
   getPrimaryConnection,
   loadConnections,
   loadConnectionsSync,
+  loadOpenSession,
   loadSubscribedSessions,
+  rememberOpenSession,
   rememberSubscribedSession,
   setActiveUrl,
   setPrimaryUrl,
@@ -33,13 +36,15 @@ import {
   upsertConnection,
   removeConnection,
 } from "./lib/storage";
+import type { OpenSession } from "./lib/storage";
 import {
   bestAddress,
   hostOf,
   isUpgrade,
   mergeAddresses,
 } from "./lib/endpoints";
-import { onWake } from "./lib/wake";
+import { machineOutage } from "./lib/fleet-outage";
+import { onAway, onWake } from "./lib/wake";
 import { hydrateReadMarks } from "./lib/unread";
 import { warm } from "./lib/warm";
 import { SessionSubscriptionHub } from "./lib/subscriptions";
@@ -115,6 +120,28 @@ type Tab = "sessions" | "connect";
 
 /** How long a parked share still steers navigation on the next launch. */
 const RESUMABLE_SHARE_MS = 5 * 60 * 1000;
+
+/**
+ * How long after a transcript was last on screen a cold start still reopens it.
+ * The pointer is re-stamped as the app goes to the background, so this measures
+ * absence, not reading time: a relaunch minutes after iOS discarded the
+ * WebContent process lands back in the conversation; one hours later lands on
+ * the list, where a stale transcript would only mislead.
+ */
+const RESUMABLE_SESSION_MS = 15 * 60 * 1000;
+
+/** The saved gateway a cold start may reopen `open` on, or null to start on the list. */
+function resumableConnection(
+  open: OpenSession,
+  conns: GatewayConn[],
+  now = Date.now(),
+): GatewayConn | null {
+  if (now - open.at > RESUMABLE_SESSION_MS) return null;
+  // A machine the fleet already knows to be dark gets the list with its
+  // "not answering" tile, never a transcript that cannot be read or written.
+  if (machineOutage(open.url) !== null) return null;
+  return conns.find((c) => c.url === open.url) ?? null;
+}
 
 // The splash is allowed to be a moment, never a state. Reading the stored
 // gateways is a native bridge call, and an iOS bridge can go silent after the
@@ -306,6 +333,7 @@ export function App() {
       setActive(conn);
       setOpenTarget({ conn, sid, fresh });
       void rememberSubscribedSession(conn.url, sid).catch(() => undefined);
+      void rememberOpenSession(conn.url, sid).catch(() => undefined);
     },
     [],
   );
@@ -331,9 +359,23 @@ export function App() {
   useEffect(() => {
     const previous = shownScreen.current;
     shownScreen.current = screen;
+    // Going back to the list is the moment a cold start stops owing the
+    // transcript: only an app that DIED with one open reopens it.
+    if (previous && !screen) void forgetOpenSession().catch(() => undefined);
     if (!isSessionEntered(previous, screen)) return;
     setSettingsDestination(null);
   }, [screen]);
+
+  // The pointer measures absence, not reading time: re-stamp it as the app goes
+  // to the background, so a relaunch minutes after iOS discarded the WebContent
+  // process reopens the transcript that was on screen, however long it was read.
+  useEffect(() => {
+    if (!openTarget) return;
+    const { conn, sid } = openTarget;
+    return onAway(
+      () => void rememberOpenSession(conn.url, sid).catch(() => undefined),
+    );
+  }, [openTarget]);
 
   // A share sheet drop, an Android `ACTION_SEND`, or a Shortcuts run carries a
   // payload but NO destination — and only the human knows which conversation a
@@ -425,18 +467,20 @@ export function App() {
       // relaunch after iOS killed the WebContent process (Capacitor #7810/#7905)
       // reboots from capacitor://localhost's blank hash, not the previous
       // address bar — so a route-less cold start here does NOT mean "go to the
-      // list", it means "we lost the address bar". Resume the last subscribed
-      // session for the active gateway instead, so an abandoned in-flight turn
-      // never gets silently orphaned by a background/foreground cycle.
+      // list", it means "we lost the address bar". Reopen the transcript that
+      // was on screen when the app died, and only that: a launch long after it
+      // was last seen, one whose gateway is known to be dark, and one after the
+      // user had already gone back to the list all start on the list.
       const hash = window.location.hash;
       if (!hash && active) {
-        void loadSubscribedSessions(active.url).then(([sid]) => {
-          if (sid) {
-            openGatewaySession(active, sid);
-          } else {
-            applyRoute(hash);
-          }
-        });
+        void loadOpenSession().then(
+          (open) => {
+            const conn = open && resumableConnection(open, conns);
+            if (open && conn) openGatewaySession(conn, open.sid);
+            else applyRoute(hash);
+          },
+          () => applyRoute(hash),
+        );
       } else {
         applyRoute(hash);
       }
@@ -451,7 +495,7 @@ export function App() {
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
-  }, [ready, routeApplied, applyRoute, active, openGatewaySession]);
+  }, [ready, routeApplied, applyRoute, active, conns, openGatewaySession]);
 
   // Reflect view state back into the URL so the address bar is always shareable.
   useEffect(() => {

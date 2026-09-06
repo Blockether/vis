@@ -176,6 +176,14 @@ const RETRY_NOTE_MS = 3_000;
 // next poll is ten seconds away.
 const RECONNECT_TIMEOUT_MS = 15_000;
 
+// A MACHINE PAINTED FROM CACHE HAS NOT BEEN HEARD FROM. Its rows are paint, not proof,
+// so its first read of the run is bounded: a closed laptop or a peer that dropped off
+// the tailnet blackholes the socket rather than refusing it, and under the request
+// deadline alone the cached rows stood behind a solid mark for half a minute while the
+// machine was off. Nine seconds of silence is the verdict — the same patience the
+// Machines screen gives a health probe — and it is recorded as this device's outage.
+const COLD_PROBE_TIMEOUT_MS = 9_000;
+
 // Each project PAGES its own history, a gateway-cut window at a time — so the DOM is
 // bounded without a global window over the fleet.
 
@@ -455,9 +463,23 @@ export function SessionsScreen({
   // say what came back, in the tile that was pressed, and reading that off the state
   // this call is about to write would be reading it a paint too early.
   const loadMachine = useCallback(
-    async (conn: GatewayConn, signal?: AbortSignal): Promise<string | null> => {
+    async (
+      conn: GatewayConn,
+      signal?: AbortSignal,
+      deadlineMs?: number,
+    ): Promise<string | null> => {
       const key = machineKey(conn);
       const api = clientFor(conn);
+      // A BOUNDED READ FAILS ON ITS OWN DEADLINE. The outer signal is a cancellation —
+      // the screen went away, nobody is owed an answer — and stays one. The deadline is
+      // this read's own verdict: the machine did not speak, and the tile must say so.
+      const probe = deadlineMs === undefined ? null : new AbortController();
+      const cancel = () => probe?.abort();
+      signal?.addEventListener('abort', cancel, { once: true });
+      const giveUp =
+        probe === null ? undefined : window.setTimeout(() => probe.abort(), deadlineMs);
+      const silence =
+        deadlineMs === undefined ? null : `silent for ${Math.round(deadlineMs / 1000)}s`;
       // ANY answer from this machine ends its darkness — both kinds. A gateway that was
       // merely busy when a search ran out of deadline must not stay skipped: the 10s poll
       // is what proves it alive again, and only a machine that keeps failing keeps being
@@ -503,14 +525,15 @@ export function SessionsScreen({
             isRemembered: false,
           }));
         };
-        const next = await api.listSessions(signal);
+        const next = await api.listSessions(probe?.signal ?? signal);
         if (signal?.aborted) return null;
         alive();
         settle(next);
         return null;
       } catch (cause) {
         if (signal?.aborted) return null;
-        const failure = (cause as Error).message;
+        const failure =
+          probe?.signal.aborted && silence !== null ? silence : (cause as Error).message;
         const held = machinesRef.current.find((machine) => machineKey(machine.conn) === key);
         // ONE MISSED READ IS NOT AN OUTAGE (see `fleetMisses`): a machine that was
         // answering a moment ago gets the next read before this device calls it dark.
@@ -533,6 +556,9 @@ export function SessionsScreen({
             isRemembered: false,
           }));
         return failure;
+      } finally {
+        if (giveUp !== undefined) window.clearTimeout(giveUp);
+        signal?.removeEventListener('abort', cancel);
       }
     },
     [patchMachine],
@@ -675,9 +701,18 @@ export function SessionsScreen({
       const paired = connsRef.current;
       const dark = (conn: GatewayConn) => machineOutage(machineKey(conn)) !== null;
       for (const conn of paired.filter(dark)) reconnectMachine(conn);
+      // A machine that has not answered in THIS run is read under `COLD_PROBE_TIMEOUT_MS`:
+      // its cached rows are on screen behind an outline, and the outline must resolve.
+      const unconfirmed = (conn: GatewayConn) =>
+        machinesRef.current.find((machine) => machineKey(machine.conn) === machineKey(conn))
+          ?.answered !== true;
       try {
         await Promise.all(
-          paired.filter((conn) => !dark(conn)).map((conn) => loadMachine(conn, signal)),
+          paired
+            .filter((conn) => !dark(conn))
+            .map((conn) =>
+              loadMachine(conn, signal, unconfirmed(conn) ? COLD_PROBE_TIMEOUT_MS : undefined),
+            ),
         );
       } finally {
         if (background) pollStartedAt.current = null;
@@ -1601,6 +1636,10 @@ export function SessionsScreen({
                 // one thing that machine can still do: ask it again. The name and the
                 // transport's own reason ride the title, where the block cannot speak.
                 const isDown = Boolean(machine.error);
+                // A MACHINE PAINTED FROM CACHE HAS NOT BEEN HEARD FROM YET. Its tile keeps
+                // its place and its press, but the mark stays an outline until the first
+                // read of this run lands (see `COLD_PROBE_TIMEOUT_MS`).
+                const isChecking = !isDown && !machine.answered;
                 const retry = isDown ? retries.get(key) : undefined;
                 return (
                   <MachineTab
@@ -1617,10 +1656,20 @@ export function SessionsScreen({
                     }
                     isNoteError={retry === 'failed'}
                     label={isDown ? `Reconnect to ${name}` : undefined}
-                    title={isDown ? `${name} is not answering — ${machine.error}` : undefined}
+                    title={
+                      isDown
+                        ? `${name} is not answering — ${machine.error}`
+                        : isChecking
+                          ? `Checking ${name}…`
+                          : undefined
+                    }
                     onClick={() => (isDown ? void retryMachine(machine.conn) : selectScope(key))}
                   >
-                    <MachineMark color={machineColor(machineColors, key)} isHollow={isDown} />
+                    <MachineMark
+                      color={machineColor(machineColors, key)}
+                      isHollow={isDown}
+                      isChecking={isChecking}
+                    />
                     {name}
                   </MachineTab>
                 );

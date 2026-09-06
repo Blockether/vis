@@ -313,6 +313,26 @@ describe("MachineMark", () => {
     expect(html).toContain('aria-hidden="true"');
     expect(html).not.toContain("bg-ok");
   });
+
+  // Regression (reported: a machine that was switched off still wore a solid mark
+  // over its cached rows for as long as the request deadline): a machine not yet
+  // heard from this run is an OUTLINE that breathes, and the breath stops in
+  // reduced motion. A verdict never breathes — down wins over checking.
+  it("keeps the outline breathing while the machine is being checked, still once it is down", () => {
+    const checking = renderToStaticMarkup(
+      <MachineMark color={MACHINE_COLORS[7]} isChecking />,
+    );
+    expect(checking).toContain(MACHINE_COLORS[7].rail);
+    expect(checking).not.toContain(MACHINE_COLORS[7].dot);
+    expect(checking).toContain("animate-pulse");
+    expect(checking).toContain("motion-reduce:animate-none");
+
+    const down = renderToStaticMarkup(
+      <MachineMark color={MACHINE_COLORS[7]} isHollow isChecking />,
+    );
+    expect(down).toContain(MACHINE_COLORS[7].rail);
+    expect(down).not.toContain("animate-pulse");
+  });
 });
 
 // Regression (reported: "the new session is button so frequently used that we should

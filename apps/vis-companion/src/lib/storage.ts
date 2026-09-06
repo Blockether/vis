@@ -120,6 +120,7 @@ export async function removeConnection(url: string): Promise<GatewayConn[]> {
     await setPrimaryUrl(conns[0]?.url ?? null);
   await forgetGatewayNotify(url);
   forgetNotifyVerdict(url);
+  if ((await loadOpenSession())?.url === url) await forgetOpenSession();
   if (forgotten) await rememberRevocation(forgotten);
   return conns;
 }
@@ -155,6 +156,8 @@ export async function switchConnectionUrl(
     delete store[from];
     await setRaw(SUBSCRIPTIONS_KEY, JSON.stringify(store));
   }
+  const open = await loadOpenSession();
+  if (open?.url === from) await saveOpenSession({ ...open, url: to });
   await moveGatewayNotify(from, to);
   return rest;
 }
@@ -341,6 +344,54 @@ export async function rememberSubscribedSession(
   return sessions;
 }
 
+// ── The open transcript, one per device ─────────────────────────────
+// Reopening what the user was reading is a promise about the LAST screen, not
+// about every session ever visited: the subscription list above grows for the
+// whole life of a gateway and is never forgotten, so it cannot say what was
+// open when the app died. This pointer is written when a transcript is
+// entered, cleared when the user leaves it, and read once on a cold start. It
+// carries the time it was written so a launch hours later lands on the list.
+const OPEN_SESSION_KEY = "vis.openSession";
+
+export interface OpenSession {
+  url: string;
+  sid: string;
+  /** Epoch milliseconds when the transcript was entered. */
+  at: number;
+}
+
+export async function loadOpenSession(): Promise<OpenSession | null> {
+  const raw = await getRaw(OPEN_SESSION_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<OpenSession> | null;
+    return parsed &&
+      typeof parsed.url === "string" &&
+      typeof parsed.sid === "string" &&
+      typeof parsed.at === "number"
+      ? { url: parsed.url, sid: parsed.sid, at: parsed.at }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveOpenSession(open: OpenSession): Promise<void> {
+  await setRaw(OPEN_SESSION_KEY, JSON.stringify(open));
+}
+
+/** The transcript just entered; a cold start within its grace window reopens it. */
+export async function rememberOpenSession(
+  url: string,
+  sid: string,
+): Promise<void> {
+  await saveOpenSession({ url, sid, at: Date.now() });
+}
+
+/** The user left the transcript: the next launch starts on the list. */
+export async function forgetOpenSession(): Promise<void> {
+  await setRaw(OPEN_SESSION_KEY, "");
+}
 // ── Notifications, per gateway ──────────────────────────────────────
 // Native push is a decision about ONE machine, not about the app: the phone can
 // want a buzz when the work laptop finishes a turn and want silence from the

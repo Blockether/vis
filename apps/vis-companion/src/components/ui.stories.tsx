@@ -507,42 +507,58 @@ export const Bands: Story = {
   ),
 };
 
+/** The machine whose first read of the run has not landed: painted from cache, outline breathing. */
+const STORY_CHECKING = STORY_MACHINES[1].name;
+
 function MachineSwitcherDemo() {
   const [on, setOn] = useState<string>(STORY_MACHINES[0].name);
   return (
     <MachineSwitcher>
-      {STORY_MACHINES.map((machine) => (
-        <MachineTab
-          key={machine.name}
-          isOn={on === machine.name}
-          hasUnread={machine.unread > 0}
-          isDown={machine.isDown}
-          label={`Switch to ${machine.name}`}
-          title={machine.isDown ? `${machine.name} is not answering` : machine.name}
-          onClick={() => setOn(machine.name)}
-        >
-          {machine.name}
-        </MachineTab>
-      ))}
+      {STORY_MACHINES.map((machine) => {
+        const isChecking = !machine.isDown && machine.name === STORY_CHECKING;
+        return (
+          <MachineTab
+            key={machine.name}
+            isOn={on === machine.name}
+            hasUnread={machine.unread > 0}
+            isDown={machine.isDown}
+            label={`Switch to ${machine.name}`}
+            title={
+              machine.isDown
+                ? `${machine.name} is not answering`
+                : isChecking
+                  ? `Checking ${machine.name}…`
+                  : machine.name
+            }
+            onClick={() => setOn(machine.name)}
+          >
+            <MachineMark color={machine.color} isHollow={machine.isDown} isChecking={isChecking} />
+            {machine.name}
+          </MachineTab>
+        );
+      })}
     </MachineSwitcher>
   );
 }
 
 /**
  * A MACHINE IS A HUE AND A NAME, never a hue alone. Down is the same hue drained
- * to an outline: it is still that computer, and nothing is behind it.
+ * to an outline: it is still that computer, and nothing is behind it. Checking is
+ * that outline breathing: painted from cache, not yet heard from this run.
  */
 export const Machines: Story = {
   render: () => (
     <Sheet>
-      <Group of="MachineMark, two sizes and the state that is not answering">
+      <Group of="MachineMark, two sizes, one still being checked and one that is not answering">
         {STORY_MACHINES.map((machine) => (
           <MachineMark key={machine.name} color={machine.color} isHollow={machine.isDown} />
         ))}
+        <MachineMark color={STORY_MACHINES[1].color} isChecking />
         <MachineMark color={STORY_MACHINES[0].color} size="banner" />
+        <MachineMark color={STORY_MACHINES[1].color} size="banner" isChecking />
         <MachineMark color={STORY_MACHINES[2].color} size="banner" isHollow />
       </Group>
-      <Group of="The switcher, with news on one tile and a machine that is down">
+      <Group of="The switcher: news on one tile, one still being checked, one that is down">
         <MachineSwitcherDemo />
       </Group>
       <Group of="What a machine's footer offers">

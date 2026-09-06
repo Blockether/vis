@@ -655,6 +655,7 @@ export function MachineMark({
   color,
   size = 'inline',
   isHollow,
+  isChecking,
 }: {
   color: MachineColor;
   size?: 'inline' | 'banner';
@@ -666,6 +667,15 @@ export function MachineMark({
    * emptied. Nothing is behind it, which is exactly what the block says.
    */
   isHollow?: boolean;
+  /**
+   * The machine has not been heard from yet this run: the same outline, breathing.
+   *
+   * Its rows are painted from what it said last time, and a solid block over them
+   * claimed a reachability nobody had checked. The outline is the one honest thing
+   * the mark can say until the first read lands — it fills when the machine
+   * answers and goes still when it does not. Down wins: a verdict never breathes.
+   */
+  isChecking?: boolean;
 }) {
   // A machine's identity block used to be `size-1.5` everywhere — the same 6px square,
   // at the same size, as the LIVE / WAITING / IDLE dot on every session row beneath
@@ -673,8 +683,9 @@ export function MachineMark({
   // level. In a banner it is the mark of a whole computer and takes the glyph column;
   // riding inside a scope chip's text it stays the 6px it has to be.
   const box = size === 'banner' ? 'size-2.5' : 'size-1.5';
-  const face = isHollow ? `border ${color.rail}` : color.dot;
-  return <span className={`${box} shrink-0 ${face}`} aria-hidden="true" />;
+  const face = isHollow || isChecking ? `border ${color.rail}` : color.dot;
+  const breath = isChecking && !isHollow ? ' animate-pulse motion-reduce:animate-none' : '';
+  return <span className={`${box} shrink-0 ${face}${breath}`} aria-hidden="true" />;
 }
 
 /**
