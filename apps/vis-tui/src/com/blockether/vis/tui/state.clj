@@ -4312,6 +4312,9 @@
                             ;; gateway owns the send from then on), and the failure path
                             ;; marks the row `:unsent?` and nudges this drain again.
                             (:awaiting-ack? head)
+                            ;; Held does not mean started. Attaching here would keep
+                            ;; the tab busy forever behind a turn the gateway paused.
+                            (:queue-paused source-db)
                             ;; A turn is ALREADY streaming into this tab (e.g. the
                             ;; persistent event listener attached a sibling-started turn
                             ;; first): draining now would double-attach the same turn.
@@ -5121,14 +5124,12 @@
 
                       (when (and (or (not (:loading? ws-final)) awaiting-gateway-cancel?)
                                  (seq (:pending-sends ws-final)))
-                        ;; Normal completion drains the next queued turn; a cancel
-                        ;; restores the AUTHORED backlog to the editor instead of
-                        ;; firing it. Mirrored sibling entries are never restored
-                        ;; (or deleted) here — see :restore-pending-to-input.
-                        (if cancelled?
-                          (when (some :mine? (:pending-sends ws-final))
-                            (vreset! restore-pending? true))
-                          (vreset! drain? true)))
+                        ;; Only success drains. Failure may arrive before queue.paused:
+                        ;; leave the backlog visible and the composer free to retry.
+                        ;; Cancellation restores authored requests instead.
+                        (cond cancelled? (when (some :mine? (:pending-sends ws-final))
+                                           (vreset! restore-pending? true))
+                              (not failed?) (vreset! drain? true)))
                       ws-final))))))
 
           ;; A turn the GATEWAY started for this session while this tab was busy

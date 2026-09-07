@@ -3549,14 +3549,15 @@
    cancel NEVER auto-starts. Without that gate a later terminal or attach kick
    could resurrect the stopped backlog and fire it as an uninterruptible follow-up — the
    queue-storm bug. `:force?` is the explicit user resume that deliberately
-   overrides the gate."
+   overrides the cancel gate. A paused queue waits for a fresh submission or
+   explicit resume; background attach must not start its held head."
   ([sid] (drain-next-queued! sid nil))
   ([sid {:keys [force?]}]
    (let [decision (volatile! nil)]
      (update-session!
        sid
        (fn [entry]
-         (if (or (nil? entry) (:current-turn entry))
+         (if (or (nil? entry) (:current-turn entry) (:queue-paused entry))
            entry
            (if-let [[tid
                      {:keys [request messages provider model reasoning-default cancel-token
@@ -3632,14 +3633,15 @@
 (defn- pause-queue!
   "Hold the distinct queued backlog after a failed turn. The failed turn remains
    terminal and is never re-queued; only an explicit resume may start the next
-   user request."
+   user request. A fresh submission can overtake terminal handling, in which case
+   its running recovery must not be paused by the older failure."
   [sid {:keys [reason]}]
   (let [captured (volatile! nil)]
     (update-session! sid
                      (fn [entry]
                        (when entry
                          (let [held (count-queued entry)]
-                           (if (pos? (long held))
+                           (if (and (pos? (long held)) (nil? (:current-turn entry)))
                              (let [gen (inc (long (get-in entry [:queue-paused :gen] 0)))
                                    paused {:reason reason :held held :gen gen :at (util/now-ms)}]
 
@@ -3767,6 +3769,8 @@
 
 (defn submit-turn!
   "Submit one turn for `sid`. Async: starts immediately when idle, otherwise queues.
+   A fresh idle submission clears a provider-failure pause before it starts;
+   success drains the backlog and another failure holds it again.
 
    Returns `{:turn record}` (plus `:idempotent? true` on an idempotency
    replay) or `{:error :session-not-found | :invalid-request, ...}`. One engine
@@ -3887,11 +3891,12 @@
                             idempotency-key
                             (assoc-in [:idempotency idempotency-key] tid)))))
                   :else (do
-                          (vreset! decision [:accepted tid])
+                          (vreset! decision [:accepted tid (:queue-paused entry)])
                           (let [token (or cancel-token (cancellation/cancellation-token))
                                 started-at (util/now-ms)]
 
                             (-> entry
+                                (dissoc :queue-paused)
                                 (assoc :current-turn tid
                                        :last-active started-at)
                                 (assoc-in [:turns tid]
@@ -3928,7 +3933,7 @@
                                 (cond->
                                   idempotency-key
                                   (assoc-in [:idempotency idempotency-key] tid)))))))))
-      (let [[kind v] @decision]
+      (let [[kind v paused] @decision]
         (case kind
           :idempotent
           {:turn (get-turn sid v) :idempotent? true}
@@ -3953,6 +3958,7 @@
 
           :accepted
           (let [turn (get-turn sid tid)]
+            (when paused (append-event! sid "queue.resumed" {:is_auto false}))
             (launch-turn-worker! sid
                                  tid
                                  request

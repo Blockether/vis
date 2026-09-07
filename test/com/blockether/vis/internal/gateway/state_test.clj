@@ -2734,6 +2734,111 @@
            (finally (swap! reg dissoc sid))))))
 
 (defdescribe
+  queue-failure-submit-resume-test
+  ;; A new message is the advertised recovery action after a provider failure.
+  ;; Publish the resume before its worker starts, not after it finishes.
+  (it
+    "resumes a fresh submission immediately, draining only on success and holding on failure"
+    (doseq [failed? [false true]]
+      (let [sid (str (java.util.UUID/randomUUID))
+            registry @#'state/registry
+            saved @registry
+            events (atom [])
+            launched (atom [])
+            token (cancellation/cancellation-token)]
+
+        (try
+          (swap! registry assoc
+            sid
+            {:next-seq 0
+             :turn-order ["failed" "held"]
+             :idempotency {"failed-client" "failed" "held-client" "held"}
+             :turns {"failed" {:turn_id "failed" :status "failed"}
+                     "held"
+                     {:turn_id "held" :status "queued" :request "next request" :queued_at 2}}})
+          (with-redefs-fn {#'lp/by-id (constantly {:id sid})
+                           #'state/session-model (constantly nil)
+                           #'state/append-event! (fn [_ type payload & _]
+                                                   (swap! events conj [type payload]))
+                           #'state/launch-turn-worker! (fn [_ tid _ _]
+                                                         (swap! launched conj
+                                                           [tid (state/queue-paused-info sid)])
+                                                         (swap! events conj ["launched" tid]))}
+            (fn []
+              (#'state/after-turn-terminal! sid "failed" {:failed? true :cancel-token token})
+              (expect (some? (state/queue-paused-info sid)))
+              ;; Background attach and transport replays are not new user intent.
+              (expect (nil? (state/drain-idle! sid)))
+              (doseq [client-id ["failed-client" "held-client"]]
+                (expect (:idempotent? (state/submit-turn! sid
+                                                          {:request "try again"
+                                                           :idempotency-key client-id}))))
+              (expect (some? (state/queue-paused-info sid)))
+              (expect (empty? @launched))
+              (let [request {:request "try again" :idempotency-key "retry"}
+                    result (state/submit-turn! sid request)
+                    tid (get-in result [:turn "turn_id"])]
+
+                (expect (= "streaming" (get-in result [:turn "status"])))
+                (expect (nil? (state/queue-paused-info sid)))
+                (expect (= [[tid nil]] @launched))
+                (expect (= ["queue.paused" "queue.resumed" "launched"] (mapv first @events)))
+                (expect (= ["queue.resumed" {:is_auto false}] (second @events)))
+                (expect (:idempotent? (state/submit-turn! sid request)))
+                (expect (= 3 (count @events)))
+                (expect (= "failed" (get (state/get-turn sid "failed") "status")))
+                (expect (= "queued" (get (state/get-turn sid "held") "status")))
+                (swap! registry update
+                  sid
+                  #(-> %
+                       (dissoc :current-turn)
+                       (assoc-in [:turns tid :status] (if failed? "failed" "completed"))))
+                (#'state/after-turn-terminal! sid tid {:failed? failed? :cancel-token token})
+                (if failed?
+                  (do (expect (= [[tid nil]] @launched))
+                      (expect (some? (state/queue-paused-info sid)))
+                      (expect (= "queued" (get (state/get-turn sid "held") "status"))))
+                  (do (expect (= [[tid nil] ["held" nil]] @launched))
+                      (expect (nil? (state/queue-paused-info sid)))
+                      (expect (= "streaming" (get (state/get-turn sid "held") "status"))))))))
+          (finally (reset! registry saved)))))))
+
+(defdescribe
+  queue-late-failure-pause-test
+  (it "does not re-pause a recovery that started before the old failure's queue handling"
+      (let [sid
+            (str (java.util.UUID/randomUUID))
+
+            registry
+            @#'state/registry
+
+            saved
+            @registry
+
+            events
+            (atom [])]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :current-turn "retry"
+                :turn-order ["failed" "held" "retry"]
+                :turns {"failed" {:turn_id "failed" :status "failed"}
+                        "held" {:turn_id "held" :status "queued" :queued_at 2}
+                        "retry" {:turn_id "retry" :status "running"}}})
+             (with-redefs [state/append-event! (fn [_ type _ & _]
+                                                 (swap! events conj type))]
+               (#'state/after-turn-terminal!
+                sid
+                "failed"
+                {:failed? true :cancel-token (cancellation/cancellation-token)})
+               (expect (nil? (state/queue-paused-info sid)))
+               (expect (empty? @events))
+               (expect (= "retry" (get-in @registry [sid :current-turn])))
+               (expect (= "queued" (get-in @registry [sid :turns "held" :status]))))
+             (finally (reset! registry saved))))))
+
+(defdescribe
   gateway-resource-bounds-test
   (it "retains only the configured replay tail and remembers what it evicted"
       (with-redefs-fn {#'state/EVENT_RING_MAX (delay 3)}

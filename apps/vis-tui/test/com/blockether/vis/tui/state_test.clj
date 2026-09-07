@@ -1717,6 +1717,50 @@
                [:message-received :main [:ast {} [:p {} [:span {} "Provider gateway unavailable"]]]
                 {:status :failed :client-turn-id pending-id}]))]
 
+    (it "keeps the backlog idle after failure, regardless of when queue.paused arrives"
+        (doseq [paused [nil {:reason "turn_failed" :held 1}]]
+          (let [queued [{:text "next request" :turn-id "held" :mine? true}]
+                before (assoc running-db
+                         :workspace {:workspace/root "."}
+                         :pending-sends queued
+                         :queue-paused paused)
+                {after :db fx :fx} ((handler :message-received)
+                                     before
+                                     [:message-received :main []
+                                      {:status :failed :client-turn-id pending-id}])
+                retry ((handler :send-message) after [:send-message "first" :main])
+                resumed ((handler :sync-queue-paused)
+                          (:db retry)
+                          [:sync-queue-paused :main
+                           (#'chat/gateway-event->chunk {"type" "queue.resumed"})])]
+
+            (expect (not-any? #(= [:dispatch [:drain-pending :main]] %) fx))
+            (expect (false? (:loading? after)))
+            (expect (= queued (:pending-sends after)))
+            (expect (= "first" (input/input->text (:input after))))
+            (expect (= 4 (count (:messages (:db retry)))))
+            (expect (= queued (:pending-sends (:db retry))))
+            (expect (nil? (:queue-paused resumed)))
+            (expect (true? (:loading? resumed)))
+            (expect (= queued (:pending-sends resumed)))
+            (expect (not-any? #(= :gateway-enqueue (first %)) (:fx retry))))))
+    (it "never attaches or submits a paused queue head, including a background tab"
+        (doseq [background?
+                [false true]
+
+                head
+                [{:text "next request" :turn-id "held"} {:text "not submitted" :unsent? true}]]
+
+          (let [paused
+                (assoc running-db
+                  :loading? false
+                  :pending-sends [head]
+                  :queue-paused {:reason "turn_failed" :held 1})
+
+                db
+                (if background? {:active-tab-id :other :tab-locals {:main paused}} paused)]
+
+            (expect (= {:db db} ((handler :drain-pending) db [:drain-pending :main]))))))
     (it "hands the failed prompt back to the composer"
         (expect (= "first" (input/input->text (:input failed)))))
     (it "clears the submitted-input snapshot once refilled"
