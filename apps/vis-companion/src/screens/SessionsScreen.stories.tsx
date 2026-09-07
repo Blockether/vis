@@ -139,3 +139,34 @@ export const TouchFleet: Story = {
   ...Fleet,
   globals: { viewport: { value: 'phone', isRotated: false } },
 };
+
+/** A successful delete must settle even when the fixture keeps same-root rows. */
+export const DeleteProject: Story = {
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement);
+    const project = await page.findByRole('region', { name: 'uberworkspace sessions' });
+    const group = within(project);
+    const ask = async () => {
+      const create = group.getByRole('button', { name: /^New session/ });
+      create.focus();
+      await userEvent.hover(create);
+      const actions = await group.findByRole('group', { name: 'uberworkspace actions' });
+      await waitFor(() => expect(getComputedStyle(actions).pointerEvents).toBe('auto'));
+      await userEvent.click(within(actions).getByRole('button', { name: 'Delete' }));
+    };
+
+    await ask();
+    await expect(group.getByRole('group', { name: 'Delete uberworkspace?' })).toBeVisible();
+    await userEvent.click(group.getByRole('button', { name: 'No, keep' }));
+    await expect(group.getByRole('group', { name: 'uberworkspace actions' })).toBeInTheDocument();
+
+    await ask();
+    await userEvent.click(group.getByRole('button', { name: 'Yes, delete' }));
+    // Held same-root rows survive; without the saved name, the band uses its folder name.
+    await expect(await page.findByRole('group', { name: 'rewrite actions' })).toBeInTheDocument();
+    await expect(page.queryByText('Deleting...')).toBeNull();
+    await expect(page.queryByRole('group', { name: 'Delete rewrite?' })).toBeNull();
+    await expect(page.getByRole('region', { name: 'reviewer sessions' })).toBeVisible();
+  },
+};

@@ -151,6 +151,8 @@ export const ProjectGroup = memo(function ProjectGroup({
       await onRemove(managedProject, conn, (progress) =>
         setRemoval((current) => (current ? { ...current, progress } : current)),
       );
+      // Success settles the question even if a same-root group remains mounted.
+      setRemoval(null);
     } catch (cause) {
       const message =
         cause instanceof Error ? cause.message : "Project could not be deleted.";

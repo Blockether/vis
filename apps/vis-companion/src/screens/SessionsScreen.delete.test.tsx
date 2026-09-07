@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
@@ -119,6 +119,71 @@ describe("deleting a project from its list band", () => {
     await waitFor(() =>
       expect(screen.queryByLabelText("project sessions")).toBeNull(),
     );
+  });
+
+  // Regression, user report: a completed project deletion left its "Deleting..."
+  // rectangle in place. A same-root group can survive the saved project's removal
+  // (for example, sessions not assigned to that project); success must settle the UI.
+  it("clears the completed confirmation when the root group stays mounted", async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: "alpha",
+          sessions: [listSession({ id: "a1", title: "Unassigned session" })],
+          projects: [
+            {
+              project_id: "p-project",
+              root: "/Users/dev/project",
+              name: "project",
+              session_count: 0,
+              live_count: 0,
+              awaiting_count: 0,
+              last_activity_ms: 0,
+            },
+          ],
+          routes: { "/v1/projects/p-project": { deleted_session_ids: [] } },
+        },
+      ],
+    });
+    restore = view.restore;
+    await screen.findByText("Unassigned session");
+    view.requests.length = 0;
+    let complete!: () => void;
+    const response = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    const gateway = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      if (init?.method === "DELETE") await response;
+      return gateway(input, init);
+    };
+
+    fireEvent.click(
+      screen
+        .getByRole("group", { name: "project actions" })
+        .querySelector("button[aria-label='Delete']")!,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Yes, delete" }));
+    expect(
+      await screen.findByRole("button", { name: "Deleting..." }),
+    ).toBeDisabled();
+    await act(async () => complete());
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("group", { name: "Delete project?" }),
+      ).toBeNull(),
+    );
+    expect(screen.queryByText("Deleting...")).toBeNull();
+    expect(
+      screen.getByRole("group", { name: "project actions" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Unassigned session")).toBeInTheDocument();
+    expect(
+      view.requests
+        .filter((request) => request.method === "DELETE")
+        .map((request) => request.path),
+    ).toEqual(["/v1/projects/p-project?is_recursive=true"]);
   });
 });
 
