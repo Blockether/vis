@@ -96,6 +96,7 @@ describe("execution grouping", () => {
     expect(
       view.queryByRole("button", { name: "Expand execution trace" }),
     ).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: /Search ×2/ }));
     const rows = [...view.container.querySelectorAll("[data-activity-row]")];
     expect(rows).toHaveLength(2);
     expect(rows.map((row) => row.getAttribute("data-activity-row"))).toEqual([
@@ -131,6 +132,7 @@ describe("execution grouping", () => {
         state === "running" ? "status" : null,
       );
       if (state === "failed") expect(trace.textContent).toContain("Failed");
+      fireEvent.click(view.getByRole("button", { name: /Search ×2/ }));
       expect(
         view.container.querySelectorAll("[data-activity-row]"),
       ).toHaveLength(2);
@@ -192,6 +194,7 @@ describe("execution grouping", () => {
         ])}
       />,
     );
+    fireEvent.click(view.getByRole("button", { name: /Search ×2/ }));
     expect(view.container.querySelectorAll("[data-activity-row]")).toHaveLength(
       2,
     );

@@ -708,8 +708,9 @@ const BAND_NAME = 'font-extrabold tracking-[0.06em]';
  * a field. A framed transport is the loud thing on that row, so its own name steps
  * off the frame instead of competing inside it.
  *
- * The height follows the pointer, never the width: 32px under a finger, the
- * tight 24px rhythm only where there is a cursor.
+ * Execution rows share one full-width control from Code through Activity. Their
+ * trailing chevron leaves the text edge flat; targets are 44px on touch, 28px with
+ * a pointer. Other bands retain their existing 32px / 24px rhythm.
  */
 export function Disclosure({
   isOpen,
@@ -720,7 +721,14 @@ export function Disclosure({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   isOpen: boolean;
-  tone?: 'step' | 'thinking' | 'muted' | 'caption' | 'branch' | 'chronology';
+  tone?:
+    | 'step'
+    | 'thinking'
+    | 'muted'
+    | 'caption'
+    | 'branch'
+    | 'chronology'
+    | 'execution';
   /**
    * Gives the row's own gutter back: the chevron lines its ink up with the card's
    * leading edge while the press target keeps the padding a finger needs. It is
@@ -743,7 +751,7 @@ export function Disclosure({
           ? 'uppercase tracking-[0.08em] text-dialog-hint hover:text-accent-ink'
           : tone === 'branch'
             ? 'font-bold text-white hover:bg-hover'
-            : tone === 'chronology'
+            : tone === 'chronology' || tone === 'execution'
               ? 'text-code-result hover:bg-hover'
               : 'text-footer-muted hover:bg-hover';
   return (
@@ -751,11 +759,16 @@ export function Disclosure({
       type="button"
       data-disclosure-toggle
       aria-expanded={isOpen}
-      className={`flex min-h-8 min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono ${tone === 'branch' ? 'text-ui' : 'text-chip'} transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-6 ${tone === 'caption' ? 'w-auto' : bleed ? 'w-[calc(100%_+_0.5rem)]' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
+      className={`flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono ${tone === 'execution' ? 'min-h-11 text-ui mouse:min-h-7' : `min-h-8 mouse:min-h-6 ${tone === 'branch' ? 'text-ui' : 'text-chip'}`} transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none ${tone === 'caption' ? 'w-auto' : bleed ? 'w-[calc(100%_+_0.5rem)]' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
       {...props}
     >
-      <ChevronIcon open={isOpen} className="size-3 shrink-0 opacity-70" />
+      {tone !== 'execution' && (
+        <ChevronIcon open={isOpen} className="size-3 shrink-0 opacity-70" />
+      )}
       {children}
+      {tone === 'execution' && (
+        <ChevronIcon open={isOpen} className="ml-auto size-3 shrink-0" />
+      )}
     </button>
   );
 }

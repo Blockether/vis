@@ -1712,3 +1712,43 @@ export function storyFleetFetch(
     return answer({});
   }) as typeof fetch;
 }
+
+/** Deterministic design states. These are projection fixtures, not a live gateway. */
+function joinedActivity(state: "running" | "succeeded" | "failed"): ActivityProjection {
+  return projection({
+    state,
+    counts: { running: state === "running" ? 1 : 0, succeeded: state === "succeeded" ? 13 : 12, failed: state === "failed" ? 1 : 0, cancelled: 0 },
+    omitted: { rows: 0, by_classification: {} },
+    rows: [
+      ...Array.from({ length: 8 }, (_, index) => ({
+        id: `read-${index}`, sequence: index, operation: "cat", presenter: "observation", signal: "observation", state: "succeeded",
+        summary: `src/component-${index % 6}.tsx`, result_summary: "Read source", duration_ms: 12,
+        resources: [{ type: "file", id: `src/component-${index % 6}.tsx` }], evidence: [],
+      })),
+      ...Array.from({ length: 3 }, (_, index) => ({
+        id: `patch-${index}`, sequence: 8 + index, operation: "patch", presenter: "patch", signal: "mutation", state: "succeeded",
+        summary: `src/component-${index % 2}.tsx`, result_summary: "Patch applied", duration_ms: 24,
+        resources: [{ type: "file", id: `src/component-${index % 2}.tsx` }],
+        evidence: [{ kind: "diff", text: `src/component-${index % 2}.tsx`, additions: 14, deletions: index === 2 ? 3 : 4, modifications: 0, is_truncated: false, is_redacted: false,
+          lines: [
+            ...Array.from({ length: index === 2 ? 3 : 4 }, (_, line) => ({ kind: "deletion", text: `const oldGroup${line} = false;` })),
+            ...Array.from({ length: 14 }, (_, line) => ({ kind: "addition", text: `const group${line} = true;` })),
+          ] }],
+      })),
+      ...["npm run lint", "npm run build"].map((command, index) => ({
+        id: `shell-${index}`, sequence: 11 + index, operation: "shell", presenter: "shell", signal: "verification",
+        state: index === 0 ? "succeeded" : state, summary: command,
+        ...(index === 1 && state === "running" ? {} : { duration_ms: 1200, result_summary: "Passed" }),
+        ...(index === 1 && state === "failed" ? { error_summary: "Build failed · exit 1", result_summary: undefined } : {}),
+        resources: [], evidence: [],
+      })),
+    ],
+  });
+}
+
+export const STORY_JOINED_ACTIVITY = Object.fromEntries(
+  (["running", "succeeded", "failed"] as const).map((state) => [state, [{
+    id: `joined-${state}`, position: 1, thinking: "Checking the Activity layout and grouping.",
+    forms: [{ source: "results = await gather(read_files(), apply_changes())\nprint(results)", activity: joinedActivity(state) }],
+  }]])
+) as Record<"running" | "succeeded" | "failed", TranscriptIteration[]>;

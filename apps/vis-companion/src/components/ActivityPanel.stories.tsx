@@ -48,14 +48,13 @@ export const LiveDisclosure: Story = {
   args: { activity: ACTIVITY_LONG_RUNNING },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const more = canvas.getByRole("button", { name: "Show 2 more steps" });
-    await userEvent.click(more);
+    await userEvent.click(canvas.getByRole("button", { name: /Search ×7/ }));
     const step = canvas.getByRole("button", { name: /Searched search-4/ });
     step.focus();
     await userEvent.keyboard("{Enter}");
     await expect(step).toHaveAttribute("aria-expanded", "true");
     await userEvent.click(
-      canvas.getByRole("button", { name: "Show fewer steps" }),
+      canvas.getByRole("button", { name: /Search ×7/ }),
     );
     await expect(canvas.queryByText("result-4")).not.toBeInTheDocument();
   },

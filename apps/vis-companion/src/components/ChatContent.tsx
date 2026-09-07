@@ -22,10 +22,6 @@ import {
   AlertIcon,
   ArrowOutIcon,
   ChevronIcon,
-  CircleCheckIcon,
-  CircleDotIcon,
-  CircleSlashIcon,
-  CircleXIcon,
   ForkIcon,
   PauseIcon,
   PlayIcon,
@@ -1341,15 +1337,15 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   const lineCount = value ? value.split("\n").length : 0;
   return (
     <section className={`relative z-0 min-w-0 bg-code pr-3 ${RAIL_BLEED}`} data-execution-code>
-      <div className="-mr-3 flex min-h-8 min-w-0 items-center gap-2">
-        {showCode ? <Disclosure isOpen={expanded} tone="muted" className="min-w-0 flex-1"
+      <div className="flex min-h-8 min-w-0 items-center gap-2">
+        {showCode ? <Disclosure isOpen={expanded} tone="execution" className="min-w-0 flex-1"
           aria-label={expanded ? "Collapse code" : "Expand code"}
           onClick={() => setExpanded((open) => !open)}>
           <BandLabel tone={outcome ? "err" : "accent"}>CODE{!expanded && <BandTally> +{lineCount} more</BandTally>}</BandLabel>
         </Disclosure>
           : <BandLabel tone={outcome ? "err" : "accent"} className="min-w-0 flex-1">CODE</BandLabel>}
+        {duration && <span className="shrink-0 whitespace-nowrap font-mono text-chip tabular-nums text-code-duration">{duration}</span>}
         {showCode && <CopyChip value={value} label="Copy code" density="compact" className="shrink-0">Copy</CopyChip>}
-        {duration && <span className="ml-auto shrink-0 font-mono text-chip tabular-nums text-code-duration">{duration}</span>}
       </div>
       {(expanded || !showCode) && <div className="py-3" data-code-body>
         {showCode && <SyntaxCodeBlock value={value} language={language} compact bare frameless />}
@@ -1589,7 +1585,8 @@ const FormTrace = memo(function FormTrace({
         </CollapsibleFormCode>
       )}
       <div
-        className="min-w-0"
+        className={detectedActivity ? `relative z-0 min-w-0 bg-code pr-3 ${RAIL_BLEED}` : "min-w-0"}
+        data-execution-activity={detectedActivity || undefined}
         role={running ? "status" : undefined}
         aria-live={running ? "polite" : undefined}
         aria-label="Execution trace"
@@ -1693,61 +1690,21 @@ function observeBox(
   };
 }
 
-// Shared thread geometry keeps the spine, step markers and content offsets aligned.
+// Joined execution surfaces share one inset, without a decorative timeline.
 const RAIL_GUTTER = "pl-6";
-const RAIL_LINE =
-  "before:absolute before:left-[6px] before:top-0 before:z-[1] before:w-0.5 before:bg-code-edge before:content-['']";
-const RAIL_NODE = "absolute -left-[17px] top-0 z-[2] -translate-x-1/2";
 const RAIL_BLEED = "-ml-4 pl-3";
 // Human content places its own stroke on the shared spine.
 const RAIL_SPINE = "ml-1.5";
 // Unstroked media begins at the spine's paper edge.
 const RAIL_SPINE_PAPER = "ml-2";
 
-/** A state ring marks each step visually; an `sr-only` label carries the same state. */
-function StepNode({ mark }: { mark: StepMark }) {
-  return (
-    <span
-      aria-hidden
-      data-step-node
-      className={`${RAIL_NODE} flex h-8 items-center mouse:h-6`}
-    >
-      {/* The thread runs UNDER the mark, not into it: the clearing is the mark's
-          own disc, so the line meets the ring and comes out the other side
-          instead of stopping in a gap either side of it. A rectangle — or any
-          taller box — cut the thread twice per step and left the ring floating
-          in the hole. It clears in the TRANSCRIPT's own paper (`bg-ink`, the
-          scroller in `SessionScreen`), never in `bg-page`: that token is three
-          percent of the foreground mixed in, so behind every marker it painted
-          a grey tile the reader could see. */}
-      <span className="flex rounded-full bg-ink">
-        {mark === "running" ? (
-          <CircleDotIcon className="text-accent-ink" />
-        ) : mark === "failed" ? (
-          <CircleXIcon className="text-err-ink" />
-        ) : mark === "halted" ? (
-          <CircleSlashIcon className="text-dialog-hint" />
-        ) : (
-          <CircleCheckIcon className="text-dialog-hint" />
-        )}
-      </span>
-    </span>
-  );
-}
 
 export const ThinkingBand = memo(function ThinkingBand({
   children,
   railed = false,
 }: {
   children: string;
-  /**
-   * Reach the band's paper LEFT until it meets the thread line — edge ON the line,
-   * never across it — while its words share the human message's prose edge. A step's
-   * reasoning is not a block standing beside the thread, it is the first thing that
-   * step did, so the paper touches the line; but the line is the spine of the turn and
-   * no paper crosses it. Off wherever the band stands alone: a single reasoning block
-   * has no thread to reach.
-   */
+  /** Align this band with the code and Activity surfaces inside a trace. */
   railed?: boolean;
 }) {
   const normalized = normalizeReasoning(children);
@@ -2433,8 +2390,6 @@ function buildSegments(
 type TraceSegmentProps = {
   segment: TraceSegmentData;
   live: boolean;
-  /** The turn's last step: the thread stops at it instead of running on past it. */
-  isLast: boolean;
   showCode: boolean;
   client?: GatewayClient;
   sid?: string;
@@ -2457,7 +2412,6 @@ function sameTraceEntry(a: TraceEntry, b: TraceEntry): boolean {
 function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
   if (
     a.live !== b.live ||
-    a.isLast !== b.isLast ||
     a.showCode !== b.showCode ||
     a.client !== b.client ||
     a.sid !== b.sid
@@ -2480,7 +2434,6 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
 const TraceSegment = memo(function TraceSegment({
   segment,
   live,
-  isLast,
   showCode,
   client,
   sid,
@@ -2522,9 +2475,7 @@ const TraceSegment = memo(function TraceSegment({
 
   return (
     <section
-      className={`relative min-w-0 pb-2.5 ${RAIL_GUTTER} ${RAIL_LINE} ${
-        isLast ? "before:bottom-2.5" : "before:bottom-0"
-      } ${live ? transcriptEnterClass : ""}`}
+      className={`relative min-w-0 pb-2.5 ${RAIL_GUTTER} ${live ? transcriptEnterClass : ""}`}
     >
       {segment.head.thinking && (
         <ThinkingBand railed>{segment.head.thinking}</ThinkingBand>
@@ -2533,7 +2484,7 @@ const TraceSegment = memo(function TraceSegment({
         // Same rhythm as every other block in the stack: the gap above this
         // prose is the stack's, so neither the block nor its first paragraph
         // adds one of its own on top of it.
-        <div className="mb-2.5 text-ui text-vis-message [&>:first-child]:mt-0">
+        <div className="-ml-1 mb-2.5 pr-3 text-ui text-vis-message [&>:first-child]:mt-0">
           <Markdown>{segment.head.prose}</Markdown>
         </div>
       )}
@@ -2543,16 +2494,8 @@ const TraceSegment = memo(function TraceSegment({
       {chunks.length > 0 && (
         <div className="grid min-w-0 gap-2.5">
           {chunks.map((chunk) => {
-            const form =
-              chunk.kind === "code"
-                ? executionGroup(chunk.forms, live)
-                : chunk.cards[0];
-            const step = form ? formStep(form, live) : undefined;
             return (
               <div key={chunk.key} className="relative min-w-0">
-                {chunk.kind !== "code" && (
-                  <StepNode mark={step ? step.mark : live ? "running" : "done"} />
-                )}
                 {chunk.kind === "code" ? (
                   <FormTrace
                     forms={chunk.forms}
@@ -2723,12 +2666,11 @@ export const IterationTrace = memo(function IterationTrace({
             {hidden} earlier step{hidden === 1 ? "" : "s"}
           </LoadMore>
         )}
-        {shown.map((segment, index) => (
+        {shown.map((segment) => (
           <TraceSegment
             key={segment.key}
             segment={segment}
             live={live}
-            isLast={index === shown.length - 1}
             showCode={showCode}
             client={client}
             sid={sid}
@@ -3694,7 +3636,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             answer at `text-body` (12px) was one px of drift, not a hierarchy. The role
             label (`text-meta`) and the meta footer (`text-chip`) still step down from it. */}
         <div
-          className={`bg-answer text-ui ${cancelled ? "italic text-cancelled-foreground" : "text-answer-foreground"}`}
+          className={`ml-2 bg-answer px-3 text-ui ${cancelled ? "italic text-cancelled-foreground" : "text-answer-foreground"}`}
         >
           {blocks.map((block) => (
             <ContentBlockView

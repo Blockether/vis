@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { InlineMarkdown, Markdown, SyntaxCodeBlock } from "./ChatContent";
-import { Disclosure, LoadMore } from "./ui";
+import { BandLabel, Disclosure, LoadMore } from "./ui";
 import type {
   ActivityDiffEvidence,
   ActivityProjection,
@@ -260,54 +260,6 @@ function activityStepDelta(row: ActivityRow): {
           }
         : total,
     { additions: 0, deletions: 0 },
-  );
-}
-
-/**
- * THE MARK ON THE BRANCH: one ring with a filled centre, and the COLOUR is the
- * state — green done, yellow running, red failed.
- *
- * Nine pixels of the transcript's own paper with a dot in it — the same mark for
- * every step, because a chronology is read as a sequence and a per-state SHAPE
- * turns it into a legend the reader has to learn. Only the tail the engine's bound
- * dropped is hollow, because nothing happened there yet to give a colour, and
- * the axis still ends on a mark rather than on a stray caption.
- *
- * The mark carries its own tick back to the rail. A dot floating beside a line
- * is a bullet in a list; a dot JOINED to it is a moment on a timeline, and this
- * axis is the second thing.
- */
-function ActivityNode({
-  state,
-  disclosure = false,
-}: {
-  state: ActivityRow["state"];
-  disclosure?: boolean;
-}) {
-  const hollow = state === "idle" || state === "cancelled";
-  const edge =
-    state === "failed"
-      ? "border-err-ink"
-      : state === "running"
-        ? "border-accent-ink"
-        : state === "succeeded"
-          ? "border-ok"
-          : "border-dialog-hint";
-  const core =
-    state === "failed"
-      ? "bg-err-ink"
-      : state === "running"
-        ? "bg-accent-ink motion-safe:animate-pulse"
-        : "bg-ok";
-  return (
-    <span
-      aria-hidden="true"
-      className={`absolute -left-1 ${disclosure ? "top-4 -translate-y-1/2 mouse:top-3" : "top-1"} size-[9px] rounded-full border bg-ink before:absolute before:top-[3px] before:right-full before:h-px before:w-[8px] before:bg-edge-strong before:content-[''] sm:before:w-[10px] ${edge}`}
-    >
-      {!hollow && (
-        <span className={`absolute inset-0.5 rounded-full ${core}`} />
-      )}
-    </span>
   );
 }
 
@@ -820,11 +772,9 @@ function ActivityStep({
     hasChildren;
 
   const label = (
-    <span className="flex min-w-0 items-baseline gap-2">
+    <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1">
       <span
-        className={
-          caption ? "min-w-0 max-w-[60%] shrink-0 truncate" : "min-w-0 truncate"
-        }
+        className={caption ? "min-w-0 font-semibold" : "min-w-0 truncate"}
         title={activityStepHeadline(row)}
       >
         {lead}
@@ -844,7 +794,7 @@ function ActivityStep({
           </span>
           <span
             data-activity-summary
-            className="min-w-0 truncate font-normal text-dialog-hint"
+            className="min-w-0 break-words font-normal text-dialog-hint"
             title={caption}
           >
             {caption}
@@ -859,6 +809,22 @@ function ActivityStep({
           </span>
         </>
       )}
+      {duration && (
+        <time
+          aria-label={`Duration ${duration}`}
+          className="ml-auto shrink-0 font-normal text-code-duration"
+        >
+          {duration}
+        </time>
+      )}
+      {!duration && running && (
+        <span
+          aria-label="Running"
+          className="ml-auto shrink-0 font-normal text-code-duration"
+        >
+          …
+        </span>
+      )}
     </span>
   );
 
@@ -866,25 +832,20 @@ function ActivityStep({
     <li
       data-activity-row={row.id}
       data-activity-depth={depth}
-      className={
-        nested
-          ? "relative mb-[var(--text-ui--line-height)] min-w-0 last:mb-0"
-          : "relative mb-[var(--text-ui--line-height)] min-w-0 pl-5 last:mb-0"
-      }
+      className="relative min-w-0"
     >
-      {!nested && <ActivityNode state={row.state} disclosure={openable} />}
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+      <div className="min-w-0">
         <Headline
           className={
             nested
-              ? "min-w-0 truncate font-sans text-meta font-medium text-code-result"
-              : "min-w-0 truncate font-sans text-ui font-bold text-code-result"
+              ? "min-w-0 text-ui font-medium text-code-result"
+              : "min-w-0 text-ui font-semibold text-code-result"
           }
         >
           {openable ? (
             <Disclosure
               isOpen={open}
-              tone="chronology"
+              tone="execution"
               className="min-w-0 max-w-full"
               onClick={() => setToggled(!open)}
             >
@@ -894,20 +855,15 @@ function ActivityStep({
             label
           )}
         </Headline>
-        {duration && (
-          <time className="min-w-[38px] shrink-0 text-right font-mono text-chip text-code-duration">
-            {duration}
-          </time>
-        )}
-        {!duration && row.state === "running" && (
-          <span
-            aria-hidden="true"
-            className="min-w-[38px] shrink-0 text-right font-mono text-chip text-code-duration"
-          >
-            &hellip;
-          </span>
-        )}
       </div>
+      {!open && failed && !presentation && (
+        <p className="pb-1 pl-3 text-ui text-err-ink">
+          {row.error_summary || "Operation failed"}
+        </p>
+      )}
+      {row.state === "cancelled" && (
+        <p className="pb-1 pl-3 text-ui text-dialog-hint">Cancelled</p>
+      )}
       {open && content && content.length > 0 && (
         <ActivityBody content={content} running={running} />
       )}
@@ -971,95 +927,210 @@ function ActivityStep({
   );
 }
 
-/**
- * THE CHRONOLOGY: the turn's own line, and a tick from it to every mark.
- *
- * It draws NO rail. The line the marks hang on is the one the turn already runs
- * down its whole column (`RAIL_LINE` in `ChatContent`), with the invocation's
- * own ring standing on it directly above — so a step is a branch off the call
- * that made it, and one line carries the eye from a turn's first call to its
- * last step. A second hairline of its own, eighteen pixels to the right, was two
- * timelines drawn for one chronology.
- *
- * Every mark reaches that line with a tick: a dot floating beside a line is a
- * bullet in a list, a dot JOINED to it is a moment on a timeline, and this axis
- * is the second thing. The padding is measured, not chosen — the ring sits 4px
- * left of the text column with an 8px tick (10px from `sm`), so 19px and 21px
- * land the tick's far end exactly on the turn's line at 7px.
- *
- * Nothing closes the group: a bracket, like a card around it, is a second border
- * saying what the named row above it already said.
- */
-// Four steps form the preview. Live work and trouble never wait behind it.
+/** Only engine operation names establish adjacency; labels and presenter text never do. */
+const OPERATION_GROUPS: Record<string, string> = {
+  cat: "Read",
+  patch: "Patch",
+  shell: "Shell",
+  grep: "Search",
+  ls: "List",
+  run_tests: "Test",
+  lint_code: "Lint",
+  format_code: "Format",
+  repl_eval: "Eval",
+};
+
+type OperationGroup = { id: string; label?: string; rows: ActivityRow[] };
+
+function operationGroups(rows: readonly ActivityRow[]): OperationGroup[] {
+  const groups: OperationGroup[] = [];
+  for (const row of [...rows].sort((a, b) => a.sequence - b.sequence)) {
+    const label = OPERATION_GROUPS[row.operation];
+    const last = groups.at(-1);
+    if (label && last?.label === label) last.rows.push(row);
+    else groups.push({ id: row.id, label, rows: [row] });
+  }
+  return groups;
+}
+
+function groupFacts(rows: readonly ActivityRow[]): string {
+  const files = new Set(
+    rows.flatMap((row) =>
+      row.resources
+        .filter((resource) => resource.type === "file")
+        .map((resource) => resource.id),
+    ),
+  );
+  const complete = rows.every(
+    (row) =>
+      !row.is_truncated &&
+      row.resources.some((resource) => resource.type === "file"),
+  );
+  const deltas = rows.map(activityStepDelta);
+  const additions = deltas.reduce((sum, delta) => sum + delta.additions, 0);
+  const deletions = deltas.reduce((sum, delta) => sum + delta.deletions, 0);
+  return [
+    files.size
+      ? `${files.size} ${complete ? "" : "known "}${files.size === 1 ? "file" : "files"}`
+      : "",
+    additions + deletions ? `+${additions} −${deletions}` : "",
+    ...(["running", "failed", "cancelled"] as const).flatMap((state) => {
+      const count = rows.filter((row) => row.state === state).length;
+      return count ? [`${count} ${state}`] : [];
+    }),
+    rows.some((row) => row.is_truncated) ? "partial details" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function ActivityGroup({ group }: { group: OperationGroup }) {
+  const [open, setOpen] = useState(false);
+  if (group.rows.length === 1) return <ActivityStep row={group.rows[0]} />;
+  const title = `${group.label} ×${group.rows.length}`;
+  const facts = groupFacts(group.rows);
+  return (
+    <li className="min-w-0" data-activity-group={group.id}>
+      <Disclosure
+        tone="execution"
+        isOpen={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <span className="font-semibold">{title}</span>
+          {facts && <span className="text-ui text-dialog-hint">{facts}</span>}
+        </span>
+      </Disclosure>
+      {!open &&
+        group.rows
+          .filter((row) => row.state !== "succeeded")
+          .map((row) => (
+            <p
+              key={row.id}
+              className={`min-w-0 break-words pb-1 pl-3 text-ui ${row.state === "failed" ? "text-err-ink" : "text-dialog-hint"}`}
+            >
+              {activityStepObject(row) ||
+                row.presentation?.headline ||
+                row.operation}{" "}
+              · {row.error_summary || row.state}
+            </p>
+          ))}
+      {open && (
+        <ol className="min-w-0 pl-3" aria-label={`${title} operations`}>
+          {group.rows.map((row) => (
+            <ActivityStep key={row.id} row={row} />
+          ))}
+        </ol>
+      )}
+    </li>
+  );
+}
+
+/** Preview groups, never hide running, failed or cancelled work behind Load more. */
 const ACTIVITY_STEPS_SHOWN = 4;
 
 function ActivityThread({ activity }: { activity?: ActivityProjection }) {
   const [showAll, setShowAll] = useState(false);
-  const rows = [...(activity?.rows ?? [])].sort(
-    (left, right) => left.sequence - right.sequence,
+  const groups = operationGroups(activity?.rows ?? []);
+  const preview = groups.filter(
+    (group, index) =>
+      index < ACTIVITY_STEPS_SHOWN ||
+      group.rows.some((row) => row.state !== "succeeded"),
   );
-  const preview = rows.filter(
-    (row, index) => index < ACTIVITY_STEPS_SHOWN || row.state !== "succeeded",
-  );
-  const hidden = rows.length - preview.length;
-  const shown = showAll ? rows : preview;
+  const hidden = groups.length - preview.length;
   const omitted = activity?.omitted.rows ?? 0;
-  const omission = `${omitted} ${omitted === 1 ? "step" : "steps"} omitted · Activity limit`;
-
   return (
     <ol
       aria-label="Invocation chronology"
       data-activity-chronology
-      className="relative -ml-6 mb-0.5 min-w-0 pt-4 pb-4.5 pl-[19px] sm:pl-[21px]"
+      className="min-w-0 pb-2"
     >
-      {shown.map((row) => (
-        <ActivityStep key={row.id} row={row} />
+      {(showAll ? groups : preview).map((group) => (
+        <ActivityGroup key={group.id} group={group} />
       ))}
       {hidden > 0 && (
-        <li className="relative min-w-0">
+        <li>
           <LoadMore
             label={
-              showAll ? "Show fewer steps" : `Show ${moreCount(hidden, "step")}`
+              showAll
+                ? "Show fewer groups"
+                : `Show ${moreCount(hidden, "group")}`
             }
             aria-expanded={showAll}
-            onClick={() => setShowAll((wasOpen) => !wasOpen)}
+            onClick={() => setShowAll((value) => !value)}
           >
-            {showAll ? "show fewer steps" : `show ${moreCount(hidden, "step")}`}
+            {showAll
+              ? "show fewer groups"
+              : `show ${moreCount(hidden, "group")}`}
           </LoadMore>
         </li>
       )}
       {omitted > 0 && (
-        <li className="relative min-w-0 pl-5 font-sans text-meta text-dialog-hint">
-          {omission}
-        </li>
-      )}
-      {rows.length === 0 && omitted === 0 && (
-        <li className="relative min-w-0 pl-5 font-sans text-meta text-dialog-hint">
-          No operations yet
+        <li className="text-ui text-dialog-hint">
+          {omitted} {omitted === 1 ? "step" : "steps"} omitted · Activity limit
         </li>
       )}
     </ol>
   );
 }
 
-/**
- * ONE FORM'S ACTIVITY, HUNG UNDER THE INVOCATION THAT PRODUCED IT.
- *
- * No frame, no header and no state of its own: the row above it already names
- * the invocation, says how it ended and prints what it cost, and a second
- * bordered box repeating that inside the first is what made a turn read as a
- * stack of panels.
- *
- * It opens no live region and it SILENCES the one it sits in. The trace around
- * it is the form's one `status`, and a chronology inside a live region is
- * re-read from the top on every re-render — twelve steps announced again
- * because a thirteenth arrived. The row above says RUNNING and then how it
- * ended; that is the announcement, and this is the page it points at.
- */
+/** Joined execution band. Hiding it retains disclosure state and silences live re-announcements. */
 export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
+  const [open, setOpen] = useState(true);
+  if (
+    !activity ||
+    (!activity.rows.length &&
+      !activity.omitted.rows &&
+      !Object.values(activity.counts).some(Boolean))
+  )
+    return null;
+  const groups = operationGroups(activity.rows);
+  const total = Math.max(
+    activity.rows.length + activity.omitted.rows,
+    Object.values(activity.counts).reduce((sum, count) => sum + count, 0),
+  );
+  const summary = open
+    ? `${total} ${total === 1 ? "operation" : "operations"}`
+    : [
+        ...groups
+          .slice(0, 3)
+          .map((group) =>
+            group.label
+              ? `${group.label}${group.rows.length > 1 ? ` ×${group.rows.length}` : ""}`
+              : group.rows[0].operation,
+          ),
+        ...(groups.length > 3 ? [`${groups.length - 3} more groups`] : []),
+      ].join(" · ");
+  const states = (["running", "failed", "cancelled"] as const).flatMap(
+    (state) =>
+      activity.counts[state] ? [`${activity.counts[state]} ${state}`] : [],
+  );
   return (
-    <div className="min-w-0" aria-live="off" data-activity-axis>
-      <ActivityThread activity={activity} />
-    </div>
+    <section className="min-w-0" aria-live="off" data-activity-axis>
+      <Disclosure
+        tone="execution"
+        isOpen={open}
+        aria-label={open ? "Collapse Activity" : "Expand Activity"}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <BandLabel>Activity</BandLabel>
+          <span className="min-w-0 break-words text-ui text-dialog-hint">
+            {[
+              summary,
+              ...states,
+              !open && activity.omitted.rows
+                ? `${activity.omitted.rows} omitted`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+        </span>
+      </Disclosure>
+      <div hidden={!open}>
+        <ActivityThread activity={activity} />
+      </div>
+    </section>
   );
 }

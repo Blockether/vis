@@ -62,17 +62,164 @@ function openEverySettledStep() {
   }
 }
 
+describe("joined Activity operation groups", () => {
+  function reads() {
+    const base = activityProjection();
+    const rows = ["a", "b", "c"].map((id, sequence) => ({
+      ...base.rows[0],
+      id,
+      sequence,
+      operation: "cat",
+      state: "succeeded" as const,
+      summary: `${id}.clj`,
+      result_summary: `${id} content`,
+      presentation: undefined,
+      children: undefined,
+      evidence: [],
+      resources: [{ type: "file" as const, id: "core.clj" }],
+    }));
+    return {
+      ...base,
+      state: "succeeded" as const,
+      counts: { running: 0, succeeded: 3, failed: 0, cancelled: 0 },
+      rows,
+    };
+  }
+
+  it("groups adjacent reads, counts unique files and preserves disclosure through updates", () => {
+    const activity = reads();
+    const { rerender } = render(<ActivityPanel activity={activity} />);
+    const group = screen.getByRole("button", { name: /Read ×3/ });
+    expect(group.textContent).toContain("1 file");
+    expect(group.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(group);
+    expect(document.querySelector('[data-activity-row="b"]')).toBeTruthy();
+    rerender(
+      <ActivityPanel
+        activity={{
+          ...activity,
+          rows: [
+            ...activity.rows,
+            { ...activity.rows[0], id: "d", sequence: 3 },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("button", { name: /Read ×4/ })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+    const band = screen.getByRole("button", { name: /Collapse Activity/ });
+    fireEvent.click(band);
+    fireEvent.click(screen.getByRole("button", { name: /Expand Activity/ }));
+    expect(
+      screen
+        .getByRole("button", { name: /Read ×4/ })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+  });
+
+  it("never sorts separated runs together or hides failure behind the band", () => {
+    const activity = reads();
+    activity.rows[1] = { ...activity.rows[1], operation: "patch" };
+    render(<ActivityPanel activity={activity} />);
+    expect(screen.queryByRole("button", { name: /Read ×/ })).toBeNull();
+    expect(
+      [...document.querySelectorAll("[data-activity-row]")].map((row) =>
+        row.getAttribute("data-activity-row"),
+      ),
+    ).toEqual(["a", "b", "c"]);
+  });
+
+  it("keeps failed and cancelled outcomes visible while a group is collapsed", () => {
+    const activity = reads();
+    render(
+      <ActivityPanel
+        activity={{
+          ...activity,
+          state: "failed",
+          counts: { running: 0, succeeded: 1, failed: 1, cancelled: 1 },
+          rows: activity.rows.map((row, index) => ({
+            ...row,
+            state:
+              index === 1 ? "failed" : index === 2 ? "cancelled" : "succeeded",
+            error_summary: index === 1 ? "Permission denied" : undefined,
+          })),
+        }}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /Read ×3/ }).textContent,
+    ).toContain("1 failed");
+    expect(screen.getByText(/Permission denied/)).toBeTruthy();
+    expect(screen.getByText(/c.clj.*cancelled/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Collapse Activity/ }));
+    expect(
+      screen.getByRole("button", { name: /Expand Activity/ }).textContent,
+    ).toContain("1 failed");
+  });
+  it("bounds a collapsed receipt while keeping omitted operations explicit", () => {
+    const activity = reads();
+    const rows = Array.from({ length: 10 }, (_, index) => ({
+      ...activity.rows[0],
+      id: String(index),
+      sequence: index,
+      operation: index % 2 ? "patch" : "cat",
+    }));
+    render(
+      <ActivityPanel
+        activity={{
+          ...activity,
+          rows,
+          omitted: { rows: 7, by_classification: { observation: 7 } },
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Collapse Activity" }));
+    const receipt = screen.getByRole("button", { name: "Expand Activity" });
+    expect(receipt.textContent).toContain("7 more groups");
+    expect(receipt.textContent).toContain("7 omitted");
+  });
+
+  it("updates commands by snapshot identity, not by parsing identical command strings", () => {
+    const activity = reads();
+    const rows = activity.rows
+      .slice(0, 2)
+      .map((row) => ({
+        ...row,
+        operation: "shell",
+        summary: "npm test",
+        state: "running" as const,
+      }));
+    const { rerender } = render(
+      <ActivityPanel activity={{ ...activity, rows }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Shell ×2/ }));
+    const next = {
+      ...activity,
+      rows: rows.map((row) => ({ ...row, state: "succeeded" as const })),
+    };
+    const original = JSON.stringify(next);
+    rerender(<ActivityPanel activity={next} />);
+    expect(
+      screen
+        .getByRole("button", { name: /Shell ×2/ })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(document.querySelectorAll("[data-activity-row]")).toHaveLength(2);
+    expect(JSON.stringify(next)).toBe(original);
+  });
+});
+
 describe("one form's Activity on the phone", () => {
-  it("separates sibling activities by one UI line, without a trailing gap", () => {
+  it("keeps root operations as siblings on one flat list", () => {
     paintActivity();
-    const rows = document.querySelectorAll("[data-activity-row]");
+    const rows = [...document.querySelectorAll("[data-activity-row]")];
     expect(rows.length).toBeGreaterThan(1);
-    for (const row of rows) {
-      expect(row.classList.contains("mb-[var(--text-ui--line-height)]")).toBe(
-        true,
-      );
-      expect(row.classList.contains("last:mb-0")).toBe(true);
-    }
+    expect(
+      rows.every((row) => row.parentElement === rows[0].parentElement),
+    ).toBe(true);
   });
   it("keeps the headline and one-line summary visible; the chevron opens only content", () => {
     const projection = activityProjection();
@@ -172,7 +319,7 @@ describe("one form's Activity on the phone", () => {
       },
     });
     expect(screen.getByText("2 files")).toBeTruthy();
-    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Listed src/ })).toBeNull();
   });
   it("keeps the engine failure visible when custom content is collapsed", () => {
     const base = activityProjection();
@@ -210,12 +357,12 @@ describe("one form's Activity on the phone", () => {
     expect(chronologyText.indexOf("Searched 18 matches")).toBeLessThan(
       chronologyText.indexOf("Running tests suite"),
     );
-    // The program and the bytes it printed stay behind the invocation's own
-    // disclosure. What the iteration DID is not something a reader opens, so
-    // the axis has no expander of its own and no second live region either.
+    // The band folds independently; it does not add another live region.
     expect(chronologyText).not.toContain("[{query: needle}]");
     expect(chronologyText).not.toContain("24 passed");
-    expect(screen.queryByRole("button", { name: /Activity/ })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Collapse Activity" }),
+    ).toBeTruthy();
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("button", { name: /interrupt/i })).toBeNull();
   });
@@ -255,11 +402,16 @@ describe("one form's Activity on the phone", () => {
     expect(screen.getByText("12.5s")).toBeTruthy();
   });
 
-  it("shows an explicit quiet empty state", () => {
+  it("adds no empty panel before the first operation", () => {
     paintActivity({
-      activity: { ...activityProjection(), state: "idle", rows: [] },
+      activity: {
+        ...activityProjection(),
+        state: "idle",
+        rows: [],
+        counts: { running: 0, succeeded: 0, failed: 0, cancelled: 0 },
+      },
     });
-    expect(screen.getByText("No operations yet")).toBeTruthy();
+    expect(document.querySelector("[data-activity-axis]")).toBeNull();
   });
 });
 
@@ -322,9 +474,7 @@ describe("what the iteration cost", () => {
 describe("the axis is built from the closed vocabulary", () => {
   it("borrows the app's controls and writes no styles of its own", () => {
     expect(activityPanelSource).toContain("<Disclosure");
-    // Shared disclosures open patches and long outcomes; neither invents a new control.
-    expect((activityPanelSource.match(/<Disclosure/g) ?? []).length).toBe(4);
-    expect((activityPanelSource.match(/<LoadMore/g) ?? []).length).toBe(2);
+    expect(activityPanelSource).toContain("<LoadMore");
     // No spinner: a mark that turns says only "still here", while one word says
     // whether the form is still working and, once it is not, how it ended.
     expect(activityPanelSource).not.toContain("<Spinner");
@@ -334,72 +484,37 @@ describe("the axis is built from the closed vocabulary", () => {
   });
 });
 
-// A run is a chronology, so the axis draws one: the marks hang on a single line
-// in engine sequence, the line stops where the work stopped, and a step owns no
-// box of its own. These cases pin that line, the words on it, and the evidence
-// that opens under one step without moving the others.
+// A flat chronology shares the turn spine; it never draws a second set of markers.
 describe("a run reads as one thread", () => {
-  it("hangs every step on one line and joins each mark to it", () => {
+  it("keeps the one list and removes decorative per-operation marks", () => {
     paintActivity();
-
-    // ONE line for the whole turn: the chronology draws none of its own. It
-    // bleeds left onto the line the turn already runs down its column, and every
-    // ring reaches that line with a tick — a dot floating beside a line is a
-    // bullet in a list, a dot JOINED to it is a moment on a timeline. Nothing
-    // brackets the group; that was a second border saying what the named row
-    // above it already said.
-    const branch = screen.getByRole("list", { name: "Invocation chronology" });
-    expect(branch.className).toContain("-ml-6");
-    expect(branch.className).not.toContain("before:");
-    expect(branch.className).not.toContain("after:");
-
-    const steps = [...document.querySelectorAll("[data-activity-row]")];
-    expect(steps).toHaveLength(2);
-    for (const step of steps) {
-      // A step owns no box of its own, and its mark is a ring rather than a glyph.
-      expect(step.className).not.toContain("border-t");
-      expect(step.className).not.toContain("bg-result");
-      const mark = step.querySelector("span.absolute")?.className ?? "";
-      expect(mark).toContain("rounded-full");
-      expect(mark).toContain("before:right-full");
-      expect(step.querySelector("svg")).toBeNull();
+    expect(
+      screen.getAllByRole("list", { name: "Invocation chronology" }),
+    ).toHaveLength(1);
+    for (const step of document.querySelectorAll("[data-activity-row]")) {
+      expect(step.querySelector("span.absolute")).toBeNull();
     }
   });
-
-  // Regression, T125: the mark said the state with its SHAPE - a grey ring once a
-  // step had finished, a filled disc when it failed - so a reader had to learn a
-  // legend to see which steps were done.
-  it("says the state in the mark's colour: green done, yellow running, red failed", () => {
+  it("states running, failed and cancelled work in words rather than colour alone", () => {
     const base = activityProjection();
-    const [first, second] = base.rows;
-    const marked: ActivityProjection = {
-      ...base,
-      rows: [
-        { ...first, id: "done-1", state: "succeeded" as const },
-        { ...second, id: "run-1", state: "running" as const },
-        { ...first, id: "fail-1", state: "failed" as const },
-      ],
-    };
-
-    paintActivity({ activity: marked });
-
-    const markOf = (id: string) =>
-      document.querySelector(`[data-activity-row="${id}"] span.absolute`)
-        ?.className ?? "";
-
-    expect(markOf("done-1")).toContain("border-ok");
-    expect(markOf("run-1")).toContain("border-accent-ink");
-    expect(markOf("fail-1")).toContain("border-err-ink");
-    // ONE shape for all three, so nothing but the hue separates a finished step
-    // from a failed one: every mark is the same ring with the same filled centre.
-    for (const id of ["done-1", "run-1", "fail-1"]) {
-      expect(markOf(id)).toContain("rounded-full");
-      expect(
-        document.querySelector(
-          `[data-activity-row="${id}"] span.absolute > span`,
-        ),
-      ).toBeTruthy();
-    }
+    render(
+      <ActivityPanel
+        activity={{
+          ...base,
+          rows: [
+            {
+              ...base.rows[0],
+              id: "failed",
+              state: "failed",
+              error_summary: "Read refused",
+            },
+            { ...base.rows[1], id: "cancelled", state: "cancelled" },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Read refused")).toBeTruthy();
+    expect(screen.getByText("Cancelled")).toBeTruthy();
   });
 
   it("names the work with a verb", () => {
@@ -466,14 +581,11 @@ describe("a run reads as one thread", () => {
   it("gives a step with nothing to open no chevron and no toggle of its own", () => {
     paintActivity();
 
-    // The axis never closes, and a step whose line already says all it has — no
-    // outcome, no paths, no patch, no grouped changes — is no disclosure either.
-    // The program and the bytes it printed stay behind the invocation's own
-    // disclosure, one level up.
+    // The band folds, but an operation with no details promises no disclosure.
     expect(screen.queryByRole("button", { name: /Searched/ })).toBeNull();
-    expect(document.querySelectorAll("[data-disclosure-toggle]")).toHaveLength(
-      0,
-    );
+    expect(
+      document.querySelectorAll("[data-activity-row] [data-disclosure-toggle]"),
+    ).toHaveLength(0);
   });
 
   it("keeps what a step left behind its chevron until the step is pressed", () => {
@@ -733,8 +845,8 @@ describe("what the axis does while the work is still moving", () => {
     const rows = activity.rows;
     const { rerender } = render(<ActivityPanel activity={activity} />);
     expect(document.querySelector('[data-activity-row="live-4"]')).toBeNull();
-    expect(document.querySelector('[data-activity-row="live-6"]')).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Show 2 more steps" }));
+    expect(screen.getByText(/search-6 · running/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Search ×7/ }));
     const step = screen.getByRole("button", { name: "Searched search-4" });
     fireEvent.click(step);
     expect(screen.getByText("result-4")).toBeTruthy();
@@ -749,11 +861,13 @@ describe("what the axis does while the work is still moving", () => {
       />,
     );
     expect(screen.getByText("result-4")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Show fewer steps" }));
+    fireEvent.click(screen.getByRole("button", { name: /Search ×7/ }));
     expect(document.querySelector('[data-activity-row="live-4"]')).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Show 3 more steps" }),
-    ).toBeTruthy();
+      screen
+        .getByRole("button", { name: /Search ×7/ })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
   });
 
   it("never hides failed or cancelled steps behind the retained-step fold", () => {
@@ -771,8 +885,8 @@ describe("what the axis does while the work is still moving", () => {
           : "succeeded") as "failed" | "cancelled" | "succeeded",
     }));
     render(<ActivityPanel activity={{ ...base, rows }} />);
-    expect(document.querySelector('[data-activity-row="step-4"]')).toBeTruthy();
-    expect(document.querySelector('[data-activity-row="step-5"]')).toBeTruthy();
+    expect(screen.getByText(/search-4 · failed/)).toBeTruthy();
+    expect(screen.getByText(/search-5 · cancelled/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /more steps/i })).toBeNull();
   });
 
@@ -849,7 +963,11 @@ describe("what a code block changed with its own hands", () => {
     );
     expect(children).toHaveLength(5);
     expect(
-      Array.from(children, (child) => child.querySelector("p")?.textContent),
+      Array.from(children, (child) => {
+        const head = child.querySelector("p")!;
+        const duration = head.querySelector("time")?.textContent ?? "";
+        return (head.textContent ?? "").replace(duration, "");
+      }),
     ).toEqual([
       "Created 2 directories",
       // A change that carries a diff prints it, and a count already answered by the

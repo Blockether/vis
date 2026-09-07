@@ -223,4 +223,47 @@ Phases 1–3 complete locally.
 - Live tests use isolated records and synthetic secrets. No live gateway restart, credential
   rotation, release, deployment or historical-record rewrite was performed.
 - Unrelated loop and Companion OAuth work is excluded. Unknown unlabelled or encoded strings
-  remain outside pattern-based redaction; previously exposed credentials still require rotation.
+   remain outside pattern-based redaction; previously exposed credentials still require rotation.
+
+# Joined Activity design
+
+One continuous Thinking / Code / Activity surface with chronological operation groups.
+
+## Context
+
+Companion's `ChatContent.tsx` joins Thinking and Code at the turn spine. `ActivityPanel.tsx`
+still indents individual steps and lacks adjacent-operation grouping. Use the existing projection
+and production controls; do not change SDK, transport, raw results or unrelated desktop work.
+Reject nested cards, regrouping across chronological boundaries and parsing human summaries.
+
+## Phases
+
+1. Pin grouping and disclosure behavior.
+   - Rationale: streaming replacements must preserve order, facts and reader choices.
+   - Data: ActivityPanel and ExecutionTrace tests; deterministic story fixtures.
+   - Acceptance criteria: failures before implementation, covering adjacency and visible errors.
+   - Unknowns: existing projections may lack command correlation or complete resource counts.
+2. Implement and render the joined surface.
+   - Rationale: alignment alone does not establish visual continuity or useful aggregation.
+   - Data: production Activity, transcript composition and existing disclosure controls.
+   - Acceptance criteria: shared edge, independent folds, stable groups, no hidden failures.
+   - Unknowns: touch layout and existing custom-presentation interactions.
+3. Verify and deliver an interactive design artifact.
+   - Rationale: tests cannot establish the actual appearance or portable artifact behavior.
+   - Data: unit, Storybook, lint and build checks; Spel review; bundled production story.
+   - Acceptance criteria: reviewed phone/tablet/desktop states and self-contained attachment.
+   - Unknowns: available browser tooling and unrelated baseline failures.
+
+## Plan state
+
+Phases 1–3 complete locally. Commit and push to main authorized; SDK and deployment remain out of scope.
+
+- Adjacent operation groups and independent folds implemented; raw projection data is unchanged.
+- Removed the decorative assistant timeline and step marks. Commentary and final prose now share
+  the Thinking text edges; a browser regression reproduced the prior mismatch before the fix.
+- Latest checks: 381 affected unit tests, 160 Storybook tests, lint and production build pass.
+  Storybook build and the all-theme contrast check pass.
+- Production story and standalone HTML match at phone, tablet and desktop frames. Phone prose
+  measures left 34 / right 367 for thinking, commentary and answer at 393px width.
+- Review uses deterministic fixtures, not a gateway. Native iOS/WKWebView remains unverified.
+- SDK semantic requirements (including command correlation) remain the next, separate phase.
