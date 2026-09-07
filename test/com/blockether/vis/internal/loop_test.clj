@@ -7310,6 +7310,483 @@
                    (next-retry-counters ::lp/retry-context-overflow
                                         {:attempt 2 :max-tokens-attempt 1}))))))
 
+(defn- overflow-loop-scenario
+  "Exercise overflow handling, Python execution and the following provider request."
+  [{:keys [carried responses request-estimate]}]
+  (let [router
+        (svar/make-router [{:id :lmstudio
+                            :base-url "http://127.0.0.1:1234/v1"
+                            :api-key "test"
+                            :models [{:name "model" :input-limit 50000}]}])
+
+        environment
+        (lp/create-environment router {:db :memory})
+
+        tid
+        (persistance/db-store-session-turn! (:db-info environment)
+                                            {:parent-session-id (:session-id environment)
+                                             :user-request "CURRENT REQUEST"})
+
+        requests
+        (atom [])
+
+        signals
+        (atom [])
+
+        successes
+        (atom 0)
+
+        summaries
+        (#'lp/current-session-summaries environment)
+
+        replacements
+        (cond-> {#'lp/previous-turn-context
+                 (fn [& _]
+                   [{:turn 1 :user-request "PRIOR REQUEST" :answer "PRIOR OUTCOME"}])
+                 #'svar/ask-code!
+                 (fn [_ opts]
+                   (let [messages
+                         (:messages opts)
+
+                         n
+                         (svar-router/count-messages "model" messages)]
+
+                     (swap! requests conj messages)
+                     (if (> n 50000)
+                       (throw (ex-info "Context overflow"
+                                       {:type :svar.core/context-overflow
+                                        :source :preflight
+                                        :input-tokens n
+                                        :max-input-tokens 50000}))
+                       (let [{:keys [code text]}
+                             (nth responses @successes {})
+
+                             id
+                             (str "call-" (swap! successes inc))
+
+                             call
+                             {:id id :name "python_execution" :input {:code code}}]
+
+                         (merge {:api-usage {:input-tokens n :output-tokens 1} :tokens {}}
+                                (if code
+                                  (cond-> {:stop-reason :tool-calls :tool-calls [call]}
+                                    text
+                                    (assoc :assistant-message
+                                      {:role "assistant"
+                                       :content [{:type "text" :text text}
+                                                 (assoc call :type "tool_use")]}))
+                                  {:stop-reason :end :tool-calls [] :content "done"}))))))}
+          carried
+          (assoc #'lp/resumable-prompt-message-base
+            (fn [_history _provider _model _context _turn ledger _stable _current]
+              {:messages carried :summaries ledger :resumed? true}))
+
+          request-estimate
+          (assoc #'lp/request-context-estimator
+            (fn [& _]
+              request-estimate)))]
+
+    (try (with-redefs-fn replacements
+           (fn []
+             (tel/with-handler
+               ::overflow-test
+               (fn [signal]
+                 (when (contains? #{::lp/context-token-counts ::lp/context-overflow-emergency-fold
+                                    ::lp/context-overflow-terminal ::lp/context-proactive-fold}
+                                  (:id signal))
+                   (swap! signals conj (select-keys signal [:id :data]))))
+               {:async? false}
+               (lp/iteration-loop environment "CURRENT REQUEST" {:session-turn-id tid}))))
+         {:requests @requests
+          :counts (mapv :data (filter #(= ::lp/context-token-counts (:id %)) @signals))
+          :rescues (mapv :data (filter #(= ::lp/context-overflow-emergency-fold (:id %)) @signals))
+          :proactive (mapv :data (filter #(= ::lp/context-proactive-fold (:id %)) @signals))
+          :summaries-unchanged? (= summaries (#'lp/current-session-summaries environment))}
+         (finally (lp/dispose-environment! environment)))))
+
+(defdescribe
+  resumed-context-overflow-test
+  ;; Regression: a refused carried prefix hid all prior settled work from the
+  ;; first iteration's emergency fold. Force a missed estimate so these cases
+  ;; keep exercising real preflight rejection independently of proactive folding.
+  (it "rebuilds a refused carried prefix and keeps the next iteration canonical"
+      (let [carried
+            [{:role "system" :content "stable"}
+             {:role "assistant"
+              :content (str "CARRIED PAYLOAD " (apply str (repeat 80000 "old work ")))}
+             {:role "user" :content "CURRENT REQUEST"}]
+
+            {:keys [requests counts rescues summaries-unchanged?]}
+            (overflow-loop-scenario {:carried carried
+                                     :request-estimate (constantly 0)
+                                     :responses [{:code "print('LIVE RESULT')"} {}]})]
+
+        (expect (= 3 (count requests)))
+        (expect (> (svar-router/count-messages "model" (first requests)) 50000))
+        (expect (= [:resumed :canonical :canonical] (mapv :prompt-base counts)))
+        (expect (= [0 1 0] (mapv :context-recovery-attempt counts)))
+        (expect (= [:canonical-rebuild] (mapv :projection-kind rescues)))
+        (expect summaries-unchanged?)
+        (doseq [messages (rest requests)]
+          (let [text (str messages)]
+            (expect (not (str/includes? text "CARRIED PAYLOAD")))
+            (expect (str/includes? text "CURRENT REQUEST"))
+            (expect (str/includes? text "PRIOR OUTCOME"))
+            (expect (< (svar-router/count-messages "model" messages) 50000))))
+        (expect (str/includes? (str (last requests)) "LIVE RESULT"))))
+  (it "retains a transport fold across the next successful iteration without changing the ledger"
+      (let [{:keys [requests counts rescues summaries-unchanged?]}
+            (overflow-loop-scenario
+              {:request-estimate (constantly 0)
+               :responses [{:code "print('old result')"
+                            :text (str "SETTLED PAYLOAD " (apply str (repeat 80000 "old work ")))}
+                           {:code "print('LIVE RESULT')"} {}]})]
+        (expect (= 4 (count requests)))
+        (expect (= [:succeeded :context-overflow :succeeded :succeeded] (mapv :outcome counts)))
+        (expect (= [:emergency-fold] (mapv :projection-kind rescues)))
+        (expect summaries-unchanged?)
+        (doseq [messages (drop 2 requests)]
+          (expect (not (str/includes? (str messages) "SETTLED PAYLOAD")))
+          (expect (str/includes? (str messages) "Emergency transport fold")))
+        (expect (str/includes? (str (last requests)) "LIVE RESULT")))))
+
+(defdescribe proactive-context-fold-test
+             ;; A low previous usage/hint must not let an oversized pending request reach
+             ;; preflight. Both inherited history and newly completed tool work are foldable.
+             (it "rebuilds an oversized resumed base before the first provider request"
+                 (let [carried
+                       [{:role "system" :content "stable"}
+                        {:role "assistant"
+                         :content (str "CARRIED PAYLOAD " (apply str (repeat 80000 "old work ")))}
+                        {:role "user" :content "CURRENT REQUEST"}]
+
+                       {:keys [requests counts rescues summaries-unchanged?]}
+                       (overflow-loop-scenario {:carried carried
+                                                :responses [{:code "print('LIVE RESULT')"} {}]})]
+
+                   (expect (= 2 (count requests)))
+                   (expect (every? #(= :succeeded (:outcome %)) counts))
+                   (expect (every? #(= :canonical (:prompt-base %)) counts))
+                   (expect (every? #(zero? (:context-recovery-attempt %)) counts))
+                   (expect (empty? rescues))
+                   (expect summaries-unchanged?)
+                   (doseq [messages requests]
+                     (expect (<= (svar-router/count-messages "model" messages) 45000))
+                     (expect (not (str/includes? (str messages) "CARRIED PAYLOAD")))
+                     (expect (str/includes? (str messages) "CURRENT REQUEST"))
+                     (expect (str/includes? (str messages) "PRIOR OUTCOME")))
+                   (expect (str/includes? (str (last requests)) "LIVE RESULT"))))
+             (it "folds growth before a follow-up request and does not resurrect it afterwards"
+                 (let [{:keys [requests counts rescues proactive summaries-unchanged?]}
+                       (overflow-loop-scenario
+                         {:responses [{:code "print('old result')"
+                                       :text (str "SETTLED PAYLOAD "
+                                                  (apply str (repeat 80000 "old work ")))}
+                                      {:code "print('LIVE RESULT')"} {}]})]
+                   (expect (= 3 (count requests)))
+                   (expect (every? #(= :succeeded (:outcome %)) counts))
+                   (expect (empty? rescues))
+                   (expect (= [:proactive-fold] (mapv :projection-kind proactive)))
+                   (expect (every? #(not (contains? % :attempt)) proactive))
+                   (expect summaries-unchanged?)
+                   (doseq [messages (rest requests)]
+                     (expect (<= (svar-router/count-messages "model" messages) 45000))
+                     (expect (not (str/includes? (str messages) "SETTLED PAYLOAD")))
+                     (expect (str/includes? (str messages) "Proactive transport fold")))
+                   (expect (str/includes? (str (last requests)) "LIVE RESULT")))))
+
+(defdescribe
+  request-context-estimator-test
+  (it "adds pending assistant/tool/user growth once to exact provider input, including cached input"
+      (let [prior
+            [{:role "system" :content "stable"} {:role "user" :content "old request"}]
+
+            context
+            {:id "same-tools-and-account" :fixed-prefix-weight 20}
+
+            entry
+            {:messages prior
+             :input-tokens 10000
+             :cache-read-tokens 10000
+             :at-ms 0
+             :prompt-cache-context context}
+
+            estimate
+            (#'lp/request-context-estimator {[:openai "gpt-4o"] entry} :openai "gpt-4o" context)
+
+            tail
+            [{:role "assistant" :content "new reasoning and answer"}
+             {:role "user"
+              :content [{:type "tool_result" :tool_use_id "call-1" :content "new result"}]}
+             {:role "user" :content "CURRENT REQUEST"}]]
+
+        (expect (= 10000 (estimate prior)))
+        (expect (= (+ 10000
+                      (- (svar-router/count-messages "gpt-4o" tail)
+                         (svar-router/count-messages "gpt-4o" [])))
+                   (estimate (into prior tail))))))
+  (it "invalidates the usage anchor after a rewrite, route change, or fixed-prefix change"
+      (let [prior
+            [{:role "user" :content "old request"}]
+
+            context
+            {:id "original" :fixed-prefix-weight 20}
+
+            entry
+            {:messages prior :input-tokens 10000 :prompt-cache-context context}
+
+            history
+            {[:openai "gpt-4o"] entry}]
+
+        (doseq [[provider model ctx messages]
+                [[:other "gpt-4o" context prior] [:openai "other-model" context prior]
+                 [:openai "gpt-4o" (assoc context :id "different-account") prior]
+                 [:openai "gpt-4o" (assoc context :fixed-prefix-weight 21) prior]
+                 [:openai "gpt-4o" nil prior]
+                 [:openai "gpt-4o" context [{:role "user" :content "folded recap"}]]]]
+          (expect (= (svar-router/count-messages model messages)
+                     ((#'lp/request-context-estimator history provider model ctx) messages))))))
+  (it "keeps the typed full-request estimate as a floor and ignores missing or invalid usage"
+      (let [messages
+            [{:role "user" :content (apply str (repeat 1000 "reasoning "))}]
+
+            context
+            {:id "original" :fixed-prefix-weight 20}
+
+            local
+            (svar-router/count-messages "gpt-4o" messages)]
+
+        (doseq [input [nil 0 -1 1]]
+          (expect (= local
+                     ((#'lp/request-context-estimator
+                       {[:openai "gpt-4o"]
+                        {:messages messages :input-tokens input :prompt-cache-context context}}
+                       :openai
+                       "gpt-4o"
+                       context)
+                       messages)))))))
+
+(defdescribe
+  pre-request-context-projection-test
+  (it "does no canonical work below budget, but acts at the boundary including pending user input"
+      (let [base
+            [{:role "user" :content "CURRENT REQUEST"}]
+
+            messages
+            (conj base {:role "assistant" :content (apply str (repeat 1000 "old work "))})
+
+            n
+            (svar-router/count-messages "gpt-4o" messages)
+
+            calls
+            (atom 0)
+
+            opts
+            {:request-messages messages
+             :base-messages messages
+             :trailer-iters []
+             :summaries []
+             :replay-target {:provider :openai :model "gpt-4o"}
+             :model "gpt-4o"
+             :canonical-base-messages-fn (fn []
+                                           (swap! calls inc)
+                                           base)
+             :canonical-trailer-iters []}]
+
+        (expect (nil? (#'lp/pre-request-context-projection (assoc opts :budget-tokens (inc n)))))
+        (expect (zero? @calls))
+        (let [projection (#'lp/pre-request-context-projection (assoc opts :budget-tokens n))]
+          (expect (= 1 @calls))
+          (expect (= base (:messages projection)))
+          (expect (= :canonical-rebuild (:projection-kind projection))))))
+  (it "will not drop immutable input or install a nonshrinking or still-oversized projection"
+      (let [request
+            [{:role "user" :content (apply str (repeat 1000 "CURRENT REQUEST "))}]
+
+            opts
+            {:request-messages request
+             :base-messages request
+             :trailer-iters []
+             :summaries []
+             :replay-target {:provider :openai :model "gpt-4o"}
+             :model "gpt-4o"
+             :budget-tokens 100}]
+
+        (expect (nil? (#'lp/pre-request-context-projection opts)))
+        (expect (nil? (#'lp/pre-request-context-projection
+                       (assoc opts
+                         :canonical-base-messages-fn (constantly request)
+                         :canonical-trailer-iters []))))))
+  (it
+    "uses measured prefix pressure even while the local estimate and last-input hint are small"
+    (let [base
+          [{:role "user" :content "CURRENT REQUEST"}]
+
+          target
+          {:provider :openai :model "gpt-4o"}
+
+          trailer
+          (mapv #(stub-tool-iter {:id %
+                                  :content [{:type "text"
+                                             :text (apply str
+                                                     (repeat (if (= 3 %) 20000 1000) "work "))}]})
+                [1 2 3])
+
+          prior
+          (into base (conversation-suffix (subvec trailer 0 2) target))
+
+          request
+          (into base (conversation-suffix trailer target))
+
+          context
+          {:id "same-prefix" :fixed-prefix-weight 20}
+
+          estimate
+          (#'lp/request-context-estimator
+           {[:openai "gpt-4o"] {:messages prior :input-tokens 30000 :prompt-cache-context context}}
+           :openai
+           "gpt-4o"
+           context)
+
+          projection
+          (#'lp/pre-request-context-projection
+           {:request-messages request
+            :base-messages base
+            :trailer-iters trailer
+            :summaries []
+            :replay-target target
+            :model "gpt-4o"
+            :budget-tokens 45000
+            :count-messages-fn estimate})]
+
+      (expect (< (svar-router/count-messages "gpt-4o" request) 45000))
+      (expect (>= (:before-tokens projection) 45000))
+      (expect (= 1 (:folded-scopes projection)))
+      (expect (<= (estimate (:messages projection)) 45000))
+      (expect (str/includes? (str (:messages projection)) "CURRENT REQUEST")))))
+
+(defdescribe
+  pre-request-tool-result-fold-test
+  (it
+    "folds large tool results while retaining semantic gists and recent tool pairs"
+    (let [base
+          [{:role "user" :content "CURRENT REQUEST"}]
+
+          target
+          {:provider :openai :model "gpt-4o"}
+
+          raw
+          [(stub-tool-iter {:id 1})
+           (assoc-in (stub-tool-iter {:id 2})
+             [1 :forms-vec 0 :stdout]
+             (str "TOOL PAYLOAD " (apply str (repeat 10000 "old work "))))
+           (assoc-in (stub-tool-iter {:id 3}) [1 :forms-vec 0 :stdout] "LIVE RESULT")]
+
+          ledger
+          [{"scopes" #{"t1/i1"} "gist" "MEANINGFUL FINDING" "at_turn" 1}]
+
+          visible
+          (#'lp/apply-summaries raw ledger)
+
+          request
+          (into base (conversation-suffix visible target))
+
+          projection
+          (#'lp/pre-request-context-projection
+           {:request-messages request
+            :base-messages base
+            :trailer-iters visible
+            :summaries ledger
+            :replay-target target
+            :model "gpt-4o"
+            :budget-tokens 1500})
+
+          text
+          (str (:messages projection))]
+
+      (expect (= #{"t1/i2"} (:scopes projection)))
+      (expect (= :proactive-fold (:projection-kind projection)))
+      (expect (<= (svar-router/count-messages "gpt-4o" (:messages projection)) 1500))
+      (expect (str/includes? text "MEANINGFUL FINDING"))
+      (expect (str/includes? text "LIVE RESULT"))
+      (expect (str/includes? text "tc-3"))
+      (expect (not (str/includes? text "TOOL PAYLOAD"))))))
+
+(defdescribe
+  canonical-overflow-projection-test
+  (it
+    "folds a canonical rebuild when rebuilding alone is still over budget"
+    (let [base
+          [{:role "system" :content "stable"} {:role "user" :content "CURRENT REQUEST"}]
+
+          request
+          (conj base {:role "assistant" :content (apply str (repeat 30000 "old work "))})
+
+          trailer
+          [(stub-tool-iter {:id 1
+                            :content [{:type "text" :text (apply str (repeat 5000 "work "))}]})
+           (stub-tool-iter {:id 2
+                            :content [{:type "text" :text (apply str (repeat 5000 "work "))}]})]
+
+          n
+          (svar-router/count-messages "gpt-4o" request)
+
+          recovery
+          (context-overflow-recovery!
+            {:error (ex-info "Context overflow"
+                             {:type :svar.core/context-overflow
+                              :source :preflight
+                              :input-tokens n
+                              :max-input-tokens 8000})
+             :output-started? (atom false)
+             :recovery-state (atom {:attempts 0})
+             :ctx-atom (atom {})
+             :turn-input-tokens 0
+             :request-messages request
+             :base-messages request
+             :trailer-iters []
+             :summaries []
+             :canonical-base-messages-fn (constantly base)
+             :canonical-trailer-iters trailer
+             :replay-target {:provider :openai :model "gpt-4o"}
+             :model "gpt-4o"})]
+
+      (expect (= :emergency-fold (:projection-kind recovery)))
+      (expect (= n (:before-tokens recovery)))
+      (expect (< (:after-tokens recovery) 7201))
+      (expect (= base (:canonical-base-messages recovery)))
+      (expect (some? (:summary recovery)))))
+  (it "never rebuilds or retries after output, for unrelated errors, or without shrinkage"
+      (let [request
+            [{:role "user" :content "CURRENT REQUEST"}]
+
+            overflow
+            (ex-info "Context overflow" {:type :svar.core/context-overflow})]
+
+        (doseq [[error output?] [[overflow true] [(ex-info "Unrelated" {}) false] [overflow false]]]
+          (let [calls (atom 0)
+                state (atom {:attempts 0})
+                result (context-overflow-recovery! {:error error
+                                                    :output-started? (atom output?)
+                                                    :recovery-state state
+                                                    :ctx-atom (atom {})
+                                                    :turn-input-tokens 0
+                                                    :request-messages request
+                                                    :base-messages request
+                                                    :trailer-iters []
+                                                    :summaries []
+                                                    :canonical-base-messages-fn (fn []
+                                                                                  (swap! calls inc)
+                                                                                  request)
+                                                    :canonical-trailer-iters []
+                                                    :replay-target {:provider :openai
+                                                                    :model "gpt-4o"}
+                                                    :model "gpt-4o"})]
+
+            (expect (nil? result))
+            (expect (nil? (:last-after-tokens @state)))
+            (expect (= (if (and (= error overflow) (not output?)) 1 0) @calls)))))))
+
 (defdescribe attachment-reinspection-wire-test
              (it "renders a reinspection image as a canonical vision message"
                  (let [wired-images
