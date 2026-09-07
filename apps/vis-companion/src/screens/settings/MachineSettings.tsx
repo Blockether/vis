@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { clientCallbackMode, startGatewayAuth, watchAuth, type AuthWatch } from "../../lib/oauth";
+import { clientCallbackMode, watchAuth, type AuthWatch } from "../../lib/oauth";
 import { McpAuth } from "../../components/McpAuth";
 
 import {
@@ -523,10 +523,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
     setBusy(server.name);
     setError(null);
     try {
-      const flow = await startGatewayAuth(client,
-        () => client.mcpAuthStart(server.name, clientCallbackMode()),
-        () => authEpoch.current === epoch);
-      if (!flow) return;
+      const flow = await client.mcpAuthStart(server.name, clientCallbackMode());
       if (authEpoch.current !== epoch) {
         await client.mcpAuthCancel(flow.server, flow.flow_id).catch(() => {});
         return;

@@ -30,9 +30,9 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-it('uses the same explicit VPN confirmation for model-provider sign-in', async () => {
+it('starts provider sign-in on a paired HTTP gateway without another consent dialog', async () => {
   vi.spyOn(window, 'open').mockReturnValue(null);
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify(flow)));
   vi.stubGlobal('fetch', fetch);
   const client = new GatewayClient({ url: 'http://10.0.0.5:7890', token: 'test-paired-token' });
@@ -40,7 +40,7 @@ it('uses the same explicit VPN confirmation for model-provider sign-in', async (
   vi.spyOn(client, 'router').mockResolvedValue([]);
   const { result } = renderHook(() => useProviderAuth(client));
   await act(async () => result.current.signIn(provider));
-  expect(confirm).toHaveBeenCalledOnce();
+  expect(confirm).not.toHaveBeenCalled();
   expect(fetch.mock.calls[0]![0]).toBe('http://10.0.0.5:7890/v1/providers/openai-codex/auth/start');
   expect(result.current.flow?.flow_id).toBe('test-flow');
   expect(window.open).toHaveBeenCalledOnce();

@@ -61,9 +61,9 @@ function pairedHttpClient() {
   vi.spyOn(gateway, 'mcpServers').mockResolvedValue(servers);
   return gateway;
 }
-it('confirms a VPN-protected HTTP connection and completes native MCP sign-in on that gateway', async () => {
+it('starts native MCP sign-in on a paired HTTP gateway without another consent dialog', async () => {
   const opened = vi.spyOn(window, 'open').mockReturnValue(null);
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   const fetch = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
     ...flow, status: url.endsWith('/complete') ? 'ok' : 'pending',
   })));
@@ -72,9 +72,7 @@ it('confirms a VPN-protected HTTP connection and completes native MCP sign-in on
   render(<McpServersPanel client={gateway} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
   await screen.findByText('Waiting for authorization…');
-  expect(confirm).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/active encrypted VPN.*Tailscale/s));
-  expect(confirm.mock.calls[0]![0]).toContain('http://10.0.0.5:7890');
-  expect(confirm.mock.calls[0]![0]).not.toContain('test-paired-token');
+  expect(confirm).not.toHaveBeenCalled();
   await waitFor(() => expect(opened).toHaveBeenCalledWith(flow.url, '_blank', 'noopener,noreferrer'));
   await act(async () => native.handler({ url: `${flow.redirect_uri}?state=test-state&code=test-code` }));
   await waitFor(() => expect(screen.queryByText('Waiting for authorization…')).toBeNull());
@@ -87,25 +85,13 @@ it('confirms a VPN-protected HTTP connection and completes native MCP sign-in on
     expect(options.redirect).toBe('error');
     expect(options.cache).toBe('no-store');
   }
-  expect(confirm).toHaveBeenCalledOnce();
-});
-it('does not send OAuth traffic or open the browser when VPN confirmation is declined', async () => {
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-  const opened = vi.spyOn(window, 'open').mockReturnValue(null);
-  const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
-  render(<McpServersPanel client={pairedHttpClient()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-  await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
-  expect(fetch).not.toHaveBeenCalled();
-  expect(opened).not.toHaveBeenCalled();
-  expect(screen.queryByText('Waiting for authorization…')).toBeNull();
-  expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled();
+  expect(confirm).not.toHaveBeenCalled();
 });
 it.each([
   [new GatewayOAuthError('pairing-required'), 'Pair this gateway before starting sign-in.'],
   [new GatewayError(400, 'test-sensitive-callback-value'),
     'Cannot start sign-in. Check the gateway and MCP server settings, then try again.'],
-])('shows safe start errors without treating remote text as VPN consent', async (error, message) => {
+])('shows safe local start errors without exposing remote error text', async (error, message) => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
   const gateway = client(); gateway.mcpAuthStart.mockRejectedValue(error);
   render(<McpServersPanel client={gateway as unknown as GatewayClient} />);

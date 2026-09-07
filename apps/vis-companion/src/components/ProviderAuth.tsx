@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { AuthFlow, ProviderAuthState, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
-import { clientAuthFlow, openAuthUrl, startGatewayAuth, watchAuth, type AuthWatch } from '../lib/oauth';
+import { clientAuthFlow, openAuthUrl, watchAuth, type AuthWatch } from '../lib/oauth';
 import { Banner, Button, ConfirmRow, DialogFrame, IconButton, Input, ListRow, Modal } from './ui';
 import {
   ChevronIcon,
@@ -421,9 +421,7 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
       setRedirectUrl('');
       setApiKey('');
       try {
-        const started = await startGatewayAuth(client, () => client.startProviderAuth(provider.id),
-          () => generation === startGeneration.current);
-        if (!started) return;
+        const started = await client.startProviderAuth(provider.id);
         if (generation !== startGeneration.current) {
           void client.cancelProviderAuth(started.provider_id, started.flow_id).catch(() => {});
           return;
