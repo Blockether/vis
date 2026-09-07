@@ -1,7 +1,7 @@
 import { useSyncExternalStore, type ReactNode } from "react";
 
 import { ChevronIcon } from "../../components/icons";
-import { IconButton, ListRow } from "../../components/ui";
+import { ListRow } from "../../components/ui";
 export function FormLabel({
   label,
   hint,
@@ -102,45 +102,46 @@ export function SettingsColumn({
       {children}
     </div>
   );
+  const TitleContainer = fold ? "span" : "div";
+  const TitleHeading = fold ? "span" : "h3";
+  const titleBlock = (
+    <TitleContainer className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
+      <TitleHeading
+        role="heading"
+        aria-level={3}
+        className="min-w-0 flex-auto truncate font-mono text-ui font-black uppercase tracking-[0.12em] text-white"
+      >
+        {title}
+      </TitleHeading>
+      {meta && (
+        <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
+          {meta}
+        </span>
+      )}
+    </TitleContainer>
+  );
   return (
     <section className="flex min-w-0 flex-col sm:min-h-0">
-      {/* A BAND NAMES THE COLUMN IN ONE LINE, and its verb is a BARE MARK at the
-          physical trailing edge. The title and optional meta wrap in their own cell;
-          the action owns the remaining hit area without painting a second object in
-          the band. Column and nested-panel bands keep one 36px touch / 32px pointer
-          rhythm; their level comes from paper and type, not from a circle around ＋. */}
       <header className="min-w-0 shrink-0 border-b border-dialog-edge bg-level-machine">
-        <div className="flex min-h-9 min-w-0 items-center gap-3 px-3 py-0.5 sm:px-4 mouse:min-h-8">
-          <div className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h3 className="min-w-0 flex-auto truncate font-mono text-ui font-black uppercase tracking-[0.12em] text-white">
-              {title}
-            </h3>
-            {meta && (
-              <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
-                {meta}
-              </span>
-            )}
+        {fold ? (
+          // Like Diagnostics, the whole named band toggles, not just its chevron.
+          <ListRow
+            density="compact"
+            aria-label={fold.label}
+            aria-expanded={fold.isOpen}
+            onClick={fold.onToggle}
+          >
+            {titleBlock}
+            <ChevronIcon open={fold.isOpen} className="size-4 shrink-0" />
+          </ListRow>
+        ) : (
+          <div className="flex min-h-9 min-w-0 items-center gap-3 px-3 py-0.5 sm:px-4 mouse:min-h-8">
+            {titleBlock}
+            <span className="flex shrink-0 items-center empty:hidden">
+              {action}
+            </span>
           </div>
-          <span className="flex shrink-0 items-center empty:hidden">
-            {action}
-            {fold && (
-              /* THE FOLD IS THE BAND'S OWN MARK, and it stands where the machines'
-                 ＋ stands: the trailing edge, one bare chevron that TURNS rather than
-                 swaps glyph. Hidden is HIDDEN — the panels under this band are not on
-                 the page at all until the mark is pressed. */
-              <IconButton
-                variant="quiet"
-                edge
-                label={fold.label}
-                title={fold.label}
-                aria-expanded={fold.isOpen}
-                onClick={fold.onToggle}
-              >
-                <ChevronIcon open={fold.isOpen} className="size-4" />
-              </IconButton>
-            )}
-          </span>
-        </div>
+        )}
       </header>
       {!fold || fold.isOpen ? body : null}
     </section>

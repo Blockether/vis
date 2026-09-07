@@ -47,12 +47,14 @@ describe("the settings dialog's stacked application fold", () => {
     expect(screen.queryByText("Theme")).not.toBeInTheDocument();
     const band = screen.getByRole("button", { name: "Show application settings" });
     expect(band).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(band);
+    fireEvent.click(screen.getByText("Application"));
     expect(screen.getByText("Theme")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Hide application settings" })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
+    fireEvent.click(screen.getByText("Application"));
+    expect(screen.queryByText("Theme")).not.toBeInTheDocument();
   });
 
   it("keeps a standing column open with no fold where both columns fit", () => {

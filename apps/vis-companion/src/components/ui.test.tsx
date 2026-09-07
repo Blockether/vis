@@ -3075,7 +3075,7 @@ describe("the session screen and the settings dialog spell no control out", () =
     // is the band's trailing CELL, centred against the title's own cell, and that
     // cell is what wraps — never the line the verb stands on.
     const band =
-      /bg-level-machine">\s*<div className="([^"]*)"/.exec(
+      /<div className="(flex min-h-9[^"]*)"/.exec(
         settingsSource,
       )?.[1] ?? "";
     const nestedBand =

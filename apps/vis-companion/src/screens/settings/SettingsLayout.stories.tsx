@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { useState } from 'react';
 import { ChoiceCell } from '../../components/ui';
 import { SettingsColumn, SettingsPanel } from './SettingsLayout';
 
@@ -25,6 +26,19 @@ const meta = {
   title: 'Screens/Settings column',
   component: SettingsColumn,
   parameters: { layout: 'padded' },
+  render: function Render(args) {
+    const [open, setOpen] = useState(args.disclosure?.isOpen ?? false);
+    return (
+      <SettingsColumn
+        {...args}
+        disclosure={args.disclosure && {
+          isOpen: open,
+          onToggle: () => setOpen((current) => !current),
+          label: `${open ? 'Hide' : 'Show'} application settings`,
+        }}
+      />
+    );
+  },
 } satisfies Meta<typeof SettingsColumn>;
 
 export default meta;
