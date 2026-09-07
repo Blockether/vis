@@ -93,6 +93,12 @@ describe('desktop release platforms', () => {
     expect([...workflow.matchAll(/^\s+label: (.+)$/gm)].map((match) => match[1])).toEqual([
       'macOS universal', 'Linux x64', 'Linux ARM64',
     ]);
+    // Only macOS is self-hosted; Linux must not depend on Mac emulation.
+    expect(workflow).toContain('runs-on: ${{ matrix.runner }}');
+    expect([...workflow.matchAll(/^\s+- runner: (.+)$/gm)].map((match) => match[1])).toEqual([
+      '[self-hosted, macOS, ARM64, vis-macos-arm64]', 'ubuntu-24.04', 'ubuntu-24.04-arm',
+    ]);
+    expect(workflow).not.toMatch(/VIS_CONTAINER_|--linux|Podman|Docker/);
     expect(workflow).toContain('runner: ubuntu-24.04');
     expect(workflow).toContain('runner: ubuntu-24.04-arm');
     expect(workflow).not.toMatch(/windows|win32/i);

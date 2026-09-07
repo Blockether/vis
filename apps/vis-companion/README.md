@@ -256,7 +256,8 @@ git tag v1.0.2 && git push origin v1.0.2
 That tag also runs `.github/workflows/desktop-companion.yml`, which packages the same web
 bundle as a desktop app with [Pake](https://github.com/tw93/pake): macOS Universal
 (Intel + Apple Silicon, `.dmg`) and Linux x86_64/ARM64 (`.deb`, `.AppImage`). Windows
-is not a desktop release target. Each Linux architecture builds on its native runner,
+is not a desktop release target. Only macOS uses the self-hosted runner. Linux builds
+on GitHub-hosted `ubuntu-24.04` (x64) and `ubuntu-24.04-arm` (ARM64) runners,
 with distinct `linux-x64` and `linux-arm64` asset names attached to the GitHub Release.
 `scripts/desktop-package.mjs` holds the flags and asset names; locally,
 `npm run build && npm run package:desktop` writes this host's installers to `build/desktop/`

@@ -199,19 +199,35 @@ Remaining distribution blockers, not successful release steps:
 - Native tag publishing is disabled by repository policy; no native engine asset was published.
 - The public PyPI project and repository `pypi` environment are not available. SDK publication
   requires trusted-publisher setup; no credentials or environment protection were changed.
-- The companion release is partial: iOS archive signing fails with `errSecInternalComponent`;
-  Windows/Linux desktop jobs use the app working directory before checkout. The Android
-  publication freeze remains in force. A separate Android CI run also reports four existing
-  Storybook accessibility failures; the 23 fixture tests changed here pass.
+- The tagged companion run failed iOS archive signing with `errSecInternalComponent`.
+  Desktop checkout ordering, Linux output casing and missing `xdg-utils` were fixed
+  afterward; all three targets passed in desktop dry run 34152836189. Windows was
+  removed from the requested targets. Android publication remains frozen.
 - No live gateway restart, deployment outside the requested release pipeline, release-asset
   overwrite, signing-key change or tag rewrite was performed.
+
+## 11. Desktop runner scope
+
+**Rationale:** Only macOS needs the self-hosted runner. Linux already builds successfully
+on GitHub-hosted native runners; routing Linux through a Mac adds unnecessary emulation.
+
+**Data:** Restored the working matrix: self-hosted macOS ARM64 for Universal DMG,
+`ubuntu-24.04` for Linux x64 and `ubuntu-24.04-arm` for Linux ARM64. Removed the
+uncommitted Linux container implementation and its container-only tests. A regression
+asserts the exact runner matrix and rejects container routing in the workflow.
+
+**Acceptance criteria:** Desktop packaging tests and lint pass, with no changes to
+unrelated working-tree edits or published release assets.
+
+**Unknowns:** No new installer build is claimed by this correction. The restored
+workflow previously passed all three jobs in dry run 34152836189.
 
 ## Plan state
 
 Phases 7–9 and the SDK/native/core-release portion of phase 10 are complete. The reusable
-SDK extension is committed, main CI is green and core 0.1.43 is published. PyPI, native
-publishing and the remaining companion targets are blocked as recorded above. No live
-service was restarted.
+SDK extension is committed and core 0.1.43 is published; earlier distribution blockers
+are recorded above. Phase 11 restores the previously green desktop runner split;
+17 packaging tests and React compiler lint pass. Gateway and production services are untouched.
 
 ### Historical phase 7 state
 Phase 7 is implemented and locally verified. Extension authors use `import blockether.vis.extension as vis`; engine clients use `from blockether.vis.engine import GatewayClient, LocalEngine`. The root package is inert, with no legacy aliases. The SDK bundles the private contract reader and all 24 canonical JSON resources in one wheel and rebuildable sdist; canonical Clojure/JSON sources are unchanged. The host-owned injector executes the same extension API shipped in that wheel. Consumers, documentation, version mirroring and CI use the new layout. Unrelated working-tree changes remain untouched. No commit, push, publication, deployment or runtime release was performed.
