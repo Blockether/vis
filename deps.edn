@@ -126,7 +126,6 @@
         org.commonmark/commonmark {:mvn/version "0.29.0"}
         org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
         org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
-        org.flatland/ordered {:mvn/version "1.15.12"}
         ;; The session store's migration runner (resources/db/sqlite/migration/). The
         ;; SQLite-specific driver was split out of flyway-core in 10.x+ — without it Flyway
         ;; cannot recognize a `jdbc:sqlite:` URL.

@@ -250,15 +250,16 @@
 ;; entrypoint with `requiring-resolve`, and an image contains only the namespaces the
 ;; BUILDER loaded; those were loaded by ACCIDENT, through a build-time preload chain
 ;; inside jars that left with GraalPy. `internal.extension.native-preload` loads them on
-;; purpose, and only build.clj's build-time initialization of its `__init` class runs it.
+;; purpose, enabled by the application's native-image.properties.
 (defdescribe
   dynamically-resolved-namespaces-reach-the-native-image-test
   (it "initializes the preload namespace in the builder, which is the whole mechanism"
       (expect
         (str/includes?
-          (slurp (io/file "build.clj"))
+          (slurp (io/file
+                   "resources/META-INF/native-image/com.blockether/vis/native-image.properties"))
           "--initialize-at-build-time=com.blockether.vis.internal.extension.native_preload__init")
-        (str "build.clj must initialize com.blockether.vis.internal.extension.native-preload at "
+        (str "native-image.properties must initialize the Vis preload at "
              "BUILD time; nothing else loads it, and without it the binary cannot "
              "resolve a single manifest entrypoint")))
   (it "keeps the preload namespace outside every other namespace's load"

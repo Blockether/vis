@@ -6,7 +6,7 @@ name: Beta Native
 # shipped and replaces the assets on its prerelease, so `vis-agent update
 # --track beta` always resolves the newest beta by name and never by version.
 # Assets carry the SAME names as a stable release — the wrapper looks for
-# `vis-agent-<os>-<arch>-community.tar.gz` and nothing else.
+# `vis-agent-<os>-<arch>.tar.gz` and nothing else.
 #
 # PAUSED, NOT DELETED. The schedule is gone: every native platform is currently
 # broken — hosted macOS is killed by its own timeout, linux-arm64 dies of
@@ -144,8 +144,8 @@ jobs:
           # The same two FREE runners, the same measured heap settings as
           # native-release.yml — a beta must be built exactly the way the stable
           # asset is, or it stops predicting anything about the release.
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64-community.tar.gz, tui_asset: vis-tui-linux-x64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64-community.tar.gz, tui_asset: vis-tui-linux-arm64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64.tar.gz, tui_asset: vis-tui-linux-x64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64.tar.gz, tui_asset: vis-tui-linux-arm64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
     steps:
       - uses: actions/checkout@v7
         with:

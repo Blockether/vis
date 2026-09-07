@@ -4,7 +4,7 @@ name: Native Release
 # dispatch can build native engine and terminal-client artifacts per platform.
 # Linux uses GitHub-hosted runners; macOS ARM64 uses the self-hosted builder.
 #
-#   vis-agent-<os>-<arch>-community.tar.gz — engine wrapper, native runtime and CPython
+#   vis-agent-<os>-<arch>.tar.gz — engine wrapper, native runtime and CPython
 #   vis-tui-<os>-<arch>.tar.gz              — standalone HTTP/SSE terminal client
 #
 # Speech models download on first use. Each artifact carries only its build host's
@@ -110,8 +110,8 @@ jobs:
           # There is no flag left to win with: the next time this cliff is hit the
           # fix is a BIGGER BUILDER (an 8-core/32 GB larger runner, or a
           # self-hosted 32 GB box), or less reachable code — not more tuning.
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64-community.tar.gz, tui_asset: vis-tui-linux-x64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64-community.tar.gz, tui_asset: vis-tui-linux-arm64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64.tar.gz, tui_asset: vis-tui-linux-x64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64.tar.gz, tui_asset: vis-tui-linux-arm64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           # macOS arm64 is NOT in this matrix: it needs its own heap sizing and
           # its own runner, so it is the SEPARATE `macos` job below, on our own
           # labelled Apple-silicon builder. Every hosted macOS class GitHub
@@ -171,7 +171,7 @@ jobs:
             ~/.vis/build-cache
           key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'apps/**/deps.edn', 'packages/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
-      # community: full agent, model downloads on first use (lean binary).
+      # Full agent; speech models download on first use.
       # GitHub's Linux runner ships ~4 GB of swap; back the 12-14 GB builder heap
       # with a real swapfile instead of letting the JVM die on GC overhead.
       - name: Enlarge builder swap (Linux)
@@ -265,12 +265,12 @@ jobs:
   # ── macOS arm64 ────────────────────────────────────────────────────────────
   # Self-hosted ARM64 macOS. Tag publishing stays disabled until every platform is proven.
   macos:
-    name: native / vis-agent-macos-arm64-community.tar.gz
+    name: native / vis-agent-macos-arm64.tar.gz
     if: inputs.only != 'linux'
     runs-on: [self-hosted, macOS, ARM64, vis-macos-arm64]
     timeout-minutes: 120
     env:
-      VIS_ASSET: vis-agent-macos-arm64-community.tar.gz
+      VIS_ASSET: vis-agent-macos-arm64.tar.gz
       VIS_TUI_ASSET: vis-tui-macos-arm64.tar.gz
     steps:
       # Native smoke tests must not attach to the user's live gateway.
@@ -439,7 +439,7 @@ jobs:
           deadline=$(( SECONDS + DEADLINE_MINUTES * 60 ))
           while :; do
             status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs" \
-                        --jq '[.jobs[] | select(.name | endswith("macos-arm64-community.tar.gz"))][0].status // "unlisted"')"
+                        --jq '[.jobs[] | select(.name | endswith("macos-arm64.tar.gz"))][0].status // "unlisted"')"
             case "$status" in
               in_progress|completed)
                 echo "${MACOS_RUNNER} took the macOS build (${status})"

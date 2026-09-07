@@ -578,40 +578,18 @@
                   "  Stock JDKs and Oracle GraalVM are NOT substitutes — see .graalvm-version.")
                 {:expected want :actual got :task task}))))))))
 
-;; ── Distribution: community, and only community ─────────────────────────────
- ;; There is ONE agent distribution. It bundles every gateway provider/language
- ;; extension, built-in speech ASR/TTS, and the web `search` extension. The
- ;; standalone `vis-tui` application is a separate executable and release asset;
- ;; it talks to this distribution over the gateway protocol. The old :tui / :cross /
- ;; :voice build cuts are gone because they mixed client packaging with engine deps.
-;; `:profile :community` is still ACCEPTED on `native` / `uber` (the Dockerfile
-;; and the release workflow pass it); anything else is a hard error.
-;; The parakeet ASR model is NEVER embedded in the binary: it is distributed
-;; separately and fetched on first use, so the binary stays lean.
-
-(def ^:private the-profile
-  "The one and only distribution. Kept named so `:profile :community` parses."
-  :community)
-
-(defn- resolve-profile
-  [opts]
-  (let [p (keyword (or (:profile opts) the-profile))]
-    (when-not (= p the-profile)
-      (throw (ex-info (str "Unknown :profile "
-                           p
-                           " — :community is the only distribution, and it bundles everything")
-                      {:profile p :available [the-profile]})))
-    p))
+;; ── One engine distribution ────────────────────────────────────────────────
+ ;; Every built-in ships. The standalone TUI is a separate executable; speech
+ ;; models are downloaded on first use rather than embedded in the engine.
 
 (defn- root-deps-edn
-  "Root deps.edn as an edn map. Community bundles everything, so nothing is
-   dissoc'd and nothing is excluded — the whole dep tree ships."
+  "The engine dependency map; there are no selectable build profiles."
   []
   (read-string (slurp "deps.edn")))
 
 (defn- all-source-roots
   "Every production src/resources directory on the Vis classpath: the repo root's
-   own `:paths` plus each `:local/root` extension. AOT covers all of them and copies
+   own `:paths` plus each local first-party package. AOT covers all of them and copies
    every resource into the class directory. The roots come from deps.edn, never a
    second hand-maintained list."
   []
@@ -652,7 +630,7 @@
         (println "Migration index:" (str (io/file dir "_index.edn")) "->" names)))))
 
 (defn- prepare-native-classes!
-  "AOT-compile every namespace (core and extensions) into `native-class-dir`,
+  "AOT-compile every engine namespace into `native-class-dir`,
    copy all resources. Shared by `uber` and
    `native`; returns the `:native`-alias basis."
   []
@@ -663,7 +641,7 @@
         srcs
         (all-source-roots)]
 
-    (println "AOT compiling every ns across" (count srcs) "source roots… (profile community)")
+    (println "AOT compiling every ns across" (count srcs) "source roots…")
     ;; copy source resources, including the one closed Vis manifest
     (b/copy-dir {:src-dirs srcs :target-dir native-class-dir})
     ;; sweep agent-session state (.omc/) that lands INSIDE source trees when
@@ -692,7 +670,7 @@
     (let [bfile (io/file native-class-dir "vis" "BUILD")]
       (io/make-parents bfile)
       (spit bfile @build-stamp))
-    ;; no :ns-compile => compile EVERY ns found in :src-dirs (extensions included)
+    ;; No :ns-compile: compile every namespace in the source roots.
     (b/compile-clj {:basis basis :src-dirs srcs :class-dir native-class-dir})
     basis))
 
@@ -703,9 +681,8 @@
    a jar's own META-INF/native-image config and module-info are what the image
    build reads, and a flat uberjar flattens them away; `native` builds from a
    classpath of real jars."
-  [opts]
+  [_opts]
   (b/delete {:path native-uber})
-  (resolve-profile opts)
   (let [basis (prepare-native-classes!)]
     (b/uber {:class-dir native-class-dir
              :uber-file native-uber
@@ -1100,17 +1077,8 @@
              ;; Restricted native access (java.lang.foreign): rift and the embedded
              ;; CPython bridge both use downcalls. A future JDK blocks them unless the
              ;; application opts in explicitly.
-             "--enable-native-access=ALL-UNNAMED"
-             ;; ── Manifest reachability ───────────────────────────────────────
-             ;; The engine resolves every manifest entrypoint dynamically, so a
-             ;; namespace the BUILDER never loads has no class in the binary and
-             ;; the first command dies with "Could not locate ...__init.class".
-             ;; Initializing this ONE class at build time loads it, and its
-             ;; top-level form then loads every entrypoint the manifest names —
-             ;; the explicit form of what used to happen by accident, through a
-             ;; dependency's build-time preload chain.
-             "--initialize-at-build-time=com.blockether.vis.internal.extension.native_preload__init"
-             "-H:IncludeResources=META-INF/vis/.*" "-H:IncludeResources=.*\\.edn$"
+             "--enable-native-access=ALL-UNNAMED" "-H:IncludeResources=META-INF/vis/.*"
+             "-H:IncludeResources=.*\\.edn$"
              ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
              "-H:IncludeResources=vis/VERSION"
              ;; the build-written `vis/BUILD` (version, commit, track, timestamp)
@@ -1171,12 +1139,7 @@
              ;; ~1 MB of CLDR data, not `-H:+IncludeAllLocales` (~20 MB).
              "-H:DefaultLocale=en-US"
              (str "-H:IncludeLocales="
-                  (str/join "," ["en-US" "en-GB" "en-IN" "pl-PL" "de-DE" "zh-CN" "zh-TW" "hi-IN"]))
-             ;; ── Binary-size + build-time reduction ──────────────────────────
-             ;; -Os optimizes the COMPILED CODE for size instead of -O2 speed:
-             ;; it trims the __text section with negligible impact on an
-             ;; I/O-bound agent, and cuts native-image build time with it.
-             "-Os"]
+                  (str/join "," ["en-US" "en-GB" "en-IN" "pl-PL" "de-DE" "zh-CN" "zh-TW" "hi-IN"]))]
       ;; voice JNI native libs for THIS platform: sherpa's JNI and the ONNX
       ;; Runtime beside it, both under sherpa-onnx/native/<tok>/ in the host's
       ;; native-lib jar, which is exactly where sherpa's LibraryUtils looks them
@@ -1205,7 +1168,6 @@
    native-image flags; run `native` once first to populate the AOT classes."
   [opts]
   (assert-graalvm-ce! :native-image-only opts)
-  (resolve-profile opts)
   (let [basis (b/create-basis {:project (root-deps-edn) :aliases [:native]})]
     ;; A prior `package`/uber run can leave a target/vis DIRECTORY behind; the
     ;; builder then dies at [8/8] Creating image with "Path exists as directory".
@@ -1226,16 +1188,12 @@
    `bin/vis-agent` together with the native runtime.
 
    Options:
-     :profile :community — the one agent distribution and default: every engine
-                           extension, built-in speech ASR and web `search`. The
-                           standalone TUI is not part of this image.
      :auto-install-graalvm false — keep a missing GraalVM CE a hard error instead of
                            installing the pin (VIS_AUTO_INSTALL_GRAALVM=0 does the same).
                            By default a missing pin is downloaded + installed, and an
                            already-installed pinned JDK is switched to automatically."
   [opts]
   (assert-graalvm-ce! :native opts)
-  (resolve-profile opts)
   (let [basis (prepare-native-classes!)]
     ;; (1) Intermediate AOT uberjar for build tooling. Never shipped or selected at runtime.
     (b/delete {:path native-uber})
@@ -1250,7 +1208,7 @@
     (b/delete {:path native-bin})
     ;; (2) Private native runtime. Built from a classpath of real jars (NOT the
     ;; uberjar) so every jar keeps its module-info + native-image.properties.
-    (println "native-image:" native-bin "(community)" "(this takes several minutes)…")
+    (println "native-image:" native-bin "(this takes several minutes)…")
     (let [{:keys [exit]} (b/process {:command-args (into [(native-image-command)]
                                                          (native-image-args basis))})]
       (if (zero? exit)

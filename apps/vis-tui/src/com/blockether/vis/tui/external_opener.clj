@@ -20,8 +20,7 @@
    Pure-ish: every step except `open!` itself is a function of its
    args plus `os.name` and the current working directory. `open!`
    shells out and never throws; errors land in the returned result map."
-  (:require [babashka.process :as process]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [com.blockether.vis.tui.workspace :as workspace])
   (:import (java.io File)
            (java.nio.file Path Paths)))
@@ -206,7 +205,14 @@
   "Spawn `argv` with stdio redirected to /dev/null. Returns nil on
    success, otherwise the Throwable for the caller to inspect."
   [argv]
-  (try (process/process {:cmd argv :out :discard :err :discard}) nil (catch Throwable t t)))
+  (try (let [child (.start (doto (ProcessBuilder. ^java.util.List argv)
+                             (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD)
+                             (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)))]
+         ;; No input belongs to a detached opener; close the pipe rather than
+         ;; leaving it waiting on the TUI or holding a descriptor until GC.
+         (.close (.getOutputStream child)))
+       nil
+       (catch Throwable t t)))
 
 (defn- spawn-first!
   "Try argv candidates in order. Returns the winning argv, or nil if

@@ -39,23 +39,16 @@
              (it "answers every entry as a map carrying at least its initializer"
                  (doseq [entry (manifest/entries)]
                    (expect (qualified-symbol? (:register entry)) entry)
-                   (expect (every? #{:register :apropos :is-optional :because} (keys entry))
-                           entry))))
+                   (expect (every? #{:register :apropos} (keys entry)) entry))))
 
 (defdescribe
   entry-shape-test
   (it "accepts a bare symbol and a declared entry, and normalizes both to maps"
       (expect (= [{:register 'example.alpha/register!}
-                  {:register 'example.beta/register! :apropos "META-INF/vis/apropos/docs.edn"}
-                  {:register 'example.gamma/register!
-                   :is-optional true
-                   :because "the native library may be absent"}]
+                  {:register 'example.beta/register! :apropos "META-INF/vis/apropos/docs.edn"}]
                  (parsed (str "{:initialization "
-                              "[example.alpha/register! " "{:register example.beta/register! "
-                              ":apropos \"META-INF/vis/apropos/docs.edn\"} "
-                              "{:register example.gamma/register! "
-                              ":is-optional true "
-                              ":because \"the native library may be absent\"}]}")))))
+                              "[example.alpha/register! {:register example.beta/register! "
+                              ":apropos \"META-INF/vis/apropos/docs.edn\"}]}")))))
   (it "refuses a manifest that carries anything but the initialization vector"
       ;; Regression: the resource list used to be a second top-level key, so every
       ;; pack's documents were declared far from the pack that registers them, and
@@ -73,11 +66,11 @@
       (expect (refused? "{:initialization [{:apropos \"x.edn\"}]}"))
       (expect (refused? "{:initialization [{:register a.b/c! :apropos \"/x.edn\"}]}"))
       (expect (refused? "{:initialization [{:register a.b/c! :apropos \"\"}]}")))
-  (it "refuses a weakness nobody explained, and an explanation of no weakness"
+  (it "refuses optional built-ins: the distribution always ships the whole engine"
       (expect (refused? "{:initialization [{:register a.b/c! :is-optional true}]}"))
       (expect (refused? "{:initialization [{:register a.b/c! :because \"why\"}]}"))
       (expect (refused? (str "{:initialization "
-                             "[{:register a.b/c! :is-optional false :because \"why\"}]}"))))
+                             "[{:register a.b/c! :is-optional true :because \"absent\"}]}"))))
   (it "refuses a tagged literal anywhere in the manifest"
       (expect (refused? "{:initialization [#inst \"2020-01-01\"]}"))))
 
@@ -92,7 +85,7 @@
              'example.beta/start! #(swap! calls conj :beta)}
 
             state
-            (atom {:initialized #{} :failed {}})]
+            (atom #{})]
 
         (with-redefs [clojure.core/requiring-resolve #(get fns %)]
           (let [result (manifest/initialize-entries! state
@@ -100,54 +93,25 @@
                                                       {:register 'example.beta/start!}])]
             (expect (= [:alpha :beta] @calls))
             (expect (= 2 (:initialized result)))
-            (expect (= [] (:failed result)))
             ;; Idempotent: what stands never stands twice.
             (manifest/initialize-entries! state
                                           [{:register 'example.alpha/start!}
                                            {:register 'example.beta/start!}])
             (expect (= [:alpha :beta] @calls))))))
-  (it "steps over an optional pack that fails and keeps the rest of the engine"
-      (let [calls
-            (atom [])
+  (it "reports load, resolve and invoke failures without recording success"
+      (doseq [[resolver phase] [[(fn [_]
+                                   (throw (ex-info "missing namespace" {}))) :load]
+                                [(constantly nil) :resolve] [(constantly 42) :resolve]
+                                [(constantly #(throw (ex-info "broken registration" {}))) :invoke]]]
+        (let [state (atom #{})
+              failure (with-redefs [clojure.core/requiring-resolve resolver]
+                        (try (manifest/initialize-entries! state
+                                                           [{:register 'example.broken/start!}])
+                             (catch clojure.lang.ExceptionInfo e (ex-data e))))]
 
-            fns
-            {'example.alpha/start! #(swap! calls conj :alpha)
-             'example.voice/start! #(throw (ex-info "no native library" {}))
-             'example.beta/start! #(swap! calls conj :beta)}
-
-            state
-            (atom {:initialized #{} :failed {}})
-
-            entries
-            [{:register 'example.alpha/start!}
-             {:register 'example.voice/start!
-              :is-optional true
-              :because "the native library may be absent"} {:register 'example.beta/start!}]]
-
-        (with-redefs [clojure.core/requiring-resolve #(get fns %)]
-          (let [result (manifest/initialize-entries! state entries)]
-            (expect (= [:alpha :beta] @calls))
-            (expect (= 2 (:initialized result)))
-            (expect (= [{:initializer 'example.voice/start!
-                         :phase :invoke
-                         :error "no native library"
-                         :because "the native library may be absent"}]
-                       (:failed result)))
-            ;; NON-retrying: nine call sites reach this, and a namespace that
-            ;; cannot load would pay its full load every single time.
-            (manifest/initialize-entries! state entries)
-            (expect (= [:alpha :beta] @calls))))))
-  (it "reports the phase a failure happened in"
-      (let [state
-            (atom {:initialized #{} :failed {}})
-
-            entries
-            [{:register 'example.missing/start! :is-optional true :because "absent"}]]
-
-        (with-redefs [clojure.core/requiring-resolve (constantly nil)]
-          (manifest/initialize-entries! state entries))
-        (expect (= [:resolve]
-                   (mapv :phase (:failed (manifest/initialize-entries! state entries)))))))
+          (expect (= :manifest/initializer-failed (:type failure)))
+          (expect (= phase (:phase failure)))
+          (expect (empty? @state)))))
   (it "THROWS when a required initializer fails, and stops right there"
       ;; A distribution that cannot build itself is a build defect, not a fact
       ;; about this machine - and a half-registered engine that looks alive is
@@ -161,7 +125,7 @@
              'example.beta/start! #(swap! calls conj :beta)}
 
             state
-            (atom {:initialized #{} :failed {}})
+            (atom #{})
 
             entries
             [{:register 'example.alpha/start!} {:register 'example.broken/start!}
@@ -177,4 +141,45 @@
         (expect (= 'example.broken/start! (:initializer thrown)))
         (expect (= :invoke (:phase thrown)))
         (expect (= [:alpha] @calls))
-        (expect (= {} (:failed @state))))))
+        (expect (= #{'example.alpha/start!} @state))
+        (with-redefs [clojure.core/requiring-resolve #(get (assoc fns
+                                                             'example.broken/start!
+                                                             (fn []
+                                                               (swap! calls conj :recovered)))
+                                                           %)]
+          (expect (= {:initialized 3} (manifest/initialize-entries! state entries))))
+        (expect (= [:alpha :recovered :beta] @calls)))))
+
+(defdescribe
+  concurrent-initialization-test
+  (it "registers each built-in once across concurrent first callers"
+      (let [state
+            (atom #{})
+
+            calls
+            (atom 0)
+
+            entered
+            (promise)
+
+            release
+            (promise)
+
+            entries
+            [{:register 'example.alpha/start!}]]
+
+        (with-redefs [clojure.core/requiring-resolve (fn [_]
+                                                       (fn []
+                                                         (swap! calls inc)
+                                                         (deliver entered true)
+                                                         (deref release 5000 nil)))]
+          (let [first-call (future (manifest/initialize-entries! state entries))]
+            (try (expect (true? (deref entered 5000 false)))
+                 (let [other-calls (mapv (fn [_]
+                                           (future (manifest/initialize-entries! state entries)))
+                                         (range 8))]
+                   (deliver release true)
+                   (doseq [call (cons first-call other-calls)]
+                     (expect (= {:initialized 1} (deref call 5000 ::timeout))))
+                   (expect (= 1 @calls)))
+                 (finally (deliver release true) (deref first-call 5000 nil))))))))

@@ -1535,7 +1535,12 @@ therapy line 2"
                          #'vis/notify! (fn [& _]
                                          nil)}
           (fn []
-            (copy-bubble! (str "\u001B[32m(def\u001B[0m x 1)\n" "\u241B[31mok\u241B[0m"))
+            ;; Wait for the WHOLE worker, including notify!, before restoring
+            ;; its Vars. Otherwise it can notify the following test's promise.
+            (expect (true? (deref (copy-bubble! (str "\u001B[32m(def\u001B[0m x 1)\n"
+                                                     "␛[31mok␛[0m"))
+                                  1000
+                                  ::timeout)))
             (expect (= "(def x 1)\nok" (deref copied 1000 ::timeout)))))))
   (it "input mouse selection copy names the input in the notification"
       (let [copied

@@ -1,34 +1,21 @@
 (ns com.blockether.vis.internal.extension.manifest
-  "The one closed distribution manifest.
+  "The ordered registration list for Vis' built-in modules, not a user extension loader.
 
-   `META-INF/vis/manifest.edn` carries exactly one key:
+   `META-INF/vis/manifest.edn` has one key, `:initialization`. Each entry is a
+   qualified registration symbol, or `{:register qualified.ns/register!
+   :apropos \"META-INF/vis/apropos/docs.edn\"}` when the module owns static docs.
+   Keeping documents beside their owner preserves discovery order.
 
-     {:initialization [qualified.ns/register!
-                       {:register    qualified.ns/register!
-                        :apropos     \"META-INF/vis/apropos/shim-pandas.edn\"
-                        :is-optional true
-                        :because     \"sherpa-onnx may be absent from this build\"}
-                       ...]}
-
-   An entry is a BARE SYMBOL when it has nothing else to say. A map adds what that
-   pack owns: `:apropos` names the one static EDN resource carrying its documents,
-   so a resource is never declared far from the code that registers it and deleting
-   a pack takes its documents with it.
-
-   Initialization order is dependency order and every initializer runs at most once.
-   A REQUIRED initializer that fails THROWS: a distribution that cannot build itself
-   is a build defect, not a fact about this machine, and a half-registered engine
-   that looks alive is worse than a loud death. `:is-optional true` says the
-   opposite - that pack may be missing from THIS machine - so its failure is logged,
-   recorded in `:failed` and stepped over; it must carry `:because`, because a
-   weakness nobody explained is indistinguishable from a forgotten line.
+   Every built-in is required. Registration runs once in dependency order; a failure
+   stops initialization rather than leaving a partial engine. Successful entries are
+   remembered so a retry does not register them again. User extensions are Python
+   files, loaded separately by `internal.python.extensions`.
 
    Nothing scans the classpath and there is no alternate manifest format."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.util :as util]
-            [taoensso.telemere :as tel]))
+            [com.blockether.vis.internal.util :as util]))
 
 (def manifest-resource "META-INF/vis/manifest.edn")
 
@@ -47,13 +34,9 @@
 (defn- entry?
   [x]
   (and (map? x)
-       (every? #{:register :apropos :is-optional :because} (keys x))
+       (every? #{:register :apropos} (keys x))
        (qualified-var-symbol? (:register x))
-       (or (not (contains? x :apropos)) (resource-path? (:apropos x)))
-       (or (not (contains? x :is-optional)) (true? (:is-optional x)))
-       (or (not (contains? x :because))
-           (and (string? (:because x)) (not (str/blank? (:because x)))))
-       (= (contains? x :is-optional) (contains? x :because))))
+       (or (not (contains? x :apropos)) (resource-path? (:apropos x)))))
 
 (defn manifest?
   [x]
@@ -100,15 +83,12 @@
 
 (defn entries
   "Every initialization entry as a map, in manifest order: `:register` always, plus
-   `:apropos`, `:is-optional` and `:because` when the entry declared them."
+   `:apropos` when the entry declared its static documents."
   []
   (normalized-entries (read-manifest)))
 
 (defn parse
-  "Validate manifest EDN `text`, named by `source`, and answer its entries. THE
-   parser: `build.clj` derives native reachability from the manifest it just copied
-   into the class directory by calling this, so a build and a runtime cannot disagree
-   about the shape, the refusal or the error."
+  "Validate manifest EDN `text`, named by `source`, and answer its normalized entries."
   [source text]
   (normalized-entries (validated source (read-edn source text))))
 
@@ -130,11 +110,8 @@
   (mapv read-resource (apropos-resource-paths)))
 
 (defonce ^:private state
-  ;; `{:initialized #{sym} :failed {sym {:phase :error :because}}}`, an ATOM and
-  ;; never `(defonce _ (delay ...))`: a delay that threw caches the THROW and answers
-  ;; it for the life of the JVM, so one transient failure would be permanent and no
-  ;; reload could undo it. Only SUCCESS is remembered here.
-  (atom {:initialized #{} :failed {}}))
+  ;; Remember only success, not a cached delay exception or unavailable modules.
+  (atom #{}))
 
 (defn- run-initializer!
   "Load the namespace, resolve the Var, call it. nil on success, else the failure:
@@ -149,53 +126,25 @@
           (try (f) nil (catch Throwable t {:phase :invoke :error (or (ex-message t) (str t))})))))
 
 (defn initialize-entries!
-  "Initialize `entries` into `state-atom` once each - the seam `initialize!` and its
-   test share, and the only place that decides what a failure means."
+  "Initialize `entries` into the set in `state-atom`, once each and in order.
+   A failure stops the walk; a retry resumes after the successful entries."
   [state-atom entries]
-  (doseq [{:keys [register is-optional because]}
-          entries
+  (locking state-atom
+    (doseq [{:keys [register]}
+            entries
 
-          :let [{:keys [initialized failed]}
-                @state-atom]
-          :when (not (or (contains? initialized register) (contains? failed register)))]
+            :when (not (contains? @state-atom register))]
 
-    (if-let [failure (run-initializer! register)]
-      (if is-optional
-        (do (tel/log! {:level :warn
-                       :id ::pack-unavailable
-                       :msg (str "Pack unavailable: " register)
-                       :data (assoc failure
-                               :initializer register
-                               :because because)})
-            (swap! state-atom assoc-in [:failed register] (assoc failure :because because)))
+      (if-let [failure (run-initializer! register)]
         (throw (ex-info (str "Required initializer failed: " register)
                         (assoc failure
                           :type :manifest/initializer-failed
-                          :initializer register))))
-      (swap! state-atom update :initialized conj register)))
-  (let [{:keys [initialized failed]} @state-atom]
-    {:initialized (count initialized)
-     :failed (mapv (fn [[sym failure]]
-                     (assoc failure :initializer sym))
-                   failed)}))
+                          :initializer register)))
+        (swap! state-atom conj register)))
+    {:initialized (count @state-atom)}))
 
 (defn initialize!
-  "Initialize the closed distribution, in manifest order, and answer what stands:
-
-     {:initialized 42
-      :failed [{:initializer com.../register! :phase :load :error \"...\" :because \"...\"}]}
-
-   Idempotent and NON-RETRYING. Nine call sites reach this function, so retrying a
-   namespace that cannot load would pay its full load every time; an optional pack
-   that failed stays failed for the life of the process, and that is the honest
-   answer anyway - the code in a native image cannot change under a running process."
+  "Register every built-in in manifest order; return `{:initialized n}`.
+   Repeated or concurrent calls never repeat a successful registration."
   []
   (initialize-entries! state (entries)))
-
-(defn failures
-  "What is NOT part of this process: one map per optional pack that could not be
-   initialized, carrying `:phase`, `:error` and the `:because` it declared."
-  []
-  (mapv (fn [[sym failure]]
-          (assoc failure :initializer sym))
-        (:failed @state)))

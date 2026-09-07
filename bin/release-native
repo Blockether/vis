@@ -40,7 +40,7 @@
 #                burning a night. CI stays the fallback:
 #                  gh workflow run native-release.yml -f tag=vX.Y.Z
 #
-# Assets land in the repo root as vis-agent-<os>-<arch>-community.tar.gz, exactly
+# Assets land in the repo root as vis-agent-<os>-<arch>.tar.gz, exactly
 # like the CI ones — both go through bin/stage-release-bundle.
 set -euo pipefail
 
@@ -110,7 +110,7 @@ fi
 
 # ── macos-arm64 ──────────────────────────────────────────────────────────────
 build_macos_arm64() {
-  local asset="vis-agent-macos-arm64-community.tar.gz"
+  local asset="vis-agent-macos-arm64.tar.gz"
   say "building macos-arm64 (clojure -T:build native)"
   # build.clj sizes the builder heap from this machine's RAM and re-execs under
   # the pinned GraalVM CE by itself; nothing to tune here.
@@ -329,7 +329,7 @@ build_linux() {
     linux-x64)   platform=linux/amd64 graal_arch=x64 ;;
     *)           die "unknown linux target $target" ;;
   esac
-  asset="vis-agent-${target}-community.tar.gz"
+  asset="vis-agent-${target}.tar.gz"
   out="target/native-export/$target"
   resolve_engine
   require_usable_platform "$platform"

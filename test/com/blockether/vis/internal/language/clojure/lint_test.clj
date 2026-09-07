@@ -176,3 +176,27 @@
                (expect (some #(and (= "reflection" (get % "type")) (= "general" (get % "provider")))
                              (get res "findings"))))
              (finally (cleanup dir))))))
+
+(defdescribe
+  analyzer-is-lazy-test
+  (it
+    "loads the lint facade in a fresh JVM without loading the analyzer"
+    (let
+      [java
+       (.getPath (io/file (System/getProperty "java.home") "bin" "java"))
+
+       code
+       "(require 'com.blockether.vis.internal.language.clojure.lint) (prn (boolean (find-ns 'clj-kondo.core)))"
+
+       child
+       (.start (doto (ProcessBuilder. ^java.util.List
+                                      [java "-cp" (System/getProperty "java.class.path")
+                                       "clojure.main" "-e" code])
+                 (.redirectErrorStream true)))]
+
+      (try (expect (.waitFor child 30 java.util.concurrent.TimeUnit/SECONDS))
+           (when-not (.isAlive child)
+             (expect (zero? (.exitValue child)))
+             (with-open [stream (.getInputStream child)]
+               (expect (= "false\n" (slurp stream)))))
+           (finally (.destroyForcibly child) (.close (.getOutputStream child)))))))

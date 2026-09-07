@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Stage (and tar) ONE native release bundle — the single definition of what a
-# `vis-agent-<os>-<arch>-community.tar.gz` contains. Used by
+# `vis-agent-<os>-<arch>.tar.gz` contains. Used by
 # .github/workflows/native-release.yml AND by bin/release-native, so a CI asset
 # and a locally built asset can never drift apart.
 #
-#   bin/stage-release-bundle target/vis vis-agent-linux-arm64-community.tar.gz
-#   bin/stage-release-bundle --from-dir out/linux-arm64 vis-agent-linux-arm64-community.tar.gz
+#   bin/stage-release-bundle target/vis vis-agent-linux-arm64.tar.gz
+#   bin/stage-release-bundle --from-dir out/linux-arm64 vis-agent-linux-arm64.tar.gz
 #
 # Bundle layout (exactly what `vis-agent update` unpacks):
 #   vis-agent             the public Bash wrapper

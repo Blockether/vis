@@ -10,11 +10,11 @@
    here puts them in `clojure.lang.RT`'s namespace map, which IS part of the
    image heap, so the same resolve at run time finds them already loaded.
 
-   NOTHING requires this namespace. `build.clj` names its `__init` class in
-   `--initialize-at-build-time`, and that is what makes the builder load it -
-   deliberately outside any other namespace's load, because an entrypoint that
-   requires the engine back is a cyclic load anywhere else. A JVM run never
-   loads this file, so the manifest stays as lazy as it always was.
+   NOTHING requires this namespace. Vis' `native-image.properties` names its
+   `__init` class in `--initialize-at-build-time`, so the builder loads it outside
+   any other namespace's load: an entrypoint requiring the engine back would
+   otherwise create a cycle. A JVM run never
+   loads this file, so manifest registration stays lazy.
 
    The list is DERIVED, never written down: the manifest's own entrypoints
    first, then every namespace this distribution compiled. Anything else is a

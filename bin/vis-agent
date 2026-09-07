@@ -227,47 +227,6 @@ run_measured_or_exec() {
   fi
 }
 
-# ── User extensions (JVM runtime only) ───────────────────────────────────────
-edn_escape_string() {
-  local s="$1"
-  s="${s//\\/\\\\}"
-  s="${s//\"/\\\"}"
-  printf '%s' "$s"
-}
-
-extension_dep_symbol() {
-  local scope="$1"
-  local name="$2"
-  name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
-  [[ -n "$name" ]] || name="extension"
-  printf 'vis-user-extension.%s/%s' "$scope" "$name"
-}
-
-collect_user_extension_sdeps() {
-  local roots=("project:$invocation_cwd/.vis/vis-extensions" "global:$vis_home/vis-extensions")
-  local root_spec root_scope root deps_file ext_dir ext_name dep_sym escaped
-  local -a entries=()
-  shopt -s nullglob
-  for root_spec in "${roots[@]}"; do
-    root_scope="${root_spec%%:*}"
-    root="${root_spec#*:}"
-    for deps_file in "$root"/*/deps.edn; do
-      [[ -f "$deps_file" ]] || continue
-      ext_dir="$(cd -P "$(dirname "$deps_file")" && pwd)"
-      ext_name="$(basename "$ext_dir")"
-      dep_sym="$(extension_dep_symbol "$root_scope" "$ext_name")"
-      escaped="$(edn_escape_string "$ext_dir")"
-      entries+=("$dep_sym {:local/root \"$escaped\"}")
-    done
-  done
-  shopt -u nullglob
-  if (( ${#entries[@]} > 0 )); then
-    printf '{:deps {'
-    printf '%s ' "${entries[@]}"
-    printf '}}'
-  fi
-}
-
 # ── Runtime discovery ────────────────────────────────────────────────────────
 # The source the jvm runtime runs: the one checkout Vis owns, pinned to main's
 # newest commit. There is no second source. A checkout of your own is yours —
@@ -736,7 +695,7 @@ EOF
 # ── Release bundle ───────────────────────────────────────────────────────────
 # Every release publishes exactly one asset per platform: the bundle that carries
 # the launcher together with its native runtime.
-#   vis-agent-<os>-<arch>-community.tar.gz
+#   vis-agent-<os>-<arch>.tar.gz
 vis_platform_asset() {
   local os arch
   case "$(uname -s)" in
@@ -749,7 +708,7 @@ vis_platform_asset() {
     x86_64|amd64)  arch=x64 ;;
     *) die "update: unsupported architecture $(uname -m)" ;;
   esac
-  printf 'vis-agent-%s-%s-community.tar.gz' "$os" "$arch"
+  printf 'vis-agent-%s-%s.tar.gz' "$os" "$arch"
 }
 
 # Exact-name match: the trailing quote keeps the bundle from matching a longer
@@ -1215,13 +1174,6 @@ if (( tui_requested )); then
   run_measured_or_exec "process JVM TUI" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} -Scp "$tui_classpath" -M:run "$@"
 fi
 
-user_extension_sdeps="$(collect_user_extension_sdeps)"
-vis_extension_sdeps=()
-if [[ -n "$user_extension_sdeps" ]]; then
-  vis_extension_sdeps=(-Sdeps "$user_extension_sdeps")
-  measure_log "user extension deps enabled"
-fi
-
 stream_trace_jvm_opts=()
 if stream_trace_on; then
   stream_trace_jvm_opts=("-J-Dsvar.stream.trace=true")
@@ -1259,5 +1211,5 @@ fi
 # cached classpath is read back (`-Spath` costs no JVM once the cache is fresh),
 # every relative entry is anchored to the source root, and `-Scp` hands the
 # absolute one over; the alias' :jvm-opts/:main-opts still come from the cache.
-vis_classpath="$(absolute_project_classpath "$source_root" ${vis_extension_sdeps[@]+"${vis_extension_sdeps[@]}"} -Spath -M:vis)" || exit 1
-run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} ${vis_extension_sdeps[@]+"${vis_extension_sdeps[@]}"} -Scp "$vis_classpath" -M:vis "$@"
+vis_classpath="$(absolute_project_classpath "$source_root" -Spath -M:vis)" || exit 1
+run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} -Scp "$vis_classpath" -M:vis "$@"

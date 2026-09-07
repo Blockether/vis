@@ -163,7 +163,7 @@ Native-image output is platform-specific. Each supported platform can publish tw
 independent archives:
 
 ```text
-vis-agent-<os>-<arch>-community.tar.gz
+vis-agent-<os>-<arch>.tar.gz
 ├── vis-agent             # public Bash wrapper
 ├── vis-agent-native      # private GraalVM native-image runtime
 ├── vis-agent-python/     # embedded CPython: cdylib + vendored interpreter
@@ -184,13 +184,13 @@ the TUI archive.
 
 | Platform | Agent bundle | TUI archive |
 |---|---|---|
-| Linux x86-64 | `vis-agent-linux-x64-community.tar.gz` | `vis-tui-linux-x64.tar.gz` |
-| Linux ARM64 | `vis-agent-linux-arm64-community.tar.gz` | `vis-tui-linux-arm64.tar.gz` |
-| macOS ARM64 | `vis-agent-macos-arm64-community.tar.gz` | `vis-tui-macos-arm64.tar.gz` |
+| Linux x86-64 | `vis-agent-linux-x64.tar.gz` | `vis-tui-linux-x64.tar.gz` |
+| Linux ARM64 | `vis-agent-linux-arm64.tar.gz` | `vis-tui-linux-arm64.tar.gz` |
+| macOS ARM64 | `vis-agent-macos-arm64.tar.gz` | `vis-tui-macos-arm64.tar.gz` |
 
 Building the image needs two things exactly:
 
-- **GraalVM Community Edition 25.1.3** — the repository pin is authoritative.
+- **GraalVM Community Edition** — use the exact version in `.graalvm-version` (native builds only).
 - **32 GB of RAM** — the points-to analysis live set is ~14 GiB, and a 16 GB host spends most of the build in GC.
 
 On such a machine, `bin/release-native` builds every asset that host can produce, smoke-tests each one, and with `--tag vX.Y.Z --upload` attaches them to the release. On Apple silicon that is all three: macOS natively, Linux ARM64 in a container with no emulation, and Linux x86-64 through Rosetta.

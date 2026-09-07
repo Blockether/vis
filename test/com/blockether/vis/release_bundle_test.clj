@@ -227,7 +227,7 @@
           (io/file root "bundle")
 
           asset
-          (io/file root "vis-agent-linux-arm64-community.tar.gz")
+          (io/file root "vis-agent-linux-arm64.tar.gz")
 
           stamp
           "0.1.28 4c1f2a9dabcdef0123456789abcdef01234567 beta 2026-08-17T10:22:31.123Z\n"
@@ -410,6 +410,39 @@
                             "  info)      printf '34359738368\\n' ;;\n"
                             "  *)         exit 0 ;;\n" "esac\n"))
     dir))
+
+(defdescribe
+  platform-asset-name-test
+  (it "selects the same unqualified asset name the release workflows publish"
+      (let [wrapper
+            (slurp "bin/vis-agent")
+
+            platform-function
+            (re-find #"(?ms)^vis_platform_asset\(\) \{\n.*?^\}" wrapper)
+
+            stable
+            (slurp ".github/workflows/native-release.yml")
+
+            beta
+            (slurp ".github/workflows/beta-native.yml")]
+
+        (expect (some? platform-function))
+        (doseq [[os arch asset] [["Linux" "x86_64" "vis-agent-linux-x64.tar.gz"]
+                                 ["Linux" "aarch64" "vis-agent-linux-arm64.tar.gz"]
+                                 ["Darwin" "arm64" "vis-agent-macos-arm64.tar.gz"]]]
+          (let [dir (fake-tools! os arch)]
+            (try (let [{:keys [exit output]}
+                       (run-bash ["bash" "-c" (str platform-function "\nvis_platform_asset")]
+                                 {"PATH" (str (.getAbsolutePath dir) ":" (System/getenv "PATH"))})]
+                   (expect (= 0 exit) output)
+                   (expect (= asset output))
+                   (expect (str/includes? stable asset) asset)
+                   (when (= os "Linux") (expect (str/includes? beta asset) asset)))
+                 (finally (delete-tree! dir)))))))
+  (it "has no distribution-profile selector in the build"
+      (let [build (slurp "build.clj")]
+        (expect (not (str/includes? build "resolve-profile")))
+        (expect (not (str/includes? build ":profile"))))))
 
 (defn- run-release-native
   [^java.io.File dir args env-extra]
@@ -966,6 +999,43 @@
              (expect (str/includes? launcher "-Scp \"$vis_classpath\" -M:vis")
                      "launch line hands -Scp over")
              (finally (delete-tree! dir))))))
+
+(defdescribe
+  source-runtime-python-extensions-only-test
+  (it
+    "never injects old user JVM libraries into the engine classpath"
+    (let [dir
+          (fake-tools! "Linux" "x86_64")
+
+          home
+          (doto (io/file dir "home") .mkdirs)
+
+          vis-home
+          (io/file home ".vis")
+
+          retired-deps
+          (io/file vis-home "vis-extensions/retired/deps.edn")]
+
+      (try
+        (io/make-parents retired-deps)
+        (spit retired-deps "{:deps {example/retired {:mvn/version \"0.0.0\"}}}")
+        (write-executable!
+          (io/file dir "clojure")
+          (str
+            "#!/usr/bin/env bash\n"
+            "for arg in \"$@\"; do\n"
+            "  [[ \"$arg\" != -Sdeps ]] || { echo 'unexpected user JVM dependencies'; exit 7; }\n"
+            "  if [[ \"$arg\" == -Spath ]]; then printf src:resources; exit 0; fi\n"
+            "done\nprintf '<%s>' \"$@\"\n"))
+        (let [{:keys [exit output]}
+              (run-bash ["bash" "bin/vis-agent" "--jvm" "python" "-c" "pass"]
+                        {"HOME" (.getAbsolutePath home)
+                         "VIS_HOME" (.getAbsolutePath vis-home)
+                         "VIS_NO_AUTO_INSTALL" "1"
+                         "PATH" (str (.getAbsolutePath dir) ":" (System/getenv "PATH"))})]
+          (expect (zero? exit) output)
+          (expect (str/includes? output "<-M:vis><python><-c><pass>") output))
+        (finally (delete-tree! dir))))))
 
 ;; Regression: the public `vis-agent tui` command fell through to the one-shot
 ;; prompt shortcut, so asking for the terminal client sent "tui" to a model.

@@ -7,8 +7,10 @@
    the strings-only boundary as a tool `:result`):
    `{\"op\" \"clj-lint\" \"error\" N \"warning\" N \"info\" N \"files\" N \"findings\" [...]}`
    where each finding is `{\"file\" \"row\" \"col\" \"level\" \"type\" \"message\" \"provider\"}`
-   (clj-kondo findings carry `\"provider\" \"clj-kondo\"`)."
-  (:require [clj-kondo.core :as clj-kondo]))
+   (every finding names clj-kondo as its provider).
+
+   Resolve the analyzer on the first lint request, not when a language pack is
+   registered: non-Clojure sessions do not need its compiler and analysis tables.")
 
 (defn- finding->map
   [f]
@@ -28,7 +30,7 @@
    config (e.g. `{:config {...}}`)."
   [lint-arg opts]
   (let [r
-        (clj-kondo/run! (merge {:lint lint-arg} opts))
+        ((requiring-resolve 'clj-kondo.core/run!) (merge {:lint lint-arg} opts))
 
         s
         (:summary r)]
