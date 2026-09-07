@@ -575,7 +575,7 @@ export function SessionStatsPanel({
       )}
       {phase === "ready" && usage && (
         <>
-          <SessionHealth snapshot={snapshot} folds={usage.fold_count} />
+          <SessionHealth snapshot={snapshot} />
           <h3 className="border-t border-dialog-edge pt-4 text-title font-bold text-white">Session totals</h3>
           <p className="mt-1 text-ui text-dialog-hint">Across all calls, including repeated context.</p>
           <dl className="mt-3 grid grid-cols-4 gap-x-3 gap-y-3">

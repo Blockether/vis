@@ -33,7 +33,6 @@ describe("session health in metrics", () => {
     expect(screen.getByText("Total input")).toBeInTheDocument();
     expect(screen.getByText("2.1M")).toBeInTheDocument();
     expect(screen.getByText(/Last measured call · #23/)).toBeInTheDocument();
-    expect(screen.getByText(/272k/)).toBeInTheDocument();
   });
 
   it("opens the estimated prompt parts and distinguishes access from loaded guidance", async () => {
@@ -63,13 +62,10 @@ describe("session health in metrics", () => {
     [207000, "Over budget"],
     [272000, "Input limit reached"],
   ])(
-    "shows the state at %i tokens without promising automatic folding",
+    "shows the state at %i tokens",
     (lastRequestTokens, state) => {
       paint({ ...STORY_SESSION_HEALTH, lastRequestTokens });
       expect(screen.getByText(state)).toBeInTheDocument();
-      expect(
-        screen.getByText(/Reminder, not an automatic fold/),
-      ).toBeInTheDocument();
     },
   );
 

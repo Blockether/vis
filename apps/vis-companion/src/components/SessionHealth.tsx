@@ -19,13 +19,7 @@ export interface SessionHealthSnapshot {
 }
 
 /** Context pressure, prompt provenance and filesystem access in session metrics. */
-export function SessionHealth({
-  snapshot,
-  folds,
-}: {
-  snapshot?: SessionHealthSnapshot;
-  folds?: number;
-}) {
+export function SessionHealth({ snapshot }: { snapshot?: SessionHealthSnapshot }) {
   const [partsOpen, setPartsOpen] = useState(false);
   const [rootsOpen, setRootsOpen] = useState(false);
   const id = useId();
@@ -129,23 +123,6 @@ export function SessionHealth({
               : `${humanizeCount(input - budget)} over budget`}
         </span>
       </div>
-      <dl className="mt-4 grid grid-cols-2 gap-3 text-ui">
-        <div>
-          <dt className="text-dialog-hint">Model input limit</dt>
-          <dd className="mt-1 font-bold tabular-nums text-white">
-            {limit === undefined ? "Not reported" : humanizeCount(limit)}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-dialog-hint">Completed folds</dt>
-          <dd className="mt-1 font-bold tabular-nums text-white">
-            {folds ?? "Not reported"}
-          </dd>
-        </div>
-      </dl>
-      <p className="mt-2 text-ui text-dialog-hint">
-        Reminder, not an automatic fold.
-      </p>
 
       <div className="mt-4 space-y-2 border-t border-dialog-edge pt-1">
         {breakdown ? (
