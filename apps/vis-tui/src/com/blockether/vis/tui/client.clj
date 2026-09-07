@@ -85,7 +85,13 @@
 
 (defn- target-entry
   [url token]
-  (let [raw
+  (let [token
+        (or (not-empty (str/trim (str token)))
+            (when (nil? url)
+              (let [file (io/file (System/getProperty "user.home") ".vis" "gateway.token")]
+                (when (.isFile file) (not-empty (str/trim (slurp file)))))))
+
+        raw
         (not-empty (str/trim (str (or url (str "http://" default-host ":" default-port)))))
 
         trimmed
@@ -123,7 +129,10 @@
        :secret (not-empty (str/trim (str token)))})))
 
 (defn configure!
-  "Configure the gateway target. Call before any request."
+  "Configure the gateway target. Call before any request.
+   Flags override environment variables. With neither an explicit URL nor a token,
+   authenticate to the default loopback gateway using ~/.vis/gateway.token when
+   present. Never infer local credentials for an explicitly selected gateway."
   [{:keys [url token]}]
   (reset! target* (target-entry (or url (System/getenv url-env))
                                 (or token (System/getenv token-env))))

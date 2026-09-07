@@ -9,8 +9,9 @@
    one line on the real terminal instead of a stack trace.
 
    Which gateway, in order: `--gateway` / `--gateway-token`, then
-   `VIS_GATEWAY_URL` / `VIS_GATEWAY_TOKEN`, then the loopback default. A bare
-   `HOST[:PORT]` is accepted and read as `http://`."
+   `VIS_GATEWAY_URL` / `VIS_GATEWAY_TOKEN`, then the loopback default with
+   `~/.vis/gateway.token`. The local file is used only without an explicit gateway
+   or token. A bare `HOST[:PORT]` is accepted and read as `http://`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
@@ -25,6 +26,7 @@
    "start one with `vis-agent gateway start` if none is running." ""
    "  --gateway HOST[:PORT]  gateway address (env VIS_GATEWAY_URL)"
    "  --gateway-token TOKEN  gateway token (env VIS_GATEWAY_TOKEN)"
+   "                        no gateway/token supplied: use ~/.vis/gateway.token"
    "  --session-id ID        open one existing session"
    "  --resume, -r           pick a session to resume"
    "  --continue, -c         reopen the most recent session"
