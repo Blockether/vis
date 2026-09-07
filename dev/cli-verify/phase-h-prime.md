@@ -1,15 +1,11 @@
-# Phase H' CLI Verify Recipe
+# Historical Phase H' CLI verification
 
-> **⚠️ OBSOLETE (2026-06-09).** This recipe exercises the `consult-*`
-> subsystem (`consult-request!` / `await-consult!` / `consult-promote!`),
-> which has been **removed** — zero hits in `src/`. The probe prompt below
-> no longer maps to any engine verb and will not run as written. Kept only
-> as a historical record of the Phase H' gate. Also note: the model now
-> writes **Python** (`done("""…""")`, etc.), not the Clojure forms shown here.
+> **Obsolete since 2026-06-09.** The `consult-*` subsystem was removed. These
+> commands no longer run and are retained as a record of the original test.
+> Current Vis uses Python actions rather than the Clojure forms below.
 
-End-to-end real-model smoke test. Requires API keys for at least
-two providers; this directory ships none. The fence below is the
-canonical probe per PLAN.md gate 11.
+This test used real model calls and required credentials for at least two
+providers. Credentials are not included in this directory.
 
 ## Setup
 
@@ -45,7 +41,7 @@ canonical probe per PLAN.md gate 11.
     :session/consult-results carries :reflexion entry
     (def r (await-consult! :reflexion))     → entry map pinned in trailer
     Check :confidence on r — expect :high or :medium for this prompt
-    (consult-promote! :reflexion :reflexion-paper)  → scrubs trailer pin
+    (consult-promote! :reflexion :reflexion-paper)  → removes the trailer entry
 
   Final :session/facts :reflexion-paper carries
     :content    "..."
@@ -56,11 +52,11 @@ canonical probe per PLAN.md gate 11.
   No `consult-fast` / `consult-balanced` / `consult-deep` ever appears
   in any iteration source.
 
-## Gates (manual inspection)
+## Checks (manual inspection)
 
   GLOBAL G1   `clojure -M:test` exits 0
   GLOBAL G2   `rg "(consult-fast|consult-balanced|consult-deep)\\(" src extensions`
-              returns only comment mentions (no resolvable surface)
+              returns only comments, not callable functions
   GLOBAL G3   thread isolation — check the consult log line confirms
               the side-thread runner; primary's ctx-atom never mutates
               while the future is pending
@@ -70,7 +66,7 @@ canonical probe per PLAN.md gate 11.
   GLOBAL G6   trailer scrub — `(introspect-iter "tN/iM")` for the await
               iter shows the await form gone after the next-iter promote
   GLOBAL G7   token cap retry-to-fit — log inspection only; the
-              entry's :retries == 0 on happy paths, == 1 if compression
+              entry's :retries == 0 for an uncompressed result, == 1 if compression
               was needed
   GLOBAL G8   prompt cache check — diff `llm_cached_tokens` on iter 2
               vs baseline; expect within 30%
@@ -81,8 +77,7 @@ canonical probe per PLAN.md gate 11.
 
 ## Notes
 
-  - The renderer compact preview header (`;; consult-results (N
-    entries)`) is the fastest way to spot whether the model is
-    integrating results into its next-action plan.
+  - Inspect the renderer's `;; consult-results (N entries)` header to see
+    whether results are included in the next model request.
   - `(introspect-changes "tN")` shows the consult-driven facts
     materialised between turns once promoted.

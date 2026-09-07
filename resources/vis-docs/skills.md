@@ -19,39 +19,43 @@ Skills written for Claude Code, pi, opencode or the
 ```markdown
 ---
 name: release-checklist
-description: Use when the user wants to cut a release. Verifies, tags and publishes.
+description: Use when the user requests a release. Verifies, tags and publishes.
 ---
 
 # Release checklist
 
 1. Run `scripts/verify.sh`.
-2. Bump the version in `VERSION`.
+2. Update the version in `VERSION`.
 3. Tag and push.
 ```
 
-Only `name` and `description` are read from the frontmatter. The description is
-what the model sees when deciding whether to use the skill, so say *when* to use
-it, not just what it is. A missing `name` falls back to the folder name.
+Vis reads `name` and `description` from the frontmatter. State when the skill
+should be used in `description`; the model uses it to select a skill. If `name`
+is missing, Vis uses the folder name.
 
 Bundled files (scripts, templates, references) are read with ordinary file tools
 when the skill is used.
 
 ## Where Vis looks
 
-Skills are found in these folders, in order. The first skill with a given name
-wins.
+Vis searches these locations in order. The first skill with a given name is
+used; later matches are ignored.
 
 | Location | Scope |
 |---|---|
 | `.vis/skills` | Project |
-| `.claude/skills`, `.pi/skills`, `.agents/skills`, `.opencode/skill` | Project |
-| `~/.claude/skills`, `~/.pi/agent/skills`, `~/.agents/skills`, `~/.config/opencode/skill` | User |
+| `.claude/skills` | Project |
+| `~/.claude/skills` | User |
 | `~/.claude/plugins/cache/**/skills` | Installed Claude Code plugins |
+| `.pi/skills` | Project |
+| `~/.pi/agent/skills` | User |
+| `.agents/skills` | Project |
+| `~/.agents/skills` | User |
+| `.opencode/skills`, then `.opencode/skill` | Project |
+| `~/.config/opencode/skills`, then `~/.config/opencode/skill` | User |
 
-`.agents/skills` is also searched in parent directories up to the Git root, so
-repository-level skills apply inside every subproject.
-
-Changes on disk are picked up without restarting Vis.
+Project locations are also searched in parent directories up to the Git root.
+Changes on disk are loaded without restarting Vis.
 
 ## Use a skill explicitly
 

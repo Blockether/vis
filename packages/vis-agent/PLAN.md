@@ -1,6 +1,6 @@
 # Complete the Python API
 
-Ship one API with two transports, without duplicating the agent.
+Provide one API with two transports, without duplicating the agent.
 
 ## Context
 
@@ -13,13 +13,13 @@ tracks unrelated Companion work and remains untouched. Root `TODO.md` tracks acc
 Rejected: embedding a JVM in CPython, copying the agent loop, mirroring the wire vocabulary,
 starting a hidden HTTP gateway for a mode advertised as gateway-free, or implicit publishing.
 
-## 1. Contract and remote vertical slice
+## 1. Contract and remote session client
 
 - Rationale: establish the public lifecycle against the working gateway before adding a transport.
 - Data: contract JSON/reader, gateway handlers/client, package tests and pyprojects.
 - Acceptance criteria: dedicated typed methods (no public `call`), session/turn/events and views/attachments with explicit
   errors and cleanup; real isolated gateway integration and packaged unit tests.
-- Unknowns: exact endpoint body/projection shapes and replay behavior; inspect canonical owners.
+- Unknowns: exact endpoint body/projection shapes and replay behavior; inspect their implementations.
 
 ## 2. Local engine transport
 
@@ -27,11 +27,11 @@ starting a hidden HTTP gateway for a mode advertised as gateway-free, or implici
 - Data: engine session/turn ownership, command dispatch, gateway handler construction, wire codec.
 - Acceptance criteria: explicit stdio process mode, shared client objects, bounded startup/exit,
   no live-gateway mutation, deterministic engine/provider integration and native coverage. A one-shot subprocess alone does not complete this phase.
-- Unknowns: smallest reusable boundary below Jetty; prove before exposing the local constructor.
+- Unknowns: reusable request handling below Jetty; verify it before exposing the local constructor.
 
-## 3. SDK reference and distribution gates
+## 3. SDK reference and distribution checks
 
-- Rationale: consumers install artifacts, not a checkout; hosted extensions need no pip bootstrap.
+- Rationale: consumers install artifacts, not a checkout; hosted extensions need no pip installation.
 - Data: extension host injection, canonical contracts, wheels/sdists, CI and PyPI metadata.
 - Acceptance criteria: installed-artifact tests, rebuilt sdists, typing and mode examples, gated
   publication preparation; no real publication without a separate request.
@@ -40,13 +40,13 @@ starting a hidden HTTP gateway for a mode advertised as gateway-free, or implici
 ## 4. Collision-free namespace and dataclass boundary
 
 - Rationale: the unrelated PyPI distribution `vis` must not share our import path;
-  slotted dataclasses must survive both extension and transport boundaries.
+  slotted dataclasses must retain their fields across extension and transport boundaries.
 - Data: the canonical SDK, PEP 420 package layouts, runtime extension bootstrap,
   client envelope models, consumer fixtures and installed artifacts.
 - Acceptance criteria: a collision-free PEP 420 parent (public domains finalized in phase 7),
   no legacy alias or parent `__init__.py`; named validated records, nested slotted extension
   results, preserved sibling packages, source and installed-wheel verification.
-- Unknowns: complete endpoint projection models and the remaining integration gates.
+- Unknowns: complete endpoint projection models and the remaining integration checks.
 
 ## 5. Canonical View and Activity boundaries
 
@@ -55,9 +55,9 @@ starting a hidden HTTP gateway for a mode advertised as gateway-free, or implici
   Python records, shared cross-language fixtures, and the runtime release/pin.
 - Acceptance criteria: Activity is not a View; closed declaration/projection shapes, bounded host-owned
   lifecycle, typed SDK reads and operator actions; no retired imports/envelopes; shared consumer tests.
-- Unknowns: fresh native Vis execution and the remaining transport integration gates below.
+- Unknowns: fresh native Vis execution and the remaining transport integration checks below.
 
-## 6. Close transport and consumer acceptance
+## 6. Complete transport and consumer acceptance
 
 - Rationale: installed imports and shape fixtures are not proof of a usable SDK lifecycle.
 - Data: canonical lease/job-stream semantics, deterministic provider + Python extension, isolated
@@ -67,12 +67,12 @@ starting a hidden HTTP gateway for a mode advertised as gateway-free, or implici
   installed-package CI and gated publishing configuration, without changing external ownership.
 - Unknowns: remote platform-matrix results and externally configured PyPI trusted publishers.
 
-## 7. Separate SDK domains and absorb the Python contract distribution
+## 7. Separate SDK domains and include the Python contracts in the SDK distribution
 
 - Rationale: engine imports must not initialize extension hosts; shared contracts do not need a second Python product.
 - Data: `extension.py`, `engine/`, private contract reader, canonical JSON resources, host bootstrap, consumers and distribution CI.
 - Acceptance criteria: lightweight `blockether.vis`; `blockether.vis.extension` and `blockether.vis.engine`; no retired imports; one wheel and rebuildable sdist; preserved host isolation, validation and cross-language fixtures; affected tests, lint and formatting pass.
-- Unknowns: none for namespace ownership or archive resources; fresh native and remote release gates remain below.
+- Unknowns: none for namespace ownership or archive resources; fresh native and remote release checks remain below.
 
 ## 8. Typed extension declarations and Activity content
 
@@ -97,7 +97,7 @@ Current verification (separate suites, not additive):
   intermediate and terminal Activity, typed results, Views and cancellation.
 - Affected Clojure suites: 732 passed. Foundation is registered and deployment environment
   is removed from the test REPL configuration only; earlier baseline caveats remain below.
-- Python formatting/lint: 27 files clean. Clojure formatting/lint/reflection: nine files clean.
+- Python formatting/lint: 27 files pass. Clojure formatting/lint/reflection: nine files pass.
 - Direct wheel and wheel rebuilt from sdist agree; all 24 canonical JSON files and the
   injected extension API match the wheel. Strict Twine checks pass.
 - Documentation: 35 Python examples, 52 local file links, three workflow YAML documents
@@ -125,7 +125,7 @@ Real isolated HTTP/stdio then reproduced cold-start ordering, providerless confi
 auto-bound preset endpoint precedence, and discarded preset headers/Responses paths.
 Extensions now register before routing configuration is resolved; managed providers can
 bind without a saved provider entry; runtime credential endpoints/dialects are not
-mistaken for explicit configuration; transport defaults reach the router intact.
+mistaken for explicit configuration; the router receives transport defaults unchanged.
 No lifecycle, auth-flow ownership or canonical provider wire contract was replaced.
 
 Final verification (separate, overlapping suites):
@@ -135,7 +135,7 @@ Final verification (separate, overlapping suites):
   credential/preset headers, opaque extra-body data, enriched models and Activity/View cancellation.
 - Eight affected Clojure suites: 699 passed. The test REPL explicitly registers foundation
   and the built-in LM Studio preset and omits deployment environment only in that REPL.
-- Python formatting/lint: four files clean. Clojure formatting/lint/reflection: six files clean.
+- Python formatting/lint: four files pass. Clojure formatting/lint/reflection: six files pass.
 - Direct and sdist-built wheels agree, match the current injected SDK and all 24 canonical
   JSON resources; strict Twine checks pass. Rebuilt after detecting source/artifact drift.
 - Both edited documentation files: 36 Python examples and 45 local file links checked.
@@ -150,9 +150,9 @@ and registration tests pass in the dependency-complete isolated environment.
 
 ## 10. Reusable SDK verification and a pinned-toolchain release
 
-- Rationale: make the repeated SDK checks a repository-owned extension, close native acceptance with the exact CE pin, and publish only verified scoped changes.
+- Rationale: provide the repeated SDK checks as a repository extension, complete native acceptance with the exact CE pin, and publish only verified scoped changes.
 - Data: `.vis/extensions/sdk_checks.py`, its tests, `.graalvm-version`, `bin/require-graalvm`, installed/native suites and the product release workflows.
-- Acceptance criteria: `sdk.check` reports ordered typed gates, stops owned processes and cleans temporary environments, rejects source/artifact drift and distinguishes local-only from actual-engine verification; install the checksum-verified locked toolchain, test a release-only snapshot, mirror VIS_VERSION, commit/push/tag only after checks pass.
+- Acceptance criteria: `sdk.check` reports ordered typed checks, stops processes it starts and cleans temporary environments, rejects source/artifact mismatches and distinguishes local-only from actual-engine verification; install the checksum-verified locked toolchain, test a release-only snapshot, mirror VIS_VERSION, commit/push/tag only after checks pass.
 - Unknowns: PyPI trusted-publisher setup, native publishing readiness and the companion release blockers recorded below.
 
 The repository already pins GraalVM CE 25.3.4.1 across version, vendor, assets, SHA-256
@@ -163,10 +163,10 @@ service restart is involved. Core release 0.1.43 is published on GitHub and Cloj
 
 Implemented `sdk.check` as an object namespace with immutable results, ordered Activity
 steps, bounded subprocess output, timeout cleanup and disposable build/install environments.
-The real host-boundary regression invokes its shell-backed first gate through the engine.
+The real host-boundary regression invokes its first shell-backed check through the engine.
 
 Verification of the isolated native candidate (separate, overlapping suites):
-- All 11 SDK gates pass: source tests 326 passed/three opt-in skips; fresh installed-wheel
+- All 11 SDK checks pass: source tests 326 passed/three opt-in skips; fresh installed-wheel
   tests 329 passed, including actual native HTTP/stdio engines and the 19 extension tests.
 - Direct and sdist-built wheels match each other, the injected source and all 24 canonical
   JSON files; strict Twine validation, 37 Python examples and 18 local links pass.
@@ -175,20 +175,20 @@ Verification of the isolated native candidate (separate, overlapping suites):
 - Main CI exposed four existing JVM failures. Reproduced and fixed the long Activity docs
   paragraph, launcher stderr contaminating the lazy-analyzer assertion, duplicated shared
   predicates and retired-name fixtures. The focused JVM selection passes 143 cases; the
-  affected companion unit/Chromium stories pass all 23 cases. Clojure lint/reflection is clean.
-- The engine lifecycle fixture now owns provider configuration, HOME and JVM user.home;
+  affected companion unit/Chromium stories pass all 23 cases. Clojure lint/reflection passes.
+- The engine lifecycle fixture now supplies provider configuration, HOME and JVM user.home;
   installed native tests no longer depend on developer credentials or saved providers.
 
 Final committed-snapshot and publication evidence:
 - Annotated `v0.1.43` points to `05ba30e96448063432d10e87b2a6a228c5b20baa`.
-  Tag, VIS_VERSION, current main and the green CI head agreed before the tag was pushed.
+  Tag, VIS_VERSION, current main and the passing CI head agreed before the tag was pushed.
 - [Main CI](https://github.com/Blockether/vis/actions/runs/34139254583) passes all 18 jobs:
   Linux/macOS JVM suites (4827 cases), all ten Python matrix jobs, both real-engine SDK
   jobs, lint, classpath checks and AOT compilation.
 - Rebuilt that exact clean commit with the locked CE toolchain. The staged native wrapper
-  reports 0.1.43; all 11 SDK gates and six selected native assertions pass again. Its local
+  reports 0.1.43; all 11 SDK checks and six selected native assertions pass again. Its local
   native artifact is explicitly stamped dry-run and was not uploaded as a stable binary.
-- The local full JVM suite is not universally green: shell-profile SDKMAN notices caused
+- The local full JVM suite does not pass in every environment: shell-profile SDKMAN notices caused
   fixture failures; an isolated HOME removes those, leaving two environment-sensitive
   truststore/home-listing failures. Both full CI platform suites pass the same tests.
 - [Release v0.1.43](https://github.com/Blockether/vis/releases/tag/v0.1.43) is public.
@@ -226,7 +226,7 @@ workflow previously passed all three jobs in dry run 34152836189.
 
 Phases 7–9 and the SDK/native/core-release portion of phase 10 are complete. The reusable
 SDK extension is committed and core 0.1.43 is published; earlier distribution blockers
-are recorded above. Phase 11 restores the previously green desktop runner split;
+are recorded above. Phase 11 restores the previously passing desktop runner split;
 17 packaging tests and React compiler lint pass. Gateway and production services are untouched.
 
 ### Historical phase 7 state
@@ -236,7 +236,7 @@ Earlier namespace-refactor verification (before phase 8; separate, overlapping s
 - Source SDK plus the project GitHub extension: 243 passed, three opt-in engine cases skipped.
 - Installed wheel outside the checkout: 205 passed, including actual JVM HTTP/stdio engines with a deterministic model double.
 - Affected Clojure contracts, extension isolation, native resources and shell/language consumers: 287 passed with foundation registered and deployment environment removed from the test REPL configuration only. A plain clean-JVM consumer run has 36 missing-shell-registration failures; the same 157-case selection reproduces all 36 on the clean baseline. The user-environment-dependent extension case also failed before this refactor.
-- Python formatting/lint: 26 files, clean. Clojure formatting/lint/reflection: eight files, clean. Version-sync syntax and execution pass without changing VIS_VERSION.
+- Python formatting/lint: 26 files pass. Clojure formatting/lint/reflection: eight files pass. Version-sync syntax and execution pass without changing VIS_VERSION.
 - Direct wheel and wheel rebuilt from sdist build successfully; wheel/sdist pass strict Twine checks. Bundled resources match all 24 canonical files byte-for-byte, with no retired modules or second Python dependency.
 - Documentation: 34 Python examples and 52 local file links checked; three workflow YAML documents and three embedded Python scripts parse.
 - Real-model `py-repl-compute` E2E: 1/1 passed on gpt-6-astra, required REPL used, zero tool errors, isolated source gateway cleaned up.
@@ -254,7 +254,7 @@ Activity declarations select presentation only; the engine owns invocation ident
 lifecycle and bounded evidence. Each `block.activity` replaces the prior projection. View uses
 open/patch/close events and validated operator actions. Public input Views omit host routing and
 validation metadata; their close receipts expose the reason, never submitted answers or secret
-handles. SSE live close receipts may omit the already-streamed picture; journal polling retains
+handles. SSE live close receipts may omit the already-streamed contents; journal polling retains
 it. Canonical documents, schemas and shared acceptance/rejection fixtures live in vis-contract.
 
 Runtime v0.5.0 is published at tag `v0.5.0`, commit
@@ -279,21 +279,21 @@ Historical verification (separate suites, not additive):
 Historical native verification passed: GraalVM CE 25.3.4.1 built that image with a 12 GiB
 heap (10.20 GiB peak RSS), then fetched and staged runtime v0.5.0. The installed SDK passed
 19 tests against the staged native wrapper over both HTTP and stdio, including input-close
-privacy and the SSE/polling difference for settled live pictures. Five selected `test-native`
+privacy and the SSE/polling difference for completed live views. Five selected `test-native`
 cases also passed: artifact/version, whole agent turn, Python execution and guarded file IO.
 The native and beta release workflows now run the shared installed-SDK native action.
-Implementation and local SDK acceptance are complete; external release gates remain below.
+Implementation and local SDK acceptance are complete; external release requirements remain below.
 
 The editing E2E classpath regression is fixed and unit-tested. A real `py-repl-compute` run
-converged with no tool errors but failed its required-REPL assertion because the model only
+completed with no tool errors but failed its required-REPL assertion because the model only
 used `cat`; cleanup reported a timeout. A cross-model retry timed out starting its isolated
-source gateway. Neither attempt is counted as green. The earlier broader JVM run had 272
+source gateway. Neither attempt passed. The earlier broader JVM run had 272
 cases and 36 unregistered `:shell` / `:_shell-wait` failures without a clean-base comparison;
-selected suites do not establish a green whole repository.
+selected suites do not establish that the whole repository passes.
 
 Reusable distribution CI covers Linux/macOS, CPython 3.11–3.14 and PyPy 3.11, plus actual
 HTTP/stdio engine integration; native workflows also test the staged release through the SDK.
 A manual protected PyPI publishing workflow consumes distribution CI's
 verified artifacts. Workflow lint passed, but the remote matrix has not run. PyPI project
-ownership/trusted publishers, SDK publication and a Vis deployment remain external gates;
+ownership/trusted publishers, SDK publication and a Vis deployment remain external requirements;
 none is implicitly authorized by this plan. No second runtime release is needed.

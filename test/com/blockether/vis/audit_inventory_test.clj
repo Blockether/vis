@@ -119,7 +119,7 @@
 (defn- declared-footprint
   [artifact-info]
   (some->> (rendered-audit artifact-info)
-           (re-find #"\*\*Declared jar footprint \(direct coords\):\*\* ~(\d+) MB")
+           (re-find #"\*\*Total direct jar size:\*\* ~(\d+) MB")
            second))
 
 (defdescribe audit-footprint-total-test

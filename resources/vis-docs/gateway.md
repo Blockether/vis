@@ -1,15 +1,14 @@
 # Remote access and the Companion app
 
-The terminal UI, the Companion app and the CLI all talk to one **gateway**: a
-local HTTP service that owns sessions, turns and the live event stream. Many
-clients can attach to the same gateway and see the same sessions.
+The terminal UI, Companion app and CLI connect to a **gateway**: a local HTTP
+service that manages sessions, turns and the live event stream. Multiple clients
+can connect to the same gateway and access the same sessions.
 
 ## Starting the gateway
 
-You normally do not start it. `vis-tui` or `vis-agent` finds the gateway for the
-current database (`~/.vis/vis.mdb`) and starts one in the background when none
-is running. That gateway stops itself once the last client disconnects and no
-turn is still producing output.
+`vis-agent` finds the gateway for the current database (`~/.vis/vis.mdb`) and
+starts one in the background if needed. This managed gateway stops after the
+last client disconnects and no turn is producing output.
 
 ```bash
 vis-agent gateway status          # pid, url, database, clients, auth mode
@@ -38,13 +37,13 @@ testing:
 | iOS / iPadOS (TestFlight) | <https://testflight.apple.com/join/4anYT4Wk> |
 | Android (Play open testing) | <https://play.google.com/apps/testing/com.blockether.viscompanion> |
 
-The app has no account; it is a client for your gateway. Feedback goes to
-`karol@blockether.com` or the TestFlight feedback button.
+The app does not require an account; it connects to your gateway. Send feedback
+to `contact@blockether.com` or use the TestFlight feedback button.
 
 ### Pair a phone
 
-The gateway a client starts for you listens on `127.0.0.1`, which a phone
-cannot reach. Start one on all interfaces with a token and print a pairing QR:
+A managed gateway listens on `127.0.0.1`, which a phone cannot access. To allow
+remote connections, listen on all interfaces and print a pairing QR code:
 
 ```bash
 vis-agent gateway start --host 0.0.0.0 --require-token --pair
@@ -70,12 +69,13 @@ token.
 
 ### Access from anywhere with Tailscale
 
-`0.0.0.0` exposes the gateway on your local network only. Put both devices on a
-[Tailscale](https://tailscale.com) tailnet and start the gateway as above. The
-QR prefers the machine's `100.x` Tailscale address, so the pairing keeps working
-away from the LAN. To listen on Tailscale only, use `--host 100.x.y.z`.
+`0.0.0.0` listens on all IPv4 interfaces, including public ones if present.
+For private remote access, put both devices on a
+[Tailscale](https://tailscale.com) tailnet. The pairing QR code prefers the
+machine's `100.x` Tailscale address. To listen only on Tailscale, use
+`--host 100.x.y.z` rather than `0.0.0.0`.
 
-Keep `--require-token` on for any non-local exposure.
+Keep token authentication enabled for remote connections.
 
 ## Using a remote gateway from the CLI
 
@@ -88,8 +88,9 @@ vis-agent --gateway https://gateway.example.com/vis --gateway-token "$TOKEN" gat
 ```
 
 `--gateway` takes `HOST`, `HOST:PORT` or a full URL; a bare host means HTTP on
-port `7890`. `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` set the same for a shell.
-Through an SSH tunnel no token is needed:
+port `7890`. `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` set the same values for
+a shell. An SSH tunnel can reach a loopback gateway. Supply a token if that
+gateway requires one:
 
 ```bash
 ssh -N -L 7890:127.0.0.1:7890 you@10.0.0.5 &
@@ -123,15 +124,15 @@ gateway on loopback.
 
 ## Push notifications
 
-The gateway sends one alert per finished turn to every registered device, with
-the session title and ids only; the transcript never leaves the gateway. In the
-app, open the gateway's **Settings → Notifications**, enable *Notify this
-device* and use *Send a test*.
+The gateway sends an alert when a turn finishes. The payload includes the
+session title, identifiers and an answer preview of up to 180 characters.
+In the app, open **Settings → Notifications** for the gateway, enable
+*Notify this device* and use *Send a test*.
 
-The store-distributed app needs no configuration: pushes go through a relay run
-by the app's publisher, which never sees the alert content and stores nothing.
-`VIS_PUSH_RELAY_URL` or `~/.vis/relay.edn` points one machine at a different
-relay.
+The store-distributed app uses a relay operated by the app's publisher. The
+relay receives the notification content and forwards it to the push provider.
+The full transcript is not included in the push payload. `VIS_PUSH_RELAY_URL`
+or `~/.vis/relay.edn` selects a different relay for a machine.
 
 Direct APNs or FCM credentials only work for a Companion you build and sign
 yourself; Apple and Google bind push credentials to the app build. In that
@@ -172,17 +173,15 @@ Every built-in route is described as OpenAPI 3.1, without a token:
 curl -sS http://127.0.0.1:7890/openapi.json -o vis-gateway.json
 ```
 
-Routes added by extensions are not included.
+The gateway and clients advertise their protocol version and the oldest
+compatible version. The gateway reports these on `GET /healthz`,
+`GET /v1/capabilities` and `GET /v1/admin/status`. Clients send `X-Vis-Protocol`,
+`X-Vis-Min-Gateway-Protocol`, `X-Vis-Client` and `X-Vis-Client-Version`.
+The gateway returns `HTTP 426` to an incompatible client. Clients display a
+version-mismatch screen for an incompatible gateway. Health, capabilities,
+OpenAPI and docs routes remain accessible without authentication.
 
-Gateway and clients each publish the protocol version they speak and the oldest
-counterpart they serve. The gateway advertises it on `GET /healthz`,
-`GET /v1/capabilities` and `GET /v1/admin/status`; a client sends
-`X-Vis-Protocol`, `X-Vis-Min-Gateway-Protocol`, `X-Vis-Client` and
-`X-Vis-Client-Version`. A client that is too old gets `HTTP 426`, and a client
-facing a gateway that is too old shows a version-mismatch screen. The health,
-capabilities, OpenAPI and docs routes stay open so the message can be read.
-
-Other routes worth knowing:
+Other API routes:
 
 - `GET /v1/events?sids=<sid>` — the session event stream (SSE), resumable with
   `Last-Event-ID`.
@@ -195,9 +194,9 @@ Other routes worth knowing:
 
 ## Python SDK
 
-`blockether.vis.engine.GatewayClient` talks to a gateway you name by URL and
-token. `LocalEngine` runs a Vis executable as a subprocess with no gateway at
-all. See the [Python SDK](https://pypi.org/project/vis-agent/).
+`blockether.vis.engine.GatewayClient` connects to a gateway by URL and token.
+`LocalEngine` runs a Vis executable as a subprocess without a gateway. See
+the [Python SDK](https://pypi.org/project/vis-agent/).
 
 ## Resource limits
 
@@ -208,8 +207,8 @@ Set before starting the gateway:
 | `VIS_GATEWAY_MAX_CONCURRENT_TURNS` | `50` | Turns executing at once across all sessions |
 | `VIS_GATEWAY_EVENT_RING_MAX` | `2000` | Events kept per session for SSE replay |
 | `VIS_ENV_CACHE_MAX` | `8` | Idle session environments kept resident |
-| `VIS_ENV_MAX_TURNS_PER_CTX` | `25` | Turns before a Python session is recycled |
-| `VIS_ENV_RSS_BUDGET_MB` | `3072` | Process memory threshold for eviction |
+| `VIS_ENV_MAX_TURNS_PER_CTX` | `5` | Turns before a Python session is recycled |
+| `VIS_ENV_RSS_BUDGET_MB` | `3072` native / `5120` JVM | Process memory threshold for eviction |
 
 A value `<= 0` disables an eviction threshold.
 

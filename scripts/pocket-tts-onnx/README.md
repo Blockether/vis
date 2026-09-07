@@ -1,7 +1,7 @@
 # pocket-tts → ONNX
 
-The export layer behind `bin/export-pocket-tts`: it wraps Kyutai's pocket-tts
-modules so `torch.onnx.export` can trace them, and quantizes the result to int8.
+`bin/export-pocket-tts` uses these wrappers to export Kyutai's pocket-tts
+modules with `torch.onnx.export` and quantize the results to int8.
 
 | | |
 |---|---|
@@ -10,9 +10,8 @@ modules so `torch.onnx.export` can trace them, and quantizes the result to int8.
 | this layer | MIT, vendored here and pinned by content |
 | licence text | `LICENSE` — as received, and it names no copyright holder |
 
-Vendored rather than fetched at build time: the build then pulls no code it has
-not pinned, the revision cannot move under a release, and the graphs are ours
-to fix when sherpa-onnx changes what it reads.
+The export code is vendored so builds use a fixed revision. Update it here
+when sherpa-onnx requires a different graph format.
 
 ```
 export_mimi_and_conditioner.py   mimi_encoder.onnx, mimi_decoder.onnx, text_conditioner.onnx
@@ -21,6 +20,6 @@ quantize.py                      *_int8.onnx (dynamic, MatMul only, for broad CP
 onnx_export/                     state flattening and the traced module wrappers
 ```
 
-Each script writes into `--output_dir`; nothing here is run by hand — `bin/export-pocket-tts`
-downloads the weights, runs all three, keeps the seven files sherpa-onnx reads, and refuses
-to package a bundle that fails its speech round trip.
+Each script writes to `--output_dir`. Run them through `bin/export-pocket-tts`,
+which downloads weights, runs all three scripts and packages the seven files
+required by sherpa-onnx after a successful speech round-trip test.

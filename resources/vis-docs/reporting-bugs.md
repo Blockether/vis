@@ -2,8 +2,8 @@
 
 Report bugs at <https://github.com/Blockether/vis/issues>.
 
-Vis works inside your repository with your credentials, so a session transcript
-is rarely safe to share as is. A good report describes Vis, not your project.
+Session transcripts can contain private code and credentials. Include only
+information needed to reproduce the Vis problem.
 
 ## Security issues
 
@@ -27,14 +27,14 @@ credential leak or unauthenticated gateway access. Email
 - API keys, tokens and anything under `~/.vis/` such as `state.yml`,
   `gateway.token`, `devices.edn`, the session database `vis.mdb` and the event
   logs in `gateway/events/`. They contain credentials or full transcripts.
-- Source code, diffs and internal API shapes. Retype a neutral example instead.
+- Private source code, diffs and API details. Use a minimal public example instead.
 - Employer, client and product names, internal hostnames and private URLs.
 - Personal data. Public issues are permanent and indexed.
 - Home paths such as `/Users/jane/work/acme/…`. Write `<project>/…`.
 
 ## Sharing a transcript
 
-If the transcript is the bug, export it and edit it before sharing:
+If a transcript is needed to demonstrate the bug, export and redact it:
 
 ```bash
 vis-agent sessions export <SESSION-ID> --md > /tmp/report.md
@@ -50,7 +50,7 @@ to the affected part.
 ## Template
 
 ```markdown
-**Version:** vis-agent 0.42.0 (native, macOS 15.3 arm64)
+**Version:** <vis-agent version, native or JVM, OS version, architecture>
 
 **What I did:** ran `/reload` after adding a Python extension.
 **What happened:** the tool disappeared from the session.
@@ -68,5 +68,5 @@ to the affected part.
 
 ## See also
 
-- [Exporting sessions](exporting-sessions.md) — producing the transcript a report attaches.
-- [Configuration](configuration.md) — the settings a report should name.
+- [Exporting sessions](exporting-sessions.md) — create a transcript export.
+- [Configuration](configuration.md) — identify relevant settings.

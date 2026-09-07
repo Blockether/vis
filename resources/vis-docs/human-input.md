@@ -1,15 +1,14 @@
 # Asking the human
 
-`vis.ask` pauses an extension, shows a typed form in the TUI, the web UI or the
-Companion app, and returns the answer. This page is the reference for the
-request, every field type, layout, validation and the answer object. It
-applies to Python extensions; the Clojure builders are listed at the end.
+`vis.ask` pauses a Python extension, displays a form in the terminal or
+Companion app, and returns the answer. This page describes fields, layout,
+validation and results.
 
 ## A request
 
 ```python
 answer = vis.ask("Deploy", [
-    {"name": "env", "label": "Target", "description": "Where this deploy lands.",
+    {"name": "env", "label": "Target", "description": "Deployment environment.",
      "type": "select", "options": ["staging", "prod"], "is_required": True},
     {"name": "notes", "type": "multiline", "label": "Release notes"},
     {"name": "token", "type": "password", "label": "Deploy token"},
@@ -25,7 +24,7 @@ Request options:
 
 | Option | Meaning |
 | --- | --- |
-| `description` | Prose under the title. |
+| `description` | Text under the title. |
 | `submit_label`, `cancel_label` | Button labels. |
 | `is_cancellable` | `False` removes the cancel button. |
 | `timeout_ms` | 5 minutes by default; `0` waits until the person answers or cancels. |
@@ -49,13 +48,13 @@ when the person confirmed:
 | `answer.reason` | `cancelled`, `timeout`, `undeliverable` or the host's reason when the answer is falsy |
 | `answer.reveal(name)` | resolve a secret handle in process |
 
-A `password` or `otp` field answers with an opaque `vis-secret:` handle. The
-transcript, logs and the model see only the handle; `answer.reveal(name)` or
-`vis.reveal(handle)` resolves it at the moment of use, and
-`vis.forget(handle)` drops it.
+A `password` or `otp` field returns an opaque `vis-secret:` handle. Only the
+handle is recorded in the transcript and logs or sent to the model. Retrieve
+the value with `answer.reveal(name)` or `vis.reveal(handle)` when needed;
+`vis.forget(handle)` removes it. Do not print or log the revealed value.
 
-When no surface can show the dialog, the answer is `undeliverable` at once and
-an error is logged; the extension is never parked until the timeout.
+If no client can display the dialog, the request immediately returns
+`undeliverable` and logs an error rather than waiting for the timeout.
 
 ## Fields
 
@@ -79,15 +78,14 @@ Common keys: `placeholder`, `default`, `is_required`, `min_length`,
 a string, or `{"value": ..., "label": ...}` when the stored value and the shown
 text differ. An answer naming an undeclared option is refused.
 
-`is_required` is enforced by the engine, not only drawn: a blank required field
-is refused on confirmation, whether the answer came from a dialog or straight
-over HTTP.
+The engine enforces `is_required`. It rejects blank required fields on
+confirmation, whether the answer comes from a dialog or an HTTP request.
 
 ## Layout
 
-Two node types answer nothing. A `group` arranges its `fields` in a `column`
-(default) or a `row`, and may nest. A `heading` or `paragraph` carries `text`
-only.
+Layout nodes do not produce answer values. A `group` arranges `fields` in a
+`column` (default) or `row` and can contain nested groups. A `heading` or
+`paragraph` displays `text`.
 
 ```python
 vis.ask("Where should the pool connect?", [
@@ -101,20 +99,19 @@ vis.ask("Where should the pool connect?", [
 ])
 ```
 
-Layout never changes the answer: `answer.values` stays flat, keyed by the leaf
-fields, and names must be unique across the whole tree. A value key on a group
-(`default`, `options`, `validate`) or a layout key on a field (`fields`,
-`direction`) is refused. Decorations are never focused and never appear in the
-answer.
+`answer.values` is a flat map keyed by field name, regardless of layout. Names
+must be unique. Groups reject value keys (`default`, `options`, `validate`);
+fields reject layout keys (`fields`, `direction`). Headings and paragraphs
+cannot receive focus and do not appear in the answer.
 
 ## Builders
 
-Each node type has a builder that validates the node where it is written:
+Each node type has a builder that validates its arguments:
 
 ```python
 form = vis.column(
     vis.heading("Target"),
-    vis.paragraph("Staging pages nobody."),
+    vis.paragraph("Staging does not send on-call alerts."),
     vis.row(
         vis.select("env", [vis.option("staging", "Staging"), vis.option("prod")],
                    is_required=True),
@@ -124,7 +121,7 @@ form = vis.column(
     vis.password("token", label="Deploy token", is_required=True),
 )
 
-answer = vis.ask("Deploy", [form], submit_label="Ship it")
+answer = vis.ask("Deploy", [form], submit_label="Deploy")
 ```
 
 Builders: `plaintext`, `password`, `multiline`, `select`, `multiselect`,
@@ -159,35 +156,11 @@ answer = vis.ask("Sign up", [
   string, is refused when the request is built.
 - `False` refuses with `is not valid`; a validator that raises refuses with
   `could not be validated: <exception>`.
-- Validators never run on a blank answer; emptiness is `is_required`'s job.
-- Validation runs once, on confirmation, in the engine. The dialog then marks
-  each refused field with its message. Validators never cross the wire.
-
-## Clojure builders
-
-`com.blockether.vis.core/request-human-input!` takes the same request, built
-with `com.blockether.vis.view` using kebab-case keys:
-
-```clojure
-(require '[com.blockether.vis.core :as vis]
-         '[com.blockether.vis.view :as hi])
-
-(vis/request-human-input!
-  (hi/form {:title "Deploy" :submit-label "Ship it"}
-           (hi/heading "Target")
-           (hi/row (hi/select "env" ["staging" "prod"] {:label "Environment"
-                                                        :is-required true})
-                   (hi/slider "canary" {:label "Canary %" :min 0 :max 100 :step 5}))
-           (hi/password "token" {:label "Deploy token" :is-required true
-                                 :validate #(when (< (count %) 12) "at least 12 characters")})))
-```
-
-Each builder returns the plain map and validates it on the way out;
-`(hi/select "env" [])` throws at that line. `:validate` takes a function or a
-vector of functions with the same contract as Python.
+- Validators do not run on blank answers; use `is_required` to reject them.
+- Validation runs in the engine on confirmation. The dialog displays each
+  field's error message. Validator functions are not sent to clients.
 
 ## See also
 
 - [Extending Vis](extending.md) — the extension that calls `vis.ask`.
-- [Live views](live-views.md) — the other direction: showing work instead of asking.
-- [Clojure extensions](clojure-extensions.md) — the Clojure side of the same API.
+- [Live views](live-views.md) — display progress while an extension runs.

@@ -11,7 +11,7 @@ vis-agent sessions export <SESSION-ID> [--md | --html PATH]
 
 ## Markdown
 
-The default. Prints the whole transcript to stdout, including tool calls:
+Markdown is the default format. The export prints the transcript, including tool calls, to stdout:
 
 ```bash
 vis-agent sessions export 3a7b2c1d > session.md
@@ -31,5 +31,5 @@ Exports are not redacted. Read one before sharing it; see
 
 ## See also
 
-- [Reporting a bug](reporting-bugs.md) — trimming an export before you share it.
-- [Remote access and the Companion app](gateway.md) — sessions that live on another machine.
+- [Reporting a bug](reporting-bugs.md) — remove private information before sharing an export.
+- [Remote access and the Companion app](gateway.md) — access sessions on another machine.

@@ -2,79 +2,86 @@
 
 ### Type
 
-The app ships JetBrains Mono for every word and fact: prose, controls, paths, ids, counts, durations,
-models and code. The TUI uses the terminal face. Never add a second family or rely on a system
-fallback.
+Use JetBrains Mono for all app text, including controls, metadata and code.
+The TUI uses the terminal's font. Do not add another font family or depend on
+a system fallback.
 
 | step | px/line | role |
 |---|---:|---|
 | `text-display` | 24/30 | one screen name |
 | `text-head` | 17/24 | screen or sheet title |
-| `text-subhead` | 15/22 | section lead; two-line touch-row title |
-| `text-title` | 13/20 | pointer-row lead; transcript body |
+| `text-subhead` | 15/22 | section heading; two-line touch-row title |
+| `text-title` | 13/20 | pointer-row title; transcript body |
 | `text-body` | 12/18 | prose and descriptions |
-| `text-ui` | 11/16 | controls; metadata floor on touch |
+| `text-ui` | 11/16 | controls; minimum metadata size on touch devices |
 | `text-meta` | 10/16 | pointer-only metadata |
-| `text-chip` | 8/14 | a short tag, never the only copy |
+| `text-chip` | 8/14 | short tags, not standalone descriptions |
 
-Use at most three steps in a row and four on a screen. Use weight and ink before another size. No
-literal type size, `leading-*`, synthesized face or all-caps sentence; caps are only for short tags.
+Use at most three text sizes per row and four per screen. Prefer weight and
+color changes before adding a size. Do not use literal sizes, `leading-*`,
+synthesized fonts or all-caps sentences. Capitals are allowed for short tags.
 
 ### Colour and marks
 
 - Use semantic theme tokens only. No literal colour, palette utility, gradient or decorative blur.
-- Measure against the surface the ink actually touches in every shipped theme: **4.5:1** for small
-  text, **3:1** for large/bold text and any meaningful icon, glyph or rule.
-- Colour repeats meaning; it never carries meaning alone. Pair state colour with shape, word or
-  position.
-- One accent and one filled primary verb per screen. Navigation is not a competing verb.
-- App marks come through `src/components/icons.tsx` from Lucide. No hand-drawn SVG, font glyph,
-  emoji or second icon family. TUI marks are cells and follow its own vocabulary.
-- Match the mark box to the adjacent type: 18px at `text-head`, 14px at `text-title`, 12px at
-  `text-ui`. Keep Lucide's stroke unchanged.
+- Measure contrast against the actual background in every supported theme:
+  **4.5:1** for small text; **3:1** for large/bold text and meaningful icons or lines.
+- Pair state colors with a shape, word or position; color alone is insufficient.
+- Use one accent and one filled primary-action control per screen. Keep
+  navigation visually secondary.
+- App icons come from Lucide through `src/components/icons.tsx`. Do not add
+  custom SVGs, font glyphs, emoji or another icon family. Use the TUI's
+  existing cell-based symbols.
+- Match icon size to adjacent text: 18px for `text-head`, 14px for `text-title`,
+  12px for `text-ui`. Keep Lucide's stroke width unchanged.
 
 ### Geometry and density
 
-- Touch targets are at least **44×44px**; fine-pointer targets at least **28×28px**; adjacent targets
-  keep **8px** between them. The painted face may be smaller: invisible hit slop supplies the target.
-- Density follows the pointer (`mouse:`), never viewport width. An iPad remains touch-first.
-- One container edge per group. Prefer proximity, alignment and one inset hairline to nested cards.
-  Vis planes are square and hairline-ruled; a component may round only the face its contract owns.
-- Every column shares one left edge. Titles take spare width; metadata stays at the trailing edge.
-  Hover actions occupy a reserved slot and never reflow the row.
-- The row is the control. Do not add an `Open` button to a row that already opens.
+- Touch targets must be at least **44×44px** and mouse targets **28×28px**, with
+  **8px** between adjacent targets. The visible control can be smaller than
+  its clickable area.
+- Use `mouse:` for density, not viewport width. An iPad uses touch sizing.
+- Use one border per group. Prefer spacing, alignment and an inset separator
+  over nested cards. Containers are square with thin borders. Round a control
+  only where its component contract permits.
+- Align each column to one left edge. Titles use available width; metadata
+  aligns to the end. Reserve space for hover actions to prevent layout shifts.
+- Do not add an `Open` button to a row that already opens when selected.
 
 ### States, motion and words
 
-- Every asynchronous surface has loading, empty, error and partial/stale paints. An error says what
-  failed and what to do; an empty state names what belongs there and offers the real verb.
-- A press responds within one frame. State motion is 120–200ms, never over 300ms, and becomes instant
-  under `prefers-reduced-motion`; lists do not animate on mount.
-- Destruction names the object and confirms with the verb, never `OK`.
-- Write from the user's side: sentence case, active voice, plain verbs, no filler. One act keeps one
-  name through control, progress and result. Every word in a story is product copy, not lorem text.
+- Async components need loading, empty, error and partial/stale states. Errors
+  explain the failure and recovery action. Empty states explain what belongs
+  there and provide an appropriate action.
+- Respond to a press within one frame. Transitions last 120–200ms, never more
+  than 300ms, and are disabled under `prefers-reduced-motion`. Do not animate
+  lists on mount.
+- Destructive confirmations name the object and action; do not label them `OK`.
+- Use sentence case, active voice and direct language. Keep action names
+  consistent across controls, progress and results. Stories use realistic
+  product text rather than placeholder text.
 
-## 3. Surface conventions
+## Platform conventions
 
-- **Touch app:** honour safe areas, keyboard and 130% text scaling. A navigation bar carries
-  navigation, not the screen's primary verb. Two-line rows keep metadata at `text-ui` or larger.
-- **Pointer app:** prefer filter and keyboard navigation to pagination; `/` focuses search, `Esc`
-  leaves or clears, arrows move and Enter opens. Reveal actions without moving content. Truncated
-  facts expose their full value.
-- **TUI:** budget cells explicitly, leave at least one-cell gutters, assume eight colours and no
-  italics, and truncate at a known column. Box drawing belongs to the outer container, not every row.
+- **Touch app:** respect safe areas, keyboards and 130% text scaling. Keep the
+  primary action out of the navigation bar. Use `text-ui` or larger metadata
+  in two-line rows.
+- **Pointer app:** prefer filtering and keyboard navigation to pagination.
+  `/` focuses search, `Esc` leaves or clears it, arrows move and Enter opens.
+  Reveal actions without moving content. Make truncated values accessible.
+- **TUI:** calculate cell sizes explicitly, leave at least one cell between
+  columns, assume eight colors and no italics, and truncate at a defined
+  column. Draw borders around containers, not every row.
 
-## 4. Reject generated slop
+## Avoid
 
-Reject on sight:
-
-1. nested bordered or rounded cards;
-2. a centred hero on a working screen;
-3. decorative icons, gradients, glass or multiple shadow depths;
-4. repeated status text, chevrons on inert rows or labels that say nothing but “Manage”;
-5. fixed metadata columns that strand space;
-6. six type sizes or weak grey-on-grey text;
-7. a 44px painted face where only the target needed 44px;
-8. two primary verbs, two icon families or meaning carried only by colour;
-9. facts removed merely to make the screen look quiet;
-10. a control, token, font or behaviour drawn in a review that does not ship.
+1. Nested bordered or rounded cards.
+2. Oversized centered headings on task screens.
+3. Decorative icons, gradients, translucent backgrounds or multiple shadow sizes.
+4. Repeated status text, chevrons on inactive rows or vague `Manage` labels.
+5. Fixed metadata columns that waste available width.
+6. Excessive text sizes or low-contrast text.
+7. A 44px visible control when only its touch target needs that size.
+8. Multiple primary actions, icon families or states indicated only by color.
+9. Removing information solely to simplify appearance.
+10. Review mockups with controls, fonts or behavior absent from production.

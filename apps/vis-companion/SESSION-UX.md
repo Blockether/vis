@@ -1,15 +1,13 @@
 # Starting work: machine, project, draft
 
-Decisions about the sessions list — who owns which action, and what a session costs
-to start. The vocabulary this flow is built from is drawn in Storybook (`npm run storybook`,
-`Vocabulary/*`), and the flow itself is looked at in the running app (`npm run dev`); this file
-records only what is settled.
+Design decisions for starting sessions. Review controls in Storybook with
+`npm run storybook` and the complete interaction in the app with `npm run dev`.
 
-## The model everything follows
+## Machine, project and session actions
 
-A **machine** owns **projects**; a **project** owns **sessions**. Every action belongs
-to the row that owns the noun it acts on, and no dialog ever asks again for something
-the tap already answered.
+A machine contains projects; each project contains sessions. Put actions on
+the relevant row. Do not ask users to reselect a machine or project already
+identified by their selection.
 
 | Row | Owns | Actions |
 | --- | --- | --- |
@@ -17,80 +15,54 @@ the tap already answered.
 | Project (folder) | its sessions | delete sessions (unchanged) |
 | Session | itself | open · rename · delete (unchanged) |
 
-## Settled
+## Decisions
 
-1. **The project `⋯` does not change.** It keeps deleting the sessions of that project
-   and gains nothing. Anything about the *machine* is not its business.
-2. **The machine header gets its own `⋯`, and it is the ONLY new control.** (Board: C.)
-   Machine-level actions live there and nowhere else, so "which machine" is never a
-   question inside the menu — the header you tapped is the answer. No labelled button,
-   no `+` on every row: the list keeps its density and the rarest verbs cost the same
-   tap as the commonest one.
-3. **`New session` starts in the machine's current project**, named in the entry's own
-   hint (`in vis · ~/vis · last used 7m ago`). Starting is one tap; *changing* which
-   project that is has its own verb, below.
-4. **`New session in a draft…` is a second verb in that menu.** (Board: F.) Two entries
-   that differ in four words, and with `Offer drafts` off the second one is simply not
-   rendered — nobody is asked a question they turned off.
-5. **`Switch project` is the name.** Not "new project", not "add folder": from the
-   user's side one project is on screen and another one takes its place.
-6. **Switch project opens a bottom sheet**, not a dialog. Sheets are what this app
-   uses for "pick one of many" on a phone; a dialog is for a decision with two
-   buttons. Same surface on desktop, anchored instead of docked.
-7. **That sheet is a breadcrumb browser** of the machine's own filesystem. (Board: H.)
-   Descend into any folder, tap an ancestor in the path to climb, go above `~` to `/`,
-   create a folder and choose it in the same breath. It commits a folder — the gateway
-   decides what that folder *is* (git repo or not). Folders already known as projects
-   are badged so the common case is recognised, not typed.
-8. **A pencil in that same header types the path.** The breadcrumb is for recognition,
-   the pencil is for people who know where they are going: it replaces the crumbs with
-   the path itself, the list below narrows to matches as you type, and the pencil stays
-   lit as the way back to browsing. Two modes, one header, one control to switch them.
-   The pencil is **ink, never a box**: a bare glyph at a full hit box, because a bordered
-   button beside the path reads as a second, competing action.
-9. **Drafts are a preference, not a step.** There is one switch, `Offer drafts`, in
-   **app settings** — this device, every machine. (Board: K.) With it off no surface in
-   the app ever asks "the project or a copy?". A gateway still refuses a draft where a
-   draft is impossible (not a git repo) — capability comes from the machine, the
-   *question* comes from this switch.
-10. **A proposal is photographed before it is built** (see `AGENTS.md` → Companion GUI
-    design shots): both viewports, both palettes, plus a falsifying state.
-11. **The proposal wears the shipped chrome, or it is a proposal about another app.**
-    Every surface in `src/dev/projectVariants.tsx` is the app's own: a menu on a phone
-    is a sheet docked to the bottom edge over a scrim with the `border-t-2 border-accent`
-    lip (never a floating popover — the app has no such screen under `sm:`), a kebab is
-    frameless ink at `min-h-11`, buttons are `Button` in `solid`/`quiet` sentence case,
-    the switch is the mono `ON`/`OFF` block, the machine dot is `MachineMark` in that
-    machine's identity hue, and the pencil is `PencilIcon` rather than a `✎` from an
-    unknown fallback face. Accent is spent once per surface: a sheet whose footer
-    carries the primary gets a quiet title band. `projectVariants.test.ts` reads the
-    source and fails on each of those drifts.
+1. The project `⋯` menu continues to delete that project's sessions. Do not add
+   machine-level actions to it.
+2. Add one `⋯` menu to the machine header for machine-level actions (board C).
+   The selected header identifies the machine; no extra selector is needed.
+3. `New session` uses the machine's current project. Show that project in the
+   entry's hint, such as `in vis · ~/vis · last used 7m ago`.
+4. Put `New session in a draft…` in the same menu (board F). Hide it when
+   `Offer drafts` is disabled.
+5. Label the project-selection action `Switch project`.
+6. On phones, open project selection in a bottom sheet. Use an anchored sheet
+   on desktop. Reserve two-button dialogs for confirmation.
+7. The sheet browses the machine's filesystem with breadcrumbs (board H).
+   Users can open folders, select ancestors, navigate above home to `/`,
+   create a folder and select it. The gateway determines whether the selected
+   folder is a Git repository. Mark known projects in the list.
+8. A pencil icon switches the header between breadcrumbs and an editable path.
+   Typing filters the list. Keep the icon selected in path-entry mode, with a
+   full touch target and no visible border.
+9. `Offer drafts` is an app setting shared across machines on that device
+   (board K). When disabled, do not ask whether to use the project or a copy.
+   The gateway still validates whether a draft is supported.
+10. Review proposals at phone and desktop sizes, in light and dark themes,
+    including a state that could invalidate the design. Follow the
+    [design skill](../../.vis/skills/design/SKILL.md) for current artifact rules.
+11. Use production components in proposals. On phones, menus use bottom sheets
+    with a scrim, not floating popovers. Use `Button`, `MachineMark` and
+    `PencilIcon` rather than custom copies or font characters. Keep labels in
+    sentence case and emphasize only the primary action.
+12. Import existing machine, project and session components. Preserve their
+    row heights, column alignment and unbroken count values. If multiple
+    examples share class strings, define them once. Reuse the input, badge,
+    row and settings-panel styles rather than creating proposal-only styles.
 
-12. **The chrome is imported, not re-typed.** The list under every proposal is the
-    shipped one: the machine block renders through the app's own `MachineGap`,
-    `MachineRail`, `MachineBanner` and `MachineMark`, the disclosure is `ChevronIcon`,
-    and the rows keep the shipped geometry (`min-h-11` project header, `min-h-14`
-    session row, `w-8` rollup column, the counts as whole nowrap units). Where a class
-    string must be repeated it is lifted VERBATIM into one named const — `ROW` is
-    `StartOption`, `CHIP` is its badge, `FIELD` is `ui.tsx`'s `Input`, `BAND` is the
-    menu heading — so there is exactly one field skin, one badge look and one row
-    geometry on the board. A settings section wears `SettingsPanel`'s accent tick, not
-    the menu's filled band. A second, hand-rolled copy of any of them is the drift.
+## Required states
 
-## Non-negotiable states
+- **One machine:** omit redundant machine selection and machine headers. Put
+  the same `⋯` actions in the top bar.
+- **Unreachable machine:** identify it as unavailable and disable actions that
+  require a connection.
+- **Deep path:** support `/`, a home folder with 90 entries and paths wider
+  than 390px. Truncate breadcrumbs from the left, preserving the current folder.
 
-- **Solo:** one machine paired ⇒ nothing costs a machine question, and no machine
-  chrome appears at all — not a header, not a chip, not a disabled control. The fleet
-  bar *is* the machine and carries the same `⋯`, so the flow above is unchanged while
-  the fleet vocabulary disappears.
-- **Unreachable machine:** never offered as a place to start; its own row says so and
-  its actions are disabled instead of failing later.
-- **Deep path:** the sheet must survive `/`, a home folder with 90 entries, and a path
-  too long for 390px — the breadcrumb elides from the left, never the right.
+## Recorded proposal
 
-## The chosen flow, photographed
-
-`#/__design?v=session-ux-board` (its own viewport) walks the seven steps: the machine
-menu, the draft verb inside it, the browsing sheet, the pencil's path field, the inline
-folder, the app switch, and the solo falsifier. Each step is also a state of
-`#/__design?v=session-flow&state=…` for a full-screen look.
+The proposal used `#/__design?v=session-ux-board` to show the machine menu,
+draft action, folder browser, path field, folder creation, preference switch
+and single-machine state. `#/__design?v=session-flow&state=…` showed individual
+states at full-screen size. These are historical proposal routes, not public
+application routes.

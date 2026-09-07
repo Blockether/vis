@@ -1,9 +1,8 @@
 # vis-companion
 
-Universal (**web · Android · iOS**) companion app for the **Vis Agent gateway**.
-Built with **React 19**, **Tailwind CSS v4**, and **Capacitor 8**. It is a pure
-gateway *client*: it reuses the exact same long-lived gateway daemon the TUI and
-other channels drive — no separate backend.
+A web, Android and iOS client for the Vis gateway, built with React 19,
+Tailwind CSS v4 and Capacitor 8. It connects to the same gateway as the TUI.
+Native push notifications use the [notification relay](../vis-companion-relay/README.md).
 
 ## What it does
 
@@ -11,21 +10,19 @@ other channels drive — no separate backend.
   `vis://gateway?url=…&token=…` deep link, or pasting the URL + bearer token.
 - **Sessions** — list, create, open, send turns, and watch replies stream live
   over SSE (`GET /v1/events?sids=<sid>`).
-- **Voice dictation** — uploads the WAV, then follows that ONE transcription
-  job's own SSE stream (`GET /v1/sessions/:sid/voice/jobs/:id/events`), whose every
-  frame is named `voice.job`, so "Sending 42%" and "Transcribing 70%" are different
-  sentences. That stream is a different resource from the session log above and is
-  matched by event name, never by payload shape.
-- **Settings** — renders the gateway's cross-channel feature-toggle registry
-  (`GET /v1/settings?channel=all`). Flipping a toggle persists in the daemon, so
-  the **TUI and the app share one settings state**.
-- **Themes** — every palette Vis ships is static CSS generated from the Clojure
-  themes (`clojure -X:companion-themes` → `src/lib/themes.generated.{css,ts}`);
-  the choice is app-local and no gateway is asked for colours.
+- **Voice dictation** — uploads a WAV recording and follows its transcription
+  job through `GET /v1/sessions/:sid/voice/jobs/:id/events`. Match the
+  `voice.job` event name, not the payload shape. This stream is separate from
+  session events and distinguishes upload progress from transcription progress.
+- **Settings** — reads `GET /v1/settings?channel=all`. Toggle changes persist in
+  the gateway and apply to both the TUI and app.
+- **Themes** — uses CSS generated from the Clojure themes with
+  `clojure -X:companion-themes` in `src/lib/themes.generated.{css,ts}`. Theme
+  selection is local to the app.
 - **Multiple gateways** — save several (home LAN, Tailscale, cloudflared) and
   switch between them.
 
-The wire contracts mirror `src/com/blockether/vis/internal/gateway/{server,client,pairing}.clj`.
+The gateway implementation is in `src/com/blockether/vis/internal/gateway/`.
 
 ## Connect from anywhere: Tailscale or cloudflared
 
@@ -37,8 +34,9 @@ The gateway itself is unchanged; you only choose how the phone reaches it.
 vis-agent gateway start --host 0.0.0.0 --require-token --pair
 ```
 
-The pairing QR automatically prefers the durable `100.x` Tailscale address, so
-the scanned URL keeps working off-LAN.
+The pairing QR prefers the machine's `100.x` Tailscale address for access
+outside the LAN. `0.0.0.0` listens on all IPv4 interfaces; use
+`--host 100.x.y.z` to listen only on Tailscale.
 
 **cloudflared** — expose the loopback gateway through a tunnel:
 
@@ -47,9 +45,8 @@ vis-agent gateway start --host 127.0.0.1 --require-token --pair   # note the tok
 cloudflared tunnel --url http://127.0.0.1:7890              # prints https://<name>.trycloudflare.com
 ```
 
-Then in the app: **Gateway → Manual**, paste the `https://<name>.trycloudflare.com`
-URL and the bearer token. (A non-loopback / tunnelled gateway always requires the
-token — that is the only thing guarding your sessions.)
+In the app's manual pairing form, enter the tunnel URL and gateway token.
+Keep `--require-token` enabled when a tunnel exposes a loopback gateway.
 
 ## Develop
 
@@ -82,43 +79,47 @@ On the web, scanning falls back to pasting the pairing link.
 
 ## Release the companion app
 
-The repo-root `VIS_VERSION` is the product version for regular Vis, iOS, and Android. A regular `vX.Y.Z` release invokes the mobile workflow only after the regular release succeeds. If app code changes while `VIS_VERSION` remains `X.Y.Z`, each public release command below creates a distinct immutable `companion-vX.Y.Z-build.N` tag for the current `main` commit, where `N` is the git-derived build number, and releases **both** stores:
+`VIS_VERSION` at the repository root defines the product version. Regular
+Vis releases start the mobile workflow after the main release succeeds.
+For an app-only release at the same version, use the mobile release command:
 
 ```sh
 npm run release:mobile -- --dry-run
 npm run release:mobile
-npm run release:ios       # same two-store release-tag orchestrator
-npm run release:android   # same two-store release-tag orchestrator
 ```
 
-Commit and push first. The commands refuse a dirty tree, a non-`main` branch, or a local branch that differs from `origin/main`. Companion release tags are immutable and include the unique git-derived build number. If `vX.Y.Z` already points at `HEAD`, no companion tag is created because that regular release already owns the app build.
+Commit and push first. The mobile release command requires a clean `main`
+matching `origin/main`. It creates an immutable `companion-vX.Y.Z-build.N` tag,
+where `N` is the commit count, to release both stores. It does not create a
+companion tag when a regular `vX.Y.Z` release already identifies `HEAD`.
 
-The low-level one-store commands are only for CI and recovery:
+To build or release one store directly, use:
 
 ```sh
 npm run release:ios:store -- --no-upload
 npm run release:android:store -- --no-upload
 ```
 
-Versioning has **no hand-edited app state**. `scripts/version.mjs` mirrors `VIS_VERSION` into `package.json` and `package-lock.json`; the store scripts pass both numbers as native build settings:
+Do not submit the same build through both release methods or create companion
+tags manually. `scripts/version.mjs` copies `VIS_VERSION` into the package
+manifests. Store scripts use these version sources:
 
 | Store field | Source |
 | --- | --- |
 | `CFBundleShortVersionString` / Android `versionName` | repo-root `VIS_VERSION` (npm metadata is only a mirror) |
 | `CFBundleVersion` / Android `versionCode` | `git rev-list --count HEAD` — strictly monotonic and shared by both stores |
 
-To archive by hand in Xcode, run `--prepare` first: it builds the bundle, syncs
-Capacitor, and writes the same two numbers into `App.xcodeproj` — a GUI archive
-reads the project, not our build settings, so without the stamp *Product >
-Archive* would ship `1.0 (1)` and App Store Connect would reject it. Then:
+Before archiving manually in Xcode, run the iOS release script with `--prepare`.
+It builds the web bundle, syncs Capacitor and writes version settings into
+`App.xcodeproj`. Xcode archives read those project settings:
 
 ```sh
 open ios/App/App.xcworkspace   # scheme App, destination "Any iOS Device (arm64)"
 ```
 
-Signing uses Xcode-managed (cloud) distribution certificates for team
-`JSZTFUBUBB`; `-allowProvisioningUpdates` creates what is missing. For the
-upload step, set an App Store Connect API key (no 2FA prompt):
+Signing uses Xcode-managed distribution certificates for the configured Apple
+team. `-allowProvisioningUpdates` creates missing profiles. For API-key
+authentication during upload, set:
 
 ```sh
 export VIS_ASC_KEY_ID=XXXXXXXXXX
@@ -126,11 +127,9 @@ export VIS_ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 export VIS_ASC_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8
 ```
 
-or `VIS_ASC_APPLE_ID` + `VIS_ASC_APP_PASSWORD` (app-specific password). With
-neither set, the upload falls back to `xcodebuild -exportArchive
--exportOptionsPlist … destination=upload`, which authenticates as the Apple
-account signed into **Xcode → Settings → Accounts** — that is what a local
-release from this machine uses. Artifacts land in `build/ios/`.
+Alternatively, set `VIS_ASC_APPLE_ID` and `VIS_ASC_APP_PASSWORD`. Without either
+method, `xcodebuild -exportArchive` uses the account signed into
+**Xcode → Settings → Accounts**. Build artifacts are written to `build/ios/`.
 
 ### TestFlight audiences
 
@@ -141,45 +140,35 @@ npm run release:ios:store -- --audience internal   # team only, no Beta App Revi
 npm run release:testflight                         # same distribution step for the LAST uploaded build
 ```
 
-A build testers can install is the SAME build for every tester, so the default is
-`all` — every audience, the TestFlight mirror of Play's `--track all`. An upload
-reaches internal groups by itself; only the public link has to be asked for, and
-asking for it by default is what stops it serving a build the team left behind.
-Every external group is linked, public link or invite-only, and so is any internal
-group created WITHOUT "access to all builds" — the one kind Apple does not hand new
-builds to. `--audience internal` opts out. Unknown audiences fail before the
-archive, not after it.
+The default `--audience all` distributes the build to external groups and
+internal groups that do not receive all builds automatically. Use
+`--audience internal` to omit external distribution. Unknown values are
+rejected before building.
 
-The public leg waits for App Store Connect to finish processing, creates (once) an
-external beta group named **Public** with a public link, attaches the build, and
-submits it for **Beta App Review**. Review takes hours on the first build of a
-version and is usually instant afterwards; the link itself never changes, so it
-can go in a README or a tweet. Internal testers get the build immediately,
-without review. The public URL is printed at the end of the run.
+External distribution waits for App Store Connect processing, associates the
+build with a beta group and submits it for Beta App Review. The default group
+is **Public**, with a public link. Review timing is controlled by Apple.
+Internal testers do not require Beta App Review. The script prints the public
+URL after distribution.
 
-**Live link: <https://testflight.apple.com/join/4anYT4Wk>** (group **External
-Testers**). The group already existed, so pass it explicitly instead of letting
-the default create a third one:
+Public test link: <https://testflight.apple.com/join/4anYT4Wk>. To use the
+existing **External Testers** group, pass its name explicitly:
 
 ```sh
 node scripts/testflight.mjs --group "External Testers"
 ```
 
-Beta metadata (feedback email, review contact, notes) is filled and permanent.
-One gotcha it cost us: Apple validates `betaAppLocalizations` against the app's
-**primary locale** — this app is `en-GB`, and an `en-US`-only localization made
-`betaAppReviewSubmissions` answer the misleading *"betaAppLocalizations not
-found for this app"*. `distribute()` now reads `primaryLocale` from the app and
-uses it.
+Beta metadata must use the app's primary locale. The distribution script reads
+`primaryLocale` rather than assuming `en-US`. A locale mismatch can cause
+`betaAppReviewSubmissions` to report that `betaAppLocalizations` is missing.
 
 ## Release to Google Play (Android)
 
-> **Publishing is frozen.** The submitted build is with Play review and must stay the one
-> testers judge, so nothing newer may reach a Play track or Firebase App Distribution.
-> `scripts/android-publish-freeze.mjs` is the single switch: `release:android:store` refuses
-> before it builds, the `android` job of `mobile-release.yml` is skipped, and
-> `android-companion.yml` skips Firebase distribution. Building still works (`--no-upload`,
-> `--tracks`) and iOS ships as usual. Lift it in that one file, on the release owner's word.
+> When publishing is disabled in `scripts/android-publish-freeze.mjs`,
+> `release:android:store` refuses uploads, and CI skips Play and Firebase
+> distribution. Local builds with `--no-upload`, track inspection with
+> `--tracks`, and iOS releases remain available. Only the release owner may
+> authorize re-enabling Android publication.
 ```sh
 npm run release:android:store                             # signed .aab → EVERY tester track
 npm run release:android:store -- --track all              # the default, spelled out
@@ -191,19 +180,14 @@ npm run release:android:store -- --reuse-existing --build 4090 --track alpha  # 
 npm run release:android:store -- --tracks                 # what each track serves today
 ```
 
-**One build, every tester channel.** `--track` takes a list and defaults to
-`all`, written in ONE transactional Play edit: either every track gets the new
-build or none does, so no channel is left a version behind and nothing has to be
-promoted afterwards. `all` is not a list frozen in this repo — the release asks
-Play which tracks this listing HAS, so a closed testing track created in the Play
-Console is served without a code change, and a misspelled `--track` is refused
-against the real names. `production` is never implied — name it and it ships. A
-staged `--rollout` is per-track by definition, so it requires exactly one
-`--track`; both refusals happen before the build, not after it.
+`--track` accepts a comma-separated list and defaults to `all`. The script
+queries Play for available testing tracks and updates the selected tracks in
+one transaction. It rejects unknown names before building. Production is
+excluded unless explicitly requested. A staged `--rollout` requires exactly
+one track.
 
-Play's equivalent of a public TestFlight link is the **`beta` (Open testing)**
-track: anyone with the URL joins, no invite and no tester list. `internal` is
-the fast lane (100 named testers, no review), `alpha` is closed testing.
+`beta` is open testing: users join through a public URL. `internal` supports
+up to 100 named testers; `alpha` is closed testing.
 
 Opt-in URL once the track is live:
 **<https://play.google.com/apps/testing/com.blockether.viscompanion>**
@@ -216,15 +200,13 @@ on draft app"*. Upload with `--draft` in the meantime:
 npm run release:android:store -- --track beta --draft
 ```
 
-and finish it in Play Console ▸ the app's **Dashboard** — store listing, App
-content (privacy policy, data safety, content rating, target audience, ads) and
-then **Publish** — none of which the Play Developer API exposes. After that
-first publish, `--track beta` rolls out unattended.
+Then complete the store listing and required App content declarations in Play
+Console before publishing.
 
-Versioning matches iOS exactly — `versionName` from `package.json`,
-`versionCode` from `git rev-list --count HEAD` — and both are stamped into the
-gitignored `android/` project by `scripts/android-prepare.mjs`, together with
-the signing config, `sdk.dir`, and the minSdk floor the barcode plugin needs.
+Android uses `VIS_VERSION` through `package.json` for `versionName` and
+`git rev-list --count HEAD` for `versionCode`. `scripts/android-prepare.mjs`
+writes them to the generated project along with signing configuration,
+`sdk.dir` and the barcode plugin's minimum SDK version.
 
 Two credentials, both kept in the macOS login keychain, never in the repo:
 
@@ -234,11 +216,10 @@ npm run secrets play <service-account.json>    # Play Developer API access
 npm run secrets doctor                         # what is configured
 ```
 
-Google Play App Signing re-signs the bundle with Google's own key, so the
-upload keystore only proves the upload came from you — but losing it still means
-a support ticket, hence `npm run secrets export-keystore` before you wipe a
-machine. The service account comes from Play Console ▸ Users and permissions ▸
-Invite via API, and needs *Release to testing tracks*.
+Google Play re-signs the bundle with its app-signing key. Your upload keystore
+authenticates uploads; back it up with `npm run secrets export-keystore` before
+replacing a machine. Configure the service account in Play Console with
+permission to release to testing tracks.
 
 Gradle needs a **stock JDK 21**: Capacitor 8 compiles with `source 21`, and
 GraalVM's `jlink` cannot run AGP's JdkImageTransform. The script finds one
@@ -246,12 +227,9 @@ itself and says so if none is installed (`sdk install java 21.0.11-tem`).
 
 ## Automatic releases
 
-The companion always carries the regular Vis version from repo-root `VIS_VERSION`.
-A regular Vis tag releases everything together:
-
-```sh
-git tag v1.0.2 && git push origin v1.0.2
-```
+The Companion uses the repository's `VIS_VERSION`. Follow the root release
+instructions to update versions and publish the annotated `vX.Y.Z` tag.
+Tag and version must match; do not move a published tag.
 
 That tag also runs `.github/workflows/desktop-companion.yml`, which packages the same web
 bundle as a desktop app with [Pake](https://github.com/tw93/pake): macOS Universal
@@ -264,21 +242,18 @@ with distinct `linux-x64` and `linux-arm64` asset names attached to the GitHub R
 (needs a Rust toolchain). A **Run workflow** from a branch is a dry run that keeps the
 installers as workflow artifacts and publishes nothing.
 
-For another iOS/Android build while Vis remains `1.0.2`, commit and push the app
-fix and create a distinct immutable companion release tag through the guarded script:
+For an app-only build, commit and push the changes, then run:
 
 ```sh
 npm run release:mobile -- --dry-run
 npm run release:mobile
 ```
 
-That creates an immutable tag such as `companion-v1.0.2-build.2874` for current
-`origin/main`. The tag push runs `.github/workflows/mobile-release.yml`, ships iOS
-to every TestFlight audience and Android to every tester track, keeps marketing version
-`1.0.2`, and gets the same unique store build number from `git rev-list --count HEAD`. A manual **Run workflow**
-can recover one platform. The workflow calls the direct `release:ios` /
-`release:android` scripts with repository secrets, so local and CI build logic
-cannot drift. A platform whose secrets are missing is skipped, not failed.
+The command tags the current `origin/main` with `companion-vX.Y.Z-build.N`.
+`.github/workflows/mobile-release.yml` distributes that build to TestFlight
+audiences and Android testing tracks, subject to the publishing controls
+above. A manual workflow run can retry one platform. CI uses the same store
+scripts as local releases and skips platforms with missing credentials.
 
 | Secret | Value |
 | --- | --- |

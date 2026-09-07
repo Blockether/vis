@@ -1,23 +1,19 @@
 # Extending Vis
 
-An extension adds capabilities to Vis: tools the model can call, slash commands
-for you, guards over file operations, LLM providers and more. This page shows
-how to write a Python extension. Python extensions are single files you drop
-into a directory and reload in place, which makes them the right choice for
-project-specific tools. For engine-level integrations that ship inside the
-binary, see [Clojure extensions](clojure-extensions.md).
+Python extensions add tools, slash commands, file-operation checks and LLM
+providers to Vis. Load them from a file and update them with `/reload`.
 
 ## Your first extension
 
 1. Create `~/.vis/extensions/greeter.py`:
 
    ```python
-   """Greeter — smallest possible tool extension."""
+   """A greeting tool."""
    import blockether.vis.extension as vis
 
 
    def greeter_hello(name):
-       """await greeter_hello(name) -> {"greeting"} — greet someone."""
+       """Return a greeting in a dict with a `greeting` key."""
        return {"greeting": f"hello {name}"}
 
 
@@ -50,26 +46,26 @@ an untrusted repository.
 
 ## Developing outside Vis
 
-`blockether.vis.extension` is the same module the engine injects, published on
-PyPI as [`vis-agent`](https://pypi.org/project/vis-agent/). Install it to
-import, test and lint an extension in an ordinary Python process:
+The engine's `blockether.vis.extension` module is also published on PyPI as
+[`vis-agent`](https://pypi.org/project/vis-agent/). Install it to import, test
+and lint extensions outside Vis:
 
 ```bash
 pip install vis-agent
 ```
 
-Without an engine, the module binds a local host: `vis.state`, `vis.log` and
-`vis.shell` work against your machine, sandbox-only operations refuse by name,
-and `vis.ask` prompts in the terminal. Prime answers for tests with
-`vis.outside.answer_with({...})` or the `VIS_OUTSIDE_ANSWERS` JSON variable, or
-set `VIS_OUTSIDE_NONINTERACTIVE=1` to make every ask come back undeliverable.
+Outside the engine, `vis.state`, `vis.log` and `vis.shell` use a local host
+implementation, and `vis.ask` prompts in the terminal. Sandbox-only operations
+return errors. Supply test answers with `vis.outside.answer_with({...})` or the
+`VIS_OUTSIDE_ANSWERS` JSON variable. Set `VIS_OUTSIDE_NONINTERACTIVE=1` to make
+input requests return an undeliverable status.
 
 ## The declaration
 
-`vis.register(vis.Extension(...))` is the only call that registers anything, and
-a file makes it once. `Extension`, `Symbol`, `SlashCommand`, `OpHook`,
-`NetworkFilter` and `Provider` are frozen declarations: constructing one
-validates it but performs no IO.
+Call `vis.register(vis.Extension(...))` once per extension file. The
+`Extension`, `Symbol`, `SlashCommand`, `OpHook`, `NetworkFilter` and `Provider`
+constructors create immutable declarations. Construction validates values but
+performs no IO; registration applies them.
 
 | Argument | Type | Purpose |
 | --- | --- | --- |
@@ -91,9 +87,8 @@ The env dict passed to `prompt`, `activation` and `ctx` contains only `cwd`,
 `session_id` and `channel`.
 
 Keep `prompt` short. The model finds tools with `apropos(pattern)` and reads
-their docstrings with `doc(name)`, so a prompt fragment that repeats a
-signature costs tokens without adding information. Use it for facts the
-docstrings cannot carry, such as a per-project catalog.
+their docstrings with `doc(name)`. Do not repeat signatures in the prompt. Use
+it for additional context, such as a project-specific catalog.
 
 ## Tools
 
@@ -115,7 +110,7 @@ vis.Symbol(fn_or_object, name=None, tag="observation", is_hidden=False, activity
 
 ```python
 def todo_toggle(id):
-    """Flip one todo. Answers {"id", "done"}; raises when the id is unknown."""
+    """Toggle a todo; return `id` and `done` keys. Raise if the id is unknown."""
     todos = vis.state.get("todos", [])
     for t in todos:
         if t["id"] == id:
@@ -127,10 +122,9 @@ def todo_toggle(id):
 
 ### Return typed objects
 
-A result crosses into the sandbox as a real Python value, so return a real
-type. A flat dict of scalars is fine for a trivial result. As soon as a result
-has a field whose meaning is not obvious, a `None` that means something, or a
-second consumer, make it a frozen dataclass:
+Results are Python values in the sandbox. A dict of scalars is sufficient for
+simple results. Use a frozen dataclass when fields need explanation, `None`
+has a specific meaning, or multiple callers use the result:
 
 - Annotate every parameter and return value; the model reads them next to the
   docstring.
@@ -149,7 +143,7 @@ class CommandResult:
 
     `exit_code` is None exactly when the command was killed locally after
     `timeout_s`. `stdout` and `stderr` are decoded UTF-8 capped at 256 KiB;
-    `is_truncated` says the cap cut something.
+    `is_truncated` is true if either output exceeded that limit.
     """
 
     command: str
@@ -165,8 +159,7 @@ this pattern.
 
 ### Object namespaces
 
-Register an object instead of a function to publish a tree of tools under one
-name:
+Register an object to expose nested tools under one name:
 
 ```python
 class Issues:
@@ -194,22 +187,22 @@ vis.register(vis.Extension(
 ```
 
 The model calls `tracker.issues.find(...)` and `tracker.issues.create(...)`.
-Public methods become tools, public attributes holding objects become nested
-namespaces, and names starting with `_` never cross. Public scalars, modules
-and classes are rejected with their path rather than serialized silently.
-`vis.method(...)` overrides `tag`, `is_hidden` or `activity` for one method.
+Public methods become tools, and object attributes become nested namespaces.
+Names starting with `_` are excluded. Public scalars, modules and classes are
+rejected with an error identifying their path. `vis.method(...)` overrides
+`tag`, `is_hidden` or `activity` for one method.
 
 ### Activity presentation
 
 `activity=vis.Activity(presenter="tests", label="Run checks")` describes how a
 running tool is shown in the TUI and the Companion app. Add `render=callback`
-to compose the presentation: the callback receives `phase` (`start`, `success`
+to customize the display. The callback receives `phase` (`start`, `success`
 or `failure`), `args`, `kwargs`, `result` and `error` and returns a
 `vis.ActivityPresentation(headline, summary, blocks)` or `None`. Blocks are
 `heading`, `text`, `markdown`, `code`, `diff`, `table`, `progress`, `image`,
 `video`, `audio` and `file`. `vis.publish_activity(presentation)` replaces the
 presentation while the tool runs. Presentation errors never change a tool's
-result. The normative vocabulary is the
+result. Supported block types are defined in the
 [Activity contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/activity.json).
 
 ## Slash commands
@@ -235,15 +228,14 @@ reason as a tool failure. With `phase="after"`, `fn` receives `{"op", "args",
 "result"}` and its return value is ignored. An error inside a tool hook allows
 the call.
 
-`"fs_access"` is a gate, not a tool. It is asked for every path the host file
-tools touch (`cat`, `grep`, `patch`, `ls`), so a guard cannot be bypassed by
-choosing another tool. `fn(access)` receives `{"operation": "file-read" |
-"file-write", "path": <absolute path>}`. A gate takes no `phase`, and an error
-inside it refuses the operation. It does not apply to `open()` inside the
-sandbox, which is bounded by the sandbox roots instead.
+`"fs_access"` checks paths used by the host file tools (`cat`, `grep`, `patch`,
+`ls`). It is not a tool itself and takes no `phase`. Its callback receives
+`{"operation": "file-read" | "file-write", "path": <absolute path>}`. An error
+in the callback refuses the operation. This check does not apply to `open()`
+in the sandbox, which uses the sandbox's filesystem policy.
 
-`vis.strings_of(value)` collects every string leaf of a nested structure, which
-is handy for scanning arguments for paths.
+`vis.strings_of(value)` collects strings from a nested structure, for example
+to check paths in tool arguments.
 
 ## Durable state
 
@@ -284,11 +276,13 @@ updates while a job runs. Both are documented on their own pages:
 
 ## Environment
 
-An extension does not receive a copy of the host environment. Name the
-variables you need and the host injects them into `os.environ` before the file
-runs:
+An extension does not automatically receive the full host environment.
+Declare the variables it needs in `env`. `vis.register()` resolves them and
+adds them to the extension's `os.environ`; read them after registration.
 
 ```python
+import os
+
 vis.register(vis.Extension(
     name="acme",
     description="Acme integration.",
@@ -301,14 +295,13 @@ key = os.environ.get("ACME_API_KEY")   # absent when nothing resolves it
 Each name resolves through the project's `environment:` block, then `.env` and
 `.env.local`, then the environment that started Vis (see
 [Configuration](configuration.md#environment)). Names defined by the project
-itself need no declaration. `env=` affects only the extension's own
-`os.environ`; it never widens what a jailed child process receives. To pass a
-variable to a confined child, declare it under `environment:`.
+itself need no declaration. `env=` affects only the extension's `os.environ`,
+not the environment of jailed child processes. To pass a variable to a jailed
+child, declare it under `environment:`.
 
 ## Session context
 
-A `ctx` callable writes a slice into the `session` dict the model sees every
-turn:
+A `ctx` callable adds data to the model's `session` dict each turn:
 
 ```python
 def _ctx(env):
@@ -317,27 +310,28 @@ def _ctx(env):
 vis.register(vis.Extension(name="todo", description="Todo list.", ctx=_ctx))
 ```
 
-Return a string-keyed dict nested under a key unique to your extension. Slices
-from every extension are deep-merged. A non-dict return or an exception
-contributes nothing and never blocks a turn.
+Return a string-keyed dict under a key unique to your extension. Results from
+all extensions are deep-merged. A non-dict return or exception adds no context
+and does not block the turn.
 
 ## Filesystem and processes
 
-Extension code runs in a trusted context, separate from the model's sandbox:
+Extension code runs in a trusted namespace, separate from the model's sandbox.
+A gateway-wide worker loads extension registrations. Session calls use another
+instance beside that session's sandbox, in the session's worker process.
 
 | | Model sandbox | Extension context |
 | --- | --- | --- |
 | Author | the model | you |
-| Filesystem | workspace roots only | your user's permissions |
+| Filesystem | workspace roots when the jail is enabled | your user's permissions |
 | Network and processes | gateway policy; no direct spawn | unrestricted |
 | Environment | project values | declared `env` plus project values |
-| Lifetime | one session | the process, rebuilt on `/reload` |
+| Lifetime | session worker | registration or session instance; reloaded by `/reload` |
 
-`subprocess`, `os.system` and `vis.shell({...})` run unconfined. Output the
-extension does not read itself is captured into the extension's log rather
-than written to the terminal, and a child that reads `isatty()` sees a pipe.
-Pipes are drained into an 8 MiB backlog per stream, so `Popen(stdout=PIPE)`
-followed by `wait()` never deadlocks.
+`subprocess`, `os.system` and `vis.shell({...})` run without the jail. Output
+not read by the extension is captured in its log. Child processes receive
+pipes rather than a terminal; output is drained into an 8 MiB buffer per
+stream, including while the extension waits for the child to exit.
 
 To confine a child, use a jailed shell:
 
@@ -347,25 +341,23 @@ To confine a child, use a jailed shell:
 | `vis.jailed_shell({...})` | merged configuration on disk, read at each spawn | no |
 | `vis.jailed_shell_session({...})` | the invoking session's policy snapshot | yes |
 
-`vis.fs` reads and writes files outside the session roots on behalf of the
-extension: `mkdir`, `write`, `read` (bytes), `read_text`, `copy`, `move`,
-`list`, `stat` and `remove`. Ordinary `open()` remains the right call for
-paths inside the session's roots.
+`vis.fs` provides filesystem operations with extension permissions: `mkdir`,
+`write`, `read` (bytes), `read_text`, `copy`, `move`, `list`, `stat` and `remove`.
+Use ordinary `open()` for paths inside the session's roots.
 
-Calls into one extension file are serialized. Keep `prompt`, `activation` and
-`ctx` fast; tools may take their time.
+Calls into one extension instance are serialized. Keep `prompt`, `activation`
+and `ctx` short-running; tools can perform longer operations.
 
 ## Reloading
 
-`/reload` closes every Python extension context and loads the current files.
-State in `vis.state` survives; new tools and commands are available to live
-sessions immediately. Nothing else picks up an edit: a running Vis serves the
-files it loaded until you reload.
+`/reload` closes Python extension contexts and loads the current files.
+`vis.state` persists, and live sessions can use the new tools and commands.
+File edits do not affect a running extension until it reloads.
 
-At load, the extension's directory is copied to a private location and that
-copy is what runs, so editing a helper module after the load also waits for
-`/reload`. Files an extension writes next to itself land in that copy; keep
-durable data in `vis.state`.
+At load, Vis copies the extension's directory to a private location and runs
+that copy. Changes to helper modules also require `/reload`. Files written
+next to the extension are created in the private copy; use `vis.state` for
+persistent data.
 
 ## Packages and tests
 
@@ -387,8 +379,9 @@ import add` works without path manipulation. Only `extension.py` is an entry
 point.
 
 Test files (`test_*.py` or `*_test.py`) are never loaded as extensions. Run
-them with `/test` in a session or `vis-agent extension test` in CI; both use
-real pytest, installed on first use, and exit non-zero on failure.
+`/test` in a session to execute them with pytest, installed on first use.
+Outside Vis or in CI, install `vis-agent` and `pytest`, then run
+`python -m pytest /path/to/my_ext`.
 
 ```python
 # ~/.vis/extensions/my_ext/test_core.py
@@ -398,13 +391,12 @@ def test_add():
     assert add(2, 3) == 5
 ```
 
-`vis.testing.LiveRecorder` records what a live view emitted and simulates
-surface actions without a session; see [Live views](live-views.md#testing-a-view).
+`vis.testing.LiveRecorder` records live-view updates and simulates user actions
+without a session; see [Live views](live-views.md#testing-a-view).
 
 ## See also
 
 - [Asking the human](human-input.md) — forms, field types, layout and validation.
 - [Live views](live-views.md) — progress a person can watch while a tool runs.
 - [Provider extensions](provider-extensions.md) — registering an LLM provider.
-- [Clojure extensions](clojure-extensions.md) — engine integrations that ship in the binary.
-- [Process jail and network policy](jail.md) — what a confined child may reach.
+- [Process jail and network policy](jail.md) — permissions for jailed processes.

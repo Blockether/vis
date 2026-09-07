@@ -5,12 +5,11 @@ are queued and run in order when the turn finishes.
 
 ## Queue a message
 
-Press **Enter** to send. If nothing is running, the message starts a turn. If a
-turn is running, the message joins the queue shown under the progress bubble.
+Press **Enter** to send. If no turn is running, the message starts one.
+Otherwise it is added to the queue below the progress display.
 
-Queued messages run oldest first, one after another. If a turn fails, the queue
-pauses so the same failure is not repeated. Resume it yourself to send the next
-message.
+Queued messages run in submission order. The queue pauses after a failed turn;
+resume it manually to send the next message.
 
 To edit a queued message:
 
@@ -18,15 +17,14 @@ To edit a queued message:
   composer.
 - **Companion app:** tap the message to edit it, or tap **×** to remove it.
 
-The queue is kept in memory. Restarting the gateway drops it.
+The queue is stored in memory and cleared when the gateway restarts.
 
 ## Cancel a turn
 
 Press **Esc** or **Ctrl+G** to cancel the running turn.
 
-Cancelling stops the turn and moves every queued message back into the composer
-as a draft. Nothing queued is sent automatically after a cancel; resend what you
-still want.
+Cancellation stops the turn and returns queued messages to the composer as a
+draft. To run them, submit the draft again.
 
 ## Quit
 

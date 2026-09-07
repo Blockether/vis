@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - chore(release): v0.1.43
 - fix(ci): repair release validation fixtures
-- feat(sdk): add reproducible verification gates
+- feat(sdk): add reproducible verification checks
 - refactor(python): merge path aliases into filesystem roots
 - feat(python): register project path globals and align prompt
 - feat: unify activity, SDK and authentication flows
@@ -20,14 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(tui): prevent idle typing and scrolling stalls
 - fix(queue): resume TUI submissions after provider failures
 - fix(code-band): turn CODE red on failure instead of naming the error
-- fix(activity): start every step shut behind its own chevron
+- fix(activity): Collapse every step by default and provide a chevron to expand it
 - fix(companion): align verbosity with TUI model capabilities
 - fix(tui): keep iteration prose on settled and restored turns
 - fix(mcp): correct connection status and caller context
 - fix(tui): set a step's words one space after its mark
 - fix(gateway): preserve model verbosity capabilities
 - feat(tui): enable typing stall diagnostics
-- fix(tui): set iteration prose on the answer's edge, off the rail
+- fix(tui): align iteration prose with the answer, outside the timeline
 - fix(tui): close a failed call's error rows with a blank row
 - fix(tui): omit absent chooser group headers
 - feat(activity): fold CODE and RESULT like THINKING in both clients
@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - chore(release): record companion build 5421
 - fix(tui): explain gateway connection failures
 - fix(tui): repaint settings during theme preview
-- fix(companion): Expand Application from its whole band
+- fix(companion): Expand Application by clicking anywhere in its header
 - fix(tui): show theme choices in a transient grid
 - feat(context): estimate linked repository guidance in metrics
 - fix(gateway): retract liveness marker on turn terminal synchronously
@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(companion): compact queued turn tray
 - refactor(python): remove interpreter configuration override
 - fix(context): publish fold counts without printed receipts
-- fix(gateway): land a cancelled turn's terminal from an interrupted worker
+- fix(gateway): publish cancelled-turn terminal events from interrupted workers
 - fix(context): refresh fold telemetry and record executed folds
 - refactor(core): finish engine and TUI cleanup
 - feat(sdk): unify Python clients and interaction contracts
@@ -67,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(metrics): show persisted session health in app metrics
 - fix(gh): archive log snapshots with window_lines
 - chore(deps): bump svar to 0.7.159 for cancel-safe Responses WebSockets
-- fix(companion): reopen only the transcript the app died on
+- fix(companion): Reopen only the transcript displayed when the app terminated
 - test(core): upgrade Lazytest and synchronize Python regressions
 - test(tui): make terminal reply draining deterministic
 - fix(gateway): run local speech without an AI session
@@ -81,23 +81,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - refactor(cli): consolidate Python workers in the runtime
 - fix(companion): preserve touch-opened dialogs
 - ci(build): move macOS jobs to GitHub-hosted runners
-- fix(clojure): formatter owns the file edges too
+- fix(clojure): format file-leading and trailing whitespace
 - feat(housekeeping): sweep stale Python runtime versions
 - refactor(core): group internal namespaces by domain
 - feat(clojure): keep exactly one blank line between top-level forms
 - build(sandbox): consume Python runtime v0.4.1
 - feat(cli): support recursive extension namespaces
-- fix(companion): match the diagnostics band height
+- fix(companion): Match the diagnostics header height
 - fix(companion): compact the diagnostics panel
-- docs(cli): close resolved issues after shipping
+- docs(cli): close resolved issues after release
 - fix(cli): load introspection in Python workers
-- fix(companion): shrink queued message remove faces
+- fix(companion): Shrink queued message remove buttons
 - fix(cli): bind Python extension file metadata
 - fix(companion): fill starred session marks
 - fix(tui): route vis-agent tui to terminal client
 - docs(docs): point quick start at vis-agent TUI
 - chore(release): record companion build 5358
-- fix(cli): anchor the JVM classpath so --jvm runs from any directory
+- fix(cli): use an absolute JVM classpath so --jvm runs from any directory
 - feat(companion): make drawing rail collapsible
 - refactor(gateway): fold the provider limits cache into the host
 - feat(jail): isolate Python execution in native worker
@@ -110,29 +110,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(companion): use JetBrains Mono throughout
 - chore(release): record companion build 5347
 - fix(companion): let the sessions list scroll under the home indicator
-- feat(companion): pair from a phone as a choice, not steps
+- feat(companion): Present phone pairing methods as alternatives, not sequential steps
 - feat(companion): pair through one field on a three-step page
-- fix(companion): pin parked sessions in their project and keep the band on the list
+- fix(companion): Pin parked sessions within their project and retain the list header
 - fix(tui): support WSL2 PipeWire recording
 - fix(gateway): enforce snake_case diagnostic codes
 - fix(jail): allow unrestricted shell working directories
-- feat(companion): ship desktop installers with Pake and hide Scan QR on desktop
+- feat(companion): Provide Pake desktop installers and hide Scan QR on desktop
 - fix(cli): isolate embedded pytest runtime
-- fix(companion): fork only from the turn, drop the row's fork verb
-- feat(companion): fork from the row, fork at a turn from the turn
-- fix(companion): cut the fork menu down to its two choices
-- fix(companion): keep a fit sheet that reaches its cap below the notch
+- fix(companion): Remove the row's Fork action; retain forking from a turn
+- feat(companion): Support forking from a session row or a specific turn
+- fix(companion): Reduce the fork menu to two choices
+- fix(companion): Limit the fit sheet height to the space below the notch
 - fix(cli): serialize embedded pytest runs
 - fix(companion): move the list toggle off the app bar, read the Mac host natively
-- feat(companion): ship the desktop conversation sidebar
+- feat(companion): add the desktop conversation sidebar
 - fix(companion): align and collapse the desktop sidebar
-- feat(companion): split the desk into a sidebar list and the transcript
-- fix(companion): desktop row verbs become icon discs in the row gutter
+- feat(companion): Split the desktop layout into a session sidebar and transcript
+- fix(companion): Use circular icon buttons for desktop row actions, outside the row columns
 - fix(ci): prepare git dependencies on the pinned JDK
-- feat(companion): set session titles in the prose face
+- feat(companion): Use the prose font for session titles
 - build(jail): pin the released confinement runtime
 - refactor(jail): state the policy in Vis, let the runtime enforce it
-- refactor(sandbox): drop the dead :fs/access gate plumbing into Python
+- refactor(sandbox): remove unused Python :fs/access checks
 - refactor(providers): fold the limits namespaces into their providers
 - refactor(providers): fold the provider packs into core and retire extensions/
 - refactor(languages): fold the Clojure and Python packs into core
@@ -147,20 +147,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docs(audit): refresh dependency inventory
 - refactor(contract): remove aggregate and trim source commentary
 - refactor(contract): validate config only with JSON Schema
-- fix(companion): expand diagnostics from its whole band
+- fix(companion): Expand diagnostics by clicking anywhere in its header
 - refactor(contract): make JSON Schema the sole contract
 - chore(release): record companion build 5306
 - fix(companion): stop blurring the composer as the app backgrounds
-- feat(tui): ship standalone app with built-in speech
+- feat(tui): Provide a standalone app with built-in speech
 - fix(engine): keep image descriptions on the foreground provider
 - fix(companion): set diagnostics facts at the dialog detail size
-- fix(companion): fold the diagnostics panel behind its band
-- refactor(companion): state the diagnostics panel as facts, not prose
+- fix(companion): Collapse the diagnostics panel under its header
+- refactor(companion): Present diagnostics as individual values instead of paragraphs
 - feat(companion): add project swipe deletion
 - fix(cli): require exact patch anchors
 - refactor(gh): rebuild the gh extension on typed dataclasses
 - chore(deps): bump svar to 0.7.152
-- feat(companion): fold the application column behind its band chevron
+- feat(companion): Collapse the Application column with its header chevron
 - refactor(extensions): adopt uplink in .vis, drop python examples
 - feat(python): object-first tool pattern docs and remote server example
 - fix(gateway): preserve long Copilot turns
@@ -168,12 +168,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(companion): compact project creation and deletion
 - fix(companion): target copied session title events
 - refactor(cli): remove Nippy and Ruff sandbox shims
-- fix(gateway): scope session headers to provider kickoff
+- fix(gateway): scope session headers to the start of a provider request
 - fix(gateway): reclaim cancelled Python workers
 - fix(tui): fold tool source with receipt
 - feat(gateway): add session-start provider header hooks
 - fix(tui): label visible Python source
-- fix(sandbox): hand a worker the interpreter its parent already resolved
+- fix(sandbox): pass the parent's resolved interpreter to its worker
 - feat(providers): add Claude Fable 5.1 support
 - fix(companion): move pull-to-search prompt into app bar
 - fix(companion): move favorites to row lead
@@ -195,17 +195,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - perf(cli): remember the prep answer instead of asking on every command
 - feat(extensions): give a trusted extension the filesystem through vis.fs
 - fix(sandbox): authorize a host call against the caller the interpreter names
-- build(lint): read a sandbox lease as its own shape, not as a let
+- build(lint): lint sandbox leases as their own form rather than let
 - feat(sandbox): let the jail switch decide the guest's confinement
-- fix(sandbox): stop the environment seeding from unbinding the runtime's own names
+- fix(sandbox): preserve runtime bindings while initializing the environment
 - refactor(sandbox): stop repairing the subprocess redirect CPython does itself
-- refactor(sandbox): let CPython own the sandbox's descriptors
+- refactor(sandbox): use CPython descriptor management in the sandbox
 - fix(sandbox): start the interpreter once and let the second session wait
 - fix(cli): provide a protected Python println
 - fix(companion): keep stop control circular
 - fix(companion): balance project header controls
 - fix(tui): increase new-session plus contrast
-- fix(companion): circle queued and send controls
+- fix(companion): Make queued and send controls circular
 - fix(companion): align thinking with user prose
 - chore(cli): merge main into CPython migration
 - feat(runtime): adopt native CPython process runtime
@@ -215,17 +215,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - refactor(cli): remove extension helper commands
 - feat(cli): support object tool namespaces
 - chore(repo): merge current main into CPython migration
-- fix(tui): preserve prose beside receipt rail
+- fix(tui): preserve prose beside the execution receipt list
 - fix(engine): stop retrying exhausted output requests
 - docs(providers): explain managed authentication setup
 - fix(providers): authenticate managed providers on first use
 - fix(tui): keep Python source visible
-- fix(companion): close session list with final edge
+- fix(companion): Add a bottom border to the session list
 - chore(repo): reformat Clojure sources with zprint
 - refactor(tui): drop cinema MP4 export and the commit convention test
 - refactor(python): drop the anydoc sandbox door
 - test(ci): stop policing the merge commit GitHub builds for a pull request
-- fix(sandbox): let a cold machine install a package and import it
+- fix(sandbox): support package installation and import before prior initialization
 - feat(python): fetch the embedded interpreter from its release archive
 
 ### Package changes
@@ -233,7 +233,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis
 - chore(release): v0.1.43 (05ba30e96)
 - fix(ci): repair release validation fixtures (22d89ca90)
-- feat(sdk): add reproducible verification gates (089b14c2a)
+- feat(sdk): add reproducible verification checks (089b14c2a)
 - refactor(python): merge path aliases into filesystem roots (c06fc943f)
 - feat(python): register project path globals and align prompt (6720741f9)
 - feat: unify activity, SDK and authentication flows (4f9b7a0d6)
@@ -241,14 +241,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(tui): prevent idle typing and scrolling stalls (5032bb463)
 - fix(queue): resume TUI submissions after provider failures (789527556)
 - fix(code-band): turn CODE red on failure instead of naming the error (5011ec941)
-- fix(activity): start every step shut behind its own chevron (9615517c5)
+- fix(activity): Collapse every step by default and provide a chevron to expand it (9615517c5)
 - fix(companion): align verbosity with TUI model capabilities (70e90c3ea)
 - fix(tui): keep iteration prose on settled and restored turns (023e801a3)
 - fix(mcp): correct connection status and caller context (ec3a4ee87)
 - fix(tui): set a step's words one space after its mark (9ecd559ac)
 - fix(gateway): preserve model verbosity capabilities (a19b18c62)
 - feat(tui): enable typing stall diagnostics (4ae9e185b)
-- fix(tui): set iteration prose on the answer's edge, off the rail (913f44a6c)
+- fix(tui): align iteration prose with the answer, outside the timeline (913f44a6c)
 - fix(tui): close a failed call's error rows with a blank row (8ddafdd50)
 - fix(tui): omit absent chooser group headers (cd6b9913f)
 - feat(activity): fold CODE and RESULT like THINKING in both clients (085685aac)
@@ -257,7 +257,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - chore(release): record companion build 5421 (cbeef0e69)
 - fix(tui): explain gateway connection failures (9b5dd76ed)
 - fix(tui): repaint settings during theme preview (b474a223c)
-- fix(companion): Expand Application from its whole band (5ee698244)
+- fix(companion): Expand Application by clicking anywhere in its header (5ee698244)
 - fix(tui): show theme choices in a transient grid (2b4c6fd33)
 - feat(context): estimate linked repository guidance in metrics (83cfc111a)
 - fix(gateway): retract liveness marker on turn terminal synchronously (f5300cc0f)
@@ -274,7 +274,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(companion): compact queued turn tray (13e2b0109)
 - refactor(python): remove interpreter configuration override (f5a823c57)
 - fix(context): publish fold counts without printed receipts (cfc6bf22e)
-- fix(gateway): land a cancelled turn's terminal from an interrupted worker (9110095df)
+- fix(gateway): publish cancelled-turn terminal events from interrupted workers (9110095df)
 - fix(context): refresh fold telemetry and record executed folds (fe2069a5a)
 - refactor(core): finish engine and TUI cleanup (5f66784d2)
 - feat(sdk): unify Python clients and interaction contracts (186f0735e)
@@ -288,7 +288,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(metrics): show persisted session health in app metrics (2bdd91916)
 - fix(gh): archive log snapshots with window_lines (b19464c01)
 - chore(deps): bump svar to 0.7.159 for cancel-safe Responses WebSockets (4c69fad4f)
-- fix(companion): reopen only the transcript the app died on (bfd128712)
+- fix(companion): Reopen only the transcript displayed when the app terminated (bfd128712)
 - test(core): upgrade Lazytest and synchronize Python regressions (94942232c)
 - test(tui): make terminal reply draining deterministic (c837419ee)
 - fix(gateway): run local speech without an AI session (aa0baf83d)
@@ -302,23 +302,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - refactor(cli): consolidate Python workers in the runtime (bae4c4862)
 - fix(companion): preserve touch-opened dialogs (065108c42)
 - ci(build): move macOS jobs to GitHub-hosted runners (1fb47ebec)
-- fix(clojure): formatter owns the file edges too (d66dbf0e8)
+- fix(clojure): format file-leading and trailing whitespace (d66dbf0e8)
 - feat(housekeeping): sweep stale Python runtime versions (123363d97)
 - refactor(core): group internal namespaces by domain (e15c3ff8e)
 - feat(clojure): keep exactly one blank line between top-level forms (a906f25af)
 - build(sandbox): consume Python runtime v0.4.1 (e4aa77c77)
 - feat(cli): support recursive extension namespaces (3c6fd7a58)
-- fix(companion): match the diagnostics band height (f24472a6d)
+- fix(companion): Match the diagnostics header height (f24472a6d)
 - fix(companion): compact the diagnostics panel (f9fc94ff2)
-- docs(cli): close resolved issues after shipping (566e761dc)
+- docs(cli): close resolved issues after release (566e761dc)
 - fix(cli): load introspection in Python workers (0eee0e98d)
-- fix(companion): shrink queued message remove faces (4043869ee)
+- fix(companion): Shrink queued message remove buttons (4043869ee)
 - fix(cli): bind Python extension file metadata (004c336ba)
 - fix(companion): fill starred session marks (11c7e1eab)
 - fix(tui): route vis-agent tui to terminal client (f5f7681c6)
 - docs(docs): point quick start at vis-agent TUI (51cfa79d7)
 - chore(release): record companion build 5358 (b3f38edf1)
-- fix(cli): anchor the JVM classpath so --jvm runs from any directory (630a7e52b)
+- fix(cli): use an absolute JVM classpath so --jvm runs from any directory (630a7e52b)
 - feat(companion): make drawing rail collapsible (6d94cf315)
 - refactor(gateway): fold the provider limits cache into the host (8246f32fc)
 - feat(jail): isolate Python execution in native worker (697197a92)
@@ -331,29 +331,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(companion): use JetBrains Mono throughout (e160f1b4b)
 - chore(release): record companion build 5347 (6c71f80da)
 - fix(companion): let the sessions list scroll under the home indicator (285fe174b)
-- feat(companion): pair from a phone as a choice, not steps (e497f04a2)
+- feat(companion): Present phone pairing methods as alternatives, not sequential steps (e497f04a2)
 - feat(companion): pair through one field on a three-step page (6414bf9b6)
-- fix(companion): pin parked sessions in their project and keep the band on the list (e9c6a98bb)
+- fix(companion): Pin parked sessions within their project and retain the list header (e9c6a98bb)
 - fix(tui): support WSL2 PipeWire recording (accd9987a)
 - fix(gateway): enforce snake_case diagnostic codes (50267f18a)
 - fix(jail): allow unrestricted shell working directories (8c2318cb5)
-- feat(companion): ship desktop installers with Pake and hide Scan QR on desktop (3c0b19da5)
+- feat(companion): Provide Pake desktop installers and hide Scan QR on desktop (3c0b19da5)
 - fix(cli): isolate embedded pytest runtime (f116224f2)
-- fix(companion): fork only from the turn, drop the row's fork verb (797f3a1a4)
-- feat(companion): fork from the row, fork at a turn from the turn (39f240d8a)
-- fix(companion): cut the fork menu down to its two choices (732d13329)
-- fix(companion): keep a fit sheet that reaches its cap below the notch (5879cd361)
+- fix(companion): Remove the row's Fork action; retain forking from a turn (797f3a1a4)
+- feat(companion): Support forking from a session row or a specific turn (39f240d8a)
+- fix(companion): Reduce the fork menu to two choices (732d13329)
+- fix(companion): Limit the fit sheet height to the space below the notch (5879cd361)
 - fix(cli): serialize embedded pytest runs (dc7378299)
 - fix(companion): move the list toggle off the app bar, read the Mac host natively (4f7e92890)
-- feat(companion): ship the desktop conversation sidebar (b6b84a7e9)
+- feat(companion): add the desktop conversation sidebar (b6b84a7e9)
 - fix(companion): align and collapse the desktop sidebar (ebe133f14)
-- feat(companion): split the desk into a sidebar list and the transcript (d27a04802)
-- fix(companion): desktop row verbs become icon discs in the row gutter (f9f48bf25)
+- feat(companion): Split the desktop layout into a session sidebar and transcript (d27a04802)
+- fix(companion): Use circular icon buttons for desktop row actions, outside the row columns (f9f48bf25)
 - fix(ci): prepare git dependencies on the pinned JDK (3d2a551c3)
-- feat(companion): set session titles in the prose face (69d856be5)
+- feat(companion): Use the prose font for session titles (69d856be5)
 - build(jail): pin the released confinement runtime (7b0831a3d)
 - refactor(jail): state the policy in Vis, let the runtime enforce it (00c79662f)
-- refactor(sandbox): drop the dead :fs/access gate plumbing into Python (2b4b88d53)
+- refactor(sandbox): remove unused Python :fs/access checks (2b4b88d53)
 - refactor(providers): fold the limits namespaces into their providers (21b5733d1)
 - refactor(providers): fold the provider packs into core and retire extensions/ (ba955012c)
 - refactor(languages): fold the Clojure and Python packs into core (91a244578)
@@ -368,20 +368,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docs(audit): refresh dependency inventory (0cd7becf5)
 - refactor(contract): remove aggregate and trim source commentary (55f185796)
 - refactor(contract): validate config only with JSON Schema (6d185c334)
-- fix(companion): expand diagnostics from its whole band (8a3b1c0bc)
+- fix(companion): Expand diagnostics by clicking anywhere in its header (8a3b1c0bc)
 - refactor(contract): make JSON Schema the sole contract (927f2ef05)
 - chore(release): record companion build 5306 (a569a5fdb)
 - fix(companion): stop blurring the composer as the app backgrounds (22cf694c3)
-- feat(tui): ship standalone app with built-in speech (d6b5d3871)
+- feat(tui): Provide a standalone app with built-in speech (d6b5d3871)
 - fix(engine): keep image descriptions on the foreground provider (db37597a8)
 - fix(companion): set diagnostics facts at the dialog detail size (f4f5fa0a1)
-- fix(companion): fold the diagnostics panel behind its band (2b3c3ac8b)
-- refactor(companion): state the diagnostics panel as facts, not prose (a3b8752d7)
+- fix(companion): Collapse the diagnostics panel under its header (2b3c3ac8b)
+- refactor(companion): Present diagnostics as individual values instead of paragraphs (a3b8752d7)
 - feat(companion): add project swipe deletion (582e7c4d6)
 - fix(cli): require exact patch anchors (f492ef4de)
 - refactor(gh): rebuild the gh extension on typed dataclasses (b3fabd24a)
 - chore(deps): bump svar to 0.7.152 (abf347d02)
-- feat(companion): fold the application column behind its band chevron (dd7eac31d)
+- feat(companion): Collapse the Application column with its header chevron (dd7eac31d)
 - refactor(extensions): adopt uplink in .vis, drop python examples (61837fb82)
 - feat(python): object-first tool pattern docs and remote server example (8b374d870)
 - fix(gateway): preserve long Copilot turns (bdbce8d53)
@@ -389,10 +389,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(companion): compact project creation and deletion (0f74acffe)
 - fix(companion): target copied session title events (8505aba10)
 - refactor(cli): remove Nippy and Ruff sandbox shims (09d04eba6)
-- fix(gateway): scope session headers to provider kickoff (e22a7ec68)
+- fix(gateway): scope session headers to the start of a provider request (e22a7ec68)
 - fix(gateway): reclaim cancelled Python workers (91d453cf6)
 - feat(gateway): add session-start provider header hooks (ce942d0d7)
-- fix(sandbox): hand a worker the interpreter its parent already resolved (7c4a9990d)
+- fix(sandbox): pass the parent's resolved interpreter to its worker (7c4a9990d)
 - feat(providers): add Claude Fable 5.1 support (b6d2b99b1)
 - fix(companion): move pull-to-search prompt into app bar (08420178f)
 - fix(companion): move favorites to row lead (c2c9bff7e)
@@ -414,16 +414,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - perf(cli): remember the prep answer instead of asking on every command (9ce67eead)
 - feat(extensions): give a trusted extension the filesystem through vis.fs (df514f6d0)
 - fix(sandbox): authorize a host call against the caller the interpreter names (7479ae44b)
-- build(lint): read a sandbox lease as its own shape, not as a let (2fb8d37da)
+- build(lint): lint sandbox leases as their own form rather than let (2fb8d37da)
 - feat(sandbox): let the jail switch decide the guest's confinement (128d6d90e)
-- fix(sandbox): stop the environment seeding from unbinding the runtime's own names (6344faa4a)
+- fix(sandbox): preserve runtime bindings while initializing the environment (6344faa4a)
 - refactor(sandbox): stop repairing the subprocess redirect CPython does itself (416f79df8)
-- refactor(sandbox): let CPython own the sandbox's descriptors (4621f1d13)
+- refactor(sandbox): use CPython descriptor management in the sandbox (4621f1d13)
 - fix(sandbox): start the interpreter once and let the second session wait (e486a1de9)
 - fix(cli): provide a protected Python println (52231562f)
 - fix(companion): keep stop control circular (f030957e1)
 - fix(companion): balance project header controls (96a1c122c)
-- fix(companion): circle queued and send controls (c6cd6d1cc)
+- fix(companion): Make queued and send controls circular (c6cd6d1cc)
 - fix(companion): align thinking with user prose (67fe76eef)
 - chore(cli): merge main into CPython migration (95c11d80e)
 - feat(runtime): adopt native CPython process runtime (6eaff8b07)
@@ -436,12 +436,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(engine): stop retrying exhausted output requests (c6d3317b2)
 - docs(providers): explain managed authentication setup (31bb9d090)
 - fix(providers): authenticate managed providers on first use (66586f212)
-- fix(companion): close session list with final edge (04dbe734e)
+- fix(companion): Add a bottom border to the session list (04dbe734e)
 - chore(repo): reformat Clojure sources with zprint (24cb0325f)
 - refactor(tui): drop cinema MP4 export and the commit convention test (345d741a3)
 - refactor(python): drop the anydoc sandbox door (966e46523)
 - test(ci): stop policing the merge commit GitHub builds for a pull request (0381c6b25)
-- fix(sandbox): let a cold machine install a package and import it (aca874e9e)
+- fix(sandbox): support package installation and import before prior initialization (aca874e9e)
 - feat(python): fetch the embedded interpreter from its release archive (55226d959)
 
 
@@ -461,11 +461,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - refactor(extensions): expose one GitHub Actions watcher for both runs and pull-request checks
 - fix(gateway): supersede explicit GitHub run watches when replacement runs start
 - fix(live): rewrite a live log pane without pumping copies into its record
-- fix(live): read an archive focus snapshot from the wire spelling
+- fix(live): read archived focus snapshots using wire-format keys
 - fix(sandbox): start the interpreter once and let the second session wait
-- refactor(sandbox): let CPython own the sandbox's descriptors
+- refactor(sandbox): use CPython descriptor management in the sandbox
 - refactor(sandbox): stop repairing the subprocess redirect CPython does itself
-- fix(sandbox): stop the environment seeding from unbinding the runtime's own names
+- fix(sandbox): preserve runtime bindings while initializing the environment
 - fix(sandbox): authorize a host call against the caller the interpreter names
 - feat(extensions): give a trusted extension the filesystem through vis.fs
 - fix(extensions): stop the first Python extension failing where there is no interpreter to bind
@@ -483,8 +483,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(cli): merge Ubuntu and Windows trust in WSL
 - fix(companion): keep keyboard open after send
 - fix(companion): retain finished job details
-- fix(companion): keep fenced code ragged
-- fix(companion): keep markdown code spans ragged
+- fix(companion): Disable justification in fenced code
+- fix(companion): Disable justification in Markdown code spans
 - refactor(extensions): remove duplicate CI activity
 - fix(companion): resume Android beta publishing
 - chore(cli): bump svar to 0.7.126
@@ -499,18 +499,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docs(cli): record parinferish 0.1.1 in audit
 - fix(companion): sync selected GitHub job
 - docs(companion): record TestFlight build 4615
-- fix(cli): consume parinferish closer relocation
-- feat(cli): carry Windows trust through WSL
+- fix(cli): Use parinferish closing-delimiter relocation
+- feat(cli): Use Windows trust stores through WSL
 - feat(cli): discover system certificate stores
-- fix(tui): anchor finished live runs
+- fix(tui): Keep finished live runs in stable positions
 - chore(cli): add clj-parinferish workspace root
 - fix(extensions): isolate live views from test runs
 - fix(companion): keep short responses beside composer
 - fix(extensions): show GitHub run start time
 - fix(companion): load session totals with list
-- fix(live): harden GitHub watches and name NDJSON
+- fix(live): improve GitHub watch recovery and identify NDJSON records
 - fix(companion): keep composer pinned during keyboard dismissal
-- fix(companion): collapse repeated live run cuts
+- fix(companion): Collapse repeated live-run snapshots
 - fix(tui): stop watching superseded CI runs
 - fix(companion): preserve interrupted live records
 - fix(tui): show live CI job activity
@@ -531,9 +531,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - chore(gateway): merge concurrent main update
 - fix(gateway): count every successful session fold
 - fix(gateway): skip auto-title after cancelled turns
-- fix(gateway): keep a session pinned to the provider it named
+- fix(gateway): preserve the session's selected provider
 - fix(engine): unwedge a turn queued behind a leaked Python GIL
-- fix(editing): gate-check grep paths as given, not their parent dir
+- fix(editing): check access to requested grep paths rather than their parent directories
 - fix(loop): keep the record of a view a stopped block abandoned
 - build(ci): run every macOS job on our own Apple-silicon runner
 - fix(ci): close the test sandboxes that were exhausting the heap
@@ -543,7 +543,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docs(docs): state the boundary, do not prescribe the call site
 - docs(docs): a Path crosses a tool boundary as itself
 - fix(docs): let a lower-case ask reach a camelCase name
-- fix(companion): save the machine this device found dark
+- fix(companion): persist machine-unreachable state detected by this device
 - refactor(cli): drop the duplicate by-cwd view from tool results
 - docs(python): a capped grep names next(r), not a retyped call
 - refactor(python): walk grep pages with next(), not more()
@@ -552,132 +552,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(python): page a capped grep from the result itself
 - docs(changelog): record the shell out rename and the daemon live view
 - refactor(shell): name the merged pty stream out
-- fix(tui): paint live views raised in the serve daemon
+- fix(tui): render live views opened by the serve daemon
 - fix(python): give the PIL shim Pillow's whole helper-module surface
 - fix(loop): stop create-environment abandoning its sandbox when a later step fails
-- feat(sandbox): one canonical teardown, so no site has to remember the order
+- feat(sandbox): centralize sandbox teardown and its ordering
 - fix(python): close the Engine with contexts built outside python-extensions
-- docs(cli): say the pty merges stderr into stdout
+- docs(cli): document merged pty stderr and stdout
 - fix(companion): shorten the composer's queued placeholder
 - fix(cli): close the PIL shim's remaining Pillow gaps
 - fix(companion): let the human, not the mounted screen, take a share
 - fix(sandbox): give PIL the CSS colours, hsl wheels and a real mode filter
 - feat(companion): accept shared files and let the share pick its session
-- fix(companion): hold the fleet scope through one dropped read
-- fix(python): own the condition lock across gather children
+- fix(companion): preserve machine scope after one failed read
+- fix(python): hold the condition lock across gather children
 - feat(config): declare a non-secret literal in environment:
 - docs(release): record companion TestFlight build 4546
 - feat(shell): scroll the log line window back up with a negative count
-- fix(tui): paint a recording's transcript as a quotation, not code
-- fix(companion): quote a memo's transcript instead of icing it
-- fix(loop): dispose the env a cache insert displaces
-- fix(cli): fold near-miss tool keywords instead of refusing the call
-- fix(tui): wrap a recording's transcript on words, not columns
-- feat(companion): open a recording's transcription under its player
-- feat(tui): fold a recording's transcript under the turn that carried it
-- feat(gateway): transcribe an attached recording into the model's manifest
-- feat(config): let an issued credential name its wire dialect
-- docs(docs): break the walls of text into lists, tables and steps
-- fix(tui): let the wheel own every row the live band paints
-- feat(config): one forgiving, validated wire-dialect vocabulary
-- fix(companion): say which live view the running row is showing
-- fix(tui): say which live view the running row is showing
-- docs(cli): one shape for a tool's doc page, cross-validated against the handlers
-- feat(extensions): keep a gh watch moving and settle it into one picture
+- fix(tui): Render recording transcripts as quotations, not code
+- fix(companion): Render memo transcripts as quotations instead of decorated blocks
+- fix(loop): Dispose of environments replaced by cache inserts
+- fix(cli): Normalize near-matching tool keywords instead of rejecting calls
+- fix(tui): Wrap recording transcripts at word boundaries
+- feat(companion): Open a recording's transcription below its player
+- feat(tui): Collapse recording transcripts under their associated turn
+- feat(gateway): Include attached recording transcriptions in the model's manifest
+- feat(config): Allow issued credentials to specify their API format
+- docs(docs): Split long documentation paragraphs into lists, tables and steps
+- fix(tui): Include live-view row types in the SDK wheel
+- feat(config): Use one validated API-format vocabulary with normalized inputs
+- fix(companion): Identify the live view shown in the running row
+- fix(tui): Identify the live view shown in the running row
+- docs(cli): Standardize tool documentation pages and validate them against handlers
+- feat(extensions): Update GitHub watches continuously and retain one final view
 - fix(cli): keep project-scoped blocks out of the machine store
-- fix(companion): name an Android octet-stream pick by its extension
-- fix(tui): isolate a dropped recording path like a dropped picture
-- feat(gateway): sniff every recorder format, not only the m4a
-- docs(docs): one canonical page shape, and a gate that keeps it
+- fix(companion): Use the extension to identify Android octet-stream selections
+- fix(tui): Isolate dropped recording paths in the same way as image paths
+- feat(gateway): Detect all supported recorder formats, not only m4a
+- docs(docs): Validate documentation against one page structure
 - feat(cli): run_tests takes deps.edn aliases for the clean-JVM run
 - feat(companion): reach any file from + and play what it cannot show
 - feat(gateway): accept voice recordings as attachments
-- docs(cli): the language verbs state the requiredness they enforce
-- chore(deps): bump imaging to 0.1.10 so an empty deck opens
+- docs(cli): document the required parameters enforced by language operations
+- chore(deps): bump imaging to 0.1.10 to support empty presentations
 - chore(deps): bump svar to 0.7.124
 - test(providers): prove MANAGED crosses the Python extension boundary
 - docs(cli): run_tests and repl_eval state requiredness and the `project` spelling
 - feat(providers): let an extension declare a MANAGED provider
-- fix(language-surface): read `project` as `cwd` on every language verb
-- fix(tui): read an OPTION in the band, and wrap over-wide headings
+- fix(language-surface): accept project as cwd for all language operations
+- fix(tui): show OPTION content in the panel and wrap wide headings
 - docs(release): record the TestFlight builds 4488 and 4508
 - fix(tui): measure dialog widths in lanterna columns, not chars
-- fix(human-input): file a late close onto its iteration, not a dead block
+- fix(human-input): attach late close records to their iteration after the block ends
 - docs(docs): drop sub-agent vocabulary and the drifting host-op count
-- fix(tui): file a finished run as a transcript row, not band furniture
+- fix(tui): show finished runs as transcript rows rather than live-panel content
 - fix(python): one spelling, runner, for the test backend on every surface
-- perf(companion): ask each machine once for its notifications state
-- fix(python): take a pathlib.Path wherever a shim takes a path
-- fix(companion): answer every machine's notifications row before it is opened
+- perf(companion): Fetch notification state once per machine
+- fix(python): Accept pathlib.Path wherever shims accept paths
+- fix(companion): Fetch machine notification state before opening its settings row
 - test(python): dispose three more single-test sandboxes
-- fix(extensions): let a gh watch run as long as the run does
+- fix(extensions): Watch GitHub runs until completion
 - style(repo): format every namespace with the canonical formatter
-- fix(build): keep the formatter alive on a binding form inside #()
-- fix(gateway): retire a client lease that stopped talking
+- fix(build): Handle binding forms inside #() without formatter failures
+- fix(gateway): Retire inactive client leases
 - refactor(gateway): identify a source build by its commit alone
-- fix(human-input): stop billing a watched run any deadline at all
-- feat(cli): say which build the gateway is running, and what replaces it
-- fix(human-input): let a live view own the wall of the block watching it
-- fix(languages): read a failed REPL start the same way in every language
+- fix(human-input): Exclude watched-run time from execution deadlines
+- feat(cli): Show the gateway's current build and available replacement
+- fix(human-input): Attribute live-view wait time to the watching block
+- fix(languages): Report failed REPL starts consistently across languages
 - fix(gateway): refuse a status this build cannot read
 - feat(gateway): identify a dev build by its commit, not by "dev"
-- feat(gateway): pick up a new build when nobody is using the old daemon
+- feat(gateway): Replace an idle daemon when a new build is available
 - fix(languages): one REPL lifecycle contract for every language
-- fix(gateway): let a managed daemon die when nothing is watching it
+- fix(gateway): Stop managed daemons when no clients remain
 - test(languages): read pack test counts by their contract names
 - fix(language-surface): refuse a bare string where repl options belong
-- fix(language-surface): keep repl_stop(id) an id, whatever trails it
+- fix(language-surface): Interpret repl_stop's first argument as its ID regardless of later arguments
 - docs(config): point whole-store writers at update-machine-config!
 - test(posix-shim): dispose the sandboxes this suite builds for itself
-- fix(companion): paint the stored palette on the first frame
+- fix(companion): Apply the stored palette on the first frame
 - test(network-guard): close the Engine with the sandbox it belongs to
 - test(config): cover removed_providers in the exhaustive config fixture
 - feat(providers): make deleting a provider actually delete it
-- test(python): give a sandbox the lifetime of the test that needs it
+- test(python): Restrict each test sandbox to that test's lifetime
 - fix(gateway): say why a provider cannot be deleted instead of silently refusing
-- docs(language-surface): name the four repl lifecycle verbs
+- docs(language-surface): Document the four REPL lifecycle operations
 - docs(cli): describe ls's tree string where the sandbox reads it
-- fix(gateway): count folds from the turn ctx ledger
+- fix(gateway): Count folds from turn context records
 - fix(gateway): let /projects/overview and /projects/:pid coexist
-- feat(companion): paint project counts from the gateway's own overview
+- feat(companion): Render project counts from the gateway overview
 - feat(cli): render ls as one compact tree string
-- fix(companion): inset every panel verb instead of running it full bleed
+- fix(companion): Inset panel actions rather than extending them to the panel edges
 - chore(python): format _outside.py the way ruff 0.16.3 does
-- fix(companion): match the notification verb to the panel action box
-- fix(companion): show a just-created session without tapping the pill
+- fix(companion): Match the notification action to the panel action container
+- fix(companion): Show newly created sessions without requiring a filter tap
 - docs(gateway): correct the remote-target claims to what the code does
-- feat(companion): fork a session from its own slide, whole or at a turn
-- fix(gateway): store settings without folding the config tiers
-- fix(python): cross a live view's first op on a freshly booted machine
+- feat(companion): Fork a session or selected turn from its row actions
+- fix(gateway): Store settings without merging configuration levels
+- fix(python): Verify the first live-view operation after machine startup
 - feat(extensions): watch a GitHub Actions run in one live view
-- fix(companion): open the projects mark on the inventory, not the browser
-- fix(loop): keep a failed block's printed output on the wire
+- fix(companion): Open the project inventory rather than the browser from the projects icon
+- fix(loop): Preserve printed output in failed-block responses
 - docs(cli): name the remote gateway flags in help, not only in the docs
-- fix(gateway): unbox the log page window and drop two dead test bindings
+- fix(gateway): Avoid boxing the log-page window and remove unused test bindings
 - fix(sandbox): repair the PIL envelope arity, and stop repeating the scope
-- feat(sandbox): a shim declares what it lends the guest, and gets the lifetime free
-- fix(sandbox): tie a guest's host objects to the session that opened them
-- docs(test): name the double-registration trap in the shared sandbox
-- refactor(loop): delete the child-env plumbing sub_loop was the only user of
+- feat(sandbox): Declare guest exports in shims and manage their lifetime automatically
+- fix(sandbox): Restrict guest host objects to the session that opened them
+- docs(test): Document duplicate registration in the shared sandbox
+- refactor(loop): Remove child-environment code used only by sub_loop
 - fix(python): one GraalPy Engine per session, not one per process
-- refactor(harness): drop the agent() verb and every sub_loop caller
+- refactor(harness): Remove agent() and all sub_loop callers
 - docs(release): record the TestFlight build testers now have
-- refactor(human-input): stop publishing what only the sink itself calls
-- fix(human-input): serve a settled view's record, and file it on a stop
-- feat(human-input): settle a finished live view into an artifact
-- fix(contract): freeze the live materializer the TUI channel reads
+- refactor(human-input): Make sink-only functions private
+- fix(human-input): Serve completed view records and persist them on stop
+- feat(human-input): Save finished live views as artifacts
+- fix(contract): Stabilize the live materializer used by the TUI channel
 - refactor(gateway): serve on Jetty 12 core, drop the ee9 servlet layer
 - docs(gateway): name the commands a remote target does not redirect
-- feat(gateway): drive a remote gateway from the command line
-- test(gateway): pin that a leaving gateway publishes held patches
-- refactor(gateway): delete unread live surface, flush patches on stop
-- feat(human-input): arrange a live view with the form's own groups
-- fix(companion): read the armed pull-to-search band
+- feat(gateway): Control a remote gateway from the command line
+- test(gateway): Test that gateway shutdown publishes pending patches
+- refactor(gateway): Remove unused live-view data and flush patches on stop
+- feat(human-input): Arrange live views with the same groups as forms
+- fix(companion): Show the pull-to-search activation state
 - fix(companion): load the session list behind an open transcript
-- fix(companion): keep the turn either side of the reader laid out
-- test(tui): show the aside band whole and pin is_aside outside Vis
-- feat(tui): fill the band, paint inline markdown, and stand a node aside
-- feat(human-input): let a human stop any live view, with a note
+- fix(companion): Keep turns before and after the visible turn laid out
+- test(tui): Show the entire aside section and test is_aside outside Vis
+- feat(tui): Fill the section, render inline Markdown and support aside nodes
+- feat(human-input): Allow users to stop any live view with a note
 - feat(companion): watch and stop a live view from the phone
 - feat(cli): open live views from a Python extension
 
@@ -691,8 +691,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(cli): merge Ubuntu and Windows trust in WSL (aeceaa0ce)
 - fix(companion): keep keyboard open after send (cc88261f5)
 - fix(companion): retain finished job details (4bed954db)
-- fix(companion): keep fenced code ragged (4a67ac707)
-- fix(companion): keep markdown code spans ragged (eaee188a7)
+- fix(companion): Disable justification in fenced code (4a67ac707)
+- fix(companion): Disable justification in Markdown code spans (eaee188a7)
 - refactor(extensions): remove duplicate CI activity (28e9aaa51)
 - fix(companion): resume Android beta publishing (c724b13ce)
 - chore(cli): bump svar to 0.7.126 (994c7ff07)
@@ -706,18 +706,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docs(cli): record parinferish 0.1.1 in audit (02602989f)
 - fix(companion): sync selected GitHub job (73bce25d5)
 - docs(companion): record TestFlight build 4615 (7b847c0a4)
-- fix(cli): consume parinferish closer relocation (e2cd4f701)
-- feat(cli): carry Windows trust through WSL (485363ecf)
+- fix(cli): Use parinferish closing-delimiter relocation (e2cd4f701)
+- feat(cli): Use Windows trust stores through WSL (485363ecf)
 - feat(cli): discover system certificate stores (52677f502)
-- fix(tui): anchor finished live runs (a614c9029)
+- fix(tui): Keep finished live runs in stable positions (a614c9029)
 - chore(cli): add clj-parinferish workspace root (93d5fdc1d)
 - fix(extensions): isolate live views from test runs (3c64395a9)
 - fix(companion): keep short responses beside composer (992185d5b)
 - fix(extensions): show GitHub run start time (fd24cd394)
 - fix(companion): load session totals with list (58c8a3815)
-- fix(live): harden GitHub watches and name NDJSON (089547073)
+- fix(live): improve GitHub watch recovery and identify NDJSON records (089547073)
 - fix(companion): keep composer pinned during keyboard dismissal (8b07ee528)
-- fix(companion): collapse repeated live run cuts (f0500d788)
+- fix(companion): Collapse repeated live-run snapshots (f0500d788)
 - fix(tui): stop watching superseded CI runs (8094319b3)
 - fix(companion): preserve interrupted live records (ef73c0271)
 - fix(tui): show live CI job activity (c15bcc121)
@@ -733,9 +733,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - ci(release): run macOS native image on Blacksmith (fb934f4f4)
 - feat(companion): focus live CI jobs (47cc50ac3)
 - fix(gateway): skip auto-title after cancelled turns (851f41948)
-- fix(gateway): keep a session pinned to the provider it named (0e5fdf521)
+- fix(gateway): preserve the session's selected provider (0e5fdf521)
 - fix(engine): unwedge a turn queued behind a leaked Python GIL (b3c78e43f)
-- fix(editing): gate-check grep paths as given, not their parent dir (b9af259d4)
+- fix(editing): check access to requested grep paths rather than their parent directories (b9af259d4)
 - fix(loop): keep the record of a view a stopped block abandoned (df1280ba5)
 - build(ci): run every macOS job on our own Apple-silicon runner (d19f66361)
 - fix(ci): close the test sandboxes that were exhausting the heap (a91da2786)
@@ -745,7 +745,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docs(docs): state the boundary, do not prescribe the call site (4e77cf513)
 - docs(docs): a Path crosses a tool boundary as itself (73f906ed2)
 - fix(docs): let a lower-case ask reach a camelCase name (3ea6c2711)
-- fix(companion): save the machine this device found dark (010d8cde3)
+- fix(companion): persist machine-unreachable state detected by this device (010d8cde3)
 - refactor(cli): drop the duplicate by-cwd view from tool results (86a35379d)
 - docs(python): a capped grep names next(r), not a retyped call (28cfaeb62)
 - refactor(python): walk grep pages with next(), not more() (aadf51db3)
@@ -753,161 +753,161 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(python): page a capped grep from the result itself (133fd9c0f)
 - docs(changelog): record the shell out rename and the daemon live view (5c352fefc)
 - refactor(shell): name the merged pty stream out (879c79cb9)
-- fix(tui): paint live views raised in the serve daemon (c0ceb78bb)
+- fix(tui): render live views opened by the serve daemon (c0ceb78bb)
 - fix(python): give the PIL shim Pillow's whole helper-module surface (e87af58fd)
 - fix(loop): stop create-environment abandoning its sandbox when a later step fails (0a80cc775)
-- feat(sandbox): one canonical teardown, so no site has to remember the order (ef71d025e)
+- feat(sandbox): centralize sandbox teardown and its ordering (ef71d025e)
 - fix(python): close the Engine with contexts built outside python-extensions (251f5d710)
-- docs(cli): say the pty merges stderr into stdout (094256421)
+- docs(cli): document merged pty stderr and stdout (094256421)
 - fix(companion): shorten the composer's queued placeholder (ab87a9ea3)
 - fix(cli): close the PIL shim's remaining Pillow gaps (4dd507f6e)
 - fix(companion): let the human, not the mounted screen, take a share (3f97a49f3)
 - fix(sandbox): give PIL the CSS colours, hsl wheels and a real mode filter (76fbe2316)
 - feat(companion): accept shared files and let the share pick its session (86d3fac0f)
-- fix(companion): hold the fleet scope through one dropped read (e7d184d0c)
-- fix(python): own the condition lock across gather children (e68c119c6)
+- fix(companion): preserve machine scope after one failed read (e7d184d0c)
+- fix(python): hold the condition lock across gather children (e68c119c6)
 - feat(config): declare a non-secret literal in environment: (a50b09c86)
 - docs(release): record companion TestFlight build 4546 (bd908456b)
 - feat(shell): scroll the log line window back up with a negative count (a46b91043)
-- fix(companion): quote a memo's transcript instead of icing it (1c2dc41e4)
-- fix(loop): dispose the env a cache insert displaces (22210bd3c)
-- fix(cli): fold near-miss tool keywords instead of refusing the call (2351576e5)
-- feat(companion): open a recording's transcription under its player (1fc0f9fd0)
-- feat(gateway): transcribe an attached recording into the model's manifest (898ca2ebd)
-- feat(config): let an issued credential name its wire dialect (fcf08a7d9)
-- docs(docs): break the walls of text into lists, tables and steps (09fe3914f)
-- fix(tui): let the wheel own every row the live band paints (8ae7c4067)
-- feat(config): one forgiving, validated wire-dialect vocabulary (845d807d8)
-- fix(companion): say which live view the running row is showing (3830f09a8)
-- docs(cli): one shape for a tool's doc page, cross-validated against the handlers (9ebe5f56f)
-- feat(extensions): keep a gh watch moving and settle it into one picture (ede8099e3)
+- fix(companion): Render memo transcripts as quotations instead of decorated blocks (1c2dc41e4)
+- fix(loop): Dispose of environments replaced by cache inserts (22210bd3c)
+- fix(cli): Normalize near-matching tool keywords instead of rejecting calls (2351576e5)
+- feat(companion): Open a recording's transcription below its player (1fc0f9fd0)
+- feat(gateway): Include attached recording transcriptions in the model's manifest (898ca2ebd)
+- feat(config): Allow issued credentials to specify their API format (fcf08a7d9)
+- docs(docs): Split long documentation paragraphs into lists, tables and steps (09fe3914f)
+- fix(tui): Include live-view row types in the SDK wheel (8ae7c4067)
+- feat(config): Use one validated API-format vocabulary with normalized inputs (845d807d8)
+- fix(companion): Identify the live view shown in the running row (3830f09a8)
+- docs(cli): Standardize tool documentation pages and validate them against handlers (9ebe5f56f)
+- feat(extensions): Update GitHub watches continuously and retain one final view (ede8099e3)
 - fix(cli): keep project-scoped blocks out of the machine store (4fa5eccef)
-- fix(companion): name an Android octet-stream pick by its extension (8a972d1b4)
-- feat(gateway): sniff every recorder format, not only the m4a (f59a1176f)
-- docs(docs): one canonical page shape, and a gate that keeps it (fca795da9)
+- fix(companion): Use the extension to identify Android octet-stream selections (8a972d1b4)
+- feat(gateway): Detect all supported recorder formats, not only m4a (f59a1176f)
+- docs(docs): Validate documentation against one page structure (fca795da9)
 - feat(cli): run_tests takes deps.edn aliases for the clean-JVM run (a92be52fd)
 - feat(companion): reach any file from + and play what it cannot show (c4c0914ec)
 - feat(gateway): accept voice recordings as attachments (1fc0d2852)
-- docs(cli): the language verbs state the requiredness they enforce (1534fd728)
-- chore(deps): bump imaging to 0.1.10 so an empty deck opens (2e9aa9c10)
+- docs(cli): document the required parameters enforced by language operations (1534fd728)
+- chore(deps): bump imaging to 0.1.10 to support empty presentations (2e9aa9c10)
 - chore(deps): bump svar to 0.7.124 (6ed5893c5)
 - test(providers): prove MANAGED crosses the Python extension boundary (c79a5679e)
 - docs(cli): run_tests and repl_eval state requiredness and the `project` spelling (a91d72e90)
 - feat(providers): let an extension declare a MANAGED provider (95a29c152)
-- fix(language-surface): read `project` as `cwd` on every language verb (8f35760e0)
+- fix(language-surface): accept project as cwd for all language operations (8f35760e0)
 - docs(release): record the TestFlight builds 4488 and 4508 (20065edda)
-- fix(human-input): file a late close onto its iteration, not a dead block (682665bff)
+- fix(human-input): attach late close records to their iteration after the block ends (682665bff)
 - docs(docs): drop sub-agent vocabulary and the drifting host-op count (2d71f8304)
-- fix(tui): file a finished run as a transcript row, not band furniture (e379b3b6a)
+- fix(tui): show finished runs as transcript rows rather than live-panel content (e379b3b6a)
 - fix(python): one spelling, runner, for the test backend on every surface (4719ef96d)
-- perf(companion): ask each machine once for its notifications state (057697b52)
-- fix(python): take a pathlib.Path wherever a shim takes a path (020727bff)
-- fix(companion): answer every machine's notifications row before it is opened (281c28d6a)
+- perf(companion): Fetch notification state once per machine (057697b52)
+- fix(python): Accept pathlib.Path wherever shims accept paths (020727bff)
+- fix(companion): Fetch machine notification state before opening its settings row (281c28d6a)
 - test(python): dispose three more single-test sandboxes (95037c627)
-- fix(extensions): let a gh watch run as long as the run does (192162006)
+- fix(extensions): Watch GitHub runs until completion (192162006)
 - style(repo): format every namespace with the canonical formatter (211f49894)
-- fix(build): keep the formatter alive on a binding form inside #() (2575e9a6a)
-- fix(gateway): retire a client lease that stopped talking (8670f3a3a)
+- fix(build): Handle binding forms inside #() without formatter failures (2575e9a6a)
+- fix(gateway): Retire inactive client leases (8670f3a3a)
 - refactor(gateway): identify a source build by its commit alone (62ff92d46)
-- fix(human-input): stop billing a watched run any deadline at all (2a24b9ee9)
-- feat(cli): say which build the gateway is running, and what replaces it (659a7e464)
-- fix(human-input): let a live view own the wall of the block watching it (131618013)
-- fix(languages): read a failed REPL start the same way in every language (2b2ed346c)
+- fix(human-input): Exclude watched-run time from execution deadlines (2a24b9ee9)
+- feat(cli): Show the gateway's current build and available replacement (659a7e464)
+- fix(human-input): Attribute live-view wait time to the watching block (131618013)
+- fix(languages): Report failed REPL starts consistently across languages (2b2ed346c)
 - fix(gateway): refuse a status this build cannot read (9687d8ff3)
 - feat(gateway): identify a dev build by its commit, not by "dev" (c93567d31)
-- feat(gateway): pick up a new build when nobody is using the old daemon (bcc0c8208)
+- feat(gateway): Replace an idle daemon when a new build is available (bcc0c8208)
 - fix(languages): one REPL lifecycle contract for every language (8d3849c43)
-- fix(gateway): let a managed daemon die when nothing is watching it (7b1c56db8)
+- fix(gateway): Stop managed daemons when no clients remain (7b1c56db8)
 - fix(language-surface): refuse a bare string where repl options belong (15104751e)
-- fix(language-surface): keep repl_stop(id) an id, whatever trails it (3bf013412)
+- fix(language-surface): Interpret repl_stop's first argument as its ID regardless of later arguments (3bf013412)
 - docs(config): point whole-store writers at update-machine-config! (5d3859cdb)
 - test(posix-shim): dispose the sandboxes this suite builds for itself (526305a13)
-- fix(companion): paint the stored palette on the first frame (9da688df8)
+- fix(companion): Apply the stored palette on the first frame (9da688df8)
 - test(network-guard): close the Engine with the sandbox it belongs to (7d8173d24)
 - test(config): cover removed_providers in the exhaustive config fixture (89ac152c2)
 - feat(providers): make deleting a provider actually delete it (e058c8981)
-- test(python): give a sandbox the lifetime of the test that needs it (b79dee16b)
+- test(python): Restrict each test sandbox to that test's lifetime (b79dee16b)
 - fix(gateway): say why a provider cannot be deleted instead of silently refusing (b839b72c9)
-- docs(language-surface): name the four repl lifecycle verbs (413640b3c)
+- docs(language-surface): Document the four REPL lifecycle operations (413640b3c)
 - docs(cli): describe ls's tree string where the sandbox reads it (831eeb49e)
 - fix(gateway): let /projects/overview and /projects/:pid coexist (525f69c7b)
-- feat(companion): paint project counts from the gateway's own overview (21375640d)
+- feat(companion): Render project counts from the gateway overview (21375640d)
 - feat(cli): render ls as one compact tree string (e192628bd)
-- fix(companion): inset every panel verb instead of running it full bleed (6f15c5ec3)
+- fix(companion): Inset panel actions rather than extending them to the panel edges (6f15c5ec3)
 - chore(python): format _outside.py the way ruff 0.16.3 does (d8b5815db)
-- fix(companion): match the notification verb to the panel action box (12ba1ba0a)
-- fix(companion): show a just-created session without tapping the pill (a6746f2b5)
+- fix(companion): Match the notification action to the panel action container (12ba1ba0a)
+- fix(companion): Show newly created sessions without requiring a filter tap (a6746f2b5)
 - docs(gateway): correct the remote-target claims to what the code does (f5c63b4a9)
-- feat(companion): fork a session from its own slide, whole or at a turn (f6c426551)
-- fix(gateway): store settings without folding the config tiers (8aba1aa52)
-- fix(python): cross a live view's first op on a freshly booted machine (a075a41c8)
+- feat(companion): Fork a session or selected turn from its row actions (f6c426551)
+- fix(gateway): Store settings without merging configuration levels (8aba1aa52)
+- fix(python): Verify the first live-view operation after machine startup (a075a41c8)
 - feat(extensions): watch a GitHub Actions run in one live view (c682f1321)
-- fix(companion): open the projects mark on the inventory, not the browser (c2e5d4122)
-- fix(loop): keep a failed block's printed output on the wire (f1e879210)
+- fix(companion): Open the project inventory rather than the browser from the projects icon (c2e5d4122)
+- fix(loop): Preserve printed output in failed-block responses (f1e879210)
 - docs(cli): name the remote gateway flags in help, not only in the docs (f10f05930)
-- fix(gateway): unbox the log page window and drop two dead test bindings (4821af913)
+- fix(gateway): Avoid boxing the log-page window and remove unused test bindings (4821af913)
 - fix(sandbox): repair the PIL envelope arity, and stop repeating the scope (10aeef006)
-- feat(sandbox): a shim declares what it lends the guest, and gets the lifetime free (fb58b8fe7)
-- fix(sandbox): tie a guest's host objects to the session that opened them (1a7ba8f4c)
-- docs(test): name the double-registration trap in the shared sandbox (b4dee14d6)
-- refactor(loop): delete the child-env plumbing sub_loop was the only user of (bb918bd7e)
+- feat(sandbox): Declare guest exports in shims and manage their lifetime automatically (fb58b8fe7)
+- fix(sandbox): Restrict guest host objects to the session that opened them (1a7ba8f4c)
+- docs(test): Document duplicate registration in the shared sandbox (b4dee14d6)
+- refactor(loop): Remove child-environment code used only by sub_loop (bb918bd7e)
 - fix(python): one GraalPy Engine per session, not one per process (66bff4fd3)
-- refactor(harness): drop the agent() verb and every sub_loop caller (2bafa1de5)
+- refactor(harness): Remove agent() and all sub_loop callers (2bafa1de5)
 - docs(release): record the TestFlight build testers now have (4f59e0df3)
-- refactor(human-input): stop publishing what only the sink itself calls (f03e0ddb8)
-- fix(human-input): serve a settled view's record, and file it on a stop (3fc614cb1)
-- feat(human-input): settle a finished live view into an artifact (b943593a5)
-- fix(contract): freeze the live materializer the TUI channel reads (cb1cd2208)
+- refactor(human-input): Make sink-only functions private (f03e0ddb8)
+- fix(human-input): Serve completed view records and persist them on stop (3fc614cb1)
+- feat(human-input): Save finished live views as artifacts (b943593a5)
+- fix(contract): Stabilize the live materializer used by the TUI channel (cb1cd2208)
 - refactor(gateway): serve on Jetty 12 core, drop the ee9 servlet layer (d122fd9df)
 - docs(gateway): name the commands a remote target does not redirect (556fc2202)
-- feat(gateway): drive a remote gateway from the command line (8574bea26)
-- test(gateway): pin that a leaving gateway publishes held patches (fa732df29)
-- refactor(gateway): delete unread live surface, flush patches on stop (e4010ffa5)
-- feat(human-input): arrange a live view with the form's own groups (4269ec1a5)
-- fix(companion): read the armed pull-to-search band (1d9620dbf)
+- feat(gateway): Control a remote gateway from the command line (8574bea26)
+- test(gateway): Test that gateway shutdown publishes pending patches (fa732df29)
+- refactor(gateway): Remove unused live-view data and flush patches on stop (e4010ffa5)
+- feat(human-input): Arrange live views with the same groups as forms (4269ec1a5)
+- fix(companion): Show the pull-to-search activation state (1d9620dbf)
 - fix(companion): load the session list behind an open transcript (687b121e9)
-- fix(companion): keep the turn either side of the reader laid out (5b21f1ce9)
-- test(tui): show the aside band whole and pin is_aside outside Vis (f36b60e4a)
-- feat(tui): fill the band, paint inline markdown, and stand a node aside (2dc4e63c0)
-- feat(human-input): let a human stop any live view, with a note (898b43f77)
+- fix(companion): Keep turns before and after the visible turn laid out (5b21f1ce9)
+- test(tui): Show the entire aside section and test is_aside outside Vis (f36b60e4a)
+- feat(tui): Fill the section, render inline Markdown and support aside nodes (2dc4e63c0)
+- feat(human-input): Allow users to stop any live view with a note (898b43f77)
 - feat(companion): watch and stop a live view from the phone (10ca1f34d)
 - feat(cli): open live views from a Python extension (d59111718)
 
 #### com.blockether/vis-channel-tui
 - feat(tui): clarify response footer controls (e9a90f4cb)
-- fix(tui): anchor finished live runs (a614c9029)
+- fix(tui): Keep finished live runs in stable positions (a614c9029)
 - feat(tui): minimize active live views (a94cc8278)
 - fix(tui): expand and focus live CI jobs (6f5d67865)
 - fix(tui): copy short thinking blocks independently (27bf4deae)
 - fix(tui): apply settings through gateway (0d4114f6e)
 - refactor(shell): name the merged pty stream out (879c79cb9)
-- fix(tui): paint live views raised in the serve daemon (c0ceb78bb)
+- fix(tui): render live views opened by the serve daemon (c0ceb78bb)
 - feat(config): declare a non-secret literal in environment: (a50b09c86)
-- fix(tui): paint a recording's transcript as a quotation, not code (ac9e2bde2)
-- fix(tui): wrap a recording's transcript on words, not columns (2132830f7)
-- feat(tui): fold a recording's transcript under the turn that carried it (e8b8c9e73)
-- fix(tui): let the wheel own every row the live band paints (8ae7c4067)
-- fix(tui): say which live view the running row is showing (f03c36211)
-- fix(tui): isolate a dropped recording path like a dropped picture (6587b6a7a)
+- fix(tui): Render recording transcripts as quotations, not code (ac9e2bde2)
+- fix(tui): Wrap recording transcripts at word boundaries (2132830f7)
+- feat(tui): Collapse recording transcripts under their associated turn (e8b8c9e73)
+- fix(tui): Include live-view row types in the SDK wheel (8ae7c4067)
+- fix(tui): Identify the live view shown in the running row (f03c36211)
+- fix(tui): Isolate dropped recording paths in the same way as image paths (6587b6a7a)
 - feat(providers): let an extension declare a MANAGED provider (95a29c152)
-- fix(tui): read an OPTION in the band, and wrap over-wide headings (c57466fb0)
+- fix(tui): show OPTION content in the panel and wrap wide headings (c57466fb0)
 - fix(tui): measure dialog widths in lanterna columns, not chars (dfa919688)
-- fix(tui): file a finished run as a transcript row, not band furniture (e379b3b6a)
+- fix(tui): show finished runs as transcript rows rather than live-panel content (e379b3b6a)
 - style(repo): format every namespace with the canonical formatter (211f49894)
-- fix(companion): show a just-created session without tapping the pill (a6746f2b5)
-- fix(gateway): store settings without folding the config tiers (8aba1aa52)
+- fix(companion): Show newly created sessions without requiring a filter tap (a6746f2b5)
+- fix(gateway): Store settings without merging configuration levels (8aba1aa52)
 - docs(cli): name the remote gateway flags in help, not only in the docs (f10f05930)
-- feat(human-input): settle a finished live view into an artifact (b943593a5)
-- refactor(gateway): delete unread live surface, flush patches on stop (e4010ffa5)
-- feat(human-input): arrange a live view with the form's own groups (4269ec1a5)
-- test(tui): show the aside band whole and pin is_aside outside Vis (f36b60e4a)
-- feat(tui): fill the band, paint inline markdown, and stand a node aside (2dc4e63c0)
-- feat(human-input): let a human stop any live view, with a note (898b43f77)
+- feat(human-input): Save finished live views as artifacts (b943593a5)
+- refactor(gateway): Remove unused live-view data and flush patches on stop (e4010ffa5)
+- feat(human-input): Arrange live views with the same groups as forms (4269ec1a5)
+- test(tui): Show the entire aside section and test is_aside outside Vis (f36b60e4a)
+- feat(tui): Fill the section, render inline Markdown and support aside nodes (2dc4e63c0)
+- feat(human-input): Allow users to stop any live view with a note (898b43f77)
 - feat(companion): watch and stop a live view from the phone (10ca1f34d)
 - feat(cli): open live views from a Python extension (d59111718)
 
 #### com.blockether/vis-foundation-bridge
-- docs(cli): one shape for a tool's doc page, cross-validated against the handlers (9ebe5f56f)
+- docs(cli): Standardize tool documentation pages and validate them against handlers (9ebe5f56f)
 - style(repo): format every namespace with the canonical formatter (211f49894)
 - feat(cli): open live views from a Python extension (d59111718)
 
@@ -916,21 +916,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(cli): open live views from a Python extension (d59111718)
 
 #### com.blockether/vis-foundation-voice
-- feat(gateway): transcribe an attached recording into the model's manifest (898ca2ebd)
+- feat(gateway): Include attached recording transcriptions in the model's manifest (898ca2ebd)
 - style(repo): format every namespace with the canonical formatter (211f49894)
 - feat(cli): open live views from a Python extension (d59111718)
 
 #### com.blockether/vis-language-clojure
 - fix(cli): find parent tests for nested sources (a2d6ae373)
-- fix(cli): consume parinferish closer relocation (e2cd4f701)
+- fix(cli): Use parinferish closing-delimiter relocation (e2cd4f701)
 - refactor(cli): drop the duplicate by-cwd view from tool results (86a35379d)
 - feat(cli): run_tests takes deps.edn aliases for the clean-JVM run (a92be52fd)
 - style(repo): format every namespace with the canonical formatter (211f49894)
 - fix(languages): one REPL lifecycle contract for every language (8d3849c43)
 - fix(language-surface): refuse a bare string where repl options belong (15104751e)
-- fix(language-surface): keep repl_stop(id) an id, whatever trails it (3bf013412)
-- docs(language-surface): name the four repl lifecycle verbs (413640b3c)
-- fix(companion): show a just-created session without tapping the pill (a6746f2b5)
+- fix(language-surface): Interpret repl_stop's first argument as its ID regardless of later arguments (3bf013412)
+- docs(language-surface): Document the four REPL lifecycle operations (413640b3c)
+- fix(companion): Show newly created sessions without requiring a filter tap (a6746f2b5)
 - feat(cli): open live views from a Python extension (d59111718)
 
 #### com.blockether/vis-language-python
@@ -938,34 +938,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - refactor(cli): drop the duplicate by-cwd view from tool results (86a35379d)
 - fix(python): one spelling, runner, for the test backend on every surface (4719ef96d)
 - style(repo): format every namespace with the canonical formatter (211f49894)
-- fix(languages): read a failed REPL start the same way in every language (2b2ed346c)
+- fix(languages): Report failed REPL starts consistently across languages (2b2ed346c)
 - fix(languages): one REPL lifecycle contract for every language (8d3849c43)
 - test(languages): read pack test counts by their contract names (aae6e5046)
 - fix(language-surface): refuse a bare string where repl options belong (15104751e)
-- fix(language-surface): keep repl_stop(id) an id, whatever trails it (3bf013412)
-- docs(language-surface): name the four repl lifecycle verbs (413640b3c)
-- fix(companion): show a just-created session without tapping the pill (a6746f2b5)
+- fix(language-surface): Interpret repl_stop's first argument as its ID regardless of later arguments (3bf013412)
+- docs(language-surface): Document the four REPL lifecycle operations (413640b3c)
+- fix(companion): Show newly created sessions without requiring a filter tap (a6746f2b5)
 - feat(cli): open live views from a Python extension (d59111718)
 
 #### com.blockether/vis-language-typescript-bun
 - style(repo): format every namespace with the canonical formatter (211f49894)
-- fix(languages): read a failed REPL start the same way in every language (2b2ed346c)
+- fix(languages): Report failed REPL starts consistently across languages (2b2ed346c)
 - fix(languages): one REPL lifecycle contract for every language (8d3849c43)
 - test(languages): read pack test counts by their contract names (aae6e5046)
 - fix(language-surface): refuse a bare string where repl options belong (15104751e)
-- fix(language-surface): keep repl_stop(id) an id, whatever trails it (3bf013412)
-- docs(language-surface): name the four repl lifecycle verbs (413640b3c)
-- fix(companion): show a just-created session without tapping the pill (a6746f2b5)
+- fix(language-surface): Interpret repl_stop's first argument as its ID regardless of later arguments (3bf013412)
+- docs(language-surface): Document the four REPL lifecycle operations (413640b3c)
+- fix(companion): Show newly created sessions without requiring a filter tap (a6746f2b5)
 - feat(cli): open live views from a Python extension (d59111718)
 
 #### com.blockether/vis-persistance-sqlite
-- fix(live): harden GitHub watches and name NDJSON (089547073)
+- fix(live): improve GitHub watch recovery and identify NDJSON records (089547073)
 - fix(gateway): count every successful session fold (71e3b7335)
-- feat(gateway): transcribe an attached recording into the model's manifest (898ca2ebd)
-- fix(human-input): file a late close onto its iteration, not a dead block (682665bff)
+- feat(gateway): Include attached recording transcriptions in the model's manifest (898ca2ebd)
+- fix(human-input): attach late close records to their iteration after the block ends (682665bff)
 - style(repo): format every namespace with the canonical formatter (211f49894)
-- fix(gateway): count folds from the turn ctx ledger (2afd2a92c)
-- refactor(harness): drop the agent() verb and every sub_loop caller (2bafa1de5)
+- fix(gateway): Count folds from turn context records (2afd2a92c)
+- refactor(harness): Remove agent() and all sub_loop callers (2bafa1de5)
 - feat(cli): open live views from a Python extension (d59111718)
 
 #### com.blockether/vis-provider-alibaba
@@ -1010,86 +1010,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - refactor(extensions): the GitHub live view no longer renders a run-wide Activity feed that duplicated job states and selected-job steps. The job table remains the run overview, while selecting a row gives that job's steps and log; provider retries remain visible in the run status.
 
-- refactor(extensions): live-view extension tests now use the generic `vis.testing.LiveRecorder` library harness for isolated open/patch/state/focus/close materialization and exact view-golden comparison. GitHub tests retain only GitHub polling, fixtures and projections instead of owning a private copy of generic live-host behavior.
+- refactor(extensions): use the shared `vis.testing.LiveRecorder` harness for isolated open/patch/state/focus/close materialization and exact view comparisons. GitHub tests now retain only GitHub polling, fixtures and projections.
 
-- fix(live,companion,extensions): a GitHub watch superseded by a newer commit now closes with the explicit `superseded` verdict instead of calling its settled record `finished`. Every job still queued or in progress in the final provider snapshot is settled as `superseded`, its running step and focused-log pulse stop, and the queued counter clears, so the archived card cannot claim both that it ended and that stale actions are still running.
+- fix(live,companion,extensions): close GitHub watches replaced by newer commits with `superseded`, not `finished`. Queued and running jobs receive the same verdict; running-step indicators, focused-log updates and queued counters stop.
 
-- fix(companion,extensions): selecting a GitHub Actions job now highlights every cell in its row and refreshes the selected job's steps and log from shared live state before the next GitHub request, so a slow or unavailable provider cannot leave stale details under a newly selected row. The labels now distinguish run-wide activity from the selected job's detail.
+- fix(companion,extensions): highlight every cell in the selected GitHub job row and refresh its steps and log from shared state before the next provider request. Distinguish run-wide activity from selected-job details.
 
-- fix(tui): a finished live run now settles beside the exact Python form that opened it instead of collecting below the final answer. Its transcript chevron flips with the read-only record, so clicking `▸ RUN` visibly opens the record in the live band and clicking `▾ RUN` collapses it again.
+- fix(tui): place finished live runs beside the Python form that opened them. The transcript chevron opens or collapses the read-only record in the live panel.
 
-- fix(extensions): `run_tests` no longer lets Python extension tests publish `vis.live` views into the active user session or file their NDJSON records as conversation artifacts. The GitHub watch suite now materializes its envelopes against an in-memory host, while the hermetic Python test boundary refuses any accidental live-session call so another test cannot reintroduce the leak.
+- fix(extensions): isolate Python extension tests from live user sessions. GitHub watch tests use an in-memory host; the test boundary rejects calls that would publish live views or attach NDJSON records to the conversation.
 
-- fix(extensions): GitHub watch status now shows the run's calendar start date and time in UTC alongside workflow, branch, and focus, so live elapsed progress has an absolute time reference.
+- fix(extensions): show the GitHub run's start date and time in UTC alongside workflow, branch and focus.
 
-- fix(live,extensions): settled live-view records now tell the truth at both boundaries: the attachment filename is `*.live.ndjson` and its media type is `application/vnd.vis.live+ndjson`, matching the append-only `open` / `patch` / `close` stream already stored on disk instead of pretending it is one JSON snapshot. GitHub watches now preserve the last good picture and visibly retry through temporary CLI, network, rate-limit, provider, and malformed-JSON failures, then settle failed after three consecutive bad polls instead of watching a lasting outage or deleted run forever; unknown unfinished states remain running, an unpublished job log is retried instead of cached as absent, and a pull request with no checks settles neutral instead of watching forever.
+- fix(live,extensions): name live-view records `*.live.ndjson` with media type `application/vnd.vis.live+ndjson`, matching their append-only open/patch/close stream. GitHub watches retain the last valid view during transient polling failures and fail after three consecutive errors. Unknown unfinished states remain running, unavailable job logs are retried, and pull requests without checks finish neutral.
 - fix(companion): repeated saved cuts of one settled live run now render as one `RUN` row in the transcript, using the newest cut, instead of one identical row per version.
 - fix(extensions): an implicit GitHub watch now stops when a newer commit starts the same workflow on the same branch and event. The live card marks the old run as superseded, links to its replacement, and returns that reason to the model instead of polling obsolete work indefinitely; a caller that explicitly names a historical run still watches exactly that run.
-- fix(live,companion): interrupting a live view now lands its record in every place the stop promises. The close event is published only after the record has been attached to its iteration, so the already-open Companion immediately re-reads the transcript when that event arrives instead of merely removing the live panel and leaving the new `RUN` row invisible until a later reload. A record filed after its tool block settled is also carried into the next model request as a compact attachment pointer (`filename`, attachment id, and `read_attachment(…)`), so a stop between requests no longer leaves the next model unaware of what the human interrupted.
-- fix(shell): a log page slices as the text it carries — `status_res.logs()[-4000:]` used to reach the generic result-map guard and raise a KeyError, forcing a caller that only wanted a bounded status tail to know the transport shape and spell `status_res.logs()["out"][-4000:]`. Slices on the `_shell_logs` answer now address `out` directly, like slices on a grep answer; string-key lookup, JSON, mutation and ordinary iteration remain dict semantics, and every non-log shell answer remains a nonsliceable result map.
-- feat(shell): a log page CONTINUES ITSELF — `page = sh.logs(0, lines=100)` still returns a nonblocking snapshot and still exposes the byte cursors, but the routine walk no longer makes the caller copy one back by hand: `next(page)` reads the next ready window with the whole original `id` / `lines` / `limit` request intact, `next(page, None)` ends normally, and `page.pages(max_pages=…)` lazily includes the current page plus those after it, bounded to ten by default. A negative line window walks upward with the same protocol and stops at byte zero; a forward walk stops at this snapshot's EOF even if its process is live, so reading output written later remains an explicit fresh `sh.logs()`. The result is still a real dict and ordinary iteration still yields its keys — paging is named rather than stealing Python's mapping semantics.
-- feat(live): a GitHub watch is ONE interactive live view — the active assistant row now mounts the panel before its phase ticker, so `Vis is showing CI` follows the card it names instead of floating above it. The card's own `Activity` node keeps job and step changes plus every newly failed job's immediate log, while the job table is shared focus state rather than a dead report: every concurrently running job is focused by default, tapping a row focuses that job without navigating away, and the steps plus combined log pane follow exactly what is focused. The generic table contract carries `is_focusable` / `focused_ids` across Python, the engine, gateway events and Companion; focus patches validate against declared row ids, survive later row updates, and a surface's choice is read back after each GitHub poll, so a tap made while GitHub is answering wins over the extension's stale default. The Companion paints each selectable row as a full-width 44px control, keeps multi-focus honest with `aria-pressed`, and sends a patch through the canonical live route; non-focusable tables remain byte-for-byte reports
-- fix(live): a running GitHub job proves it is moving before its raw log exists — GitHub's documented job-log endpoint returned HTTP 404 for the reported in-progress run, while the view compounded that external limit by opening `Activity` with a static promise and `Logs` with only a refusal. The first frame now names every focused job's current step (or its runner wait), the job duration and active-step duration advance on every poll, and the focused output repeats that live pulse beside an accurate publication note. When GitHub closes the job, the same pane still replaces the pulse with the raw log tail immediately; transition history and failed-job tails keep their existing semantics.
-- fix(engine): a turn queued behind a WEDGED Python context stops bricking the session — cancelling a long run (Interrupt, or the app's stop button) can leave the guest's GIL owned by a thread that the interrupt already killed: nothing is executing, yet the next turn parks forever in `acquireGil` while it syncs its extension symbols, so the session answers a stalled-before-the-provider failure two minutes later and every message after it dies the same way — one observed engine sat there for eight hours. Condemning an engine on cancel was never enough, because the cancel path only marks the engines it KNOWS are dead. So the turn lock now proves what it took: after the lock is won the engine's context must answer a trivial `None` eval on a detached probe thread inside a bounded budget, and an engine that cannot be ENTERED is unlocked, detached and replaced with a fresh one — once per acquisition, so a genuinely busy engine is still waited for, and nothing is disposed, because disposing a context whose GIL is held would park the caller in the same place. A user's answer to being stuck is the stop button; it may cost the sandbox's variables, never the conversation.
-- test(loop): the sandbox-roots test lists a directory it MAKES instead of the whole home — the guest `ls` counts what it lists, so pointing it at `$HOME` walked every child on a developer machine, outlived the block's eval wall, and left the abandoned guest thread inside a native call that the test's own `Context.close` then waited for forever: the file could not finish at all. It now runs in 34 seconds
-- fix(loop): a run STOPPED mid-watch still hands over what it was SHOWING — cancelling a turn that had a live view open (a two-hour CI watch, Interrupt from the app) left the transcript holding a bare `java.lang.InterruptedException`: the pane went away, which is right, but no attachment row was ever filed and the finished picture survived only as a record on disk that nothing pointed at. The sweep that ends a view the block abandoned runs on the engine's own thread, where that block's artifact collector has already been drained, so it carries a collector of its own now and the settled view comes back ON the block's outcome — the record as an attachment row, for the gallery and the database, and its verdict rendered into what the block printed, for the model that has to say what happened. A block killed at its eval wall hands over the lines it had already printed the same way, instead of answering `Timeout (300s)` and nothing else
-- refactor(language-surface): `format_code`, `lint_code` and `run_tests` answer ONE view of what they found — every result carried a second, directory-nested `by-cwd` copy of the same maps beside the flat `findings` / `files` / `failures`, and nothing in the tree ever read it: the grouping was justified as writing each directory prefix once, but every entry keeps its own full `file` anyway, so on a two-finding lint the duplicate measured 394 characters against the flat list's 361 and the caller paid for the same findings twice on every call. The flat list is what a caller indexes and what `patch` / `cat` need, so it is the one that stays; the contract spec, the total `run_tests` key set and both language packs stopped building the nested view — grouping by directory is one line of Python for whoever wants it
-- feat(python): a capped `grep` PAGES ITSELF — a wide sweep answers 50 hits and line 1 names the next call — `next(r)` before the literal offset form — but the answer was a bare string, so continuing meant retyping the whole search with `offset`: the step nobody takes by hand, which is how a slice gets read as the whole tree. The page is still exactly the text — every str operation, slicing, `print` and the uniform `.get('op')` probe behave, and iterating it still yields CHARACTERS, because a page walk that stole `__iter__` would break `''.join(g)` for every caller who never asked for paging — and it now carries `next_offset`, `next(g)` for the next page — the protocol Python already has, StopIteration when the page already IS the whole answer, so `next(g, None)` is the sentinel form — `pages()` for a lazy bounded walk and `all()` for the lot as one text, which SAYS when its bound stopped it and names the call that continues. The options map is captured while the deferred call still holds it, since a settled thunk releases its arguments, and paging preserves the WHOLE original map rather than re-searching with an offset alone
-- refactor(shell): the merged pty stream is named `out` on every shell answer — a result field called `stdout` named a descriptor that result never had: every command runs under a real pty, where fd 1 and fd 2 ARE one stream, so the name itself invited an extension author to reach for the `stderr` beside it and collect the KeyError issue #137 had already been documented away. `out` names what the field HOLDS, not one of the two descriptors it arrived on — `run`, the handle, `logs`, `wait`, `type` and `stop` answer the ONE key set with `out` / `out_omitted_chars`, the shell card paints an OUT section, and `doc('shell')` / `doc('_shell_logs')` / `doc('_shell_wait')` say that whatever the command wrote to either descriptor is in there, in order. The `vis-agent` package mirrors the same pair for an extension running outside a Vis host, and no `stdout` alias was left behind: two names for the same bytes is the cost this removes.
-- fix(tui): a live view raised inside the `vis serve` daemon paints in the terminal — the engine publishes open/patch/close on a PROCESS-LOCAL channel bus, so a run started under the daemon reached the phone, which reads the session journal, and nothing else: the terminal's one gateway projection knew `human_input.request` and `human_input.close` only, and the three live events fell into its trailing nil. They map onto the panes the TUI already had, and a frame is read back through the same spec the engine stamped it with — the view keeps the `id` and `seq` the engine gave it, since re-parsing would mint a new one — while an unreadable frame is logged rather than half-painted. A terminal attaching MID-run replays the views that are open instead of waiting for the next patch, and a view arriving by BOTH routes settles once: a patch that does not advance `seq`, and a close on a pane that already settled, are dropped.
-- feat(config): `environment:` carries a non-secret value it OWNS — `VIS_MANAGED: {literal: "true"}` declares a process marker in Vis' own configuration instead of forcing a Vis-specific line into the project's `.env`, and it resolves through the one funnel every other entry uses, so a managed REPL, a test runner, a shell child and an extension all read it alike. The wrapper is required so a value can never be a slip: a bare scalar (`VIS_MANAGED: "true"`) is still refused, and so is a literal under a credential-looking name (`*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`) — that value has a source, so name it. One call's own `env` delta takes the same `{literal: …}` spelling beside the bare scalar it already accepted
-- fix(python,cli): a near-miss keyword no longer costs the whole call — `attach(name=…)` and `attach(title=…)` raised over a word (the sandbox's own failure log has eight such deaths in this session alone) and `grep({"glob": "*.clj"})` died on "find spec has unknown keys", so a model paid for a spelling instead of getting its search. Each idea keeps ONE canonical name and the near-misses FOLD onto it — `name`/`file_name`→`filename`, `title`/`caption`/`description`→`label`, `path`/`file`→`source`, `path`/`dir`→`paths`, `glob`/`globs`→`include`, `context_lines`→`context`, `max_results`→`limit`, and on a shell handle `n`/`tail`→`lines`, `secs`/`timeout`→`seconds` — while naming one idea TWICE is still refused, by both spellings. It also fixed a silent loss: grep's CONTENT search read the caller's RAW map, so a folded `glob=` filter was dropped after the fold and the search quietly widened. Unknown keys are still refused, and the refusal now prints the whole vocabulary
-- feat(shell): `sh.logs(lines=10)` is a LINE window that scrolls BOTH ways — the last ten, the NEXT ten from an offset (`sh.logs(next_offset, 10)`), and with a NEGATIVE count the ten lines ABOVE one (`sh.logs(next_offset, -10)`), so a long log is walked a screenful at a time and a reader who paged past the line they wanted scrolls back instead of re-reading from byte 0; the only line-aware read before it was the whole negative tail. A backward window stops at the offset it was anchored at — asking for more lines than sit above it is the head up to it, never a read that runs past where the caller was looking — and a chunk closed by the window says `is_eof` false so a reader continues rather than sleeping on a log that is already written
-- docs(python): the attachment shims read like every other tool page — `attach`, `list_attachments`, `get_attachment`, `read_attachment` and `show_attachment` had prose with no REQUIRED marker, no per-key notes and a hand-typed call line that could drift from the Python signature. Each page is now generated from the function's own `inspect.signature`, seeds the sandbox doc structure (`__vis_calls__`/`__vis_keys__`) so `doc(name)` prints the same `Keys: …` line a host tool does, marks what is REQUIRED there and nowhere else, and ends with the `Raw result:` sentence; a test compares every documented key against the live signature in both directions
-- fix(python): `PIL`'s helper modules answer like Pillow's instead of like stubs — `ExifTags.Base`/`GPS`/`IFD` and `TiffTags.lookup` did not exist, so a tag could be read by number and never named; `ImagePalette.sepia`/`negative`/`make_linear_lut`, `ImageMath.ops`, `ImageFile.Parser`'s context management, `PIL.features`' three tables, `ImageShow.register`/`show` and the GUI adapters (`ImageTk`, `ImageWin`, `ImageQt`, `PSDraw`) were missing or empty, and `features.check_module` answered False for a name it had never heard of rather than refusing it. Every module-level name Pillow 10 publishes now exists AND behaves: `UnsharpMask(threshold=…)` is applied rather than accepted and dropped, which is what kept flat areas from being sharpened along with the edges; `ImageFont.truetype(index=, encoding=, layout_engine=)` keeps its arguments and `font_variant` carries them; a builtin filter carries Pillow's own `filterargs` kernel and `Color3DLUT.transform` derives one table from another; an `Image` compares by VALUE — with `copy.deepcopy`, `__array_interface__` for numpy and `get_format_mimetype()` — while staying hashable by IDENTITY, because the host resource registry is what holds the picture; and `ImageSequence.Iterator` names its cursor `position`. What the shim does not do is stated on its own page, `doc("pil")`, so the line pushed into every prompt is back inside its budget
-- fix(tui): a LIVE run owns four fifths of the usable terminal and its focusable table rows are controls — the band used to stop at half height (and shrink again when the current frame was sparse), leaving stale transcript to occupy the space a person was actively watching; moving the wheel across its table then multiplied one coalesced trackpad gesture by three, producing a visible jump, while the jobs themselves had no focus action at all. Paint and hit-testing now share one stable four-fifths geometry, the live pane consumes the wheel's raw signed row delta without transcript momentum leaking across its edge, and every visible focusable row is a full-row click target marked `○` / `●`. A click sends a singleton selection through the engine locally or the canonical gateway action remotely and waits for the ordinary shared patch, so steps and logs follow the same durable focus on every attached surface rather than a TUI-only selection; settled read-only records expose no control.
-- fix(tui): a running live view can be minimized without stopping it — its opening rule now carries a `▾` control that folds the transient to one live status row, returns the table body to the transcript and lets wheel input continue across the compact line. The `▴` title control and the whole status row restore the exact viewport; patches keep landing while it is folded, and Escape restores before showing the interrupt-note field so no active input can hide behind the compact state.
-- docs(cli): a tool's doc page has ONE shape, and the language verbs were cross-validated against the handlers that read their keys — `format_code`/`lint_code` never mentioned ruff's own `line_length`, `config`, `select` and `ignore`, which the python pack has always read, and `repl_eval` never mentioned clojure's `ns`, `port` and `host`, so keys that existed could not be reached; `include`/`exclude` were advertised for every pack when only the clojure runner reads a metadata tag, `repl_connect`'s `port` said REQUIRED in prose while the machine-readable flag said otherwise, and `run_tests` printed the same clause twice because two `str` lines of one description had been duplicated. Requiredness is now `:required? true` and nothing else, a `:note` is a six-word label carrying the one thing its key's name does not say — prefixed `clojure — ` / `python — ` when a single pack reads it — and the prose lives where prose belongs, in `:description`. The contract is written beside the spec it governs (`:ext.symbol/params`) and `extension_test.clj` enforces it over EVERY live tool: the note budget, requiredness never spelled in prose, and the declared order a caller reads keys in
-- fix(tui,companion): a turn WATCHING a live view says so — the running row read `Vis is thinking (iter 30)... 10m 1s` with the run's own panel, its counters and its Interrupt painted directly underneath, so the one thing on screen that was moving was described as silence and a long CI watch read as a hang for as long as it lasted. Both surfaces now name what is on the glass (`Vis is showing <view> — live (iter N)`) for as long as a view is open, and go back to the ordinary phase the moment it settles — a finished run is a row of the transcript, never the phase of the turn
-- fix(extensions): a `gh` watch says what MOVED while it moves, and ends as ONE photograph — the pane repainted the same table every 5 s and produced the failing job's log only after the whole run was over, so a red job sat there unexplained for the rest of the build and the model was told there was nothing in the logs. GitHub refuses `gh run view --log` until the run ends but serves a FINISHED job's log through `gh api repos/…/actions/jobs/<id>/logs` mid-run, so a job that fails now files its tail the moment it fails; polls are 3 s while jobs move and 8 s while they queue, and each one writes only the jobs that CHANGED state plus the steps of the job in focus. What the model reads at the end is the settled picture — the counters, the job that failed and the tail of its log within the engine's own 120-line budget — not the 500 lines of feed that got it there
-- fix(python): a presentation with NO slides is still a presentation — `Presentation()` → `save(…)` → `Presentation(…)` died with `not a readable workbook: Cannot detect file format`, because the OOXML sniffer in `com.blockether/imaging` recognised a deck only by `ppt/slides/slide*` and a freshly created deck legally has none, so an empty deck was handed to the spreadsheet reader and refused in a workbook's words; the kind is decided by `ppt/presentation.xml` now — fixed at the source, published as imaging 0.1.10, and this is the pin that brings it in
-- fix(language-surface): `project` names the project directory on every language verb, exactly as `cwd` does — `repl_start({"language": "clojure", "project": repo})` answered `no-launcher` for the WORKSPACE ROOT while reporting nothing about the key it had dropped, and `run_tests`/`repl_eval` swallowed it the same way; the alias resolves once for the whole surface, and a call naming two DIFFERENT directories in `cwd` and `project` is refused instead of silently reduced to one. The REPL verbs also say what they take: `repl_eval` needs `code`, `repl_connect` needs `port` unless `build` names one, `repl_stop` names the exact `id` or the pack's REPL under a directory, and neither it nor `repl_start` requires anything at all — omitting the directory starts at the workspace root, which is what made the original call look like a broken project; `run_tests` and `repl_eval` carry the same two facts on their own pages — nothing is required to run the whole suite, `code` is required to evaluate, and an omitted directory means the WORKSPACE ROOT, which is where a relative `paths` entry resolves; and the pages now state the REQUIREDNESS that is actually enforced instead of the one they had inherited — `language` is inferred on EVERY verb and marked optional (it was announced as part of what `repl_stop` needs), `repl_connect` says it is CLOJURE only because Vis owns the python and bun runtimes and those packs refuse to attach, `build` is documented where it exists — `repl_connect` attaches to a `shadow-cljs watch`, `run_tests` picks the build that runs the `*_test.cljs`, and it never appears on `repl_start`, which LAUNCHES the project's own REPL — and `repl_start`'s `id` is named for what it is, a python/bun LABEL for a second REPL in one project, a clojure id being derived from its `cwd`
-- feat(clj-test): `run_tests({"aliases": ["bench"]})` puts EXTRA deps.edn aliases on the run — the clean-JVM test command was hardcoded to `clojure -M:test`, so a project whose tests need anything its `:test` alias does not declare had no way to say so, and `repl_start` was the only verb that took `aliases` at all. They are APPENDED to `:test` (`-M:test:bench`, never replacing the alias that mains the runner), their own `:jvm-opts` are inherited alongside `:test`'s, `":bench"` and `"bench"` read alike, and a `lein` / `bb` project — whose test command has no such vocabulary — is refused by name instead of being shelled without the classpath the caller asked for. A run that REUSED this session's nREPL, or a shadow-cljs build, cannot pick aliases up mid-run and now SAYS on its note that they did not apply, rather than letting a green result read as proof the alias was on the classpath; and `repl_start`'s own `aliases` are documented for what they do — ADD to the always-on `:dev` + `:test`, not "default" to them
-- fix(human-input): a run stopped AFTER the block that showed it ended keeps its record — the artifact a close builds went into the collector of the BLOCK that opened the view, and that collector is drained exactly once when the block returns, so pressing Interrupt on a pane left behind by a killed or finished block wrote the finished run into a bucket nobody would ever read again: the log was gone from the transcript and from the artifacts alike. A view now remembers the ITERATION it was opened under and a close with no live collector files the record there instead, through the same path a human revision of an artifact already takes; the store also stopped reading the owning turn from a SIBLING artifact row, which is why an iteration whose FIRST artifact was the live record silently persisted nothing
- - fix(tui,companion): a run that ENDED is a ROW OF THE TRANSCRIPT, opened like any other artifact — the terminal kept the finished run on the band as one collapsed line, and settling a second run RETIRED the first, so the log a human watched an hour ago became unreachable and a run that was over went on sitting where live work paints; the phone filed it among recorded files as a nameless `release.live.ndjson` and opened it only from the artifacts sheet. A close now hangs the run's row on the assistant turn that watched it — `RUN · title · verdict · N lines · how long it took` — and pressing that row reads the record back READ-ONLY in the band, one row per run, none of them retired. On the phone a settled run is its own row under the turn, opened full screen through the same overlay a document uses and fetching the record's bytes only when it is opened. Nothing about a settled view can be stopped or answered on either surface: a finished run is a photograph, not a pilot
-- fix(python): a path is a path in ANY spelling inside the sandbox too — `im.save(dir / "shot.png")` died with `'PosixPath' object has no attribute 'write'`, and `plt.savefig(dir / "plot.txt")` silently wrote PNG BYTES into a .txt that only the `str` spelling of the SAME path rendered as ASCII. Both shims decided by `isinstance(fp, str)` and took every other value for a file object, so an `os.PathLike` either could not be written at all or was written in the wrong format with nothing raised; they normalize it first now, the way the host boundary already does for every tool argument, and PIL picks the file-object branch by asking for `.write` instead of by refusing a type
-- fix(extensions): a `gh` watch runs until the RUN ends or a human stops it — it used to quit after 90 minutes it had invented for itself, abandoning a longer CI run mid-flight and answering the model "still running" about a run it never saw end. An extension ends its own work on a signal it can SEE (GitHub calling the run completed, `gh` refusing to answer) and never on a duration it guessed, so `minutes=` is gone from `gh_watch_run`/`gh_watch_checks` rather than raised; where no such signal exists the view stays up and Interrupt is the stop. `resources/vis-docs/extending.md` states this for every extension now, because the engine's eval wall is lifted for as long as a view is open — nothing else is counting
-- fix(human-input): a live view LIFTS the eval wall of the block watching it — a `gh` watch of a CI run was killed at `Timeout (300s)` with the build still going, and the pane it left behind never closed: hours later it still painted the last poll and still offered a Stop nobody was listening to. The block's watchdog is a backstop for code that says NOTHING, and a run painting a picture a human is watching is the opposite of silent: it is billed no deadline at all — not a bigger one, none — so opening a view lifts the wall for as long as the view is open, and the close hands the base budget back, measured from that moment. A block killed at its wall or cancelled can no longer strand a pane either: its frames unwind through a context that refuses host calls, so the close never arrives, and the engine now ends what the run abandoned (`timeout`/`failed`) with the picture intact — a view deliberately carried from one block to the next is left alone
-- fix(companion): a live status headline owns the whole width and its detail sits UNDER it — the two shared one flex line, so the headline lost every character the detail claimed and "1 of 2 jobs finished" beside a workflow and a job name broke to one word per line on a phone
-- fix(languages): a REPL that FAILED to start reads the same way whatever launched it — Python answered `error`/`stderr`/`exit_code`, Bun answered `error` and nothing else (no exit code, none of what the runtime printed) and Clojure answered `message`/`exit`/`log_tail`, so one launch failure could not be read twice; every language answers `message`, `exit` and `log_tail` now, and both child runtimes PUMP their stderr from the first line, because nothing read that pipe — left unread it fills and the child BLOCKS mid-write, and once the process is reaped the JDK closes the stream, so the very words that explain the failure were the ones being lost. `repl_status` carries a key only where it MEANS something — `running`, `pid` and `cmd` while the interpreter is up, never the pid of nothing — the shape Clojure already answered; and a Bun start that failed no longer registers a session resource announcing a dead runtime as up in ctx and the footer
-- fix(languages): a REPL means the SAME thing in every language — `repl_start` REUSES a live REPL and refuses a start naming a different `env` by the keys that differ (Python and Bun used to kill the running interpreter and respawn it silently, losing every global the caller had built), `repl_status` answers `result`/`id`/`status`/`cwd` plus the env by name and digest, and `repl_stop` answers `stopped` or `not-managed` with `status` `down` instead of each pack inventing its own words. The difference and the refusal sentence are minted once in `process-jail`, so a pack cannot drift from them; a Bun start now waits for its handshake like Python's, so a start that answers `started` has a REPL that can evaluate; and a lifecycle call with no verb reads `status`, the one op that changes nothing
-- refactor(language-surface): the `repl` tool's `op` STRING is gone — REPL lifecycle is four verbs, `repl_start`, `repl_status`, `repl_stop` and `repl_connect`, so a call says in its own record what it did and a refusal names a verb instead of a value of `op`. `repl_stop` still takes the bare id `repl_start`/`repl_status` answered with, and also the language-led `repl_stop("clojure", {"cwd": "…"})`; `restart` is gone with the op string it lived in, since stop and start are two decisions and a hung relaunch used to leave the caller with no REPL and no error
-- fix(language-surface): a REPL lifecycle call no longer swallows a bare string where its options map belongs — `repl_start("clojure", "extensions/foo")` answered success while starting the REPL at the workspace ROOT, because the string fell into an ignored `{:arg …}`; it is refused by name now, and an `id` — leading or in the options — selects THAT REPL on `repl_status` and `repl_stop` instead of being dropped, while a pack's own REPL label still reaches the pack. `repl_status` answers `resources` beside the pack's per-directory state, so a REPL under another `cwd`, or a shadow-cljs attachment riding beside the JVM one, is visible again — the enumeration its own doc promised. Every runtime message that still told the model to call the removed `repl(…)`, or to read the `session["resources"]["repls"]` ctx key that no longer exists, names the verb it means
-- feat(shell): one call carries its OWN environment — `shell(cmd, {"env": …})` and `repl_start({"env": …})` take a delta over the workspace's `.env` and `environment:` declarations, where a literal is for a switch (`NODE_ENV`, `RUST_LOG`) and a `{env|dotenv|keychain|command}` source map is for a secret, because an argument is written into the session journal for good; `null` unsets one name for that child. Every refusal names the key — a name that is not an environment variable name, a pre-exec hijack name (`LD_*`, `DYLD_*`, `BASH_ENV`…), a map naming no source, a source that produced nothing. For a REPL the env is part of its IDENTITY: `repl_status` reports it by name and digest, never by value, and a `repl_start` for a REPL already running with a different env is refused by the keys that differ
-- feat(python): `ls()` answers ONE compact tree STRING instead of structured rows — a `path  Nd Nf` header, then one line per entry with two-character branches (`├ `, `└ `, `│ `), a directory as `name/` carrying the child count once `depth` expanded it, a file as `name  size` in at most four characters (`812`, `7.2k`, `2.1M`), and one blank-line separated section per path when several are listed. A listing is READ, never indexed: every model that printed the rows re-rendered them itself, so the shim renders once and the print costs what it shows
-- fix(python): the FIRST op of a live view crossed the boundary at once only on a machine that had been up longer than the flush window — `time.monotonic()` counts from an arbitrary origin, so the `0.0` standing for "never flushed" read as "eight seconds ago" on a freshly booted runner: the leading edge was swallowed by the window and `is_interrupted` asked the engine nothing for its first tick. Never is now `None`, and never is longer than any window
-- feat(extensions): watch a GitHub Actions run in ONE live view — `.vis/extensions/gh.py` declares seven nodes over `gh run view --json` (the headline, the progress of the jobs, the four counters, a job table upserted by `databaseId` so a row keeps its slot as it changes, the failing job's steps, its log tail and the links) and polls every 5s, dropping to 15s after five minutes, so a person WATCHES CI in the terminal or on the phone instead of re-running a command and re-reading its output. Every gh call is the CLI itself through a background shell with stdout redirected to a file, because a job log outgrows the shell's own capture; GitHub serves that log only once the RUN is over, so the pane says so until then and the window ends at the last `##[error]` rather than on the runner's cleanup. `gh_watch_checks` reads a pull request's checks through the very same mapping. The picture and the ops are pinned by two REAL polls of one real run: `.vis/extensions/test_gh.py` asserts what the extension SAYS to the engine, and `test/com/blockether/vis/internal/human_input/gh_live_test.clj` replays those same envelopes through the engine's own live dispatch, so an op this extension emits that the engine would refuse turns a Clojure test red instead of failing in front of a human. The live example in `resources/vis-docs/extending.md` is now this extension rather than a sketch
- - feat(human-input): a live view SETTLES into an artifact instead of vanishing — `close-live!` files the run's own record (`~/.vis/gateway/views/<session-id>/<view-id>.ndjson`) as an `application/vnd.vis.live+ndjson` attachment ADDRESSED by `storage-uri` rather than re-encoded, with only a record under 256 KiB also travelling as bytes, and the verdict the model reads carries its `artifact-id`. The address is `vis-live://<session-id>/<view-id>`, a scheme the sink OWNS and registers a read-only storage rail for, so the record reads back through the byte endpoint on exactly the long runs it exists for; and a run a human STOPS files its artifact too, into the collector of the block that opened the view, because a gateway thread holds none of its own. The terminal collapses a finished view into one clickable line — tone, reason, line count, frozen elapsed — that reopens it read-only, and stops offering to interrupt what already ended. The phone lists it in the artifacts sheet as a `RUN`, paints the picture the run ended on, reads a record past 1 MB at its two ENDS only — so a 100 000-line run is never parsed line by line — and pages the log out of the same file on the gateway
-- refactor(gateway): serve HTTP/SSE on the Jetty 12 CORE adapter (`info.sunng/ring-jetty9-adapter`) instead of `ring/ring-jetty-adapter` — ring's adapter routes every request through Jetty's ee9 servlet compatibility layer, so the SSE hot path ran Jetty core -> ee9 nested -> the servlet API before it reached a Ring response map; the gateway now hangs off a bare Jetty `Handler` writing through the same `ring.core.protocols` streaming body, which drops 12 jars and 1.66 MB (22 -> 10), both Jetty CVE pins (the adapter tracks Jetty's own releases, now 12.1.12) and the ee9 `HttpOutput` build-time-init flag. Jetty's own JVM shutdown hook is cleared, so `stop!` stays the single shutdown path that cancels and drains in-flight turns before the socket goes
-- feat(gateway): drive a gateway on another machine from the command line — the root flags `--gateway HOST[:PORT]|URL` and `--gateway-token TOKEN` (or `VIS_GATEWAY_URL` / `VIS_GATEWAY_TOKEN`) point every gateway call of the invocation at a remote daemon instead of the one this machine manages: no registry, no auto-spawn, no lifecycle — a gateway vis does not own is never started, restarted or stopped, and the client claims no pid because leases are reaped by pid on the gateway's own host. A token-less target (a loopback daemon reached through an SSH tunnel) is supported; an unreachable host or a value that names no host fails loudly instead of falling back to the local daemon. The TUI has no multi-gateway switcher yet: one process drives one gateway, and the root help, the `gateway` command help and the TUI usage line all name the two flags: `gateway status` and `gateway pair` answer from the target itself, `gateway stop` refuses one, and `--db` means nothing beside it
-- fix(gateway): `vis-agent gateway status` reported a live daemon as `gateway stopped` — it destructured the daemon's STRING-keyed wire map with keyword keys, so every field read as nil
-- feat(clj-repl): attach the Clojure REPL to a `shadow-cljs` build — `repl_connect("clojure", {"build": "app"})` reads the port that watch published, selects the build in the nREPL session every later `repl_eval` reuses, and lives BESIDE the managed JVM REPL for the same cwd under its own id; a build that is unknown, unwatched, on a plain JVM nREPL, or has no JS runtime joined is named as such instead of silently answering as JVM Clojure
-- feat(clj-test): run ClojureScript tests — a selection of `*_test.cljs` compiles and runs through the project's own shadow-cljs build (npm binary, `thheller/shadow-cljs` in `deps.edn`, or lein), narrowed by `:ns-regexp`, with `build` naming the build; the verdict is the printed test counts, since shadow-cljs exits 0 even when tests fail
+- fix(live,companion): publish live-view close events after attaching the record to its iteration, allowing Companion to refresh the transcript immediately. Records attached after block completion also reach the next model request as filename, attachment ID and `read_attachment(…)` reference.
+- fix(shell): support text slicing on shell log results: `status_res.logs()[-4000:]` slices `out` instead of raising KeyError. String-key lookup, JSON, mutation and iteration retain dictionary behavior; other shell result maps remain nonsliceable.
+- feat(shell): add shell-log pagination with `next(page)`, `next(page, None)` and `page.pages(max_pages=…)`. Pages preserve the original id, lines and limit; `pages` includes the current page and defaults to ten pages. Negative windows stop at byte zero; forward windows stop at the snapshot's EOF. Later output requires a fresh `sh.logs()`. Results remain dictionaries whose ordinary iteration yields keys.
+- feat(live): make GitHub watches interactive live views. Activity shows job and step changes plus newly failed job logs. Focusable job tables use shared `is_focusable` / `focused_ids` state across Python, engine, gateway and Companion. Running jobs are focused by default; user selections update steps and logs, persist across row updates and override stale polling defaults. Companion uses full-width 44px row controls with `aria-pressed`; non-focusable tables remain unchanged.
+- fix(live): show focused jobs' current step or runner wait while GitHub job logs remain unavailable. Job and step durations update on every poll, with an explicit log-publication note. When a job finishes, its raw log replaces the progress summary; transition history and failed-job log tails remain unchanged.
+- fix(engine): recover from Python contexts whose GIL remains locked after cancellation. After acquiring the turn lock, a bounded detached probe evaluates `None`; an unresponsive context is detached and replaced once per acquisition without blocking on disposal. Busy contexts are still awaited. Recovery may reset sandbox variables but preserves the conversation.
+- test(loop): make the sandbox-roots test list its own fixture directory instead of the whole home directory. This prevents native directory reads from exceeding the evaluation timeout and blocking context cleanup; the test file completes in 34 seconds.
+- fix(loop): preserve live-view records and already-printed output when a block is cancelled or times out. Engine-thread cleanup uses its own artifact collector, adds the record to the block outcome and includes its verdict in model-visible output.
+- refactor(language-surface): remove duplicate directory-grouped `by-cwd` results from `format_code`, `lint_code` and `run_tests`. Retain the flat `findings`, `files` and `failures` lists with full paths; update the contract and both language packs.
+- feat(python): add pagination to grep text results: `next(g)`, `next(g, None)`, bounded lazy `pages()` and `all()`. The page preserves the entire original options map and exposes `next_offset`; bounded aggregation reports remaining output. String operations, slicing, printing, `.get('op')` and character iteration remain unchanged.
+- refactor(shell): rename merged pty output to `out` / `out_omitted_chars` across run, handles, logs, wait, type and stop. Both stdout and stderr appear in order in this stream. Update shell cards, documentation and the standalone SDK; remove the stdout alias (issue #137).
+- fix(tui): render daemon-originated live views in the TUI by projecting gateway open/patch/close events. Preserve engine IDs and sequence numbers, log invalid frames, replay open views on mid-run attachment and ignore duplicate or outdated patches and closes.
+- feat(config): support explicit non-secret configuration values such as `VIS_MANAGED: {literal: "true"}` through the shared environment resolver. Managed REPLs, tests, shells and extensions use the same value. Bare scalar declarations and literals under credential-like names remain invalid. Per-call env deltas also accept the literal wrapper.
+- fix(python,cli): normalize common attachment, grep and shell keyword variants to canonical names while rejecting duplicate or unknown keys. Preserve normalized grep filters during content search and include the accepted vocabulary in errors. Aliases cover attachment filename/label/source, grep paths/include/context/limit and shell lines/seconds.
+- feat(shell): support forward and backward line windows in `sh.logs`: positive counts read after an offset, negative counts read before it. Backward windows never exceed their starting offset; truncated windows report `is_eof` false.
+- docs(python): generate attachment shim documentation from `inspect.signature`. Pages use `__vis_calls__` / `__vis_keys__`, consistent required markers, per-key notes and Raw result descriptions; tests compare documented keys with live signatures in both directions.
+- fix(python): complete Pillow 10 helper-module APIs, including ExifTags, TiffTags.lookup, palette operations, ImageMath, parser context management, feature tables, ImageShow and GUI adapters. Apply UnsharpMask thresholds, preserve font arguments and variants, expose filter kernels and Color3DLUT.transform, and support image value equality, identity hashing, deepcopy, NumPy array access and format MIME types. Document remaining shim limitations in `doc("pil")`.
+- fix(tui): give active TUI live views a stable four-fifths-height viewport. Use raw signed wheel deltas without transcript momentum. Focusable rows are full-width targets marked ○ / ●; selection uses the shared engine or gateway action and ordinary patches. Read-only completed records have no controls.
+- fix(tui): allow running TUI live views to collapse to a status row without stopping updates. The title control or status row restores the viewport; Escape restores it before showing the interruption-note field.
+- docs(cli): standardize tool documentation and validate language parameters against handlers. Document Python formatting/lint options, Clojure REPL connection options and language-specific test filters. Requiredness uses `:required?`; parameter notes have a six-word limit. Tests enforce note length, requiredness and key order across registered tools.
+- fix(tui,companion): show `Vis is showing <view> — live (iter N)` while a live view is open in TUI or Companion. Restore the ordinary turn phase after closure; completed runs appear in the transcript.
+- fix(extensions): update GitHub watches with changed jobs, focused steps and failed-job log tails as soon as each job completes. Poll every 3 seconds while jobs run and 8 seconds while queued. Return the final counters, failed job and log tail within the engine's 120-line budget rather than the full update history.
+- fix(python): support saving and reopening empty presentations by detecting `ppt/presentation.xml` rather than requiring slide files. Pin imaging 0.1.10, which fixes the incorrect workbook-format error.
+- fix(language-surface): accept `project` as `cwd` across language tools and reject conflicting directory values. Document actual requiredness and workspace-root defaults. `repl_connect` is Clojure-only and supports shadow-cljs builds; `run_tests` supports build selection; `repl_start` launches project REPLs and uses `id` as a Python/Bun label rather than a Clojure ID.
+- feat(clj-test): append requested deps.edn aliases to clean-JVM test runs, retaining :test and inherited JVM options. Accept aliases with or without a leading colon; reject them for lein/bb projects. Report when aliases cannot apply to reused nREPL or shadow-cljs runs. Document repl_start aliases as additions to :dev and :test.
+- fix(human-input): attach live-view records to their opening iteration when the block collector has already closed. Resolve the owning turn directly so an iteration's first artifact can be a live record.
+show completed runs as persistent transcript rows with title, verdict, line count and duration. TUI opens read-only records in the live panel; Companion opens them full-screen and fetches bytes on demand. Multiple completed runs remain accessible and expose no stop or input controls.
+- fix(python): normalize `os.PathLike` inputs in image-save and plotting shims before selecting file-object or filename behavior. PIL detects file objects by `.write`; plotting chooses the same format for string and Path filenames.
+- fix(extensions): remove the arbitrary 90-minute limit and minutes parameter from GitHub watches. Watches end on provider completion, an unrecoverable error or user interruption; the extension documentation defines the same lifecycle rule.
+- fix(human-input): suspend a block's evaluation deadline while it has an open live view. Restore the base budget from the time the view closes. Timeout or cancellation closes abandoned views with their current contents, while views deliberately retained between blocks remain open.
+- fix(companion): give live-status headlines full width and place detail text below them to avoid word-per-line wrapping on phones.
+- fix(languages): standardize REPL startup failures as message, exit and log_tail across languages. Drain child stderr from startup to avoid pipe blocking and lost diagnostics. Report running, pid and cmd only for live interpreters; failed Bun starts no longer register live resources.
+- fix(languages): standardize REPL lifecycle behavior: reuse live REPLs, reject changed environments by key, report environment names and digests, and use stopped/not-managed with status down. Centralize comparison and errors in process-jail; wait for the Bun handshake before reporting started.
+- refactor(language-surface): replace repl's op string with repl_start, repl_status, repl_stop and repl_connect. Keep bare-ID and language-led stop forms; remove restart in favor of explicit stop and start.
+- fix(language-surface): reject bare strings where REPL option maps are required. Honor IDs in status and stop calls, report resources alongside per-directory state and update messages that referenced removed repl APIs or session resource keys.
+- feat(shell): support per-call shell and REPL environment deltas over workspace dotenv and configured declarations. Null unsets a variable; source maps supply secrets without recording values in call arguments. Validate names and sources and reject unsafe process-initialization variables. REPL identity includes environment names and digests; changed environments require an explicit restart.
+- feat(python): return compact tree text from ls instead of structured rows. Include path and directory/file counts, two-character branches, expanded child counts, compact file sizes and blank-line-separated sections for multiple paths. Listings are rendered directly rather than indexed.
+- fix(python): flush a live view's first operation immediately after machine startup. Represent never-flushed state as None rather than 0.0 so monotonic-clock origin does not suppress the first update.
+- feat(extensions): add GitHub Actions live views with headline, job progress, counters, job table, focused steps, log tail and links. Poll every 5 seconds, slowing to 15 seconds after five minutes; read logs through redirected CLI output and state when GitHub has not published them. Shared pull-request mapping and Python/Clojure envelope tests verify engine acceptance. Replace the extension documentation sketch with this example.
+save closed live views as `application/vnd.vis.live+ndjson` attachments addressed by `vis-live://<session-id>/<view-id>`, using read-only storage and inline bytes only below 256 KiB. Preserve interrupted views through the opening block's collector. TUI reopens completed views read-only; Companion displays RUN artifacts, reads only the ends of records above 1 MB and pages logs from the gateway.
+- refactor(gateway): replace the servlet-based gateway adapter with Jetty 12 core via info.sunng/ring-jetty9-adapter. Streaming Ring responses use a direct Handler; dependencies decrease from 22 to 10 jars by 1.66 MB. Remove obsolete Jetty CVE pins and ee9 HttpOutput initialization settings. Disable Jetty's separate shutdown hook so stop! remains responsible for cancelling and draining turns before socket closure.
+- feat(gateway): support remote gateway targets through --gateway / --gateway-token or VIS_GATEWAY_URL / VIS_GATEWAY_TOKEN. Remote calls do not discover, spawn or manage a local daemon and do not claim a local PID. Support tokenless SSH-tunnel targets; invalid or unreachable targets fail without local fallback. Each TUI process uses one gateway; status and pair use that target, stop refuses remote targets, and --db does not apply.
+- fix(gateway): read string-keyed gateway status correctly instead of reporting a running daemon as stopped.
+- feat(clj-repl): attach Clojure REPLs to shadow-cljs builds alongside managed JVM REPLs for the same directory. Validate build existence, watch state, nREPL type and connected JavaScript runtime; preserve the selected build for later evaluations.
+- feat(clj-test): run selected ClojureScript tests through the project's shadow-cljs build, using :ns-regexp and optional build selection. Determine results from printed counts because shadow-cljs can exit zero after test failures.
 - fix(clj-test): answer a `run_tests` path that is NOT on disk with `no such path` plus the deepest part of it that exists, instead of "no tests under it"
 - fix(clj-test): select `*_test.cljc` files — a `.cljc` test namespace was invisible to `run_tests`
 - feat(clj-test): `run_tests` runs the clojure namespace a call names — `ns` / `nses` / `namespace` / `namespaces` and `var` / `vars` / `only` select instead of being refused
 - fix(extensions): make `vis.state` a whole mapping — `pop`, `setdefault`, `update`, `clear`, keys and iteration
 - refactor(editing): remove structural editing — `struct_index`, `struct_nodes` and `struct_patch` are gone; `grep` → `cat` → `patch` is the whole editing surface
 - feat(python): cover asyncio queues, locks, futures and timeouts in the sandbox shim
-- fix(python): settle a tool handed to `asyncio.to_thread` / `run_in_executor` inside its `gather` slot
-- build(ci): pause the beta native cron — every native platform is broken, so betas are dispatch-only
-- fix(build): make `dev` a track of its own, refused as an update target
-- feat(companion): pull the sessions list down to open the fleet-wide search
-- fix(companion): draw the pull-to-search band with the finger instead of snapping it
+- fix(python): resolve tools passed to asyncio.to_thread or run_in_executor within their gather slots
+- build(ci): pause scheduled beta native builds after failures on all native platforms; retain manual dispatch
+- fix(build): identify dev builds as a separate track and reject dev as an update target
+- feat(companion): open search across machines by pulling down the session list
+- fix(companion): move the pull-to-search indicator with the touch gesture
 - feat(companion): keep an unsaved comment and let it be edited
 - build(ci): build the macOS asset on our own runner, and watch the queue
-- build(ci): ship JVM-only releases until a native platform is green again
+- build(ci): release JVM-only builds until native platform checks pass
 - feat(voice): download pocket-tts with every other model
-- fix(copilot): authenticate only the tier the credential was minted for
+- fix(copilot): authenticate only the account tier associated with the credential
 - fix(tui): remove a provider for good, credential included
 - refactor(tui): drop provider Log Out for Remove, and ask inside the transient
-- refactor(tui): ask every provider and MCP question in the band it was fired from
-- fix(providers): keep a default root tagged as the fleet changes
+- refactor(tui): show provider and MCP questions in the panel that initiated them
+- fix(providers): Preserve the default-root marker across machine updates
 
 ## [v0.1.40] - 2026-08-16
 
@@ -1115,49 +1115,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(companion): read the artifact overlay after its bytes arrive
 - build(ci): build the macOS asset on a hosted runner, never a self-hosted one
 - feat(build): let native-image size its own builder heap, and measure it
-- fix(companion): give the image viewer one Save, in the band beside the close
-- fix(companion): strip settings band sentences and close a column's last group
+- fix(companion): put the image viewer's Save button in its header beside Close
+- fix(companion): shorten settings headers and close the final group border
 - fix(ci): make the hosted macOS fallback fit the free runner
 - fix(companion): raise the annotator composer above the keyboard
-- feat(build): ship a beta track on free runners, not the mac builder
-- fix(companion): reconnect a dark machine off All, in the background
+- feat(build): build the beta track on free hosted runners rather than the macOS builder
+- fix(companion): reconnect unreachable machines in the background outside the All view
 - feat(build): stamp every native runtime with the commit that built it
-- fix(cli): resolve sandbox PIL colours per mode and replace drawn ink
+- fix(cli): resolve PIL colors by image mode and replace drawn pixels
 - fix(sandbox): answer two bands for an 'LA' image, as Pillow does
 - docs(companion): record TestFlight build 4319 in the app changelog
 - fix(companion): brand the launch screen and name the Android channel
 - fix(companion): reopen a session where the reader stopped reading
 - fix(sandbox): read a paste mask's alpha band, not its blue channel
-- fix(companion): redraw the Android launcher and notification icons from the iOS master
-- fix(companion): ask the sessions list for one page when nothing moved
+- fix(companion): Generate Android launcher and notification icons from the iOS source
+- fix(companion): Fetch one session-list page when the list is unchanged
 - fix(companion): tag Android alerts so the badge can clear
-- fix(sandbox): address a fresh attachment in the block that made it
-- feat(companion): badge the icon with the alerts still waiting
-- fix(companion): put an opened note's Save in its header band
-- fix(companion): wear the name's step on a status dot
-- fix(companion): frame the destructive confirm around its own cost
-- feat(tui): hold a spoken conversation instead of a speech toggle
+- fix(sandbox): Allow attachment references in the block that created them
+- feat(companion): Set the app badge to the pending notification count
+- fix(companion): Put an opened note's Save button in its header
+- fix(companion): Indicate operation state with a status dot
+- fix(companion): Describe the consequences in destructive-action confirmation
+- feat(tui): Replace the speech toggle with voice conversation controls
 - fix(companion): keep a project folded once you have folded it
-- fix(companion): unbox the voice bands and drop the Off route
+- fix(companion): Remove voice-section borders and the Off route
 - docs(docs): plan making every capability an extension of one contract
 - refactor(contract): make the Python host an object, not a dict
-- fix(companion): strip the MCP band and land its verb as the list's last row
+- fix(companion): Remove the MCP header and move its action to the last list row
 - feat(contract): give the host contract its own package
-- fix(companion): make the providers action amber and unpin the blocked banner
-- fix(companion): make lone settings verbs full width and align status dots
-- fix(companion): anchor the sessions list across every fleet arrival
-- fix(companion): keep a live session following once the reader arrives
-- fix(companion): one verb in notifications, and demote nested panel bands
+- fix(companion): Color the Providers action amber and unpin the blocked banner
+- fix(companion): make single settings actions full-width and align status indicators
+- fix(companion): preserve session-list position as machine data arrives
+- fix(companion): resume live-session following when the reader reaches the end
+- fix(companion): use one notification action and reduce nested-header emphasis
 - feat(extensions): gate the Clojure host surface with a contract
-- fix(companion): restore the machines verb and quiet the providers one
-- fix(companion): strip the providers band to its title and a short verb
+- fix(companion): restore the Machines action and reduce emphasis on Providers
+- fix(companion): limit the Providers header to its title and a short action label
 - refactor(loop): drop the native-tool leftovers from the one-tool wire
-- fix(companion): rule the machine panel stack and cut its band prose
+- fix(companion): add machine-panel borders and shorten header descriptions
 - feat(run-tests): give a test run ten minutes in every pack
 - feat(sandbox): give a Python block five minutes before the backstop
 - docs(python): write the package README example in the formatter's own shape
-- feat(gateway): flag a session parked on a human across the fleet
-- ci(python): verify the package on the floor the engine's GraalPy sets
+- feat(gateway): show sessions awaiting user input in the machine list
+- ci(python): verify the Python package on the engine's minimum supported Python version
 - fix(python): dispatch the outside shell from the contract's own vocabulary
 - feat(gateway): fold every window a fold_session key names
 - perf(companion): fill pulled-in history sixteen segments a frame, not two
@@ -1165,23 +1165,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(companion): drop the trace a command turn never wrote
 - fix(companion): disclose each machine's settings under its own row
 - fix(companion): keep a reader's place when the keyboard comes and goes
-- fix(tui): repoint the table card test at the display's new home
-- fix(shell): confirm an exited child's silence before reporting it
+- fix(tui): Update the table-card test for the relocated display
+- fix(shell): Drain exited-child output before reporting completion
 - feat(gateway): reclaim the SQLite freelist once a fortnight
-- perf(companion): paint only the turns a session is showing
+- perf(companion): Render only visible session turns
 - fix(gateway): drop a retired column SQLite was refusing to drop
 - feat(shell): raise the wait budget and cap to thirty minutes
-- perf(gateway): stop storing what a reader can re-derive
-- feat(python): ship the extension API as the vis-agent package
-- chore(repo): drop the TODO whose every item shipped
-- docs(cli): close item 1 and record the residues nothing schedules
+- perf(gateway): Stop persisting values that readers can derive
+- feat(python): Distribute the extension API as the vis-agent package
+- chore(repo): Remove the fully completed TODO list
+- docs(cli): Complete item 1 and record the unscheduled remainder
 - test(bench): make the redaction test independent of the caller's environment
 - docs(cli): record the TODO state after the doc and ranker work
 - chore(repo): reformat every Clojure and Python source in place
-- test(ci): pin the two loaded-runner flakes without a stopwatch
-- test(ci): own the espeak and pty-log preconditions the runners lack
-- docs(cli): name the keys a test run answers with
-- fix(ci): make the test suite green on both runners
+- test(ci): Remove timing sensitivity from two tests on loaded runners
+- test(ci): Provide missing espeak and pty-log test preconditions
+- docs(cli): Document test-result keys
+- fix(ci): Fix the test suite on both runners
 - feat(companion): give providers the machine row and its slide
 - feat(cli): give a helper's docstring a gist, a page and a search hit
 - docs(repo): delete banner rules and labels that repeat the code
@@ -1193,10 +1193,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(cli): answer the ask a model types, not the one the page assumes
 - fix(persistance): bound the SQLite -wal sidecar with journal_size_limit
 - fix(cli): saturate the three ranked fields together, not one by one
-- fix(voice): hand sherpa a map the shipped binary can walk
+- fix(voice): pass sherpa a map compatible with the distributed native binary
 - chore(docs): drop the session-id marker from the commit trailer
-- fix(companion): rank a machine only where there is a fleet
-- fix(companion): release a pin the app itself had to break
+- fix(companion): rank machines only when multiple machines are available
+- fix(companion): clear the app's selection lock when it must switch machines
 - docs(voice): say why the progress callback is a deftype
 - docs(cli): record what the tool pages answer today
 - test(cli): follow the auto-title order to the Alibaba plan
@@ -1220,36 +1220,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(grep): exclude globs drop files from the content sweep
 - A dropped PIL image gives its raster back
 - The ASR archive names its direction
-- The voice assets are named for what they are
-- A voice belongs to the machine, and the app can bring one
+- Use descriptive names for voice assets
+- Store voices per machine and support uploads from the app
 - Fix iOS keyboard-safe companion modals
 - Namespace skill slash commands
-- Keep the inherited trace whole when the handover lands late
-- Give pocket-tts a voice: three clips we make, and any clip anyone brings
+- Preserve the inherited trace during delayed transcript replacement
+- Add three generated pocket-tts reference clips and support user-provided clips
 - apropos: answer a row per hit, not a bare first line
-- Own the pocket-tts ONNX export: vendor the MIT layer, drop the clone
+- Vendor the MIT pocket-tts ONNX export code instead of cloning it
 - Export pocket-tts ourselves and publish it in the assets pack
-- A message keeps its ticker while its own POST is still on the wire
+- Keep message progress visible while its POST request is pending
 - A parked run's push asks the question, not which session
-- A parked run's push says Action needed, and the body is the question
+- Use Action needed for input-wait notifications and include the question in the body
 - Rank documents on a stamped corpus instead of rebuilding it per call
 - The session heading keeps its row when the notch pushes it down
-- Ship only what we make: assets-only pack, espeak from the system
-- Companion: a machine row is one line, and its address is a swipe verb
+- Distribute first-party assets only and use system eSpeak
+- Use one line per machine row and put its address action in the swipe drawer
 - bm25: extract the ranker and make it fast and shareable
-- Re-judge the live-to-persisted handover on every reconcile tick
-- Probe the router fleet in parallel so the phone's Providers screen paints
+- Reevaluate live-to-persisted transcript replacement on every reconciliation
+- Probe provider routers concurrently to load Companion Providers settings
 - apropos: rank with BM25F instead of ANDing terms
-- Ship the voice assets pack and add Ryan as the first opt-in voice
-- Speak locally: a licence-carrying asset manifest, Piper voices, pocket-tts opt-in
-- Speak over HTTP: /v1/sessions/:sid/speech, its job stream and features.speech
+- Release the voice assets package with Ryan as the first optional voice
+- Add local speech with licensed asset metadata, Piper voices and optional pocket-tts
+- Expose speech over HTTP with /v1/sessions/:sid/speech, its job stream and features.speech
 - voice: one registry for both directions, keyed by transcribe or synthesize
 - Primitive math in the balancer's hot loops, and no boxed math left in the tree
 - Fetch only this platform's sherpa-onnx native, and plan speech into voice.clj
 - balance: seat a repaired delimiter where the replaced text had it
 - voice: take upstream sherpa-onnx v1.13.5 and delete the ONNX Runtime pin
 - providers: add the Alibaba Coding Plan and Token Plan endpoints
-- Settle the pocket-tts gate and the shipped voice list in PLAN.md
+- Record pocket-tts acceptance and the distributed voice list in PLAN.md
 - Plan speech output as an engine registry on upstream sherpa-onnx
 - vis-agent: run the checkout it sits in when nothing is installed
 - format: the delimiter repair is add-only there too
@@ -1259,21 +1259,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Re-read a swiped row's offset every frame it claims to be open
 - Remove the runtime selector: what is installed is what runs
 - Refuse a delimiter repair that moves or retypes what the caller wrote
-- Land every TUI duration and id badge on one right edge
+- Align TUI duration and ID badges to one right edge
 - Remove the dev runtime: vis-agent installs and runs under ~/.vis
-- Paint the call duration on every TUI result, not just carded ones
+- Show call duration on every TUI result, including results without cards
 - Record Companion TestFlight build 4179 in the app changelog
 - Repair an edit's delimiters from the file, never from the fragment
-- Ask which address a machine uses on the machine's own line
-- Close the gap the removed duration marker left in the marker tables
-- The TUI tells how long each tool call took, as the companion always has
-- A warm-up owns the failure of a load nobody is waiting for
+- Select a machine address within its settings row
+- Update marker tables after removing the duration marker
+- Show tool-call duration in the TUI, as in Companion
+- Handle failures in unattended warm-up loads
 - Keep the direct push in the magit push transient (issue #144)
-- Companion: the model picker's verbs stand in its band, and the sheet stops at its content
-- Fix #145 in the app's last carrier: an answer promoted out of a content-less row
-- Fix #145: paint a settled answer exactly once, in the TUI and the companion
+- Companion: move model-picker actions into its header and size the sheet to its content
+- Fix #145: handle answers promoted from rows without content in Companion
+- Fix #145: render completed answers once in TUI and Companion
 - Every editor write is atomic, and a refused struct_patch batch is rolled back
-- A helper's `return` settles its tool calls, so the caller never gets a thunk
+- Resolve tool calls before helper return so callers receive values rather than thunks
 - The gateway keeps "no AI provider" typed, so the TUI opens the dialog
 - release: update release notes for v0.1.38
 
@@ -1287,49 +1287,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(companion): read the artifact overlay after its bytes arrive (3f3288fdf)
 - build(ci): build the macOS asset on a hosted runner, never a self-hosted one (12775d58f)
 - feat(build): let native-image size its own builder heap, and measure it (4314130a0)
-- fix(companion): give the image viewer one Save, in the band beside the close (6c07f93d4)
-- fix(companion): strip settings band sentences and close a column's last group (7c7eebfad)
+- fix(companion): put the image viewer's Save button in its header beside Close (6c07f93d4)
+- fix(companion): shorten settings headers and close the final group border (7c7eebfad)
 - fix(ci): make the hosted macOS fallback fit the free runner (fb7927c9c)
 - fix(companion): raise the annotator composer above the keyboard (2141a57e1)
-- feat(build): ship a beta track on free runners, not the mac builder (4430c7404)
-- fix(companion): reconnect a dark machine off All, in the background (1273b10b2)
+- feat(build): build the beta track on free hosted runners rather than the macOS builder (4430c7404)
+- fix(companion): reconnect unreachable machines in the background outside the All view (1273b10b2)
 - feat(build): stamp every native runtime with the commit that built it (c2abf4c10)
-- fix(cli): resolve sandbox PIL colours per mode and replace drawn ink (52a215b56)
+- fix(cli): resolve PIL colors by image mode and replace drawn pixels (52a215b56)
 - fix(sandbox): answer two bands for an 'LA' image, as Pillow does (29fb1d4d1)
 - docs(companion): record TestFlight build 4319 in the app changelog (380806099)
 - fix(companion): brand the launch screen and name the Android channel (8088f819e)
 - fix(companion): reopen a session where the reader stopped reading (b5eb54df3)
 - fix(sandbox): read a paste mask's alpha band, not its blue channel (11879470e)
-- fix(companion): redraw the Android launcher and notification icons from the iOS master (a30ceb8f0)
-- fix(companion): ask the sessions list for one page when nothing moved (1a9f51080)
+- fix(companion): Generate Android launcher and notification icons from the iOS source (a30ceb8f0)
+- fix(companion): Fetch one session-list page when the list is unchanged (1a9f51080)
 - fix(companion): tag Android alerts so the badge can clear (fe187409f)
-- fix(sandbox): address a fresh attachment in the block that made it (ed8777994)
-- feat(companion): badge the icon with the alerts still waiting (666fa4b03)
-- fix(companion): put an opened note's Save in its header band (cd2ba0705)
-- fix(companion): wear the name's step on a status dot (0ff682bd0)
-- fix(companion): frame the destructive confirm around its own cost (0aa7d76d9)
-- feat(tui): hold a spoken conversation instead of a speech toggle (3338a1d0c)
+- fix(sandbox): Allow attachment references in the block that created them (ed8777994)
+- feat(companion): Set the app badge to the pending notification count (666fa4b03)
+- fix(companion): Put an opened note's Save button in its header (cd2ba0705)
+- fix(companion): Indicate operation state with a status dot (0ff682bd0)
+- fix(companion): Describe the consequences in destructive-action confirmation (0aa7d76d9)
+- feat(tui): Replace the speech toggle with voice conversation controls (3338a1d0c)
 - fix(companion): keep a project folded once you have folded it (581ed57c9)
-- fix(companion): unbox the voice bands and drop the Off route (55cb6ff67)
+- fix(companion): Remove voice-section borders and the Off route (55cb6ff67)
 - docs(docs): plan making every capability an extension of one contract (6ac932db4)
 - refactor(contract): make the Python host an object, not a dict (137d00650)
-- fix(companion): strip the MCP band and land its verb as the list's last row (b71ab6bd8)
+- fix(companion): Remove the MCP header and move its action to the last list row (b71ab6bd8)
 - feat(contract): give the host contract its own package (4cdcae1a4)
-- fix(companion): make the providers action amber and unpin the blocked banner (41e8c3a3f)
-- fix(companion): make lone settings verbs full width and align status dots (db909334e)
-- fix(companion): anchor the sessions list across every fleet arrival (012df177e)
-- fix(companion): keep a live session following once the reader arrives (1e79fb42c)
-- fix(companion): one verb in notifications, and demote nested panel bands (94024bc92)
+- fix(companion): Color the Providers action amber and unpin the blocked banner (41e8c3a3f)
+- fix(companion): make single settings actions full-width and align status indicators (db909334e)
+- fix(companion): preserve session-list position as machine data arrives (012df177e)
+- fix(companion): resume live-session following when the reader reaches the end (1e79fb42c)
+- fix(companion): use one notification action and reduce nested-header emphasis (94024bc92)
 - feat(extensions): gate the Clojure host surface with a contract (82a3220ff)
-- fix(companion): restore the machines verb and quiet the providers one (705a52029)
-- fix(companion): strip the providers band to its title and a short verb (6f0a5c0d0)
+- fix(companion): restore the Machines action and reduce emphasis on Providers (705a52029)
+- fix(companion): limit the Providers header to its title and a short action label (6f0a5c0d0)
 - refactor(loop): drop the native-tool leftovers from the one-tool wire (4647db9d9)
-- fix(companion): rule the machine panel stack and cut its band prose (4cd359424)
+- fix(companion): add machine-panel borders and shorten header descriptions (4cd359424)
 - feat(run-tests): give a test run ten minutes in every pack (f01b6e98a)
 - feat(sandbox): give a Python block five minutes before the backstop (04be7c8eb)
 - docs(python): write the package README example in the formatter's own shape (2d96a8bd4)
-- feat(gateway): flag a session parked on a human across the fleet (ec56d8347)
-- ci(python): verify the package on the floor the engine's GraalPy sets (d85c63f4a)
+- feat(gateway): show sessions awaiting user input in the machine list (ec56d8347)
+- ci(python): verify the Python package on the engine's minimum supported Python version (d85c63f4a)
 - fix(python): dispatch the outside shell from the contract's own vocabulary (67d8ffcc8)
 - feat(gateway): fold every window a fold_session key names (a9cf4dec3)
 - perf(companion): fill pulled-in history sixteen segments a frame, not two (19ecbe5db)
@@ -1337,21 +1337,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(companion): drop the trace a command turn never wrote (ce5caf195)
 - fix(companion): disclose each machine's settings under its own row (936e3be55)
 - fix(companion): keep a reader's place when the keyboard comes and goes (6b8787d45)
-- fix(tui): repoint the table card test at the display's new home (dc0cc7852)
-- fix(shell): confirm an exited child's silence before reporting it (20f56cc4d)
-- perf(companion): paint only the turns a session is showing (e5ec15679)
+- fix(tui): Update the table-card test for the relocated display (dc0cc7852)
+- fix(shell): Drain exited-child output before reporting completion (20f56cc4d)
+- perf(companion): Render only visible session turns (e5ec15679)
 - feat(shell): raise the wait budget and cap to thirty minutes (04225aea2)
-- perf(gateway): stop storing what a reader can re-derive (77587a196)
-- feat(python): ship the extension API as the vis-agent package (93e379fa0)
-- chore(repo): drop the TODO whose every item shipped (81bc8f91d)
-- docs(cli): close item 1 and record the residues nothing schedules (155bb8094)
+- perf(gateway): Stop persisting values that readers can derive (77587a196)
+- feat(python): Distribute the extension API as the vis-agent package (93e379fa0)
+- chore(repo): Remove the fully completed TODO list (81bc8f91d)
+- docs(cli): Complete item 1 and record the unscheduled remainder (155bb8094)
 - test(bench): make the redaction test independent of the caller's environment (8b83864e2)
 - docs(cli): record the TODO state after the doc and ranker work (27af056d8)
 - chore(repo): reformat every Clojure and Python source in place (2770d1cb5)
-- test(ci): pin the two loaded-runner flakes without a stopwatch (65b83f977)
-- test(ci): own the espeak and pty-log preconditions the runners lack (886b34bac)
-- docs(cli): name the keys a test run answers with (98cda9046)
-- fix(ci): make the test suite green on both runners (0403732e6)
+- test(ci): Remove timing sensitivity from two tests on loaded runners (65b83f977)
+- test(ci): Provide missing espeak and pty-log test preconditions (886b34bac)
+- docs(cli): Document test-result keys (98cda9046)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - feat(companion): give providers the machine row and its slide (21ec0d43a)
 - feat(cli): give a helper's docstring a gist, a page and a search hit (851ac835f)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
@@ -1362,10 +1362,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docs(cli): give every code verb in the core prompt its call shape (b2a63f670)
 - fix(cli): answer the ask a model types, not the one the page assumes (84140ba94)
 - fix(cli): saturate the three ranked fields together, not one by one (ae1f3f45a)
-- fix(voice): hand sherpa a map the shipped binary can walk (24ea302b0)
+- fix(voice): pass sherpa a map compatible with the distributed native binary (24ea302b0)
 - chore(docs): drop the session-id marker from the commit trailer (898dc0e4a)
-- fix(companion): rank a machine only where there is a fleet (f55919ee5)
-- fix(companion): release a pin the app itself had to break (7670b6908)
+- fix(companion): rank machines only when multiple machines are available (f55919ee5)
+- fix(companion): clear the app's selection lock when it must switch machines (7670b6908)
 - docs(voice): say why the progress callback is a deftype (297b36c4d)
 - docs(cli): record what the tool pages answer today (e39420f10)
 - test(cli): follow the auto-title order to the Alibaba plan (191551d7a)
@@ -1388,36 +1388,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(grep): exclude globs drop files from the content sweep (900411403)
 - A dropped PIL image gives its raster back (49d20b6cf)
 - The ASR archive names its direction (b584a7fd7)
-- The voice assets are named for what they are (b1f159997)
-- A voice belongs to the machine, and the app can bring one (ee7adde58)
+- Use descriptive names for voice assets (b1f159997)
+- Store voices per machine and support uploads from the app (ee7adde58)
 - Fix iOS keyboard-safe companion modals (46ed794b3)
 - Namespace skill slash commands (c947be7be)
-- Keep the inherited trace whole when the handover lands late (ef344cc60)
-- Give pocket-tts a voice: three clips we make, and any clip anyone brings (faaad441f)
+- Preserve the inherited trace during delayed transcript replacement (ef344cc60)
+- Add three generated pocket-tts reference clips and support user-provided clips (faaad441f)
 - apropos: answer a row per hit, not a bare first line (5e3ad668a)
-- Own the pocket-tts ONNX export: vendor the MIT layer, drop the clone (9be9db401)
+- Vendor the MIT pocket-tts ONNX export code instead of cloning it (9be9db401)
 - Export pocket-tts ourselves and publish it in the assets pack (dce9af64b)
-- A message keeps its ticker while its own POST is still on the wire (6d9db565d)
+- Keep message progress visible while its POST request is pending (6d9db565d)
 - A parked run's push asks the question, not which session (e5d640de6)
-- A parked run's push says Action needed, and the body is the question (d05986a09)
+- Use Action needed for input-wait notifications and include the question in the body (d05986a09)
 - Rank documents on a stamped corpus instead of rebuilding it per call (d12f581b7)
 - The session heading keeps its row when the notch pushes it down (ba1c32522)
-- Ship only what we make: assets-only pack, espeak from the system (2f9e2c1a2)
-- Companion: a machine row is one line, and its address is a swipe verb (957f37054)
+- Distribute first-party assets only and use system eSpeak (2f9e2c1a2)
+- Use one line per machine row and put its address action in the swipe drawer (957f37054)
 - bm25: extract the ranker and make it fast and shareable (1d36ba9bd)
-- Re-judge the live-to-persisted handover on every reconcile tick (bcf95fcb2)
-- Probe the router fleet in parallel so the phone's Providers screen paints (7193aa3a9)
+- Reevaluate live-to-persisted transcript replacement on every reconciliation (bcf95fcb2)
+- Probe provider routers concurrently to load Companion Providers settings (7193aa3a9)
 - apropos: rank with BM25F instead of ANDing terms (84b53c5d8)
-- Ship the voice assets pack and add Ryan as the first opt-in voice (a939800c5)
-- Speak locally: a licence-carrying asset manifest, Piper voices, pocket-tts opt-in (19c5655a8)
-- Speak over HTTP: /v1/sessions/:sid/speech, its job stream and features.speech (a5864247a)
+- Release the voice assets package with Ryan as the first optional voice (a939800c5)
+- Add local speech with licensed asset metadata, Piper voices and optional pocket-tts (19c5655a8)
+- Expose speech over HTTP with /v1/sessions/:sid/speech, its job stream and features.speech (a5864247a)
 - voice: one registry for both directions, keyed by transcribe or synthesize (40c9d2464)
 - Primitive math in the balancer's hot loops, and no boxed math left in the tree (7c40a20c3)
 - Fetch only this platform's sherpa-onnx native, and plan speech into voice.clj (4442a2df0)
 - balance: seat a repaired delimiter where the replaced text had it (08142bded)
 - voice: take upstream sherpa-onnx v1.13.5 and delete the ONNX Runtime pin (f99eaee39)
 - providers: add the Alibaba Coding Plan and Token Plan endpoints (25f540fb7)
-- Settle the pocket-tts gate and the shipped voice list in PLAN.md (4e98cbd64)
+- Record pocket-tts acceptance and the distributed voice list in PLAN.md (4e98cbd64)
 - Plan speech output as an engine registry on upstream sherpa-onnx (54a0353c8)
 - vis-agent: run the checkout it sits in when nothing is installed (d7af0c84b)
 - format: the delimiter repair is add-only there too (5edf44475)
@@ -1430,65 +1430,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Remove the dev runtime: vis-agent installs and runs under ~/.vis (b7c4b29b3)
 - Record Companion TestFlight build 4179 in the app changelog (f324ec589)
 - Repair an edit's delimiters from the file, never from the fragment (1c55f10b2)
-- Ask which address a machine uses on the machine's own line (258f80c47)
-- A warm-up owns the failure of a load nobody is waiting for (3deb6f0df)
-- Companion: the model picker's verbs stand in its band, and the sheet stops at its content (d6e9309f1)
-- Fix #145 in the app's last carrier: an answer promoted out of a content-less row (fa2a29c36)
-- Fix #145: paint a settled answer exactly once, in the TUI and the companion (c70b46431)
+- Select a machine address within its settings row (258f80c47)
+- Handle failures in unattended warm-up loads (3deb6f0df)
+- Companion: move model-picker actions into its header and size the sheet to its content (d6e9309f1)
+- Fix #145: handle answers promoted from rows without content in Companion (fa2a29c36)
+- Fix #145: render completed answers once in TUI and Companion (c70b46431)
 - Every editor write is atomic, and a refused struct_patch batch is rolled back (12d2ad319)
-- A helper's `return` settles its tool calls, so the caller never gets a thunk (2be4b0701)
+- Resolve tool calls before helper return so callers receive values rather than thunks (2be4b0701)
 - The gateway keeps "no AI provider" typed, so the TUI opens the dialog (eefc71c0a)
 - release: update release notes for v0.1.38 (6b2f66de5)
 
 #### com.blockether/vis-channel-tui
-- feat(tui): hold a spoken conversation instead of a speech toggle (3338a1d0c)
-- feat(gateway): flag a session parked on a human across the fleet (ec56d8347)
-- fix(tui): repoint the table card test at the display's new home (dc0cc7852)
-- perf(gateway): stop storing what a reader can re-derive (77587a196)
-- test(ci): pin the two loaded-runner flakes without a stopwatch (65b83f977)
-- fix(ci): make the test suite green on both runners (0403732e6)
+- feat(tui): Replace the speech toggle with voice conversation controls (3338a1d0c)
+- feat(gateway): show sessions awaiting user input in the machine list (ec56d8347)
+- fix(tui): Update the table-card test for the relocated display (dc0cc7852)
+- perf(gateway): Stop persisting values that readers can derive (77587a196)
+- test(ci): Remove timing sensitivity from two tests on loaded runners (65b83f977)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 - chore(tui): reformat the command suggestion namespace (10296499f)
 - Namespace skill slash commands (c947be7be)
 - Primitive math in the balancer's hot loops, and no boxed math left in the tree (7c40a20c3)
 - cli: finish the vis -> vis-agent rename in text that tells you what to run (ec7ce2942)
-- Land every TUI duration and id badge on one right edge (7a8be54e8)
-- Paint the call duration on every TUI result, not just carded ones (7ac776bec)
-- Close the gap the removed duration marker left in the marker tables (f4636de51)
-- The TUI tells how long each tool call took, as the companion always has (4c98c7479)
+- Align TUI duration and ID badges to one right edge (7a8be54e8)
+- Show call duration on every TUI result, including results without cards (7ac776bec)
+- Update marker tables after removing the duration marker (f4636de51)
+- Show tool-call duration in the TUI, as in Companion (4c98c7479)
 - Keep the direct push in the magit push transient (issue #144) (ec6eaaa70)
-- Fix #145: paint a settled answer exactly once, in the TUI and the companion (c70b46431)
+- Fix #145: render completed answers once in TUI and Companion (c70b46431)
 - The gateway keeps "no AI provider" typed, so the TUI opens the dialog (eefc71c0a)
 
 #### com.blockether/vis-foundation-bridge
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 - feat(cli): teach every tool page its call line and required keys (4eb49268f)
 
 #### com.blockether/vis-foundation-search
 - refactor(loop): drop the native-tool leftovers from the one-tool wire (4647db9d9)
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 - feat(cli): teach every tool page its call line and required keys (4eb49268f)
 
 #### com.blockether/vis-foundation-voice
-- feat(tui): hold a spoken conversation instead of a speech toggle (3338a1d0c)
-- test(ci): own the espeak and pty-log preconditions the runners lack (886b34bac)
+- feat(tui): Replace the speech toggle with voice conversation controls (3338a1d0c)
+- test(ci): Provide missing espeak and pty-log test preconditions (886b34bac)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 - docs(voice): trim manifest and JNI notes, drop the finished plan (6ff7b063e)
 - feat(voice): carry every Piper voice at the highest level published (6183aff27)
-- fix(voice): hand sherpa a map the shipped binary can walk (24ea302b0)
+- fix(voice): pass sherpa a map compatible with the distributed native binary (24ea302b0)
 - feat(voice): recover from a failed engine without restarting Vis (736fcb865)
 - chore(lint): clear every ruff and reflection warning in the tree (f5ed3ed5d)
 - feat(voice): render THIRD_PARTY_MODELS.md from the model manifest (12608da39)
 - The ASR archive names its direction (b584a7fd7)
-- The voice assets are named for what they are (b1f159997)
-- Give pocket-tts a voice: three clips we make, and any clip anyone brings (faaad441f)
-- Own the pocket-tts ONNX export: vendor the MIT layer, drop the clone (9be9db401)
+- Use descriptive names for voice assets (b1f159997)
+- Add three generated pocket-tts reference clips and support user-provided clips (faaad441f)
+- Vendor the MIT pocket-tts ONNX export code instead of cloning it (9be9db401)
 - Export pocket-tts ourselves and publish it in the assets pack (dce9af64b)
-- Ship only what we make: assets-only pack, espeak from the system (2f9e2c1a2)
-- Ship the voice assets pack and add Ryan as the first opt-in voice (a939800c5)
-- Speak locally: a licence-carrying asset manifest, Piper voices, pocket-tts opt-in (19c5655a8)
+- Distribute first-party assets only and use system eSpeak (2f9e2c1a2)
+- Release the voice assets package with Ryan as the first optional voice (a939800c5)
+- Add local speech with licensed asset metadata, Piper voices and optional pocket-tts (19c5655a8)
 - voice: one registry for both directions, keyed by transcribe or synthesize (40c9d2464)
 - Fetch only this platform's sherpa-onnx native, and plan speech into voice.clj (4442a2df0)
 - voice: take upstream sherpa-onnx v1.13.5 and delete the ONNX Runtime pin (f99eaee39)
@@ -1497,7 +1497,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - refactor(loop): drop the native-tool leftovers from the one-tool wire (4647db9d9)
 - feat(run-tests): give a test run ten minutes in every pack (f01b6e98a)
 - feat(shell): raise the wait budget and cap to thirty minutes (04225aea2)
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 - balance: seat a repaired delimiter where the replaced text had it (08142bded)
 - format: the delimiter repair is add-only there too (5edf44475)
@@ -1507,19 +1507,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 #### com.blockether/vis-language-python
 - feat(run-tests): give a test run ten minutes in every pack (f01b6e98a)
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 
 #### com.blockether/vis-language-typescript-bun
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 
 #### com.blockether/vis-persistance-sqlite
-- fix(sandbox): address a fresh attachment in the block that made it (ed8777994)
+- fix(sandbox): Allow attachment references in the block that created them (ed8777994)
 - feat(gateway): reclaim the SQLite freelist once a fortnight (9e2d5c230)
 - fix(gateway): drop a retired column SQLite was refusing to drop (2c4e59ee1)
-- perf(gateway): stop storing what a reader can re-derive (77587a196)
-- fix(ci): make the test suite green on both runners (0403732e6)
+- perf(gateway): Stop persisting values that readers can derive (77587a196)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 - fix(persistance): bound the SQLite -wal sidecar with journal_size_limit (e0aa37591)
 - feat(gateway): keep the human's star on the gateway, not the device (da626a28c)
@@ -1527,114 +1527,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - cli: finish the vis -> vis-agent rename in text that tells you what to run (ec7ce2942)
 
 #### com.blockether/vis-provider-alibaba
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 - providers: add the Alibaba Coding Plan and Token Plan endpoints (25f540fb7)
 
 #### com.blockether/vis-provider-anthropic
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - Primitive math in the balancer's hot loops, and no boxed math left in the tree (7c40a20c3)
 
 #### com.blockether/vis-provider-github-copilot
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 - Primitive math in the balancer's hot loops, and no boxed math left in the tree (7c40a20c3)
 
 #### com.blockether/vis-provider-openai-codex
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 - Primitive math in the balancer's hot loops, and no boxed math left in the tree (7c40a20c3)
 - cli: finish the vis -> vis-agent rename in text that tells you what to run (ec7ce2942)
 
 #### com.blockether/vis-provider-opencode-go
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 
 #### com.blockether/vis-provider-openrouter
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 
 #### com.blockether/vis-provider-standard
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 
 #### com.blockether/vis-provider-zai
-- fix(ci): make the test suite green on both runners (0403732e6)
+- fix(ci): Fix the test suite on both runners (0403732e6)
 - docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
 
 
 
 ### Added
 - Credit every model the built-in voice service can install in `THIRD_PARTY_MODELS.md`, generated from the manifest
-- Choose where a reply is spoken — this device or the machine that answered — and in which voice, with the phone falling back to its own voice when the machine cannot speak
-- Settings reports whether this machine can listen and speak: how far a model download has got, which engine is answering, why one is missing, and one button that retries
-- `vis-agent speech say "<text>"` and `vis-agent speech transcribe <clip.wav>` — the two one-line checks that a machine's voice works
-- LJ (en-US), a fourth voice Vis fetches by itself, trained from scratch on public-domain recordings
-- A session that stopped to ask you something says so where you are looking: the fleet list flags it `INPUT NEEDED` and floats it to the top, the terminal tints that tab and its row amber, and the phone gets the notification
-- Hold a spoken conversation in the terminal, as on the phone: `C-x b` arms it for the tab you are on, every answer that lands there is read aloud, and what you dictate sends itself — reaching for the microphone silences whatever is being spoken
-- The app icon says how many notifications are waiting: an extension counts them on the phone as each alert arrives, so the number is right whichever of your machines sent it, and reading a session takes its alerts back off the icon
-- Every native runtime records the commit it was built from, so `vis-agent runtime` can date an installed binary — and call it stale against the source beside it — without running the binary at all
-- A beta track: `vis-agent update --track beta` follows a rolling build cut from a green `main` commit every few hours, `--track stable` returns to releases, and an update never changes track on its own
+- Select reply speech on this device or the responding machine and choose a voice. Fall back to device speech when remote speech is unavailable.
+- Show listening and speech capabilities in machine settings, including model download progress, selected engine, missing-component errors and retry controls.
+- Add vis-agent speech say and speech transcribe commands for local synthesis and transcription checks.
+- Add LJ (en-US), an automatically downloaded voice trained from scratch on public-domain recordings.
+- Mark sessions waiting for input as INPUT NEEDED and sort them first. Highlight their TUI tabs and rows in amber and send a phone notification.
+- Add TUI voice conversation mode with C-x b for the current tab. Speak new replies and automatically send dictated input; activating the microphone stops playback.
+- Count pending notifications across machines in the app badge. Reading a session removes its alerts from that count.
+- Record the source commit in native runtimes so vis-agent runtime can identify build age and source differences without executing the binary.
+- Add the beta update track with rolling builds from passing main commits. --track stable returns to releases; updates never switch tracks implicitly.
 
 ### Changed
 - No release depends on a machine of ours being awake: the macOS ARM64 asset builds on GitHub's free hosted Apple-silicon runner, no workflow names a self-hosted label any more, and the builder shrinks the build to fit that machine instead of asking for a heap it does not have
 - Commits are `type(scope): summary` with a body of at most six WHY lines and a mandatory `Vis-Session: <uuid>` trailer
-- `/v1/voice/model` and `/v1/speech/model` hang off the machine, beside its voices, instead of off a session
-- Cori speaks from the high weights her author published: a quality level is a separate training run, not a setting, so every voice Vis carries is the best level published for that speaker
-- Whether replies are spoken is a conversation MODE the surface arms, not a machine-wide `speech` setting: the old feature toggle could not say “for this conversation”, so it is gone and a machine speaks whenever its engine is asked to
+- Move /v1/voice/model and /v1/speech/model from session scope to machine scope.
+- Use each Piper speaker's highest published quality model, including Cori high. Quality levels are separately trained models, not runtime settings.
+- Make reply speech a per-conversation client mode rather than a machine-wide feature toggle. The machine synthesizes speech when requested.
 
 ### Fixed
-- The comment composer in an opened document sits above the keyboard, on all three surfaces: the document was drawn over the whole window instead of into the shell the keyboard shrinks, so on a phone the field a reader had just tapped went under the keys and the note could not be typed; it now shares the app's pinned layer, so it rides the keyboard up — and the picked passage says it is picked by its own paper alone: the coloured rail down its edge and the quotation of that same text above the input said it twice more, and are gone
-- Vis opens on its own mark: for the moment before the app paints, both phones showed Capacitor's blue logo — the launch screen is scaffolding, rewritten on every build — and they now show the Vis eye centred on the same cream the app opens on, so the first frame and the second are one picture; on iOS it is declared to the system rather than drawn from a storyboard, because a large enough screen refuses to compose that storyboard at all (the launch image it bakes has a size budget) and launched the app on black instead
-- An answer arriving on Android is announced like an answer: with no channel of its own, Firebase filed every alert under its fallback channel, `Miscellaneous`, which the phone keeps quiet and which tells nobody in Settings what it is for; alerts now arrive on an `Answers` channel the app creates on launch, so they light the screen up and can be tuned — or silenced — by name
-- A picture pasted through a transparency mask in the sandbox keeps the colours it went in with: Pillow there read a mask's BLUE channel instead of its alpha band, so `im.paste(im, box, im)` — the usual way a transparent PNG is dropped onto a canvas — blended every pixel by its own blueness, painting the same gold as cream on a white background and as brown on a dark one, which quietly falsified every before/after picture built that way; masks now follow Pillow's own rule (alpha band, gray value, or a boolean bitmap), a mask mode Pillow cannot read is refused rather than blended, and `Image.new('LA', size, (gray, alpha))` fills instead of failing
-- The Vis eye on the Android home screen is the one iOS shows: every tracked launcher bitmap had been flattened onto white at about a third opacity and then kept that same coverage in its alpha, so the mark faded a second time over the icon's white layer and arrived as a pale ghost — a grey pupil and cream rays where the phone should paint navy and gold; the whole set is redrawn from the iOS master, so both platforms now carry pixel-for-pixel the same artwork
-- An Android notification carries the Vis eye instead of the system's stock bell: Firebase refuses an adaptive icon in the status bar and silently falls back, so the app now hands it a monochrome silhouette of the mark, tinted with the brand teal
-- The Android icon goes quiet again once you have read everything: each alert now carries its session as the notification's TAG, which is the only thing an Android notification remembers about itself — the payload is gone by the time the app can list what was delivered — so reading a session takes its alert out of the tray and the launcher's dot goes out with the last one, instead of staying lit until the tray is swiped by hand
-- A big session on a phone types and scrolls at speed again: a keystroke no longer re-runs the sessions list waiting behind the transcript, that list asks the fleet for nothing while it is parked, marking your place costs one store write per gesture instead of one per frame, and a streaming answer redraws only the step it is writing
-- A session scrolls at full speed however far back it goes: the phone lays out and paints only the turns it is showing, each one skipped at the height it was measured at, so a fast flick through 24 turns runs at 17 ms a frame instead of 104 ms and nothing shifts under your thumb
-- Tapping the transcript no longer throws you through the session: taking the keyboard down — which is what a tap outside the composer does — leaves a reader parked in history on the exact line they were reading, instead of moving them by the keyboard's whole height
-- Older turns arrive four times faster when you pull them in: filling a page of history grew two segments a frame because the ramp priced its work with a number nothing ever wrote, and each frame it paid the same fixed cost of a render pass; it now starts at sixteen and triples while the frames stay under target, so twenty thousand nodes land in 1.8 s instead of 6.7 s, already syntax-coloured, with no bare paper in between
-- A live session keeps bringing you the newest step once you have reached for it: arriving at the end is now judged against the end you were reaching for, not one that ran away while your thumb was travelling, so a transcript that grows as you scroll stops handing you back to the middle of the running turn; and a reader parked in history is no longer nudged by the turn being written, because a streaming turn stopped dropping the oldest step it had already put on screen
-- The sessions list holds still while a fleet loads: with two gateways paired, every machine arrives on its own round trip and a long history arrives a page at a time, and each of those landings used to push the machine you were reading down the glass; the row under the top edge now stays under it whichever machine answers next
-- Voice no longer needs Vis restarted to work again: an engine that failed to load is tried on the next use, a failed model download can be retried, and a recording that threw never blocks the next one
-- The installed binary can speak and listen at all — sherpa reads its own Java API through JNI by name, so the native image now keeps every one of those names: the class it calls back into while it speaks, and every step of the walk it makes through the generation options
-- A command reads as its answer in the app: `/reload` and `!` turns no longer paint the command itself as a Python program with a result card under it
+- Keep document comment composers above the keyboard in all clients by using the keyboard-resized app layout. Indicate selected passages with background color only; remove the duplicate side marker and quotation.
+- Replace Capacitor launch screens with the Vis logo on the app background. Use iOS system launch-screen configuration rather than a storyboard to avoid image-size failures on large screens.
+- Create an Android Answers notification channel at launch rather than using Firebase's Miscellaneous fallback, allowing users to configure answer alerts separately.
+- Use mask alpha, grayscale or bitmap values in sandbox Pillow paste operations rather than the blue channel. Reject unsupported mask modes and support LA image fills.
+- Regenerate Android launcher images from the iOS source to match its colors and alpha, removing the double-applied transparency.
+- Use a monochrome Vis notification icon with teal tint on Android instead of Firebase's fallback bell.
+- Tag Android notifications by session so reading a session removes its delivered alerts and clears the launcher dot after the last alert.
+- Reduce Companion typing and scrolling work: hidden session lists do not rerender or poll, reading position persists once per gesture and streaming updates rerender only the active step.
+- Render only visible session turns and preserve measured heights for skipped content. A 24-turn scrolling test improves from 104 ms to 17 ms per frame without shifting content.
+- Preserve the exact historical reading position when tapping the transcript dismisses the keyboard.
+- Start history rendering at sixteen segments and triple the batch while frames remain within budget. A 20,000-node history loads with syntax highlighting in 1.8 seconds rather than 6.7 seconds.
+- Resume following when readers reach the end they targeted, even if a live turn grows during scrolling. Preserve earlier rendered steps so readers in history are not displaced.
+- Preserve the top visible session row while machine responses and history pages arrive independently.
+- Retry failed speech-engine loads on the next use and allow model-download retries. Failed recordings no longer block later recordings.
+- Register sherpa JNI callback and generation-option classes in native images so installed binaries can synthesize and transcribe speech.
+- Render /reload and shell-command turns as their responses rather than as Python source with a result card.
 - A project you fold stays folded: the sessions list opens the project at the top of a machine and leaves every other one as you last left it, through opening a session, coming back, and relaunching the app — a search still shows what it matched, fold or no fold
-- Removing a provider, forgetting a machine or deleting a session now asks inside its own red box: the sentence saying what it costs stands in that box with the two answers, instead of hanging under the row above between the same hairlines two calm rows share
-- An opened note saves from the band that names it: `Save` is a cell beside the ✕, where every other dialog verb in this app already stands, and the band reports which version the note just became — the docked strip under the comments is gone and the note is 53px taller for it
-- Opening the sessions list no longer drags the whole history down behind it: a poll asks for the first page only, and when the gateway reports the same ordering it keeps the rows it already holds, so a machine with 1192 sessions costs one request every ten seconds instead of twelve — and the list stops flickering, because a poll that found nothing new no longer rebuilds the fleet under the filter, the sort and your place in it
-- A session you come back to opens where you stopped reading: your place is now taken as you LEAVE and honoured against the transcript once it has finished painting, and the history it needs is pulled back in until it fits — the phone used to answer with a screen it had not painted a row of yet, throw the place away on the opening's own scrolls, and rebuild the same eight-turn window whatever you had loaded, so a live session you had read 91 349 px back into reopened at its very FIRST turn, every time; a place further back than this visit can reach now lands you on the newest turn, following it again, instead of parking you at the top for good
-- A grayscale picture with transparency counts its channels the way Pillow does in the sandbox: `LA` was stored and reported as a four-channel image, so one pixel came back as `(gray, gray, gray, alpha)`, `tobytes` wrote four bytes where Pillow writes two, `split()` handed back four bands and `histogram()` twice its length — while the mode itself already answered two, so anything that trusted the count read the transparency as a colour; `LA` is two bands everywhere now, `Image.merge` refuses a band count the mode does not have instead of returning a garbled pixel, and `putalpha` on a gray image leaves it gray with an alpha band instead of turning it into full colour
-- Colours in the sandbox's Pillow land where Pillow puts them: a colour was resolved without ever looking at the image's mode, so a number filled a colour picture with gray instead of the colour Pillow reads out of it, a colour name was never turned into a gray level on a grayscale picture, and a new transparent canvas started as opaque black — every drawing built on one carried an invisible black floor. Drawing with a see-through ink blended it onto whatever was underneath instead of writing it down, so the usual way of punching a transparent hole did nothing at all, and a black-and-white picture handed out one byte per pixel where Pillow packs eight pixels into one, which made its bytes four times too long and unreadable by anything expecting them. Pinned against real Pillow 12.1.1: 216 measured cases, all agreeing.
+- Place destructive-action explanations and confirmation choices inside one error-styled container for provider, machine and session removal.
+- Move document Save beside Close in the header and report the saved revision there. Remove the lower save strip, adding 53 px of document space.
+- Poll only the first session-list page and retain existing rows when ordering is unchanged. For 1,192 sessions, polling decreases from twelve requests to one every ten seconds without rebuilding filters, sorting or scroll position.
+- Save reading position on session exit and restore it after rendering enough history. Ignore opening-time scroll events; if the saved position is unavailable, open the newest turn and resume following.
+- Represent LA images as two channels consistently in pixels, bytes, split and histograms. Reject invalid merge band counts and preserve grayscale when adding alpha.
+- Resolve sandbox Pillow colors according to image mode, initialize transparent images correctly, replace pixels when drawing with alpha and pack monochrome bitmap bytes. Verify behavior against Pillow 12.1.1 in 216 cases.
 
 ## [v0.1.38] - 2026-08-14
 
 ### Changed
 - Release v0.1.38
-- A row verb sends its drawer home instead of asking for an animation
-- Pin svar 0.7.117 so GLM-5.3 is routable and :reasoning speaks GLM's own rungs
+- Close row action drawers immediately instead of animating them
+- Pin svar 0.7.117 to support GLM-5.3 routing and GLM reasoning levels
 - Restore a session's helpers through the rewrite that defined them
-- Address rows are a list, and each one's verb is in its slide
-- Forgetting a machine takes this device off it
+- List addresses with actions in each row's swipe drawer
+- Unregister this device when forgetting a machine
 - Record Companion TestFlight build 4159 in the app changelog
 - The slide is back on both lists, and it stops closing the row it just opened
-- Notifications are per machine, and Disconnect always lands
+- Make notifications machine-specific and ensure Disconnect completes
 - Cross-validate the peer plan against the runtime and fix what it cited wrong
 - Record Companion TestFlight build 4154 in the app changelog
-- The core prompt teaches fold_session(key, gist)
-- Restore the plan for letting a session speak to its peers
+- Document fold_session(key, gist) in the core prompt
+- Restore the plan for communication between peer sessions
 - Stop patch growing a blank line the caller never asked for
 - fold_session takes a string range grammar
-- Every row wears its own verbs, and the machines band is one line
+- Show row actions directly and use a single-line Machines header
 - TUI: write a plan's name once in the limits summary
 - Pin svar 0.7.116 so a declined retry states its reason
 - Native release: name the precondition the macOS runner override needs
 - OpenCode Go: report live 5h/7d/30d quotas from /zen/go/v1/usage
 - Make patch take one file's whole batch of anchored edits
-- A machine's verbs are words in the row the settings column is reading
+- Show machine actions as text in the associated settings row
 - Carry svar's stream-finalization evidence into the fatal provider log
 - The composer height test declares its observer field instead of a constructor parameter property
-- The composer refits its height when its own box narrows, not only when you type
+- Recalculate composer height when its width changes, not only on typing
 - The write that records a turn's outcome survives the payload it was given
 - release: update release notes for v0.1.37
 
@@ -1642,29 +1642,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 #### com.blockether/vis
 - Release v0.1.38 (e686fb2d3)
-- A row verb sends its drawer home instead of asking for an animation (e56eafbee)
-- Pin svar 0.7.117 so GLM-5.3 is routable and :reasoning speaks GLM's own rungs (11ebcf482)
+- Close row action drawers immediately instead of animating them (e56eafbee)
+- Pin svar 0.7.117 to support GLM-5.3 routing and GLM reasoning levels (11ebcf482)
 - Restore a session's helpers through the rewrite that defined them (92ca7349b)
-- Address rows are a list, and each one's verb is in its slide (0c8997098)
-- Forgetting a machine takes this device off it (c4a37c91c)
+- List addresses with actions in each row's swipe drawer (0c8997098)
+- Unregister this device when forgetting a machine (c4a37c91c)
 - Record Companion TestFlight build 4159 in the app changelog (91668ea90)
 - The slide is back on both lists, and it stops closing the row it just opened (09ad53d9c)
-- Notifications are per machine, and Disconnect always lands (c5487390d)
+- Make notifications machine-specific and ensure Disconnect completes (c5487390d)
 - Cross-validate the peer plan against the runtime and fix what it cited wrong (b3130f92a)
 - Record Companion TestFlight build 4154 in the app changelog (4c32f0ea6)
-- The core prompt teaches fold_session(key, gist) (eefd08947)
-- Restore the plan for letting a session speak to its peers (a80a5a898)
+- Document fold_session(key, gist) in the core prompt (eefd08947)
+- Restore the plan for communication between peer sessions (a80a5a898)
 - Stop patch growing a blank line the caller never asked for (40c9ec904)
 - fold_session takes a string range grammar (57d09f967)
-- Every row wears its own verbs, and the machines band is one line (5a718178b)
+- Show row actions directly and use a single-line Machines header (5a718178b)
 - TUI: write a plan's name once in the limits summary (6be874415)
 - Pin svar 0.7.116 so a declined retry states its reason (125d0e4d0)
 - Native release: name the precondition the macOS runner override needs (28aca9751)
 - Make patch take one file's whole batch of anchored edits (22b36784f)
-- A machine's verbs are words in the row the settings column is reading (02aae91a3)
+- Show machine actions as text in the associated settings row (02aae91a3)
 - Carry svar's stream-finalization evidence into the fatal provider log (b4a7ae7b6)
 - The composer height test declares its observer field instead of a constructor parameter property (7c43ff0c7)
-- The composer refits its height when its own box narrows, not only when you type (ca6a5aa81)
+- Recalculate composer height when its width changes, not only on typing (ca6a5aa81)
 - The write that records a turn's outcome survives the payload it was given (b824b706d)
 - release: update release notes for v0.1.37 (92c7b024b)
 
@@ -1683,139 +1683,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 
 ### Changed
-- Every list row wears its own verbs at its trailing edge — no swipe, no `⋯`, no strip of words under the row
-- The machines band is one line: its name and `Add a machine`, with no sentence about tapping and no address it already lists
+- Show list-row actions at the trailing edge without swipe drawers, overflow menus or a separate action strip.
+- Limit the Machines header to its title and Add a machine action, removing repeated addresses and instructions.
 - `fold_session(key, gist)` takes a key and a gist and nothing else: the key is a string — `"t2/i5"` one step, `"t2"` a whole turn, `"t2/i1-i9"` a range, `"-t2/i9"` everything through it, `"t2/i5-"` everything since it, commas union several
 
 ### Fixed
-- A machine you only paired never wakes this device until that machine's own Connect is pressed — an unanswered switch counted as yes, so pairing a second machine handed it this device's push token on the very next sweep and its panel opened already connected
-- Disconnect lands on a machine that knows this device by its relay grant: it no longer gives up when this run holds no OS push token, and one refused revocation no longer strands the other name the machine is holding
+- Require explicit Connect before registering notifications for a newly paired machine. Unanswered switches no longer count as consent.
+- Revoke notification registrations identified by relay grants even when no OS token is available. A failed revocation does not prevent revoking the other registration.
 - Forgetting a machine takes this device off it — the machine kept the device row and went on notifying, and the forget itself was what made that permanent, since a machine that is no longer paired is never swept again; the revocation it is owed is now kept and retried until that machine accepts it
 
 ## [v0.1.37] - 2026-08-14
 
 ### Changed
 - Release v0.1.37
-- The notifications row offers the verb, not the state it is already in
-- A turn settles only itself, keeps the answer it just painted, and refetches a short transcript
+- Label the notification action rather than repeating the current state
+- Complete only the matching turn, preserve its rendered answer and refetch a short transcript
 
 ### Package changes
 
 #### com.blockether/vis
 - Release v0.1.37 (fbca3dd3a)
-- The notifications row offers the verb, not the state it is already in (22f5e2b7a)
-- A turn settles only itself, keeps the answer it just painted, and refetches a short transcript (b20892310)
+- Label the notification action rather than repeating the current state (22f5e2b7a)
+- Complete only the matching turn, preserve its rendered answer and refetch a short transcript (b20892310)
 
 
 
 ### Added
-- One `C-x g` status buffer for EVERY repository a session works on: the project, every Git
-  repository nested below it (a mega-repo's `repositories/` clones) and every read-write
-  repository declared in `vis.yml`'s `workspace.filesystem` catalog. Each earns a header carrying
-  its branch and dirty counts — a clean one folded to that single line — and every verb (`s`/`u`,
-  `S`/`U`, `c`, `P`, `F`, `b`, `z`) acts on the repository under the cursor. Nothing caps how many
-  are shown; only DISCOVERY is bounded, and a walk that stops early says `scan truncated` in the
-  title instead of quietly listing fewer.
-- `jail.environment` — one MODE, not a list, over the operator's ambient environment in a
-  confined child: `declared` (the default: only the project's own `.env` + `environment:` plus a
-  non-secret basics allowlist) or `inherit` (the whole ambient environment, secrets included,
-  with filesystem, network, exec and Mach confinement untouched). The escape hatch for a
-  toolchain that needs a pile of host variables instead of naming each one. `LD_*`, `DYLD_*`,
-  `PERL*`, `BASH_ENV` and friends are refused under `inherit` too — that scrub protects the
-  jail's own installation, not the child.
-- Trim to view in the Companion image viewer: zoom or pan to a detail and `Trim` makes that
-  region the picture — cut at the ORIGINAL resolution, with any strokes flattened into it — so
-  the pen, Copy, Share and Use edit all act on the detail. `Undo trim` brings the whole picture
-  back.
+- The C-x g status buffer lists the project, nested Git repositories and read-write repositories declared in workspace.filesystem. Each repository has a branch/count header and independent actions under the cursor. Clean repositories collapse to their header. Display count is unlimited; bounded discovery reports scan truncated when incomplete.
+- `jail.environment` selects `declared` or `inherit` for child environments. The default includes project dotenv values, environment declarations and a non-secret basic allowlist. Inherit includes ambient values, including secrets, without changing other confinement. Variables that could interfere with jail initialization remain rejected.
+- Add Trim to the Companion image viewer. Crop the visible region at original resolution with annotations flattened into it; drawing, Copy, Share and Use edit then use the crop. Undo trim restores the full image.
 
 ### Changed
-- The Companion's Notifications panel answers ONE question: is this device connected to this
-  machine. It used to list every push token the gateway holds — one iPhone reinstalled three times
-  stood in it four times, under four masked tokens and two APNs environments — while the only state
-  a reader wants was left to the verb printed on a button. One row now states it (`Connected` /
-  `Not connected`, naming the machine in the sentence, `Checking…` before the first answer) and one
-  `Switch` is both verbs, in the same place either way; native APNs/FCM and Web Push ask it with the
-  same row. A permission turned off in the OS is never reported as connected, and on iOS the blocked
-  state offers the door to system Settings.
-- Copying a session id — the TUI header chip and the Companion chip beside the title — now puts
-  `vis_session_id#<uuid>` on the clipboard instead of a bare UUID. The marker says WHAT the id
-  addresses, so whoever it is pasted to recognises a Vis session, and `read_session` /
-  `get_session` accept the marked form verbatim (the introspection prompt names the format).
-- The Companion composer has ONE microphone. Tap it and it acts in the mode you are in; press and
-  hold it for 450ms and the mode flips — dictation writes into the box, voice conversation sends
-  what you said and reads the answer aloud. The disclosure beside it, the two-item mode menu, the
-  rule that welded them and the separate leave button are gone: the mode was always one piece of
-  state, and holding is now both the way in and the way out (the exit runs the full teardown —
-  lease, queued utterance, speech, an in-flight recording and the audio route). Voice conversation
-  wears its own drawn mark and the accent square instead of a `V` badge, the accessible name spells
-  the gesture out in both modes, and a pointer that cannot hold gets the same switch from a
-  right-click or Shift+Enter. Entering the conversation now only ARMS it; the next tap is what
-  starts talking.
-- The Vis JVM heap ceiling is an explicit 5 GiB instead of a share of host RAM. `-XX:MaxRAMPercentage=75.0`
-  scaled with the machine — ~27 GiB on a 48 GB host — so a gateway running for hours sat at ~5 GB resident
-  with a 3.2 GiB live set and shrank nothing: the tight free ratios beside it only uncommit once the heap
-  looks full, and the engine's memory-pressure gates (heap watermark 85%, heap budget 2 GB, RSS budget
-  3 GB) were either unreachable or shedding idle sessions that were not what held the memory. `-Xmx5g` is
-  the same ceiling on every machine, so the periodic concurrent GC has something to give back and the
-  pressure gates sit at a meaningful fraction of the cap.
-- One Android release lands on EVERY Play tester track. `release:android:store` wrote a single
-  `--track`, so the channels drifted apart — internal served 0.1.21 (2861) while beta already
-  served 0.1.35 (4075), and lining them up again was a second, manual promote afterwards.
-  `--track` now takes a LIST (comma-separated, or the flag repeated) and defaults to
-  `internal,alpha,beta`, all assigned inside ONE transactional Play edit: either every track gets
-  the build or none does, so no channel can be left a version behind. `production` is never
-  implied, and a staged `--rollout` — which Play defines per track — refuses more than one track
-  BEFORE the build rather than after a signed .aab.
-- One iOS release reaches EVERY TestFlight audience, the same rule Android just got. An upload
-  reaches only the internal groups by itself, and the public-link group had to be asked for with
-  `--public` — so the public link served build 4042 while the team group already had 4075 and
-  every Play tester track served 4090. `release:ios:store` now fans out by default (internal
-  groups PLUS the public group after Beta App Review) and `--audience internal` keeps a build
-  inside the team; the audience is planned BEFORE the archive, so an unknown one costs a second
-  instead of a signed .ipa. The product release workflow no longer narrows Android to `beta`
-  alone either: a `vX.Y.Z` tag ships one build to every tester channel of both stores.
-- `all` — every tester channel each STORE has, not the list this repo happens to know. The
-  fan-out was still three track names frozen in the release script and repeated in two workflow
-  files, so a closed testing track created in the Play Console could never be released to
-  (`--track qa` was refused as unknown) and an internal TestFlight group created WITHOUT "access
-  to all builds" — the one kind Apple does not hand new builds to — was skipped on every run.
-  `--track all` now asks Play which tracks this listing HAS and writes them all in the one edit
-  (`production` still never implied, a typo still refused against the real names, before the
-  build), `--audience all` links every external group and every internal group that needs the
-  build assigned, and both GitHub workflows pass `all` — so a channel added in a console is
-  served by the next release with no change to this repository.
-- `run_tests` selects by `paths` and nothing else, in every language. The `ns` / `namespace` /
-  `namespaces` selector is gone: name a test file, a directory, or the SOURCE file whose `*-test`
-  namespace should run, and the clojure pack does that translation itself (a `*_test.clj` file is
-  read for the namespace it declares, a source file maps to its `*-test` namespace, a directory is
-  walked for both). Two vocabularies for one selection meant the same run could be named two ways
-  and only one of them reached a pack; the old spellings are refused by name rather than silently
-  running the WHOLE suite.
-- A `paths` entry may name ONE TEST: `<path>::<test-name>` — pytest's own node-id grammar, now the
-  single way to say it in every pack. The name half translates the way the file half already did
-  (`src/a/core.clj::adds` runs `adds-test` in `com.example.core-test`, just as `core.clj` runs
-  `core-test`), a namespace-less `::adds-test` finds that var wherever it lives, and each id is
-  paired with its OWN file instead of cross-producting names over namespaces. Clojure's `only` and
-  bun's `filter` are deleted — a second key that narrowed a run could disagree with the path beside
-  it, and only one pack understood each spelling. Python passes node ids straight to pytest and
-  turns a pathless `::name` into `-k`; the hermetic GraalPy backend runs whole files, so it REFUSES
-  a node id (naming `{"environment": "project"}`) instead of quietly running the rest of the file.
-- Every language pack now emits the `run_tests` result vocabulary ITSELF — `pass`, `fail`,
-  `errored`, `command`, `is_pass`. The surface's translation table (`passed`/`failed` -> `pass`/
-  `fail`, `ok` -> `is_pass`, an argv `cmd` -> `command`) is deleted: it guessed each runner's
-  arithmetic from outside the pack that knew it (pytest's `failed` and `errors` are DISJOINT,
-  lazytest's are not), and a fact reached a result under two spellings. Python's `runner` /
-  `interpreter` call aliases are gone too: a CALL says `environment`, config says `python.runner`.
-- The session introspection surface reads as VERBS instead of storage nouns: `session_state` is
-  now `read_session`, `sessions` is `list_sessions`, `session_fold` is `fold_session`, and the
-  read that was missing between them is `get_session(target)` — ONE descriptor row (identity,
-  turn count, last activity, provider/model, the last turn) so asking what a session IS no longer
-  costs a whole transcript. `session_state` was the name of a DB TABLE, and a bare plural noun is
-  not a verb. `list_sessions` drops the `channel` filter for `search=`, which is the SAME ranked
-  answer the TUI and the companion app paint: the server ranks title (0), request (1), reply (2)
-  and thinking (3), and each matched row carries `rank`,
-  `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` plus the request/reply snippet
-  windows. There are no aliases — the old names are gone.
+- Replace the notification token list with a device-to-machine connection row and switch. Show Checking, Connected or Not connected consistently for APNs, FCM and Web Push. OS-disabled permissions are not reported as connected; iOS offers a system Settings link.
+- Copy session IDs as `vis_session_id#<uuid>` from TUI and Companion. `read_session` and `get_session` accept this marked form directly; introspection instructions describe it.
+- Use one Companion microphone control: tap to activate the current mode and hold for 450 ms to switch between dictation and voice conversation. Right-click and Shift+Enter also switch modes. Remove separate mode and exit controls. Exiting releases audio, recordings, speech, queued utterances and leases. Entering conversation mode enables it; the next tap starts recording. Icons and accessible names identify the mode and gesture.
+- Set the JVM maximum heap to `-Xmx5g` instead of 75% of host RAM. This gives concurrent GC and memory-pressure thresholds a consistent limit across machines rather than allowing a roughly 27 GiB maximum on a 48 GB host.
+- Allow comma-separated or repeated Android --track values, defaulting to internal,alpha,beta. Assign the build to all selected tracks in one transactional Play edit. Production remains explicit; reject multi-track staged rollouts before building.
+- Distribute iOS releases to internal TestFlight groups and the public group after Beta App Review by default. --audience internal restricts distribution to the team. Validate the audience before archiving. Product release tags target tester channels in both stores rather than Android beta alone.
+- Discover tester channels from the stores with --track all and --audience all. Play updates all discovered non-production tracks in one edit and validates names before building. TestFlight assigns external groups and internal groups that need explicit assignment. Both GitHub workflows use all.
+- Use paths to select tests in every language. Clojure maps test files, source files and directories to test namespaces. Remove ns, namespace and namespaces selectors and explicitly reject the old options rather than running the full suite.
+- Select individual tests with `<path>::<test-name>`. Keep each name paired with its file; Clojure maps source names to test namespaces and accepts pathless var names. Remove Clojure only and Bun filter options. Python forwards node IDs to pytest and uses -k for pathless names; the whole-file GraalPy runner rejects individual-test selection and recommends the project environment.
+- Make language packs return pass, fail, errored, command and is_pass directly. Remove shared result-name translation so each pack applies its runner's count semantics. Python call options use environment; configuration uses python.runner. Remove runner/interpreter call aliases.
+- Rename session_state to read_session, sessions to list_sessions and session_fold to fold_session, without aliases. Add get_session for one descriptor without a transcript. Replace list_sessions' channel filter with search, using the same title/request/reply/thinking ranking as TUI and Companion. Results include rank, match flags and request/reply snippets.
 - Android voice capture now opens a connected Bluetooth headset's HFP/SCO microphone before
   WebView starts recording, then restores the normal audio route when recording ends.
 - Voice-conversation playback on Android now uses the system text-to-speech engine when WebView
@@ -1825,29 +1734,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Prepare `vis-foundation-bridge` for Bridge 0.3: migrate the project profile and policy to the
   reduced YAML schema, recognize every 0.3 profile filename, preserve exact validation paths, and
   keep malformed Bridge configuration from crashing ordinary filesystem access.
-- The native release build is verifiable without spending a tag. `Native Release` dispatched
-  from a BRANCH is now a dry run — it builds the image, stages the bundle and runs every smoke
-  test and the native suite, and attaches nothing; only a `v*` ref publishes. It used to refuse
-  a non-tag dispatch outright, so the only way to learn whether a release would build was to cut
-  the tag and watch.
-- The macOS arm64 release build runs on GITHUB's hosted runner and on nobody's laptop. The
-  self-hosted Apple-silicon runner is deregistered, its launchd service uninstalled and its
-  working directory deleted; the `macos` job of `.github/workflows/native-release.yml` now
-  defaults to the free hosted `macos-26` — free and unlimited on public repositories, because
-  only LARGER runners are billed and this workflow uses none. That builder is 3 cores / 7 GiB
-  against a ~13.7 GiB points-to live set, so every heap that fits in RAM is a known OOM: the job
-  pins `-J-Xmx14g -J-Xms2g -J-XX:+UseParallelGC` and lets macOS dynamic swap back it, and its
-  first step prints cores, RAM, free disk and swap so a failure is a NUMBER on the log. The
-  repository variable `VIS_MACOS_ARM64_RUNNER` survives only as an OPTIONAL override naming a
-  bigger CLOUD Apple-silicon label; by hand it is still `bin/release-native --tag vX.Y.Z
-  --upload` on any 32 GB+ Mac. The job also caches dependencies and smoke-tests the gateway,
-  because a hosted runner is ephemeral.
-- A shell result has NO `stderr` field (issue #137). Every command runs under a real pty, where
-  stdout and stderr are physically ONE stream, so `stderr` could only ever answer `nil` — a
-  caller reading it to diagnose a failure got nothing while the message sat in `stdout`. The
-  internal blocking runner merges the two streams the same way, so one shape and one reading of
-  "the bytes" hold everywhere; `stderr_omitted_chars` and the card's STDERR section are gone with
-  it.
+- Allow branch-dispatched Native Release dry runs to build the image, stage the bundle and run smoke/native tests without publishing. Only v* refs publish artifacts.
+- Move macOS arm64 native releases to GitHub-hosted macos-26 and remove the self-hosted runner. Use a 14 GiB maximum / 2 GiB initial heap with ParallelGC and swap for the 3-core, 7 GiB runner; log resource measurements. Keep VIS_MACOS_ARM64_RUNNER as an optional hosted-runner override. Cache dependencies and smoke-test the gateway; manual release builds remain available on Macs with at least 32 GB RAM.
+- Remove shell stderr and stderr_omitted_chars fields and the STDERR card section (issue #137). Pty commands and the internal blocking runner merge stdout and stderr into one output stream.
 - The agent prompt and the shell docstrings spell the keystroke method `sh.type("y")`, never a
   bare `sh.type()` (issue #137): it SENDS text and its argument is required, so the old spelling
   among the status accessors raised a `TypeError` for anyone who followed it.
@@ -1855,178 +1744,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   repo *sandbox* now names only the in-process GraalPy sandbox, and *jail* names OS confinement —
   the same split the config keys and `session["access"]` already use. Every in-tree link moved
   with it.
-- `grep` and `struct_nodes` take ONE options map and nothing else — `grep({"query": q, "paths":
-  ["src"]})`, `struct_nodes({"path": p, "line": n})` — the same shape `struct_index` and
-  `struct_patch` already had, and the shape Python kwargs (`grep(query=q, paths=["src"])`) fold
-  into. The positional forms are gone: `grep("q")`, `grep("q", {opts})` and `struct_nodes("p")`
-  made the SECOND argument mean options, so the obvious `grep(["a", "b"], ["src", "tools"])` —
-  needles, then scopes — failed on argument shape instead of searching. The refusal now names the
-  one canonical call.
-- `/<name>` NAMES a skill instead of pasting it. The expansion is one sentence — use this skill,
-  read it with `doc("name")` unless its `SKILL.md` is already in the conversation — plus your
-  task, the owning project of a nested skill, and the paths of its bundled resources. Whether the
-  instructions still have to be fetched is the model's call, since only the model can see whether
-  that text is still in front of it. Every skill surface is now stateless: two `/<name>`s expand
-  identically and nothing is recorded between them.
-- The workspace's `.env` / `.env.local` are now loaded BY DEFAULT, whole, with nothing declared,
-  and reach every child Vis spawns — `shell(...)` (jailed or not), managed REPLs, test runners and
-  Python extensions. Resolution order everywhere is `environment:` declaration, then `.env`, then
-  the environment that started Vis. `environment:` is now only for what a dotenv file cannot say:
-  a rename, a keychain item, a helper command, or re-admitting an ambient variable to a confined
-  child.
-- The jail no longer withholds the project's `.env` from a confined child. The child was granted
-  the workspace and can read that file itself, so dropping the values confined nothing; what
-  `jail.enabled` draws a line around is the OPERATOR's ambient environment, which is still
-  deny-by-default. `LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV` and friends are refused from a project
-  `.env` exactly as they are from a declaration.
+- Require one options map for grep and struct_nodes, also accepting equivalent keyword arguments. Remove positional forms and report the canonical call shape when rejected.
+- Expand /<name> into a skill reference, task, project and resource paths rather than the full skill text. The model reads doc(name) if the instructions are not already present. Repeated skill expansion is stateless.
+- Load workspace .env and .env.local by default for shells, managed REPLs, tests and Python extensions. Resolve environment declarations before dotenv and startup environment values. Use declarations for renames, keychain items, helper commands and explicit ambient access.
+- Include project dotenv values in confined child environments while keeping ambient operator variables denied by default. Reject unsafe process-initialization variables from dotenv and declarations alike.
 
-- `jail` is the ONLY word for confinement, in config and in the model's own session map.
-  The read-only `session["access"]` view reports `is_jailed` instead of `sandboxed`, and
-  `session["workspace"]` reports `isolated` (a backend workspace copy, which was never about
-  confinement) instead of `sandbox`. "Sandbox" now means only the Python sandbox.
+- Use jail for confinement terminology. Session access reports is_jailed; workspace copies report isolated instead of sandbox. Reserve sandbox for the Python execution environment.
 
 ### Removed
-- The top-level `sandbox:` and `filesystem:` config keys. Both were silently REWRITTEN into
-  `jail:` before the schema saw the file, so an operator's key became a different one and a
-  `sandbox: false` written next to a `jail:` block was quietly ignored. Write `jail.enabled` and
-  `jail.filesystem` — anything else is refused by name, loudly, on load.
-- `jail.env`. It was a second list of the same names that could only ever re-admit an AMBIENT
-  variable — never a `dotenv:`/`keychain:`/`command:` value — so the two blocks disagreed exactly
-  where it mattered. Declare the variable in `environment:` instead (`CI: {env: CI}` is the old
-  `jail.env: [CI]`). Everything undeclared is still dropped for a confined child, and `LD_*`,
-  `DYLD_*`, `PERL*`, `BASH_ENV` and friends are still refused even when declared.
+- Remove top-level sandbox and filesystem configuration aliases. Require jail.enabled and jail.filesystem and reject obsolete keys during configuration loading.
+- Remove jail.env. Declare variables in environment instead, using source maps such as `CI: {env: CI}`. Confined children still omit undeclared ambient variables and reject unsafe process-initialization names.
 - `extensions.env-passthrough`, a third list of the same names: `extensions` was never a valid
   top-level config key, so the block was rejected before anything could read it.
-- The `skill` verb. A skill is a document like any other: `apropos(text)` finds it, `doc("name")`
-  prints the whole `SKILL.md`, and reading it is the whole of using it. There is no activation, no
-  `status`/`scope`/`note` receipt, no idempotent re-read and no fold protection for an "active"
-  body. Skill DISCOVERY is unchanged — every skill is still listed in the prompt by name,
-  description and owning project.
+- Remove the skill operation and activation state. Use apropos to discover skills and doc(name) to read their full instructions. Prompt discovery still includes each skill's name, description and project.
 - The `git` tool. There is no model-facing Git schema, no `git` binding in the sandbox and no
   `foundation-git` extension: a Git command is an ordinary `shell` command, run by the same
   jail, capture and timeout as everything else. Workspace Git FACTS (footer status, environment
   block, file picker) and the TUI Magit surface are unchanged.
-- The automatic outbox capture. `$VIS_OUTBOX` no longer exists in the sandbox, a file the
-  sandbox writes into system temp is no longer harvested, and neither is a `write_file` that
-  lands in `/tmp` — the session, the transcript and the Companion stop filling with scratch,
-  build chips and half-finished files nobody asked for. `attach` is how an artifact is kept:
-  a producer that wants a human to SEE something names it and hands over the bytes. Writing to
-  temp still WORKS everywhere it did; it is simply not collected. The machinery stays in the
-  tree, dormant and tested behind `mpl-capture/incidental-capture-enabled?`, in case a future
-  feature wants an engine-owned capture directory again.
+- Disable automatic outbox capture and remove VIS_OUTBOX from sandbox environments. Temporary files remain writable but are no longer collected as artifacts; use attach explicitly. Retain tested capture support behind mpl-capture/incidental-capture-enabled?.
 
 ### Fixed
-- `patch` and `cat` refused the anchor they had just printed. Every addressable line these tools
-  render is `<line>:<hash>│ <text>`, but the anchor parser read EVERYTHING after the colon as the
-  hash — the gutter and the line's own text included — so a row pasted back whole hashed to
-  `5af│ /**`, matched no line in the file, and came back as `no line within 40 lines carries
-  5af│ /**` with a "current anchor" identical to the one just refused (its text lower-cased on the
-  way out, since the hash is folded case-insensitively). The gutter and everything behind it are
-  now cut before parsing, so a `cat` line, a `grep` hit row (indent and all) or a `struct_index`
-  anchor addresses a line exactly as printed. A REPLACEMENT carrying a gutter is unchanged: it is
-  still written verbatim, with the note that says so.
-- Sandbox HTTPS could not skip certificate verification, and the escape hatch was deleted behind
-  the caller's back. `requests.get(url, verify=False)`, `Session.verify`, `cert=`, httpx's
-  `verify=`/`cert=` and urllib3's `cert_reqs` / `ca_certs` / `cert_file` / `assert_hostname` /
-  `ssl_context` were all accepted and thrown away — every request used urlopen's default verified
-  context, so an expired, self-signed or internal-CA host was unreachable from a block — while a
-  top-level `import ssl` (and `select` / `selectors`) was silently DELETED from the source by the
-  import preprocessor, so even the stdlib workaround died on an unexplainable `NameError`. Those
-  options now build the TLS context for the request, warning with urllib3's own
-  `InsecureRequestWarning` (which `urllib3.disable_warnings()` really silences); only `asyncio` is
-  still rewritten, and every other stdlib import reaches the block verbatim.
-- Sandbox TLS options were honoured only in their most common spelling, and every other one
-  failed QUIETLY. A `pathlib.Path` CA bundle fell through the shim's `str` check and restored the
-  DEFAULT store, so the narrow bundle a caller pinned silently became the wide one; a missing
-  bundle or client certificate surfaced as a bare `FileNotFoundError` from inside `ssl` instead of
-  requests' own message naming the file; `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` were never read;
-  urllib3 reported a certificate failure as a bare `ProtocolError`, so
-  `except urllib3.exceptions.SSLError` never fired, and dressed an unreadable CA path as a
-  transport error; `cert_reqs="NONE"` — upstream's own bare spelling — and an unknown name both
-  verified anyway; and `assert_fingerprint`, `ciphers` and the TLS version bounds were swallowed
-  whole, reporting a guarantee nothing enforced. Paths are now any `str` / `bytes` / `os.PathLike`,
-  the environment's bundle is read unless `Session.trust_env` is off, a certificate failure is
-  `urllib3.exceptions.SSLError`, a configuration error is raised verbatim,
-  `ssl_minimum_version` / `ssl_maximum_version` reach the context,
-  `urllib3.util.ssl_.create_urllib3_context` is published, and the two options this transport
-  cannot honour are REFUSED with a message instead of ignored.
-- A committed `vis.yml` forced one developer's provider and model on every clone. The visible
-  project file merges LAST, over `~/.vis`, so `default_provider`, `default_model`,
-  `fallback_provider` and `fallback_model` written there silently replaced each teammate's own
-  selection — a teammate without that entitlement got a broken session on first run, and
-  validation reported no problem at all. Those four keys are now dropped from
-  `<project>/vis.yml` (and `vis.yaml`) with one warning naming the file and the right home.
-  They still decide routing in every file a person owns: `~/.vis/config.yml`, the
-  machine-written `~/.vis/state.yml`, and the gitignored `<project>/.vis/config.yml` overlay.
-- The native binary crashed the moment the TUI painted. Lanterna's `TTYDeviceControl` builds its
-  termios/ioctl `MethodHandle`s in a class initializer that ran in the image BUILDER, where
-  `java.lang.foreign` works — so the binary inherited `SUPPORTED = true` and handles with no
-  downcall stubs behind them, and segfaulted inside `DowncallStubsHolder` on the first
-  `open("/dev/tty")` (v0.1.33-v0.1.35, x64 and arm64). The class now initializes at RUN time, so
-  the binary decides for itself: the termios fast path where the descriptors are registered, and
-  lanterna's own fallback to forking `/bin/stty` where they are not.
-- The native binary could not open its own terminal UI or touch its database. The TUI's `screen`
-  and `chat`, the sqlite backend's `core` and voice's `input` are reached BY NAME
-  (`requiring-resolve`) on first use, so nothing required them at discovery and the image never
-  build-time initialized them — a native image cannot define classes at run time, so `vis` died
-  with `Could not locate …channel_tui/screen__init.class` and any DB command with `Backend
-  :sqlite … failed to load`, while every JVM test stayed green. An extension manifest now
-  declares such a namespace under `:image-nses`: compiled INTO the image, still not required at
-  startup, so discovery keeps paying nothing for Lanterna or JDBC. `native-reachability-test`
-  now fails when a by-name namespace is undeclared.
-- The Android release preflight asks the question the build asks. It probed
-  `/usr/libexec/java_home -v 21`, which only reports JDKs registered under
-  `/Library/Java/JavaVirtualMachines` and is blind to SDKMAN — so a machine whose only
-  stock Temurin 21 lives in SDKMAN was declared unfit for the Play leg, even though
-  `release:android:store` searches SDKMAN itself and builds there happily.
-  `apps/vis-companion/scripts/jdk.mjs` now owns the rule (exactly 21, never GraalVM,
-  whose `jlink` breaks AGP's JdkImageTransform) and the search; `android-release.mjs`
-  imports it instead of carrying its own copy, and `node scripts/jdk.mjs` prints the JDK
-  Gradle will really use — the preflight and the build can no longer disagree.
+- Accept complete cat, grep and struct_index anchor rows by stripping the display separator and text before parsing the hash. Previously, including the line text caused valid printed anchors to fail. Replacement text containing a separator remains literal.
+- Honor supported requests, httpx and urllib3 TLS options instead of silently discarding them (issue #141). Preserve ssl, select and selectors imports; only asyncio still uses import rewriting. Emit the standard warning for unverified requests.
+- Handle string, bytes and PathLike certificate paths consistently, respect configured CA-bundle environment variables unless trust_env is disabled, and preserve SSL/configuration error types. Apply TLS version bounds, expose create_urllib3_context and explicitly reject unsupported options rather than ignoring them.
+- Ignore default/fallback provider and model selections in committed project vis.yml/vis.yaml, with a warning directing users to personal configuration. Retain those settings in global config, machine state and gitignored project overlays (issue #140).
+- Initialize Lanterna TTYDeviceControl at native runtime rather than build time. This avoids unusable foreign-function handles and startup crashes in v0.1.33–v0.1.35; use registered termios support or Lanterna's stty fallback.
+- Add :image-nses to extension manifests for namespaces resolved by name. Compile them into native images without eagerly loading them during discovery. Add reachability tests to detect omitted TUI, SQLite and voice namespaces.
+- Share Android JDK discovery between release preflight and build through scripts/jdk.mjs. Require stock JDK 21, including SDKMAN installations, and reject GraalVM because its jlink is incompatible with AGP JdkImageTransform.
 
-- The pty bridge is tested against a REAL pseudo-terminal. `pty_bridge_test` drove a hand-written
-  `{:add-listener :send}` stand-in, which could only prove that `serve!` called two functions —
-  never that a byte typed into the socket reaches a terminal and comes back. It now spawns `cat`
-  under `pty/spawn!` (the exact handle production hands the bridge) and asserts the whole loop:
-  replay, live tee, and typed input echoed back out of the master.
+- Test the pty bridge with a real pseudo-terminal running cat. Cover replay, live output and typed-input echo rather than only a listener/send stub.
 
-- The native binary starts again. `build.clj` kept its own copy of the built-in extension
-  namespaces vis `require`s at runtime, and every built-in added since — `foundation.introspection`
-  and the whole shim family — was missing from it, so the image never initialized them and the
-  binary died on its first line with "Could not locate …introspection__init.class on classpath".
-  The copy is complete, and a reachability test now fails when the two lists drift.
+- Include missing built-in extension namespaces in native build initialization and test the list against runtime discovery. This fixes startup failures caused by missing introspection and shim classes.
 
-- The Linux native binaries ship again. Every release since v0.1.33 built them and then died in
-  the TUI smoke test with a SIGSEGV inside the generated FFM stub for lanterna's
-  `open("/dev/tty", …)`, so v0.1.33, v0.1.34 and v0.1.35 attached no Linux distribution at all.
-  The build feature no longer registers those downcall descriptors on Linux, which leaves
-  lanterna's own `catch Throwable` to mark the native TTY unsupported and drive the terminal by
-  forking `/bin/stty` — exactly what shipped through v0.1.32. macOS keeps the fast path.
+- Restore Linux native releases by omitting Lanterna FFM TTY downcall registration, avoiding the TUI smoke-test SIGSEGV seen in v0.1.33–v0.1.35. Linux uses Lanterna's stty fallback, as through v0.1.32; macOS retains native calls.
 
-- Push capability named the wrong provider. Web Push MINTS its own VAPID identity the first time
-  it is asked, so its half is "configured" on every gateway — and it sat AHEAD of the relay in
-  `/v1/capabilities`, hiding the one provider a machine with no credentials at all actually
-  delivers through. The relay is named first now, Web Push last; a browser device also takes the
-  real Web Push path instead of being reported as an unsupported platform.
-- The providers router-rebuild hook held the FUNCTION, and `defonce` skips its body on a
-  `(require … :reload)` — so after any reload of the agent loop the hook still pointed at the
-  definition from the first load, and a default-model change reached a stale router. It holds the
-  VAR now.
-- On Linux, pasta's own diagnostics ("No routable interface for IPv6: IPv6 is disabled") were read
-  back as the jailed command's output: pasta is the argv PREFIX, so it writes to the child's stdio.
-  It now runs `--quiet` (which drops only the informational half) with `--log-file` pointing at
-  this process' own `~/.vis/logs`.
+- Report the push relay before Web Push in capabilities so automatic VAPID configuration does not hide the native provider. Route browser devices through Web Push rather than reporting an unsupported platform.
+- Store a Var rather than a function value in the provider router-rebuild hook so namespace reloads use the current implementation.
+- Keep pasta diagnostics out of jailed command output by using --quiet and a process-specific log file under ~/.vis/logs.
 
-- A cancel that landed inside a best-effort `(catch Throwable _ …)` is no longer
-  swallowed. The JVM clears the interrupt flag as it throws, so every catch-all
-  around a blocking call — `git`, the workspace's git, `rewind`, the credential
-  helper, `stty`, the jail's detacher probe, the RSS sampler, the shell's tree
-  teardown, the gateway client's port poll, the MCP listen thread, `gh auth
-  token`, the Copilot keychain read — answered its fallback value with the
-  cancellation gone, and the turn polled on to its own deadline.
-  `cancellation/preserve-interrupt!` re-arms the flag (never for a
-  `CancellationException`, which interrupted nothing), and the MCP listen thread
-  now ENDS on an interrupt instead of sleeping through it.
+- Preserve JVM interruption across best-effort catch blocks in process, Git, gateway, credential, jail and MCP operations. cancellation/preserve-interrupt! restores the flag after InterruptedException but not CancellationException. The MCP listener exits on interruption.
 - The prompt's Clojure `run_tests` note said the opposite of what the runner does. It claimed the
   managed REPL does "NOT reload namespaces automatically" and told a session to reload every
   changed *test* namespace, while the runner already `(require … :reload)`s (or `load-file`s)
@@ -2034,51 +1790,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   test namespace came back restored from a run, the poisoned Var in the production namespace that
   test requires did not. The prompt line, `run-form`'s docstring and the repo guidance now name
   the real trap: a changed PRODUCTION namespace keeps the Vars the reused REPL already holds.
-- A cancelled turn no longer keeps polling a shell wait to its own deadline. `sh.wait` samples the
-  process tree's usage on every iteration, and that sampler spawns `ps` and calls `.waitFor` inside
-  a best-effort `catch Throwable` — which caught the `InterruptedException` the JVM throws with the
-  interrupt flag already CLEARED, so a cancellation landing in that window was swallowed and the
-  wait ran on for up to ten minutes. The sampler now restores the flag and answers `nil`: the
-  measurement is worthless after a cancel, the cancellation is not.
-- The artifacts gallery no longer reads a wire key nobody sends. `collectArtifacts` asked each
-  iteration for `tool_name` — a field that left the wire when the 21 native tools did — so it
-  always answered `""` and the tile's screen-reader caption silently degraded from "produced in
-  turn 6 by ..." to "produced in turn 6". The dead read, the `SessionArtifact.tool` field and the
-  caption branch are gone rather than re-pointed at the iteration's op: with one door, naming the
-  producer on every row is noise, and the turn plus the iteration it hangs off is the provenance
-  that is real.
-- `capfd` captures the REAL file descriptor in the sandbox pytest shim (issue #138): it used to
-  be a second name for `capsys` — a `sys.stdout`/`sys.stderr` swap — so `os.write(1, ...)`, a
-  C-level write or a child process's output never came back from `readouterr()`. Fd 1 and fd 2 are
-  now redirected onto a drained pipe for the test's lifetime (no filesystem needed, so it works in
-  a Context granted none), the descriptor's bytes follow the stream text in the same
-  `CaptureResult`, and a tail nobody read is still replayed under the failure. `capsys` stays
-  stream-only, exactly as real pytest does.
-- Every model-facing document names a call the runtime accepts. `run_tests("python")` /
-  `repl_eval("python")` never selected the Python pack: the language surface reads the pack from
-  `{"language": "python"}` (or as the FIRST of two arguments), so a lone string was the PAYLOAD —
-  `run_tests("python")` asked the Clojure runner for a `python` namespace, and
-  `repl_eval("python")` evaluated `python` as Clojure. The token-optimization page also showed
-  `struct_index({"path": …})` (the key is `paths`), a project-wide rename through
-  `struct_patch({"paths": ["."]})` (there is no `paths` key — a rename batch is `edits`, whose
-  entries inherit the shared top-level keys), a JSON `true` where Python needs `True`, and the
-  positional `struct_index(paths)` / `struct_nodes(nodes)` spellings the one-options-map contract
-  refuses. A corpus test now scans every document `doc`/`apropos` can hand back for those shapes.
-- `run_tests({"language": "python"})` NAMES the tests that failed. Both backends now return every fault in
-  `failures` / `errors` as `{ns, test, message, file, line}` — the project backend reads pytest's
-  own `--junitxml` report, the hermetic GraalPy backend maps its per-test records — where before a
-  run could report `fail: 1` and not one node id, because pytest's summary line carries counts
-  only. The transcript cap in `output` is also cut in the MIDDLE now, keeping the session header
-  AND the `FAILURES` section, the short test summary and the counts line, behind a marker that
-  says how many characters it dropped; the old tail slice hid a whole `FAILURES` section behind a
-  bare ellipsis.
-- `attach(img, 'crop.png')` takes a PIL image, the way it already took a matplotlib figure. A
-  picture cropped or composed in the sandbox fell through to the PATH branch and died with
-  `attach: no such file: <PIL.Image.Image ...>`, so it had to be written to a temp file first.
-  The FILENAME chooses the encoder (`shot.jpg` really stores a JPEG, converting an alpha mode the
-  encoder cannot take; anything else is lossless PNG), and a source that is neither a path nor a
-  producer is now refused by SHAPE — `attach: source must be a path, bytes, a PIL image or a
-  matplotlib figure, got dict` — instead of having its repr reported as a missing file.
+- Restore the interrupt flag when shell usage sampling is interrupted, returning no measurement. Cancelled sh.wait calls now stop rather than continuing to their deadline.
+- Remove the obsolete tool_name lookup, SessionArtifact.tool field and related screen-reader caption branch from the artifact gallery. Retain turn and iteration provenance.
+- Make capfd capture actual file descriptors in the sandbox pytest shim (issue #138), including os.write, C-level and child-process output. Drain redirected pipes during the test, include captured bytes in CaptureResult and replay unread output on failure. capsys remains stream-only.
+- Correct documented language and structural-tool calls to match runtime contracts: explicit language options, paths versus path, edit batches, Python True and one-options-map calls. Add a corpus test for every doc/apropos document.
+- Include failed Python test identities and messages in structured results. The project runner reads pytest JUnit XML; the GraalPy runner converts per-test records. Truncate output in the middle to retain the session header, failure details and summary, reporting the omitted character count (issue #136).
+- Accept PIL images directly in attach, alongside paths, bytes and matplotlib figures. Use JPEG for .jpg filenames with compatible mode conversion and lossless PNG otherwise. Reject unsupported source types explicitly rather than interpreting their repr as a missing path.
 
 ## [v0.1.35] - 2026-08-09
 
@@ -2089,17 +1806,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Trim README install and runtime prose
 - Simplify README install section
 - Name the one shell tool `shell`
-- Give apropos groups and every sandbox verb its raw-result doc
+- Document raw results for apropos groups and sandbox operations
 - Make `wait` the only difference between a run and a background shell
 - Serve the whole session's artifacts from a metadata index
 - PLAN: name Phase 5 by its commit
 - Make every run a handle: a timeout is a wait that expired
 - Stop forcing deferred work at namespace load, which native-image runs on the builder
 - PLAN: name Phase 4 by its commit
-- Give a background shell a log FILE and a byte OFFSET cursor
-- Page a project from the list on screen, not the gateway's own window
+- Give background shells log files and byte-offset cursors
+- Paginate the displayed project list rather than the gateway's result window
 - Delete the project-wide rename
-- Ask the :fs/access gate from struct_rename too
+- Apply :fs/access checks to struct_rename
 - release: update release notes for v0.1.34
 - Record what a host map actually looks like in the sandbox
 
@@ -2112,17 +1829,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Trim README install and runtime prose (66527db92)
 - Simplify README install section (0d29554ca)
 - Name the one shell tool `shell` (25089f16f)
-- Give apropos groups and every sandbox verb its raw-result doc (07cf88d36)
+- Document raw results for apropos groups and sandbox operations (07cf88d36)
 - Make `wait` the only difference between a run and a background shell (634c0476c)
 - Serve the whole session's artifacts from a metadata index (cac2e80a3)
 - PLAN: name Phase 5 by its commit (4f9983d23)
 - Make every run a handle: a timeout is a wait that expired (451a644a2)
 - Stop forcing deferred work at namespace load, which native-image runs on the builder (8d0eae493)
 - PLAN: name Phase 4 by its commit (1be019874)
-- Give a background shell a log FILE and a byte OFFSET cursor (e98cc607e)
-- Page a project from the list on screen, not the gateway's own window (a264ef547)
+- Give background shells log files and byte-offset cursors (e98cc607e)
+- Paginate the displayed project list rather than the gateway's result window (a264ef547)
 - Delete the project-wide rename (71f00d8c9)
-- Ask the :fs/access gate from struct_rename too (a6557f244)
+- Apply :fs/access checks to struct_rename (a6557f244)
 - release: update release notes for v0.1.34 (6469254b2)
 - Record what a host map actually looks like in the sandbox (1afa5d007)
 
@@ -2142,74 +1859,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - Release v0.1.34
-- Refuse toolchain output at the incidental capture tap
+- Exclude toolchain output from incidental attachment capture
 - Stop capturing the temp file nobody named
 - PLAN: record Phase 3 as done
 - Replace the `ls` native tool with a sandbox `ls()` helper
-- Invent the provider the native suite talks to
-- Companion: measure the "Latest" offer instead of remembering it
-- Prove the native binary from its own suite, not from a docker build
-- Companion: let an artifact tile show its own note, and keep its controls legible
+- Use a deterministic provider fixture in native tests
+- Companion: calculate whether Latest is needed from the current scroll position
+- Verify native binaries with native tests, not only Docker builds
+- Companion: show artifact notes on their tiles and keep controls legible
 - Companion: one Settings dialog, this device beside the machines
 - Record Phase 2 in the plan
 - Replace protected paths with one :fs/access gate hook
 - Companion: search is a page, and the bar keeps two marks
 - Prove the native TUI, the agent entrypoint and the zai provider in the image build
 - Make the container image a base a deployment extends
-- Companion: one document stack per step, and the row is the verb
+- Group documents by step and open them from their rows
 - Pin the container agent's home to the vis user and prove it at build time
 - Install a provisioning profile only where Xcode reads it
 - Serve the container gateway from the native image
-- Pin the transcript in the frame the keyboard shrinks the shell
-- Let an attached page run its own script, never the app's origin
-- Rename the sandbox attachment surface to plain verbs
-- Make every way out say what it closes
-- Give the companion's paint back to the components that own it
-- Leave the image viewer through the app's one close
-- Give every close mark the page's own ink
-- Zoom a picture by the distance scrolled, and take Safari own pinch
+- Keep the transcript fixed within the keyboard-resized app layout
+- Run attached-page scripts in isolation from the app origin
+- Use direct operation names for sandbox attachment APIs
+- Label close controls with the element they close
+- Move Companion rendering styles into the relevant components
+- Use the shared close control in the image viewer
+- Use page text colors for close icons
+- Scale image zoom by scroll distance and support Safari pinch gestures
 - release: update release notes for v0.1.33
 
 ### Package changes
 
 #### com.blockether/vis
 - Release v0.1.34 (7e2d6cefa)
-- Refuse toolchain output at the incidental capture tap (e8c512bae)
+- Exclude toolchain output from incidental attachment capture (e8c512bae)
 - Stop capturing the temp file nobody named (9386b5144)
 - PLAN: record Phase 3 as done (e3240898f)
 - Replace the `ls` native tool with a sandbox `ls()` helper (d3db4c514)
-- Invent the provider the native suite talks to (5701c9d7e)
-- Companion: measure the "Latest" offer instead of remembering it (871420423)
-- Prove the native binary from its own suite, not from a docker build (72ef3fec8)
-- Companion: let an artifact tile show its own note, and keep its controls legible (7c6fae0b9)
+- Use a deterministic provider fixture in native tests (5701c9d7e)
+- Companion: calculate whether Latest is needed from the current scroll position (871420423)
+- Verify native binaries with native tests, not only Docker builds (72ef3fec8)
+- Companion: show artifact notes on their tiles and keep controls legible (7c6fae0b9)
 - Companion: one Settings dialog, this device beside the machines (df428cafe)
 - Record Phase 2 in the plan (287bcda62)
 - Replace protected paths with one :fs/access gate hook (49d5a182e)
 - Companion: search is a page, and the bar keeps two marks (8b6bea53b)
 - Prove the native TUI, the agent entrypoint and the zai provider in the image build (72bd2b6e4)
 - Make the container image a base a deployment extends (2f36d3e44)
-- Companion: one document stack per step, and the row is the verb (c173d5421)
+- Group documents by step and open them from their rows (c173d5421)
 - Pin the container agent's home to the vis user and prove it at build time (b2656c39a)
 - Install a provisioning profile only where Xcode reads it (59c889f7b)
 - Serve the container gateway from the native image (b067471d4)
-- Pin the transcript in the frame the keyboard shrinks the shell (eb3303a52)
-- Let an attached page run its own script, never the app's origin (5c0bcda60)
-- Rename the sandbox attachment surface to plain verbs (3913d59c9)
-- Make every way out say what it closes (b243f9cb7)
-- Give the companion's paint back to the components that own it (a4eaf0e27)
-- Leave the image viewer through the app's one close (00b058dd8)
-- Give every close mark the page's own ink (80af604cf)
-- Zoom a picture by the distance scrolled, and take Safari own pinch (b245817ce)
+- Keep the transcript fixed within the keyboard-resized app layout (eb3303a52)
+- Run attached-page scripts in isolation from the app origin (5c0bcda60)
+- Use direct operation names for sandbox attachment APIs (3913d59c9)
+- Label close controls with the element they close (b243f9cb7)
+- Move Companion rendering styles into the relevant components (a4eaf0e27)
+- Use the shared close control in the image viewer (00b058dd8)
+- Use page text colors for close icons (80af604cf)
+- Scale image zoom by scroll distance and support Safari pinch gestures (b245817ce)
 - release: update release notes for v0.1.33 (9d9bf9855)
 
 #### com.blockether/vis-channel-tui
-- Rename the sandbox attachment surface to plain verbs (3913d59c9)
+- Use direct operation names for sandbox attachment APIs (3913d59c9)
 
 #### com.blockether/vis-foundation-bridge
 - Replace protected paths with one :fs/access gate hook (49d5a182e)
 
 #### com.blockether/vis-persistance-sqlite
-- Rename the sandbox attachment surface to plain verbs (3913d59c9)
+- Use direct operation names for sandbox attachment APIs (3913d59c9)
 
 
 
@@ -2218,61 +1935,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - Release v0.1.33
 - Put the search field and every transcript card header on one height
-- Take the machine strip's side edges from the page
+- Align machine-strip side borders with the page
 - Page grep results with offset and next_offset
 - Let a session row fill its swipe track
-- Anchor the companion search field to the bar's trailing edge
+- Align Companion search with the app bar's trailing edge
 - Default grep to 50 elements, filename fallback included
-- Frame a sent picture like a produced one and gallery several
-- Stretch a row-ending icon button at mouse density too
+- Use the artifact image frame for sent images and a gallery for multiple images
+- Stretch row-end icon buttons at pointer density as well as touch density
 - Put search back on the app bar with its own magnifying glass
-- Give search its own band on a phone and land Clear on the field's edge
-- Render MetaButton's children so the composer strip has words again
-- Name a button by its rank and give the composer one strip
+- Give mobile search a separate row and place Clear at the field edge
+- Render MetaButton children so composer labels remain visible
+- Name button variants by hierarchy and use one composer control row
 - Give the companion one chip, one row, one disclosure and one remove
 - Show a saved artifact revision without refetching the transcript
-- Give the opened document the one header band and the one button
+- Use the shared header and button in opened documents
 - Remove the copy, move, delete, create_directory and file_exists tools
 - Start a stroke from beside the picture, not only on its edge
 - Release the companion app locally when this machine can sign
 - Enforce :ext/protected-paths in the Python sandbox filesystem
-- Say the create inside its button and shrink the row question
-- Show a document artifact once, as a card that opens over everything
-- Paint the star action yellow and keep the starred row in view
+- Put creation labels inside their buttons and shorten row confirmation prompts
+- Show document artifacts once as cards that open an overlay viewer
+- Color the Star action yellow and keep starred rows visible
 - Let the app stop the turn it started again
-- Never link a TestFlight build to an internal beta group
+- Exclude TestFlight builds from internal beta groups
 - Give a note ten annotation threads and a comment on the whole document
 - Push from workflows through one shared git-push action
 - Mark annotations in theme colours and annotate plain text too
-- Make the machine switcher square, unread a highlight, and hide it for a solo machine
+- Use a square machine switcher, highlight unread state and hide it for a single machine
 - Draw a comment ordinal as a plain coloured number
 - Accept any spelling of a path in vis_attach
 - Clear the NEW badge on the row you just read
-- Make the fleet switcher one segmented track
+- Use one segmented machine switcher
 - Put the session star immediately right of the title
 - Number and colour markdown comments, and underline the passage each is about
-- Clear the machine card below the fleet strip
-- Pin the companion's artifact-revision save URL to its route
+- Remove the machine card below the machine switcher
+- Test the Companion artifact-revision save URL against its route
 - Read a note inline as source and comment on it by tapping
-- Pour the page ink into Add machine and lift the fleet strip
+- Use page text colors for Add machine and increase machine-strip contrast
 - Put the machine tabs and Add machine on one control height
 - Give the phone a full-bleed sessions card with a fixed height
 - Link every TestFlight build to every beta group
-- Name the machine strip's pairing verb Add machine
-- Pair a machine from the tab strip's own + button
-- Abandon the stroke a pinch turned out to be
+- Label the machine-strip pairing action Add machine
+- Pair machines from the tab strip's plus button
+- Cancel the active stroke when a pinch gesture begins
 - End the machine card where its content ends
-- Give the session list one meta ink and a closed machine card
+- Use one metadata text color in the session list and enclose the machine card
 - Let the viewer zoom out to 50%
 - Write PDF annotations with the maintained pdf-lib fork
-- Annotate every opened artifact: comments on notes, ink on PDFs and pictures
-- Stand the machine tabs outside the machine card and drop the All scope
+- Support comments on notes and drawing on PDFs and images in artifact viewers
+- Place machine tabs outside the machine card and remove All scope
 - Give a document preview an Open chip that fills the screen
 - Remove the bin/vis-agent launcher tests
 - Keep a Python extension loaded between tests that ask for the same one
 - Restore the transcript copy chip's own look
-- Give the app bar search the buttons own face
-- Give the transcript's copy chip the app's own button and one preview box
+- Use the shared button styling for app-bar search
+- Use the shared button for transcript copying and one preview container
 - Open every artifact at full height
 - Render markdown artifacts and let a human comment on them
 - Make search the app bar and move pairing into preferences
@@ -2280,13 +1997,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Collapse vis_attach_bytes into vis_attach
 - Show document artifacts plainly: no draw, hide or new tab
 - Stop shelling out to real git in the tests
-- Give the app bar and machine verbs a real button face
-- Label every companion verb and move the machines into the header
-- Pair from the app bar and show one fleet strip for any fleet size
+- Use visible button backgrounds for app-bar and machine actions
+- Label Companion actions and move machine controls into the header
+- Pair from the app bar and use one machine strip regardless of machine count
 - Make pairing a chip and drop the tab bar
-- Key the shared test GraalPy sandbox so an abusive suite keeps its own
+- Key shared test sandboxes to isolate suites with incompatible state
 - Remove the ACP extension
-- Make the machine a chip, not a second header band
+- Show the machine as a chip instead of a second header
 - Require UI proposals as ASCII sketches, not app-built galleries
 - Remove model, reasoning, verbosity, drafts, magit palette verbs and /export-html
 - Keep a renamed machine name across dev reloads
@@ -2295,26 +2012,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Rename a machine on its own header and add a project in one tap
 - Route overlay card justification through the shared run justifier
 - End the phone status on the timestamp edge, with the flags against it
-- Cut the wall-clock waste out of the slowest gateway and loop tests
+- Reduce unnecessary waits in the slowest gateway and loop tests
 - Pin svar 0.7.109 for the 2-minute retrying TTFT watchdog
-- Put the machine header two verbs on the band as + and gear
+- Use plus and gear icons for the two machine-header actions
 - Cap the session pager to a centred cluster
 - Sit the phone row flags beside the status they qualify
 - Align header names on one glyph column and always print the tally noun
 - Give the first token two minutes instead of five
 - Give session-row flags their own column
-- Hold the pager steps in fixed slots so > never moves
+- Keep pagination controls in fixed positions
 - Page the session list with numbered, jumpable pages
 - Add a sharded parallel test runner
 - Always offer the draft half and delete the Offer drafts setting
 - Wall the test suite off from the public internet
 - Make Manage projects the same anchored panel as the draft picker
 - Frame transcript media as a plate with a docked filename label
-- Move the draft verb onto the project header as a split button
+- Move the Draft action into the project header as a split button
 - Show a human-input pause only on its own session's tab
 - Draw the draft mark as a forked project folder
 - Add hard no-profanity rule to AGENTS.md
-- Mark the draft verb with its own folder icon
+- Give the Draft action a folder icon
 - Remove profanity from source comments and test reports
 - Make the drafts setting a named choice on the shared settings cell
 - Stop provider tests dialing the network and trim eval-timeout walls
@@ -2328,16 +2045,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Refuse re-adding a folder that is already a project
 - Open project browsing one level above the current project
 - Dock the Manage projects footer and align its trash to the row edge
-- Read ui source through Vite raw import in the sheet pin
+- Import UI source through Vite raw imports in the sheet test
 - Make every dialog a bottom sheet on phones
 - Align companion trailing controls and drop the glyph hover frame
 - Keep inline images visible when a transient band opens
 - Shrink compact header buttons to a 32px face with a 44px touch target
-- Paint the transient band flat on the terminal's own paper
+- Use the terminal background for transient panels
 - Load the TUI provider dialog from one gateway call
-- Close the transient band around its hint bar on slightly darker paper
+- Enclose the transient panel and hint bar on a slightly darker background
 - Render TUI diff fences compact instead of side-by-side
-- Border the transient band, drop its tinted paper and column rules
+- Add a transient-panel border and remove tinted backgrounds and column dividers
 - Pin svar 0.7.107 for uncompressed SSE streaming
 - Never title a session after a pasted image's clipboard path
 - Order provider limit windows shortest-first (5h before 7d)
@@ -2346,44 +2063,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Never animate auto-follow scrolling in the TUI
 - Drop tool name from pending-summary docstring example
 - Drop unused form display exports and the dead auto-repaired flag
-- Drop a tab's stale layout on switch so the view stops self-scrolling
+- Clear stale tab layouts on switch to prevent automatic scrolling
 - Correct label-overrides docstring after the shell/fs tool split
 - Drop same-path coalescing and the running-code-tools exception
-- Land the TUI scroll on a terminal resize instead of easing to it
+- Apply TUI scroll position immediately after terminal resize
 - Purge legacy fs/shell tool names from form and loop tests
-- Split the `shell` and `fs` mega-tools into named verbs
+- Split shell and filesystem tools into named operations
 - Print a TUI notice's sentence without its machine code
 - Unify the transient band into one embeddable component
-- Anchor every main-screen transient through one band anchor
+- Use one positioning function for main-screen transient panels
 - Adopt svar 0.7.106 so a declared retry cooldown is waited out
-- Ink the transient band's title on its opening rule and move the palette into Tools
+- Place the transient title on its top divider and move the palette into Tools
 - Serve a live turn's text-named images from the gateway
-- Anchor in-session transients above the prompt on their own paper
+- Position session transients above the prompt with separate backgrounds
 - Report total line counts in a collapsed multi-file patch headline
 - Give a form one text column by moving the focus ring out of it
 - Report added/removed/modified line counts on every edit summary
 - Stop blaming the provider for a turn that never reached one
-- Abandon a wedged session engine instead of queueing behind it
+- Replace unresponsive session engines instead of queueing behind them
 - Give every companion list header one band
-- Pin the turn soul on every attachment row, tool artifacts included
+- Associate every attachment row with its turn, including tool artifacts
 - Give every attachment descriptor its turn id
-- Answer every cancel, even when the tab paints no live turn
+- Respond to cancellation even when the tab shows no active turn
 - Give every header one trailing cluster and one kebab
 - Share one overflow button and one header action cluster in the companion
 - Unify companion overflow menus, icon buttons, and dialog closes
 - Return attachment descriptors and drop the answer gallery
 - Search the zipper tree with one parse instead of re-parsing per node
-- Give a form field's input its own row of air and stop indenting toggles
+- Put form inputs on separate rows and remove toggle indentation
 - Bump svar to 0.7.105
 - Decode Python provider maps from declared field tables
 - Give every C-x category its own column
 - Open one blank row under every human-input label
 - Lay a tall transient band out in which-key columns
-- Make C-x a transient hydra band
-- Ask a band's follow-up question in the band's own frame
+- Implement C-x as a transient keyboard-command panel
+- Show follow-up questions within the initiating panel
 - Give every managed nREPL its own log file
 - Scope the tid-less cancel to the turn its caller submitted
-- Let Rift hand a clean draft over without pending changes
+- Accept clean Rift drafts without pending changes
 - Name the project that owns a nested skill
 - Remove native tool color roles
 - Revert recent folding changes
@@ -2423,61 +2140,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis
 - Release v0.1.33 (2ebb36887)
 - Put the search field and every transcript card header on one height (f8df6596e)
-- Take the machine strip's side edges from the page (f17a0baa9)
+- Align machine-strip side borders with the page (f17a0baa9)
 - Page grep results with offset and next_offset (be31c6165)
 - Let a session row fill its swipe track (94f996d60)
-- Anchor the companion search field to the bar's trailing edge (3102648f0)
+- Align Companion search with the app bar's trailing edge (3102648f0)
 - Default grep to 50 elements, filename fallback included (d6b9d2253)
-- Frame a sent picture like a produced one and gallery several (116c59834)
-- Stretch a row-ending icon button at mouse density too (c85b77e9a)
+- Use the artifact image frame for sent images and a gallery for multiple images (116c59834)
+- Stretch row-end icon buttons at pointer density as well as touch density (c85b77e9a)
 - Put search back on the app bar with its own magnifying glass (ba9296498)
-- Give search its own band on a phone and land Clear on the field's edge (85d9d3b4c)
-- Render MetaButton's children so the composer strip has words again (3bae6b37d)
-- Name a button by its rank and give the composer one strip (bb59694f1)
+- Give mobile search a separate row and place Clear at the field edge (85d9d3b4c)
+- Render MetaButton children so composer labels remain visible (3bae6b37d)
+- Name button variants by hierarchy and use one composer control row (bb59694f1)
 - Give the companion one chip, one row, one disclosure and one remove (0d3274b0b)
 - Show a saved artifact revision without refetching the transcript (94b26fdc5)
-- Give the opened document the one header band and the one button (b430dea50)
+- Use the shared header and button in opened documents (b430dea50)
 - Remove the copy, move, delete, create_directory and file_exists tools (87c1562ea)
 - Start a stroke from beside the picture, not only on its edge (686ea2827)
 - Release the companion app locally when this machine can sign (7ad4c1123)
 - Enforce :ext/protected-paths in the Python sandbox filesystem (b11aa1706)
-- Say the create inside its button and shrink the row question (2d4b8e7ec)
-- Show a document artifact once, as a card that opens over everything (65cf41550)
-- Paint the star action yellow and keep the starred row in view (8ead5cd33)
+- Put creation labels inside their buttons and shorten row confirmation prompts (2d4b8e7ec)
+- Show document artifacts once as cards that open an overlay viewer (65cf41550)
+- Color the Star action yellow and keep starred rows visible (8ead5cd33)
 - Let the app stop the turn it started again (421734b0e)
-- Never link a TestFlight build to an internal beta group (6cef66c7c)
+- Exclude TestFlight builds from internal beta groups (6cef66c7c)
 - Give a note ten annotation threads and a comment on the whole document (8b832e827)
 - Push from workflows through one shared git-push action (5f4e33ac9)
 - Mark annotations in theme colours and annotate plain text too (7c3ba0413)
-- Make the machine switcher square, unread a highlight, and hide it for a solo machine (305cd6789)
+- Use a square machine switcher, highlight unread state and hide it for a single machine (305cd6789)
 - Draw a comment ordinal as a plain coloured number (53d371558)
 - Accept any spelling of a path in vis_attach (d383fed53)
 - Clear the NEW badge on the row you just read (aea33924a)
-- Make the fleet switcher one segmented track (050cb9b70)
+- Use one segmented machine switcher (050cb9b70)
 - Put the session star immediately right of the title (c8b6263e2)
 - Number and colour markdown comments, and underline the passage each is about (1167b97b4)
-- Clear the machine card below the fleet strip (7d1bfb53f)
-- Pin the companion's artifact-revision save URL to its route (637600b9b)
+- Remove the machine card below the machine switcher (7d1bfb53f)
+- Test the Companion artifact-revision save URL against its route (637600b9b)
 - Read a note inline as source and comment on it by tapping (1a706229c)
-- Pour the page ink into Add machine and lift the fleet strip (e0918c09d)
+- Use page text colors for Add machine and increase machine-strip contrast (e0918c09d)
 - Put the machine tabs and Add machine on one control height (02700e1ed)
 - Give the phone a full-bleed sessions card with a fixed height (8e771c3e9)
 - Link every TestFlight build to every beta group (9142379af)
-- Name the machine strip's pairing verb Add machine (41715e01e)
-- Pair a machine from the tab strip's own + button (ec71c1c2a)
-- Abandon the stroke a pinch turned out to be (ebcc90c27)
+- Label the machine-strip pairing action Add machine (41715e01e)
+- Pair machines from the tab strip's plus button (ec71c1c2a)
+- Cancel the active stroke when a pinch gesture begins (ebcc90c27)
 - End the machine card where its content ends (e41345a66)
-- Give the session list one meta ink and a closed machine card (2e312c16f)
+- Use one metadata text color in the session list and enclose the machine card (2e312c16f)
 - Let the viewer zoom out to 50% (f93e02b32)
 - Write PDF annotations with the maintained pdf-lib fork (1a0d386d5)
-- Annotate every opened artifact: comments on notes, ink on PDFs and pictures (7fde3d069)
-- Stand the machine tabs outside the machine card and drop the All scope (eec70eb58)
+- Support comments on notes and drawing on PDFs and images in artifact viewers (7fde3d069)
+- Place machine tabs outside the machine card and remove All scope (eec70eb58)
 - Give a document preview an Open chip that fills the screen (76164492e)
 - Remove the bin/vis-agent launcher tests (b3f98438a)
 - Keep a Python extension loaded between tests that ask for the same one (efb5d97d2)
 - Restore the transcript copy chip's own look (82383147c)
-- Give the app bar search the buttons own face (3ed7d5270)
-- Give the transcript's copy chip the app's own button and one preview box (6586e491d)
+- Use the shared button styling for app-bar search (3ed7d5270)
+- Use the shared button for transcript copying and one preview container (6586e491d)
 - Open every artifact at full height (a4e500782)
 - Render markdown artifacts and let a human comment on them (c4a1ea54f)
 - Make search the app bar and move pairing into preferences (7308e9c00)
@@ -2485,13 +2202,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Collapse vis_attach_bytes into vis_attach (1afa4df70)
 - Show document artifacts plainly: no draw, hide or new tab (774cfb6a8)
 - Stop shelling out to real git in the tests (e0d8aa5ca)
-- Give the app bar and machine verbs a real button face (b498ea4e9)
-- Label every companion verb and move the machines into the header (cc7f57260)
-- Pair from the app bar and show one fleet strip for any fleet size (50cadeda4)
+- Use visible button backgrounds for app-bar and machine actions (b498ea4e9)
+- Label Companion actions and move machine controls into the header (cc7f57260)
+- Pair from the app bar and use one machine strip regardless of machine count (50cadeda4)
 - Make pairing a chip and drop the tab bar (975a0d4b7)
-- Key the shared test GraalPy sandbox so an abusive suite keeps its own (545cad9e5)
+- Key shared test sandboxes to isolate suites with incompatible state (545cad9e5)
 - Remove the ACP extension (8e6e9e413)
-- Make the machine a chip, not a second header band (6e9e6ef28)
+- Show the machine as a chip instead of a second header (6e9e6ef28)
 - Require UI proposals as ASCII sketches, not app-built galleries (afac2f6ae)
 - Remove model, reasoning, verbosity, drafts, magit palette verbs and /export-html (0d255f454)
 - Keep a renamed machine name across dev reloads (13aafb0b7)
@@ -2499,25 +2216,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Cut the paramiko and sandbox-fd test walls (682e4206e)
 - Rename a machine on its own header and add a project in one tap (3295bc072)
 - End the phone status on the timestamp edge, with the flags against it (0687d2486)
-- Cut the wall-clock waste out of the slowest gateway and loop tests (375fce532)
+- Reduce unnecessary waits in the slowest gateway and loop tests (375fce532)
 - Pin svar 0.7.109 for the 2-minute retrying TTFT watchdog (4de9b8291)
-- Put the machine header two verbs on the band as + and gear (e1b46d338)
+- Use plus and gear icons for the two machine-header actions (e1b46d338)
 - Cap the session pager to a centred cluster (cbeb3e224)
 - Sit the phone row flags beside the status they qualify (52012ca27)
 - Align header names on one glyph column and always print the tally noun (f3f29d16a)
 - Give the first token two minutes instead of five (75fae850f)
 - Give session-row flags their own column (620af0f38)
-- Hold the pager steps in fixed slots so > never moves (0b92b77b3)
+- Keep pagination controls in fixed positions (0b92b77b3)
 - Page the session list with numbered, jumpable pages (6db2a1982)
 - Add a sharded parallel test runner (293ea7e19)
 - Always offer the draft half and delete the Offer drafts setting (0561f5fd6)
 - Wall the test suite off from the public internet (1275bf716)
 - Make Manage projects the same anchored panel as the draft picker (3f617032b)
 - Frame transcript media as a plate with a docked filename label (1bfa6855e)
-- Move the draft verb onto the project header as a split button (07ed1075f)
+- Move the Draft action into the project header as a split button (07ed1075f)
 - Draw the draft mark as a forked project folder (030af03e3)
 - Add hard no-profanity rule to AGENTS.md (d0045b87f)
-- Mark the draft verb with its own folder icon (13529ded0)
+- Give the Draft action a folder icon (13529ded0)
 - Remove profanity from source comments and test reports (d56c65216)
 - Make the drafts setting a named choice on the shared settings cell (c0d100981)
 - Stop provider tests dialing the network and trim eval-timeout walls (5326ced75)
@@ -2531,7 +2248,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Refuse re-adding a folder that is already a project (c0eacae97)
 - Open project browsing one level above the current project (353b0ac01)
 - Dock the Manage projects footer and align its trash to the row edge (80d33e9ad)
-- Read ui source through Vite raw import in the sheet pin (1e2bd6cda)
+- Import UI source through Vite raw imports in the sheet test (1e2bd6cda)
 - Make every dialog a bottom sheet on phones (27606096f)
 - Align companion trailing controls and drop the glyph hover frame (e9d60a060)
 - Shrink compact header buttons to a 32px face with a 44px touch target (3b0fdbaf1)
@@ -2545,13 +2262,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Correct label-overrides docstring after the shell/fs tool split (020ed396f)
 - Drop same-path coalescing and the running-code-tools exception (6611bbb1b)
 - Purge legacy fs/shell tool names from form and loop tests (3e16113bf)
-- Split the `shell` and `fs` mega-tools into named verbs (5846c9dc9)
+- Split shell and filesystem tools into named operations (5846c9dc9)
 - Adopt svar 0.7.106 so a declared retry cooldown is waited out (492c93ff8)
 - Serve a live turn's text-named images from the gateway (31970dec1)
 - Report total line counts in a collapsed multi-file patch headline (a357ce607)
 - Report added/removed/modified line counts on every edit summary (1fb5fe24f)
 - Stop blaming the provider for a turn that never reached one (0b8194c57)
-- Abandon a wedged session engine instead of queueing behind it (3e813c15a)
+- Replace unresponsive session engines instead of queueing behind them (3e813c15a)
 - Give every companion list header one band (bc5516194)
 - Give every attachment descriptor its turn id (eec04cf37)
 - Give every header one trailing cluster and one kebab (2661521fc)
@@ -2562,7 +2279,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Bump svar to 0.7.105 (f0e35f757)
 - Decode Python provider maps from declared field tables (7ae92e716)
 - Scope the tid-less cancel to the turn its caller submitted (9daf44093)
-- Let Rift hand a clean draft over without pending changes (8de1c5504)
+- Accept clean Rift drafts without pending changes (8de1c5504)
 - Name the project that owns a nested skill (5d399ef38)
 - Remove native tool color roles (3f92b2cbd)
 - Revert recent folding changes (57f722736)
@@ -2602,32 +2319,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Show a human-input pause only on its own session's tab (e1ff3aa14)
 - Remove profanity from source comments and test reports (d56c65216)
 - Keep inline images visible when a transient band opens (2ab21ff16)
-- Paint the transient band flat on the terminal's own paper (f670c026d)
+- Use the terminal background for transient panels (f670c026d)
 - Load the TUI provider dialog from one gateway call (c181c0896)
-- Close the transient band around its hint bar on slightly darker paper (d639c94cd)
+- Enclose the transient panel and hint bar on a slightly darker background (d639c94cd)
 - Render TUI diff fences compact instead of side-by-side (cf36e81c8)
-- Border the transient band, drop its tinted paper and column rules (12f68cc6d)
+- Add a transient-panel border and remove tinted backgrounds and column dividers (12f68cc6d)
 - Order provider limit windows shortest-first (5h before 7d) (e50e51b0b)
 - Keep a TUI tab's reading position across a workspace switch (c896ed12d)
 - Never animate auto-follow scrolling in the TUI (6b2a8111e)
-- Drop a tab's stale layout on switch so the view stops self-scrolling (8d2b238ce)
+- Clear stale tab layouts on switch to prevent automatic scrolling (8d2b238ce)
 - Drop same-path coalescing and the running-code-tools exception (6611bbb1b)
-- Land the TUI scroll on a terminal resize instead of easing to it (c6dd2fe6f)
+- Apply TUI scroll position immediately after terminal resize (c6dd2fe6f)
 - Print a TUI notice's sentence without its machine code (e7146ae58)
 - Unify the transient band into one embeddable component (3fc733b99)
-- Anchor every main-screen transient through one band anchor (2ff6b8f0d)
-- Ink the transient band's title on its opening rule and move the palette into Tools (4be2df9f7)
-- Anchor in-session transients above the prompt on their own paper (b9a9db2d2)
+- Use one positioning function for main-screen transient panels (2ff6b8f0d)
+- Place the transient title on its top divider and move the palette into Tools (4be2df9f7)
+- Position session transients above the prompt with separate backgrounds (b9a9db2d2)
 - Give a form one text column by moving the focus ring out of it (699faae0d)
-- Answer every cancel, even when the tab paints no live turn (8e5f97569)
+- Respond to cancellation even when the tab shows no active turn (8e5f97569)
 - Return attachment descriptors and drop the answer gallery (2d29bf3e9)
-- Give a form field's input its own row of air and stop indenting toggles (bfd1c544e)
+- Put form inputs on separate rows and remove toggle indentation (bfd1c544e)
 - Decode Python provider maps from declared field tables (7ae92e716)
 - Give every C-x category its own column (151340f56)
 - Open one blank row under every human-input label (9bc3de016)
 - Lay a tall transient band out in which-key columns (1d67bfabb)
-- Make C-x a transient hydra band (f20d4c7aa)
-- Ask a band's follow-up question in the band's own frame (5414f777b)
+- Implement C-x as a transient keyboard-command panel (f20d4c7aa)
+- Show follow-up questions within the initiating panel (5414f777b)
 - Scope the tid-less cancel to the turn its caller submitted (9daf44093)
 - Remove native tool color roles (3f92b2cbd)
 - Keep Magit responsive during commit verification (d0531b830)
@@ -2659,8 +2376,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis-persistance-sqlite
 - Render markdown artifacts and let a human comment on them (c4a1ea54f)
 - Collapse vis_attach_bytes into vis_attach (1afa4df70)
-- Cut the wall-clock waste out of the slowest gateway and loop tests (375fce532)
-- Pin the turn soul on every attachment row, tool artifacts included (ab7a722da)
+- Reduce unnecessary waits in the slowest gateway and loop tests (375fce532)
+- Associate every attachment row with its turn, including tool artifacts (ab7a722da)
 - Finish pending companion and engine work (ab1db24db)
 
 #### com.blockether/vis-provider-anthropic
@@ -2692,11 +2409,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Release v0.1.32
 - Drop stale workspace backend re-exports from core
 - Allow per-model provider API styles
-- Match fleet header typography
-- Make fleet headers and attachments easier to use
+- Match machine-list header typography
+- Improve machine-list headers and attachment controls
 - Use the shared Button component for doc-artifact toolbar controls
 - companion: let a pinch start while a stroke is in progress
-- Fold the artifacts sheet's title band into its filter strip
+- Combine the artifact sheet title and filter rows
 - Drop oversized py-2 override from image-viewer/annotation buttons
 - Raise ArtifactsSheet z-index above transcript copy buttons
 - Bridge extension: throw on missing :workspace/root instead of falling back to user.dir
@@ -2704,20 +2421,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Drop bossy "ATTACH ONE OR TWO PER TURN" framing from attach shim's prompt-facing description
 - Print every shim's supported surface in the system prompt
 - Write every shim description as an editable multi-line str
-- Tell the write side to keep one document under one name
-- Version artifacts so a name is one continuous thread of work
+- Keep document updates under one name
+- Version artifacts under a shared name
 - Hardcode workspace backend to Rift, remove pluggable backend registry
-- Align fleet kebab flush-right and match project header typography
+- Right-align machine overflow menus and match project-header typography
 - Add vis-agent gateway mcp CLI commands
 - Replace ⋯ glyph with a proper DotsIcon in the icon set
-- Remove the redundant fleet bar ⋯ — one kebab per machine header only
+- Remove the machine-list overflow menu; retain one per machine header
 - Rename release-companion skill to release-companion-hotfix
 - Remove the /clear slash command
 - Fix iOS keyboard glitch when tapping a slash command
-- Put every machine verb behind one ⋯ menu and let a session pick its project
+- Group machine actions in one overflow menu and allow session project selection
 - Suspend the zoom-viewer snap transition during a live pinch/pan
 - Fit the composer text to its own line box
-- Loosen the small type steps and refuse a hardcoded line-height
+- Increase small-text sizing intervals and remove fixed line height
 - release: update release notes for v0.1.31
 - Draw the design board with the app's own list components
 
@@ -2727,31 +2444,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Release v0.1.32 (6d4bf9101)
 - Drop stale workspace backend re-exports from core (5609ac9f2)
 - Allow per-model provider API styles (efb7b129d)
-- Match fleet header typography (1cf300753)
-- Make fleet headers and attachments easier to use (93d4aff0b)
+- Match machine-list header typography (1cf300753)
+- Improve machine-list headers and attachment controls (93d4aff0b)
 - Use the shared Button component for doc-artifact toolbar controls (c17473390)
 - companion: let a pinch start while a stroke is in progress (5ed890df4)
-- Fold the artifacts sheet's title band into its filter strip (48fde2874)
+- Combine the artifact sheet title and filter rows (48fde2874)
 - Drop oversized py-2 override from image-viewer/annotation buttons (9b344dc58)
 - Raise ArtifactsSheet z-index above transcript copy buttons (9abaf9a00)
 - companion: resume last session on cold hashless relaunch (ee72aad57)
 - Drop bossy "ATTACH ONE OR TWO PER TURN" framing from attach shim's prompt-facing description (344923028)
 - Print every shim's supported surface in the system prompt (da99aadd0)
 - Write every shim description as an editable multi-line str (64fcd44c1)
-- Tell the write side to keep one document under one name (06424ae2f)
-- Version artifacts so a name is one continuous thread of work (4e5ba78ab)
+- Keep document updates under one name (06424ae2f)
+- Version artifacts under a shared name (4e5ba78ab)
 - Hardcode workspace backend to Rift, remove pluggable backend registry (a84314623)
-- Align fleet kebab flush-right and match project header typography (c269eefa3)
+- Right-align machine overflow menus and match project-header typography (c269eefa3)
 - Add vis-agent gateway mcp CLI commands (74f26e03c)
 - Replace ⋯ glyph with a proper DotsIcon in the icon set (52280c55e)
-- Remove the redundant fleet bar ⋯ — one kebab per machine header only (32f70e99b)
+- Remove the machine-list overflow menu; retain one per machine header (32f70e99b)
 - Rename release-companion skill to release-companion-hotfix (386459ad6)
 - Remove the /clear slash command (398d28da8)
 - Fix iOS keyboard glitch when tapping a slash command (23cbf2f1b)
-- Put every machine verb behind one ⋯ menu and let a session pick its project (62daee7ea)
+- Group machine actions in one overflow menu and allow session project selection (62daee7ea)
 - Suspend the zoom-viewer snap transition during a live pinch/pan (577388d1f)
 - Fit the composer text to its own line box (c877137e0)
-- Loosen the small type steps and refuse a hardcoded line-height (5f45e7f0b)
+- Increase small-text sizing intervals and remove fixed line height (5f45e7f0b)
 - release: update release notes for v0.1.31 (507ca8dc1)
 - Draw the design board with the app's own list components (0f423eb9b)
 
@@ -2759,7 +2476,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Bridge extension: throw on missing :workspace/root instead of falling back to user.dir (cb4e63b8e)
 
 #### com.blockether/vis-persistance-sqlite
-- Version artifacts so a name is one continuous thread of work (4e5ba78ab)
+- Version artifacts under a shared name (4e5ba78ab)
 
 
 
@@ -2769,11 +2486,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Release v0.1.31
 - Prove format_code/lint_code's invoke-symbol-wrapper respects draft cwd
 - Prove native-handler workspace-root fix covers repl/repl_connect/repl_eval
-- Coerce the fold ledger's own anchor grammar in session_fold
-- Draw the proposal in the app's own chrome
+- Accept fold-record anchor syntax in session_fold
+- Use app controls and layout in the design proposal
 - Bind workspace context for native handler-tool dispatch
 - Add opencode-go provider with per-model wire routing
-- Draw the path pencil as ink, not a box
+- Render the path edit pencil without a button background
 - Photograph the chosen session flow: machine menu, path pencil, one switch
 - Refuse an unparseable session_fold scope id instead of acking a fold of nothing
 - Show per-file +/- line counts in the /draft apply report
@@ -2784,14 +2501,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Refresh the audit snapshot for imaging 0.1.9
 - Refuse a misplaced shell options map by name
 - Spec the TUI transient and compute its layout once
-- Compose every band on one embed-transient! seam
+- Compose transient panels through embed-transient!
 - Revert "Rename bar identifiers to baz"
 - feat(tui): answer every /draft slash with the draft band
 - fix(gateway,hitl): one sid spelling in the registry, lock-free hydrate, OTP as a secret
 - Serve ls of an unindexable directory from fff itself
 - Split the draft band into create, switch and abandon commands
 - Merge the draft transient's Create and Danger groups into Actions
-- Make drafts a magit transient band
+- Implement draft controls as a Magit transient panel
 - Make environment refresh! a host-only /reload hook
 - Make environment refresh host-only, off the Python sandbox
 - Convey caller thread bindings into the structural scan pool
@@ -2803,7 +2520,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Replay every parked human-input request on attach
 - Surface daemon-side human input in the terminal
 - Run bang turns in the session workspace root
-- Separate the artifacts band from the dark chrome above it
+- Separate the artifact section from the dark controls above it
 - Find search hits the session list has not paged in, and date the rows
 - Draw every companion icon at one optical size
 - Stream empty-reply resends live and name why each provider call exists
@@ -2813,7 +2530,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Make the favorite star icon truly yellow
 - Keep the caller's session inside a bounded provider probe
 - Make failed-turn error cards selectable in the TUI transcript
-- Give the artifacts sheet the dialog band's own height
+- Match the artifact-sheet header to dialog-header height
 - Keep Python provider limits rows valid
 - Open text artifacts and give the artifacts sheet canonical chrome
 - Name the provider and model a stalled turn died on
@@ -2830,7 +2547,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Serve attachment bytes from the list the descriptors number
 - Treat a blank rg include glob as no filter
 - Release iOS keyboard before backgrounding
-- Ship the artifacts sheet: one index of everything a session produced
+- Add one artifact index for all session output
 - Keep trusted extension shell outside the jail
 - Guard collapsed tool result memory
 - Unify filesystem tool input schema
@@ -2841,7 +2558,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Paint a failed turn as a card in the TUI
 - Stop advertising strict tools on every wire
 - Log the tool-call transport wreckage the door drops
-- Gate advertised :strict on the request's own wire
+- Advertise :strict only when supported by the request API format
 - Refuse a tool-call arguments payload that is not an object
 - Decode drifted escapes in one linear allocation-free pass
 - Propose three Artifacts gallery designs for the session header
@@ -2860,11 +2577,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Release v0.1.31 (91f6db754)
 - Prove format_code/lint_code's invoke-symbol-wrapper respects draft cwd (80a31e269)
 - Prove native-handler workspace-root fix covers repl/repl_connect/repl_eval (3c7620aec)
-- Coerce the fold ledger's own anchor grammar in session_fold (52d4e4c3a)
-- Draw the proposal in the app's own chrome (d3187b86a)
+- Accept fold-record anchor syntax in session_fold (52d4e4c3a)
+- Use app controls and layout in the design proposal (d3187b86a)
 - Bind workspace context for native handler-tool dispatch (6afd4bf25)
 - Add opencode-go provider with per-model wire routing (a6dc50277)
-- Draw the path pencil as ink, not a box (9a13e8a00)
+- Render the path edit pencil without a button background (9a13e8a00)
 - Photograph the chosen session flow: machine menu, path pencil, one switch (3c94a6df4)
 - Refuse an unparseable session_fold scope id instead of acking a fold of nothing (6cc908129)
 - Show per-file +/- line counts in the /draft apply report (3695a2a1b)
@@ -2886,7 +2603,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Remove /draft blank (45f5ff1fa)
 - Surface daemon-side human input in the terminal (537da3648)
 - Run bang turns in the session workspace root (4b4989131)
-- Separate the artifacts band from the dark chrome above it (14a251b7f)
+- Separate the artifact section from the dark controls above it (14a251b7f)
 - Find search hits the session list has not paged in, and date the rows (f79fba147)
 - Draw every companion icon at one optical size (770e51cda)
 - Stream empty-reply resends live and name why each provider call exists (8569d0fed)
@@ -2895,7 +2612,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Size the artifacts chip to the session id beside it and give it a paperclip (01d4a9eac)
 - Make the favorite star icon truly yellow (674b790cd)
 - Keep the caller's session inside a bounded provider probe (1e08f32a1)
-- Give the artifacts sheet the dialog band's own height (702eb438d)
+- Match the artifact-sheet header to dialog-header height (702eb438d)
 - Keep Python provider limits rows valid (92a9400b6)
 - Open text artifacts and give the artifacts sheet canonical chrome (51005c0ed)
 - Name the provider and model a stalled turn died on (c4482e973)
@@ -2912,7 +2629,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Serve attachment bytes from the list the descriptors number (e64b35427)
 - Treat a blank rg include glob as no filter (bb617c375)
 - Release iOS keyboard before backgrounding (376ca3b23)
-- Ship the artifacts sheet: one index of everything a session produced (d62ac00b4)
+- Add one artifact index for all session output (d62ac00b4)
 - Keep trusted extension shell outside the jail (a6aecf9f9)
 - Guard collapsed tool result memory (38f630b98)
 - Unify filesystem tool input schema (f62d39a97)
@@ -2921,7 +2638,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Make the artifacts gallery proposals operable and touch-sized (66166db20)
 - Stop advertising strict tools on every wire (6d60bf87f)
 - Log the tool-call transport wreckage the door drops (b6a5630e0)
-- Gate advertised :strict on the request's own wire (0276623e9)
+- Advertise :strict only when supported by the request API format (0276623e9)
 - Refuse a tool-call arguments payload that is not an object (242250462)
 - Decode drifted escapes in one linear allocation-free pass (34fdf9f66)
 - Propose three Artifacts gallery designs for the session header (44aac9a23)
@@ -2937,13 +2654,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis-channel-tui
 - Fix non-deterministic model picker title in the add-provider band (996e8422e)
 - Spec the TUI transient and compute its layout once (a1235b3a3)
-- Compose every band on one embed-transient! seam (aa009dad5)
+- Compose transient panels through embed-transient! (aa009dad5)
 - Revert "Rename bar identifiers to baz" (8105572f7)
 - feat(tui): answer every /draft slash with the draft band (4dcfef4e7)
 - fix(gateway,hitl): one sid spelling in the registry, lock-free hydrate, OTP as a secret (fd152579d)
 - Split the draft band into create, switch and abandon commands (35adceb1e)
 - Merge the draft transient's Create and Danger groups into Actions (2f39dafc8)
-- Make drafts a magit transient band (d1cef6941)
+- Implement draft controls as a Magit transient panel (d1cef6941)
 - Rename bar identifiers to baz (d921da75a)
 - Remove /draft blank (45f5ff1fa)
 - Replay every parked human-input request on attach (03e86ba9c)
@@ -2969,7 +2686,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Serve the installer and the vis-agent command as release assets
 - Crown the start menu with the Blockether yellow
 - Keep the start menu reading parked drafts when the menu is re-anchored
-- Ship a dark-theme vis logo and un-matte the transparent marks
+- Add a dark-theme Vis logo and remove background color from transparent assets
 - Fix numpy and PIL sandbox shim gaps for image work
 - Take the keyboard down before the attachment sheet
 - Delete a session without waiting on its live teardown
@@ -2977,15 +2694,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Make TUI screenshots one call and paint italic and underline like a terminal
 - Build the OAuth file refresher lazily so its lock path is the user's
 - Re-anchor the start menu on resize instead of closing it
-- Fix disclosure copy targets landing one row above the painted body
+- Align disclosure copy targets with their rendered content
 - Photograph where the Blockether yellow goes on the start menu
 - Read the environment at runtime, not at native-image build time
-- Give every machine its own coloured rail in the sessions list
+- Give each machine a distinct colored indicator in the session list
 - Give every commit on main its own CI run
 - Rasterize a bold run as bold, not as the mono face's only weight
 - Never cancel a CI run for the commit already on main
 - Select the runtime an update names
-- Invert the vis-table card header onto its own dark band
+- Use inverse text colors for vis-table card headers
 - Clone the dev checkout on main when there is none
 - Separate machines in the sessions list with air and a banner
 - Keep the vis-table card's row bands inside the frame
@@ -2994,7 +2711,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Float sessions holding unsent work and keep their attachments
 - Offer none authentication in the paramiko shim SSH server
 - Make the urllib3 shim a package, not one flat module
-- Lighten the live badge to a green FILL, not the green ink
+- Use a green background rather than green text for the live badge
 - Rasterize captured TUI frames in Clojure, in the theme's own colours
 - Report the inspected session's turn and form-level failures
 - Ignore Wrangler local dev state
@@ -3006,13 +2723,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Render a vis-table preview as one stretched card
 - Pin ruff at 0.3.4, whose reported version is the released one
 - Cross-validate the vis-table pipeline on the TUI
-- Cap a turn whose provider never answered at a tight first-output ceiling
+- Limit turns with no provider output using a first-output timeout
 - Stop cancel from settling a live turn's durable row
 - Keep attached CSV rows out of model context and rebuild the grid
 - Fail a Python lint/format target that holds no Python
 - Bracket the live count in a scope chip
 - Name the publisher's relay by default on the gateway too
-- Let the scope strip own the fleet's live and unread counts
+- Show live and unread machine counts in the scope strip
 - Let a device name the relay that sealed its grant
 - Add ruled-grid and cell-inspector table design proposals
 - Reformat the bs4 shim with ruff
@@ -3027,13 +2744,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Keep an Android device Google only disliked one message from
 - Decide a notification's size before a provider does
 - Add a vis-table design gallery variant
-- Name the relay a machine chose, and say so when it refuses one
+- Show the selected relay and explain relay rejection
 - Make the requests and httpx shims behave like the real clients
-- Ask a stumbling relay twice and never hand a grant to cleartext
+- Retry transient relay failures once and require HTTPS for delivery grants
 - Fetch the relay healthcheck URL the workflow was given
 - Register through the relay when a machine holds no push key
 - Expose httpx.Response.elapsed in the sandbox shim
-- Price strict tools by the provider's real grammar slots
+- Calculate strict-tool cost from provider grammar capacity
 - Render attached CSV as an interactive table in TUI and companion
 - Grant the relay workflow only what a deploy needs
 - Bound the relay's request body and never leak a stack trace
@@ -3049,7 +2766,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Constrain sampling of the tools whose payload can be mis-serialized
 - Document red-then-green regression discipline and link regression tests to their issues
 - Document that APNs and FCM credentials bind to the app build
-- Report companion search as a fleet question
+- Identify Companion search as spanning machines
 - Make struct_patch `match` a sub-expression selector under every locator
 - Organize companion sessions by machine
 - Keep a timed-out Python block's output and budget HTTP evals
@@ -3084,7 +2801,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Pin svar 0.7.99 so provider responses are never interned
 - Default TUI frame renders to the bundled JetBrains Mono
 - Pass the requested font family through the PIL shim bridge
-- Detect a dead GraalPy context by asking it, not by matching error text
+- Probe GraalPy context health instead of matching exception text
 - Cap rendered TUI frame PNGs at 1024px per side
 - Heal Python extension symbols whose context was torn down
 - Pin svar 0.7.98 so tool arguments are never interned
@@ -3096,13 +2813,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Stamp every Python sandbox shim with __file__ and __version__
 - Pin svar 0.7.97 for strings-only tool arguments
 - Drop launcher-owned runtime and update commands from the binary
-- Guarantee every wire image is measured under the pixel ceiling
+- Measure every outgoing image against the pixel limit
 - Normalize svar tool calls to strings at one engine door
-- Cap wire image dimensions so many-image requests survive
+- Limit outgoing image dimensions for multi-image requests
 - Pin the owned source checkout instead of cloning it
 - Cross the PIL draw bridge once per run and convert rasters without reflection
-- Glue the magit transient band to the dialog's bottom chrome
-- Pin that a tapped notification lands on its session screen
+- Align the Magit transient panel with the dialog's bottom controls
+- Test that notification taps open the associated session
 - Batch PIL draw ops into one cdylib call
 - Open the session a tapped notification is about after a cold start
 - Stringify keyword tool-argument values at the svar edge
@@ -3114,7 +2831,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Carry the vis-agent command through a source update
 - Accept bare runtime words in vis-agent update
 - Document Python layout-read warnings and venv interpreter resolution
-- Never prompt for a credential the machine mints itself
+- Skip credential prompts for automatically generated credentials
 - release: update release notes for v0.1.27
 
 ### Package changes
@@ -3124,7 +2841,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Serve the installer and the vis-agent command as release assets (e1f106241)
 - Crown the start menu with the Blockether yellow (49ccf1b15)
 - Keep the start menu reading parked drafts when the menu is re-anchored (18eadb087)
-- Ship a dark-theme vis logo and un-matte the transparent marks (ec8343973)
+- Add a dark-theme Vis logo and remove background color from transparent assets (ec8343973)
 - Fix numpy and PIL sandbox shim gaps for image work (5d1944e16)
 - Take the keyboard down before the attachment sheet (8f2a0f339)
 - Delete a session without waiting on its live teardown (7d90486fb)
@@ -3134,7 +2851,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Re-anchor the start menu on resize instead of closing it (a859de278)
 - Photograph where the Blockether yellow goes on the start menu (19416e983)
 - Read the environment at runtime, not at native-image build time (0d980d92c)
-- Give every machine its own coloured rail in the sessions list (e8b2b563e)
+- Give each machine a distinct colored indicator in the session list (e8b2b563e)
 - Give every commit on main its own CI run (e819e86c4)
 - Never cancel a CI run for the commit already on main (451fa1e36)
 - Select the runtime an update names (a09ee8b9c)
@@ -3144,7 +2861,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Float sessions holding unsent work and keep their attachments (563738cdd)
 - Offer none authentication in the paramiko shim SSH server (ca2d8e1b0)
 - Make the urllib3 shim a package, not one flat module (297543cf0)
-- Lighten the live badge to a green FILL, not the green ink (86575fd5e)
+- Use a green background rather than green text for the live badge (86575fd5e)
 - Rasterize captured TUI frames in Clojure, in the theme's own colours (7d62afb1b)
 - Report the inspected session's turn and form-level failures (9f700957a)
 - Ignore Wrangler local dev state (d05b62c20)
@@ -3154,12 +2871,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Judge the PIL pixel-read budget by canvas ratio, not wall clock (9641dffef)
 - Report the real cause when a lazy Python shim fails to import (a60ade92e)
 - Pin ruff at 0.3.4, whose reported version is the released one (36d8e805b)
-- Cap a turn whose provider never answered at a tight first-output ceiling (6060ebdcc)
+- Limit turns with no provider output using a first-output timeout (6060ebdcc)
 - Stop cancel from settling a live turn's durable row (0a92426f7)
 - Keep attached CSV rows out of model context and rebuild the grid (0e4242f92)
 - Bracket the live count in a scope chip (afa1480a1)
 - Name the publisher's relay by default on the gateway too (774e9b99e)
-- Let the scope strip own the fleet's live and unread counts (31c4bb444)
+- Show live and unread machine counts in the scope strip (31c4bb444)
 - Let a device name the relay that sealed its grant (7a87cbf8f)
 - Add ruled-grid and cell-inspector table design proposals (8781c07cf)
 - Reformat the bs4 shim with ruff (161430165)
@@ -3172,13 +2889,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Keep an Android device Google only disliked one message from (9c803eff8)
 - Decide a notification's size before a provider does (4a3d96cff)
 - Add a vis-table design gallery variant (6500d3d2e)
-- Name the relay a machine chose, and say so when it refuses one (1e938b352)
+- Show the selected relay and explain relay rejection (1e938b352)
 - Make the requests and httpx shims behave like the real clients (fe5175e4b)
-- Ask a stumbling relay twice and never hand a grant to cleartext (63b849b87)
+- Retry transient relay failures once and require HTTPS for delivery grants (63b849b87)
 - Fetch the relay healthcheck URL the workflow was given (300444b66)
 - Register through the relay when a machine holds no push key (8f0d4a259)
 - Expose httpx.Response.elapsed in the sandbox shim (ea0f30b75)
-- Price strict tools by the provider's real grammar slots (b6e72492c)
+- Calculate strict-tool cost from provider grammar capacity (b6e72492c)
 - Render attached CSV as an interactive table in TUI and companion (6ea932a46)
 - Grant the relay workflow only what a deploy needs (f39021e51)
 - Bound the relay's request body and never leak a stack trace (84bd31f12)
@@ -3194,7 +2911,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Constrain sampling of the tools whose payload can be mis-serialized (b0b8699e5)
 - Document red-then-green regression discipline and link regression tests to their issues (28c3efb05)
 - Document that APNs and FCM credentials bind to the app build (21d1e8ba3)
-- Report companion search as a fleet question (ab5bc6be4)
+- Identify Companion search as spanning machines (ab5bc6be4)
 - Make struct_patch `match` a sub-expression selector under every locator (6d78ec191)
 - Organize companion sessions by machine (ea200ee24)
 - Keep a timed-out Python block's output and budget HTTP evals (7bc2c93e1)
@@ -3219,7 +2936,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Pin svar 0.7.99 so provider responses are never interned (cf3e00bca)
 - Default TUI frame renders to the bundled JetBrains Mono (8b379d1f1)
 - Pass the requested font family through the PIL shim bridge (c591fd622)
-- Detect a dead GraalPy context by asking it, not by matching error text (15df749f7)
+- Probe GraalPy context health instead of matching exception text (15df749f7)
 - Heal Python extension symbols whose context was torn down (a1654168c)
 - Pin svar 0.7.98 so tool arguments are never interned (640085960)
 - Narrow the tool-call door to model drift and extension EDN (7a5b76538)
@@ -3229,13 +2946,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Stamp every Python sandbox shim with __file__ and __version__ (a176541f4)
 - Pin svar 0.7.97 for strings-only tool arguments (a8443d0d9)
 - Drop launcher-owned runtime and update commands from the binary (555a52d75)
-- Guarantee every wire image is measured under the pixel ceiling (9782a139f)
+- Measure every outgoing image against the pixel limit (9782a139f)
 - Normalize svar tool calls to strings at one engine door (583c359e8)
-- Cap wire image dimensions so many-image requests survive (5b8d5df2f)
+- Limit outgoing image dimensions for multi-image requests (5b8d5df2f)
 - Pin the owned source checkout instead of cloning it (bf42529be)
 - Cross the PIL draw bridge once per run and convert rasters without reflection (75f894a5a)
-- Glue the magit transient band to the dialog's bottom chrome (b12b18a4c)
-- Pin that a tapped notification lands on its session screen (dab963288)
+- Align the Magit transient panel with the dialog's bottom controls (b12b18a4c)
+- Test that notification taps open the associated session (dab963288)
 - Batch PIL draw ops into one cdylib call (ea08babc6)
 - Open the session a tapped notification is about after a cold start (71ecc2a93)
 - Stringify keyword tool-argument values at the svar edge (8b2363d15)
@@ -3246,15 +2963,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Carry the vis-agent command through a source update (69f2c71d8)
 - Accept bare runtime words in vis-agent update (271f5f91f)
 - Document Python layout-read warnings and venv interpreter resolution (031d08cb5)
-- Never prompt for a credential the machine mints itself (543df0972)
+- Skip credential prompts for automatically generated credentials (543df0972)
 - release: update release notes for v0.1.27 (14db65ea6)
 
 #### com.blockether/vis-channel-tui
 - Make TUI screenshots one call and paint italic and underline like a terminal (367bbe19b)
-- Fix disclosure copy targets landing one row above the painted body (c2cd40d3b)
+- Align disclosure copy targets with their rendered content (c2cd40d3b)
 - Read the environment at runtime, not at native-image build time (0d980d92c)
 - Rasterize a bold run as bold, not as the mono face's only weight (46590f686)
-- Invert the vis-table card header onto its own dark band (52c059fab)
+- Use inverse text colors for vis-table card headers (52c059fab)
 - Keep the vis-table card's row bands inside the frame (0e3fafe24)
 - Dress the vis-table card as a sheet: muted rules, banded head, zebra rows (e5e38270e)
 - Rasterize captured TUI frames in Clojure, in the theme's own colours (7d62afb1b)
@@ -3278,9 +2995,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Pass the requested font family through the PIL shim bridge (c591fd622)
 - Cap rendered TUI frame PNGs at 1024px per side (396c0090d)
 - Render TUI capture frames legibly and under a 2000px cap (7a9eb30be)
-- Glue the magit transient band to the dialog's bottom chrome (b12b18a4c)
+- Align the Magit transient panel with the dialog's bottom controls (b12b18a4c)
 - Anchor magit transient band to its own hint bar (dcc6d81ec)
-- Never prompt for a credential the machine mints itself (543df0972)
+- Skip credential prompts for automatically generated credentials (543df0972)
 
 #### com.blockether/vis-foundation-voice
 - Read the environment at runtime, not at native-image build time (0d980d92c)
@@ -3329,7 +3046,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Rebuild the LLM router on /reload
 - Give provider card limits their own row
 - Stop the composer keyboard flickering after attaching media
-- Make the magit transient a full-bleed band with a title margin
+- Extend the Magit transient panel to the dialog edges with a title margin
 - Accept images up to 25MB over the gateway
 - Build Linux release assets locally with a real version sha
 - Keep a gateway notification choice even when that machine is unreachable
@@ -3359,7 +3076,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Let a magit transient paint inside a host dialog's frame (609d503d6)
 - Retain selected live provider models (6d9f91ef6)
 - Give provider card limits their own row (985d90ad1)
-- Make the magit transient a full-bleed band with a title margin (30fc5386e)
+- Extend the Magit transient panel to the dialog edges with a title margin (30fc5386e)
 
 #### com.blockether/vis-foundation-bridge
 - Fix Bridge commit gate project selection (03514779f)
@@ -3380,7 +3097,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Emit pytest terminal report and --junitxml from the sandbox shim
 - Guarantee a terminal event for every launched gateway turn
 - Teach python run_tests the project's declared layout
-- Underline markdown table links and pin the painted click region
+- Underline Markdown table links and test their click regions
 - Make markdown links inside table cells clickable
 - Record how a draft clone was actually made
 - Let a jailed command reach the macOS Keychain
@@ -3392,9 +3109,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Record the typed human-input pause API in the changelog
 - Reformat the tree and drop the ambiguous loop name in the issues example
 - Cover human-input dialog queueing in the TUI state store
-- Wrap dialog descriptions at the painted width and survive tiny terminals
+- Wrap dialog descriptions to rendered width and support narrow terminals
 - Render optional dialog description above human-input fields
-- Enforce snake_case string keys at the Python human-input seam
+- Require snake_case keys at the Python human-input boundary
 - Ask the clone what its fork skipped instead of mirroring the rules
 - Document the no-root options for draft copy-on-write
 - Document that btrfs drafts need root only once
@@ -3405,7 +3122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Enforce human-input rules identically on the TUI and the app
 - Stop tracking generated tsc buildinfo files
 - Pick the podman machine that can hold the native builder
-- Never read a filtered .yarn artifact pair as an agent deletion
+- Exclude filtered Yarn artifacts from draft deletion reports
 - Render magit transient flags as toggles distinct from commands
 - Build the linux-x64 release asset locally through Rosetta
 - Cross-validate human input on the TUI and the companion app
@@ -3450,7 +3167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Record the typed human-input pause API in the changelog (3ba586e5b)
 - Reformat the tree and drop the ambiguous loop name in the issues example (f7046766e)
 - Render optional dialog description above human-input fields (d84392570)
-- Enforce snake_case string keys at the Python human-input seam (609374929)
+- Require snake_case keys at the Python human-input boundary (609374929)
 - Ask the clone what its fork skipped instead of mirroring the rules (ad00c209c)
 - Document the no-root options for draft copy-on-write (c397c6327)
 - Document that btrfs drafts need root only once (f61be0fe3)
@@ -3461,7 +3178,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Enforce human-input rules identically on the TUI and the app (3633dabcb)
 - Stop tracking generated tsc buildinfo files (4ec7b78dd)
 - Pick the podman machine that can hold the native builder (ac1ddcabe)
-- Never read a filtered .yarn artifact pair as an agent deletion (024bfc742)
+- Exclude filtered Yarn artifacts from draft deletion reports (024bfc742)
 - Build the linux-x64 release asset locally through Rosetta (e756ef8fe)
 - Cross-validate human input on the TUI and the companion app (f00138072)
 - Stop counting a draft-generated ignored tree as an agent change (9febe38bd)
@@ -3484,12 +3201,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - release: update release notes for v0.1.25 (c22ad7f0b)
 
 #### com.blockether/vis-channel-tui
-- Underline markdown table links and pin the painted click region (0270524f4)
+- Underline Markdown table links and test their click regions (0270524f4)
 - Make markdown links inside table cells clickable (71f3950a5)
 - Paint a failed call's error line red (ed0eccaa8)
 - Settle a cancelled turn in one frame (9730a9d02)
 - Cover human-input dialog queueing in the TUI state store (24ef40908)
-- Wrap dialog descriptions at the painted width and survive tiny terminals (483947fd6)
+- Wrap dialog descriptions to rendered width and support narrow terminals (483947fd6)
 - Render optional dialog description above human-input fields (d84392570)
 - Enforce required human-input fields and mark them REQUIRED (46bb32041)
 - Give every human-input field a name, a label and a description (bc7b618e9)
@@ -3517,102 +3234,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- human-input: an extension can pause its run and ask the operator a typed
-  question. `vis.ask(title, fields, **options)` (Clojure:
-  `vis/request-human-input!`) blocks the calling extension until a human answers,
-  and the request rides every channel at once — the TUI paints a form dialog, the
-  gateway publishes `human_input.request` / `human_input.close` as session events
-  and serves `GET /v1/sessions/:sid/human-input` plus per-request submit and
-  cancel actions, and the companion app renders the same fields (and gets a push
-  notification for the block). Field types are `plaintext`, `password`,
-  `multiline`, `select`, `multiselect`, and `checkbox`, each with `name`,
-  `label`, `description`, `default`, `placeholder`, `max_length`, and an
-  `is_required` that both dialogs and the HTTP seam enforce. Every key is a
-  snake_case string; a camelCase or kebab-case spelling is refused with the right
-  name rather than silently ignored, so a required field can never turn optional.
-  Cancelling or timing out never raises: it returns a falsey `Answer` whose
-  `reason` says which. A `password` answers with an opaque `vis-secret:` handle —
-  transcript, logs, and the model see only the handle, `answer.reveal(name)`
-  resolves the plaintext in-process, and `vis.forget(handle)` drops it.
-  Documented in `resources/vis-docs/extending.md`.
+- human-input: let extensions ask typed questions with vis.ask or vis/request-human-input!. TUI, gateway and Companion present the same fields, validation, submit and cancel actions. Supported fields include plaintext, password, multiline, select, multiselect and checkbox. Require snake_case keys and enforce is_required across clients and HTTP. Cancellation and timeout return a falsey Answer with a reason. Passwords return opaque vis-secret handles; reveal resolves them in-process and forget removes them. Documented in resources/vis-docs/extending.md.
 
-- config: a `workspace.filesystem` entry can say WHERE it mounts. `when.os`
-  (`macos`, `linux`, `wsl`, `windows`) and `when.exists: <path>` gate a root on
-  the host, and `optional: true` skips a declared root whose own path is absent,
-  so one `vis.yml` serves a laptop, a workstation and CI. A gated id may stay in
-  `jail.filesystem.allow` on every machine: roots this host does not mount are
-  dropped before the jail is built instead of failing the config as an unknown
-  id. `doctor` — and the startup hint that reuses it — now reports every root
-  that did not mount as written: `info` for a conditional root the host skipped,
-  a warning for an admitted root whose path is missing. Documented in
-  `resources/vis-docs/sandbox.md`.
-- config: `jail.mach_services` opens macOS Mach lookups to a confined child.
-  `keychain: true` allows `com.apple.SecurityServer`, `com.apple.ocspd` and
-  `com.apple.trustd.agent` and grants read access to `~/Library/Keychains` and
-  `/Library/Keychains` (kept out of the default search sweep) — which is what
-  makes `security`, `gh auth token` and `git credential-osxkeychain get` work
-  inside a Seatbelt jail; `allow` names any further service by global name.
-  Deny stays the default, and a command that fails on a lookup the jail did not
-  grant now carries a `note` naming the denial and the setting that lifts it,
-  instead of only the opaque Security-framework message. Documented in
-  `resources/vis-docs/sandbox.md`.
+- config: add conditional filesystem roots using when.os, when.exists and optional. Omit roots unavailable on the current host before building the jail, including their allow-list references. Doctor reports conditional skips as info and missing required paths as warnings.
+- config: allow explicitly declared macOS Mach services for confined children. The keychain option grants required security services and keychain-directory access while excluding those directories from default search. Additional services require explicit names; access remains denied by default and errors identify missing permissions.
 
 ### Changed
 
-- change(drafts): a draft now records HOW it was physically made, not just who
-  made it. rift 0.0.10-10 reports the copy mechanism it actually used
-  (`btrfs`, `reflink`, `apfs`, `worktree`, `copy`) and vis persists it as the
-  workspace's `workspace_mechanism`, so a clone on a filesystem without
-  copy-on-write is labelled `worktree` — the linked Git worktree it really is —
-  instead of being described by the backend's name. A backend that reports no
-  mechanism (or an older native library) stores NULL, and every existing draft
-  keeps working unchanged.
+- change(drafts): persist rift 0.0.10-10's actual copy mechanism as workspace_mechanism: btrfs, reflink, apfs, worktree or copy. Store NULL when the backend does not report it; existing drafts remain usable.
 
-- change(drafts): the draft itself now says what its fork skipped. rift 0.0.10-9
-  records every pruned path in the workspace marker at the clone root, and
-  `deleted-paths` reads that record instead of mirroring the backend's filter
-  rules, which vis had to keep in sync by hand and twice failed to (a tracked
-  `dist`, a committed `.yarn/cache`). Same release keeps a git-TRACKED artifact
-  directory in the clone, so a draft's `git status` matches its source's. The
-  mirrored name lists are gone; a clone with no marker falls back to trunk's own
-  ignore rules, so older drafts behave exactly as before.
+- change(drafts): use rift 0.0.10-9's recorded pruned paths rather than duplicating backend filter rules. Preserve tracked artifact directories and matching Git status. Older clones without a marker use the source repository's ignore rules.
 
 ### Fixed
 
-- fix(native-image): the native binary no longer aborts with "Cannot reflectively
-  invoke constructor 'public java.math.BigInteger(java.lang.String)'". Loading any
-  YAML document that contains a plain integer runs
-  `yamlstar.numbers/parse-safe-integer`, i.e. `clojure.core/bigint` on the raw
-  scalar STRING, and that ends in an untyped `(BigInteger. x)` — a
-  `clojure.lang.Reflector` call the image had no metadata for, so `vis doctor`,
-  `vis sessions list`, `vis providers status` and one-shot prompts died on startup
-  in every workspace but the vis repository root. vis's own
-  `reachability-metadata.json` now registers `BigInteger(String)` plus the
-  `BigInteger(String,int)` that `clojure.tools.reader` uses for integer literals,
-  and `com.blockether.vis.native-reachability-test` pins both.
+- fix(native-image): register BigInteger(String) and BigInteger(String,int) constructors in reachability metadata. This fixes YAML integer parsing and tools.reader failures in native commands outside the repository root; tests enforce both registrations.
 
-- fix(drafts): `/draft apply` no longer deletes the trees the fork never copied.
-  Since rift 0.0.10-8 a clone is gitignore-aware, so every ignored path (and every
-  regenerable artifact directory such as `dist`, `build`, `coverage`, or a
-  virtualenv) is missing from the draft by construction — `deleted-paths` read that
-  absence as an agent deletion and `apply!` erased those files from the user's real
-  repository. Trunk paths the backend cannot have cloned are now excluded from the
-  deletion diff, and `resources/vis-docs/drafts.md` documents what a fork copies.
+- fix(drafts): exclude paths omitted during cloning from the deletion diff used by /draft apply. Ignored and generated directories absent from gitignore-aware forks no longer cause deletion of source-repository files.
 
-- fix(drafts): a draft's own generated output is no longer reported as an agent
-  change. `changed-paths` now prunes whatever the CLONE's repository ignores and
-  does not track: a gitignore-aware fork never copies those trees, so an ignored
-  file inside a draft was built there — a regenerated native project alone pushed
-  one session to 8,426 changed files, all of which `/draft apply` would have
-  dumped into the real repository. Force-added ignored files stay tracked and
-  still land.
+- fix(drafts): exclude untracked, ignored files generated within a draft from changed-paths and /draft apply. Force-added tracked files remain included.
 
-- fix(drafts): `/draft apply` no longer deletes a committed `.yarn/cache`. The fork
-  drops the `.yarn/<artifact>` pairs (`cache`, `unplugged`, `install-state.gz`,
-  `build-state.yml`) that a Yarn zero-install repository commits, and the deletion
-  guard matched single directory names only, so every file under a tracked
-  `.yarn/cache` read as an agent deletion. The guard now mirrors the pair rule;
-  `.yarn/patches` and `.yarn/releases` keep reporting real deletions.
+- fix(drafts): prevent /draft apply from deleting committed Yarn artifact paths omitted by the fork, including .yarn/cache, unplugged, install-state.gz and build-state.yml. Continue reporting actual deletions in patches and releases.
 
 ### Documentation
 
@@ -3625,12 +3266,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - release: v0.1.25
-- Stop the audit-doc gate failing on its own date stamp
+- Keep generated audit dates stable during content checks
 - perf(drafts): clone gitignore-aware trees by bumping rift to 0.0.10-8
 - Cover nested edits and deletions in the draft apply! round-trip
-- Let a provider timeout drain the queue instead of wedging it
+- Continue queued work after provider timeouts
 - Pin the wrapped-401 cooldown with a test
-- Spot the 401s a wrapped fleet failure hides on :attempts
+- Detect 401 responses in wrapped router failure attempts
 - Name cat's own key when a batch entry is malformed
 - Trust a corporate CA without patching the JDK
 - Prune build directories at any depth, not just the tree root
@@ -3646,15 +3287,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Read the routing attempts off the live throwable
 - Let a provider fetch its key from a command instead of an env var
 - Stop calling a dropped connection a rejection
-- Revert "Retry a connect timeout that arrives wearing a status code"
+- Revert retry handling for connection timeouts with status codes
 - Bind skill as a Python verb beside its native tool
 - Retire the restart op from REPL and resource lifecycle
 - Stop the environment running code before the jail exists
 - Format the pack-owned scan the way zprint wants it
-- Retry a connect timeout that arrives wearing a status code
-- Let the language pack own the parallel scan
+- Retry connection timeouts that include a status code
+- Implement parallel scanning in the language pack
 - Stop a child's Ctrl-C from killing the gateway
-- Name what killed the gateway
+- Report gateway termination causes
 - Compile the lint target without ever running it
 - Find the needle in a 20 MB file, and stop sweeping forever
 - Never let the audit record downgrade a license it already vetted
@@ -3662,17 +3303,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - One attachment control in the composer, not two
 - Do not lose a release to one 401 from Apple
 - Sign with the distribution identity the keychain actually has
-- Sign the archive by hand, so CI stops minting certificates
+- Sign archives manually rather than generating certificates in CI
 - Name a profile for every bundle, or export automatically
 - Export the archive even when only the app has a pinned profile
 - audit: read imaging 0.1.7 license and size from the published artifact
 - Move the imaging pin to 0.1.7 and lock the pptx shim against it
-- Floor the eval watchdog above the LONGEST legal shell budget
+- Set the evaluation timeout above the maximum allowed shell wait
 - Offer "Start the session in" when the TUI opens a new session
 - Test the companion share intake, and pin its dependencies exactly
 - test(pptx): lock the imaging 0.1.6 chart part, picture crop and read-back
-- Close the last descriptor doors: raw io.FileIO and host sqlite3 handles
-- Say what `n` and `until` actually bound in shell wait
+- Track raw io.FileIO and host sqlite3 descriptors
+- Document shell wait n and until limits
 - Accept system shares into the companion composer
 - test(mcp): assert the kill brake by pool state, not by an exact connect log
 - test(sandbox): make the fd hardening cases actually discriminate
@@ -3696,7 +3337,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(shell): capture streams whole and clip only the card
 - fix(python): honor explicit run_tests targets and never green an empty run
 - fix(python): re-expand folded kwargs for Python-backed tool symbols
-- fix(shell): require `until` for wait and never report a dead process as running
+- fix(shell): require until for wait and report exited processes accurately
 - chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.38
 - fix(companion): one owner for transcript scroll anchoring
 - fix(mcp,acp): string-keyed session-server results, like every MCP surface
@@ -3706,7 +3347,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(config,cli): render a vis.yml provider id verbatim, never capitalized
 - fix(companion): follow the gateway's session.model_updated broadcast
 - fix(mcp,routing): total JSON-RPC encoding, headless MCP OAuth, pin fixes
-- docs(site): tagline and sub say the mechanism, not the metaphor
+- docs(site): describe the mechanism directly in site headings
 - fix(companion): keep the reader's line by anchoring an element, not a height
 - test(loop): pin the auth cooldown and the pinned-model router
 - fix(providers): log out a key-only provider by clearing its key, keeping its entry
@@ -3714,19 +3355,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docs(readme): lead with Clojars and license, drop build and allowlist sections
 - test(loop): mcp exposes one mcp__call verb, server-only lists schemas
 - feat(companion,install): camera capture, install script as a release asset, documented Clojars
-- fix(loop): request-bound provider credentials so a rotated OAuth token never strands a turn
+- fix(loop): resolve provider credentials per request to handle OAuth token rotation
 - release: update release notes for v0.1.24
 
 ### Package changes
 
 #### com.blockether/vis
 - release: v0.1.25 (158cc2df0)
-- Stop the audit-doc gate failing on its own date stamp (cccd0fefd)
+- Keep generated audit dates stable during content checks (cccd0fefd)
 - perf(drafts): clone gitignore-aware trees by bumping rift to 0.0.10-8 (3015f6ce5)
 - Cover nested edits and deletions in the draft apply! round-trip (9990742ff)
-- Let a provider timeout drain the queue instead of wedging it (346f09bed)
+- Continue queued work after provider timeouts (346f09bed)
 - Pin the wrapped-401 cooldown with a test (3ed40ced7)
-- Spot the 401s a wrapped fleet failure hides on :attempts (086d0c166)
+- Detect 401 responses in wrapped router failure attempts (086d0c166)
 - Name cat's own key when a batch entry is malformed (dd2b1d88a)
 - Trust a corporate CA without patching the JDK (ca46cc9c5)
 - Prune build directories at any depth, not just the tree root (04f8f9ef3)
@@ -3742,31 +3383,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Read the routing attempts off the live throwable (4bcf77594)
 - Let a provider fetch its key from a command instead of an env var (2fd49ce1a)
 - Stop calling a dropped connection a rejection (4ff5d0f6d)
-- Revert "Retry a connect timeout that arrives wearing a status code" (c349c707a)
+- Revert retry handling for connection timeouts with status codes (c349c707a)
 - Bind skill as a Python verb beside its native tool (dfbb1e3b4)
 - Retire the restart op from REPL and resource lifecycle (5921c471c)
 - Stop the environment running code before the jail exists (a7c0648b0)
 - Format the pack-owned scan the way zprint wants it (3ae016e97)
-- Retry a connect timeout that arrives wearing a status code (712ee9f7a)
-- Let the language pack own the parallel scan (dfc7ed12c)
+- Retry connection timeouts that include a status code (712ee9f7a)
+- Implement parallel scanning in the language pack (dfc7ed12c)
 - Stop a child's Ctrl-C from killing the gateway (56ae91192)
-- Name what killed the gateway (0e6df3101)
+- Report gateway termination causes (0e6df3101)
 - Find the needle in a 20 MB file, and stop sweeping forever (49302325b)
 - Never let the audit record downgrade a license it already vetted (5995096f0)
 - Retry every App Store Connect call, not only the two that failed (b097a6d1a)
 - One attachment control in the composer, not two (a5a2c2c61)
 - Do not lose a release to one 401 from Apple (64c6f5612)
 - Sign with the distribution identity the keychain actually has (87cb8f2c4)
-- Sign the archive by hand, so CI stops minting certificates (b5ad3c947)
+- Sign archives manually rather than generating certificates in CI (b5ad3c947)
 - Name a profile for every bundle, or export automatically (87dae362f)
 - Export the archive even when only the app has a pinned profile (4fc4a2136)
 - audit: read imaging 0.1.7 license and size from the published artifact (34333c540)
 - Move the imaging pin to 0.1.7 and lock the pptx shim against it (70435b2f8)
-- Floor the eval watchdog above the LONGEST legal shell budget (7c4fb70c1)
+- Set the evaluation timeout above the maximum allowed shell wait (7c4fb70c1)
 - Test the companion share intake, and pin its dependencies exactly (0d88054b9)
 - test(pptx): lock the imaging 0.1.6 chart part, picture crop and read-back (2922d5d00)
-- Close the last descriptor doors: raw io.FileIO and host sqlite3 handles (bd08a4061)
-- Say what `n` and `until` actually bound in shell wait (a0680bbb7)
+- Track raw io.FileIO and host sqlite3 descriptors (bd08a4061)
+- Document shell wait n and until limits (a0680bbb7)
 - Accept system shares into the companion composer (1b572e7f0)
 - test(mcp): assert the kill brake by pool state, not by an exact connect log (95a072020)
 - test(sandbox): make the fd hardening cases actually discriminate (7a5daf39e)
@@ -3788,7 +3429,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(shell): capture streams whole and clip only the card (e31fc62f9)
 - fix(python): honor explicit run_tests targets and never green an empty run (66d90e4e3)
 - fix(python): re-expand folded kwargs for Python-backed tool symbols (0fdf52d91)
-- fix(shell): require `until` for wait and never report a dead process as running (4d01e8db2)
+- fix(shell): require until for wait and report exited processes accurately (4d01e8db2)
 - chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.38 (7d7e0d625)
 - fix(companion): one owner for transcript scroll anchoring (14c0e51fd)
 - fix(mcp,acp): string-keyed session-server results, like every MCP surface (82aba80ba)
@@ -3798,7 +3439,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(config,cli): render a vis.yml provider id verbatim, never capitalized (a838d9ea1)
 - fix(companion): follow the gateway's session.model_updated broadcast (f8177e8db)
 - fix(mcp,routing): total JSON-RPC encoding, headless MCP OAuth, pin fixes (a10ba6158)
-- docs(site): tagline and sub say the mechanism, not the metaphor (8cfd79373)
+- docs(site): describe the mechanism directly in site headings (8cfd79373)
 - fix(companion): keep the reader's line by anchoring an element, not a height (4c4c4b17e)
 - test(loop): pin the auth cooldown and the pinned-model router (aa386b0b4)
 - fix(providers): log out a key-only provider by clearing its key, keeping its entry (1a3a9c382)
@@ -3806,7 +3447,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docs(readme): lead with Clojars and license, drop build and allowlist sections (4718fc6b5)
 - test(loop): mcp exposes one mcp__call verb, server-only lists schemas (54f90c31e)
 - feat(companion,install): camera capture, install script as a release asset, documented Clojars (76183368d)
-- fix(loop): request-bound provider credentials so a rotated OAuth token never strands a turn (9147f7379)
+- fix(loop): resolve provider credentials per request to handle OAuth token rotation (9147f7379)
 - release: update release notes for v0.1.24 (bed466948)
 
 #### com.blockether/vis-channel-tui
@@ -3841,11 +3482,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- perf(drafts): bump com.blockether/rift to 0.0.10-8 — draft creation clones a
-  gitignore-aware tree, so generated output (e.g. a companion app's `ios/`
-  build) is pruned instead of copy-on-write cloned file by file. Forking this
-  repository drops from ~3.8s to ~0.7s; force-added paths and `.git` are still
-  cloned, so a fresh draft's `git status` matches its trunk
+- perf(drafts): pin rift 0.0.10-8 for gitignore-aware cloning. Skip generated output while preserving force-added paths and .git. Repository fork time decreases from about 3.8 seconds to 0.7 seconds with matching Git status.
 - chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.38 — reference
   search runs as one native batch walk, no longer matches names written inside
   string literals or comments (rename included), and the shared native library
@@ -3856,7 +3493,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - release: v0.1.24
 - feat(mcp): manage MCP servers and their OAuth from the companion and the TUI
-- fix(release): release notes survive a main that moved, and land v0.1.23's
+- fix(release): preserve release notes when main advances and add v0.1.23 notes
 - test(ls): pin the warm-index fast path and recursive listing order
 
 ### Package changes
@@ -3864,7 +3501,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis
 - release: v0.1.24 (a56ad6009)
 - feat(mcp): manage MCP servers and their OAuth from the companion and the TUI (139cdc801)
-- fix(release): release notes survive a main that moved, and land v0.1.23's (57693dc17)
+- fix(release): preserve release notes when main advances and add v0.1.23 notes (57693dc17)
 - test(ls): pin the warm-index fast path and recursive listing order (ccbd03009)
 
 #### com.blockether/vis-channel-tui
@@ -3880,33 +3517,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- mcp: the whole MCP server lifecycle is reachable outside a terminal. The
-  gateway exposes kill, start and auth start/complete/poll/cancel/logout per
-  server; the companion drives them from Settings (and surfaces them at connect
-  time), and the TUI gets a matching MCP dialog. A server that needs a browser
-  login is no longer a dead end you can only watch fail.
+- mcp: expose server start, stop and authentication lifecycle through the gateway, Companion Settings and a matching TUI dialog. Browser sign-in is available during connection setup.
 
 ### Fixed
 
-- bs4 shim: `BeautifulSoup(None, ...)` now raises
-  `TypeError: object of type 'NoneType' has no len()` exactly like upstream bs4
-  4.12 instead of quietly parsing as empty markup, plus soupsieve and
-  tree-builder parity work cross-validated probe-by-probe against real
-  beautifulsoup4 4.12.3 + soupsieve 2.5.
+- bs4 shim: match BeautifulSoup 4.12's TypeError for None input. Verify soupsieve and tree-builder behavior against beautifulsoup4 4.12.3 and soupsieve 2.5.
 - release: the workflow's "Commit release notes" step rebases onto
   `origin/main` and retries, so a `main` that moved during the run no longer
   fails the release job and skips the mobile release with it.
 
-- persistence: the shared SQLite pool is no longer torn down underneath live
-  queries. The snapshot behind "was `~/.vis/vis.mdb/vis.db` replaced under this
-  JVM?" compared the file's size and mtime, and SQLite rewrites `vis.db` in
-  place on every WAL checkpoint — so ordinary write traffic made the store look
-  replaced forever after. The gateway answered by closing its connection pool
-  and opening a new one, over and over: a crashed 3h21m process had reached
-  pool generation 351, leaked seven housekeeper threads, and died with SIGBUS
-  inside `NativeDB.step`, taking every live session with it. The check now
-  compares the filesystem `(dev, ino)` identity only, which moves exactly when
-  a reopen is the right answer.
+- persistence: detect database replacement by filesystem device/inode identity rather than size and modification time. Normal WAL checkpoints no longer trigger repeated SQLite pool closure, leaked housekeeping threads or SIGBUS during live queries.
 
 ## [v0.1.23] - 2026-08-02
 
@@ -3916,15 +3536,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - test: cover external-opener, notifications and serial-batch
 - perf(ls): serve directory listings from the warm fff index
 - fix(acp): answer `cancelled` when the cancel itself throws, and bind cancels to turn numbers
-- fix(companion): resume a live turn from the row already in hand
+- fix(companion): resume live turns from existing session rows
 - feat(drafts): a draft can start from your last commit, not your dirty tree
-- fix(cli): no dead ends — launcher owns runtime/update, flag typos are refused
+- fix(cli): keep runtime/update in the launcher and reject unknown flags
 - fix(acp): refuse phantom resumes and walk tool arguments iteratively
 - fix(launcher): dev names one checkout, never a silent substitute
 - docs(changelog): record the coherent vis-agent runtime surface
 - Advertise cat's directory listing (ls) and compress native tool prose
 - chore: vis-agent runtime docs, ACP concurrency fixes, bs4 fidelity, companion polish
-- feat(rewind): land the /rewind slash surface with context reporting
+- feat(rewind): add /rewind with context reporting
 - Compress fs tool reference prose
 - Ratchet the native tool prose budget to 1250
 - Compress shell and grep reference prose
@@ -3932,7 +3552,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docs(runtime): document release-following default and dev mode precisely
 - Compress the core system prompt and ratchet its budget
 - feat(launcher): follow releases by default, opt in to dev mode
-- chore: land in-flight foundation, gateway, TUI, and companion work
+- chore: include pending foundation, gateway, TUI and Companion changes
 - fix(loop): align the overflow-rescue tests with graduated folding
 - refactor(installer): drop pre-bundle release asset fallback
 - fix: bs4 4.12 serialization fidelity and preflight context-overflow recovery
@@ -3948,13 +3568,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- drafts: `/draft clean <label>` (and the companion's "A new draft, without my
-  uncommitted changes") forks the project and rewinds the copy to the committed
-  `HEAD`, so a fresh draft starts from your last commit while modified tracked
-  files, untracked files, and staged-but-uncommitted ones stay in the real
-  project. The skipped paths are recorded, so applying the draft later never
-  deletes work it never received; a repo without a commit is refused instead of
-  silently forking a dirty tree.
+- drafts: add /draft clean <label> and the equivalent Companion option to fork committed HEAD without uncommitted changes. Record omitted paths so later apply operations preserve original work. Reject repositories without a commit.
 
 ### Changed
 
@@ -3976,19 +3590,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- sandbox: a Python block's `open(path, "w").write(text)` reaches the disk. The
-  sandbox runs on GraalPy, which does not refcount, so a handle dropped without
-  `close()` was never finalized at the end of the statement — the bytes stayed
-  in the buffer and the file was EMPTY, so the next tool (`git commit -F`) read
-  nothing. Writable handles are now tracked weakly and flushed before every tool
-  call and at the end of the block.
-- git tool: `git add -- <paths>` stages again. The `--verbose` the tool appends
-  so `add` reports what it staged landed AFTER the `--` separator, where git
-  reads it as a pathspec (`fatal: pathspec '--verbose' did not match any
-  files`); it is now inserted before the separator.
-- launcher: `vis-agent update --native|--jvm|--dev` reached the update path
-  again (the launch-flag loop used to swallow them), and a `[[ … ]] && cmd`
-  tail no longer makes a successful `runtime use` exit 1.
+- sandbox: track writable GraalPy file handles weakly and flush them before tool calls and at block completion. Writes from handles dropped without close now reach disk instead of remaining buffered.
+- git tool: insert --verbose before git add's -- separator, preventing it from being treated as a pathspec.
+- launcher: `vis-agent update --native|--jvm|--dev` reaches the update path
+  again; the launch-flag parser previously discarded those flags. A final
+  `[[ … ]] && cmd` no longer makes a successful `runtime use` exit 1.
 - launcher: the `dev` runtime names one checkout. When `$VIS_DEV_CHECKOUT` does
   not hold one, `vis-agent` now says so instead of silently running whichever
   checkout the launcher happens to sit in.
@@ -4003,11 +3609,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - launcher: `runtime use` and JVM/dev launches report a missing runtime,
   missing `clojure`, or missing `java` with the command that fixes it, instead
   of exiting 127 from `exec`.
-- launcher: `--` ends the wrapper's own flag parsing too. `vis-agent -- --dev`
-  used to switch runtime (and `-- --measure`/`-- --jfr` used to turn on
-  profiling) while handing the app an empty prompt; those tokens are now prompt
-  text. `runtime use <name>` combined with `--native|--jvm|--dev` is refused
-  instead of silently dropping the flag.
+- launcher: stop wrapper flag parsing at -- so later runtime/profiling flags remain prompt text. Reject runtime use combined with --native, --jvm or --dev rather than ignoring a flag.
 - launcher: persisting a runtime verifies the write, so a `VIS_HOME` that is a
   file, a `~/.vis/runtime` that is a directory, or an unwritable home reports
   the path it could not write instead of claiming "runtime is now …".
@@ -4325,7 +3927,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - chore(deps): svar 0.7.95, refresh the audit inventory
 - ci: enforce the locked GraalVM pin across build workflows
-- feat: ship viewport speedups and accumulated runtime work
+- feat: Release viewport performance improvements and accumulated runtime changes
 - docs(companion): release notes for 0.1.19 (2854)
 - feat(companion): expandable session stats and drafts grouped under their project
 - feat(companion): add image viewer and smooth native viewport
@@ -4333,14 +3935,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - perf(companion): keep the app shell off the compositor during keyboard/rotation
 - docs(companion): release notes for 0.1.17 (2849)
 - style(companion): full-bleed paste blocks in user messages
-- perf(companion): drive shell geometry through CSS custom properties
+- perf(companion): update app-shell geometry through CSS custom properties
 - docs(companion): release notes for 0.1.16 (2846)
 - feat(companion): show recently-active sessions in collapsed projects
 - docs(companion): release notes for 0.1.15 (2844)
 - perf(companion): isolate shell re-renders from keyboard and rotation frames
 - feat(companion): collapsible projects with per-project paging and richer settings
 - docs(companion): release notes for 0.1.15 (2841)
-- fix(companion): match the composer strip type ladder and shrink the rule
+- fix(companion): Match composer font sizes and reduce divider thickness
 - docs(companion): release notes for 0.1.15 (2839)
 - feat(companion): glyph-free composer strip and animated reasoning swap
 - docs(companion): release notes for 0.1.15 (2837)
@@ -4352,15 +3954,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(companion): glyph-free thinking band and model manager
 - docs(companion): release notes for 0.1.15 (2830)
 - feat(companion): footer reasoning chip, landscape safe areas
-- fix(editing): stop stamping --- before / +++ after on every diff
-- fix(ci): restore the native builder args that last built green
+- fix(editing): Remove redundant --- before / +++ after labels from diffs
+- fix(ci): Restore the last successful native-builder arguments
 - fix(ci): give the native builder a 22g heap on the swapfile-backed runner
 - fix(ci): switch the preselected ParallelGC off before enabling G1
-- fix(ci): overcommit the native builder heap with G1 instead of starving it
+- fix(ci): Use G1 and an overcommitted heap for the native builder
 - docs(companion): release notes for 0.1.15 (2823)
 - test(loop): measure the guest-interrupt CPU delta, not JVM-wide CPU
-- fix(ci): keep the native-image heap inside runner RAM and give it a longer clock
-- fix(ci): give the native-image builder enough heap, and let a dispatch rebuild a tag
+- fix(ci): Limit native-image heap to runner RAM and extend the build timeout
+- fix(ci): Increase native-image build heap and support tag rebuilds through workflow dispatch
 - docs(audit): refresh dependency inventory
 - docs(companion): TestFlight notes for 0.1.14 (2817)
 - release: update version files for v0.1.14, bump to next dev version
@@ -4370,7 +3972,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis
 - chore(deps): svar 0.7.95, refresh the audit inventory (e9a1a6f84)
 - ci: enforce the locked GraalVM pin across build workflows (0deb9e403)
-- feat: ship viewport speedups and accumulated runtime work (66b0c31d8)
+- feat: Release viewport performance improvements and accumulated runtime changes (66b0c31d8)
 - docs(companion): release notes for 0.1.19 (2854) (b0f316183)
 - feat(companion): expandable session stats and drafts grouped under their project (da7516494)
 - feat(companion): add image viewer and smooth native viewport (91170014c)
@@ -4378,14 +3980,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - perf(companion): keep the app shell off the compositor during keyboard/rotation (d5f4f08cf)
 - docs(companion): release notes for 0.1.17 (2849) (821f28861)
 - style(companion): full-bleed paste blocks in user messages (e1e9c7743)
-- perf(companion): drive shell geometry through CSS custom properties (c34efdda8)
+- perf(companion): update app-shell geometry through CSS custom properties (c34efdda8)
 - docs(companion): release notes for 0.1.16 (2846) (2815efc72)
 - feat(companion): show recently-active sessions in collapsed projects (68352e07b)
 - docs(companion): release notes for 0.1.15 (2844) (5b8ddeaa4)
 - perf(companion): isolate shell re-renders from keyboard and rotation frames (a70d92516)
 - feat(companion): collapsible projects with per-project paging and richer settings (2d04f57a6)
 - docs(companion): release notes for 0.1.15 (2841) (49276fdf0)
-- fix(companion): match the composer strip type ladder and shrink the rule (d15a8b24b)
+- fix(companion): Match composer font sizes and reduce divider thickness (d15a8b24b)
 - docs(companion): release notes for 0.1.15 (2839) (d0e0b328d)
 - feat(companion): glyph-free composer strip and animated reasoning swap (25fa99d8e)
 - docs(companion): release notes for 0.1.15 (2837) (bcb1f7cfc)
@@ -4396,42 +3998,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(companion): glyph-free thinking band and model manager (012b26d82)
 - docs(companion): release notes for 0.1.15 (2830) (7bd15a8df)
 - feat(companion): footer reasoning chip, landscape safe areas (dbab3492c)
-- fix(editing): stop stamping --- before / +++ after on every diff (f7870f43b)
-- fix(ci): restore the native builder args that last built green (8edf48275)
+- fix(editing): Remove redundant --- before / +++ after labels from diffs (f7870f43b)
+- fix(ci): Restore the last successful native-builder arguments (8edf48275)
 - fix(ci): give the native builder a 22g heap on the swapfile-backed runner (fff80c57a)
 - fix(ci): switch the preselected ParallelGC off before enabling G1 (e63b9282a)
-- fix(ci): overcommit the native builder heap with G1 instead of starving it (8ea6b9d15)
+- fix(ci): Use G1 and an overcommitted heap for the native builder (8ea6b9d15)
 - docs(companion): release notes for 0.1.15 (2823) (c85f7da50)
 - test(loop): measure the guest-interrupt CPU delta, not JVM-wide CPU (2626ea8d7)
-- fix(ci): keep the native-image heap inside runner RAM and give it a longer clock (715cd41e2)
-- fix(ci): give the native-image builder enough heap, and let a dispatch rebuild a tag (eadda4851)
+- fix(ci): Limit native-image heap to runner RAM and extend the build timeout (715cd41e2)
+- fix(ci): Increase native-image build heap and support tag rebuilds through workflow dispatch (eadda4851)
 - docs(audit): refresh dependency inventory (8e2a282f3)
 - docs(companion): TestFlight notes for 0.1.14 (2817) (0738c1822)
 - release: update version files for v0.1.14, bump to next dev version (34f89e45b)
 
 #### com.blockether/vis-channel-tui
-- feat: ship viewport speedups and accumulated runtime work (66b0c31d8)
+- feat: Release viewport performance improvements and accumulated runtime changes (66b0c31d8)
 - fix(tui): handle whitespace split across styled runs (cdf9bd256)
 
 #### com.blockether/vis-persistance-sqlite
-- feat: ship viewport speedups and accumulated runtime work (66b0c31d8)
+- feat: Release viewport performance improvements and accumulated runtime changes (66b0c31d8)
 
 ## [v0.1.14] - 2026-07-30
 
 ### Changed
-- fix(editing): newline-faithful structural edits and comment docs across 28 languages
+- fix(editing): Preserve newlines in structural edits and support comment documentation across 28 languages
 - Record the 0.1.14 (2815) release notes
 - Cover turn attachments with tests and note 0.1.14 in the changelog
 - Bump tree-sitter-language-pack to 1.12.3-blockether.32
 - Serve a turn's inline attachments and hide the footer mid-turn
 - Bump tree-sitter-language-pack to 1.12.3-blockether.31
 - Name every working directory `cwd` across the tool surface
-- Cache the live turn bubble so re-entry paints it instantly
+- Cache live turn content for immediate rendering on session re-entry
 - docs(companion): release notes for 0.1.14 (2808)
 - Let the companion app change the reasoning mode
 - Adopt already-running turns in the companion session screen
 - Add PRIVACY.md for the companion app (Play store policy URL)
-- Guarantee turn terminals and bound Python GC
+- Ensure turns emit terminal events and bound Python GC
 - Allow block-local shadowing of bound tool names in vis Python
 - docs(companion): release notes for 0.1.14 (2802)
 - Unify tool input carriers and refresh companion diff view
@@ -4456,9 +4058,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Improve compaction guidance and retry diagnostics
 - feat(build): install the pinned GraalVM CE automatically when it is missing
 - fix(companion): stabilize transcript rotation
-- refactor(prompt,fold): say what to do, and advertise only the 5 newest ntr entries
-- fix(provider-error): blame the gateway, not a Vis schema, for injected tool fields
-- feat(titling): the LLM title always runs after the turn, on its own route
+- refactor(prompt,fold): Clarify instructions and advertise only the five newest NTR entries
+- fix(provider-error): Attribute injected tool fields to the gateway rather than a Vis schema
+- feat(titling): Generate LLM titles after turns through a separate route
 - test(loop): the deferred title upgrade is after-turn-auto-title! (#71)
 - feat(titling): configurable session titling, deferred past the foreground turn (#71)
 - test(loop): widen the observation-batch concurrency margin for loaded runners
@@ -4472,19 +4074,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Package changes
 
 #### com.blockether/vis
-- fix(editing): newline-faithful structural edits and comment docs across 28 languages (edcac200a)
+- fix(editing): Preserve newlines in structural edits and support comment documentation across 28 languages (edcac200a)
 - Record the 0.1.14 (2815) release notes (e50c94af9)
 - Cover turn attachments with tests and note 0.1.14 in the changelog (060fe81df)
 - Bump tree-sitter-language-pack to 1.12.3-blockether.32 (e3b729f13)
 - Serve a turn's inline attachments and hide the footer mid-turn (29a05339a)
 - Bump tree-sitter-language-pack to 1.12.3-blockether.31 (f6881c9dd)
 - Name every working directory `cwd` across the tool surface (4df25f19e)
-- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+- Cache live turn content for immediate rendering on session re-entry (ece994fa2)
 - docs(companion): release notes for 0.1.14 (2808) (96563d153)
 - Let the companion app change the reasoning mode (f567648ee)
 - Adopt already-running turns in the companion session screen (2dd3ad3ba)
 - Add PRIVACY.md for the companion app (Play store policy URL) (4ea71f8a3)
-- Guarantee turn terminals and bound Python GC (5bb959dd7)
+- Ensure turns emit terminal events and bound Python GC (5bb959dd7)
 - Allow block-local shadowing of bound tool names in vis Python (88bbea7eb)
 - docs(companion): release notes for 0.1.14 (2802) (971591d06)
 - Unify tool input carriers and refresh companion diff view (7e3b8a2c2)
@@ -4508,9 +4110,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Improve compaction guidance and retry diagnostics (c39edc0b8)
 - feat(build): install the pinned GraalVM CE automatically when it is missing (956cb66aa)
 - fix(companion): stabilize transcript rotation (636ea5af0)
-- refactor(prompt,fold): say what to do, and advertise only the 5 newest ntr entries (df93fefef)
-- fix(provider-error): blame the gateway, not a Vis schema, for injected tool fields (7abfd121a)
-- feat(titling): the LLM title always runs after the turn, on its own route (a696d8d2d)
+- refactor(prompt,fold): Clarify instructions and advertise only the five newest NTR entries (df93fefef)
+- fix(provider-error): Attribute injected tool fields to the gateway rather than a Vis schema (7abfd121a)
+- feat(titling): Generate LLM titles after turns through a separate route (a696d8d2d)
 - test(loop): the deferred title upgrade is after-turn-auto-title! (#71) (ec1c01f38)
 - feat(titling): configurable session titling, deferred past the foreground turn (#71) (eb0b6a793)
 - test(loop): widen the observation-batch concurrency margin for loaded runners (3f1fe723c)
@@ -4521,7 +4123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - chore(audit): regenerate the dependency inventory (ruff 0.3.2, svar 0.7.86) (af62949a3)
 
 #### com.blockether/vis-channel-tui
-- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+- Cache live turn content for immediate rendering on session re-entry (ece994fa2)
 - Allow block-local shadowing of bound tool names in vis Python (88bbea7eb)
 - Unify tool input carriers and refresh companion diff view (7e3b8a2c2)
 - Fix gateway, Python, Git, and TUI regressions (#61, #73, #74, #75) (571e761d4)
@@ -4538,25 +4140,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docs(bridge): Prefer JSON in Bridge extension docs (f8e973098)
 
 #### com.blockether/vis-foundation-search
-- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+- Cache live turn content for immediate rendering on session re-entry (ece994fa2)
 - Improve extension configuration and tools (31a974b4b)
 
 #### com.blockether/vis-foundation-voice
-- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+- Cache live turn content for immediate rendering on session re-entry (ece994fa2)
 
 #### com.blockether/vis-language-clojure
 - Name every working directory `cwd` across the tool surface (4df25f19e)
-- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+- Cache live turn content for immediate rendering on session re-entry (ece994fa2)
 - Unify tool input carriers and refresh companion diff view (7e3b8a2c2)
 
 #### com.blockether/vis-language-python
 - Name every working directory `cwd` across the tool surface (4df25f19e)
-- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+- Cache live turn content for immediate rendering on session re-entry (ece994fa2)
 - Unify tool input carriers and refresh companion diff view (7e3b8a2c2)
 
 #### com.blockether/vis-language-typescript-bun
 - Name every working directory `cwd` across the tool surface (4df25f19e)
-- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+- Cache live turn content for immediate rendering on session re-entry (ece994fa2)
 
 #### com.blockether/vis-persistance-sqlite
 - Unify tool input carriers and refresh companion diff view (7e3b8a2c2)
@@ -4566,20 +4168,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Bridge exact-candidate options in `br/check` and `br/run-evidence`.
-- A shared fail-closed `:git/commit` operation for the model-facing Git tool
-  and TUI Magit. The generic Git adapter resolves Git-global repository
-  options, rejects index-changing commit forms, rechecks the staged tree, and
-  verifies the resulting commit tree; Bridge contributes only the
-  lifecycle-owned approval hook.
+- Add a shared fail-closed :git/commit operation for the Git tool and TUI Magit. Resolve repository options, reject index-changing commit forms, recheck staged content and verify the resulting tree. Bridge supplies the lifecycle approval hook.
 
 ### Changed
 
 - `vis-foundation-bridge` now targets the Bridge 0.2.2
   candidate-verification API.
-- tree-sitter-language-pack 1.12.3-blockether.34: structural editing keeps a
-  file's final newline and CRLF endings across every splice, replaces a node by
-  its non-whitespace core, and understands comment docs — so `add_doc` /
-  `replace_doc` work for the 26 languages whose docs are comments, not strings.
+- tree-sitter-language-pack 1.12.3-blockether.34 preserves final newlines and CRLF endings across structural edits and replaces only non-whitespace node content. Support add_doc/replace_doc for 26 languages that use comment documentation.
 
 ### Fixed
 
@@ -4590,7 +4185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [v0.1.13] - 2026-07-29
 
 ### Changed
-- chore(deps): svar 0.7.86 -- every quota/credit/budget wall is a hard error
+- chore(deps): svar 0.7.86 treats exhausted quota, credit and budget as non-retryable errors
 - feat(companion): collapse recorded non-image attachments into one disclosure row
 - feat(python): read packaging metadata with Python's own parsers, add `python.source_paths`
 - fix(companion): a dead event stream can no longer silently freeze an open session
@@ -4607,7 +4202,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(reload): re-hydrate feature toggles from config on /reload
 - refactor(tools): always respect .gitignore; config-only filesystem + search scope
 - docs(companion): TestFlight notes for 0.1.13 (2751)
-- feat: web-search toggle, typed extension schemas, honest python CLI exits
+- feat: add a web-search toggle, typed extension schemas and accurate Python CLI exit codes
 - refactor(tools): use ranges-only line windows
 - test(shims): cover deferred shim dependency loading
 - test(loop): tolerate runner JIT activity after timeout
@@ -4641,7 +4236,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(shell): allow host-root descendants outside jail
 - companion: coalesced tool-card grids, justified prose, correct live ticker
 - release: notes for 1.0.1 (2717)
-- companion: honest live status, one-motion keyboard, resume at the end
+- companion: Companion: accurate live status, coordinated keyboard movement and resume at the end
 - companion: one-motion iOS keyboard; TUI limits, shims, editing fixes
 - labelled ntr recovery, image optimization at ingest, companion back/paste/perf
 - release: update version files for v0.1.12, bump to next dev version
@@ -4649,7 +4244,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Package changes
 
 #### com.blockether/vis
-- chore(deps): svar 0.7.86 -- every quota/credit/budget wall is a hard error (02252578e)
+- chore(deps): svar 0.7.86 treats exhausted quota, credit and budget as non-retryable errors (02252578e)
 - feat(companion): collapse recorded non-image attachments into one disclosure row (9dba6166e)
 - feat(python): read packaging metadata with Python's own parsers, add `python.source_paths` (f8ac1d4ec)
 - fix(companion): a dead event stream can no longer silently freeze an open session (c229e28d5)
@@ -4666,7 +4261,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(reload): re-hydrate feature toggles from config on /reload (75893813a)
 - refactor(tools): always respect .gitignore; config-only filesystem + search scope (6f89aaa01)
 - docs(companion): TestFlight notes for 0.1.13 (2751) (4966f3233)
-- feat: web-search toggle, typed extension schemas, honest python CLI exits (a9ee2d552)
+- feat: add a web-search toggle, typed extension schemas and accurate Python CLI exit codes (a9ee2d552)
 - refactor(tools): use ranges-only line windows (136c408dd)
 - test(shims): cover deferred shim dependency loading (df5a6b7c1)
 - test(loop): tolerate runner JIT activity after timeout (522367ffa)
@@ -4700,7 +4295,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(shell): allow host-root descendants outside jail (e226f48d2)
 - companion: coalesced tool-card grids, justified prose, correct live ticker (d8bd17eb2)
 - release: notes for 1.0.1 (2717) (406756439)
-- companion: honest live status, one-motion keyboard, resume at the end (445a3b2d4)
+- companion: Companion: accurate live status, coordinated keyboard movement and resume at the end (445a3b2d4)
 - companion: one-motion iOS keyboard; TUI limits, shims, editing fixes (154a0e343)
 - labelled ntr recovery, image optimization at ingest, companion back/paste/perf (f6a109f89)
 - release: update version files for v0.1.12, bump to next dev version (f07ee491c)
@@ -4713,7 +4308,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - companion: one-motion iOS keyboard; TUI limits, shims, editing fixes (154a0e343)
 
 #### com.blockether/vis-foundation-search
-- feat: web-search toggle, typed extension schemas, honest python CLI exits (a9ee2d552)
+- feat: add a web-search toggle, typed extension schemas and accurate Python CLI exit codes (a9ee2d552)
 
 #### com.blockether/vis-language-clojure
 - feat(queue): cancelled turn returns queued messages to the input (505bb13d8)
@@ -4751,7 +4346,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - turn failures: fail once, fail legibly; session_fold kwargs; repo-wide format
 - session_fold: accept keyword arguments from the Python sandbox
 - config: name the failing fields and stop dumping a stack trace
-- gateway state test: assert the budget-busting turn is kept, not deferred
+- gateway state test: verify over-budget turns are retained rather than deferred
 - release notes: keep one preamble in CHANGELOG.md, human-readable 2707 entry
 - Restore images on transcript reload, smooth rotation, auto TestFlight notes
 - shell logs: return the tail once as plain strings
@@ -4774,7 +4369,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - turn failures: fail once, fail legibly; session_fold kwargs; repo-wide format (18cadf1f9)
 - session_fold: accept keyword arguments from the Python sandbox (1fbad6b56)
 - config: name the failing fields and stop dumping a stack trace (5d270615b)
-- gateway state test: assert the budget-busting turn is kept, not deferred (d361085f1)
+- gateway state test: verify over-budget turns are retained rather than deferred (d361085f1)
 - release notes: keep one preamble in CHANGELOG.md, human-readable 2707 entry (3df9a77cb)
 - Restore images on transcript reload, smooth rotation, auto TestFlight notes (16c287e2e)
 - shell logs: return the tail once as plain strings (9c94b083a)
@@ -4875,13 +4470,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [v0.1.10] - 2026-07-27
 
 ### Changed
-- fix(native): ship linux x64 + arm64 from CI, drop the impossible macOS job
+- fix(native): release Linux x64 and arm64 binaries from CI and remove the unsupported macOS job
 - release: update version files for v0.1.9, bump to next dev version
 
 ### Package changes
 
 #### com.blockether/vis
-- fix(native): ship linux x64 + arm64 from CI, drop the impossible macOS job (005b9b806)
+- fix(native): release Linux x64 and arm64 binaries from CI and remove the unsupported macOS job (005b9b806)
 - release: update version files for v0.1.9, bump to next dev version (d00e41718)
 
 ## [v0.1.9] - 2026-07-27
@@ -4993,10 +4588,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat: harden queues, tools, and companion
 - fix(gateway): refresh stall watchdog on real progress
 - companion: canonical type scale, line-height in the scale, taller session header
-- perf(search): fff owns every ignore decision (overlay), no Clojure walk left
+- perf(search): delegate all ignore rules to fff and remove the Clojure filesystem walk
 - fix(queue): images in queued turns render as chips, not raw paths
 - fix(companion): smaller composer text and narrower +/mic buttons on phone
-- fix(companion): model badge is a quiet centered caption; composer no longer hugs the screen edge
+- fix(companion): center the model caption below the composer and add spacing from the screen edge
 - perf(companion): cache /v1/router for 5 minutes and prefetch it at connect
 - fix(companion): New session back to solid primary; Share chip primary
 - fix(companion): model badge spans the composer width
@@ -5049,7 +4644,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Fix Blockether light theme tab colors and dialog margins
 - fix(paramiko): drop shared MINA SSHD io-factory so every server negotiates
 - Render fixes
-- fix(channel-tui): restore result-row copy alignment for baked output indent
+- fix(channel-tui): restore result-row copy alignment for pre-indented output
 - fix(paramiko-shim): self-reap MINA sshd host-side on session close
 - fix(gateway/bus): treat turn.cancelled as terminal in hydrate!
 - fix(channel-tui): declare flatland/ordered dep + align queue-close test
@@ -5090,7 +4685,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - perf(tui): skip grapheme array on plain lines in paint-styled-line!
 - Bump lanterna
 - deps(tui): bump com.blockether/lanterna to 3.1.5-vis.32
-- Better error signal for the compiler exceptions
+- Improve compiler error reporting
 - perf(tui): identity-memoize layout height-key vector
 - fix(clj-test): honor run_tests :dir so sibling-project tests hit their own nREPL
 - perf(tui): O(log n) binary-search visible-window for scroll layout
@@ -5156,7 +4751,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - big refactor
 - feat(python-sandbox): auto-settle deferred tool calls on subscript/len/in
 - fix(tui): wire Esc to clear the pending-sends queue
-- fix(clojure): evict wedged nrepl connection on eval timeout
+- fix(clojure): discard unresponsive nREPL connections after evaluation timeout
 - feat(python-cli): forward script argv and caller env into vis python sandbox
 - fix(channel-tui): reserve exact inline-image box from real terminal cell size
 - fix(tui): stop slash/file suggestion overlay flicker during live stream
@@ -5198,10 +4793,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat: harden queues, tools, and companion (5d773f2cf)
 - fix(gateway): refresh stall watchdog on real progress (553626fe1)
 - companion: canonical type scale, line-height in the scale, taller session header (f095e603a)
-- perf(search): fff owns every ignore decision (overlay), no Clojure walk left (760197012)
+- perf(search): delegate all ignore rules to fff and remove the Clojure filesystem walk (760197012)
 - fix(queue): images in queued turns render as chips, not raw paths (5c5e4c6e5)
 - fix(companion): smaller composer text and narrower +/mic buttons on phone (dc16e6641)
-- fix(companion): model badge is a quiet centered caption; composer no longer hugs the screen edge (75869fb6f)
+- fix(companion): center the model caption below the composer and add spacing from the screen edge (75869fb6f)
 - perf(companion): cache /v1/router for 5 minutes and prefetch it at connect (90474b8ce)
 - fix(companion): New session back to solid primary; Share chip primary (955a1fa32)
 - fix(companion): model badge spans the composer width (e6d773d80)
@@ -5287,7 +4882,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Performance improvements (5857ca85b)
 - Performance fixes for TUI! (cb2460d7a)
 - Bump lanterna (cf28b89fb)
-- Better error signal for the compiler exceptions (4b96c7cd5)
+- Improve compiler error reporting (4b96c7cd5)
 - fix(clj-test): honor run_tests :dir so sibling-project tests hit their own nREPL (8cde86af8)
 - perf(tui): cache last-bubble tail projection; coalesce tab-switch refresh (4b2acd233)
 - Performance fixes (8be5edce6)
@@ -5391,7 +4986,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(transcript): surface python stdout and attachments in transcript (#40) (5bab7111e)
 - Fix Blockether light theme tab colors and dialog margins (d8d06f748)
 - Render fixes (cf9b43414)
-- fix(channel-tui): restore result-row copy alignment for baked output indent (88a58bf47)
+- fix(channel-tui): restore result-row copy alignment for pre-indented output (88a58bf47)
 - fix(channel-tui): declare flatland/ordered dep + align queue-close test (88668e84d)
 - fix(prompt): gate user-pasted images on model vision + steer PIL fallback (be8cf6554)
 - fix(editing): steer append_child/prepend_child used with a NAME locator (781f4bf47)
@@ -5414,7 +5009,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - perf(tui): halve styled-line paint allocation via sentinel split (64e4d6db0)
 - perf(tui): skip grapheme array on plain lines in paint-styled-line! (285a07af4)
 - deps(tui): bump com.blockether/lanterna to 3.1.5-vis.32 (ba40cc26a)
-- Better error signal for the compiler exceptions (4b96c7cd5)
+- Improve compiler error reporting (4b96c7cd5)
 - perf(tui): identity-memoize layout height-key vector (5f32d67d6)
 - perf(tui): O(log n) binary-search visible-window for scroll layout (0b01e116f)
 - perf(tui): replace pass-1 est mapv with primitive transient loop (f64f5dfdb)
@@ -5465,7 +5060,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - style: blank line between all top-level forms (d6fd30b17)
 - style: full-project cljfmt reformat (5f81e3684)
 - Bump lanterna (cf28b89fb)
-- Better error signal for the compiler exceptions (4b96c7cd5)
+- Improve compiler error reporting (4b96c7cd5)
 - Fixes to highlighting (b4d1c8dfe)
 - chore: scrub residual telegram & web-channel mentions from comments and docs (1135b69c9)
 - refactor(repl): remove bin/dev launcher and clj_repl references (05f9ebaa2)
@@ -5508,7 +5103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(clojure-test): relativize fault file paths in repl-mode test output (075d68353)
 - Fixes to anchored editing (c9746b69d)
 - Performance fixes for TUI! (cb2460d7a)
-- Better error signal for the compiler exceptions (4b96c7cd5)
+- Improve compiler error reporting (4b96c7cd5)
 - fix(clj-test): honor run_tests :dir so sibling-project tests hit their own nREPL (8cde86af8)
 - Performance fixes (8be5edce6)
 - Prompt changes, tui optimizations (ecf8c0edc)
@@ -5526,7 +5121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - test(language-clojure): cover blank snippet defaults (9e398bd6b)
 - fix(language-clojure): ignore blank snippet defaults (f9c9490c1)
 - big refactor (be1dbaa62)
-- fix(clojure): evict wedged nrepl connection on eval timeout (47fc63e2c)
+- fix(clojure): discard unresponsive nREPL connections after evaluation timeout (47fc63e2c)
 - fix(clojure-test-runner): silence framework reporter, structured failure digest (bc84dd95e)
 - perf(providers): cache fleet enumeration for footer-frequency reads (#29) (bd821219f)
 - fix(test-runner): pr-str result under pinned print vars to survive truncating nREPL sessions (dfa51f7dd)
@@ -5674,9 +5269,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - ci(native): probe free macOS runners + env-tunable builder heap
 - fix(gateway): drain a message queued after Esc as soon as the cancelled turn unwinds
 - feat(compaction): session_fold receipt carries saved-tokens note and op-card headline
-- fix(theme): hint rel-luminance ^double to kill Math/abs reflection; baseline 1977->395
-- feat(loop): surface the saved-tokens note on fold breadcrumb cards
-- docs(language-surface): teach manual reload after editing source (no auto-reload)
+- fix(theme): add a ^double hint to rel-luminance to remove Math/abs reflection; baseline 1977->395
+- feat(loop): show saved-token counts on fold summary cards
+- docs(language-surface): document manual reload after editing source (no auto-reload)
 - refactor(loop): clarify fold card wording (saved ~tokens / utilization %)
 - fix(language-clojure): :only matches fully-qualified var names and errors on no-match
 - refactor(loop,extension): park the native tool wall during slow setup instead of startup budgets
@@ -5736,7 +5331,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - chore(graal): re-baseline boxed-math ratchet to 2270 (pre-existing drift; reflection now 0)
 - fix(graal): add type hints to silence reflective calls + advertise sandbox shims
 - Remove the leftovers
-- feat(compaction): breadcrumb-canonical fold gist, utilization keeps only the live budget
+- feat(compaction): store fold summaries in cards; utilization retains only the current budget
 - refactor(sqlite): squash migrations V1..V10 into a single consolidated V1__schema.sql
 - chore: sync workspace changes across core, extensions, and docs
 - feat(compaction): merge fold ledger into utilization as one-line readout
@@ -5745,8 +5340,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - chore: sync workspace changes across core, extensions, and docs
 - perf(channel-tui,git): route footer git through gateway, drop dead client-side walks; sync cache TTL to poll
 - fix(verify,reflection): make graal gate actually run + zero reflection warnings
-- fix(loop): treat post-refresh 401 as propagation lag, not dead credential
-- fix(loop): latch dead OAuth credentials gateway-wide to stop 401 refresh storms
+- fix(loop): treat post-refresh 401 responses as propagation delays rather than invalid credentials
+- fix(loop): mark invalid OAuth credentials across the gateway to prevent repeated refreshes
 - fix(clojure): self-heal nrepl eviction and gate test runner on repl liveness
 - perf(channel-tui): throttle render-loop scroll-ease to stop streaming CPU spin
 - perf(build): shrink native image with -Os + interpreter-only GraalPy
@@ -5763,7 +5358,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(tui/render-test): assert the real coalesced flush contract
 - fix(tui/shell): green the suite — resume duration bug + stale expectations
 - perf(client/gateway/bridge): cut TUI typing lag + idle CPU/alloc
-- perf(gateway/bus): adaptive tailer poll to kill idle CPU burn
+- perf(gateway/bus): adapt tailer polling to reduce idle CPU usage
 - fix(gateway): reap orphaned event journals + JFR recordings; isolate draft store
 - chore(rn-companion): harden app .gitignore for Expo/native build artifacts
 - feat(magit): colorize diff header filenames in TUI status view
@@ -5830,9 +5425,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - ci(native): probe free macOS runners + env-tunable builder heap (22b22dba)
 - fix(gateway): drain a message queued after Esc as soon as the cancelled turn unwinds (b4afb32d)
 - feat(compaction): session_fold receipt carries saved-tokens note and op-card headline (f56fced4)
-- fix(theme): hint rel-luminance ^double to kill Math/abs reflection; baseline 1977->395 (a1433367)
-- feat(loop): surface the saved-tokens note on fold breadcrumb cards (5b21d983)
-- docs(language-surface): teach manual reload after editing source (no auto-reload) (321c48f2)
+- fix(theme): add a ^double hint to rel-luminance to remove Math/abs reflection; baseline 1977->395 (a1433367)
+- feat(loop): show saved-token counts on fold summary cards (5b21d983)
+- docs(language-surface): document manual reload after editing source (no auto-reload) (321c48f2)
 - refactor(loop): clarify fold card wording (saved ~tokens / utilization %) (f1473666)
 - refactor(loop,extension): park the native tool wall during slow setup instead of startup budgets (7cd3e3e8)
 - fix(gateway): clear remaining boxed-math warnings in state.clj and server.clj (9b655432)
@@ -5878,7 +5473,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - chore(graal): re-baseline boxed-math ratchet to 2270 (pre-existing drift; reflection now 0) (9a17a06a)
 - fix(graal): add type hints to silence reflective calls + advertise sandbox shims (4d17b60a)
 - Remove the leftovers (709c1451)
-- feat(compaction): breadcrumb-canonical fold gist, utilization keeps only the live budget (eec7c974)
+- feat(compaction): store fold summaries in cards; utilization retains only the current budget (eec7c974)
 - refactor(sqlite): squash migrations V1..V10 into a single consolidated V1__schema.sql (c0898015)
 - chore: sync workspace changes across core, extensions, and docs (9a68ff54)
 - feat(compaction): merge fold ledger into utilization as one-line readout (c35868e8)
@@ -5887,8 +5482,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - chore: sync workspace changes across core, extensions, and docs (e410b355)
 - perf(channel-tui,git): route footer git through gateway, drop dead client-side walks; sync cache TTL to poll (3e161cb8)
 - fix(verify,reflection): make graal gate actually run + zero reflection warnings (001c99fe)
-- fix(loop): treat post-refresh 401 as propagation lag, not dead credential (473c0f9f)
-- fix(loop): latch dead OAuth credentials gateway-wide to stop 401 refresh storms (f7a251b8)
+- fix(loop): treat post-refresh 401 responses as propagation delays rather than invalid credentials (473c0f9f)
+- fix(loop): mark invalid OAuth credentials across the gateway to prevent repeated refreshes (f7a251b8)
 - fix(clojure): self-heal nrepl eviction and gate test runner on repl liveness (8ee71a22)
 - perf(build): shrink native image with -Os + interpreter-only GraalPy (46e006d4)
 - fix(build,ci): build native image on every commit for all platforms (793b1ba1)
@@ -5901,7 +5496,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(progress/web/tui): surface a live 'Vis is running: …' ticker for coarse activity (0e0280fc)
 - fix(tui/shell): green the suite — resume duration bug + stale expectations (bccd7d22)
 - perf(client/gateway/bridge): cut TUI typing lag + idle CPU/alloc (605d6639)
-- perf(gateway/bus): adaptive tailer poll to kill idle CPU burn (17357e96)
+- perf(gateway/bus): adapt tailer polling to reduce idle CPU usage (17357e96)
 - fix(gateway): reap orphaned event journals + JFR recordings; isolate draft store (9dddbc53)
 - feat(magit): colorize diff header filenames in TUI status view (1dc58309)
 - fix(language-clojure): resolve lint config from nearest .clj-kondo in nested projects (61f475f4)
@@ -5956,7 +5551,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - chore: sync workspace changes across core, extensions, and docs (e410b355)
 - perf(channel-tui,git): route footer git through gateway, drop dead client-side walks; sync cache TTL to poll (3e161cb8)
 - fix(verify,reflection): make graal gate actually run + zero reflection warnings (001c99fe)
-- fix(loop): treat post-refresh 401 as propagation lag, not dead credential (473c0f9f)
+- fix(loop): treat post-refresh 401 responses as propagation delays rather than invalid credentials (473c0f9f)
 - fix(clojure): self-heal nrepl eviction and gate test runner on repl liveness (8ee71a22)
 - perf(channel-tui): throttle render-loop scroll-ease to stop streaming CPU spin (1bffb7e7)
 - perf(channel-tui): input-text fast path + phase-tagged slow-frame logs (fc738374)
@@ -6080,13 +5675,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- fix(openai-codex): give new Codex models svar's pinned catalog doesn't know
-  yet (e.g. `gpt-5.6-terra`) their real context window via a
-  `:provider/enrich-models-fn` hook, instead of svar's 8192 default that
-  rejected normal turns with "Context overflow … has 8192 context". Only fills
-  the gap — models svar knows keep their catalog window and explicit config
-  `:context` still wins. `gpt-5.6-terra` also added to the provider's
-  default-models.
+- fix(openai-codex): use provider/enrich-models-fn to supply context windows for models absent from svar's catalog, including gpt-5.6-terra, instead of its 8192 default. Preserve known catalog values and explicit context configuration. Add gpt-5.6-terra to default models.
 
 ## [v0.1.3] - 2026-07-12
 
@@ -6100,7 +5689,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(editing): treat non-positive expected_mtime as no staleness guard
 - feat(language): full TypeScript/JavaScript/JSX/TSX support
 - test(channel-tui): repair stale state-test setups against current code
-- style(tui,web): bolden dialog titles and warm modal chrome
+- style(tui,web): bold dialog titles and use warmer modal colors
 - fix(channel-tui): drop the attaching turn from the queued mirror
 - chore(companion): trim web dependencies
 - fix(gateway): route provider diagnostics through daemon
@@ -6165,7 +5754,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis-channel-tui
 - feat(sessions): owner + session-group folders across sqlite/gateway/tui (3eda3304)
 - test(channel-tui): repair stale state-test setups against current code (1b5c2a3f)
-- style(tui,web): bolden dialog titles and warm modal chrome (63ea851b)
+- style(tui,web): bold dialog titles and use warmer modal colors (63ea851b)
 - fix(channel-tui): drop the attaching turn from the queued mirror (7b02d0db)
 - fix(gateway): route provider diagnostics through daemon (10021653)
 - feat(tui): colour the footer git/draft chips like sibling buttons (f50e23dc)
@@ -6182,7 +5771,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 #### com.blockether/vis-channel-web
 - style(channel-web): use --primary-fg for text on filled primary buttons (0d4262fc)
-- style(tui,web): bolden dialog titles and warm modal chrome (63ea851b)
+- style(tui,web): bold dialog titles and use warmer modal colors (63ea851b)
 - fix(gateway): route provider diagnostics through daemon (10021653)
 - feat(gateway): canonical wire transcripts + turn traces across channels (3c56c0df)
 - feat(gateway): route interactive clients through daemon (c23d8035)
@@ -6252,15 +5841,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(clojure-test-runner): empty selectors run everything, not error
 - feat(attachments): session-level introspection lister (P1)
 - feat(resources): live-tail + paging in background-log viewers
-- feat(attachments): storage-offload rail — registry + pure decision + resolver
+- feat(attachments): add attachment storage offloading with a registry, pure selection logic and resolver
 - feat(resources): view background logs in TUI + web
 - fix(channel-web): space + chip styling for result summaries
 - feat(attachments): session_fold collapses vision replay too
 - fix(channel-web): harden renderProse against UI-spoofing HTML injection
 - fix(web): strip vis-image fence in DB-restored history; drop comment profanity
 - fix(tui): collapse same-file edit band to full path shown once
-- feat(attachments): V4 unifies both rails into one session_attachment table
-- refactor(attachments): self-describing handle ids kill the read-back fallback
+- feat(attachments): unify tool and user attachment storage in one session_attachment table
+- refactor(attachments): use self-describing handle IDs and remove the read-back fallback
 - feat(attachments): unify read-back across tool + user attachments
 - test(loop): update synth oracle for symbol_rename as positional native tool
 - feat(attachments): introspection read-back API + misc workspace changes
@@ -6268,24 +5857,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - test(attachments): lock down gather->virtual-thread sink conveyance
 - clj-ext: format only on :write, not patch/struct_patch
 - feat(attachments): $VIS_OUTBOX filesystem tap + rename :images -> :attachments
-- feat(attachments): vis_attach — generic producer rail for any artifact
+- feat(attachments): support generic artifact producers in vis_attach
 - feat(attachments): V3 brings session_turn_attachment to V2 payload parity
-- feat(attachments): wire iteration-attachment rail to both ends
-- refactor(mpl): sink produced images at source, drop stdout-fence parsing
+- feat(attachments): connect iteration attachments to producers and readers
+- refactor(mpl): capture produced images at their source and remove stdout-fence parsing
 - feat(loop): replay generated figures to vision models on the wire
 - feat(loop): capture matplotlib figure bytes into iteration attachments
 - feat(persist): V2 session_iteration_attachment table + store/read
 - tui(navigator): drop empty Modified column, rename Directory -> Dir
 
 ### Added
-- GitHub Copilot **Enterprise** provider (`:github-copilot-enterprise`). The
-  provider extension already shipped the enterprise base-url, provider id,
-  label, and account type, but only registered `:individual` + `:business`,
-  so Copilot Enterprise users could not select Claude Opus 4.8 / Sonnet 4.6 /
-  Haiku 4.5 at all. Enterprise now registers alongside the other tiers and
-  inherits the same curated catalog: dotted models.dev ids
-  (`claude-opus-4.8`, `claude-sonnet-4.6`, `claude-haiku-4.5`) over the native
-  Anthropic `/v1/messages` wire (never `/chat/completions`).
+- Register GitHub Copilot Enterprise alongside Individual and Business. Use the same curated Claude catalog with dotted models.dev IDs and the native Anthropic /v1/messages API.
 - Extension system with global registry, topo-sort, hot-reload
 - `:ext/nudge-fn` for per-iteration system nudges from extensions
 - `:ext/requires` for extension dependency declaration
@@ -6309,22 +5891,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `var-diff` (dead code)
 - `restore-var` references (never existed as callable tool)
 - Scattered .md files (consolidated into `resources/docs/`)
-- Built-in repetition `[system_nudge]` ("You repeated the same expression ...").
-  `<journal>` + the dedup cache (`:cached? true`) already give the model
-  enough signal to change strategy; the nudge was noise. Drops
-  `repetition-warning`, `REPETITION_THRESHOLD`, the `call-counts-atom`
-  plumbing, and the `:call-counts-atom` arg to `prompt/build-iteration-context`.
+- Remove the built-in repetition system_nudge and its repetition-warning, REPETITION_THRESHOLD and call-count state. Retain journal and cached-result information for detecting repeated work.
 
 ### Fixed
-- GitHub Copilot Claude requests returning `404 page not found`. The token
-  exchange's authoritative `endpoints.api` (and the account fallback hosts)
-  are bare roots with no `/v1`, so `provider-token-base-url` handed svar a
-  versionless base and Claude hit `{host}/messages` instead of
-  `{host}/v1/messages`. The token's LLM base is now suffixed with `/v1` at
-  exchange time (idempotent `ensure-api-version`) and reused from cache, while
-  the model-policy call still targets the root host. Affects all Copilot tiers
-  (individual/business/enterprise), since every account's token endpoint
-  resolves to the same versionless host.
+- Fix Copilot Claude 404 responses by appending /v1 to token-exchanged LLM base URLs with idempotent ensure-api-version. Cache the versioned URL while retaining the root host for model-policy calls. Apply to Individual, Business and Enterprise.
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 

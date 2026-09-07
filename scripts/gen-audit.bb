@@ -413,45 +413,31 @@
         today
         ".
 
-Vis is a coding agent that writes Python into a sandboxed CPython runtime,
-keeps durable state outside the model context window, and inspects and changes
-the host project through tools. It ships as one Clojure package
-(`com.blockether.vis.core`, Apache-2.0) with the language packs, providers and
-the SQLite store inside it. Users install the `vis-agent` Bash wrapper, which runs
-live JVM source or a private GraalVM native-image sidecar.
+Vis is a coding agent that runs Python, uses tools to inspect and change
+projects, and stores sessions locally. The `vis-agent` wrapper starts a JVM
+runtime or a GraalVM native binary.
 
-This document is the authoritative security, licensing and software
-supply-chain record for that software. It is maintained by **Blockether**
-(§2) and is written to be relied upon by security, procurement and
-vendor-risk reviewers evaluating Vis inside **regulated environments** —
-financial services, public sector, and any setting with formal
-third-party-risk, software-provenance or SBOM obligations (e.g. EU DORA ICT
-third-party risk, NIS2). It answers, without reading the source: *what is it,
-who stands behind it, what is inside it, under what terms, is any of it
-vulnerable, and what does it do with data.*
+This generated document lists dependencies, licenses, vulnerability-scan
+locations and data handling. Blockether maintains it for technical and
+procurement review. It is not a certification of security or regulatory
+compliance.
 
 ---
 
-## 1. The product — what Vis is
+## 1. Product
 
-- **What it is.** Vis is an LLM coding agent that acts by writing code. It
-  drives tasks end-to-end — locate → edit → verify — against the host
-  repository, executing its own Python inside a **sandboxed CPython runtime**
-  embedded in either the JVM process or native-image runtime rather than on the
-  host interpreter.
-- **Durable, out-of-context state.** Session state (plans, prior results,
-  durable memory) lives *outside* the model context window, in a local store,
-  so long tasks survive context limits. It is model-agnostic: it works with any
-  text-producing LLM, with no provider lock-in.
-- **How it ships.** One public **`vis-agent` Bash wrapper** with two runtime
-  choices: live JVM source, or a private self-contained GraalVM native-image
-  sidecar. The native executable is never installed as the public command.
-  Language packs, providers, persistence and speech are part of the core
-  package; the TUI is its own app module.
-- **Where it runs.** Locally, on a developer machine or CI runner. It reaches
-  an LLM provider only for inference; everything else is on-box (§9).
+- **Execution:** the model runs Python in the bundled CPython runtime and uses
+  host tools to read files, edit code and run tests. Gateway sessions have
+  separate worker processes.
+- **State:** sessions and results are stored locally, outside model requests.
+  Configured providers receive the context required for inference.
+- **Distribution:** `vis-agent` selects a managed JVM source checkout or native
+  binary. Language packs, providers, persistence and speech are part of the
+  engine; the TUI is a separate app module.
+- **Network:** providers, tools, package downloads and notifications can make
+  network requests. See §9 for data handling.
 
-### At a glance
+### Summary
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
@@ -460,28 +446,24 @@ vulnerable, and what does it do with data.*
         " unique, across "
         (count modules)
         " `deps.edn` modules (root + siblings).
-- **Declared jar footprint (direct coords):** ~"
+- **Total direct jar size:** ~"
         (format "%.0f" (/ total-b 1024.0 1024.0))
-        " MB; concentrated in the embedded CPython runtime and the optional voice/ONNX stack (§8).
-- **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — "
+        " MB; most space is used by Python and optional speech components (§8).
+- **Licenses:** dependencies include EPL, MIT, Apache-2.0, BSD and UPL — "
         (if (seq copyleft) "**copyleft exception(s) flagged in §6.**" "no copyleft exceptions.")
         "
-- **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
+- **Vulnerability scans:** [clj-watson](https://github.com/clj-holmes/clj-watson) runs on dependency changes, weekly and on request. Results are published to GitHub Security (§7).
 
 ---
 
-## 2. Blockether — who maintains it
+## 2. Maintainer
 
 Vis is built and maintained by **Blockether** (BLOCKETHER SP. Z O.O.),
 a software consultancy and development company based in Kraków, Poland
 (KRS 0001171097, NIP 675-18-13-221).
 
-- **Focus.** Data, AI, web, cloud and blockchain engineering for **finance,
-  regulated industries and e-commerce**, delivered predominantly as
-  data-driven Clojure solutions.
-- **Track record.** Years of work aligning stakeholders and shipping inside
-  regulated environments; an active open-source footprint (e.g. `svar` and
-  `holy-lambda`) alongside its commercial engagements.
+Blockether develops data, AI, web, cloud and blockchain software and maintains
+open-source projects including `svar` and `holy-lambda`.
 - **Contact.** General enquiries and commercial support:
   <contact@blockether.com>. Security disclosure: <security@blockether.com>
   (§11). Web: <https://blockether.com>. Source repository:
@@ -510,83 +492,49 @@ property of their respective owners; their use here is descriptive and does
 
 ## 4. Technology & distribution
 
-The native distribution ships the public **`vis-agent` Bash wrapper** beside a
-private **GraalVM native-image runtime**. The source distribution ships that
-same wrapper and runs the JVM checkout directly. The build toolchain, the
-embedded Python interpreter and models, and the one copyleft UI dependency are
-each **FOSS and cleared for commercial redistribution**. There is **no Oracle
-license on the distributed native runtime**.
+Both distributions use the `vis-agent` wrapper. Native installations include a
+GraalVM native binary; source installations run the managed JVM checkout.
+Build tools, runtime libraries and model files have separate license terms.
+Review the applicable licenses before redistribution.
 
 ### 4.1 The build tool and the embedded interpreter
 
 | Layer | What it is | Coordinates / tool | License | Redistribution *for a fee* |
 |---|---|---|---|---|
-| **Embedded interpreter** | CPython 3.14, built from source and shipped beside the binary as the agent's sandboxed Python substrate | `com.blockether/vis-python-runtime` pinned to an immutable Git commit, plus that repository's per-platform release archive | **MIT** for the bridge, **PSF-2.0** for CPython and its standard library | **Permitted** — both are permissive |
-| **Build tool** | The `native-image` compiler that AOT-compiles vis into the standalone binary (`clojure -T:build native`) | **GraalVM Community Edition (CE) for JDK 25.1.3**, installed from the pinned `graalvm-ce-builds` asset via `.github/actions/setup-graalvm-25` (every CI + native-release workflow) | **GPL-2.0 with Classpath Exception** | **Permitted** — the Classpath Exception frees the output binary |
+| **Embedded interpreter** | CPython 3.14, included beside the binary | `com.blockether/vis-python-runtime` at a pinned Git commit and platform release | **MIT** bridge; **PSF-2.0** CPython | Subject to those licenses |
+| **Build tool** | GraalVM native-image compiler | **GraalVM CE**, version pinned by `.graalvm-version` | **GPL-2.0 with Classpath Exception** | Review the exception and bundled-library terms |
 
-**Which GraalVM we support.** The release build uses **GraalVM CE 25.1.3**
-only (the pinned `graalvm-ce-builds` asset). Oracle GraalVM is **not** used in
-any build. The `native-image` compiler is **GPL-2.0 with the Classpath
-Exception** (the OpenJDK license): the Exception exempts the tool's *output* —
-the binary vis produces — from GPL, so it may be distributed and sold under
-any terms with no copyleft reaching first-party code.
+The build uses the Community Edition version pinned in `.graalvm-version`,
+not Oracle GraalVM. Compiler licensing and the licenses of code included in
+the resulting binary are separate considerations.
 
-> **Historical note.** vis previously built with **Oracle GraalVM** under the
-> **GFTC** (GraalVM Free Terms & Conditions), which permits free commercial
-> *use* but restricts redistributing the built binary **for a fee**. The build
-> was moved to **GraalVM CE** to remove that restriction — and Oracle from the
-> risk register — entirely.
+### 4.2 Python and speech
 
-### 4.2 Embedded interpreter & bundled models
+The core runtime requires CPython 3.14 and its standard library, supplied by
+`com.blockether/vis-python-runtime` and a platform archive. The bridge is MIT;
+CPython is PSF-2.0.
 
-The distribution ships **CPython 3.14** (`com.blockether/vis-python-runtime`
-plus its per-platform release archive, ~69 MB unpacked beside the binary) as the
-agent's sandboxed Python substrate; it is mandatory for the core binary. The
-bridge is **MIT**, CPython and its standard library are **PSF-2.0**. Both are
-permissive and cleared for commercial redistribution.
+Local speech uses `sherpa-onnx` (Apache-2.0) and ONNX Runtime (MIT). Its API jar
+is a declared dependency; platform-specific native libraries are loaded
+separately. Some native builds include eSpeak NG (GPL-3.0), which requires
+separate license review. Model licenses and download sources are listed in
+[THIRD_PARTY_MODELS.md](../THIRD_PARTY_MODELS.md), including models with
+non-commercial restrictions. Do not infer model permissions from library
+licenses.
 
-The built-in speech subsystem runs local speech through upstream
-**`sherpa-onnx`** (Apache-2.0). Only its 187 KB API jar is a declared
-dependency: sherpa's JNI library and the **ONNX Runtime** (MIT) it is linked
-against travel together in one native jar PER PLATFORM, and exactly one of them
-is ever present — fetched on demand into `~/.vis` on a plain JVM, or embedded
-for the BUILD HOST alone in the native image. That native library also carries
-**espeak-ng** (**GPL-3.0**), which serves only sherpa's text-to-speech path —
-never reached by Vis, which uses Pocket TTS; a native built with
-`SHERPA_ONNX_ENABLE_TTS=OFF` drops it outright. Speech runs **fully on-device** —
-no cloud speech service — and ships with Vis. No proprietary model weights are
-redistributed by vis; LLM inference is delegated to a provider chosen by the
-operator (§9). Every embedded/optional model component is under a permissive
-license (see §5–§6).
+### 4.3 Lanterna
 
-### 4.3 Lanterna (terminal UI) — LGPL, safe for commercial use
+The optional TUI uses `com.blockether/lanterna`, a Blockether-maintained fork
+of Lanterna under LGPL-3.0. Maintaining a fork does not remove upstream license
+obligations. Review notice, source and relinking requirements for the chosen
+distribution method, particularly static native-image builds. §6 lists the
+dependency automatically.
 
-The optional **`vis-channel-tui`** extension depends on **`com.blockether/lanterna`**
-(**LGPL-3.0**) — a Blockether-owned fork of the Lanterna terminal-UI library.
-LGPL is the *lesser* (weak) copyleft: it permits use in a **closed-source,
-commercial** product; the only obligation is that a user can relink a modified
-version of the LGPL library itself. Two facts make this a non-issue here:
+### Redistribution
 
-1. **We own the artifact.** `com.blockether/lanterna` is a Blockether in-house
-   library; we control its source, license and release cadence.
-2. **It is optional and droppable.** It ships only with the TUI channel; the
-   core binary and every other channel build without it, so it need never be
-   statically linked into a distributed binary where relinking obligations
-   would otherwise need review. The generated §6 warning tracks it
-   automatically.
-
-### What the owner of vis can do
-
-- **Use it, run it, deploy it internally — for free.** CE is free for any use,
-  commercial and production alike.
-- **Modify vis.** First-party code is **Apache-2.0**; every dependency is
-  permissive (see §6); the CE Classpath Exception keeps your changes proprietary.
-  You own your changes.
-- **Redistribute the vis source + its permissive deps for a fee.** Apache-2.0 /
-  UPL / MIT / EPL / BSD all allow commercial redistribution, including charging.
-- **Redistribute the native *binary* — free or for a fee.** The GPL-2.0+CE
-  Classpath Exception on the CE build tool puts **no charge restriction** on the
-  output binary. Sell it, bundle it, ship it into regulated / financial-sector environments — all clean.
+Vis's first-party code is Apache-2.0. Redistribution must also comply with
+dependency and model licenses. A commercial agreement with Blockether does
+not replace third-party license obligations.
 
 ---
 
@@ -595,8 +543,7 @@ version of the LGPL library itself. Two facts make this a non-issue here:
 Grouped by the module that declares each dependency; a coordinate shared by
 several modules is listed once, under the first module that declares it. Jar
 sizes are the direct artifact only (not the transitive closure). \"Ownership\"
-distinguishes **Blockether in-house** libraries (we control the source and
-release cadence) from **3rd-party** open source.
+identifies Blockether-maintained libraries and third-party projects.
 
 "
         (str/join "\n"
@@ -623,9 +570,8 @@ release cadence) from **3rd-party** open source.
                     (format "| %s | %d |" lic n)))
         "
 
-All licenses in the graph are **permissive / OSI-approved** (EPL-1.0/2.0, MIT,
-Apache-2.0, BSD, UPL-1.0, PSF, Public Domain) and compatible with shipping vis
-under **Apache-2.0**"
+Dependencies use several licenses, listed above. Vis first-party code uses
+Apache-2.0. Review dependency terms for the intended distribution method"
         (if (seq copyleft)
           (str
             " — **with the copyleft exception(s) below that need legal sign-off:**\n\n"
@@ -633,11 +579,9 @@ under **Apache-2.0**"
               "\n"
               (for [[_ sym v info] copyleft]
                 (format
-                  "> **WARNING — `%s` (`%s`) is %s** (copyleft). LGPL is generally fine for dynamic
-> linking, but **static linking into the GraalVM native image** can trigger
-> relinking obligations. Action: confirm distribution terms with legal, or keep
-> the owning extension as an optional (droppable) jar rather than baking it into
-> the distributed binary (see §4.3)."
+                  "> **Copyleft: `%s` (`%s`) uses %s.** Review source, notice and relinking
+> obligations before distribution, particularly for static native-image builds.
+> Keeping an optional dependency separate may affect those obligations (§4.3)."
                   (str sym)
                   v
                   (:license info)))))
@@ -648,18 +592,18 @@ under **Apache-2.0**"
 
 - **First-party (this repo, Apache-2.0):** the `com.blockether.vis.core` package
   and every sibling module in this tree.
-- **Blockether in-house libraries** (separate repos, we own source + releases):
-  every `com.blockether/*` coordinate above.
+- **Blockether-maintained libraries:** `com.blockether/*` coordinates above,
+  including forks with upstream copyrights and license obligations.
 - **3rd-party:** everything else in §5, sourced from its declared Maven or git repository.
 
 ---
 
-## 7. Vulnerability posture — clj-watson (CVEs)
+## 7. Vulnerability scans
 
-### Where to find live findings
+### Scan results
 
-The **authoritative, always-current** list of vulnerabilities is the repository's
-GitHub **Security → Code scanning** tab — not this document:
+View published findings in GitHub **Security → Code scanning**. Check each
+scan's date and status; this generated inventory does not report current CVEs:
 
 **<https://github.com/Blockether/vis/security/code-scanning>**
 
@@ -671,18 +615,17 @@ artifact under **Actions → Security audit**
 (<https://github.com/Blockether/vis/actions/workflows/security-audit.yml>). This
 document is not the system of record for live CVE state — the Security tab is.
 
-### What it is & why
+### Scanner
 
-[clj-watson](https://github.com/clj-holmes/clj-watson) (clj-holmes / Sean
-Corfield community, EPL-2.0) is a **Software Composition Analysis (SCA)** tool
-for Clojure. Most real-world risk in a JVM app lives in transitive
-dependencies, not code we wrote — clj-watson gives an automated, reproducible
-answer to \"does anything we ship have a known CVE?\", wired into CI so the
-answer stays current without anyone remembering to check.
+[clj-watson](https://github.com/clj-holmes/clj-watson) is an EPL-2.0 Software
+Composition Analysis tool for Clojure. It checks direct and transitive
+dependencies against vulnerability databases. Results depend on the resolved
+dependency graph and available advisory data; a scan is not a source-code
+security review.
 
 ### How it runs here
 
-**Locally** — a pinned `:clj-watson` alias lives in the root `deps.edn`:
+**Locally** — use the pinned `:clj-watson` alias in `deps.edn`:
 
 ```bash
 # github-advisory strategy: only needs a GitHub token, no NVD download.
@@ -696,22 +639,21 @@ GITHUB_TOKEN=<your-token> clojure -M:clj-watson scan -p deps.edn -a '*' -t githu
 `deps.edn` change, on pull requests, weekly (Mondays 06:00 UTC), and via manual
 dispatch. It emits **SARIF**, uploads it to GitHub **code scanning** (findings
 appear in *Security → Code scanning*) and archives it as a build artifact. The
-workflow is **non-blocking by default**; an opt-in gate (`-f`, or `-c <cvss>`)
-is included, commented out, to start failing PRs once the baseline is clean. A
-second job, `nvd-scan`, runs the deeper NVD / `dependency-check` strategy (full
-CVSS scoring) weekly and on manual dispatch once the `NVD_API_KEY` secret is
-provisioned; it self-skips until then.
+scan does not fail builds by default. Enable `-f` or a `-c <cvss>` threshold
+to fail on findings. The `nvd-scan` job uses OWASP Dependency-Check for NVD
+results weekly and on manual dispatch when `NVD_API_KEY` is configured; it
+skips otherwise.
 
 | Strategy | Source | Auth / cost | When |
 |---|---|---|---|
-| `github-advisory` *(our default)* | GitHub Advisory Database (GraphQL) | built-in `GITHUB_TOKEN`, instant | CI + everyday local runs |
+| `github-advisory` (default) | GitHub Advisory Database (GraphQL) | `GITHUB_TOKEN` | CI and local runs |
 | `dependency-check` | NIST NVD (OWASP Dependency-Check) | needs a free **NVD API key**, downloads the full NVD DB on first run (cached in `~/.m2`) | deeper CVSS coverage / compliance |
 
 ---
 
-## 8. Resource footprint
+## 8. Resource sizes
 
-Heaviest direct artifacts (>= 1 MB):
+Direct artifacts of at least 1 MB:
 
 | Dependency | Version | Jar size |
 |---|---|---|
@@ -722,74 +664,44 @@ Heaviest direct artifacts (>= 1 MB):
         "
 
 Notes:
-- The **CPython** interpreter (`com.blockether/vis-python-runtime`, ~69 MB
-  unpacked) is the agent's sandboxed Python substrate — mandatory for the core
-  binary (§4.2).
-- The built-in **speech** stack uses `sherpa-onnx`. Its per-platform native jar —
-  the JNI plus the ONNX Runtime inside it — is not a declared dependency at all,
-  so it is absent from the table above: one platform's copy is fetched at
-  runtime or embedded for the build host (§4.2).
-- `sqlite-jdbc` is bundled by the core session store (`internal/persistance/sqlite`).
-- The final GraalVM **native binary** is larger than any single jar because it
-  statically links the JDK; the Python interpreter travels beside it as the
-  python sidecar. Track both in the `native-release` workflow output.
+- CPython is required by the core runtime and installed beside the binary (§4.2).
+- Speech's platform-specific JNI and ONNX Runtime libraries are loaded
+  separately and are not included in the direct-dependency table.
+- The core session store includes `sqlite-jdbc`.
+- Native binaries include JDK code. Track their size and the separate Python
+  runtime directory in native-release output.
 
 ---
 
 ## 9. Data governance
 
-Vis is designed to keep data **on-box**. From a data-governance standpoint:
-
-- **No telemetry.** vis ships **no analytics, no usage tracking and no
-  phone-home**. It does not emit metrics or events to Blockether or any third
-  party.
-- **No tracing off-box.** Session traces, plans and tool output are written to
-  the **local** durable store only (for the agent's own out-of-context memory);
-  nothing is transmitted for observability.
-- **Where data goes.** The only outbound network call in normal operation is to
-  the **LLM provider the operator configures**, for inference — chosen and
-  keyed by the operator, not by Blockether. Package/dependency resolution
-  (\"packing phase\") fetches artifacts from Clojars / Maven Central at
-  build/resolve time only. Optional voice runs **locally** via on-device ONNX
-  models (§4.2) — no cloud speech service.
-- **Data providers.** vis bundles no proprietary datasets or model weights;
-  content it processes is the host project's own files plus whatever the
-  operator sends to their chosen LLM provider. The operator remains the data
-  controller.
+- **Local storage:** sessions, tool output and traces are stored on the gateway
+  machine. Exports can contain private data and are not automatically redacted.
+- **Model requests:** configured providers receive prompts and selected session
+  context, which may include project files and tool output.
+- **Tools and downloads:** extensions, MCP servers, shell commands and package
+  or model installation can contact external services. Apply filesystem and
+  network policy according to the deployment's requirements.
+- **Notifications:** enabled push notifications send session titles, identifiers
+  and answer previews to the publisher's relay and platform push provider.
+  The relay processes notification content; it does not receive the full
+  transcript in that payload. See [PRIVACY.md](../PRIVACY.md).
+- **Speech:** built-in speech processing runs locally after model downloads.
+  External speech services used by extensions have their own data handling.
+- **Telemetry:** the app includes no analytics or advertising SDK. Local
+  diagnostics and metrics do not imply that all network traffic remains local.
 
 ---
 
 ## 10. Commercial licensing, support & warranty
 
-Vis and its first-party code are distributed **\"AS IS\", without warranty of
-any kind**, express or implied — as stated in the Apache-2.0 `LICENSE` and in
-the license of every third-party dependency in §5. The open-source grant
-carries **no warranty, no guarantee of fitness, and no liability** on the part
-of Blockether or any upstream author. Absent a commercial agreement, use of vis
-is governed exclusively by the open-source licenses above and is entirely at
-the user's own risk.
+Vis is distributed under Apache-2.0, including its warranty and liability
+limitations. Third-party dependencies retain their own terms.
 
-**Warranties, SLAs and support are provided solely under a paid commercial
-agreement with Blockether** — request one at <contact@blockether.com>
-(<https://blockether.com>). Only a signed Blockether service contract confers:
-
-- warranty / fitness commitments and defect remediation;
-- a security-response and vulnerability-remediation SLA (§7);
-- maintenance, updates and prioritised support;
-- any indemnification.
-
-**What commercial engagement covers.** Blockether can, under contract:
-
-- **ship, deploy and integrate the base** into your environment — installation,
-  release/upgrade management and CI wiring;
-- **maintain it** — dependency and security updates, version pinning, and
-  keeping this audit and the SCA scans current;
-- **guide teams** on how to *use*, *secure* and *distribute* vis to match your
-  regulatory and internal requirements;
-- **build custom extensions** for a particular component (channels, language
-  packs, persistence, workspace / tool integrations) on the extension surface;
-- provide hardening, compliance-mapping and audit support for regulated
-  deployments.
+Commercial support, service levels, warranties or indemnification apply only
+where a signed agreement provides them. Contact <contact@blockether.com>
+for installation, integration, maintenance, extension development or security
+review support. No such commitments are implied by this inventory.
 
 ---
 
@@ -802,11 +714,9 @@ undisclosed vulnerability. Coordinated-disclosure timelines and any remediation
 SLA are governed by a commercial agreement (§10); absent one, Blockether
 addresses reports on a best-effort basis.
 
-**Non-security issues** — ordinary bugs, feature requests and any code problem
-*not* related to a vulnerability — belong in the public issue tracker at
-<https://github.com/Blockether/vis/issues>, **not** at the security address.
-Keep the two channels separate: security disclosures stay private
-(<security@blockether.com>); everything else is a GitHub issue.
+Report ordinary bugs and feature requests at
+<https://github.com/Blockether/vis/issues>. Keep undisclosed security reports
+private and send them to <security@blockether.com>.
 
 "))))
 

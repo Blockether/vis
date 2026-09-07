@@ -1,10 +1,5 @@
 (ns com.blockether.vis.internal.docs.core-test
-  "Docs renderer: cross-page markdown links must resolve in BOTH output
-   modes (live `/docs/<slug>`, static `<slug>.html`), and the live
-   handler tolerates literal `<slug>.md` deep links with a redirect.
-   Plus the CONTENT invariants: `clojure-extensions.md` is where an extension author
-   learns what `doc(name)` renders and what an `apropos` row previews, and
-   `live-views.md` is where a live view is driven from Python."
+  "Documentation rendering, navigation, supported features and Python examples."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.docs.core :as docs]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -39,6 +34,54 @@
           (let [html (docs/page-html site page :live)]
             (expect (not (re-find #"href=\"[^\"/:][^\":]*\.md[\"#]" html))
                     (str "dangling .md link in live page " (:slug page))))))))
+
+(defdescribe mobile-navigation-test
+             (it "keeps the menu control without a hover or tap highlight rectangle"
+                 (let [{:keys [pages] :as site}
+                       (docs/collect)
+
+                       home
+                       (first (filter #(= "index" (:slug %)) pages))]
+
+                   (doseq [mode
+                           [:static :live]
+
+                           :let [html
+                                 (docs/page-html site home mode)]]
+
+                     (expect (str/includes? html "class=\"hamburger\""))
+                     (expect (str/includes? html "id=\"navtoggle\""))
+                     (expect (not (str/includes? html ".hamburger:hover")))
+                     (expect (str/includes? html "-webkit-tap-highlight-color:transparent"))))))
+
+(defdescribe responsive-typography-test
+             (it "uses one bundled font and compact, wrapping tables in both outputs"
+                 (let [{:keys [pages] :as site}
+                       (docs/collect)
+
+                       page
+                       (first (filter #(= "extending" (:slug %)) pages))]
+
+                   (doseq [mode
+                           [:static :live]
+
+                           :let [html
+                                 (docs/page-html site page mode)]]
+
+                     (expect (str/includes? html "font-family:var(--font)"))
+                     (expect (str/includes? html "--font:'JetBrains Mono',monospace"))
+                     (expect (not (str/includes? html "Hanken")))
+                     (expect (str/includes? html "--text-small:.8125rem"))
+                     (expect (str/includes? html "--text-small:.75rem"))
+                     (expect (str/includes? html "overflow-wrap:anywhere"))
+                     (expect (str/includes? html "table-layout:fixed"))
+                     (expect (str/includes? html ".content pre{font-family:inherit"))
+                     (expect (not (str/includes? html "white-space:nowrap")))
+                     (expect (str/includes? html
+                                            ".content th code,.content td code{font-size:inherit"))
+                     (expect (str/includes? html "<thead>"))
+                     (expect (str/includes? html "initial-scale=1,viewport-fit=cover"))
+                     (expect (not (re-find #"user-scalable=no|maximum-scale=" html)))))))
 
 (defdescribe getting-started-page-test
              (it "uses ordinary documentation links and one install command in both outputs"
@@ -88,26 +131,22 @@
   [slug]
   (:md (first (filter #(= slug (:slug %)) (:pages (docs/collect))))))
 
- ;; A tool page is rendered from the entry contract and previewed as a three-field
- ;; apropos row. `clojure-extensions.md` is the author-facing contract for both
- ;; renderings, so this test names the page that must change with either.
 (defdescribe
-  clojure-extensions-page-teaches-its-renderings-test
-  (it "names every entry key `doc(name)` renders, and both structural lines"
-      (let [md (page-md "clojure-extensions")]
-        (expect (string? md))
-        (doseq [needle [":description" ":params" ":result" ":call" "Keys:" "(REQUIRED)"
-                        "Raw result:"]]
-          (expect (str/includes? md needle) (str "clojure-extensions.md never mentions " needle)))))
-  (it "shows an `apropos` item with all three fields"
-      (let [md (page-md "clojure-extensions")]
-        (doseq [needle ["AproposItem(" "type=" "name=" "body="]]
-          (expect (str/includes? md needle)
-                  (str "clojure-extensions.md never shows " needle " in an apropos item")))))
-  (it "names the shim keys that drive discovery and the page they answer with"
-      (let [md (page-md "clojure-extensions")]
-        (doseq [needle [":shim/imports" ":shim/globals" ":shim/source" ":shim/docs"]]
-          (expect (str/includes? md needle) (str "clojure-extensions.md never mentions " needle))))))
+  supported-extension-docs-test
+  (it "does not publish the removed Clojure extension guide"
+      (expect (not-any? #(= "clojure-extensions" (:slug %)) (:pages (docs/collect)))))
+  (it
+    "does not advertise removed extension APIs in current guides"
+    (doseq [{:keys [slug md]} (:pages (docs/collect))]
+      (expect
+        (not
+          (re-find
+            #"clojure-extensions|clojure-builders|vis/request-human-input!|vis/register-extension!|:ext/engine|vis-agent extension test|Routes added by extensions"
+            md))
+        (str "unsupported extension documentation in " slug))))
+  (it "does not serve the removed guide or redirect its Markdown URL"
+      (doseq [uri ["/docs/clojure-extensions" "/docs/clojure-extensions.md"]]
+        (expect (nil? (docs/handle {:uri uri :headers {}}))))))
 
 ;; A live view is the one primitive an author cannot infer from the field builders:
 ;; its verbs differ per node type, and `vis.output` deliberately does not match the
@@ -120,13 +159,11 @@
         (doseq [needle ["vis.live(" "vis.output(" "upsert(" "is_interrupted" "vis.Interrupted"
                         "flush_ms" "view.is_from_human" "view.note"]]
           (expect (str/includes? md needle) (str "live-views.md never mentions " needle)))))
-  ;; Layout is the half an author cannot infer: without these two paragraphs a run writes a
-  ;; second node where one paragraph BESIDE the table was meant, and marks up a string the
-  ;; page never promised to paint.
-  (it "teaches where a node stands and what a human-facing string may carry"
+  ;; Authors need the layout, text formatting, and interruption rules.
+  (it "documents layout, text formatting, and interruption"
       (let [md (page-md "live-views")]
-        (doseq [needle ["vis.row(" "vis.column(" "inline markdown" "wraps and justifies"
-                        "stay verbatim" "`Escape` or `Enter` sends the stop"]]
+        (doseq [needle ["vis.row(" "vis.column(" "inline Markdown" "wraps and is justified"
+                        "remain verbatim" "`Escape` or `Enter` confirms"]]
           (expect (str/includes? md needle) (str "live-views.md never mentions " needle))))))
 
 ;;; ── The page contract ───────────────────────────────────────────────────────

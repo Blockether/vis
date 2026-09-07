@@ -1,45 +1,35 @@
 # vis-companion-relay
 
-A Cloudflare Worker that lets a gateway **you** run wake a phone running a
-companion **somebody else** signed — without ever holding their signing key.
+A Cloudflare Worker that delivers push notifications for Companion gateways.
+The publisher keeps APNs and FCM credentials in the Worker. Each gateway uses
+a delivery grant instead of receiving those credentials.
 
-APNs binds a topic to the Apple team that owns it. A key minted by anyone else,
-aimed at someone else's bundle id, is refused forever (`403
-InvalidProviderToken` / `TopicDisallowed`). So the key has to live on
-infrastructure the app's publisher runs, and every gateway gets a **capability**
-instead of a credential:
+APNs credentials must match the app's Apple team and topic. A gateway cannot
+use an unrelated team's key for the store-distributed app:
 
 ```
-app     -> POST /v1/grants  {device_token}   => an opaque, sealed grant
-app     -> hands that grant to a gateway on "notify this device"
-gateway -> POST /v1/push    Bearer <grant>   => the relay signs and sends
+app     -> POST /v1/grants  {device_token}   => encrypted delivery grant
+app     -> registers the grant with its paired gateway
+gateway -> POST /v1/push    Bearer <grant>   => relay authenticates and sends
 ```
 
-## It stores nothing
+## Grant storage
 
-There is **no database**. No D1, no KV, no Durable Object, no cron, no queue.
-
-A grant is not a row key — it *is* the record, AES-256-GCM sealed under a key
-that exists only as a Worker secret (`src/seal.ts`):
+The relay has no device-token database. It uses no D1, KV, Durable Object, cron
+or queue. Each grant contains the device token, platform, environment and
+expiry, encrypted with AES-256-GCM using a Worker secret (`src/seal.ts`):
 
 ```
 vg1.<base64url( iv(12) || AES-GCM({device token, platform, environment, expiry}) )>
 ```
 
-That one decision is most of the security story:
-
-- **No push-token database is at rest.** Sealed push grants eliminate that table.
-- **A grant cannot be forged or retargeted.** GCM authenticates every byte, and
-  `additionalData` pins the format version; you cannot edit the device token,
-  the platform, or the expiry inside one.
-- **The gateway still cannot read the device token.** It holds ciphertext, not
-  an encoding.
-- **A grant expires by itself** (`GRANT_TTL_DAYS`, default 90) because the
-  expiry travels *inside* it. No calendar, no sweeper, no list of anybody.
-- **Push grants do not accumulate**, so issuing them consumes no record storage.
-
-What that costs: revoking one grant needed the row. Revocation is now expiry —
-and, for *everything, now*, rotating `RELAY_SEAL_KEY`.
+- GCM authenticates the encrypted fields; `additionalData` authenticates the
+  format version. Modified grants are rejected.
+- Gateways receive the encrypted grant, not the device token.
+- Grants contain their expiry (`GRANT_TTL_DAYS`, default 90), so the relay can
+  validate expiry without stored records or a cleanup job.
+- Individual grants cannot be revoked. They expire, or the operator can rotate
+  `RELAY_SEAL_KEY` to invalidate grants encrypted with the old key.
 
 ## No OAuth callbacks
 
@@ -57,10 +47,10 @@ callback or browser fallback here. OAuth paths are ordinary unknown routes (404)
 | `POST /v1/grants` | the app | `201 {grant, relay_url, platform, environment, expires_at}` |
 | `POST /v1/push` | a gateway, `Authorization: Bearer <grant>` | `200 {is_delivered:true}` |
 
-Push verdicts a gateway acts on: `404` the grant is forged, expired, or sealed
-under a rotated-away key; `410` the provider says that device is gone — both
-mean *forget this device*. `429` over a limit, `502` the provider failed,
-`503` this relay cannot sign for that platform.
+Gateways remove device registrations after `404` (invalid or expired grant)
+or `410` (provider reports an unavailable device). `429` indicates a rate
+limit, `502` a provider failure, and `503` missing relay credentials for the
+requested platform.
 
 ```bash
 curl -sS -X POST "$RELAY/v1/grants" -H 'content-type: application/json' \
@@ -71,38 +61,32 @@ curl -sS -X POST "$RELAY/v1/push" -H "authorization: Bearer $GRANT" \
   -d '{"title":"vis","body":"needs your input","data":{"session_id":"abc"}}'
 ```
 
-## What an unwelcome caller costs
+## Request limits
 
-Every route is public — nobody authenticates to *ask* for a grant — so the
-question is never "is this caller allowed" but "what does this cost me".
+Grant creation is public. Push delivery requires a valid grant. The Worker
+applies these limits:
 
-| a stranger can | and it costs |
+| Check | Limit or behavior |
 | --- | --- |
-| flood `/v1/push` with invented grants | `PUSH_ADDRESS_LIMIT` (60/min per address) is checked **before** the body is read and before a byte is decrypted. The counter lives at the Cloudflare edge: a refusal performs no storage operation at all |
-| guess a grant | AES-256-GCM. There is nothing to guess and nothing to look up |
-| mint junk grants | `MINT_LIMIT`, 5/min per address — and a grant is a string the relay immediately forgets, so junk grants occupy nothing |
-| mint many grants for one phone | nothing: `PUSH_DEVICE_LIMIT` is keyed by a **hash of the device token**, so all the grants for one phone share one 20/min budget |
-| POST a 100 MB body | `413` from `content-length` before parsing, and again on what actually arrived (a chunked body declares no length) |
-| stuff a payload | 16 KiB per request (`MAX_REQUEST_BYTES`, which may only *tighten* it), 4 KiB per field, ≤32 data keys — and the **provider's** 4 KiB is measured here, before the round trip: a too-long preview is trimmed (`is_truncated`), a too-long `data` map is `413 payload_too_large` |
-| put `../` or a URL in a device token | refused at mint time by platform-specific alphabets (Apple: hex; Google: url-safe base64 + `:`), and the APNs path is `encodeURIComponent`-escaped anyway |
-| make the relay hang on a provider | every provider call carries a 10 s `AbortSignal.timeout` |
-| steal a grant off a gateway | pushes to that one phone, ≤20/min, until it expires. A stolen `.p8` is none of those things |
+| Pushes per client address | `PUSH_ADDRESS_LIMIT`: 60/min, checked before reading or decrypting the body |
+| Grant creation | `MINT_LIMIT`: 5/min per address |
+| Pushes per device | `PUSH_DEVICE_LIMIT`: 20/min, keyed by device-token hash across all grants |
+| Request body | 16 KiB maximum; `MAX_REQUEST_BYTES` may lower it |
+| Payload fields | 4 KiB per field and at most 32 data keys |
+| Provider payload | 4 KiB; long previews are shortened with `is_truncated`, oversized data returns `413 payload_too_large` |
+| Device tokens | Platform-specific format validation at grant creation |
+| Provider requests | 10-second timeout |
 
-**Volumetric DDoS is Cloudflare's problem, not yours** — unmetered DDoS
-mitigation is on the free plan. What Cloudflare will *not* do for you is the
-size of a single request: the body limit belongs to your **account plan** (100
-MB on Free) and no setting lowers it, and a `workers.dev` subdomain is not a
-zone, so WAF custom rules and rate limiting rules never run in front of the
-Worker. Every cap in the table above is therefore enforced by `src/index.ts`
-itself, before the body is pulled. Put the relay on a **custom domain** and the
-dashboard rules do apply — a WAF custom rule on `http.request.body.size` then
-refuses a flood without invoking the Worker at all. If you move to paid
-Workers, set a **spend limit**; on the free plan the worst case is a degraded
-relay for a day, and it cannot become a bill.
+Cloudflare's infrastructure protections do not replace application limits.
+On `workers.dev`, the Worker enforces body limits itself. A custom domain can
+also use WAF rules to reject oversized requests before Worker execution.
+Review Cloudflare's current limits and pricing before deployment and configure
+a spending limit where available.
 
-What a stranger cannot obtain at any volume: a device token (never returned by
-any route), an alert body (encrypt it app-side and even the relay operator
-cannot read it), a session, or your signing key.
+Treat grants as credentials: anyone holding one can send notifications to its
+device until expiry or key rotation. The relay does not expose sessions or
+return device tokens. It does receive notification titles, bodies and data
+when forwarding pushes; those payloads are not end-to-end encrypted.
 
 ## Deploy
 
@@ -114,18 +98,15 @@ npx wrangler secret put FCM_SERVICE_ACCOUNT   # the service-account JSON
 npm run deploy
 ```
 
-Public configuration lives in `wrangler.jsonc` `vars`: `APNS_KEY_ID`,
-`APNS_TEAM_ID`, `APNS_TOPIC`, `APNS_DEFAULT_ENV`, `GRANT_TTL_DAYS`,
-`MAX_REQUEST_BYTES`. Set the Apple three for iOS, `FCM_SERVICE_ACCOUNT` for
-Android; either alone is fine — `/healthz` reports which are live, and under
-`limits` the caps this relay enforces.
+Public configuration is in `wrangler.jsonc` under `vars`: `APNS_KEY_ID`,
+`APNS_TEAM_ID`, `APNS_TOPIC`, `APNS_DEFAULT_ENV`, `GRANT_TTL_DAYS` and
+`MAX_REQUEST_BYTES`. Configure APNs for iOS, FCM for Android, or both.
+`/healthz` reports provider availability and active limits.
 
-`FCM_SERVICE_ACCOUNT` is the service-account **JSON itself**. A secret the relay
-cannot parse is not an error anywhere — it is simply `fcm.is_available: false`
-in `/healthz` — so read that endpoint back after uploading one. On macOS
-`security find-generic-password -w` prints **hex** whenever the stored value is
-not plain ASCII, and a private key never is; decode it before it reaches
-`wrangler`:
+`FCM_SERVICE_ACCOUNT` must contain the service-account JSON. Invalid JSON makes
+`fcm.is_available` false in `/healthz`; check that field after configuration.
+If macOS Keychain returns a hex-encoded value, decode it before passing it to
+Wrangler:
 
 ```bash
 security find-generic-password -s vis-fcm -a service_account -w \
@@ -139,27 +120,25 @@ Then point a gateway at it:
 export VIS_PUSH_RELAY_URL=https://push.example.com
 ```
 
-Neither side needs configuring: the app carries its publisher's relay as a build
-constant, mints its grant there, and hands the paired gateway `{grant,
-relay_url}` together — over `https` only — while the gateway names that same
-relay by default, so a machine that was told nothing reports push as available
-and delivers. `VIS_PUSH_RELAY_URL` overrides one machine. So running your own
-relay is a deploy plus one constant in each build, and it serves the companion
-build whose signing key you put in it.
+The store app includes its publisher's relay URL. It obtains a grant there
+and registers `{grant, relay_url}` with the paired gateway using HTTPS.
+Gateways also use the publisher's relay by default; `VIS_PUSH_RELAY_URL`
+overrides that choice. A self-hosted relay needs credentials for the app build
+it serves and a matching relay URL in that build.
 
-`npm run dev` deliberately uses `--remote`: local workerd has no HTTP/2 and APNs
-will fail there with code that works deployed.
+`npm run dev` uses `--remote` because local workerd lacks the HTTP/2 support
+required by APNs.
 
-### Rotating the seal
+### Rotating encryption keys
 
 ```bash
 npx wrangler secret put RELAY_SEAL_KEY_PREVIOUS   # the current value
 npx wrangler secret put RELAY_SEAL_KEY            # a new one
 ```
 
-Both keys open a grant; only the first seals a new one. Delete
-`RELAY_SEAL_KEY_PREVIOUS` once every app has re-registered — or immediately, if
-what you want is to invalidate every grant in existence at once.
+The relay accepts grants encrypted with either key and creates new grants
+with `RELAY_SEAL_KEY`. Remove `RELAY_SEAL_KEY_PREVIOUS` after devices
+re-register, or immediately to invalidate grants using that key.
 
 ## Continuous deployment
 
@@ -167,20 +146,18 @@ what you want is to invalidate every grant in existence at once.
 `apps/vis-companion-relay/**` — and on no other commit.
 
 1. **verify** (also on PRs): `npm ci`, `npm run typecheck`, `npm test`.
-2. **deploy** (main only): stands down with a `::notice` unless
-   `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are set, then
-   `wrangler deploy` with the `vars` below, then `curl /healthz` (with retries)
-   and a check that the deployed Worker is really accepting grants and can sign
-   for at least one provider.
+2. **deploy** (main only): skips with a `::notice` unless
+   `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are configured. It runs
+   `wrangler deploy`, then checks `/healthz` to confirm grant acceptance and
+   credentials for at least one provider.
 
 | where | name |
 | --- | --- |
 | secret | `CLOUDFLARE_API_TOKEN` (Workers Scripts:Edit), `CLOUDFLARE_ACCOUNT_ID` |
 | variable | `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`, `APNS_DEFAULT_ENV`, `GRANT_TTL_DAYS`, `RELAY_HEALTHCHECK_URL` |
 
-CI never sees key material: `wrangler deploy` does not touch a Worker's secrets,
-so `RELAY_SEAL_KEY`, `APNS_KEY_P8` and `FCM_SERVICE_ACCOUNT` stay in Cloudflare
-and out of GitHub.
+`wrangler deploy` preserves existing Worker secrets. `RELAY_SEAL_KEY`,
+`APNS_KEY_P8` and `FCM_SERVICE_ACCOUNT` remain in Cloudflare, not GitHub CI.
 
 ## Tests
 
@@ -189,6 +166,6 @@ npm run typecheck
 npm test
 ```
 
-The suite drives the real router with a fake provider `fetch` and fake rate
-limiters, and verifies real ES256/RS256 signatures with WebCrypto: no network,
-no Cloudflare account, no emulator.
+Tests run the router with mocked provider requests and rate limiters.
+WebCrypto verifies ES256/RS256 signatures. The suite requires no network,
+Cloudflare account or emulator.

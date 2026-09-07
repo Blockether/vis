@@ -1,6 +1,6 @@
 # TUI implementation and review
 
-Paths are relative to `apps/vis-tui/`. Paint contracts live beside their implementation:
+Paths are relative to `apps/vis-tui/`. Rendering contracts are documented beside:
 `draw-row-surface!`, `draw-field-row!`, `draw-toggle-row!`, `draw-selectable-row!`,
 `selection-prefix`, `choice-mark` and `draw-dialog-chrome!`. Use them rather than a parallel renderer.
 A reusable state has a deterministic production-component `HtmlTerminalView` fixture.
@@ -9,7 +9,7 @@ Use Spel, not MCP or a second browser layer. Read command help when an argument 
 Use one task-specific browser session and close only that session after review. Do not stop a
 healthy user-owned application server as incidental cleanup.
 
-## Inspect the shipped render
+## Inspect production rendering
 
 For local HTML-backend development, build the sibling Lanterna checkout (`mvn test` in
 `~/lanterna`), then run from `apps/vis-tui`:
@@ -51,9 +51,10 @@ exported from the final production render. It is temporary evidence, never track
    at phone, tablet and desktop sizes and inside Companion's unchanged sandboxed `DocFrame`.
    Check the right edge, background, Fit width/Actual size and absence of network dependencies.
    Attach that one self-contained file. JVM callbacks are absent: label it a static frame.
-4. HTML is the primary make/review artifact. After it passes, the real `DefaultVirtualTerminal` PNG
-   capture and terminal-grid assertions remain the final parity gate for terminal-specific glyph width
-   and back-buffer behaviour; the PNG is private verification evidence, not the review attachment.
+4. Use HTML for the review attachment. Then verify terminal-specific glyph
+   widths and buffer behavior with `DefaultVirtualTerminal` PNG captures and
+   terminal-grid assertions. The PNG is verification evidence, not the review
+   attachment.
 
 ## Completion
 

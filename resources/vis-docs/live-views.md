@@ -1,11 +1,8 @@
 # Live views
 
-A live view shows a person what an extension is doing while it runs: a status
-line, a progress bar, a table of jobs, streamed log lines. `vis.live(...)`
-mounts the view and returns a handle the extension pushes into; the person
-watches in the terminal, in the Companion app, or both, and can stop the view
-at any time. This page is the reference for nodes, updates, interruption and
-testing.
+A live view displays status, progress, tables or logs while an extension runs.
+`vis.live(...)` opens the view and returns a handle for updates. The user can
+watch it in the terminal or Companion app and stop it at any time.
 
 ## Example
 
@@ -19,7 +16,7 @@ TONES = {"": "running", "success": "ok", "skipped": "idle"}  # anything else is 
 
 def poll(run_id):
     done = vis.shell({"op": "background", "id": "gh",
-                      "command": f"gh run view {run_id} --json jobs,status,url"}).wait(60)
+                      "command": f"gh run view {run_id} --json jobs,status,conclusion,url"}).wait(60)
     return json.loads(done["out"])
 
 
@@ -37,9 +34,9 @@ def watch_run(run_id):
         description=f"{len(run['jobs'])} jobs",
     ) as view:
         seen = {}
-        while run["status"] != "completed":
+        while True:
             if view.is_interrupted:
-                return view.close(summary="stopped while the run was still going")
+                return view.close(summary="Stopped watching before the run completed")
             for job in run["jobs"]:
                 state = job["conclusion"] or job["status"]
                 if seen.get(job["databaseId"]) != state:
@@ -47,13 +44,15 @@ def watch_run(run_id):
                     view["jobs"].upsert(str(job["databaseId"]), [job["name"], state],
                                         tone=TONES.get(job["conclusion"], "error"))
             view["progress"].set(done=sum(1 for j in run["jobs"] if j["status"] == "completed"))
+            if run["status"] == "completed":
+                break
             view.sleep(5)
             run = poll(run_id)
         view["run"].set(run["conclusion"], tone=TONES.get(run["conclusion"], "error"))
-        return view.close(summary=f"the run {run['conclusion']}")
+        return view.close(summary=f"Run result: {run['conclusion']}")
 ```
 
-The Vis repository ships the complete version as `.vis/extensions/gh.py`.
+For a complete implementation, see `.vis/extensions/gh.py` in the Vis repository.
 
 ## Nodes
 
@@ -73,82 +72,79 @@ A view declares its nodes once, each with an id, and addresses them by id.
 `vis.output(...)` builds a `log` node; it is named `output` so it never shadows
 `vis.log`, the engine log line.
 
-Every keyed verb is an upsert: writing an id that exists updates it in place
-and keeps its position, so a table does not reshuffle while someone reads it.
-Log lines have no id and concatenate; `window_lines` limits how much of the
-tail a surface keeps hot, and `.clear()` restarts both the window and the
-record.
+Keyed updates insert new ids or update existing ones without changing their
+position. Log lines have no ids and are appended. `window_lines` limits the
+recent lines retained by a client; `.clear()` removes both displayed and
+recorded lines.
 
-Tables: `order` is `insertion` (default), `newest-first` or `{"by": "duration",
-"dir": "desc"}`. Rows that share a `branch="Release apps"` paint under one
-collapsible parent. `is_selectable=True` makes rows tappable; the extension
-reads the current selection from `view.state()`.
+Tables support `order="insertion"` (default), `"newest-first"` or
+`{"by": "duration", "dir": "desc"}`. Rows sharing a `branch="Release apps"`
+appear under one collapsible parent. With `is_selectable=True`, users can
+select rows; read the selection with `view.state()`.
 
 When a view has exactly one node of a type, its verb is available on the view
 itself: `view.status(...)`, `view.progress(...)`, `view.write(...)`,
-`view.row(...)`. A view can grow with `view.add(node, after=id)` and shrink
-with `view.drop(id)`.
+`view.row(...)`. Add nodes with `view.add(node, after=id)` and remove them with
+`view.drop(id)`.
 
 ## Layout and text
 
-`vis.row(id, *nodes)` and `vis.column(id, *nodes)` arrange nodes the way a form
-arranges fields; a view's group carries an id because every node is
-addressable. A row stands its children side by side where there is room and
-stacks them on a narrow phone. `view.add(node, after="hosts")` lands inside the
-group that holds `hosts`; dropping a group drops what it arranged.
+`vis.row(id, *nodes)` and `vis.column(id, *nodes)` arrange nodes horizontally
+or vertically. Every group has an id. Rows place children side by side when
+space permits and vertically on narrow screens. `view.add(node, after="hosts")`
+inserts into the group containing `hosts`. Removing a group removes its
+children.
 
-Every human-facing string takes inline markdown: `` `code` ``, `**bold**`,
-`_italic_` and links. A status node's text wraps and justifies to its column.
-Log lines are machine output and stay verbatim. There is no free markdown node,
-because every node has one markdown form that reads back as its type.
+Display text accepts inline Markdown: `` `code` ``, `**bold**`, `_italic_` and
+links. Status text wraps and is justified within its column.
+Log lines remain verbatim. There is no arbitrary Markdown node; each node type
+has its own Markdown output.
 
 ## Updating
 
-- `view.sleep(seconds)` waits in short slices and returns `True` as soon as a
-  surface changed the view, so a tap is handled at once. Never use
-  `time.sleep` in a view loop.
-- `with view.batch(): ...` publishes several node changes as one patch.
-- Pushes are batched: the first op after a quiet stretch crosses immediately and
-  later ops within `flush_ms` (100 ms by default; `vis.live(..., flush_ms=…)`)
-  ride the next push. Every read and `view.close(...)` flush first.
-- A view has no deadline, and neither does the block showing it. End it on a
-  signal you can observe: the run reports completion, the process exits, or the
-  person stops it. Do not invent a duration.
+- `view.sleep(seconds)` returns `True` when a user changes the view, allowing
+  prompt handling of actions. Use it instead of `time.sleep` in view loops.
+- `with view.batch(): ...` sends multiple node changes as one patch.
+- The first update is sent immediately. Further updates within `flush_ms`
+  (100 ms by default) are batched. Set the interval with
+  `vis.live(..., flush_ms=…)`. Reads and `view.close(...)` flush pending updates.
+- Live views and the blocks displaying them have no timeout. Close the view
+  when the job completes, the process exits or the user stops watching.
 
 ## Interruption
 
-The person can always stop watching. In the terminal, `Escape` arms the stop
-and opens one line for a note; `Escape` or `Enter` sends the stop, and
-`Backspace` on an empty line returns to watching. The Companion app's Interrupt
-button opens the same line.
+The user can stop watching at any time. In the terminal, `Escape` opens a
+stop confirmation with an optional note. `Escape` or `Enter` confirms;
+`Backspace` on an empty line resumes watching. The Companion app's Interrupt
+button opens the same input.
 
-- `view.is_interrupted` is true once the view ended without the extension
-  closing it. It costs at most one host call per batching window.
-- `view.is_from_human` says a person ended it; `view.note` carries their note,
-  or `None`.
-- Pushing into an ended view raises `vis.Interrupted` with the same note, so a
-  loop that ignores the flag still stops.
+- `view.is_interrupted` is true if the view ended without the extension closing
+  it. Reading it uses at most one host call per batching interval.
+- `view.is_from_human` indicates a user-initiated stop. `view.note` contains
+  their note or `None`.
+- Updating an ended view raises `vis.Interrupted` with the note, even if the
+  loop does not check the flag.
 
 ## Closing
 
 `view.close(reason=…, summary=…, error=…, artifact_id=…, selection_snapshots=…,
-model_result=…)` ends the view and returns the verdict as data: `is_completed`,
-`reason`, `is_from_human`, `note`, the final picture and the `summary`.
+model_result=…)` ends the view and returns `is_completed`, `reason`,
+`is_from_human`, `note`, the final view state and `summary`.
 
-- `model_result` replaces the returned value with one string for the model; the
-  full picture still reaches the surfaces and the durable artifact. A human
-  stop that races the close wins and returns the interruption verdict.
-- Closing twice returns the first result. As a context manager, the view closes
-  itself; an exception inside closes it as `failed`.
-- `selection_snapshots` seals alternative pictures for selectable rows into the
-  artifact (at most 500 snapshots, 1 MiB), so a finished view stays inspectable
-  after the extension is gone.
+- `model_result` replaces the model's result with a string. Clients and the
+  saved artifact still receive the full view state. A concurrent user stop
+  takes precedence and returns an interruption result.
+- Repeated closes return the first result. Exiting a context manager closes
+  the view; an exception closes it with reason `failed`.
+- `selection_snapshots` stores alternate states for selectable rows in the
+  artifact, so users can inspect them after the extension exits. The limit is
+  500 snapshots and 1 MiB.
 
 ## Testing a view
 
-Outside Vis, a live view writes its transcript to stderr and materializes the
-same state. `vis.testing.LiveRecorder` records what an extension emitted and
-simulates surface actions:
+Outside Vis, a live view writes its transcript to stderr and maintains the
+same state. `vis.testing.LiveRecorder` records updates and simulates user
+actions:
 
 ```python
 import blockether.vis.extension as vis
@@ -163,8 +159,8 @@ assert recorder.patched()                # ops the extension emitted
 result = recorder.close(reason="interrupted")
 ```
 
-`recorder.ops()` gives stable envelope goldens and
-`vis.testing.assert_tree(actual, expected)` an exact nested diff.
+`recorder.ops()` returns the recorded operations for comparison with expected
+output. `vis.testing.assert_tree(actual, expected)` reports nested differences.
 
 ## See also
 

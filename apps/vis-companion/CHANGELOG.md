@@ -5,7 +5,7 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.43 (5468) — 2026-09-07
 <!-- commit: 063f8998138a1888c28a31a347ddb1fda02334ce -->
 
-- Join Activity with execution bands
+- Join Activity with execution sections
 - Keep only macOS on self-hosted runners
 - Register OAuth callbacks in existing projects
 - Record companion build 5463
@@ -14,7 +14,7 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.43 (5463) — 2026-09-07
 <!-- commit: 548183a79fd7a98368a3085c93df1f1705d04c35 -->
 
-- Align thinking and code bands
+- Align Thinking and Code sections
 - Use paired transport without VPN prompts
 - Allow confirmed VPN gateway connections
 - Record companion build 5457
@@ -31,7 +31,7 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Unify activity, SDK and authentication flows
 - Align session controls and reserve hover actions
 - Turn CODE red on failure instead of naming the error
-- Start every step shut behind its own chevron
+- Collapse every step by default and provide a chevron to expand it
 - Align verbosity with TUI model capabilities
 - Omit absent chooser group headers
 - Fold CODE and RESULT like THINKING in both clients
@@ -41,7 +41,7 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.42 (5421) — 2026-09-07
 <!-- commit: b474a223c91064abf40823ad86f04c34e374831f -->
 
-- Expand Application from its whole band
+- Expand Application by clicking anywhere in its header
 - Estimate linked repository guidance in metrics
 - Add rich symbol content and refine execution UI
 - Pad queued turn rows
@@ -63,14 +63,14 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 <!-- commit: e4baada06375f657cac8e08b8075f72c60802ba2 -->
 
 - Show persisted session health in app metrics
-- Reopen only the transcript the app died on
+- Reopen only the transcript displayed when the app terminated
 - V0.1.42
 - Consolidate Python workers in the runtime
 - Preserve touch-opened dialogs
 - Group internal namespaces by domain
-- Match the diagnostics band height
+- Match the diagnostics header height
 - Compact the diagnostics panel
-- Shrink queued message remove faces
+- Shrink queued message remove buttons
 - Fill starred session marks
 - Record companion build 5358
 
@@ -89,36 +89,36 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 <!-- commit: 285fe174b5114cc11e124f6067196029bc33b84d -->
 
 - Let the sessions list scroll under the home indicator
-- Pair from a phone as a choice, not steps
+- Present phone pairing methods as alternatives, not sequential steps
 - Pair through one field on a three-step page
-- Pin parked sessions in their project and keep the band on the list
+- Pin parked sessions within their project and retain the list header
 - Enforce snake_case diagnostic codes
-- Ship desktop installers with Pake and hide Scan QR on desktop
-- Fork only from the turn, drop the row's fork verb
-- Fork from the row, fork at a turn from the turn
-- Cut the fork menu down to its two choices
-- Keep a fit sheet that reaches its cap below the notch
+- Provide Pake desktop installers and hide Scan QR on desktop
+- Remove the row's Fork action; retain forking from a turn
+- Support forking from a session row or a specific turn
+- Reduce the fork menu to two choices
+- Limit the fit sheet height to the space below the notch
 - Move the list toggle off the app bar, read the Mac host natively
 - Align and collapse the desktop sidebar
-- Split the desk into a sidebar list and the transcript
-- Desktop row verbs become icon discs in the row gutter
-- Set session titles in the prose face
+- Split the desktop layout into a session sidebar and transcript
+- Use circular icon buttons for desktop row actions, outside the row columns
+- Use the prose font for session titles
 - Align retired feature checks
 - Remove obsolete terminal artifact bridge
 - Remove aggregate and trim source commentary
-- Expand diagnostics from its whole band
+- Expand diagnostics by clicking anywhere in its header
 - Record companion build 5306
 
 ## 0.1.41 (5306) — 2026-09-03
 <!-- commit: 22cf694c3c0c39111ac1e42a37b3f3910ab76f8a -->
 
 - Stop blurring the composer as the app backgrounds
-- Ship standalone app with built-in speech
+- Provide a standalone app with built-in speech
 - Set diagnostics facts at the dialog detail size
-- Fold the diagnostics panel behind its band
-- State the diagnostics panel as facts, not prose
+- Collapse the diagnostics panel under its header
+- Present diagnostics as individual values instead of paragraphs
 - Add project swipe deletion
-- Fold the application column behind its band chevron
+- Collapse the Application column with its header chevron
 - Remove divider before project plus
 - Compact project creation and deletion
 - Target copied session title events
@@ -132,11 +132,11 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 <!-- commit: b15d795974db4d0d3eb6c6a382c7697249616d59 -->
 
 - Record release entries for builds 5209-5232
-- Revert(repo): take somebody else's working tree back out of my commit
+- Revert unrelated working-tree changes included in an earlier commit
 - Make the python child a worker, one per key
 - Keep stop control circular
 - Balance project header controls
-- Circle queued and send controls
+- Make queued and send controls circular
 - Align thinking with user prose
 - Strengthen TokyoNight companion contrast
 - Add all TokyoNight styles
@@ -144,41 +144,41 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.41 (5232) — 2026-09-02
 <!-- commit: c6d3317b25cb8a9eb36b6f2a8439c7ae41e81ab1 -->
 
-- Close session list with final edge
+- Add a bottom border to the session list
 - Reserve project header controls
 - Stabilize audio attachment transcription
 - Simplify settings add actions
 - Recover paused queues after request failures
-- Remove gaps between project bands
+- Remove gaps between project sections
 
 ## 0.1.41 (5222) — 2026-09-02
 <!-- commit: 10538feb57ba876e43e4499047b13d9f9d4da842 -->
 
-- Give each project a band, drop the needs-you group
-- Keep our own clock when turn.started lands
+- Give each project a section and remove the needs-you group
+- Retain the local clock when turn.started arrives
 - Keep the running placeholder out of the render window
-- Pin the halted step's struck-through ring
-- Fold a long turn's trace instead of painting it whole
-- The ring says how a step ended, the row says what it called
-- The thread runs through the middle of every mark
-- Run the turn's thread under its step marks
-- Clear the trace marks in the transcript's own paper
-- Stand the user bubble on the turn's own thread
+- Keep the halted step's struck-through ring stable
+- Collapse long turn traces instead of rendering them in full
+- Show step outcome in the ring and the called operation in the row
+- Center the timeline through every step marker
+- Draw the turn timeline behind step markers
+- Use the transcript background behind trace markers
+- Align the user bubble with its turn timeline
 
 ## 0.1.41 (5209) — 2026-09-01
 <!-- commit: 8de68974ed6b7c5e9fb8bc610176929d64d0f854 -->
 
-- Size the error trace as meta, not a chip
-- Measure quiet ink on the paper it touches
-- Say a receipt's elapsed once and keep the program as written
+- Use metadata text sizing for error traces, not chip styling
+- Measure muted text contrast against its actual background
+- Show receipt elapsed time once and preserve the original program
 - Make the queued tray a scrollable labelled region
-- Name the calls on the receipt, not the state word
+- Label receipts with call names, not state names
 - Show every patch and refusal line whole
-- Draw every show-more as one rule on both surfaces
-- Say a step's state in the mark's colour
+- Use the same show-more divider in both clients
+- Indicate step state with marker color
 - Stop a story fixture doubling a diff sign
 - One diff per changed file, paths as ~/
-- Group a block's own file changes under one row
+- Group each block's file changes under one row
 - Accept exported gzip diagnostics
 - Distinguish bundled pages from TUI exports
 - Make os.link reach its destination and report it
@@ -187,7 +187,7 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Keep session create button compact
 - Preserve provider failure facts
 - Avoid touch rename selection handles
-- Hang the activity fold in the paths' own column
+- Align the Activity expand control with file paths
 
 ## 0.1.41 (5118) — 2026-08-31
 <!-- commit: 0005909e61bdfd8d8fa006eda5f3a6667c235f4a -->
@@ -196,15 +196,15 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Embed responsive terminal in Companion
 - Simplify dialog header actions
 - Align dialog header with its body
-- Render every surface through Lanterna grids
+- Render all terminal output through Lanterna grids
 - Edit only the session title
 - Rename sessions inline
 - Strengthen session list boundaries
 - Extract session header
 - Unify composer suggestions
 - Fold completion text into stdout
-- Extract composer feature surfaces
-- Extract canonical fleet rail
+- Extract composer feature components
+- Extract the shared machine navigation component
 - Remove iteration form results
 - Strengthen feature component boundaries
 - Make prompt reuse context-safe
@@ -216,35 +216,35 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.41 (5066) — 2026-08-29
 <!-- commit: 876103f5b201162aa8cfe0922e7b3fb4f9a46e4c -->
 
-- Give Activity to the form that produced it
-- Let the two protocol numbers lead the mismatch screen
-- Bin the machine rail and round the icon-only controls
+- Associate Activity with the form that produced it
+- Show both protocol versions at the top of the mismatch screen
+- Remove the machine navigation sidebar and round icon-only controls
 
 ## 0.1.41 (5061) — 2026-08-29
 <!-- commit: a45da30c17e23de30ca9f157c85c627d26caa8de -->
 
-- Stand the project sheets on the glass too
-- Stop offering Latest to a reader who taps the composer
-- Mirror the filled close face into Blockether Dark
-- Give the dock's boxes the composer's corner
+- Update project panel backgrounds
+- Hide Latest when the reader taps the composer
+- Use the filled close button in Blockether Dark
+- Match dock container corner radii to the composer
 - Fill the Blockether Light close circle
 - Reuse downloaded artifact bytes
 - Make touch controls act on release
 - Drop the light/dark column from the theme list
-- Stop wrapping a sole machine in its own rail
+- Remove the navigation container when only one machine is present
 - Round dialog headers
-- Give the project band air again
+- Restore spacing around the project header
 
 ## 0.1.41 (5049) — 2026-08-29
 <!-- commit: 1abdb07bf86bd9744ad9f4b15520bfb77813b554 -->
 
 - Correlate requests across app wake
-- Round the machine switcher off its own box
-- Stand each desk project on its own sheet
+- Round the machine switcher corners
+- Give each desktop project a separate panel
 - Show image actions as icons
 - Add exportable app diagnostics
-- Give the desk rail's column back to the list
-- Stand the desk list on one grid
+- Use the removed desktop sidebar's width for the session list
+- Align the desktop session list to one grid
 - Open sessions at latest turn
 - Count every LLM call in session usage
 - Remove empty response placeholder
@@ -264,13 +264,13 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 
 - Unify input and live view lifecycle
 - Preload unread session views
-- Stand a fleet rail beside the list on a desk
-- Take UIKit's form accessory bar off the composer
-- Shrink the session heading on a pointer
-- Tell a sent turn apart from a stuck one
-- Hand an abandoned fetch its own rejection
-- Expect the justified prose the ui now paints
-- Size what leads each bar to lead it
+- Add machine navigation beside the desktop session list
+- Remove UIKit's form accessory bar from the composer
+- Reduce the session heading size on pointer devices
+- Distinguish sent turns from stalled turns
+- Reject abandoned fetches explicitly
+- Update tests for justified prose rendering
+- Adjust leading elements in app bars
 - Retire streams before backgrounding
 
 ## 0.1.41 (5009) — 2026-08-28
@@ -278,24 +278,24 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 
 - Round and rescale the Latest pill
 - Ignore hardware keyboard shortcut frames
-- Make the session header one row of ink
+- Display the session header in one row
 - Expose all premium and enhanced iOS voices
 - Restore justified transcript prose
 - Decode downloaded video frames
-- Keep the PDF band still while a page turns
+- Keep the PDF header stationary during page changes
 
 ## 0.1.41 (5002) — 2026-08-28
 <!-- commit: 6fe72373c32189db83b45427cf8ac19321745295 -->
 
-- Draw the stop mark, not a coloured box
-- Round what can be pressed
+- Use a stop icon instead of a colored box
+- Round interactive controls
 - Preserve unread state across restarts
-- Move the PDF pager and pen into the file's band
+- Move PDF page and drawing controls into the file header
 - Keep completion taps from moving transcript
-- Show skills in bare slash palette
+- Show skills in the empty slash palette
 - Draw every control mark with Lucide, not a character
-- Make the live view read down, not across
-- Say what the run is doing, not how many jobs it has
+- Arrange live view content vertically
+- Show run activity instead of job count
 - Send the message with an icon, not a character
 - Draw every mark with Lucide
 - Cancel abandoned transcript loads
@@ -303,17 +303,17 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Open iOS voice download settings
 - Restyle parked share notice
 - Run an attached page's script without asking
-- Reserve nothing for a keyboard parked off-screen
-- Spell the page's top inset once, not twice
+- Reserve no space for an off-screen keyboard
+- Apply the page's top inset once
 
 ## 0.1.41 (4973) — 2026-08-27
 <!-- commit: f462587b680da4bf4dc85fc06471e98b07394b46 -->
 
-- Predict no keyboard a hardware one never raises
-- Send on Enter wherever a keyboard is
-- Keep a row's verbs off the row's own columns
-- Give a mouse no sideways scroll on row verbs
-- Fill desktop viewport cleanly
+- Do not predict an on-screen keyboard when a hardware keyboard is connected
+- Support Enter to send across keyboard types
+- Position row actions outside the row's data columns
+- Disable horizontal scrolling for pointer-driven row actions
+- Fill the desktop viewport
 - Separate Activity from produced artifacts
 - Isolate Activity from turn rendering
 - Clear stale Latest after resume
@@ -347,17 +347,17 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Upload companion attachments as binary
 - Keep activity and media responsive
 - Align cache metrics with the stat columns
-- Retry artifacts before durable landing
+- Retry artifact downloads before persistence completes
 - Separate prompt cache metrics
 - Restore Latest after native momentum
 - Distinguish cache share from reuse coverage
 - Report session loading progress
-- Make artifact surfaces fill viewport
+- Make artifact viewers fill the viewport
 - Share artifacts through system sheet
 - Keep terminal handover silent
 - Smooth submitted prompt reveal
 - Present Python cancellations as interruptions
-- Quieter api-key sign-in card, airier password dots
+- Simplify the API-key sign-in card and increase password-dot spacing
 
 ## 0.1.41 (4938) — 2026-08-27
 <!-- commit: 84eb4977304a8754281c4a12c94efe26c58c1523 -->
@@ -379,10 +379,10 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Keep voice mic over artifact reader
 - Preserve voice playback across transcript handoff
 - Add recommended native iOS voices
-- Stop shipping the touch clock nobody reads
-- Drop the per-session SSE route for the fleet feed
-- Follow the fleet stream instead of re-reading the list
-- Keep the newest turn under a reader who stayed
+- Remove the touch timestamp from session data
+- Replace per-session SSE routes with the shared session feed
+- Update the list from the shared session stream instead of fetching it again
+- Keep the newest turn visible for readers already at the end
 - Read twenty session rows per window
 - Align CI with active machine scope
 - Separate voice controls and groups
@@ -390,9 +390,9 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.41 (4861) — 2026-08-25
 <!-- commit: 184d0988c67e4e5da9dd0bce354aad54dc4a13f5 -->
 
-- Close mobile machine rails
+- Close mobile machine navigation panels
 - Make voice previews stoppable
-- Make voice preview handoffs quiet
+- Avoid overlapping voice previews during switches
 - Hide disclosure for empty projects
 
 ## 0.1.41 (4855) — 2026-08-25
@@ -409,12 +409,12 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Respect small upward scroll gestures
 - Reveal empty projects in session list
 - Put voice sample icons before names
-- Keep large live updates from yanking scroll
+- Prevent large live updates from changing the scroll position
 - Confirm project deletion in its row
 - Show a refused protocol instead of failing calls
-- Compress responses and slim the live close
-- Stop asking for the diff figure a refactor removed
-- Draw nesting with the panel's own ink
+- Compress responses and reduce live-close payloads
+- Remove requests for the deleted diff metric
+- Use panel text colors for nesting indicators
 
 ## 0.1.41 (4837) — 2026-08-25
 <!-- commit: 44f44b81d529ca39cc632c039a5f839e5a12c89c -->
@@ -435,15 +435,15 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.41 (4829) — 2026-08-24
 <!-- commit: c88c11bc5cb0dca9aeff859556626caad9ddcd5d -->
 
-- Give the settings choices a hierarchy again
-- Give a nested settings cluster one left edge
-- Let a voice be auditioned before it is chosen
+- Restore hierarchy among settings choices
+- Align nested settings to one left edge
+- Preview a voice before selecting it
 - Prefetch active session transcripts
 
 ## 0.1.41 (4819) — 2026-08-24
 <!-- commit: 604e93e80253c05239011648e87a027624cbd56d -->
 
-- Skip loading veil for cached sessions
+- Skip the loading overlay for cached sessions
 - Remove remaining human draft remnants
 - Cache machine capabilities
 - Remove human draft controls
@@ -459,9 +459,9 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Open CSV artifacts as tables
 - Remove duplicate projects button
 - Always select the first machine
-- Keep Activity with its filed turn
-- Anchor Activity after Python results
-- Quiet Activity receipts
+- Keep Activity with its persisted turn
+- Position Activity after Python results
+- Reduce visual detail in Activity receipts
 - Keep one machine active
 
 ## 0.1.41 (4807) — 2026-08-24
@@ -476,17 +476,17 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Open CSV artifacts as tables
 - Remove duplicate projects button
 - Always select the first machine
-- Keep Activity with its filed turn
-- Anchor Activity after Python results
-- Quiet Activity receipts
+- Keep Activity with its persisted turn
+- Position Activity after Python results
+- Reduce visual detail in Activity receipts
 - Keep one machine active
-- Keep live activities in anchored slots
+- Keep live activities in stable positions
 - Stabilize machine colors across reorderings
 - Align settled reasoning across clients
 - Remove synthetic all machine group
 - Keep transcript prose naturally spaced
-- Demote unreachable machines
-- Avoid duplicate filed activity
+- Lower the priority of unreachable machines
+- Avoid duplicate persisted Activity
 
 ## 0.1.41 (4804) — 2026-08-24
 <!-- commit: 741fdde771ff3ff90f9fe61d2bd3bef3d90c509c -->
@@ -498,19 +498,19 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Open CSV artifacts as tables
 - Remove duplicate projects button
 - Always select the first machine
-- Keep Activity with its filed turn
-- Anchor Activity after Python results
-- Quiet Activity receipts
+- Keep Activity with its persisted turn
+- Position Activity after Python results
+- Reduce visual detail in Activity receipts
 - Keep one machine active
-- Keep live activities in anchored slots
+- Keep live activities in stable positions
 - Stabilize machine colors across reorderings
 - Align settled reasoning across clients
 - Remove synthetic all machine group
 - Keep transcript prose naturally spaced
-- Demote unreachable machines
-- Avoid duplicate filed activity
+- Lower the priority of unreachable machines
+- Avoid duplicate persisted Activity
 - Repair CSV table interactions
-- Anchor live views by iteration position
+- Position live views by iteration
 
 ## 0.1.41 (4783) — 2026-08-24
 <!-- commit: f576692a03dbc67e2f1d89d3e7aba0a20ae27f2c -->
@@ -519,20 +519,20 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Align settled reasoning across clients
 - Remove synthetic all machine group
 - Keep transcript prose naturally spaced
-- Demote unreachable machines
-- Avoid duplicate filed activity
+- Lower the priority of unreachable machines
+- Avoid duplicate persisted Activity
 - Repair CSV table interactions
-- Anchor live views by iteration position
-- Move a project's pager into its own band
+- Position live views by iteration
+- Move project pagination into its header
 - Delete the skill corpus, keep the contracts in AGENTS.md
-- Weld the projects sheet's verbs into its band
+- Move project panel actions into its header
 - Use Activity status icons
 - Preserve terminal Activity handoff
 - Render structured Activity diffs
-- Build chronological Activity rail
+- Build a chronological Activity list
 - Build compact Activity receipt
-- Anchor Activity to its form
-- Carry semantic Activity projections
+- Associate Activity with its form
+- Include semantic Activity projections
 - Finish Activity presentation
 - Show bounded tool activity receipts
 
@@ -541,23 +541,23 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 
 - Remove synthetic all machine group
 - Keep transcript prose naturally spaced
-- Demote unreachable machines
-- Avoid duplicate filed activity
+- Lower the priority of unreachable machines
+- Avoid duplicate persisted Activity
 - Repair CSV table interactions
-- Anchor live views by iteration position
-- Move a project's pager into its own band
+- Position live views by iteration
+- Move project pagination into its header
 - Delete the skill corpus, keep the contracts in AGENTS.md
-- Weld the projects sheet's verbs into its band
+- Move project panel actions into its header
 - Use Activity status icons
 - Preserve terminal Activity handoff
 - Render structured Activity diffs
-- Build chronological Activity rail
+- Build a chronological Activity list
 - Build compact Activity receipt
-- Anchor Activity to its form
-- Carry semantic Activity projections
+- Associate Activity with its form
+- Include semantic Activity projections
 - Finish Activity presentation
 - Show bounded tool activity receipts
-- Drop the machine address from the projects bands
+- Remove the machine address from project headers
 - Stop retrying rejected voice audio
 
 ## 0.1.41 (4729) — 2026-08-23
@@ -566,21 +566,21 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Manage every speech engine model
 - Restore project and document additions
 - Separate device voices from TTS engines
-- Stop draining the fleet into the session list
-- Let the gateway cut every project page
-- Send the gateway the words this device holds
-- Stop a rewritten log pane from pumping its own record
-- Cut a project's page to the device
+- Stop loading every machine's sessions into the list
+- Paginate projects on the gateway
+- Send locally available transcript text to the gateway
+- Prevent rewritten log views from repeatedly recording themselves
+- Size project pages for the device
 - Cap premium device voices at three
 - Label gateway engines and curate voices
 - Unify speech engine selection
 - Distinguish provider authentication states
-- Keep provider refreshes visually quiet
+- Avoid visual disruption during provider refreshes
 - Move session usage out of composer
 - Keep delete confirmation at row height
-- Preserve transcript width during paint skips
-- Caption the transcript from outside its frame
-- Name the waveform plot in the one-icon-module rule
+- Preserve transcript width when rendering is skipped
+- Place the transcript caption outside its frame
+- Include waveform plots in the single-icon-module rule
 - Give the transcript a waveform header
 - Restore provider disclosures
 
@@ -588,49 +588,49 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 <!-- commit: a4ea80786403562cc81e021c9521e5ed786ef716 -->
 
 - Separate device voices from TTS engines
-- Stop draining the fleet into the session list
-- Let the gateway cut every project page
-- Send the gateway the words this device holds
-- Stop a rewritten log pane from pumping its own record
-- Cut a project's page to the device
+- Stop loading every machine's sessions into the list
+- Paginate projects on the gateway
+- Send locally available transcript text to the gateway
+- Prevent rewritten log views from repeatedly recording themselves
+- Size project pages for the device
 - Cap premium device voices at three
 - Label gateway engines and curate voices
 - Unify speech engine selection
 - Distinguish provider authentication states
-- Keep provider refreshes visually quiet
+- Avoid visual disruption during provider refreshes
 - Move session usage out of composer
 - Keep delete confirmation at row height
-- Preserve transcript width during paint skips
-- Caption the transcript from outside its frame
-- Name the waveform plot in the one-icon-module rule
+- Preserve transcript width when rendering is skipped
+- Place the transcript caption outside its frame
+- Include waveform plots in the single-icon-module rule
 - Give the transcript a waveform header
 - Restore provider disclosures
 - Inline provider limits
-- Calm the spoken reply into one band
+- Display the spoken reply in one section
 
 ## 0.1.41 (4724) — 2026-08-22
 <!-- commit: 276aa958000fa66eb650c25f686862319c2b0211 -->
 
-- Let the gateway cut every project page
-- Send the gateway the words this device holds
-- Stop a rewritten log pane from pumping its own record
-- Cut a project's page to the device
+- Paginate projects on the gateway
+- Send locally available transcript text to the gateway
+- Prevent rewritten log views from repeatedly recording themselves
+- Size project pages for the device
 - Cap premium device voices at three
 - Label gateway engines and curate voices
 - Unify speech engine selection
 - Distinguish provider authentication states
-- Keep provider refreshes visually quiet
+- Avoid visual disruption during provider refreshes
 - Move session usage out of composer
 - Keep delete confirmation at row height
-- Preserve transcript width during paint skips
-- Caption the transcript from outside its frame
-- Name the waveform plot in the one-icon-module rule
+- Preserve transcript width when rendering is skipped
+- Place the transcript caption outside its frame
+- Include waveform plots in the single-icon-module rule
 - Give the transcript a waveform header
 - Restore provider disclosures
 - Inline provider limits
-- Calm the spoken reply into one band
+- Display the spoken reply in one section
 - Disclose provider limits
-- Add seekable spoken reply rail
+- Add seek controls for spoken replies
 
 ## 0.1.41 (4655) — 2026-08-21
 <!-- commit: f5747d0a913eb2327fe5f15d769100db7a8a01c2 -->
@@ -640,7 +640,7 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Reveal interrupted live artifacts
 - Shrink usage metric values
 - Reduce compact label size
-- Keep iOS fleet polling current
+- Keep iOS machine polling current
 - Nest matrix jobs
 - Send committed iOS autocorrection
 - Fit and retain PDF annotations
@@ -650,8 +650,8 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Clarify response footer controls
 - Keep keyboard open after send
 - Retain finished job details
-- Keep fenced code ragged
-- Keep markdown code spans ragged
+- Disable justification in fenced code
+- Disable justification in Markdown code spans
 - Resume Android beta publishing
 - Rename quick reasoning effort to low
 - Restore the verbosity composer control
@@ -666,10 +666,10 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.40 (4615) — 2026-08-20
 <!-- commit: e2cd4f701d5aca9ef808feb2929eb5847fced1be -->
 
-- Consume parinferish closer relocation
-- Carry Windows trust through WSL
+- Use parinferish closing-delimiter relocation
+- Use Windows trust stores through WSL
 - Discover system certificate stores
-- Anchor finished live runs
+- Keep finished live runs in stable positions
 - Add clj-parinferish workspace root
 - Isolate live views from test runs
 - Keep short responses beside composer
@@ -677,7 +677,7 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Load session totals with list
 - Harden GitHub watches and name NDJSON
 - Keep composer pinned during keyboard dismissal
-- Collapse repeated live run cuts
+- Collapse repeated live-run snapshots
 - Stop watching superseded CI runs
 - Preserve interrupted live records
 - Show live CI job activity
@@ -690,148 +690,148 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.40 (4546) — 2026-08-19
 <!-- commit: ac9e2bde25e37e0a1bbb61e2c8ffb9f44bc86201 -->
 
-- Paint a recording's transcript as a quotation, not code
-- Quote a memo's transcript instead of icing it
-- Dispose the env a cache insert displaces
-- Fold near-miss tool keywords instead of refusing the call
-- Wrap a recording's transcript on words, not columns
-- Open a recording's transcription under its player
-- Fold a recording's transcript under the turn that carried it
-- Transcribe an attached recording into the model's manifest
-- Let an issued credential name its wire dialect
-- Break the walls of text into lists, tables and steps
-- Let the wheel own every row the live band paints
-- One forgiving, validated wire-dialect vocabulary
-- Say which live view the running row is showing
-- One shape for a tool's doc page, cross-validated against the handlers
-- Keep a gh watch moving and settle it into one picture
+- Render recording transcripts as quotations, not code
+- Render memo transcripts as quotations instead of decorated blocks
+- Dispose of environments replaced by cache inserts
+- Normalize near-matching tool keywords instead of rejecting calls
+- Wrap recording transcripts at word boundaries
+- Open a recording's transcription below its player
+- Collapse recording transcripts under their associated turn
+- Include attached recording transcriptions in the model's manifest
+- Allow issued credentials to specify their API format
+- Split long documentation paragraphs into lists, tables and steps
+- Include live-view row types in the SDK wheel
+- Use one validated API-format vocabulary with normalized inputs
+- Identify the live view shown in the running row
+- Standardize tool documentation pages and validate them against handlers
+- Update GitHub watches continuously and retain one final view
 - Keep project-scoped blocks out of the machine store
-- Name an Android octet-stream pick by its extension
-- Isolate a dropped recording path like a dropped picture
-- Sniff every recorder format, not only the m4a
-- One canonical page shape, and a gate that keeps it
+- Use the extension to identify Android octet-stream selections
+- Isolate dropped recording paths in the same way as image paths
+- Detect all supported recorder formats, not only m4a
+- Validate documentation against one page structure
 
 ## 0.1.40 (4508) — 2026-08-19
 <!-- commit: 057697b52fb6875584d6a565351226d15335c360 -->
 
-- Ask each machine once for its notifications state
-- Take a pathlib.Path wherever a shim takes a path
-- Answer every machine's notifications row before it is opened
+- Fetch notification state once per machine
+- Accept pathlib.Path wherever shims accept paths
+- Fetch machine notification state before opening its settings row
 - Dispose three more single-test sandboxes
-- Let a gh watch run as long as the run does
+- Watch GitHub runs until completion
 - Format every namespace with the canonical formatter
-- Keep the formatter alive on a binding form inside #()
-- Retire a client lease that stopped talking
+- Handle binding forms inside #() without formatter failures
+- Retire inactive client leases
 - Identify a source build by its commit alone
-- Stop billing a watched run any deadline at all
-- Say which build the gateway is running, and what replaces it
-- Let a live view own the wall of the block watching it
-- Read a failed REPL start the same way in every language
+- Exclude watched-run time from execution deadlines
+- Show the gateway's current build and available replacement
+- Attribute live-view wait time to the watching block
+- Report failed REPL starts consistently across languages
 - Refuse a status this build cannot read
 - Identify a dev build by its commit, not by "dev"
-- Pick up a new build when nobody is using the old daemon
+- Replace an idle daemon when a new build is available
 - One REPL lifecycle contract for every language
-- Let a managed daemon die when nothing is watching it
+- Stop managed daemons when no clients remain
 - Read pack test counts by their contract names
 - Refuse a bare string where repl options belong
 
 ## 0.1.40 (4488) — 2026-08-18
 <!-- commit: 3bf0134120b93be902f54e59d2b0331d1106a619 -->
 
-- Keep repl_stop(id) an id, whatever trails it
+- Interpret repl_stop's first argument as its ID regardless of later arguments
 - Point whole-store writers at update-machine-config!
 - Dispose the sandboxes this suite builds for itself
-- Paint the stored palette on the first frame
+- Apply the stored palette on the first frame
 - Close the Engine with the sandbox it belongs to
 - Cover removed_providers in the exhaustive config fixture
 - Make deleting a provider actually delete it
-- Give a sandbox the lifetime of the test that needs it
+- Restrict each test sandbox to that test's lifetime
 - Say why a provider cannot be deleted instead of silently refusing
-- Name the four repl lifecycle verbs
+- Document the four REPL lifecycle operations
 - Describe ls's tree string where the sandbox reads it
-- Count folds from the turn ctx ledger
+- Count folds from turn context records
 - Let /projects/overview and /projects/:pid coexist
-- Paint project counts from the gateway's own overview
+- Render project counts from the gateway overview
 
 ## 0.1.40 (4474) — 2026-08-18
 <!-- commit: e192628bdc20a226e146900263e14e0629646e0f -->
 
 - Render ls as one compact tree string
-- Inset every panel verb instead of running it full bleed
+- Inset panel actions rather than extending them to the panel edges
 - Format _outside.py the way ruff 0.16.3 does
-- Match the notification verb to the panel action box
-- Show a just-created session without tapping the pill
+- Match the notification action to the panel action container
+- Show newly created sessions without requiring a filter tap
 - Correct the remote-target claims to what the code does
 
 ## 0.1.40 (4468) — 2026-08-18
 <!-- commit: f6c4265518a97932a824d004263011eafbf794e6 -->
 
-- Fork a session from its own slide, whole or at a turn
-- Store settings without folding the config tiers
-- Cross a live view's first op on a freshly booted machine
+- Fork a session or selected turn from its row actions
+- Store settings without merging configuration levels
+- Verify the first live-view operation after machine startup
 - Watch a GitHub Actions run in one live view
 
 ## 0.1.40 (4464) — 2026-08-18
 <!-- commit: c2e5d4122f2f264579e471f2429ace609687a4d7 -->
 
-- Open the projects mark on the inventory, not the browser
-- Keep a failed block's printed output on the wire
+- Open the project inventory rather than the browser from the projects icon
+- Preserve printed output in failed-block responses
 - Name the remote gateway flags in help, not only in the docs
-- Unbox the log page window and drop two dead test bindings
+- Avoid boxing the log-page window and remove unused test bindings
 - Repair the PIL envelope arity, and stop repeating the scope
-- A shim declares what it lends the guest, and gets the lifetime free
-- Tie a guest's host objects to the session that opened them
-- Name the double-registration trap in the shared sandbox
-- Delete the child-env plumbing sub_loop was the only user of
+- Declare guest exports in shims and manage their lifetime automatically
+- Restrict guest host objects to the session that opened them
+- Document duplicate registration in the shared sandbox
+- Remove child-environment code used only by sub_loop
 - One GraalPy Engine per session, not one per process
-- Drop the agent() verb and every sub_loop caller
+- Remove agent() and all sub_loop callers
 - Record the TestFlight build testers now have
 
 ## 0.1.40 (4452) — 2026-08-18
 <!-- commit: f03e0ddb8f5d41288d0730dc9d4c17e83e55c843 -->
 
-- Stop publishing what only the sink itself calls
-- Serve a settled view's record, and file it on a stop
-- Settle a finished live view into an artifact
-- Freeze the live materializer the TUI channel reads
+- Make sink-only functions private
+- Serve completed view records and persist them on stop
+- Save finished live views as artifacts
+- Stabilize the live materializer used by the TUI channel
 - Serve on Jetty 12 core, drop the ee9 servlet layer
 - Name the commands a remote target does not redirect
-- Drive a remote gateway from the command line
-- Pin that a leaving gateway publishes held patches
-- Delete unread live surface, flush patches on stop
-- Arrange a live view with the form's own groups
-- Read the armed pull-to-search band
+- Control a remote gateway from the command line
+- Test that gateway shutdown publishes pending patches
+- Remove unused live-view data and flush patches on stop
+- Arrange live views with the same groups as forms
+- Show the pull-to-search activation state
 - Load the session list behind an open transcript
-- Keep the turn either side of the reader laid out
-- Show the aside band whole and pin is_aside outside Vis
-- Fill the band, paint inline markdown, and stand a node aside
-- Let a human stop any live view, with a note
+- Keep turns before and after the visible turn laid out
+- Show the entire aside section and test is_aside outside Vis
+- Fill the section, render inline Markdown and support aside nodes
+- Allow users to stop any live view with a note
 - Watch and stop a live view from the phone
 - Open live views from a Python extension
-- Paint a live view as one scroll surface in the band
-- Hand the model a live view's picture as data, not markdown
+- Render each live view in one scrollable section
+- Return live-view contents to the model as structured data, not Markdown
 
 ## 0.1.40 (4423) — 2026-08-17
 <!-- commit: 52ce0b0877ce8ac03d0d0ce577c51dc1fef65704 -->
 
-- Hold the project shelf at its paged height
+- Keep project-list height stable across pages
 - Refuse a missing path as missing, and select .cljc tests
 - Select clojure tests by namespace, not just paths
-- Press the composer on the tap, not on the click
+- Activate the composer on touch rather than waiting for click
 - Keep a safety refusal inside the provider that refused
-- Re-place images when a live tick shifts the transcript
-- Let the human refuse fallback and measure who served
-- Bound the post-block defs snapshot on the GIL
+- Reposition images when live updates shift the transcript
+- Let users disable fallback and report the serving provider
+- Bound post-block defs snapshots while holding the GIL
 - Make vis.state a whole mapping
-- Move the session pick when a provider's auth stays dead
+- Switch the session's provider after persistent authentication failure
 - Keep slash commands out of the input history ring
-- Read the document corpus live in the sandbox
-- Settle a tool handed to to_thread inside its gather slot
+- Read current documentation in the sandbox
+- Resolve tools passed to to_thread within their gather slots
 - Drop the structural editing scenarios
 - Drop the last structural editing references
-- Keep a default root tagged as the fleet changes
+- Preserve the default-root marker across machine updates
 - Drop the structural editing tools
-- Give every deps.edn one shape
+- Standardize deps.edn formatting
 - Cover asyncio queues, locks, futures and timeouts
 
 ## 0.1.38 (4319) — 2026-08-16
@@ -840,157 +840,157 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Brand the launch screen and name the Android channel
 - Reopen a session where the reader stopped reading
 - Read a paste mask's alpha band, not its blue channel
-- Redraw the Android launcher and notification icons from the iOS master
-- Ask the sessions list for one page when nothing moved
+- Generate Android launcher and notification icons from the iOS source
+- Fetch one session-list page when the list is unchanged
 - Tag Android alerts so the badge can clear
-- Address a fresh attachment in the block that made it
-- Badge the icon with the alerts still waiting
-- Put an opened note's Save in its header band
-- Wear the name's step on a status dot
-- Frame the destructive confirm around its own cost
-- Hold a spoken conversation instead of a speech toggle
+- Allow attachment references in the block that created them
+- Set the app badge to the pending notification count
+- Put an opened note's Save button in its header
+- Indicate operation state with a status dot
+- Describe the consequences in destructive-action confirmation
+- Replace the speech toggle with voice conversation controls
 - Keep a project folded once you have folded it
-- Unbox the voice bands and drop the Off route
+- Remove voice-section borders and the Off route
 - Plan making every capability an extension of one contract
 - Make the Python host an object, not a dict
-- Strip the MCP band and land its verb as the list's last row
+- Remove the MCP header and move its action to the last list row
 - Give the host contract its own package
-- Make the providers action amber and unpin the blocked banner
+- Color the Providers action amber and unpin the blocked banner
 
 ## 0.1.38 (4280) — 2026-08-16
 <!-- commit: 936e3be55930ab3eec07f34b255f2b9d6397a0b5 -->
 
 - Disclose each machine's settings under its own row
 - Keep a reader's place when the keyboard comes and goes
-- Repoint the table card test at the display's new home
-- Confirm an exited child's silence before reporting it
+- Update the table-card test for the relocated display
+- Drain exited-child output before reporting completion
 - Reclaim the SQLite freelist once a fortnight
-- Paint only the turns a session is showing
+- Render only visible session turns
 - Drop a retired column SQLite was refusing to drop
 - Raise the wait budget and cap to thirty minutes
-- Stop storing what a reader can re-derive
-- Ship the extension API as the vis-agent package
-- Drop the TODO whose every item shipped
-- Close item 1 and record the residues nothing schedules
+- Stop persisting values that readers can derive
+- Distribute the extension API as the vis-agent package
+- Remove the fully completed TODO list
+- Complete item 1 and record the unscheduled remainder
 - Make the redaction test independent of the caller's environment
 - Record the TODO state after the doc and ranker work
 - Reformat every Clojure and Python source in place
-- Pin the two loaded-runner flakes without a stopwatch
-- Own the espeak and pty-log preconditions the runners lack
-- Name the keys a test run answers with
-- Make the test suite green on both runners
+- Remove timing sensitivity from two tests on loaded runners
+- Provide missing espeak and pty-log test preconditions
+- Document test-result keys
+- Fix the test suite on both runners
 
 ## 0.1.38 (4179) — 2026-08-14
 <!-- commit: 1c55f10b2d9fca5397741b8ac0c8ac1097f97b97 -->
 
 - Repair an edit's delimiters from the file, never from the fragment
-- Ask which address a machine uses on the machine's own line
-- Close the gap the removed duration marker left in the marker tables
-- The TUI tells how long each tool call took, as the companion always has
-- A warm-up owns the failure of a load nobody is waiting for
+- Select a machine address within its settings row
+- Update marker tables after removing the duration marker
+- Show tool-call duration in the TUI, as in Companion
+- Handle failures in unattended warm-up loads
 - Keep the direct push in the magit push transient (issue #144)
-- Companion: the model picker's verbs stand in its band, and the sheet stops at its content
-- Fix #145 in the app's last carrier: an answer promoted out of a content-less row
-- Fix #145: paint a settled answer exactly once, in the TUI and the companion
+- Companion: move model-picker actions into its header and size the sheet to its content
+- Fix #145: handle answers promoted from rows without content in Companion
+- Fix #145: render completed answers once in TUI and Companion
 - Every editor write is atomic, and a refused struct_patch batch is rolled back
-- A helper's `return` settles its tool calls, so the caller never gets a thunk
+- Resolve tool calls before helper return so callers receive values rather than thunks
 - The gateway keeps "no AI provider" typed, so the TUI opens the dialog
 - Release v0.1.38
-- A row verb sends its drawer home instead of asking for an animation
-- Pin svar 0.7.117 so GLM-5.3 is routable and :reasoning speaks GLM's own rungs
+- Close row action drawers immediately instead of animating them
+- Pin svar 0.7.117 to support GLM-5.3 routing and GLM reasoning levels
 - Restore a session's helpers through the rewrite that defined them
-- Address rows are a list, and each one's verb is in its slide
-- Forgetting a machine takes this device off it
+- List addresses with actions in each row's swipe drawer
+- Unregister this device when forgetting a machine
 - Record Companion TestFlight build 4159 in the app changelog
 
 ## 0.1.37 (4159) — 2026-08-14
 <!-- commit: 09ad53d9c488577f2f1e512550b11108c4a63cdb -->
 
-- Star, Rename and Delete come back to a slide on a session row, and Make primary, Rename and Forget to a slide on a machine row — always on the right, with no menu mark beside them
-- Sliding a second row closes the first, and a row sliding shut no longer closes the row you just opened
-- A starred session wears its star beside its own title again
-- Notifications are per machine, and Disconnect always lands
+- Restore right-side swipe actions: Star, Rename and Delete for sessions; Make primary, Rename and Forget for machines. Remove the adjacent menu icon.
+- Opening a row's swipe actions closes the previous row; its closing event no longer closes the new row.
+- Show a starred session's star beside its title
+- Make notifications machine-specific and ensure Disconnect completes
 
 ## 0.1.37 (4154) — 2026-08-14
 <!-- commit: a80a5a898559b37fdd0925aa4b202dfb0ef9bdc5 -->
 
-- Every row wears its own verbs: Star, Rename and Delete stand in a session row, Make primary, Rename and Forget in a machine row — always visible, never a swipe or a hidden menu
-- The machines band is one line, and pairing is a labelled "Add a machine" button instead of a bare plus
-- Notifications answer one question — connected or not — with a single switch, instead of listing every push token the machine holds
-- The composer refits its height when its own box narrows, not only when you type
-- A turn settles only itself, keeps the answer it just painted, and refetches a short transcript
+- Show Star, Rename and Delete on session rows and Make primary, Rename and Forget on machine rows without swipes or hidden menus
+- Use one line for the Machines header and label pairing Add a machine instead of using a plus icon
+- Replace the push-token list with one notification connection switch
+- Recalculate composer height when its width changes, not only on typing
+- Complete only the matching turn, preserve its rendered answer and refetch a short transcript
 - A staged photo is no longer rewritten into storage on every keystroke
 - A copied session id is marked vis_session_id#<uuid>
-- Search answers freshest first, which is the order the session list is already in
-- The italic font axis is imported, so italics actually slant
-- Every theme ships as static CSS, with no /v1/theme round trip to the gateway
+- Return newest search results first, matching the session list
+- Import the font's italic axis to render italics correctly
+- Bundle every theme as static CSS, removing the /v1/theme gateway request
 
 ## 0.1.35 (4124) — 2026-08-14
 <!-- commit: 52f098458a174d9adffa3ed35f99f2aac1224061 -->
 
-- Keep a reaped child's pid from signalling the child that took its slot
-- A search settles on the word typing rested on, and reports it on its own line
+- Avoid signaling a reused PID after its original child has been reaped
+- Search for the final typed query and display that query separately
 - One microphone in the Companion composer: tap acts, hold switches the mode
 - Confine the extension child-pid handoff to the spawning thread
 - Keep only the sentences the summarizer finished
 - Give an extension's Popen the child's real OS pid
-- Pin the Vis JVM heap ceiling at an explicit 5 GiB
+- Set the Vis JVM maximum heap to 5 GiB
 - Add half-duplex voice conversations
 - Preserve streamed answers during transcript handover
 - Fix Android Bluetooth voice capture
-- A helper never gets a tool's name: refuse it, and never restore one
-- A restored toolbox is the whole toolbox, not the parseable half
-- A user turn is no paint island either
-- A helper outlives the process: defs() lists them, a restart re-creates them
-- A machine known to be dark is asked no further search questions
+- Reject helper names that conflict with tools, including during restoration
+- Restore all helpers rather than only those that parse successfully
+- Remove isolated rendering from user turns
+- Persist helper definitions across process restarts and list them with defs()
+- Skip search requests to known-unreachable machines
 - Anchor ruff's per-file-ignores at the canonical path
-- A dead gateway is an absence, not an answer of "no matches"
-- A helper you defined stays readable, so you refine it instead of re-pasting it
-- Search answers in a quarter of the time, and says where it is while it runs
-- Write a program, not a transcript: teach the core prompt the shape of a good block
+- Report unreachable gateways separately from searches with no matches
+- Keep helper definitions readable so they can be edited without repetition
+- Reduce search duration to one quarter and show progress during execution
+- Add program structure guidance to the core prompt
 
 ## 0.1.35 (4090) — 2026-08-13
 <!-- commit: 4b67f7bafd8181c495f9397bf5eabfe01242d310 -->
 
-- Companion: the notch strip stands ON the dialog band, not inside it
-- Plan: let a session speak to the other sessions in its tree
-- Name tests by path, and let each pack say pass and fail itself
-- Give a switched-off toggle a frame it can be found by
-- Name the session surface after the verb, not the storage table
-- Give an edit a coordinate again: cat mints it, patch spends it
-- Say what pairing is doing, and bound how long it can take
-- Delete a session without re-downloading the fleet
-- Honour every TLS option the sandbox shims accept, or refuse it out loud
-- Count the tests that THREW, and read the cli tally as counts
-- Never lose the TestFlight notes to one bad minute from Apple
+- Companion: position the notch strip above the dialog header
+- Plan communication between sessions in the same tree
+- Select tests by path and use each language pack's test counts
+- Give disabled toggles a visible border
+- Name session APIs by operation rather than storage table
+- Restore cat-generated addresses for patch edits
+- Show pairing progress and enforce a timeout
+- Delete sessions without reloading all machines
+- Honor accepted TLS options or explicitly reject unsupported values
+- Count test exceptions and parse CLI test counts
+- Preserve TestFlight notes when Apple requests fail temporarily
 - Collapse run_tests faults into ONE typed failures list
 - Show every repository in the magit buffer, not the first twelve
-- Plan: bring back cat and patch, and make grep speak anchored text
+- Plan restoration of cat and patch with anchored grep output
 - Companion: record the 0.1.35 (4075) TestFlight build
 
 ## 0.1.35 (4075) — 2026-08-13
 <!-- commit: 303d39e0132803b54e94db9293b6828bfbde6901 -->
 
 - Retire the automatic outbox capture; `attach` is how an artifact is kept
-- Hand the finished answer the trace the live bubble already painted
-- Fix #141: an unverified HTTPS request was impossible from the sandbox, and the escape hatch was deleted
+- Preserve the live execution trace in the finished answer
+- Fix #141: enforce verified HTTPS and remove the redundant bypass option
 - Hand-written config keeps the provider and model pair; the committed file still cannot
 - Make the provider/model pair a remembered selection, not configuration
 - Fix #140: a committed vis.yml forced one developer's provider on every clone
-- Companion: the result band gets its name back, in caps and bold
-- Companion: a machine retry answers in five seconds, in red, then goes quiet
-- Name every collapsible band in caps and bold
+- Companion: restore the bold uppercase RESULT header
+- Companion: limit machine retries to five seconds and show failures in red without repeated attempts
+- Use bold uppercase labels for collapsible sections
 - Fix Android gateway and optional push support
 - Update Bridge extension for 0.3
 - Migrate verification governance to Bridge 0.3
-- Keep a focused field's accent ring inside the frame's rails
+- Keep focused-field accent rings within their borders
 - Fix #139: concurrent shells shared one auto-derived handle id
-- Sandbox: pin that a cancel reaches a host park of any length
+- Sandbox: test cancellation during host waits of any duration
 - Sandbox: cancel a parked block through the guest safepoint
-- Companion: a turn that is running always says it is running
+- Companion: show running state throughout turn execution
 - Release: macOS arm64 builds on GitHub's hosted runner, never a laptop
-- Native: lanterna's TTY control decides in the BINARY, not the builder
-- Native: an extension declares what the IMAGE needs, not only discovery
+- Native: determine Lanterna TTY control at binary runtime, not build time
+- Native: include extension native-image requirements as well as discovery metadata
 
 ## 0.1.35 (4047) — 2026-08-12
 <!-- commit: 3605627d4c480ff9816ae24f17724b8ca6e107a1 -->
@@ -1008,38 +1008,38 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.35 (4042) — 2026-08-12
 <!-- commit: 59354fd64c245c588a43a67274e99ef54de33e54 -->
 
-- Native: every built-in extension ns reaches the image, or the binary dies
-- Wait for the pty child, and let the jail greet the Linux runner
-- The last red tests — the relay's name, a reloaded card, pasta's log
-- Native: no FFM TTY downcalls on Linux — the binaries ship again
-- Green the suite — the relay's name, a reloaded hook, a stack-safe scan
+- Native: include every built-in extension namespace and reject incomplete binaries
+- Wait for the pty child and test the jail on Linux runners
+- Fix remaining tests for relay naming, card reloads and pasta logging
+- Native: remove Linux FFM TTY downcalls to restore binary releases
+- Fix tests for relay naming, hook reloads and stack-safe scanning
 - Name svar's unroutable failure instead of the generic provider card
-- Cancellation: a best-effort catch no longer eats the interrupt
+- Cancellation: preserve interrupts through best-effort exception handling
 - Prompt: run_tests reloads what it RUNS, never its dependencies
-- Shell: a cancel during usage sampling is no longer swallowed
-- Companion: a starred row keeps its page, so the star lands where the thumb is
-- Companion: a star you can see on the row and read on the strip
+- Shell: preserve cancellation during usage sampling
+- Companion: keep starred rows on the current page to preserve their position
+- Companion: show star status on session rows and in the header
 - Companion: drop the artifacts gallery's dead tool_name read
 - Pytest shim: capfd captures the real descriptor (#138)
-- Companion: a machine's dot reports a probe, not the memory of one
+- Companion: show current probe results in machine status indicators
 - Shell: one stream, no dead stderr field (#137)
-- Companion: let the pen write on a picture instead of selecting it
-- Companion: give every band's way out the band's own cell
+- Companion: support drawing on images without selecting them
+- Companion: give every section a dedicated close-control cell
 - Show every nested repository in the magit status buffer
-- Price the fold trigger in the core prompt's budget line
+- Show the fold threshold in the core prompt's budget line
 - Name session_fold in the rule that orders the fold
 
 ## 0.1.35 (4019) — 2026-08-12
 <!-- commit: 624ea44af361a3cb5d3d340b8a6aaec99ca1a521 -->
 
-- Companion: one meaning, one mark — the plus is a session and nothing else
-- Pin svar 0.7.115: a reasoning level never means "do not think"
-- Pin svar 0.7.114: ask each model for the depth its catalog sells
-- Companion: spread a fleet's hues around the wheel so no two machines wear one red
-- Send Copilot Claude the depth the caller asked for
+- Companion: reserve the plus icon for session creation
+- Pin svar 0.7.115 to distinguish reasoning levels from disabling reasoning
+- Pin svar 0.7.114 to use model-supported reasoning levels
+- Companion: distribute machine colors across the hue range to distinguish them
+- Send the requested reasoning level to Copilot Claude
 - Account for fast mode pricing
 - Drop the op-name badge from every result card
-- Stop a sandbox FD leak from wedging the whole process
+- Fix a sandbox file-descriptor leak that blocked the process
 - Companion: keep a project's pager on one line at every page
 - Add fast mode switch
 - Companion: record the 0.1.35 (4008) TestFlight build
@@ -1047,14 +1047,14 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.35 (4008) — 2026-08-12
 <!-- commit: ba43d093d0bce4dc4173f04bb651d77cea9477a6 -->
 
-- Companion: hang a project's pager on its own shelf, and open each group on a trough
-- Companion: centre a menu item's content in the thumb target it fills
-- Companion: an All view that gives every machine its own hue, rail and section
+- Companion: give project pagination a separate row and group headers a distinct background
+- Companion: center menu content within its touch target
+- Companion: give each machine a distinct color, navigation item and section in the All view
 
 ## 0.1.35 (4003) — 2026-08-12
 <!-- commit: 4a1a594e9f988b7d96d89c5a440b610cea2aa9da -->
 
-- Companion: the cog opens the machines, and pairing happens there
+- Companion: open machine management and pairing from Settings
 - Companion: put a project header's path under its name
 - Companion: record the 0.1.35 (4000) TestFlight build
 
@@ -1062,11 +1062,11 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 <!-- commit: 9523cf14b093199e1f2f2ead6dca13767978fa13 -->
 
 - Make sandbox functions and tools introspectable
-- Companion: drop the machine row's kebab and always show the switch
+- Companion: remove the machine row overflow menu and always show its switch
 - Drop TOP TOOLS and TOP ERRORS from the session card
-- Drop the machine band; its verbs stand on the row above the list
+- Remove the machine header and place its actions in the row above the list
 - Honour the file redirect an extension's subprocess asked for
-- Settings rows carry one line, not a paragraph
+- Limit settings descriptions to one line
 - Extension env= never widens a confined child environment
 - Jail.md replaces sandbox.md, document the declared extension env
 - Drain the pipes an extension's guest asked for
@@ -1076,53 +1076,53 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Make grep and struct_nodes take one canonical options map
 - Load the workspace .env by default, jail or no jail
 - CHANGELOG: run_tests(python) names its faults (issue #136)
-- Companion: the one close button is a square, the same size on every band
+- Companion: use square close buttons of equal size in every section
 - One word for confinement: jail
 - Companion: one CloseButton — every close glyph in the app is the same 32px column
 - Delete jail.env: `environment:` is the one place a variable is named
-- Companion: draw one close glyph at one size, so the queued tray's close is the black one every other close is
+- Companion: use the same black close icon and size in the queued tray and other controls
 
 ## 0.1.35 (3971) — 2026-08-12
 <!-- commit: eef1f83d0f5af4c3cfa30158ccbde81d9a5326ea -->
 
 - Trim the Companion image viewer to what is on screen
 - Shorten inline session delete confirm to Yes, delete / No, keep
-- Tone the inline session-delete confirm: err surface, edge and ink
+- Use error background, border and text colors for inline session-delete confirmation
 - Companion: confirm a session delete in the row, not in a dialog
 - Remove live resources from the model-facing session context
 - Stop naming the deleted cat and patch tools in the docstrings
 - Drop finished background shells from the model-facing ctx
-- Split the shim block into a pushed line and a pulled page
+- Split shim documentation into a prompt summary and an on-demand page
 - Drop the provisioning-profile env overrides from the iOS release
 - Fetch the App Store profile at release time instead of storing it as a secret
-- Pull area doctrine out of the pushed prompt and into skills
+- Move area-specific guidance from the system prompt into skills
 - Record the 0.1.35 (3959) companion build in the changelog
 
 ## 0.1.35 (3959) — 2026-08-11
 <!-- commit: 99ccc2b5af2816ee6f6389a8f042355310a42b90 -->
 
-- Rewrite the model-facing prompt for the one-call surface, and measure it
+- Rewrite and measure the model-facing prompt for the single-tool API
 
 ## 0.1.35 (3958) — 2026-08-11
 <!-- commit: 0ebaf1a2829b3f9b0f9ddfb52306f7994195a8dc -->
 
 - Wait for the folder listing before asserting the reuse footer
 - Remove cat/patch and retire the lineno:hash anchor
-- Paint a result from its own data, not from a per-tool renderer
-- Keep a skill live by the iteration that printed its body
+- Render results from their data rather than per-tool renderers
+- Retain a skill's instructions through the iteration that printed them
 - Retire the native-result store and the fold's recovery half
 - Search every document with apropos, retrieve one whole with doc
 - Ls: decide index-vs-list from the FILE, not the rendered address
-- Title a result card from the value's own op, not from a tool table
+- Title result cards from the value's operation field, not a tool lookup table
 - Trace the provider stream only when asked
 - List a directory outside the workspace instead of indexing it
-- Move the HITL band scrollbar into the dialog gutter lane
-- Stand the band's rails on the prompt's own rule
+- Move the human-input scrollbar into the dialog margin
+- Align section borders with the prompt divider
 - One tool on the wire: delete the native-tool test surface
-- Inset the HITL band's body and stand its caps off the fields
-- Hand a failed prompt back to the composer so Enter retries it
-- Make the human-input band the same box the C-x transient is
-- A held turn shows Paused, not a phantom "calling the provider" spinner
+- Inset human-input content and separate header labels from fields
+- Restore failed prompts to the composer for retry with Enter
+- Match human-input panel geometry to the C-x transient
+- Show Paused for held turns instead of an incorrect provider-call spinner
 - Surface the real provider failure, not the canonical-content validation
 - One diagnostic log per process: ~/.vis/logs/vis-<pid>.log
 - Advertise only python_execution: the wire carries one tool
@@ -1134,46 +1134,46 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Make every run a handle: a timeout is a wait that expired
 - Stop forcing deferred work at namespace load, which native-image runs on the builder
 - PLAN: name Phase 4 by its commit
-- Give a background shell a log FILE and a byte OFFSET cursor
-- Page a project from the list on screen, not the gateway's own window
+- Give background shells log files and byte-offset cursors
+- Paginate the displayed project list rather than the gateway's result window
 - Delete the project-wide rename
 - Ask the :fs/access gate from struct_rename too
 - Record what a host map actually looks like in the sandbox
 - Release v0.1.34
-- Refuse toolchain output at the incidental capture tap
+- Exclude toolchain output from incidental attachment capture
 - Stop capturing the temp file nobody named
 - PLAN: record Phase 3 as done
 - Replace the `ls` native tool with a sandbox `ls()` helper
-- Invent the provider the native suite talks to
-- Companion: measure the "Latest" offer instead of remembering it
-- Prove the native binary from its own suite, not from a docker build
-- Companion: let an artifact tile show its own note, and keep its controls legible
+- Use a deterministic provider fixture in native tests
+- Companion: calculate whether Latest is needed from the current scroll position
+- Verify native binaries with native tests, not only Docker builds
+- Companion: show artifact notes on their tiles and keep controls legible
 - Companion: one Settings dialog, this device beside the machines
 - Record Phase 2 in the plan
 
 ## 0.1.33 (3824) — 2026-08-09
 <!-- commit: 5c0bcda60cac8388413d4fc55d088c0c5df9d621 -->
 
-- Let an attached page run its own script, never the app's origin
-- Rename the sandbox attachment surface to plain verbs
-- Make every way out say what it closes
-- Give the companion's paint back to the components that own it
-- Leave the image viewer through the app's one close
-- Give every close mark the page's own ink
-- Zoom a picture by the distance scrolled, and take Safari own pinch
+- Run attached-page scripts in isolation from the app origin
+- Use direct operation names for sandbox attachment APIs
+- Label close controls with the element they close
+- Move Companion rendering styles into the relevant components
+- Use the shared close control in the image viewer
+- Use page text colors for close icons
+- Scale image zoom by scroll distance and support Safari pinch gestures
 - Release v0.1.33
 - Put the search field and every transcript card header on one height
-- Take the machine strip's side edges from the page
+- Align machine-strip side borders with the page
 - Page grep results with offset and next_offset
 - Let a session row fill its swipe track
-- Anchor the companion search field to the bar's trailing edge
+- Align Companion search with the app bar's trailing edge
 - Default grep to 50 elements, filename fallback included
-- Frame a sent picture like a produced one and gallery several
-- Stretch a row-ending icon button at mouse density too
+- Use the artifact image frame for sent images and a gallery for multiple images
+- Stretch row-end icon buttons at pointer density as well as touch density
 - Put search back on the app bar with its own magnifying glass
-- Give search its own band on a phone and land Clear on the field's edge
-- Render MetaButton's children so the composer strip has words again
-- Name a button by its rank and give the composer one strip
+- Give mobile search a separate row and place Clear at the field edge
+- Render MetaButton children so composer labels remain visible
+- Name button variants by hierarchy and use one composer control row
 
 ## 0.1.32 (3799) — 2026-08-07
 <!-- commit: 686ea282730f4d3a2868b30e0e03ec0727e28c26 -->
@@ -1181,23 +1181,23 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Start a stroke from beside the picture, not only on its edge
 - Release the companion app locally when this machine can sign
 - Enforce :ext/protected-paths in the Python sandbox filesystem
-- Say the create inside its button and shrink the row question
-- Show a document artifact once, as a card that opens over everything
-- Paint the star action yellow and keep the starred row in view
+- Put creation labels inside their buttons and shorten row confirmation prompts
+- Show document artifacts once as cards that open an overlay viewer
+- Color the Star action yellow and keep starred rows visible
 - Let the app stop the turn it started again
-- Never link a TestFlight build to an internal beta group
+- Exclude TestFlight builds from internal beta groups
 - Give a note ten annotation threads and a comment on the whole document
 - Push from workflows through one shared git-push action
 - Mark annotations in theme colours and annotate plain text too
-- Make the machine switcher square, unread a highlight, and hide it for a solo machine
+- Use a square machine switcher, highlight unread state and hide it for a single machine
 - Draw a comment ordinal as a plain coloured number
 - Accept any spelling of a path in vis_attach
 - Clear the NEW badge on the row you just read
-- Make the fleet switcher one segmented track
+- Use one segmented machine switcher
 - Put the session star immediately right of the title
 - Number and colour markdown comments, and underline the passage each is about
-- Clear the machine card below the fleet strip
-- Pin the companion's artifact-revision save URL to its route
+- Remove the machine card below the machine switcher
+- Test the Companion artifact-revision save URL against its route
 
 ## 0.1.21 (2871) — 2026-08-01
 <!-- commit: 1db0d4f7d66aecc93ba26cae8751d39f925181c5 -->
@@ -1232,7 +1232,7 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.20 (2856) — 2026-08-01
 <!-- commit: 66b0c31d8faee8c348f30a412c520b826579c506 -->
 
-- Ship viewport speedups and accumulated runtime work
+- Release viewport performance improvements and accumulated runtime changes
 - Release notes for 0.1.19 (2854)
 
 ## 0.1.19 (2854) — 2026-08-01
@@ -1273,7 +1273,7 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.15 (2841) — 2026-07-31
 <!-- commit: d15a8b24b9b1cf6a97b25f0e2a3cc03954df4028 -->
 
-- Match the composer strip type ladder and shrink the rule
+- Match composer font sizes and reduce divider thickness
 - Release notes for 0.1.15 (2839)
 
 ## 0.1.15 (2839) — 2026-07-31
@@ -1301,26 +1301,26 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 <!-- commit: dbab3492cd03e2c55a1be61d42a37a88eef3c069 -->
 
 - Footer reasoning chip, landscape safe areas
-- Stop stamping --- before / +++ after on every diff
-- Restore the native builder args that last built green
+- Remove redundant --- before / +++ after labels from diffs
+- Restore the last successful native-builder arguments
 - Give the native builder a 22g heap on the swapfile-backed runner
 - Switch the preselected ParallelGC off before enabling G1
-- Overcommit the native builder heap with G1 instead of starving it
+- Use G1 and an overcommitted heap for the native builder
 - Release notes for 0.1.15 (2823)
 
 ## 0.1.15 (2823) — 2026-07-31
 <!-- commit: 2626ea8d7835f485bea60d9a79e0babc2e1c0501 -->
 
 - Measure the guest-interrupt CPU delta, not JVM-wide CPU
-- Keep the native-image heap inside runner RAM and give it a longer clock
-- Give the native-image builder enough heap, and let a dispatch rebuild a tag
+- Limit native-image heap to runner RAM and extend the build timeout
+- Increase native-image build heap and support tag rebuilds through workflow dispatch
 - Refresh dependency inventory
 - TestFlight notes for 0.1.14 (2817)
 
 ## 0.1.14 (2817) — 2026-07-30
 <!-- commit: edcac200a917a05e9f724ecc8a3706b122d60a37 -->
 
-- Newline-faithful structural edits and comment docs across 28 languages
+- Preserve newlines in structural edits and support comment documentation across 28 languages
 - Record the 0.1.14 (2815) release notes
 
 ## 0.1.14 (2815) — 2026-07-30
@@ -1333,7 +1333,7 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 
 - Serve a turn's inline attachments and hide the footer mid-turn
 - Name every working directory `cwd` across the tool surface
-- Cache the live turn bubble so re-entry paints it instantly
+- Cache live turn content for immediate rendering on session re-entry
 - Release notes for 0.1.14 (2808)
 
 ## 0.1.14 (2808) — 2026-07-30
@@ -1346,7 +1346,7 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.14 (2805) — 2026-07-30
 <!-- commit: 5bb959dd751a3ade42121036f3221ca427647e4a -->
 
-- Guarantee turn terminals and bound Python GC
+- Ensure turns emit terminal events and bound Python GC
 
 ## 0.1.14 (2804) — 2026-07-30
 <!-- commit: 88bbea7eb3eee254690946ef364d5f0a31b67e16 -->
@@ -1403,9 +1403,9 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 ## 0.1.14 (2780) — 2026-07-29
 <!-- commit: df93fefef6194b1309ca45cfc2e4370fde1fca65 -->
 
-- Say what to do, and advertise only the 5 newest ntr entries
-- Blame the gateway, not a Vis schema, for injected tool fields
-- The LLM title always runs after the turn, on its own route
+- Clarify instructions and advertise only the five newest NTR entries
+- Attribute injected tool fields to the gateway rather than a Vis schema
+- Generate LLM titles after turns through a separate route
 - The deferred title upgrade is after-turn-auto-title! (#71)
 - Configurable session titling, deferred past the foreground turn (#71)
 - Widen the observation-batch concurrency margin for loaded runners

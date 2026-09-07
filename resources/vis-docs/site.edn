@@ -29,27 +29,26 @@
     {:blurb "Show progress a person can watch and stop." :page "live-views" :title "Live views"}
     {:blurb "Register an LLM provider from an extension."
      :page "provider-extensions"
-     :title "Provider extensions"}
-    {:blurb "Engine integrations that ship inside the binary."
-     :page "clojure-extensions"
-     :title "Clojure extensions"}]
+     :title "Provider extensions"}]
    :section "Extensions"}
-  {:pages
-   [{:blurb "Why the agent writes programs and folds history."
-     :page "token-optimization"
-     :title "How Vis manages context"}
-    {:blurb "What the model's Python can reach." :page "python-sandbox" :title "Python sandbox"}]
+  {:pages [{:blurb "Why the agent writes programs and folds history."
+            :page "token-optimization"
+            :title "How Vis manages context"}
+           {:blurb "Python execution, packages and permissions."
+            :page "python-sandbox"
+            :title "Python sandbox"}]
    :section "Concepts"}
-  {:pages [{:blurb "Filesystem, environment and network rules for child processes."
-            :page "jail"
-            :title "Process jail and network policy"}
-           {:blurb "Message and streaming formats." :page "content-blocks" :title "Content-block protocol"}
-           {:blurb "Choose an installation method and update the runtime."
-            :page "distributions"
-            :title "Runtime distributions"}
-           {:blurb "GraalVM build, metadata and TLS proxies."
-            :page "jvm-native-image"
-            :title "Building the native binary"}]
+  {:pages
+   [{:blurb "Filesystem, environment and network rules for child processes."
+     :page "jail"
+     :title "Process jail and network policy"}
+    {:blurb "Message and streaming formats." :page "content-blocks" :title "Content-block protocol"}
+    {:blurb "Choose an installation method and update the runtime."
+     :page "distributions"
+     :title "Runtime distributions"}
+    {:blurb "GraalVM build, metadata and TLS proxies."
+     :page "jvm-native-image"
+     :title "Building the native binary"}]
    :section "Reference"}]
  :site {:repo "https://github.com/Blockether/vis"
         :tagline "A coding agent for your projects."

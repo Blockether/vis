@@ -1,79 +1,74 @@
 # Privacy Policy — Vis Gateway Companion
 
-**Last updated:** 2026-08-17
-**Applies to:** the *Vis Gateway Companion* app (`com.blockether.viscompanion`) for
-Android, iOS and web, and the `vis-agent` command-line gateway it talks to.
+**Last updated:** 2026-09-08
+**Applies to:** the Vis Gateway Companion app (`com.blockether.viscompanion`)
+for Android, iOS and web, and the `vis-agent` gateway it connects to.
 **Provider:** Blockether (contact: contact@blockether.com).
 
 ## Short version
 
-The app has **no backend of ours**. It is a client for a gateway daemon that
-**you** run, on **your** machine. We operate no servers for it, we receive no
-data from it, and we run no analytics, advertising, tracking or crash-reporting
-SDKs. Nothing you type in the app reaches Blockether.
+The app connects to a gateway you configure and does not require a Blockether
+account. Conversation data is sent to that gateway. If you enable push
+notifications, the publisher's relay and platform push provider also process
+notification data, including an answer preview.
 
-## What the app stores, and where
+## Data stored on your device
 
-Everything below is stored **only on your device**, in the operating system's
-app-private storage (Capacitor Preferences / browser local storage). It is never
-transmitted to Blockether.
+The app stores connection details and preferences in app-private storage
+(Capacitor Preferences or browser local storage):
 
-| Data | Why | Where it lives |
+| Data | Purpose | Storage |
 | --- | --- | --- |
 | Gateway URL(s) and bearer token(s) from pairing | to reach and authenticate against your own gateway | on-device only |
 | Selected gateway, theme, UI preferences | to restore your setup | on-device only |
 | Cached session titles / messages for display | to render the conversation you opened | on-device only, transient |
-| Push registration token *(created only if you enable notifications)* | so your own gateway can address alerts to this device | on-device, and registered with your gateway |
+| Push token, delivery grant or Web Push subscription *(only if notifications are enabled)* | to deliver alerts to this device | saved on-device; grant or subscription registered with the gateway; native token processed by the relay |
 
-Deleting the app deletes all of it. Removing a gateway in the app deletes that
-gateway's URL and token immediately.
+Removing a gateway deletes its saved URL and token. You can clear app or
+browser storage to remove locally stored settings and cached data.
 
 ## What leaves the device
 
-Only traffic between the app and **the gateway address you configured**. That is
-a direct connection to a host you chose — your LAN, your Tailscale tailnet, or
-your own tunnel. It carries the prompts, responses and session data of your own
-work. Blockether is not an endpoint, an intermediary or a recipient of that
-traffic.
+The app sends prompts, responses and session data to the configured gateway
+address over your selected connection, such as a local network, Tailscale or
+an HTTPS tunnel.
 
-**Push notifications are the one addition.** If — and only if — you enable
-notifications, the platform generates a push registration token (a device
-identifier: FCM on Android, APNs on iOS, a Web Push subscription in the
-browser). The app sends that token to the gateway you paired, over the same
-connection as the rest of your traffic, so the gateway can address alerts to
-this device. Delivery then runs through the platform's push service (Google's
-Firebase Cloud Messaging on Android, Apple's push service on iOS), which
-processes the token as transport operator under its own policy. Blockether
-is not a recipient of it — and turning notifications off, or removing the
-gateway, unregisters the device.
+When notifications are enabled, the app obtains a device token or Web Push
+subscription. Native apps request a delivery grant from the publisher's relay
+and register that grant with the paired gateway. The relay receives the device
+token. The gateway sends notification content to the relay, which forwards it
+to Apple Push Notification service or Firebase Cloud Messaging. Browser push
+uses the browser's push service.
 
-If the gateway you run is configured to use a third-party AI provider (for
-example Anthropic, OpenAI, Google or an OpenRouter model), then **your gateway**
-sends your prompts to that provider under **your** account and **their** privacy
-policy. The app does not choose or contact those providers on its own.
+Notification payloads include the session title, identifiers and an answer
+preview of up to 180 characters. They do not include the full transcript.
+The relay processes this content; it is not end-to-end encrypted between the
+gateway and app. Disabling notifications or removing the gateway unregisters
+the device through the app.
 
-## What we collect
+If your gateway uses an AI provider, it sends model requests under your
+provider account and that provider's privacy policy. The app does not select
+or contact model providers independently of the gateway.
 
-**Nothing.** No analytics, no advertising identifiers, no crash reporting, no
-telemetry, no account with us. We do not create a profile of you, and there is
-nothing for us to sell or share, because we never receive it.
+## Blockether and third-party services
 
-The push registration token described above is a device identifier, but it
-is optional, generated only when you enable notifications, and its only
-recipient is your own gateway — never Blockether.
+The app does not include analytics, advertising or crash-reporting SDKs.
+Blockether does operate the push relay described above. The relay
+implementation uses encrypted delivery grants rather than a device-token
+database; it processes device tokens and notification content to deliver
+notifications.
 
-Distribution platforms are the exception we do not control: Google Play, and
-Apple's TestFlight/App Store, collect their own install and crash statistics
-under their own policies.
+Google Play, Apple TestFlight and the App Store may collect installation and
+crash statistics under their own policies. Push providers also process delivery
+data under their policies.
 
 ## Permissions
 
 - **Internet / network access** — to reach the gateway you paired with.
 - **Camera** *(optional, only if you use QR pairing)* — the camera frame is
   decoded on-device to read the pairing QR code. No image is stored or uploaded.
-- **Notifications** *(optional)* — to alert you when a turn on your own gateway
-  finishes. Notification content is generated by your gateway, not by us.
-  Enabling it creates the push registration token described above.
+- **Notifications** *(optional)* — receive alerts when a turn finishes. The
+  gateway generates the content; relay and push services deliver it.
 
 Each is requested only when you use the corresponding feature, and the app works
 without the optional ones.
@@ -84,24 +79,25 @@ The app is a developer tool and is not directed at children under 13.
 
 ## Security
 
-Gateway credentials are held in app-private storage. Use HTTPS or a private
-network (Tailscale, cloudflared) when exposing a gateway beyond localhost, and
-revoke a token with `vis-agent gateway pair` if a device is lost.
+Gateway credentials are stored in app-private storage. Use HTTPS or a private
+network for remote access and require gateway authentication. If a device is
+lost, replace the gateway token and update authorized clients. Pairing displays
+credentials; it is not a token-revocation command.
 
 ## Your rights
 
-Because we hold no personal data about you, there is no account to access,
-export or erase on our side. All data is under your control on your own device
-and your own machine; deleting the app, or the gateway's data directory
-(`~/.vis`), removes it — including the push registration token, which is
-unregistered from the gateway when you disable notifications or remove it.
+You control the data stored in your app and gateway. Remove saved gateways,
+clear app storage or delete gateway data when no longer needed. Disable
+notifications before removing the app to unregister it from the gateway.
+For questions about data processed by the notification relay, contact
+contact@blockether.com.
 
 ## Open source
 
-Vis is open source: <https://github.com/Blockether/vis>. You can verify every
-claim above in the source, including the app under `apps/vis-companion/`.
+The app and relay source are public at <https://github.com/Blockether/vis>,
+under `apps/vis-companion/` and `apps/vis-companion-relay/`.
 
 ## Changes
 
-Material changes to this policy will be published in this file; its git history
-is the changelog. Questions: **contact@blockether.com**.
+Changes to this policy are published in this file and recorded in git history.
+Contact: contact@blockether.com.

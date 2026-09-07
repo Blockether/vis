@@ -16,11 +16,11 @@
 
 # Vis
 
-Vis is a coding agent that writes Python into a sandboxed CPython runtime, keeps durable state outside the context window, and inspects/changes the host project through tools.
+Vis is a coding agent. It runs Python in a sandboxed CPython runtime, stores session state outside the model's context window, and uses tools to inspect and change your project.
 
 ## Install
 
-One command installs **`vis-agent`** — the only Vis command there is.
+Install the `vis-agent` command:
 
 ```bash
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
@@ -28,8 +28,8 @@ vis-agent help
 ```
 
 ```bash
-vis-agent runtime           # what runs, and where it lives
-vis-agent update            # move the command and its runtime to the newest commit
+vis-agent runtime           # show the active runtime and its location
+vis-agent update            # update the command and runtime
 ```
 
 **Clojure library:**
@@ -46,11 +46,11 @@ vis-agent tui --jvm                                 # interactive terminal UI
 vis-agent gateway start --host 0.0.0.0 --pair --jvm # gateway for the phone app; prints the pairing QR
 ```
 
-`vis-agent tui` opens the terminal UI and starts the managed local gateway when none is running. `--jvm` runs the JVM source runtime — the checkout Vis owns — instead of an installed native binary (`VIS_JVM=1` is the same switch). A gateway bound to a non-loopback `--host` always requires a bearer token, and `--pair` prints the QR that carries it — see [Remote access and the Companion app](resources/vis-docs/gateway.md).
+`vis-agent tui` opens the terminal UI and starts a local gateway if needed. `--jvm` uses Vis's managed source checkout instead of an installed native binary; `VIS_JVM=1` has the same effect. A non-loopback `--host` requires a bearer token. `--pair` prints a QR code containing the address and token. See [Remote access and the Companion app](resources/vis-docs/gateway.md).
 
 ## Companion app (iPhone / Android)
 
-The phone client for the gateway above: install it, scan the QR, and it drives the same sessions as the TUI. Both stores are in open public testing — no invite, no tester list.
+Install the app and scan the pairing QR code to access the same sessions as the terminal UI. Both stores offer public testing without an invitation.
 
 - iOS / iPadOS — <https://testflight.apple.com/join/4anYT4Wk>
 - Android — <https://play.google.com/apps/testing/com.blockether.viscompanion>
@@ -61,5 +61,5 @@ Questions and beta feedback: `contact@blockether.com`.
 
 Apache License 2.0 — see [LICENSE](LICENSE).
 
-The models the built-in speech service can install are third parties' work and keep their own terms — every one of them is
-credited in [THIRD_PARTY_MODELS.md](THIRD_PARTY_MODELS.md), which is generated from the manifest the installer reads.
+The speech service can install third-party models with separate license terms.
+[THIRD_PARTY_MODELS.md](THIRD_PARTY_MODELS.md) lists their authors and licenses; it is generated from the installer's model manifest.

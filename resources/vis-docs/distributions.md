@@ -1,10 +1,10 @@
 # Runtime distributions
 
-Vis ships two executables:
+Vis provides two executables:
 
-- `vis-agent` — the engine, gateway, tools and embedded Python. It is a small
-  wrapper on `PATH` that runs the runtime installed under `~/.vis`.
-- `vis-tui` — an optional terminal client that talks to a gateway over HTTP.
+- `vis-agent` starts the engine, gateway, tools and embedded Python. A wrapper
+  on `PATH` selects the runtime installed under `~/.vis`.
+- `vis-tui` is an optional terminal client that connects to a gateway over HTTP.
 
 ## Installing
 
@@ -23,17 +23,18 @@ The script is published as a GitHub release asset because
 `raw.githubusercontent.com` is blocked on many corporate networks. Running
 `bin/install-vis-agent` from a clone works too.
 
-## What runs
+## Runtime selection
 
-There are two runtimes. Whichever is installed runs; there is no selector.
+Vis supports native and JVM runtimes:
 
 | Runtime | Runs |
 |---|---|
-| `native` | a prebuilt native binary beside the command, from a release bundle or a local `--rebuild` |
-| `jvm` | the source checkout Vis owns, pinned to the newest commit of `main` |
+| `native` | a prebuilt binary from a release bundle or local build |
+| `jvm` | the managed source checkout under `~/.vis/install/src` |
 
-Currently releases ship no native bundle, so the installer sets up the `jvm`
-runtime. A native binary, when present, always wins.
+The wrapper prefers an installed native binary. Use `--jvm` or `VIS_JVM=1` to
+select the JVM runtime explicitly. If no native bundle is available, the
+installer sets up the JVM runtime.
 
 ```bash
 vis-agent runtime
@@ -57,25 +58,28 @@ To run a clone's own code, use `clojure -M:vis` inside it.
 |---|---|
 | `vis-agent update` | Newest release bundle (native) or newest commit of `main` (jvm) |
 | `vis-agent update vX.Y.Z` | That release instead of the newest |
-| `vis-agent update --rebuild` | Build the native binary locally from the installed source |
-| `vis-agent update --track stable\|beta` | Follow that track from now on |
-| `vis-agent update --keep-gateway` | Keep a running idle gateway instead of stopping it so the next session uses the new runtime |
+| `vis-agent update --rebuild` | In JVM mode, update the managed source and build a native binary from it |
+| `vis-agent update --track stable\|beta` | Select a published native distribution track; unavailable in JVM mode |
+| `vis-agent update --keep-gateway` | Leave an idle managed gateway running after the update |
 
-An update never switches between the native and jvm runtimes, and never
-changes track on its own. The `vis-agent` command is updated together with
-the runtime. `beta` currently publishes nothing new.
+Updates use the selected runtime and update the wrapper too. Native mode
+rejects `--rebuild`; use the source runtime to build. Track selection applies
+only to published native bundles.
+
+`--rebuild` updates the managed source checkout before building. It does not
+build edits in your working repository. To build those edits, run
+`clojure -T:build native` from that repository.
 
 ## Files
 
-| Path | Holds |
+| Path | Contents |
 |---|---|
 | `~/.vis/install/vis-agent-native` | the native runtime |
 | `~/.vis/install/src` | the pinned source checkout: one detached commit, no branches |
 | `~/.vis/install/ref` | the commit it is pinned at; `vis-agent runtime` reports `DRIFTED` when `HEAD` differs |
 
-Deleting `~/.vis/install` is a full reset. `VIS_HOME` moves the whole `~/.vis`
-directory. `vis-agent --measure` prints startup timings and `--jfr` records a
-Java Flight Recorder profile into `VIS_HOME`.
+`VIS_HOME` changes the base directory from `~/.vis`. `vis-agent --measure`
+prints startup timings; `--jfr` saves a Java Flight Recorder profile there.
 
 ## Native bundles
 
@@ -94,10 +98,10 @@ vis-tui-<os>-<arch>.tar.gz
 
 Targets are Linux x86-64, Linux ARM64 and macOS ARM64. Building an image needs
 the GraalVM CE version in `.graalvm-version` and about 32 GB of RAM;
-`bin/release-native` builds and smoke-tests every asset a host can produce. On
-Apple silicon it builds macOS natively, Linux ARM64 in a container and Linux
-x86-64 through Rosetta (enable it in Docker Desktop or podman; qemu is refused
-as too slow). `VIS_CONTAINER_CONNECTION` and `VIS_CONTAINER_CLI` pick the
+`bin/release-native` builds and smoke-tests the assets supported by the host.
+On Apple silicon it builds macOS natively, Linux ARM64 in a container and Linux
+x86-64 through Rosetta. Enable Rosetta in Docker Desktop or podman; the build
+rejects qemu. `VIS_CONTAINER_CONNECTION` and `VIS_CONTAINER_CLI` select the
 container machine and engine.
 
 On a platform with no published bundle, use the jvm runtime or

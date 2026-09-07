@@ -1,14 +1,13 @@
 # Process jail and network policy
 
-The process jail confines every process Vis starts for a session: it limits
-filesystem access, scrubs the child environment and routes outbound connections
-through the gateway's policy. This page is the reference for enabling it and for
-each rule it applies. The in-process Python sandbox has its own guards; see
+When enabled, the process jail limits filesystem access, filters environment
+variables and applies network policy to processes Vis starts for a session.
+The Python sandbox also applies its own permission checks; see
 [Python sandbox](python-sandbox.md).
 
-## Enable the boundary
+## Enable the jail
 
-The jail is off unless the merged `vis.yml` contains:
+The jail is disabled by default. Enable it in configuration:
 
 ```yaml
 jail:
@@ -25,9 +24,9 @@ not change the policy for other managed processes.
 
 ## What is confined
 
-| execution path | boundary |
+| Execution path | Enforcement |
 |---|---|
-| `shell(...)`, nested shells, and Python `subprocess` reached through the sandbox | OS process jail plus gateway egress policy |
+| `shell(...)` and its child processes | OS process jail plus gateway egress policy |
 | REPLs started by `repl_start` and project test runners | same session policy as `shell(...)` |
 | `python_execution` | CPython filesystem and socket guards; HTTP uses the gateway policy while the jail is enabled |
 | `repl_connect` | not confined; it attaches to a process Vis did not start |
@@ -37,9 +36,9 @@ A trusted extension can opt into confinement with `vis.jailed_shell(...)` or use
 invoking session's snapshot with `vis.jailed_shell_session(...)`. Project extension
 files are executable plugins and require the same review as build scripts.
 
-## Filesystem admission
+## Filesystem access
 
-Declare additional roots once under `workspace.filesystem`, then admit them by id
+Declare additional roots under `workspace.filesystem`, then allow them by id
 under `jail.filesystem.allow`:
 
 ```yaml
@@ -64,21 +63,20 @@ jail:
     allow: [sibling, reference, m2]
 ```
 
-The active workspace and temporary directories are writable. An admitted catalog
-root uses its declared `access`; a catalog root omitted from `allow` is absent from a
-confined child. Dependency caches are not granted automatically.
+The active workspace and temporary directories are writable. Allowed roots use
+their declared `access`; unlisted roots are not available to jailed children.
+Dependency caches require explicit access.
 
-Every path must be absolute or home-relative. `when.os`, `when.exists`, and
-`optional: true` let one catalog cover hosts where a root is unavailable. An id may
-remain in `allow` when its conditional catalog entry does not apply. An unknown id is
-a configuration error.
+Paths must be absolute or home-relative. Use `when.os`, `when.exists` or
+`optional: true` for roots available only on some hosts. An id may remain in
+`allow` when its conditional entry does not apply. An unknown id is an error.
 
 `search: false` keeps a granted root out of default `grep` searches without blocking
 an explicit path. `draft` controls isolated workspace copies independently of the OS
 jail. Vis also grants `~/.vis` read/write and excludes it from default searches;
 declare it explicitly only to change that access.
 
-## Environment scrubbing
+## Environment filtering
 
 With the jail enabled, a child receives:
 
@@ -88,8 +86,8 @@ With the jail enabled, a child receives:
    `environment:` block;
 3. the session's proxy and CA variables.
 
-The operator's remaining environment is omitted. Declare a needed ambient value at
-the top level instead of copying it into the jail block:
+Other parent-process variables are excluded. Declare required variables in the
+top-level `environment` block:
 
 ```yaml
 environment:
@@ -102,14 +100,14 @@ children, including exported credentials. Filesystem and network rules still app
 Pre-exec injection variables such as `LD_*`, `DYLD_*`, `BASH_ENV`, and `PERL*` are
 refused in both modes because they could run before the jail is installed.
 
-When the jail is disabled, child processes inherit the host environment with project
-values layered on top.
+When the jail is disabled, children inherit the host environment; project
+values override it.
 
 ## Network egress
 
-A confined process cannot dial the network directly. HTTP, HTTPS, and proxy-aware raw
-TCP clients reach a session-authenticated gateway proxy. The proxy resolves the
-requested host, applies the session policy, and dials the validated address.
+Jailed processes use a session-authenticated gateway proxy for HTTP, HTTPS and
+proxy-aware TCP connections. The proxy resolves the host, checks session policy
+and connects to the validated address.
 
 Without a `jail.network` block, public destinations are allowed. These protections
 still apply:
@@ -119,9 +117,10 @@ still apply:
 - loopback services are allowed except the gateway's control and proxy ports.
 
 Use `allowed_domains` for an allowlist and `denied_domains` for explicit blocks.
-Denies win. A concrete denied hostname is also blocked by its resolved addresses;
-wildcard entries match names. `exclude_domains` disables TLS inspection for clients
-that pin certificates, but it does not bypass host, port, or SSRF checks.
+Deny rules take precedence. A denied hostname also blocks its resolved
+addresses; wildcard entries match names. `exclude_domains` disables TLS
+inspection for clients that pin certificates, but host, port and SSRF checks
+still apply.
 
 ```yaml
 jail:
@@ -158,11 +157,11 @@ jail:
 permits none. `methods` can name an explicit method set, and `allow` adds method/path
 exceptions. `ports` applies to HTTP CONNECT and SOCKS as well as ordinary HTTP.
 
-The gateway terminates inspected HTTPS with an ephemeral session CA. Common HTTP
-clients receive CA environment variables, and managed JVMs receive a temporary trust
-store. Raw TCP uses a SOCKS5 lane on the same proxy port and therefore has host and
-port checks but no HTTP method or path. A program that ignores proxy variables, such
-as `ssh`, needs an explicit proxy command.
+The gateway inspects HTTPS using a temporary session CA. Common HTTP clients
+receive CA environment variables, and managed JVMs receive a temporary trust
+store. Raw TCP uses SOCKS5 on the same proxy port, with host and port checks
+but no HTTP method or path checks. Programs that ignore proxy variables, such
+as `ssh`, require explicit proxy configuration.
 
 ### Inbound development ports
 
@@ -183,12 +182,11 @@ jail:
 
 ### Project network filters
 
-A trusted Python extension can register a gateway `network_filter`. Filters see HTTP
-request and response phases plus SOCKS connection attempts; an exception denies the
-request. Use `/net-probe` to test the host gate and every registered filter without
-opening a socket. Inside `python_execution`, `network_filter(...)` and
-`network_probe(...)` test session-local filters, but those local filters do not alter
-live egress.
+Trusted Python extensions can register gateway `network_filters` for HTTP
+requests, responses and SOCKS connections. An exception denies the request.
+`/net-probe` checks host policy and registered filters without opening a socket.
+Inside `python_execution`, `network_filter(...)` and `network_probe(...)` test
+session-local filters; those filters do not change gateway network policy.
 
 See [Extending Vis](extending.md#the-declaration) for `network_filters`.
 
@@ -220,12 +218,12 @@ jail:
   deny_exec: [curl, wget]
 ```
 
-This is a command guardrail, not capability containment. Another interpreter or a
-new script can perform the same operation. Use filesystem and network policy for the
-actual boundary.
+Blocking an executable does not block every way to perform its operations.
+Use filesystem and network policy to restrict those operations.
 
-A confined child cannot reach the operating system's credential store by default,
-so `gh`, `git` credential helpers and similar tools fail their lookup. Permit it with:
+Jailed children cannot access the OS credential store by default, so `gh`,
+`git` credential helpers and similar tools cannot retrieve credentials. Allow
+access with:
 
 ```yaml
 jail:
@@ -235,7 +233,7 @@ jail:
 
 On macOS this grants the Keychain services plus read access to the system and user
 keychain databases; on Linux it exposes the session D-Bus so the Secret Service
-(GNOME Keyring, KWallet) answers.
+(GNOME Keyring, KWallet) can respond.
 
 ## Diagnose the effective policy
 
@@ -254,5 +252,5 @@ cannot widen an existing environment until `/reload` invalidates it.
 ## See also
 
 - [Configuration](configuration.md): the complete `workspace`, `jail`, `environment` and toggle keys.
-- [Python sandbox](python-sandbox.md): the in-process Python boundary.
-- [Remote access and the Companion app](gateway.md): the daemon that owns the egress proxy.
+- [Python sandbox](python-sandbox.md): Python runtime permissions.
+- [Remote access and the Companion app](gateway.md): the gateway's egress proxy.

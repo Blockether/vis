@@ -1,11 +1,8 @@
 # How Vis manages context
 
-Every token the model reads costs money and attention, and a long session can
-fill a context window with files, tool output and history that no longer
-matter. Vis is designed around one rule: data stays addressable in the runtime,
-and the model receives only the slice it needs. This page explains the
-mechanisms behind that rule so you can predict what a session costs and why it
-behaves the way it does.
+Files, tool output and history consume the model's input tokens. Vis reduces
+repeated input by storing data in the runtime, returning selected results and
+replacing earlier steps with summaries.
 
 ## One tool, many functions
 
@@ -13,65 +10,59 @@ The model has a single tool, `python_execution`. Every capability (searching,
 reading, editing, running tests, shells) is a Python function inside it, and
 only what a block prints returns to the model. That has three consequences:
 
-- A batch of fifty operations costs one tool call, not fifty.
-- Intermediate results live in Python variables and never enter the context.
-- The model writes small programs, reusing helpers it defined earlier. `defs()`
-  lists them, and they survive turns and even a gateway restart.
+- Multiple operations can run in one tool call.
+- Intermediate results can remain in Python variables instead of being printed.
+- The model can reuse helpers it defined earlier. `defs()` lists them; function
+  definitions persist across turns and gateway restarts.
 
-The `session` dict the model sees is rebuilt before every block from the
-engine's snapshot: turn counters, workspace roots, utilization figures and the
-slices extensions contribute.
+Before each block, Vis rebuilds the `session` dict with turn counters, workspace
+roots, utilization figures and extension-provided context.
 
 ## Discovery instead of catalogs
 
-The prompt does not carry every signature. The model finds capabilities with
-`apropos(pattern)`, a regular-expression filter over public symbol names, and
-reads one whole contract with `doc(name)`. Documentation pages and skills are
-reachable the same way (`doc("gateway")`, `doc("release-checklist")`). Search
-never reads document bodies or scores results; it is a literal filter in
-manifest order.
+The prompt does not list every function signature. The model finds functions
+with `apropos(pattern)`, which filters public symbol names using a regular
+expression, and reads their documentation with `doc(name)`. Documentation
+pages and skills are available the same way. Search matches names only and
+returns results in manifest order.
 
 ## Addresses, not copies
 
-`grep` and `cat` return anchored text: each line is `line:hash│ text`. Those
-anchors are the coordinates `patch` edits by, so the search that finds a line
-also addresses it, and the read that shows a region is the read the edit
-spends. A `patch` call carries every edit for one file in one atomic write,
-re-parses the file afterwards and refuses a syntax-breaking batch whole.
+`grep` and `cat` return text with a `line:hash` address for each line. Pass those
+addresses to `patch` to identify the lines to change without repeating their
+old text. Include all edits for one file in a single `patch` call. The write is
+atomic; a stale address or syntax error rejects the whole batch.
 
-Because the edit names an address rather than restating text, the model never
-pays to quote back what it replaces. `Path.read_text()` remains available for
-files that are only consumed.
+`Path.read_text()` is available for reading data that will not be edited.
 
 ## Folding settled work
 
-`fold_session(key, gist)` removes settled steps from future model calls without
-deleting anything from the database. A key names turns or iterations:
-`"t2"` a whole turn, `"t2/i4-i5"` a range, `"-t3/i9"` everything through a
-step, and several keys separated by commas make one fold. The live iteration is
-the only thing that cannot be folded.
+`fold_session(key, gist)` removes earlier steps from future model requests
+without deleting them from the database. A key selects turns or iterations:
+`"t2"` selects a whole turn, `"t2/i4-i5"` a range, and `"-t3/i9"` everything
+through an iteration. Comma-separated keys select multiple ranges. The
+current iteration cannot be folded.
 
-The gist is what survives on the wire, so a good one is a checkpoint rather
-than a transcript: conclusions, open questions, exact paths and symbols, the
-state of edits and tests. Folded content remains readable through
-`read_session()` when the `introspection` toggle is on; with it off, the gist
-is all that remains.
+The gist replaces the selected content in model requests. Include conclusions,
+open questions, exact paths and symbols, and the state of edits and tests.
+With the `introspection` toggle enabled, `read_session()` can retrieve folded
+content. Without it, the model has only the gist.
 
-The model watches `session["utilization"]`: `last_request_tokens` against
-`auto_compress_above` (200k by default) is the operating pressure, and a
-`hint` appears for a few turns once the ceiling is crossed. `saturation` and
-`headroom_tokens` are measured against the model's hard input limit instead.
+The model monitors `session["utilization"]`. `last_request_tokens` is compared
+with `auto_compress_above`, normally 200k tokens and reduced for smaller input
+windows. A `hint` begins at 75% of that budget, becomes more urgent at 90%, and
+requires folding above 100%. It remains while usage is high. `saturation` and
+`headroom_tokens` are measured against the model's hard input limit.
 
-## What this buys
+## Example editing workflow
 
-A typical edit costs: one `grep` for the location, one `cat` of the region,
-one `patch`, one test run. No whole files, no repeated catalogs, no
-intermediate values in the transcript. When a helper recurs across turns it
-becomes an extension, so a step that took five calls takes one; see
+Locate code with `grep`, read the relevant region with `cat`, apply a `patch`,
+and run the affected tests. This avoids returning whole files and repeating
+old text in edits. Reusable helpers can become extensions; see
 [Extending Vis](extending.md).
 
 ## See also
 
 - [Python sandbox](python-sandbox.md) — the interpreter the model's programs run in.
 - [Extending Vis](extending.md) — turning a recurring helper into a tool.
-- [Skills](skills.md) — instructions pulled on demand instead of pushed into every request.
+- [Skills](skills.md) — instructions loaded when needed rather than included in every request.

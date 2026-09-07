@@ -72,8 +72,9 @@ with LocalEngine(executable="/path/to/vis-agent", root="/path/to/project") as en
     print(result)
 ```
 
-`LocalEngine` uses the same session API as `GatewayClient`. It owns a private
-process and temporary database; both are removed when the context exits.
+`LocalEngine` uses the same session API as `GatewayClient`. It starts a private
+process and creates a temporary database; exiting the context stops the process
+and removes the database.
 
 ## Documentation
 

@@ -1,6 +1,6 @@
 # Session health in app metrics
 
-Ship the approved view with measured session data, never demonstration values.
+Implement the approved view using measured session data, not demonstration values.
 
 ## Context
 The Companion health component and stories already render the approved layout. The usage
@@ -12,7 +12,7 @@ do not reconstruct a prompt from files on disk, add polling to every list row, o
 - Data: context renderer, loop request boundary, persisted iteration metadata.
 - Acceptance criteria: request-aligned budget, limit and prompt estimates; guidance access
   distinct from loaded instructions; missing measurements stay absent; regression tests.
-- Unknowns: smallest existing durable metadata slot and actual prompt assembly seam.
+- Unknowns: existing persistent metadata field and prompt assembly location.
 
 ## 2. Connect the usage endpoint and Companion
 - Rationale: reuse the on-demand metrics read and the approved UI.
@@ -66,7 +66,7 @@ through the notification relay/Cloudflare, including authorization codes and bro
 - Data: TUI browser flow, Companion authentication, desktop/native packaging, deep links.
 - Acceptance criteria: TUI, desktop, iOS and Android close the pending UI and refresh auth;
   remote gateway is covered; manual input is an explicit fallback, never claimed automatic.
-- Unknowns: native fixed-loopback interception on mobile; Pake native integration seam.
+- Unknowns: native fixed-loopback interception on mobile; Pake native integration API.
 
 ## 3. Direct return, no shared intermediary
 - Rationale: enterprise OAuth must stay between the provider, the initiating client and its gateway.
@@ -83,7 +83,7 @@ through the notification relay/Cloudflare, including authorization codes and bro
 - Unknowns: interactive consent and real-device availability in this session.
 
 ## 5. One authentication mechanism
-- Rationale: MCP and model-provider adapters must not own duplicate flow registries or client loops.
+- Rationale: MCP and model-provider adapters must not maintain duplicate flow registries or client loops.
 - Data: shared gateway lifecycle under `internal/provider/flow.clj`; one Companion watcher in
   `src/lib/oauth.ts`; TUI already uses `tui/oauth.clj` for both domains.
 - Acceptance criteria: both adapters exercise the same callback validation, single exchange,
@@ -141,7 +141,7 @@ Current verification: the full Companion suite passes 2,277 tests, with one exis
   (248 files, including 153 Storybook interactions). Typecheck, React compiler lint and web
   production build pass. All 153 stories across 10 themes pass contrast checks. The first full
   run caught the old exact native-plugin registration expectation; it was updated to include
-  OAuthLoopback while preserving the existing plugins, then the full suite was rerun green.
+  OAuthLoopback while preserving the existing plugins, then the full suite passed.
   Earlier shared-engine verification passed 261 gateway/MCP/provider and 88 TUI tests, plus
   Clojure formatting and lint/reflection; those production namespaces did not change here.
   The no-relay suite passed 38 tests in the preceding implementation.
@@ -193,7 +193,7 @@ registries, blanket rewriting of source literals, and rewriting existing records
 ## Phases
 
 1. Reproduce the presentation gaps with synthetic fixtures.
-   - Rationale: prior green suites did not cover these boundaries.
+   - Rationale: prior passing suites did not cover these boundaries.
    - Data: Activity, input, and isolated Live lifecycle regression tests.
    - Acceptance criteria: confirmed failures before production edits; no real secrets printed.
    - Unknowns: additional validation and size-limit constraints exposed by the tests.
@@ -227,23 +227,23 @@ Phases 1–3 complete locally.
 
 # Joined Activity design
 
-One continuous Thinking / Code / Activity surface with chronological operation groups.
+One continuous Thinking / Code / Activity panel with chronological operation groups.
 
 ## Context
 
-Companion's `ChatContent.tsx` joins Thinking and Code at the turn spine. `ActivityPanel.tsx`
+Companion's `ChatContent.tsx` displays Thinking and Code as adjacent sections. `ActivityPanel.tsx`
 still indents individual steps and lacks adjacent-operation grouping. Use the existing projection
 and production controls; do not change SDK, transport, raw results or unrelated desktop work.
 Reject nested cards, regrouping across chronological boundaries and parsing human summaries.
 
 ## Phases
 
-1. Pin grouping and disclosure behavior.
+1. Specify grouping and disclosure behavior in tests.
    - Rationale: streaming replacements must preserve order, facts and reader choices.
    - Data: ActivityPanel and ExecutionTrace tests; deterministic story fixtures.
    - Acceptance criteria: failures before implementation, covering adjacency and visible errors.
    - Unknowns: existing projections may lack command correlation or complete resource counts.
-2. Implement and render the joined surface.
+2. Implement and render the joined panel.
    - Rationale: alignment alone does not establish visual continuity or useful aggregation.
    - Data: production Activity, transcript composition and existing disclosure controls.
    - Acceptance criteria: shared edge, independent folds, stable groups, no hidden failures.

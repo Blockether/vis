@@ -1,18 +1,15 @@
 # Content-block protocol
 
-Every message in Vis is a role-labelled envelope containing an ordered array of
-typed content blocks, and the same JSON shape is used by persistence, gateway
-responses, SSE replay and channels. This page is the reference for that shape.
-You need it when writing a gateway client or a renderer; using Vis does not
-require it.
+A Vis message has a role and an ordered array of typed content blocks.
+Persistence, gateway responses, SSE replay and clients use the same JSON
+format. This reference is for gateway client and renderer authors.
 
-Markdown is not an alternate answer. It is a field inside a `prose` block.
-Renderer-specific trees are temporary implementation details and are never sent,
-stored, or accepted as message content.
+Markdown is stored in a `prose` block. Parsed renderer data is temporary and
+is not sent or stored as message content.
 
-The executable Clojure contract is in
-`com.blockether.vis.internal.content`. Its specs and constructors are the source
-of truth for validation.
+Canonical contracts and schemas are in
+[`packages/vis-contract/resources/vis-contract/`](https://github.com/Blockether/vis/tree/main/packages/vis-contract/resources/vis-contract).
+`com.blockether.vis.internal.content` provides the Clojure constructors.
 
 ## Invariants
 
@@ -22,11 +19,10 @@ of truth for validation.
 4. Every block has a stable string `id` and string `type`.
 5. Completed blocks and terminal messages are immutable.
 6. Tools, errors, attachments, and lifecycle state remain structured data.
-7. A renderer may parse `prose.markdown` while rendering, but the parsed result
-   is disposable and cannot cross a process or persistence boundary.
-8. No pending-message queue is persisted. Only submitted turns and their settled
-   content are durable. A restart interrupts in-flight work; it does not replay a
-   request automatically.
+7. A renderer may parse `prose.markdown` for display, but must not persist or
+   send the parsed data as message content.
+8. Pending messages are not persisted. Submitted turns and their content are
+   stored. A restart interrupts running work and does not resubmit it.
 
 These rules apply at every nesting depth. This is invalid because `provider` is
 a keyword value and the nested keys are keywords:
@@ -159,8 +155,8 @@ must be safe to expose and must never include credentials.
 {"id":"b6","type":"attachment","attachment_id":"att_01J","name":"report.png","media_type":"image/png"}
 ```
 
-An attachment block references durable attachment metadata. Binary bytes are not
-embedded in the message.
+An attachment block references stored attachment metadata. The message does
+not contain the binary file.
 
 ### `notice`
 
@@ -168,7 +164,10 @@ embedded in the message.
 {"id":"b7","type":"notice","code":"turn_cancelled","message":"Stopped by user."}
 ```
 
-A notice is a non-error lifecycle or informational item.
+A notice reports lifecycle changes or other information without indicating an error.
+
+The canonical contract also defines specialized blocks such as `speech`; use
+its schema when implementing support for additional types.
 
 ## Streaming contract
 
@@ -187,15 +186,14 @@ A delta is valid only for an existing incomplete block and its declared mutable
 field: `markdown` for prose or `text` for enabled reasoning. Receivers concatenate
 deltas in sequence order. Reconnect uses gateway event sequence numbers.
 
-Terminal events do not duplicate the answer. Clients obtain the settled message
-from event-applied state or the canonical turn endpoint.
+Terminal events do not repeat the answer. Clients read the completed message
+from the state built by applying events or from the turn endpoint.
 
 ## Persistence
 
-Persistence stores the message envelope and `content` array as the only answer
-truth, alongside queryable turn metadata. It does not store rendered Markdown
-exports, HTML, parsed Markdown trees, channel layout data, or a pending request
-queue.
+Persistence stores the message envelope, its `content` array and queryable turn
+metadata. It does not store rendered exports, HTML, parsed Markdown, client
+layout data or a pending request queue.
 
 A persisted running turn is reconciled to `interrupted` after restart. The
 runtime never reconstructs and automatically resubmits its request.
@@ -205,18 +203,18 @@ runtime never reconstructs and automatically resubmits its request.
 Renderers switch on `block.type` and preserve block order and message role:
 
 - TUI parses prose only while producing styled terminal lines.
-- Clipboard, search, and export derive disposable text or Markdown projections.
+- Clipboard, search and export generate text or Markdown from the blocks.
 - `code.text` is always literal.
 - Private reasoning remains hidden unless explicitly authorized.
 
-Derived output cannot be written back as canonical content. There is no second
-answer field to synchronize and no renderer tree fallback.
+Generated display output must not replace stored content. The `content` array
+is the only answer representation; renderers cannot supply an alternate one.
 
 ## Guarantees
 
-The engine's contract tests hold that:
+Contract tests verify that:
 
-1. Clojure constructors and specs reject non-string nested map keys and
+1. Clojure constructors and schema validation reject non-string nested keys and
    non-JSON values.
 2. REST, SSE, in-process clients, persistence, and channels observe identical
    string-keyed maps and string enum values.
@@ -228,5 +226,5 @@ The engine's contract tests hold that:
 ## See also
 
 - [Exporting sessions](exporting-sessions.md) — the same blocks rendered to Markdown, HTML or a screencast.
-- [Remote access and the Companion app](gateway.md) — the SSE stream these blocks travel on.
-- [Live views](live-views.md) — an extension's live work, sealed into a transcript.
+- [Remote access and the Companion app](gateway.md) — delivery through SSE.
+- [Live views](live-views.md) — saving an extension's progress display in a transcript.

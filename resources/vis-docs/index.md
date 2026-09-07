@@ -72,13 +72,12 @@ To check which runtime is installed, run `vis-agent runtime`.
 - [Asking the human](human-input.md) — show a typed form and read the answer.
 - [Live views](live-views.md) — show progress a person can watch and stop.
 - [Provider extensions](provider-extensions.md) — register an LLM provider from an extension.
-- [Clojure extensions](clojure-extensions.md) — engine integrations that ship inside the binary.
 - [Python SDK](https://pypi.org/project/vis-agent/) — develop and test extensions outside Vis.
 
 ### Concepts
 
 - [How Vis manages context](token-optimization.md) — why the agent writes programs and folds history.
-- [Python sandbox](python-sandbox.md) — what the model's Python can reach.
+- [Python sandbox](python-sandbox.md) — Python execution, packages and permissions.
 
 ### Reference
 

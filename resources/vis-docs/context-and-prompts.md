@@ -1,7 +1,7 @@
 # Project instructions
 
-Vis reads plain Markdown files from your project and home directory. Changes are
-picked up on the next turn without restarting.
+Vis reads Markdown instructions from your project and home directory. Changes
+apply on the next turn without a restart.
 
 | File | Purpose |
 |---|---|
@@ -12,8 +12,8 @@ picked up on the next turn without restarting.
 ## Project rules: AGENTS.md
 
 Put instructions for your codebase in `AGENTS.md` at the project root: how to
-run tests, coding conventions, what not to touch. Vis includes the file in every
-turn.
+run tests, coding conventions and files that must not change. Vis includes the
+file in every turn.
 
 Several files can apply at once, from broadest to narrowest:
 
@@ -25,7 +25,7 @@ Several files can apply at once, from broadest to narrowest:
 Nearer files come later and override broader ones on conflict. `CLAUDE.md` is
 read only where no `AGENTS.md` exists.
 
-## System prompt files: SYSTEM.md / APPEND_SYSTEM.md
+## System prompt files
 
 To change the system prompt itself, add files under `.vis/` in the project or
 under `~/.vis/`:
@@ -38,8 +38,8 @@ under `~/.vis/`:
 A project file overrides a user file. Append files are applied user first,
 project last.
 
-The built-in prompt teaches Vis how its tools work. Prefer `APPEND_SYSTEM.md` or
-`AGENTS.md`; replace the prompt only when you mean to.
+The built-in prompt describes Vis's tools. Use `APPEND_SYSTEM.md` or
+`AGENTS.md` to add instructions without removing those descriptions.
 
 ## Prompt templates: /name
 

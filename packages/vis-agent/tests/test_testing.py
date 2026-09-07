@@ -134,3 +134,66 @@ def test_live_recorder_starts_a_cleared_log_record_over():
 
     patch({"op": "append", "node_id": "log", "lines": ["again"]})
     assert recorder.node("log")["total_lines"] == 1
+
+
+def test_live_view_documentation_renders_terminal_jobs(monkeypatch):
+    # The example previously omitted conclusion from the query and skipped final rows.
+    import re
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    document = Path(__file__).parents[3] / "resources/vis-docs/live-views.md"
+    example = re.search(
+        r"```python\n(.*?)\n```", document.read_text(), re.DOTALL
+    ).group(1)
+    namespace = {}
+    exec(compile(example, str(document), "exec"), namespace)
+    recorder = vis.testing.LiveRecorder(vis._host)
+    monkeypatch.setattr(vis, "_host", recorder)
+    requests = []
+    replies = iter(
+        [
+            {
+                "status": "in_progress",
+                "conclusion": "",
+                "url": "https://github.com/example/repo/actions/runs/1",
+                "jobs": [
+                    {
+                        "databaseId": 1,
+                        "name": "Tests",
+                        "status": "in_progress",
+                        "conclusion": "",
+                    }
+                ],
+            },
+            {
+                "status": "completed",
+                "conclusion": "success",
+                "url": "https://github.com/example/repo/actions/runs/1",
+                "jobs": [
+                    {
+                        "databaseId": 1,
+                        "name": "Tests",
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                ],
+            },
+        ]
+    )
+
+    def shell(request):
+        requests.append(request)
+        fields = request["command"].split("--json ")[1].split(",")
+        snapshot = next(replies)
+        return SimpleNamespace(
+            wait=lambda _: {"out": json.dumps({key: snapshot[key] for key in fields})}
+        )
+
+    monkeypatch.setattr(vis, "shell", shell)
+    monkeypatch.setattr(vis.LiveView, "sleep", lambda self, seconds: False)
+    result = namespace["watch_run"](1)
+    assert len(requests) == 2
+    assert result["summary"] == "Run result: success"
+    assert recorder.node("jobs")["rows"][0]["cells"] == ["Tests", "success"]
+    assert recorder.node("progress")["done"] == 1

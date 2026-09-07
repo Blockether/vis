@@ -119,30 +119,26 @@
   (str/join
     "\n"
     ["## eSpeak NG phoneme data" ""
-     "Piper phonemizes through eSpeak NG's GPL-3.0-or-later data. Each publisher archive above"
-     "carries the tables its voice needs; Vis downloads that archive into its model store without"
-     "administrator access and never mirrors the data in a Vis release."]))
+     "Piper uses eSpeak NG phoneme data under GPL-3.0-or-later. Each publisher archive includes"
+     "the data required by its voice. Vis downloads it to the model store without administrator"
+     "access and does not redistribute that data in Vis releases."]))
 
 (defn markdown
   "The entire `THIRD_PARTY_MODELS.md`, rendered from the manifest."
   []
   (let [entries (assets/manifest)]
-    (str
-      (str/join
-        "\n"
-        (concat
-          ["# Third-party models" ""
-           "Vis speaks and listens with models it did not train. Every model it can install is here,"
-           "with its licence, who to credit, and whether Vis hosts a copy or sends you to the publisher."
-           ""
-           (str "This file is generated: it is `"
-                manifest-path
-                "` rendered. Edit the manifest, then run")
-           (str "`" regenerate-command "`. A test fails when the two disagree.") ""
-           "| model | licence | commercial use | comes from | installed |"
-           "| --- | --- | --- | --- | --- |"]
-          (map summary-row entries)
-          [""]
-          (interpose "" (map entry-section entries))
-          (when (some :needs-espeak-ng entries) ["" espeak-section])))
-      "\n")))
+    (str (str/join
+           "\n"
+           (concat
+             ["# Third-party models" ""
+              "Vis uses third-party models for speech recognition and synthesis. This table lists"
+              "their licenses, authors and download sources." ""
+              (str "This file is generated from `" manifest-path "`. Edit the manifest, then run")
+              (str "`" regenerate-command "`. Tests check that the document matches the manifest.")
+              "" "| Model | License | Commercial use | Source | Installation |"
+              "| --- | --- | --- | --- | --- |"]
+             (map summary-row entries)
+             [""]
+             (interpose "" (map entry-section entries))
+             (when (some :needs-espeak-ng entries) ["" espeak-section])))
+         "\n")))

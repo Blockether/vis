@@ -1,23 +1,21 @@
 ;; Static documentation records named by META-INF/vis/manifest.edn.
 ;; A page IS the markdown file it names; how the site titles, groups and orders
 ;; it lives in vis-docs/site.edn, which nothing searches.
-[
- {:name "index", :kind "doc", :resource "vis-docs/index.md"}
- {:name "token-optimization", :kind "doc", :resource "vis-docs/token-optimization.md"}
- {:name "python-sandbox", :kind "doc", :resource "vis-docs/python-sandbox.md"}
- {:name "jail", :kind "doc", :resource "vis-docs/jail.md"}
- {:name "content-blocks", :kind "doc", :resource "vis-docs/content-blocks.md"}
- {:name "jvm-native-image", :kind "doc", :resource "vis-docs/jvm-native-image.md"}
- {:name "distributions", :kind "doc", :resource "vis-docs/distributions.md"}
- {:name "configuration", :kind "doc", :resource "vis-docs/configuration.md"}
- {:name "context-and-prompts", :kind "doc", :resource "vis-docs/context-and-prompts.md"}
- {:name "exporting-sessions", :kind "doc", :resource "vis-docs/exporting-sessions.md"}
- {:name "skills", :kind "doc", :resource "vis-docs/skills.md"}
- {:name "queue-and-cancel", :kind "doc", :resource "vis-docs/queue-and-cancel.md"}
- {:name "gateway", :kind "doc", :resource "vis-docs/gateway.md"}
- {:name "reporting-bugs", :kind "doc", :resource "vis-docs/reporting-bugs.md"}
- {:name "extending", :kind "doc", :resource "vis-docs/extending.md"}
- {:name "human-input", :kind "doc", :resource "vis-docs/human-input.md"}
- {:name "live-views", :kind "doc", :resource "vis-docs/live-views.md"}
- {:name "provider-extensions", :kind "doc", :resource "vis-docs/provider-extensions.md"}
- {:name "clojure-extensions", :kind "doc", :resource "vis-docs/clojure-extensions.md"}]
+[{:kind "doc" :name "index" :resource "vis-docs/index.md"}
+ {:kind "doc" :name "token-optimization" :resource "vis-docs/token-optimization.md"}
+ {:kind "doc" :name "python-sandbox" :resource "vis-docs/python-sandbox.md"}
+ {:kind "doc" :name "jail" :resource "vis-docs/jail.md"}
+ {:kind "doc" :name "content-blocks" :resource "vis-docs/content-blocks.md"}
+ {:kind "doc" :name "jvm-native-image" :resource "vis-docs/jvm-native-image.md"}
+ {:kind "doc" :name "distributions" :resource "vis-docs/distributions.md"}
+ {:kind "doc" :name "configuration" :resource "vis-docs/configuration.md"}
+ {:kind "doc" :name "context-and-prompts" :resource "vis-docs/context-and-prompts.md"}
+ {:kind "doc" :name "exporting-sessions" :resource "vis-docs/exporting-sessions.md"}
+ {:kind "doc" :name "skills" :resource "vis-docs/skills.md"}
+ {:kind "doc" :name "queue-and-cancel" :resource "vis-docs/queue-and-cancel.md"}
+ {:kind "doc" :name "gateway" :resource "vis-docs/gateway.md"}
+ {:kind "doc" :name "reporting-bugs" :resource "vis-docs/reporting-bugs.md"}
+ {:kind "doc" :name "extending" :resource "vis-docs/extending.md"}
+ {:kind "doc" :name "human-input" :resource "vis-docs/human-input.md"}
+ {:kind "doc" :name "live-views" :resource "vis-docs/live-views.md"}
+ {:kind "doc" :name "provider-extensions" :resource "vis-docs/provider-extensions.md"}]

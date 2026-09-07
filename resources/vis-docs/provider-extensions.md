@@ -1,9 +1,9 @@
 # Provider extensions
 
-A Python extension can register an LLM provider that the router selects like
-any built-in one. This page is the reference for `vis.Provider`, its callbacks
-and the managed-provider mode. For adding a provider through configuration
-instead, see [Configuration](configuration.md#providers-and-models).
+A Python extension can register an LLM provider. The router selects it in the
+same way as built-in providers. This page describes `vis.Provider`, callbacks
+and managed providers. To add a provider without an extension, see
+[Configuration](configuration.md#providers-and-models).
 
 ## Declaring a provider
 
@@ -41,9 +41,9 @@ vis.register(vis.Extension(
 ```
 
 Add `example` through **Add provider** or the `providers` configuration, then
-select `example-model`. The preset supplies the endpoint, dialect and default
-model names; the callbacks supply the credential and status. `vis-agent
-providers status|limits|auth <id>` use the same registered provider.
+select `example-model`. The preset supplies the endpoint, API format and
+default model names; callbacks supply credentials and status. The commands
+`vis-agent providers status|limits|auth <id>` use the same registration.
 
 ## Records
 
@@ -55,11 +55,11 @@ providers status|limits|auth <id>` use the same registered provider.
 | `ProviderModel` | `name`, `context`, `is_tool_call`, `is_image_input`, JSON-only `extra` |
 | `ProviderLimits` | `limits` (list of `ProviderLimit`), `rpm`, `tpm`, `note`, `error` |
 
-`api_style` uses the vocabulary shared with configuration: `anthropic`,
-`openai`, `openai-responses`, `gemini` and their aliases. Precedence is
-configuration, then credential, then preset, so a credential can supply an
-endpoint discovered during authentication and a user override still wins.
-Header maps replace whole fields at each level.
+`api_style` accepts the same values as configuration: `anthropic`, `openai`,
+`openai-responses`, `gemini` and their aliases. Configuration overrides the
+credential, which overrides the preset. A credential can therefore supply an
+endpoint discovered during authentication while still allowing a user override.
+Header maps replace the entire field at each level.
 
 Token and header fields are excluded from a record's `repr`. Never log
 credentials or put them in status metadata. A missing credential is `None`,
@@ -79,10 +79,9 @@ not a record with an empty token.
 | `enrich_models_fn` | `(provider, router_opts) -> Sequence[ProviderModel] \| None` | extend the model list; `None` keeps defaults |
 | `on_selected_fn` | `(event) -> None` | notification after selection |
 
-All callbacks are optional and synchronous; an async function or a wrong
-signature fails at declaration. Passive callback errors are logged and yield no
-result, so one broken extension does not break the provider registry.
-Authentication errors reach the caller.
+Callbacks are optional and synchronous. Async functions and invalid signatures
+are rejected at declaration. Passive callback errors are logged and return no
+result; authentication errors are returned to the caller.
 
 Startup, status probes and limits polling run without a session. `vis.shell`
 and `vis.jailed_shell` work there; `vis.ask` and `vis.jailed_shell_session` do
@@ -106,9 +105,9 @@ def limits() -> vis.ProviderLimits:
 
 ## Managed providers
 
-A managed provider owns its whole lifecycle: it binds when the extension
-loads, defines its endpoint and models, and keeps credentials outside
-`state.yml`. Declare it with `is_managed=True`:
+A managed provider is registered when its extension loads. The extension
+defines its endpoint and models and stores credentials outside `state.yml`.
+Set `is_managed=True`:
 
 ```python
 vis.Provider(
@@ -150,5 +149,5 @@ while signed out to verify first-use login.
 ## See also
 
 - [Configuration](configuration.md) — providers declared in `vis.yml` and the router.
-- [Extending Vis](extending.md) — the extension that carries the provider.
-- [Distributions](distributions.md) — shipping a provider inside a custom build.
+- [Extending Vis](extending.md) — writing the provider's extension.
+- [Distributions](distributions.md) — including a provider in a custom build.
