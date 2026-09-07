@@ -176,3 +176,51 @@ Temporary browsers, Appium and test servers were stopped; only the simulator cre
   this check was shut down and removed. No deployment or live gateway restart was performed.
   The user authorized committing and pushing the scoped changes; unrelated shared-worktree
   work is excluded. The preceding shared-engine refactor was included by a concurrent commit.
+
+# Presentation secret containment
+
+Keep credentials out of Activity, input errors, and Live view records without changing tool data.
+
+## Context
+
+Confirmed runtime gaps are in `activity/event.clj`, `view/core.clj`, and `view/sink.clj`:
+labelled credentials in strings/errors, private key fields, callable envelopes, secret defaults,
+validator echoes, and Live text persisted unchanged. Shared pure text/key redaction belongs in
+`internal.util`; Live field selection belongs in `view.materializer`. Raw tool results, vault
+semantics, structural IDs, and unrelated loop work must remain unchanged. Reject global secret
+registries, blanket rewriting of source literals, and rewriting existing records.
+
+## Phases
+
+1. Reproduce the presentation gaps with synthetic fixtures.
+   - Rationale: prior green suites did not cover these boundaries.
+   - Data: Activity, input, and isolated Live lifecycle regression tests.
+   - Acceptance criteria: confirmed failures before production edits; no real secrets printed.
+   - Unknowns: additional validation and size-limit constraints exposed by the tests.
+2. Contain secrets at presentation boundaries.
+   - Rationale: preserve usable raw results while protecting rendered and persisted data.
+   - Data: shared redactor; Activity walker; input projection/errors; Live lifecycle and sink.
+   - Acceptance criteria: callbacks hidden, defaults refused, errors scrubbed, public text redacted;
+     IDs/order and normal data preserved; redaction idempotent and traversal bounded.
+   - Unknowns: unknown unlabelled/encoded secrets cannot be inferred from arbitrary text.
+3. Verify the affected contracts and report the deployment boundary.
+   - Rationale: formatting, reflection, and integration regressions matter beyond unit examples.
+   - Data: affected Lazytest suites, formatter, lint/reflection, scoped diff review.
+   - Acceptance criteria: affected checks pass; no unrelated changes included; no gateway restart,
+     credential rotation, release, or historical-record mutation.
+   - Unknowns: independent concurrent edits and local environment failures, if encountered.
+
+## Plan state
+
+Phases 1–3 complete locally.
+
+- Regression tests reproduced the Activity, secret-default, validation-error and Live lifecycle
+  failures before the fixes. Follow-up tests caught nested text, content-budget and stat-text gaps.
+- 300 Activity/View/util/contract tests and 120 Python extension/runtime/worker tests pass.
+  The Python boundary test verifies raw typed values remain unchanged while Activity is redacted.
+- Formatting is idempotent; clj-kondo and reflection/boxed-math lint report no findings across
+  the ten changed Clojure files. Scoped diff checks pass.
+- Live tests use isolated records and synthetic secrets. No live gateway restart, credential
+  rotation, release, deployment or historical-record rewrite was performed.
+- Unrelated loop and Companion OAuth work is excluded. Unknown unlabelled or encoded strings
+  remain outside pattern-based redaction; previously exposed credentials still require rotation.

@@ -23,7 +23,8 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.util :as util])
+            [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.view.materializer :as materializer])
   (:import (java.io File)
            (java.nio.file Files)))
 
@@ -116,7 +117,7 @@
   ^File [^File file line]
   (io/make-parents file)
   (with-open [writer (io/writer file :append true)]
-    (.write writer ^String (wire/json-str line))
+    (.write writer ^String (wire/json-str (materializer/redact-presentation line)))
     (.write writer "\n"))
   file)
 

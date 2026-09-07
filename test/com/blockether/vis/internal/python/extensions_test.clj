@@ -359,35 +359,30 @@ vis.register(vis.Extension(
 ))
 ")
 
-(defdescribe python-object-activity-test
-             (it "keeps typed runtime results intact while publishing only their public fields"
-                 (with-loaded {"object_namespace.py" object-namespace-py}
-                              (fn [_ _]
-                                (let [ext
-                                      (registered "glms")
+(defdescribe
+  python-object-activity-test
+  (it "keeps typed runtime values intact while redacting only Activity arguments and results"
+      (with-loaded {"object_namespace.py" object-namespace-py}
+                   (fn [_ _]
+                     (doseq [job ["job" "password=fixture-runtime-secret"]]
+                       (let [ext (registered "glms")
+                             entry (first (get-in ext [:ext/engine :ext.engine/symbols]))
+                             events (atom [])
+                             value (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                                     (extension/invoke-symbol-wrapper ext entry [job 4 0] {}))
+                             projection (-> @events
+                                            activity/replay
+                                            activity/presentation)]
 
-                                      entry
-                                      (first (get-in ext [:ext/engine :ext.engine/symbols]))
-
-                                      events
-                                      (atom [])
-
-                                      value
-                                      (binding [extension/*tool-event-sink* #(swap! events conj %)]
-                                        (extension/invoke-symbol-wrapper ext entry ["job" 4 0] {}))
-
-                                      projection
-                                      (-> @events
-                                          activity/replay
-                                          activity/presentation)]
-
-                                  (expect (= "BuildStatus" (get value "__vis_object__")))
-                                  (expect (= "job:4:0" (get-in value ["__vis_attrs__" "state"])))
-                                  (expect (= 2 (count @events)))
-                                  (expect (= (pr-str {"state" "job:4:0"})
-                                             (get-in projection [:rows 0 :result-summary])))
-                                  (expect (not (str/includes? (pr-str projection) "__vis_")))
-                                  (expect (activity-contract/valid-projection? projection)))))))
+                         (expect (= "BuildStatus" (get value "__vis_object__")))
+                         (expect (= (str job ":4:0") (get-in value ["__vis_attrs__" "state"])))
+                         (expect (= 2 (count @events)))
+                         (expect (= (pr-str {"state"
+                                             (if (= job "job") "job:4:0" "password=[REDACTED]")})
+                                    (get-in projection [:rows 0 :result-summary])))
+                         (expect (not (str/includes? (pr-str projection) "__vis_")))
+                         (expect (not (str/includes? (pr-str projection) "fixture-runtime-secret")))
+                         (expect (activity-contract/valid-projection? projection))))))))
 
 (defdescribe python-object-namespace-test
              ;; Regression, issue #166: object integrations had to flatten every method into a

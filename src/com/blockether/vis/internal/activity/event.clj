@@ -25,9 +25,11 @@
 
 (def ^:private max-summary-nodes 128)
 
-(def ^:private secret-key?
-  #(boolean (re-find #"(?i)(password|passwd|secret|token|authorization|cookie|otp|api[_-]?key)"
-                     (name %))))
+(defn- callback-envelope?
+  [value]
+  (and (map? value)
+       (= 1 (count value))
+       (or (string? (get value "__vis_callable__")) (string? (get value "__vis_callback__")))))
 
 (defn utf8-bytes ^long [x] (long (alength (.getBytes (str x) StandardCharsets/UTF_8))))
 
@@ -83,14 +85,15 @@
 (defn redact
   "Remove credential-bearing values recursively before summaries or sizes exist."
   [value]
-  (cond (map? value) (into (empty value)
+  (cond (callback-envelope? value) "[CALLBACK]"
+        (map? value) (into (empty value)
                            (map (fn [[k v]]
-                                  [k (if (secret-key? k) "[REDACTED]" (redact v))]))
+                                  [k (if (util/secret-key? k) "[REDACTED]" (redact v))]))
                            value)
         (vector? value) (mapv redact value)
         (set? value) (into #{} (map redact) value)
         (sequential? value) (mapv redact value)
-        (and (string? value) (str/starts-with? value "vis-secret:")) "[SECRET HANDLE]"
+        (string? value) (util/redact-secret-text value)
         :else value))
 
 (defn- bounded-redact-result
@@ -111,25 +114,27 @@
            (do (vreset! truncated? true) omitted)
            (do
              (vswap! remaining #(unchecked-dec (long %)))
-             (cond (map? x)
-                   (loop [entries
-                          (seq (if (and (string? (get x "__vis_object__"))
-                                        (map? (get x "__vis_attrs__")))
-                                 (get x "__vis_attrs__")
-                                 x))
+             (cond (callback-envelope? x) "[CALLBACK]"
+                   (map? x) (loop [entries
+                                   (seq (if (and (string? (get x "__vis_object__"))
+                                                 (map? (get x "__vis_attrs__")))
+                                          (get x "__vis_attrs__")
+                                          x))
 
-                          result
-                          (transient {})]
+                                   result
+                                   (transient {})]
 
-                     (cond (nil? entries) (persistent! result)
-                           (not (pos? (long @remaining))) (do (vreset! truncated? true)
-                                                              (persistent!
-                                                                (assoc! result omitted "omitted")))
-                           :else (let [[k v] (first entries)]
-                                   (recur (next entries)
-                                          (assoc! result
-                                                  k
-                                                  (if (secret-key? k) "[REDACTED]" (visit v)))))))
+                              (cond (nil? entries) (persistent! result)
+                                    (not (pos? (long @remaining)))
+                                    (do (vreset! truncated? true)
+                                        (persistent! (assoc! result omitted "omitted")))
+                                    :else (let [[k v] (first entries)]
+                                            (recur (next entries)
+                                                   (assoc! result
+                                                           k
+                                                           (if (util/secret-key? k)
+                                                             "[REDACTED]"
+                                                             (visit v)))))))
                    (or (vector? x) (set? x) (sequential? x))
                    (loop [items
                           (seq x)
@@ -141,8 +146,7 @@
                            (not (pos? (long @remaining))) (do (vreset! truncated? true)
                                                               (persistent! (conj! result omitted)))
                            :else (recur (next items) (conj! result (visit (first items))))))
-                   (and (string? x) (str/starts-with? x "vis-secret:")) "[SECRET HANDLE]"
-                   (string? x) (bounded-text x max-detail-bytes)
+                   (string? x) (bounded-text (util/redact-secret-text x) max-detail-bytes)
                    :else x))))]
       {:value (visit value) :is-truncated @truncated?})))
 
@@ -293,14 +297,16 @@
   (when-not (contract/valid-presentation? presentation)
     (throw (ex-info "Invalid or oversized Activity presentation"
                     {:type :activity/invalid-content})))
-  (checked (assoc (base-event ctx invocation operation presenter :content)
-             :presentation (redact presentation))))
+  (let [public (redact presentation)]
+    (when-not (contract/valid-presentation? public)
+      (throw (ex-info "Invalid or oversized Activity presentation"
+                      {:type :activity/invalid-content})))
+    (checked (assoc (base-event ctx invocation operation presenter :content)
+               :presentation public))))
 
 (defn- map-value [m k] (when (map? m) (or (get m k) (get m (name k)))))
 
-(def ^:private sensitive-diff-text?
-  #(boolean (re-find #"(?i)(password|passwd|secret|token|authorization|cookie|otp|api[_-]?key)"
-                     (str %))))
+(def ^:private sensitive-diff-text? util/secret-key?)
 
 (defn- diff-line
   [line]
@@ -496,10 +502,10 @@
         (assoc :symbol symbol)
 
         label
-        (assoc :label (bounded-text label max-summary-bytes))
+        (assoc :label (bounded-text (util/redact-secret-text label) max-summary-bytes))
 
         phrase
-        (assoc :phrase (bounded-text phrase max-summary-bytes))
+        (assoc :phrase (bounded-text (util/redact-secret-text phrase) max-summary-bytes))
 
         classification
         (assoc :classification classification)
@@ -508,7 +514,7 @@
         (assoc :group-token (bounded-text token max-summary-bytes))
 
         group-head
-        (assoc :group-head group-head)
+        (assoc :group-head (redact group-head))
 
         summary-format
         (assoc :summary-format summary-format)
@@ -545,9 +551,9 @@
         (if (= outcome :succeeded)
           (some-> (displayable-result result)
                   (bounded-summary max-detail-bytes))
-          (bounded-rendered (or (some-> error*
-                                        ex-message)
-                                (str error*))
+          (bounded-rendered (util/redact-secret-text (or (some-> error*
+                                                                 ex-message)
+                                                         (str error*)))
                             max-detail-bytes))
 
         diff-evidence

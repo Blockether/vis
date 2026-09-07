@@ -29,7 +29,27 @@
    is only how much a surface holds hot, and the model's own budget always says
    how many lines it left behind."
   (:require [clojure.string :as str]
-            [com.blockether.vis.contract.view :as spec]))
+            [com.blockether.vis.contract.view :as spec]
+            [com.blockether.vis.internal.util :as util]))
+
+(def ^:private presentation-text-keys
+  #{:title :label :description :placeholder :source :text :detail :summary :error :note
+    :model-result :target :value :value-text :branch :lines :cells})
+
+(defn redact-presentation
+  "Redact human text in normalized View data, never structural IDs, selections,
+   ordering or enums. Recurse through containers, propagating text context into
+   lines/cells but choosing it afresh for every map key. Pure and idempotent."
+  [value]
+  (letfn [(visit [value text?]
+            (cond (map? value) (into {}
+                                     (map (fn [[k v]]
+                                            [k (visit v (contains? presentation-text-keys k))]))
+                                     value)
+                  (vector? value) (mapv #(visit % text?) value)
+                  (and text? (string? value)) (util/redact-secret-text value)
+                  :else value))]
+    (visit value false)))
 
 ;; The materializer
 

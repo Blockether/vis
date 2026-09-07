@@ -540,6 +540,10 @@
             raw-default
             (pick field "default" :default)
 
+            _
+            (when (and (:is-secret spec) (some? raw-default))
+              (invalid-field! field-id "secret fields must not have a :default"))
+
             [status default]
             (coerce-value (assoc spec :is-required false) raw-default)]
 
@@ -1493,14 +1497,38 @@
    the extension's own validator FUNCTIONS. So it runs ONCE, when the human
    confirms the form, never on a keystroke; only a real submission goes through
    [[coerce-values]]."
-  [fields values]
+  [fields raw-values]
   (let [fields
         (input-fields fields)
 
-        {:keys [values errors]}
-        (check-all fields (coerce-all fields values))]
+        coerced
+        (coerce-all fields raw-values)
 
-    (if (seq errors) {:is-accepted false :errors errors} {:is-accepted true :values values})))
+        {:keys [values errors]}
+        (check-all fields coerced)
+
+        ;; Only multiselect coercion echoes submitted values. The other built-in
+        ;; messages describe the spec: a one-letter password must not erase that
+        ;; letter from "must be one of ...". Custom validator errors are untrusted.
+        static-errors
+        (into #{}
+              (keep (fn [{:keys [id type]}]
+                      (when (and (contains? (:errors coerced) id) (not= :multiselect type)) id)))
+              fields)
+
+        secrets
+        (mapcat (fn [{:keys [id]}]
+                  [(get raw-values id) (get raw-values (keyword id)) (get values id)])
+                (filter :is-secret fields))]
+
+    (if (seq errors)
+      {:is-accepted false
+       :errors
+       (into {}
+             (map (fn [[id message]]
+                    [id (util/redact-secret-text message (when-not (static-errors id) secrets))]))
+             errors)}
+      {:is-accepted true :values values})))
 
 (defn coerce-values
   "[[validate-values]] for a SUBMISSION: identical answer, except that accepted
@@ -1533,7 +1561,11 @@
   [request]
   (-> request
       (dissoc :promise :channel-ids :kind)
-      (assoc :fields (map-fields #(dissoc % :is-secret :validate) (:fields request)))))
+      (assoc :fields (map-fields (fn [field]
+                                   (cond-> (dissoc field :is-secret :validate)
+                                     (contains? view-spec/secret-types (:type field))
+                                     (dissoc :default)))
+                                 (:fields request)))))
 
 (def ^:private request-stamps
   "The engine's own request stamps, wire spelling -> normalized key."
@@ -1729,7 +1761,11 @@
    at once because a form nobody can see is a thread parked forever."
   [view]
   (let [view
-        (materializer/materialize (normalize-live-view view))
+        (-> view
+            normalize-live-view
+            materializer/redact-presentation
+            checked-live-view
+            materializer/materialize)
 
         view-id
         (:id view)
@@ -1790,7 +1826,9 @@
 
     (locking cell
       (let [applied
-            (normalize-patch @cell patch)
+            (-> (normalize-patch @cell patch)
+                materializer/redact-presentation
+                checked-live-patch)
 
             patched
             (materializer/apply-patch @cell applied)]
@@ -1815,7 +1853,8 @@
    `view-spec/note-chars`. A stop is never refused for the length of its note —
    what the person managed to type before pressing stop always reaches the model."
   [note]
-  (when-let [text (trimmed note)]
+  (when-let [text (some-> (trimmed note)
+                          util/redact-secret-text)]
     (subs text 0 (min (count text) (long view-spec/note-chars)))))
 
 (defn- live-result
@@ -1860,9 +1899,12 @@
           (seq (:elided picture))
           (assoc :elided (:elided picture)))]
 
-    (if-let [why (view-spec/live-result-error result)]
-      (fail! why)
-      result)))
+    (when-let [why (view-spec/live-result-error result)]
+      (fail! why))
+    (let [public (materializer/redact-presentation result)]
+      (if-let [why (view-spec/live-result-error public)]
+        (fail! why)
+        public))))
 
 (defn- live-attachment
   "The settled view as ONE row of `db-store-iteration!`'s `:attachments` — the only
@@ -1994,7 +2036,10 @@
                                    "each selection snapshot needs node_id, selected_ids and view"))
                                (when-let [why (view-spec/live-view-error snapshot-view)]
                                  (invalid-live-view! (str "invalid selection snapshot: " why)))
-                               {:node-id node-id :selected-ids selected-ids :view snapshot-view}))
+                               {:node-id node-id
+                                :selected-ids selected-ids
+                                :view (checked-live-view (materializer/redact-presentation
+                                                           snapshot-view))}))
                            (or (pick* ending :selection-snapshots) []))
                _ (when (> (count snapshots) 500)
                    (invalid-live-view! "an artifact holds at most 500 selection snapshots"))
@@ -2013,7 +2058,8 @@
                                     invalid-live-view!)
                compact-result (when (or (contains? ending :model-result)
                                         (contains? ending "model_result"))
-                                (or (trimmed (pick* ending :model-result))
+                                (or (some-> (trimmed (pick* ending :model-result))
+                                            util/redact-secret-text)
                                     (invalid-live-view! "model_result must be a non-blank string")))
                ;; Built BEFORE the registry drops the view, so a refusal leaves the
                ;; view open and nameable rather than stranding whoever is holding it;

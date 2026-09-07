@@ -4,6 +4,45 @@
             [com.blockether.vis.contract.view :as hs]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defdescribe
+  presentation-redaction-test
+  (it
+    "redacts all human text while keeping keys, IDs, enums and ordering stable"
+    (let [id
+          "password=stable-identity"
+
+          raw
+          {:id id
+           :session-id id
+           :seq 7
+           :nodes [{:id id
+                    :type :table
+                    :selected-ids [id]
+                    :order :keyed
+                    :columns [{:id id :label "password=fixture-column"}]
+                    :rows [{:id id
+                            :branch "token=fixture-branch"
+                            :cells ["private_key=fixture-cell" "unchanged"]}]}
+                   {:id "stats"
+                    :type :stat
+                    :stats [{:id id :label "Result" :value-text "secret=fixture-stat"}]}]}
+
+          public
+          (live/redact-presentation raw)]
+
+      (expect (= id (:id public)))
+      (expect (= id (:session-id public)))
+      (expect (= 7 (:seq public)))
+      (expect (= id (get-in public [:nodes 0 :id])))
+      (expect (= id (get-in public [:nodes 0 :columns 0 :id])))
+      (expect (= [id] (get-in public [:nodes 0 :selected-ids])))
+      (expect (= :keyed (get-in public [:nodes 0 :order])))
+      (expect (= "unchanged" (get-in public [:nodes 0 :rows 0 :cells 1])))
+      (doseq [secret ["fixture-column" "fixture-branch" "fixture-cell" "fixture-stat"]]
+        (expect (not (str/includes? (pr-str public) secret))))
+      (expect (= "secret=fixture-stat" (get-in raw [:nodes 1 :stats 0 :value-text])))
+      (expect (= public (live/redact-presentation public))))))
+
 (defn- view
   "A materialized view carrying `nodes`; everything else is what the engine
    stamps on one."

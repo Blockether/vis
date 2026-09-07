@@ -4,6 +4,42 @@
             [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defdescribe
+  secret-redaction-test
+  (it "recognizes credential keys without assuming every key is named"
+      (doseq [key [:password "DATABASE_PASSWORD" :private_key 'passphrase :credentials :access-key
+                   :apiKey]]
+        (expect (util/secret-key? key)))
+      (doseq [key [nil 3 :status "count"]]
+        (expect (not (util/secret-key? key)))))
+  (it "redacts labelled shell, JSON, EDN, headers and URLs idempotently"
+      (doseq [text
+              ["password=fixture-value" "DATABASE_PASSWORD=fixture-value"
+               "run --password fixture-value --verbose" "run --api-key='fixture-value with spaces'"
+               "{\"private_key\":\"fixture-value\",\"status\":\"ok\"}"
+               "{\"message\":\"password=fixture-value\"}"
+               "run --password 'fixture-value with missing quote"
+               "password=\"fixture-value with missing quote"
+               "{:passphrase \"fixture-value\" :count 3}" "Authorization: Bearer fixture-value"
+               "Authorization: Basic fixture-value" "Cookie: session=fixture-value; mode=private"
+               "https://user:fixture-value@gateway.example.com/path"
+               "-----BEGIN PRIVATE KEY-----\nfixture-value\n-----END PRIVATE KEY-----"
+               "-----BEGIN RSA PRIVATE KEY-----\nfixture-value"]]
+        (let [public (util/redact-secret-text text)]
+          (expect (not (str/includes? public "fixture-value")))
+          (expect (str/includes? public "[REDACTED]"))
+          (expect (= public (util/redact-secret-text public))))))
+  (it "hides embedded handles and replaces only explicitly known unlabelled values"
+      (expect (= "Use [SECRET HANDLE] now"
+                 (util/redact-secret-text "Use vis-secret:fixture-handle now")))
+      (expect (= "Rejected [REDACTED] / [REDACTED]"
+                 (util/redact-secret-text "Rejected a.b / a" ["a" "a.b"])))
+      (expect (= "[REDACTED]" (util/redact-secret-text "[REDACTED]" ["RED" "["]))))
+  (it "preserves ordinary output and source marker literals"
+      (doseq [text ["18 tests passed" "token budget is 42" "password is required"
+                    "return {'__vis_object__': 'Example'}" "{:status :ok :count 3}"]]
+        (expect (= text (util/redact-secret-text text))))))
+
 (defdescribe truncate-test
              (it "head-clips to at most n chars, with no ellipsis"
                  (expect (= "abc" (util/truncate "abcdef" 3)))

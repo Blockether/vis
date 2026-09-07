@@ -62,6 +62,69 @@
        :detach! #(ce/remove-channel-event-listener! chan ::collector)})))
 
 (defdescribe
+  input-secret-presentation-test
+  (it "refuses password and OTP defaults without echoing their value"
+      (doseq [kind
+              ["password" "otp"]
+
+              value
+              ["fixture-default-secret" "123456" ""]]
+
+        (let [error (try (normalized-fields {:id "credential" :type kind :default value})
+                         nil
+                         (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+          (expect (some? error))
+          (expect (not (str/includes? (or error "") "fixture-default-secret")))
+          (expect (not (str/includes? (or error "") "123456"))))))
+  (it "omits secret defaults from nested public projections even for constructed requests"
+      (let [request
+            {:fields
+             [{:id "group"
+               :type :group
+               :direction :column
+               :fields
+               [{:id "pw" :type :password :is-secret true :default "fixture-projection-secret"}
+                {:id "code" :type :otp :is-secret true :default "123456"}
+                {:id "name" :type :text :default "Ada"}]}]}
+
+            fields
+            (get-in (hi/request->view request) [:fields 0 :fields])]
+
+        (expect (not (contains? (first fields) :default)))
+        (expect (not (contains? (second fields) :default)))
+        (expect (= "Ada" (:default (nth fields 2))))))
+  (it "scrubs raw and coerced form secrets from every validator error"
+      (let [raw
+            "  fixture-submitted-secret  "
+
+            fields
+            (normalized-fields {:id "pw"
+                                :type "password"
+                                :validate (fn [value]
+                                            (throw (ex-info (str "Rejected " value) {})))}
+                               {:id "code" :type "otp"}
+                               {:id "name"
+                                :validate (fn [_ values]
+                                            (str "Try again " raw
+                                                 " / " (get values "pw")
+                                                 " / 123 456 / " (get values "code")))}
+                               {:id "choices" :type "multiselect" :options ["safe"]})
+
+            result
+            (hi/validate-values
+              fields
+              {:pw raw :code "123 456" :name "Ada" :choices ["fixture-submitted-secret"]})
+
+            public
+            (pr-str (:errors result))]
+
+        (expect (false? (:is-accepted result)))
+        (expect (= #{"pw" "name" "choices"} (set (keys (:errors result)))))
+        (doseq [secret ["fixture-submitted-secret" "123 456" "123456"]]
+          (expect (not (str/includes? public secret))))
+        (expect (str/includes? public "[REDACTED]")))))
+
+(defdescribe
   normalize-field-test
   (it "fills the documented defaults"
       (let [[field] (normalized-fields {:id "name"})]
@@ -854,8 +917,8 @@
       (expect (throws? clojure.lang.ExceptionInfo #(otp-field "max_length" 99)))
       (expect (throws? clojure.lang.ExceptionInfo #(otp-field "min_length" 8 "max_length" 4)))
       (expect (throws? clojure.lang.ExceptionInfo #(otp-field "max_length" "six"))))
-  (it "validates its own :default like any other answer"
-      (expect (= "123456" (:default (otp-field "default" "123 456"))))
+  (it "refuses secret defaults even when they have the right number of digits"
+      (expect (throws? clojure.lang.ExceptionInfo #(otp-field "default" "123 456")))
       (expect (throws? clojure.lang.ExceptionInfo #(otp-field "default" "12")))))
 
 (defn- sign-in-request
@@ -1636,6 +1699,86 @@
   "The one-line reason `f` was refused, or nil when it was accepted."
   [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))
+
+(defdescribe
+  live-secret-presentation-test
+  (it
+    "redacts open, patch, close and snapshot text before publishing or persistence"
+    (recorded
+      (fn []
+        (let [chan
+              (fresh-channel)
+
+              events
+              (atom [])
+
+              spec
+              (assoc (live-spec {:id "tail" :type "log" :lines ["password=fixture-open-secret"]})
+                :channel-ids [chan]
+                :title "token=fixture-title-secret")]
+
+          (ce/add-channel-event-listener! chan ::secret-collector #(swap! events conj %))
+          (try
+            (let [view
+                  (hi/open-live! spec)
+
+                  view-id
+                  (:id view)]
+
+              (try
+                (let [patched
+                      (hi/patch-live! view-id
+                                      [{:op "append"
+                                        :node-id "tail"
+                                        :lines ["Authorization: Bearer fixture-patch-secret"]}])
+
+                      snapshot
+                      {:node-id "tail"
+                       :selected-ids ["first"]
+                       :view (assoc view :description "private_key=fixture-snapshot-secret")}
+
+                      result
+                      (hi/close-live! view-id
+                                      {:summary "password=fixture-close-secret"
+                                       :reason :interrupted
+                                       :selection-snapshots [snapshot]}
+                                      {:note "secret=fixture-note-secret"})
+
+                      file
+                      (live-sink/view-file (:session-id spec) view-id)
+
+                      lines
+                      (live-sink/read-range file 0 10)]
+
+                  (doseq [public [(pr-str view) (pr-str patched) (pr-str result) (pr-str @events)
+                                  (slurp file) (live/->markdown (:view result) {:result result})]]
+                    (doseq [secret ["fixture-open-secret" "fixture-title-secret"
+                                    "fixture-patch-secret" "fixture-snapshot-secret"
+                                    "fixture-close-secret" "fixture-note-secret"]]
+                      (expect (not (str/includes? public secret)))))
+                  (expect (= ["open" "patch" "close"] (mapv :kind lines)))
+                  (expect (= [:view/open :view/patch :view/close] (mapv :op @events)))
+                  (expect (= "tail" (get-in patched [:nodes 0 :id])))
+                  (expect (= 1 (:seq patched)))
+                  (expect (= view-id (:view-id result)))
+                  (expect (str/includes? (slurp file) "[REDACTED]")))
+                (finally (hi/close-live! view-id))))
+            (finally (ce/remove-channel-event-listener! chan ::secret-collector)))))))
+  (it "redacts the compact model result as well as direct sink callers"
+      (recorded (fn []
+                  (let [spec
+                        (live-spec {:id "now" :type "status" :text "Ready"})
+
+                        view
+                        (hi/open-live! spec)]
+
+                    (try (let [result (hi/close-live! (:id view)
+                                                      {:model-result "token=fixture-model-secret"})]
+                           (expect (= "token=[REDACTED]" result)))
+                         (finally (hi/close-live! (:id view))))
+                    (live-sink/open! (assoc view :title "password=fixture-direct-secret"))
+                    (let [public (slurp (live-sink/view-file (:session-id spec) (:id view)))]
+                      (expect (not (str/includes? public "fixture-direct-secret")))))))))
 
 (defdescribe
   live-lifecycle-test

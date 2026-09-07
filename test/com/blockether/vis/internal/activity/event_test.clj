@@ -5,6 +5,118 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
+  custom-presentation-redaction-test
+  (it "redacts custom headlines, summaries, code and table content"
+      (let [ctx
+            (event/context)
+
+            public
+            (event/content-event
+              ctx
+              (event/invocation ctx nil)
+              {:operation :sample :presenter :generic}
+              {:headline "password=fixture-headline"
+               :summary "token=fixture-summary"
+               :content [{:type :code :text "api_key=fixture-code" :language "python"}
+                         {:type :table :columns ["Value"] :rows [["secret=fixture-cell"]]}]})]
+
+        (doseq [secret ["fixture-headline" "fixture-summary" "fixture-code" "fixture-cell"]]
+          (expect (not (string/includes? (pr-str public) secret))))
+        (expect (nil? (event/event-error public)))))
+  (it "never publishes a presentation whose redaction exceeds the content budget"
+      (let [ctx
+            (event/context)
+
+            presentation
+            {:headline (str (apply str (repeat 502 "x")) " token=a") :summary "" :content []}
+
+            refusal
+            (try (event/content-event ctx
+                                      (event/invocation ctx nil)
+                                      {:operation :sample :presenter :generic}
+                                      presentation)
+                 nil
+                 (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
+
+        (expect (= :activity/invalid-content refusal)))))
+
+(defdescribe
+  presentation-secret-regression-test
+  (it
+    "redacts labelled credentials and embedded handles on every Activity text surface"
+    (let [ctx
+          (event/context)
+
+          invocation
+          (event/invocation ctx nil)
+
+          text
+          "password=fixture-password token=fixture-token handle vis-secret:fixture-handle"
+
+          details
+          {:operation :shell
+           :presenter :generic
+           :args [text]
+           :label text
+           :phrase text
+           :group-head text}
+
+          start
+          (event/start-event ctx invocation details)
+
+          terminal
+          (event/terminal-event ctx
+                                invocation
+                                (assoc details
+                                  :started-at-ms 0
+                                  :outcome :succeeded
+                                  :result text))
+
+          failed
+          (event/terminal-event ctx
+                                invocation
+                                (assoc details
+                                  :started-at-ms 0
+                                  :outcome :failed
+                                  :error (ex-info text {})))]
+
+      (doseq [public [start terminal failed]]
+        (let [rendered (pr-str public)]
+          (expect (not (string/includes? rendered "fixture-password")))
+          (expect (not (string/includes? rendered "fixture-token")))
+          (expect (not (string/includes? rendered "fixture-handle")))
+          (expect (string/includes? rendered "[REDACTED]"))))))
+  (it "hides private key fields and callable transport references without changing raw data"
+      (let [ctx
+            (event/context)
+
+            raw
+            {"private_key" "fixture-private-key"
+             "passphrase" "fixture-passphrase"
+             "callback" {"__vis_callable__" "fixture-callable-reference"}
+             "nested" [{"__vis_callback__" "fixture-callback-reference"}]
+             "count" 3}
+
+            terminal
+            (event/terminal-event ctx
+                                  (event/invocation ctx nil)
+                                  {:operation :sample
+                                   :presenter :generic
+                                   :started-at-ms 0
+                                   :outcome :succeeded
+                                   :result raw})
+
+            public
+            (:result-summary terminal)]
+
+        (doseq [secret ["fixture-private-key" "fixture-passphrase" "fixture-callable-reference"
+                        "fixture-callback-reference" "__vis_"]]
+          (expect (not (string/includes? public secret))))
+        (expect (string/includes? public "3"))
+        (expect (= "fixture-private-key" (get raw "private_key")))
+        (expect (= "fixture-callable-reference" (get-in raw ["callback" "__vis_callable__"]))))))
+
+(defdescribe
   python-transport-presentation-test
   (it
     "shows public fields, not Python object envelopes, in arguments and outcomes"

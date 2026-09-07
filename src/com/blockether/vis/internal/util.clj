@@ -17,6 +17,80 @@
   (:import (java.nio.charset StandardCharsets)
            (java.security MessageDigest)))
 
+(def ^:private secret-key-pattern
+  #"(?i)(?:password|passwd|passphrase|secret|token|authorization|cookie|otp|(?:api|private|access)[_-]?key|credentials?)")
+
+(def ^:private secret-value-pattern
+  #"(\[REDACTED\]|\[SECRET HANDLE\]|\"(?:[^\"\\]++|\\.)*+(?:\"|\z)|'(?:[^'\\]++|\\.)*+(?:'|\z)|[^\s,;}\])\"']+)")
+
+(def ^:private secret-assignment-pattern
+  (re-pattern (str "(?i)(?<![\\w.-])(?=[\\w.-]*"
+                   secret-key-pattern
+                   ")"
+                   "([\\w.-]++)([\"']?[ \\t]*[:=][ \\t]*)"
+                   secret-value-pattern)))
+
+(def ^:private secret-argument-pattern
+  (re-pattern (str "(?i)(?<![\\w.-])((?:--|:)(?=[\\w.-]*"
+                   secret-key-pattern
+                   ")[\\w.-]++)"
+                   "([ \\t]+)"
+                   secret-value-pattern)))
+
+(defn secret-key?
+  "Whether a named data key denotes credentials. Non-name keys are not secrets."
+  [key]
+  (boolean (and (or (string? key) (keyword? key) (symbol? key))
+                (re-find secret-key-pattern (name key)))))
+
+(defn- redact-assignment
+  [[match key separator value]]
+  (if (secret-key? key)
+    (str key
+         separator
+         (if (contains? #{\" \'} (first value))
+           (str (first value) "[REDACTED]" (first value))
+           "[REDACTED]"))
+    match))
+
+(defn redact-secret-text
+  "Redact labelled credentials, credential headers/URLs, private PEM keys and
+   embedded vault handles in PRESENTATION text. This is not a detector for
+   arbitrary unlabelled or encoded secrets. Raw tool values must not pass here.
+
+   Optional `known-secrets` are literal values local to one form validation, not
+   a registry. Replace them in one pass, longest first, preserving redaction
+   markers so repeated presentation/sink passes are idempotent."
+  ([text] (redact-secret-text text nil))
+  ([text known-secrets]
+   (let [secrets
+         (->> known-secrets
+              (filter #(and (string? %) (seq %)))
+              distinct
+              (sort-by count >))
+
+         text
+         (if (seq secrets)
+           (str/replace text
+                        (re-pattern
+                          (str "\\[REDACTED\\]|\\[SECRET HANDLE\\]|"
+                               (str/join "|" (map #(java.util.regex.Pattern/quote %) secrets))))
+                        #(if (contains? #{"[REDACTED]" "[SECRET HANDLE]"} %) % "[REDACTED]"))
+           text)]
+
+     (->
+       text
+       (str/replace #"vis-secret:[A-Za-z0-9._-]+" "[SECRET HANDLE]")
+       (str/replace
+         #"(?s)-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----.*?(?:-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----|\z)"
+         "[REDACTED]")
+       (str/replace #"(?i)(?<![\w+.-])([a-z][a-z0-9+.-]*://)[^\s/@]+:[^\s/@]+@" "$1[REDACTED]@")
+       (str/replace #"(?im)((?:proxy-)?authorization|(?:set-)?cookie)([ \t]*:[ \t]*)([^\r\n]*+)"
+                    (fn [[_ key separator _]]
+                      (str key separator "[REDACTED]")))
+       (str/replace secret-assignment-pattern redact-assignment)
+       (str/replace secret-argument-pattern redact-assignment)))))
+
 (defn now-ms
   "Milliseconds since the epoch — the engine's one wall clock."
   ^long []
