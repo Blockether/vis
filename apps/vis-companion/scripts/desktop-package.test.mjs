@@ -100,6 +100,13 @@ describe('desktop release platforms', () => {
     expect(workflow).toContain('name: vis-companion-desktop-${{ matrix.asset }}');
   });
 
+  it('installs xdg-open explicitly for Linux AppImage bundling', () => {
+    // The ARM64 hosted runner lacks the xdg-utils package present on x64.
+    const dependencies = workflow.split('name: Install Linux WebKit build dependencies')[1].split('      - name:')[0];
+    expect(dependencies).toContain("if: runner.os == 'Linux'");
+    expect(dependencies).toMatch(/\bxdg-utils\b/);
+  });
+
   it('checks out the project before any shell step uses its working directory', () => {
     const checkout = workflow.indexOf('uses: actions/checkout@');
     const firstRun = workflow.indexOf('\n        run:');
