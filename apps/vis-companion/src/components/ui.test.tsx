@@ -2459,7 +2459,7 @@ describe("the transcript's card header band", () => {
   it("is worn by every card header and re-spelled by none", () => {
     expect(
       (chatSource.match(/\$\{CARD_BAND\}|className={CARD_BAND}/g) ?? []).length,
-    ).toBe(3);
+    ).toBe(2); // Python source has a compact code line, not a card header.
     expect(chatSource).not.toContain('className="flex min-h-6');
   });
 });

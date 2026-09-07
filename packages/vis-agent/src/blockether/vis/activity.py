@@ -10,7 +10,7 @@ from typing import Any
 
 from blockether.vis_contract import ACTIVITY, validate
 
-from ._wire import to_wire
+from ._wire import freeze, to_wire
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +57,7 @@ class ActivityRow:
     result_format: str | None = None
     is_truncated: bool | None = None
     children: tuple[ActivityRow, ...] | None = None
+    content: tuple[Mapping[str, Any], ...] | None = None
 
     @classmethod
     def _from_validated(cls, value):
@@ -88,7 +89,7 @@ class ActivityRow:
         )
         return cls(
             **{
-                **value,
+                **freeze(value),
                 "resources": tuple(ActivityResource(**r) for r in value["resources"]),
                 "evidence": evidence,
                 **children,
@@ -126,6 +127,24 @@ class ActivityProjection:
 
         def visit(rows):
             for row in rows:
+                content = row.get("content", [])
+                if (
+                    len(
+                        json.dumps(
+                            content, ensure_ascii=False, separators=(",", ":")
+                        ).encode()
+                    )
+                    > 32768
+                ):
+                    raise ValueError("activity content exceeds byte bound")
+                for block in content:
+                    if block["type"] == "progress" and "value" in block:
+                        if not (0 <= block["value"] <= block["total"]):
+                            raise ValueError("invalid activity progress")
+                    if block["type"] == "table" and any(
+                        len(cells) != len(block["columns"]) for cells in block["rows"]
+                    ):
+                        raise ValueError("invalid activity table width")
                 ids.append(row["id"])
                 visit(row.get("children", []))
 

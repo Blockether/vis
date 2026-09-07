@@ -35,19 +35,70 @@
    :ext.foundation.editing/ls-on-file "file"
    :ext.foundation.editing/invalid-ls-args "args"})
 
+(defn- listing-content
+  "A bounded view of the returned listing; the full tree remains the Python value."
+  [listings]
+  (let [shown (take 4 listings)]
+    (into
+      []
+      (concat
+        (mapcat (fn [{:strs [path entries]}]
+                  (let [all (rest (tree-seq #(seq (get % "children"))
+                                            #(get % "children")
+                                            {"children" entries}))
+                        rows (take 12 all)
+                        dirs (count (filter #(= "dir" (get % "type")) entries))]
+
+                    [{"type" "heading" "text" (subs path 0 (min 128 (count path)))}
+                     {"type" "text"
+                      "text" (str dirs
+                                  " directories · " (- (count entries) dirs)
+                                  " files" (when (> (count all) 12)
+                                             (str " · showing 12 of " (count all) " entries")))}
+                     {"type" "table"
+                      "columns" ["Name" "Kind" "Bytes"]
+                      "rows" (mapv (fn [entry]
+                                     (let [entry-path (str (get entry "path" (get entry "name")))
+                                           name (if (.startsWith ^String entry-path (str path "/"))
+                                                  (subs entry-path (inc (count path)))
+                                                  entry-path)
+                                           dir? (= "dir" (get entry "type"))]
+
+                                       [(str (subs name 0 (min 64 (count name)))
+                                             (when (> (count name) 64) "…")
+                                             (when dir? "/")) (if dir? "Directory" "File")
+                                        (if dir? "—" (str (get entry "size" 0)))]))
+                                   rows)}]))
+                shown)
+        (when (> (count listings) 4)
+          [{"type" "text"
+            "text" (str (- (count listings) 4) " more directories in the returned tree")}])))))
+
+(def ^:private listing-symbol
+  {:ext.symbol/symbol 'ls
+   :ext.symbol/tag :observation
+   :ext.symbol/presenter :observation
+   :ext.symbol/inject-env? true
+   :ext.symbol/fn (fn [env args]
+                    (extension/publish-activity! [{"type" "progress"
+                                                   "label" "Listing directories"}])
+                    (let [rows (editing/list-directories env args)]
+                      (extension/publish-activity! (listing-content rows))
+                      (extension/success {:result rows})))})
+
 (defn- ls-bridge-bindings
-  "Host callable the `ls` shim delegates to. `__vis_list_directories__` takes the
-   JSON request (`{\"paths\": [...], \"depth\": n, \"is_hidden\": b}`) and answers
-   `[true json-rows nil]`, or `[false message kind]` when the listing was refused,
-   the path is missing, the path is a file, or the request is malformed."
+  "Observe the host listing as one symbol invocation, retaining the shim's error envelope."
   []
-  {"__vis_list_directories__"
-   (fn list-directories [args-json]
-     (try [true
-           (json/write-json-str (editing/list-directories extension/*current-environment*
-                                                          (json/read-json (str args-json)))) nil]
-          (catch Throwable t
-            [false (str (or (ex-message t) t)) (get error-kinds (:type (ex-data t)))])))})
+  {"__vis_list_directories__" (fn list-directories [args-json]
+                                (try [true
+                                      (json/write-json-str (extension/invoke-symbol-wrapper
+                                                             {:ext/name "foundation-shim-ls"}
+                                                             listing-symbol
+                                                             [(json/read-json (str args-json))]
+                                                             extension/*current-environment*)) nil]
+                                     (catch Throwable t
+                                       [false (str (or (ex-message t) t))
+                                        (get error-kinds (:type (ex-data t)))])))})
 
 (def vis-extension
   (vis/extension

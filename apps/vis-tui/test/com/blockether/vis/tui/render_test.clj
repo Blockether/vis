@@ -177,7 +177,7 @@
       (expect (not (str/includes? txt "java.util.concurrent.ExecutionException")))
       (expect (not (str/includes? txt "{:type :clj/bad-args")))))
   (it
-    "keeps a failed program with only two surplus source lines inline in full"
+    "keeps the failed program compact while its error remains readable"
     (let [code
           (str "first = 1\n"
                "second = 2\n" "third = 3\n"
@@ -208,8 +208,8 @@
 
       (expect (not (str/includes? txt "PYTHON +")))
       (expect (str/includes? txt "first = 1"))
-      (expect (str/includes? txt "x = 1/0"))
-      (expect (= 1 (count (re-seq #"PYCODEMARKER" txt))))
+      (expect (not (str/includes? txt "x = 1/0")))
+      (expect (not (str/includes? txt "PYCODEMARKER")))
       (expect (not (str/includes? txt "RUNTIME_EXCERPT_ONLY")))
       (expect (= 1 (count (re-seq #"ZeroDivisionError" txt))))))
   (it "defaults a long failed program collapsed without hiding its source preview or error"
@@ -235,7 +235,7 @@
                               :detail-expansions {:vis.channel-tui/expand-execution-details?
                                                   true}})))]
 
-        (expect (str/includes? txt "PYTHON +"))
+        (expect (str/includes? txt "▸ first = 1"))
         (expect (str/includes? txt "first = 1"))
         (expect (not (str/includes? txt "sixth = 6")))
         (expect (not (str/includes? txt "x = 1 / 0")))
@@ -321,7 +321,7 @@
               (str/trimr (strip-sentinels (strip-ansi (body-of (:line entry))))))
 
             band
-            (first (filter #(str/includes? (body-of (:line %)) "PYTHON") entries))
+            (first (filter #(str/includes? (body-of (:line %)) "RESULT") entries))
 
             head
             (first (filter #(str/includes? (body-of (:line %)) "RESULT") entries))]
@@ -332,7 +332,7 @@
         ;; disappears with the fold.
         (expect (= :toggle-details (:kind (:meta band))))
         (expect (some? head) (str "got: " (mapv :line entries)))
-        (expect (not (str/includes? (body-text head) "2.3s")))))
+        (expect (= 1 (count (filter #(str/includes? (body-text %) "2.3s") entries))))))
   (it "paints nothing when the duration is zero or absent"
       (let [zero
             (render-forms [(assoc (result-form "grep" "12 results") :duration-ms 0)])
@@ -368,7 +368,7 @@
               (str/trimr (strip-sentinels (strip-ansi (body-of (:line entry))))))
 
             band
-            (first (filter #(str/includes? (body-of (:line %)) "PYTHON") entries))
+            (first (filter #(str/includes? (body-of (:line %)) "RESULT") entries))
 
             head
             (first (filter #(str/includes? (body-of (:line %)) "RESULT") entries))]
@@ -376,7 +376,7 @@
         (expect (some? band) (str "got: " (mapv :line entries)))
         (expect (str/ends-with? (body-text band) "1m 1s"))
         (expect (some? head) (str "got: " (mapv :line entries)))
-        (expect (not (str/includes? (body-text head) "1m 1s")))))
+        (expect (= 1 (count (filter #(str/includes? (body-text %) "1m 1s") entries))))))
   ;; The three shapes the companion bands and the TUI did not: `toolCards`
   ;; returns `[form]` for EVERY non-silent form, so a bare value, a call that
   ;; returned nothing and a FAILED call all wear the figure in the app while the
@@ -599,7 +599,7 @@
         ;; comes back on its own flush-painted row.
         (expect (not-any? #(str/includes? % "✓") lines))
         (expect (= 1 (count (filter #(str/includes? % "1ms") lines))))
-        (expect (= 2 (count (filter #(= p/MARKER_CODE_PAD (marker-of %)) lines))))
+        (expect (not-any? #(= p/MARKER_CODE_PAD (marker-of %)) lines))
         (expect (not-any? #(str/includes? (or % "") "3") bodies)))))
   (it "pads displayed form comments by one column"
       (with-raw-code-on
@@ -1187,7 +1187,8 @@
             (strip-sentinels (strip-ansi (str/join "\n" (:lines payload))))]
 
         (expect (not (str/includes? body "ACTIVITY")))
-        (expect (str/includes? body "▸ SHELL · GREP"))))
+        (expect (str/includes? body "Running npm test"))
+        (expect (str/includes? body "Searched 18 matches"))))
   (it
     "uses the same trace renderer for live progress and cancelled bubbles"
     (let [;; Tool output paints purely as the program's stdout — both live
@@ -1434,8 +1435,8 @@
                                          {:now-ms 1000
                                           :turn-start-ms 0
                                           :session-id "session"
-                                          :detail-expansions
-                                          {:vis.channel-tui/expand-execution-details? true}})
+                                          :detail-expansions {:vis.channel-tui/expand-all-details?
+                                                              true}})
 
             body
             (strip-ansi (:text payload))]
@@ -2500,7 +2501,7 @@
         (expect (not (str/includes? (:text payload) "[iteration 1 · block 1]")))
         (expect (not (str/includes? (:text payload) huge-result)))
         (expect (every? #(or (not= :toggle-details (:kind %))
-                             (str/ends-with? (str (:node-id %)) ":execution"))
+                             (re-find #":(execution|code)$" (str (:node-id %))))
                         (:line-meta payload)))))
   (it "collapses completed reasoning behind the badge on the answer view"
       ;; Completed reasoning defaults collapsed; the legacy
@@ -4193,10 +4194,10 @@
             (str/join "\n" (map (comp strip-sentinels body-of strip-ansi :line) entries))]
 
         (expect (str/includes? text "values = [x * 2 for x in range(4)]"))
-        (expect (str/includes? text "PYTHON"))
+        (expect (not (str/includes? text "</>")))
         (expect (not (str/includes? text "[0, 2, 4, 6]")))))
   (it
-    "folds Activity source and result under the receipt"
+    "keeps Activity visible independently of source and result disclosures"
     (let [iteration
           (iteration/canonicalize
             {:position 0
@@ -4229,124 +4230,57 @@
           expanded
           (render-text {:vis.channel-tui/expand-execution-details? true})]
 
-      (expect (str/includes? collapsed "▸ GREP · source · 0 mutations · 1 observation"))
-      (expect (not (str/includes? collapsed "answer = search()")))
+      (expect (str/includes? collapsed "Searched source"))
+      (expect (str/includes? collapsed "answer = search()"))
       (expect (not (str/includes? collapsed "PYTHON")))
       (expect (not (str/includes? collapsed "one match")))
-      (expect (str/includes? expanded "▾ GREP · source · 0 mutations · 1 observation"))
+      (expect (str/includes? expanded "Searched source"))
       (expect (str/includes? expanded "answer = search()"))
-      (expect (str/includes? expanded "PYTHON"))
+      (expect (not (str/includes? expanded "PYTHON")))
       (expect (str/includes? expanded "RESULT")))))
 
 (defdescribe
   python-code-disclosure-is-a-header-test
-  ;; ONE accordion rule across every collapsible band (THINKING, op-cards, the
-  ;; python code band): the chevron row is a HEADER that labels the block BENEATH
-  ;; it. The code band used to append its `PYTHON +N more` row AFTER the peek,
-  ;; which read as a footer belonging to the next card and pushed the collapse
-  ;; control off screen once expanded.
   (it
-    "puts `PYTHON +N more` ABOVE the peeked code, not after it"
-    (let [entries
+    "keeps exactly one source line before the receipt and expands the full program"
+    (let [code
+          "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
+
+          entry
+          {:forms [{:code code :success? true :stdout "ok"}]}
+
+          opts
+          {:session-id "s1" :session-turn-id "t1"}
+
+          closed
+          (format-iteration-entry-entries entry 80 1 opts)
+
+          header
+          (first (filter #(str/ends-with? (str (get-in % [:meta :node-id])) ":code") closed))
+
+          opened
           (format-iteration-entry-entries
-            (iteration/canonicalize {:position 0
-                                     :thinking nil
-                                     :forms [{:success? true
-                                              :code
-                                              "a = 1
-b = 2
-c = 3
-d = 4
-e = 5
-f = 6
-g = 7
-h = 8"
-                                              :stdout "ok"}]})
+            entry
             80
             1
-            {:session-id "s1"
-             :session-turn-id "t1"
-             :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
+            (assoc opts :detail-expansions {["s1" (get-in header [:meta :node-id])] true}))
 
-          lines
-          (mapv (comp strip-sentinels body-of strip-ansi :line) entries)
+          text-of
+          #(str/join "\n" (map (comp strip-sentinels strip-ansi :line) %))]
 
-          toggle-i
-          (first (keep-indexed (fn [i l]
-                                 (when (str/includes? l "PYTHON +") i))
-                               lines))
-
-          first-code-i
-          (first (keep-indexed (fn [i l]
-                                 (when (= "a = 1" l) i))
-                               lines))]
-
-      (expect (some? toggle-i))
-      (expect (some? first-code-i))
-      (expect (= p/MARKER_CODE_PAD (marker-of (:line (nth entries (inc (long toggle-i)))))))
-      (expect (< (long toggle-i) (long first-code-i)))
-      ;; collapsed: exactly the 5-line peek, and the hidden count names the rest
-      (expect (str/includes? (nth lines toggle-i) "+3 more"))
-      (expect (not (some #{"f = 6"} lines)))))
-  (it "counts folded Python source lines, not their visual rows"
-      (let [source-line
-            (str "value = '" (apply str (repeat 120 "x")) "'")
-
-            code
-            (str/join "\n" (map #(str source-line " # " %) (range 1 9)))
-
-            entries
-            (format-iteration-entry-entries
-              (iteration/canonicalize {:position 0
-                                       :thinking nil
-                                       :forms [{:success? true :display-code code :stdout "ok"}]})
-              40
-              1
-              {:session-id "s1"
-               :session-turn-id "t1"
-               :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
-
-            lines
-            (mapv (comp strip-sentinels body-of strip-ansi :line) entries)
-
-            summary
-            (first (filter #(str/includes? % "PYTHON +") lines))]
-
-        (expect (str/includes? summary "+3 more"))))
-  (it "uses the code band's bottom edge as Python result spacing"
-      (let [entries
-            (format-iteration-entry-entries
-              (iteration/canonicalize {:position 0
-                                       :thinking nil
-                                       :forms [{:success? true
-                                                :code
-                                                "a = 1
-b = 2
-c = 3
-d = 4
-e = 5
-f = 6
-g = 7
-h = 8"
-                                                :stdout "ok"}]})
-              80
-              1
-              {:session-id "s1"
-               :session-turn-id "t1"
-               :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
-
-            lines
-            (mapv (comp body-of strip-ansi :line) entries)
-
-            last-code-i
-            (first (keep-indexed (fn [i line]
-                                   (when (= "e = 5" line) i))
-                                 lines))]
-
-        (expect (= p/MARKER_CODE_PAD (marker-of (:line (nth entries (inc last-code-i))))))
-        ;; The row under the pad is the stable RESULT disclosure; completion text
-        ;; remains inside stdout rather than becoming a second headline.
-        (expect (str/includes? (str (:line (nth entries (+ 2 last-code-i)))) "RESULT")))))
+      (expect (str/includes? (text-of closed) "▸ a = 1"))
+      (expect (not (str/includes? (text-of closed) "</>")))
+      (expect (not (str/includes? (text-of closed) "Execution")))
+      (expect (not (str/includes? (text-of closed) "b = 2")))
+      (expect (true? (get-in header [:meta :band-flush?])))
+      (let [after-head (rest (drop-while #(not= (get-in % [:meta :node-id])
+                                                (get-in header [:meta :node-id]))
+                                         opened))]
+        (expect (some #(str/blank? (strip-sentinels (strip-ansi (body-of (:line %)))))
+                      (take 1 after-head))))
+      (expect (= code (get-in header [:meta :copy-text])))
+      (expect (str/includes? (text-of opened) "h = 8"))
+      (expect (= 1 (count (filter #(get-in % [:meta :copy-width]) opened)))))))
 
 (defdescribe python-code-disclosure-is-clickable-test
              ;; The header row is only a control if the PAINTER publishes its hit target:
@@ -4356,7 +4290,7 @@ h = 8"
              ;; unreachable by mouse AND by keyboard label — collapsed forever unless you
              ;; folded the whole transcript.
              (it
-               "registers a toggle click region on the `PYTHON` row it paints"
+               "registers a toggle click region on the compact code row it paints"
                (let [entries
                      (format-iteration-entry-entries
                        (iteration/canonicalize
@@ -4379,11 +4313,10 @@ h = 8"
                         :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
 
                      toggle-i
-                     (first (keep-indexed (fn [i e]
-                                            (when (str/includes? (strip-sentinels (str (:line e)))
-                                                                 "PYTHON +")
-                                              i))
-                                          entries))
+                     (first (keep-indexed
+                              (fn [i e]
+                                (when (str/ends-with? (str (get-in e [:meta :node-id])) ":code") i))
+                              entries))
 
                      _
                      (do (.reset interactions/hit-map) (.beginFrame interactions/hit-map))
@@ -4423,7 +4356,7 @@ h = 8"
                  ;; collapsed now → a click asks for EXPANDED
                  (expect (true? (:collapsed? hit)))
                  ;; and it is the HEADER row that answers, not a peek line
-                 (expect (str/includes? (str (:line (nth entries toggle-i))) "PYTHON")))))
+                 (expect (str/includes? (str (:line (nth entries toggle-i))) "a = 1")))))
 
 (defdescribe
   markdown-table-link-click-region-test
@@ -4896,10 +4829,11 @@ h = 8"
         (fn [row pred]
           (apply str (map :ch (filter pred row))))]
 
-    (it "paints the collapsed code band's name bold and leaves its tally quiet"
-        (let [row (band-row "PYTHON +")]
-          (expect (str/includes? (row-text row) "▸ PYTHON +3 more"))
-          (expect (= "PYTHON" (ink row :bold)))))
+    (it "paints the first source line and one Copy, without a language heading"
+        (let [row (band-row "a = 1")]
+          (expect (str/includes? (row-text row) "▸ a = 1"))
+          (expect (str/includes? (row-text row) "❐"))
+          (expect (not (str/includes? (row-text row) "PYTHON")))))
     (it "paints THINKING bold ON TOP of the band's own italic"
         ;; The thinking band is painted italic as a whole and
         ;; `p/paint-styled-line!` inherits the modifiers already active on the
@@ -5006,10 +4940,9 @@ h = 8"
                 "each row names the session whose band reopens the record")
         (expect (< (.indexOf ^String body "first_watch()")
                    (.indexOf ^String body "Release · gh")
-                   (.indexOf ^String body "second_watch()")
                    (.indexOf ^String body "Nightly")
                    (.indexOf ^String body "Watched it."))
-                "each run remains where it executed instead of collecting below the answer")
+                "both run records remain inside their execution group, before the answer")
         (expect (str/includes? body "▸ RUN Release · gh") "a dormant record offers open")
         (expect (str/includes? body "▾ RUN Nightly") "a reopened record offers collapse")))
   (it "invalidates the hot iteration cache when the record opens and closes"
@@ -5075,14 +5008,13 @@ h = 8"
           expanded
           (render-row 80 {:vis.channel-tui/expand-all-details? true})]
 
-      (expect (str/includes? collapsed "▸ GREP · TEST EVIDENCE"))
-      (expect (not (str/includes? collapsed "grep({...})")))
+      (expect (str/includes? collapsed "test evidence companion suite"))
+      (expect (str/includes? collapsed "grep({...})"))
       (expect (not (str/includes? collapsed "PYTHON")))
-      (expect (not (str/includes? collapsed "18 matches")))
+      (expect (str/includes? collapsed "18 matches"))
       (expect (not (str/includes? collapsed "ACTIVITY")))
-      (expect (str/includes? expanded "▾ GREP · TEST EVIDENCE"))
-      (expect (< (.indexOf ^String expanded "PYTHON")
-                 (.indexOf ^String expanded "grep({...})")
+      (expect (str/includes? expanded "test evidence companion suite"))
+      (expect (< (.indexOf ^String expanded "grep({...})")
                  (.indexOf ^String expanded "18 matches")
                  (.indexOf ^String expanded "test evidence companion suite")
                  (.indexOf ^String expanded "Done.")))
@@ -5125,10 +5057,10 @@ h = 8"
             expanded
             (render-row {:vis.channel-tui/expand-all-details? true})]
 
-        (expect (str/includes? collapsed "▸ PYTHON · 29ms"))
+        (expect (str/includes? collapsed "29ms"))
         (expect (str/includes? collapsed "print(1)"))
-        (expect (str/includes? expanded "▾ PYTHON · 29ms"))
-        (expect (str/includes? expanded "PYTHON"))
+        (expect (str/includes? expanded "29ms"))
+        (expect (not (str/includes? expanded "PYTHON")))
         (expect (str/includes? expanded "print(1)"))
         (expect (str/includes? expanded "RESULT"))
         (expect (not (str/includes? expanded "ACTIVITY")))))
@@ -5173,8 +5105,7 @@ h = 8"
           (str/split-lines collapsed)
 
           collapsed-status-row
-          (first (keep-indexed #(when (str/includes? %2 "▸ RUN_TESTS · GREP · GREP + 3 more") %1)
-                               collapsed-lines))
+          (first (keep-indexed #(when (str/includes? %2 "RESULT") %1) collapsed-lines))
 
           expanded
           (render-row {:vis.channel-tui/expand-all-details? true})
@@ -5183,27 +5114,21 @@ h = 8"
           (str/split-lines expanded)
 
           status-row
-          (first (keep-indexed #(when (str/includes? %2 "▾ RUN_TESTS · GREP · GREP + 3 more") %1)
-                               expanded-lines))]
+          (first (keep-indexed #(when (str/includes? %2 "RESULT") %1) expanded-lines))]
 
-      (expect (str/includes? collapsed "▸ RUN_TESTS · GREP · GREP + 3 more · 4.8s"))
+      (expect (str/includes? collapsed "4.8s"))
       (expect (not (str/includes? collapsed "ACTIVITY")))
       (expect (some? collapsed-status-row))
-      (expect (str/blank? (nth collapsed-lines (dec collapsed-status-row)))
-              "collapsed and expanded receipts keep the same leading margin")
+      (expect (< (.indexOf ^String collapsed "print(result")
+                 (.indexOf ^String collapsed "operation 1"))
+              "the source line precedes visible Activity")
       (expect (some? status-row))
-      (expect (str/blank? (nth expanded-lines (dec status-row))))
-      (expect (str/blank? (nth expanded-lines (inc status-row))))
-      ;; The code band wears the same name everywhere. `1 line shown` was a caption
-      ;; no other band said, and only an Activity-bearing step ever showed it — so the
-      ;; one place a reader met a python block beside its chronology looked like a
-      ;; different surface than every other python block in the transcript.
       (expect (not (str/includes? expanded "line shown")))
-      (expect (str/includes? expanded "PYTHON"))
-      (expect (< (.indexOf ^String expanded "PYTHON")
+      (expect (not (str/includes? expanded "PYTHON")))
+      (expect (< (.indexOf ^String expanded "print(result")
+                 (.indexOf ^String expanded "operation 6")
                  (.indexOf ^String expanded "RESULT")
-                 (.indexOf ^String expanded "## main...origin/main")
-                 (.indexOf ^String expanded "operation 6")))
+                 (.indexOf ^String expanded "## main...origin/main")))
       (expect (not (str/includes? expanded "ACTIVITY")))))
   ;; Regression, issue td-9c41a7: the TUI receipt named the calls but never what they
   ;; cost, while the web band beside it printed the three counts the wire classifies —
@@ -5240,55 +5165,53 @@ h = 8"
             :text
             strip-ansi
             strip-sentinels)]
-      ;; The rows the ENGINE dropped are part of the cost: a receipt showing three of
-      ;; five calls must never report the cost of three.
-      (expect (str/includes? receipt "1 mutation · 3 observations · 1 check"))
+      ;; Omitted operations remain counted on the chronology, not a redundant summary.
+      (expect (str/includes? receipt "2 more steps"))
+      (expect (str/includes? receipt "Patched"))
+      (expect (str/includes? receipt "Searched"))
+      (expect (str/includes? receipt "Ran tests"))
       (expect (not (str/includes? receipt "ACTIVITY")))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
-  (it
-    "keeps several expanded Activity receipts inline after their Python results"
-    (render/invalidate-cache!)
-    (let [activity
-          (fn [label]
-            {:state "running"
-             :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
-             :rows [{:id label :operation (str label " OPERATION") :summary "" :state "running"}
-                    {:id (str label "-2") :operation "grep" :summary "" :state "succeeded"}]
-             :omitted {:rows 0 :by-classification {}}})
+  (it "keeps several expanded Activity receipts inline after their Python results"
+      (render/invalidate-cache!)
+      (let [activity
+            (fn [label]
+              {:state "running"
+               :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
+               :rows [{:id label :operation (str label " OPERATION") :summary "" :state "running"}
+                      {:id (str label "-2") :operation "grep" :summary "" :state "succeeded"}]
+               :omitted {:rows 0 :by-classification {}}})
 
-          trace
-          [{:forms [{:code "first()" :stdout "FIRST RESULT" :activity (activity "FIRST")}
-                    {:code "second()" :stdout "SECOND RESULT" :activity (activity "SECOND")}]}]
+            trace
+            [{:forms [{:code "first()" :stdout "FIRST RESULT" :activity (activity "FIRST")}
+                      {:code "second()" :stdout "SECOND RESULT" :activity (activity "SECOND")}]}]
 
-          body
-          (-> (render/format-answer-with-thinking-data
-                "Done."
-                trace
-                80
-                nil
-                nil
-                false
-                {:session-id "s1"
-                 :session-turn-id "turn-1"
-                 :detail-expansions {:vis.channel-tui/expand-all-details? true}})
-              :text
-              strip-ansi
-              strip-sentinels)]
+            body
+            (-> (render/format-answer-with-thinking-data
+                  "Done."
+                  trace
+                  80
+                  nil
+                  nil
+                  false
+                  {:session-id "s1"
+                   :session-turn-id "turn-1"
+                   :detail-expansions {:vis.channel-tui/expand-all-details? true}})
+                :text
+                strip-ansi
+                strip-sentinels)]
 
-      (expect
-        (< (.indexOf ^String body "FIRST OPERATION · GREP")
-           (.indexOf ^String body "first()")
-           (.indexOf ^String body "FIRST RESULT")
-           (.indexOf ^String body "FIRST OPERATION" (inc (.indexOf ^String body "FIRST RESULT")))
-           (.indexOf ^String body "second()")))
-      (expect
-        (< (.indexOf ^String body "second()")
-           (.indexOf ^String body "SECOND RESULT")
-           (.indexOf ^String body "SECOND OPERATION" (inc (.indexOf ^String body "SECOND RESULT")))
-           (.indexOf ^String body "Done.")))
-      (expect (not (str/includes? body "STATUS")) "expanded detail does not repeat status")
-      (expect (not (str/includes? body "Succeeded 1")) "expanded detail does not repeat counters")))
+        (expect (< (.indexOf ^String body "first()")
+                   (.indexOf ^String body "second()")
+                   (.indexOf ^String body "FIRST OPERATION")
+                   (.indexOf ^String body "FIRST RESULT")
+                   (.indexOf ^String body "SECOND RESULT")
+                   (.indexOf ^String body "Done.")))
+        (expect (= 1 (count (re-seq #" ❐" body))))
+        (expect (not (str/includes? body "STATUS")) "expanded detail does not repeat status")
+        (expect (not (str/includes? body "Succeeded 1"))
+                "expanded detail does not repeat counters")))
   (it "a turn that watched nothing carries no rail at all"
       (render/invalidate-cache!)
       (let [payload (render/format-answer-with-thinking-data "Nothing here."
@@ -5416,13 +5339,10 @@ h = 8"
           (fn [needle]
             (first (keep-indexed #(when (str/includes? %2 needle) [%1 %2]) lines)))
 
-          [status-row _]
-          (row-with "SHELL · SHELL · RUN_TESTS")
+          [python-row _python-line]
+          (row-with "a = 1")
 
-          [python-row python-line]
-          (row-with "PYTHON")
-
-          [result-row result-line]
+          [result-row _result-line]
           (row-with "RESULT")
 
           ;; Protocol 7 folded Activity into the form that produced it: the timeline
@@ -5430,7 +5350,7 @@ h = 8"
           ;; first SHELL row is where the timeline starts.
           [first-row first-line]
           (first (filter (fn [[row line]]
-                           (and (> (long row) (long result-row)) (str/includes? line "Ran ")))
+                           (and (< (long row) (long result-row)) (str/includes? line "Ran ")))
                          (keep-indexed (fn [row line]
                                          (when (str/includes? line "Ran ") [row line]))
                                        lines)))
@@ -5447,16 +5367,15 @@ h = 8"
 
       ;; Regression, issue td-794deb: Activity forced RESULT open, removed its toggle,
       ;; lost its top surface pad, and painted the timeline outside the execution box.
-      (expect (str/includes? collapsed-text "▸ SHELL · SHELL · RUN_TESTS")
-              "a collapsed form carrying Activity states its verdict in one row")
+      (expect (str/includes? collapsed-text "Ran npm test")
+              "Activity stays visible while source and result are collapsed")
       (expect (= :toggle-details (:kind result-toggle-meta))
               "the RESULT row remains an interactive disclosure")
       (expect (not (str/includes? collapsed-text "result-value")) "RESULT is collapsed by default")
       (expect (str/includes? expanded-text "▾ RESULT"))
       (expect (str/includes? expanded-text "result-value")
               "RESULT remains independently expandable")
-      (expect (= (get-in frame [(dec python-row) 1 :bg]) (get-in frame [python-row 1 :bg]))
-              "the execution box has one tinted padding row above PYTHON")
+      (expect (some? python-row) "one compact code line replaces the padded language header")
       ;; Regression, T125: Activity painted the code band's slab under every row, so
       ;; the chronology read as a second thinking block instead of the turn's own axis.
       (expect (= (get-in frame [first-row 1 :bg])
@@ -5465,24 +5384,16 @@ h = 8"
               "every Activity row and its padding share one paper")
       (expect (not= (get-in frame [python-row 1 :bg]) (get-in frame [first-row 1 :bg]))
               "Activity paints the transcript's own paper, never the code band's slab")
-      (expect (= (.indexOf ^String python-line "PYTHON") (.indexOf ^String result-line "RESULT"))
-              "section labels share one visual column")
-      (expect (< (long status-row)
-                 (long python-row)
-                 (long result-row)
-                 (long first-row)
-                 (long second-row)
-                 (long tests-row))
-              "summary, execution surface, timeline, and commands retain canonical order")
-      (expect (not= (get-in frame [status-row 1 :bg]) (get-in frame [result-row 1 :bg]))
-              "the outer verdict remains outside the execution surface")
+      (expect
+        (< (long python-row) (long first-row) (long second-row) (long tests-row) (long result-row))
+        "code, visible stages and results retain canonical order")
       (expect (= (get-in frame [first-row 1 :bg])
                  (get-in frame [second-row 1 :bg])
                  (get-in frame [tests-row 1 :bg]))
               "Activity owns one quiet timeline surface")
       (expect (str/includes? first-line "Ran npm test"))
       (expect (= 1 (count (filter #(str/includes? % "Ran npm test") lines))))
-      (expect (str/includes? second-line "...") "the terminal-width command is ellipsized")
+      (expect (str/includes? second-line "…") "the terminal-width command is ellipsized")
       (expect (not (str/includes? tests-line "run_tests"))
               "a default detail equal to its operation is omitted")
       (expect (str/ends-with? tests-line "1.4s") "durations align at the right edge"))))
@@ -5867,13 +5778,13 @@ h = 8"
         (expect (some? (row-with "Balanced. Now inspect the schema."))))
     (it "crosses the program's own paper instead of stopping at its edge"
         (let [python
-              (row-with "PYTHON")
+              (row-with "print(1)")
 
               result
               (row-with "RESULT")]
 
           (expect (and python result) "the receipt paints a program and its result")
-          (expect (rail-at? python) "the line crosses the PYTHON band")
+          (expect (rail-at? python) "the line crosses the code row")
           (expect (rail-at? result) "the line crosses the RESULT band")))
     (it "leaves the answer off the line"
         (let [answer (row-with "Done.")]
@@ -5952,10 +5863,8 @@ h = 8"
         (expect (= 1 (count (re-seq #"8\.4s" expanded)))
                 "the figure is printed once while the receipt is open")
         (expect (= 1 (count (re-seq #"8\.4s" collapsed))) "and once while it is folded")
-        (expect (str/includes? (str (row-text expanded "8.4s")) "GREP")
-                "the band is where the figure stands")
-        (expect (not (str/includes? (str (row-text expanded "RESULT")) "8.4s"))
-                "so the result band never repeats it"))
+        (expect (str/includes? (str (row-text expanded "8.4s")) "RESULT")
+                "the result disclosure is the one home for the form duration"))
     (it "shows the program the model wrote, not a reformatting of it"
         (expect (str/includes? expanded "rows=[1,") "the model's own line break survives")
         (expect (not (str/includes? expanded "rows = [1, 2]"))
@@ -6049,3 +5958,273 @@ h = 8"
         (let [[[ok-r ok-g] [bad-r bad-g]] marks]
           (expect (> (long ok-g) (long ok-r)) "the succeeded mark leans green")
           (expect (> (long bad-r) (long bad-g)) "the failed mark leans red")))))
+
+(defdescribe
+  compact-execution-group-test
+  (it "groups adjacent Python source into one line before its activity receipt"
+      (let [entry
+            (iteration/canonicalize {:forms [{:code "first_call()\nfirst_detail()" :success? true}
+                                             {:code "second_call()" :success? true}]})
+
+            entries
+            (format-iteration-entry-entries entry 80 1 {:session-id "s" :session-turn-id "t"})
+
+            text
+            (str/join "\n" (map (comp strip-sentinels body-of strip-ansi :line) entries))
+
+            code
+            (filter #(str/ends-with? (str (get-in % [:meta :node-id])) ":code") entries)
+
+            receipts
+            (filter #(str/ends-with? (str (get-in % [:meta :node-id])) ":execution") entries)]
+
+        (expect (empty? receipts))
+        (expect (= 1 (count code)))
+        (expect (str/includes? text "first_call()"))
+        (expect (not (str/includes? text "first_detail()")))
+        (expect (not (str/includes? text "PYTHON")))
+        (expect (not (str/includes? text "Execution")))))
+  (it "hides source without hiding execution or result"
+      (let [entry
+            (iteration/canonicalize
+              {:forms [{:code "private_code()" :stdout "result remains" :success? true}]})
+
+            text
+            (->> (format-iteration-entry-entries
+                   entry
+                   80
+                   1
+                   {:session-id "s"
+                    :session-turn-id "t"
+                    :show-python-code? false
+                    :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
+                 (map :line)
+                 (str/join "\n"))]
+
+        (expect (not (str/includes? text "private_code()")))
+        (expect (not (str/includes? text "Execution")))
+        (expect (str/includes? text "RESULT")))))
+
+(defdescribe
+  execution-group-integrity-test
+  (it "scopes duplicate ids and adds counts without inventing elapsed time"
+      (let [activity
+            {:state "succeeded"
+             :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+             :rows [{:id "same"
+                     :sequence 1
+                     :state "succeeded"
+                     :operation "grep"
+                     :children [{:id "child" :sequence 1}]}]
+             :omitted {:rows 2 :by-classification {:observation 2}}}
+
+            form
+            {:code "first()" :success? true :duration-ms 700 :activity activity}
+
+            grouped
+            (#'render/execution-group [form (assoc form :code "second()")])]
+
+        (expect (= "first()\n\nsecond()" (:code grouped)))
+        (expect (= ["0:same" "1:same"] (mapv :id (get-in grouped [:activity :rows]))))
+        (expect (= "1:child" (get-in grouped [:activity :rows 1 :children 0 :id])))
+        (expect (= 2 (get-in grouped [:activity :counts :succeeded])))
+        (expect (= 4 (get-in grouped [:activity :omitted :rows])))
+        (expect (= 4 (get-in grouped [:activity :omitted :by-classification :observation])))
+        (expect (nil? (:duration-ms grouped)))))
+  (it "preserves every failure and keeps a live member running"
+      (let [forms
+            [{:code "first()" :success? false :error {:message "first error"}}
+             {:code "second()" :success? false :error {:message "second error"}}]
+
+            grouped
+            (#'render/execution-group forms)
+
+            live
+            (#'render/execution-group (conj forms {:code "third()"}))]
+
+        (expect (= ["first error" "second error"] (mapv :message (:group-errors grouped))))
+        (expect (= "failed" (get-in grouped [:activity :state])))
+        (expect (= "running" (get-in live [:activity :state])))))
+  (it "breaks on comments and non-Python forms"
+      (doseq [boundary [{:comment "Next stage"} {:display-language "bash"} {:tag "user-shell"}]]
+        (let [groups (#'render/execution-groups
+                      [{:code "first()"} (merge {:code "second()"} boundary)])]
+          (expect (= 2 (count groups))))))
+  (it "invalidates the settled trace cache when source visibility changes"
+      (let [trace
+            [{:forms [{:code "visible_code()" :success? true :stdout "kept result"}]}]
+
+            opts
+            {:session-id "s" :session-turn-id "t"}
+
+            render-text
+            (fn [shown?]
+              (:text (render/format-answer-with-thinking-data ""
+                                                              trace
+                                                              80
+                                                              {:show-iterations true
+                                                               :show-python-code shown?}
+                                                              nil
+                                                              false
+                                                              opts)))]
+
+        (render/invalidate-cache!)
+        (expect (str/includes? (render-text true) "visible_code()"))
+        (expect (not (str/includes? (render-text false) "visible_code()")))
+        (expect (str/includes? (render-text true) "visible_code()")))))
+
+(defdescribe
+  activity-content-painter-test
+  (it
+    "keeps listing content clear of the rail without an empty timing band"
+    (let [activity
+          {:state "succeeded"
+           :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+           :rows [{:id "ls"
+                   :sequence 1
+                   :operation "ls"
+                   :presenter "observation"
+                   :state "succeeded"
+                   :duration-ms 42
+                   :content
+                   [{"type" "heading" "text" "apps/vis-companion/src"}
+                    {:type "text" :text "3 directories · 2 files"}
+                    {:type "table" :columns ["Name" "Kind"] :rows [["components/" "Directory"]]}]}]}
+
+          data
+          (render/format-answer-with-thinking-data* ""
+                                                    [{:forms [{:code "ls()
+print(paths)"
+                                                               :success? true
+                                                               :silent? false
+                                                               :duration-ms 42
+                                                               :activity activity}]}]
+                                                    72
+                                                    {:show-iterations true}
+                                                    nil
+                                                    false
+                                                    {:session-id "listing-paint"
+                                                     :detail-expansions
+                                                     {:vis.channel-tui/expand-all-details? true}})
+
+          captured
+          (cap/capture! {:cols 80
+                         :rows 30
+                         :paint! (fn [{:keys [screen]}]
+                                   (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                                     (render/draw-chat-bubble! (.newTextGraphics s)
+                                                               {:role :assistant
+                                                                :text ""
+                                                                :prewrapped-lines (:lines data)
+                                                                :line-meta (:line-meta data)}
+                                                               2 1
+                                                               76 {:viewport-h 28})
+                                     (.refresh s)))})
+
+          text
+          (cap/frame-text captured)]
+
+      (expect (str/includes? text "3 directories · 2 files"))
+      (let [lines
+            (str/split-lines text)
+
+            head
+            (first (filter #(str/includes? % "Listed") lines))
+
+            code
+            (first (filter #(str/includes? % "ls()") lines))]
+
+        (expect (str/includes? head "Listed apps/vis-companion/src"))
+        (expect (str/includes? head "▾"))
+        (let [source-idx
+              (first (keep-indexed #(when (:code-source? %2) %1) (:line-meta data)))
+
+              last-source-idx
+              (last (keep-indexed #(when (:code-source? %2) %1) (:line-meta data)))
+
+              marker
+              (subs (nth (:lines data) source-idx) 0 1)]
+
+          (expect (= marker (nth (:lines data) (dec source-idx))))
+          (expect (= marker (nth (:lines data) (inc last-source-idx)))))
+        (expect (= 1 (count (re-seq #"apps/vis-companion/src" text))))
+        (expect (= 76 (+ (.indexOf ^String head "42ms") 4)))
+        (expect (= 75 (.indexOf ^String code "❐")))
+        (expect (= (.indexOf ^String head "Listed") (.indexOf ^String code "ls()")))
+        (doseq [source (filter #(or (str/includes? % "ls()") (str/includes? % "print(paths)"))
+                               lines)]
+          (expect (= (.indexOf ^String head "Listed")
+                     (if (str/includes? source "ls()")
+                       (.indexOf ^String source "ls()")
+                       (.indexOf ^String source "print(paths)"))))))
+      (expect (str/includes? text "│ Name"))
+      (expect (= 1 (count (re-seq #"42ms" text)))))))
+
+(defdescribe
+  activity-content-render-test
+  (it "renders headings, Markdown, tables, code, progress and safe media fallback"
+      (let [blocks
+            [{:type "heading" :text "Verification"}
+             {:type "markdown" :text "**Prepared** the workspace"}
+             {:type "table" :columns ["Suite" "Result"] :rows [["unit" "passed"]]}
+             {:type "code" :language "python" :text "print(42)"}
+             {:type "diff" :text "+added\n-removed"}
+             {:type "progress" :label "Checking" :value 1 :total 2}
+             {:type "image" :label "Screenshot" :attachment_id "image-1"}]
+
+            entries
+            (#'render/activity-content-entries
+             blocks
+             60
+             "s"
+             {"image-1" {:iteration-id "i" :index 0 :filename "screen.png"}}
+             true)
+
+            text
+            (str/join "\n" (map :line entries))]
+
+        (doseq [word ["Verification" "Prepared" "Suite" "passed" "print" "Checking" "Screenshot"]]
+          (expect (str/includes? text word)))
+        (expect (some #(= "i" (get-in % [:meta :artifact :iteration-id])) entries))
+        (expect (str/includes? (str (#'render/activity-content-entries
+                                     [{:type "progress" :label "Checking"}]
+                                     40
+                                     "s"
+                                     {}
+                                     false))
+                               "Stopped"))))
+  (it
+    "resolves symbol media in tool-only byte-endpoint order"
+    (let [entry
+          (iteration/canonicalize
+            {:id "i"
+             :position 0
+             :attachments
+             [{:source "user" :filename "input.txt"}
+              {:source "tool" :attachment_id "clip" :filename "clip.mp4" :media_type "video/mp4"}]
+             :forms [{:code "record()"
+                      :success? true
+                      :activity
+                      {:state "succeeded"
+                       :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+                       :rows [{:id "row"
+                               :sequence 1
+                               :state "succeeded"
+                               :operation "record"
+                               :summary "Record"
+                               :content [{:type "video" :attachment_id "clip" :label "Recording"}]}]
+                       :omitted {:rows 0 :by-classification {}}}}]})
+
+          entries
+          (format-iteration-entry-entries entry
+                                          80
+                                          1
+                                          {:session-id "s"
+                                           :session-turn-id "t"
+                                           :detail-expansions
+                                           {:vis.channel-tui/expand-execution-details? true}})
+
+          artifacts
+          (keep #(get-in % [:meta :artifact]) entries)]
+
+      (expect (some #(and (= "clip.mp4" (:filename %)) (= 0 (:index %))) artifacts)))))

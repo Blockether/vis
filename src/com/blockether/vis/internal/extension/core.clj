@@ -100,6 +100,15 @@
   "Invocation whose body is running, used only as observed parentage."
   nil)
 
+(def ^:dynamic *activity-content-sink*
+  "Invocation-scoped presentation writer. No invocation coordinates cross into Python."
+  nil)
+
+(defn publish-activity!
+  "Replace the running symbol's content; returns false outside an observed invocation."
+  [blocks]
+  (if *activity-content-sink* (do (*activity-content-sink* blocks) true) false))
+
 (defn- record-tool-event!
   [event]
   (when *tool-event-sink*
@@ -1919,7 +1928,12 @@
                 ctx
 
                 *current-invocation-id*
-                (:invocation-id invocation)]
+                (:invocation-id invocation)
+
+                *activity-content-sink*
+                (fn [blocks]
+                  (record-tool-event!
+                    (activity-event/content-event ctx invocation details blocks)))]
 
         (try (let [envelope
                    (volatile! nil)

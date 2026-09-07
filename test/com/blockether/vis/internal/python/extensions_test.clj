@@ -150,6 +150,7 @@ def counter_bump(by):
 
 def counter_read():
     \"\"\"await counter_read() -> {\\\"count\\\"} — read the counter.\"\"\"
+    vis.publish_activity({\"type\": \"markdown\", \"text\": \"**Counter** ready\"})
     return {\"count\": vis.state.get(\"count\", 0)}
 
 
@@ -170,7 +171,7 @@ vis.extension(
     alias=\"counter\",
     symbols=[
         vis.symbol(counter_bump, tag=\"mutation\"),
-        vis.symbol(counter_read, tag=\"observation\", activity=vis.Activity(presenter=\"tests\", label=\"checking counter\")),
+        vis.symbol(counter_read, tag=\"observation\", activity=vis.Activity(presenter=\"tests\", label=\"checking counter\", render=lambda phase, **_: [{\"type\": \"text\", \"text\": phase}])),
         vis.symbol(counter_boom, tag=\"observation\", is_hidden=True),
     ],
     prompt=\"counter_ surface active.\",
@@ -210,7 +211,11 @@ vis.extension(
           (let [projection (-> @events
                                activity/replay
                                activity/presentation)]
-            (expect (= 4 (count @events)))
+            (expect (= 7 (count @events)))
+            (expect (= ["start" "**Counter** ready" "success"]
+                       (mapv #(get-in % [:content 0 "text"])
+                             (filter #(= :content (:phase %)) @events))))
+            (expect (= [{"type" "text" "text" "success"}] (get-in projection [:rows 0 :content])))
             (expect (= "failed" (:state projection)))
             (expect (= {:running 0 :succeeded 1 :failed 1 :cancelled 0} (:counts projection)))
             (expect (= "tests" (get-in projection [:rows 0 :presenter])))

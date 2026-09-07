@@ -1,16 +1,15 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, within } from "storybook/test";
 import {
+  STORY_COMPACT_EXECUTIONS,
+  STORY_LISTING,
   STORY_EXCHANGE_TURN,
   STORY_TURN_ITERATIONS,
   STORY_TURN_ITERATIONS_ACTIVITY,
   STORY_TURN_ITERATIONS_LONG,
   STORY_TURN_ITERATIONS_SETTLED,
 } from "../dev/story-data";
-import {
-  AssistantMessage,
-  IterationTrace,
-  UserMessage,
-} from "./ChatContent";
+import { AssistantMessage, IterationTrace, UserMessage } from "./ChatContent";
 
 /**
  * A TURN, DRAWN AS ONE THREAD.
@@ -126,7 +125,9 @@ export const Exchange: Story = {
   args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED },
   render: (args) => (
     <>
-      <UserMessage onFork={() => {}}>{STORY_EXCHANGE_TURN.request ?? ""}</UserMessage>
+      <UserMessage onFork={() => {}}>
+        {STORY_EXCHANGE_TURN.request ?? ""}
+      </UserMessage>
       <AssistantMessage
         turn={{ ...STORY_EXCHANGE_TURN, iterations: args.iterations }}
         whole={args.whole}
@@ -154,4 +155,38 @@ export const Forking: Story = {
       />
     </>
   ),
+};
+
+export const CompactGroup: Story = {
+  args: { live: true, showCode: true, iterations: STORY_COMPACT_EXECUTIONS },
+};
+
+export const GroupStages: Story = {
+  ...CompactGroup,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(
+      canvas.getAllByRole("list", { name: "Invocation chronology" }),
+    ).toHaveLength(1);
+    await expect(
+      canvas.getAllByRole("button", { name: "Copy code" }),
+    ).toHaveLength(1);
+  },
+};
+
+export const HiddenCode: Story = {
+  args: { live: true, showCode: false, iterations: STORY_COMPACT_EXECUTIONS },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(
+      canvas.queryByRole("button", { name: "Copy code" }),
+    ).toBeNull();
+    await expect(
+      canvas.getAllByRole("list", { name: "Invocation chronology" }),
+    ).toHaveLength(1);
+  },
+};
+
+export const Listing: Story = {
+  args: { live: false, showCode: true, iterations: STORY_LISTING },
 };

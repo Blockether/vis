@@ -1,12 +1,13 @@
-import type { Meta, StoryObj } from '@storybook/react-vite';
+import type { Meta, StoryObj } from "@storybook/react-vite";
 import {
   ACTIVITY_CHRONOLOGY,
+  ACTIVITY_RICH,
   ACTIVITY_FAILED,
   ACTIVITY_RUNNING,
   ACTIVITY_SETTLED,
   ACTIVITY_TREE_CHANGES,
-} from '../dev/story-data';
-import { ActivityPanel } from './ActivityPanel';
+} from "../dev/story-data";
+import { ActivityPanel } from "./ActivityPanel";
 
 /**
  * WHAT THE MODEL IS DOING, WHILE IT IS DOING IT.
@@ -24,9 +25,9 @@ import { ActivityPanel } from './ActivityPanel';
  * change breaks this sheet before it reaches a screen.
  */
 const meta = {
-  title: 'Components/Activity panel',
+  title: "Components/Activity panel",
   component: ActivityPanel,
-  parameters: { layout: 'padded' },
+  parameters: { layout: "padded" },
 } satisfies Meta<typeof ActivityPanel>;
 
 export default meta;
@@ -62,3 +63,5 @@ export const Chronology: Story = {
 export const TreeChanges: Story = {
   args: { activity: ACTIVITY_TREE_CHANGES },
 };
+
+export const SymbolContent: Story = { args: { activity: ACTIVITY_RICH } };

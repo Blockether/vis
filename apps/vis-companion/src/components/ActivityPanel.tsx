@@ -1,11 +1,12 @@
-import { useState } from "react";
-import { InlineMarkdown, Markdown } from "./ChatContent";
+import { createContext, useContext, useState, type ReactNode } from "react";
+import { InlineMarkdown, Markdown, SyntaxCodeBlock } from "./ChatContent";
 import { Disclosure, LoadMore } from "./ui";
 import type {
   ActivityDiffEvidence,
   ActivityProjection,
   ActivityResource,
   ActivityRow,
+  ActivityContent,
   ActivityTextEvidence,
   ActivityTextFormat,
 } from "../lib/activity";
@@ -575,6 +576,174 @@ function ActivityText({
  * touched — is the whole tree either surface will draw, because a fourth is a file
  * tree printed into a chronology and nothing on this axis is worth that.
  */
+/** Keep payload-sized outcomes out of the chronology until the reader asks. */
+function ActivityOutcome({
+  text,
+  format,
+}: {
+  text: string;
+  format?: ActivityTextFormat;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = text.split("\n").slice(0, 2).join("\n").slice(0, 240);
+  const truncated = preview.length < text.length;
+  return (
+    <div className="mt-0.5 min-w-0 break-words font-sans text-meta text-dialog-hint">
+      <div className={!expanded && truncated ? "line-clamp-2" : undefined}>
+        <ActivityText
+          text={expanded || !truncated ? text : `${preview}…`}
+          format={expanded || !truncated ? format : undefined}
+          block
+        />
+      </div>
+      {truncated && (
+        <Disclosure
+          isOpen={expanded}
+          tone="muted"
+          bleed
+          aria-label={`${expanded ? "Collapse" : "Expand"} result summary`}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          {expanded ? "Less result" : "Full result"}
+        </Disclosure>
+      )}
+    </div>
+  );
+}
+
+/** The containing trace resolves only attachments belonging to this transcript. */
+export const ActivityAttachmentContext = createContext<
+  ((id: string) => ReactNode) | null
+>(null);
+
+function ActivityBody({
+  content,
+  running,
+}: {
+  content: ActivityContent[];
+  running: boolean;
+}) {
+  const attachment = useContext(ActivityAttachmentContext);
+  return (
+    <div className="mt-2 grid min-w-0 gap-2" data-activity-content>
+      {content.map((block, index) => {
+        switch (block.type) {
+          case "heading":
+            return (
+              <h5 key={index} className="text-ui font-bold text-code-result">
+                {block.text}
+              </h5>
+            );
+          case "text":
+            return (
+              <p
+                key={index}
+                className="whitespace-pre-wrap break-words text-ui text-code-result"
+              >
+                {block.text}
+              </p>
+            );
+          case "markdown":
+            return (
+              <Markdown key={index} compact>
+                {block.text}
+              </Markdown>
+            );
+          case "code":
+          case "diff":
+            return (
+              <SyntaxCodeBlock
+                key={index}
+                value={block.text}
+                language={
+                  block.type === "diff" ? "diff" : (block.language ?? "text")
+                }
+                compact
+                bare
+                frameless
+              />
+            );
+          case "table":
+            return (
+              <div
+                key={index}
+                className="min-w-0 overflow-x-auto"
+                role="region"
+                aria-label="Activity table"
+                tabIndex={0}
+              >
+                <table className="w-full text-left text-ui text-code-result">
+                  <thead>
+                    <tr>
+                      {block.columns.map((column, at) => (
+                        <th
+                          key={at}
+                          scope="col"
+                          className="border-b border-edge px-2 py-1 font-bold"
+                        >
+                          {column}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {block.rows.map((row, at) => (
+                      <tr key={at}>
+                        {row.map((cell, col) => (
+                          <td
+                            key={col}
+                            className="whitespace-pre-wrap px-2 py-1"
+                          >
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {!block.rows.length && (
+                  <p className="text-ui text-dialog-hint">No rows</p>
+                )}
+              </div>
+            );
+          case "progress":
+            return (
+              <div key={index} className="text-ui text-dialog-hint">
+                <p>
+                  {block.label}
+                  {block.total !== undefined
+                    ? ` · ${block.value} / ${block.total}`
+                    : running
+                      ? " · In progress"
+                      : " · Stopped"}
+                </p>
+                {(running || block.total !== undefined) && (
+                  <progress
+                    className="block h-1.5 w-full overflow-hidden rounded-full border-0 bg-edge accent-accent-ink [&::-webkit-progress-bar]:bg-edge [&::-webkit-progress-value]:bg-accent-ink [&::-moz-progress-bar]:bg-accent-ink motion-safe:indeterminate:animate-pulse"
+                    aria-label={block.label}
+                    value={block.value}
+                    max={block.total}
+                  />
+                )}
+              </div>
+            );
+          default:
+            return (
+              <div key={index} className="min-w-0">
+                <p className="text-ui text-dialog-hint">{block.label}</p>
+                {attachment?.(block.attachment_id) ?? (
+                  <p className="text-ui text-dialog-hint">
+                    Attachment unavailable
+                  </p>
+                )}
+              </div>
+            );
+        }
+      })}
+    </div>
+  );
+}
+
 function ActivityStep({
   row,
   depth = 0,
@@ -582,10 +751,14 @@ function ActivityStep({
   row: ActivityRow;
   depth?: number;
 }) {
+  const [open, setOpen] = useState(true);
   const nested = depth > 0;
   const failed = row.state === "failed";
   const lead = activityStepLead(row);
-  const summary = activityStepObject(row);
+  const heading =
+    row.content?.[0]?.type === "heading" ? row.content[0] : undefined;
+  const content = heading ? row.content?.slice(1) : row.content;
+  const summary = heading?.text ?? activityStepObject(row);
   const delta = activityStepDelta(row);
   const duration = formatActivityDuration(row.duration_ms);
   const children = nested
@@ -618,6 +791,28 @@ function ActivityStep({
     ? ""
     : summary;
 
+  const label = (
+    <>
+      {lead}
+      {object && (
+        <>
+          {" "}
+          <span className="ml-[5px] font-normal text-dialog-hint">
+            <ActivityText text={object} format={heading ? undefined : row.summary_format} />
+          </span>
+        </>
+      )}
+      {delta.additions + delta.deletions > 0 && (
+        <>
+          {" "}
+          <span className="ml-[5px] font-mono font-normal text-dialog-hint">
+            +{delta.additions} &minus;{delta.deletions}
+          </span>
+        </>
+      )}
+    </>
+  );
+
   return (
     <li
       data-activity-row={row.id}
@@ -633,27 +828,20 @@ function ActivityStep({
         <Headline
           className={
             nested
-              ? "min-w-0 font-sans text-meta font-medium text-code-result"
-              : "min-w-0 font-sans text-ui font-bold text-code-result"
+              ? "min-w-0 truncate font-sans text-meta font-medium text-code-result"
+              : "min-w-0 truncate font-sans text-ui font-bold text-code-result"
           }
         >
-          {lead}
-          {object && (
-            <>
-              {" "}
-              <span className="ml-[5px] font-normal text-dialog-hint">
-                <ActivityText text={object} format={row.summary_format} />
-              </span>
-            </>
-          )}
-          {delta.additions + delta.deletions > 0 && (
-            <>
-              {" "}
-              <span className="ml-[5px] font-mono font-normal text-dialog-hint">
-                +{delta.additions} &minus;{delta.deletions}
-              </span>
-            </>
-          )}
+          {content?.length ? (
+            <Disclosure
+              isOpen={open}
+              tone="chronology"
+              className="min-w-0 max-w-full"
+              onClick={() => setOpen((value) => !value)}
+            >
+              <span className="min-w-0 truncate">{label}</span>
+            </Disclosure>
+          ) : label}
         </Headline>
         {duration && (
           <time className="min-w-[38px] shrink-0 text-right font-mono text-chip text-code-duration">
@@ -669,14 +857,14 @@ function ActivityStep({
           </span>
         )}
       </div>
-      {outcome && (
-        <div className="mt-0.5 font-sans text-meta text-dialog-hint">
-          <ActivityText
-            text={outcome}
-            format={failed ? undefined : row.result_format}
-            block
-          />
-        </div>
+      {open && content && (
+        <ActivityBody content={content} running={row.state === "running"} />
+      )}
+      {outcome && (!row.content?.length || failed) && (
+        <ActivityOutcome
+          text={outcome}
+          format={failed ? undefined : row.result_format}
+        />
       )}
       {/* A GROUP'S PATHS BELONG TO ITS CHANGES, not to the group as well: the head
           carries every child's resource, so painting them here and again under each

@@ -177,6 +177,16 @@
       (-> (retain-start state event)
           (assoc :state :running))
 
+      :content
+      (update state
+              :rows
+              (fn [rows]
+                (mapv (fn [row]
+                        (if (and (= (:id row) (:invocation-id event)) (= :running (:state row)))
+                          (assoc row :content (:content event))
+                          row))
+                      rows)))
+
       :terminal
       (let [next (settle state event)]
         (if (pos? (long (get-in next [:counts :running] 0)))
@@ -390,7 +400,7 @@
 (defn- presentation-row
   [{:keys [id sequence operation presenter classification state summary group-token resources
            duration-ms result-summary error-summary evidence children is-truncated summary-format
-           result-format]}]
+           result-format content]}]
   (cond-> {:id (str id)
            :sequence (long sequence)
            :operation (enum-name operation)
@@ -400,6 +410,9 @@
            :summary (str (or summary ""))
            :resources (mapv presentation-resource resources)
            :evidence (mapv presentation-evidence evidence)}
+    (some? content)
+    (assoc :content content)
+
     group-token
     (assoc :group-token (str group-token))
 

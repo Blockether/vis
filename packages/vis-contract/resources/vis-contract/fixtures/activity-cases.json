@@ -943,5 +943,284 @@
         "by_classification": {}
       }
     }
+  },
+  {
+    "name": "rich-symbol-content",
+    "valid": true,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "content": [
+            {
+              "type": "heading",
+              "text": "Checks"
+            },
+            {
+              "type": "table",
+              "columns": [
+                "Suite",
+                "Passed"
+              ],
+              "rows": [
+                [
+                  "Unit",
+                  "12"
+                ]
+              ]
+            },
+            {
+              "type": "progress",
+              "label": "Checking",
+              "value": 1,
+              "total": 2
+            },
+            {
+              "type": "video",
+              "attachment_id": "recording",
+              "label": "Recording"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "progress-missing-total",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "content": [
+            {
+              "type": "progress",
+              "label": "Checking",
+              "value": 1
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "content-rejects-html",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "content": [
+            {
+              "type": "html",
+              "text": "<b>unsafe</b>"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "media-rejects-url",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "content": [
+            {
+              "type": "image",
+              "attachment_id": "image",
+              "label": "Image",
+              "url": "https://gateway.example.com/image"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
   }
 ]

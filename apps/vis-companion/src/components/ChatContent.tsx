@@ -15,12 +15,9 @@ import Prism from "prismjs";
 import { DataTable } from "./DataTable";
 import { DocPreview, DocStack, docStackSummary } from "./DocArtifact";
 import { LiveRunRow } from "./LiveArtifact";
-import {
-  ActivityPanel,
-  activityCostParts,
-  activityReceiptText,
-} from "./ActivityPanel";
+import { ActivityPanel, ActivityAttachmentContext } from "./ActivityPanel";
 import type { ActivityProjection } from "../lib/activity";
+import { usePythonCodeShown } from "../lib/transcript-display";
 import {
   AlertIcon,
   ArrowOutIcon,
@@ -436,7 +433,7 @@ function splitGutter(
 // leaves make every UNCHANGED block bail out instead of re-running Prism /
 // ReactMarkdown over the whole accumulated body (that main-thread churn is
 // what made typing during streaming lag).
-const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
+export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   value,
   language,
   compact,
@@ -1180,16 +1177,10 @@ const CARD_BAND = "flex min-h-8 items-center gap-1.5 px-2";
 
 const ToolCard = memo(function ToolCard({
   form,
-  elapsedOnBand = false,
+  isCopyable = true,
 }: {
   form: TranscriptForm;
-  /**
-   * THE ELAPSED IS SAID ONCE. Under a receipt, the band above already carries the
-   * figure and is the only row present in both states, so the card head stops
-   * repeating it — the same measurement printed twice reads as two of them. A card
-   * standing on its own (a chunk with no band) keeps it: there it is the only home.
-   */
-  elapsedOnBand?: boolean;
+  isCopyable?: boolean;
 }) {
   const interrupted = interruptedPython(form);
   const resultText = resultBody(form);
@@ -1199,7 +1190,7 @@ const ToolCard = memo(function ToolCard({
   const stateLabel = interrupted ? "Interrupted" : failed ? "Failed" : "";
   const running = !interrupted && !failed && !hasOutcome;
   const body = resultText;
-  const duration = elapsedOnBand ? "" : formatDuration(form.duration_ms);
+  const duration = formatDuration(form.duration_ms);
   // A COLLAPSED result body is not in the DOM at all. Measured on device on a
   // real transcript: those bodies were 52k of the screen's 72k elements, and
   // WebKit computes style for them even though a closed <details> paints
@@ -1257,11 +1248,11 @@ const ToolCard = memo(function ToolCard({
           className={`size-3 shrink-0 group-open:rotate-90 ${failed ? "text-err" : "text-accent-ink"}`}
         />
         {headline}
-        {/* ONE copy control per result card: the body's code blocks are frameless
-            inside this card and render no chip of their own. */}
-        <CopyChip value={body} label="Copy result" className="shrink-0">
-          Copy
-        </CopyChip>
+        {isCopyable && (
+          <CopyChip value={body} label="Copy result" className="shrink-0">
+            Copy
+          </CopyChip>
+        )}
       </summary>
       {/* A tool result is SUBORDINATE to the answer it feeds: its body is `text-meta`
           (10px), the step its compact code blocks and diffs already render at, so the
@@ -1306,77 +1297,69 @@ function showFormCode(form: TranscriptForm, code: string): boolean {
   return Boolean(code) && !hiddenForm(form);
 }
 
-const PYTHON_PREVIEW_LINES = 5;
-
+/** A single source line opens the whole program; one copy always copies all of it. */
 const CollapsibleFormCode = memo(function CollapsibleFormCode({
   value,
-  label,
   language = "python",
-  bare = false,
 }: {
   value: string;
-  label: string;
   language?: string;
-  bare?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const lines = value.split(/\r?\n/);
-  const hiddenLines = Math.max(0, lines.length - PYTHON_PREVIEW_LINES);
-  const collapsible = hiddenLines > 0;
-  const visibleValue =
-    collapsible && !expanded
-      ? lines.slice(0, PYTHON_PREVIEW_LINES).join("\n")
-      : value;
-  // Same frame as the result cards this program produced (see `FormTrace`).
-  // The disclosure row is a header for the source block beneath it.
+  const firstLine = lines[0];
+  const hiddenLines = lines.length - 1;
+  const label = (
+    <code className="min-w-0 truncate font-mono text-ui font-normal normal-case tracking-normal text-code-foreground">
+      {firstLine}
+    </code>
+  );
   return (
     <div
-      className={
-        bare
-          ? "min-w-0"
-          : "mb-1 min-w-0 overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]"
-      }
+      className={`relative z-0 min-w-0 bg-code py-2 pr-3 ${RAIL_BLEED}`}
+      data-execution-code
     >
-      <div className="min-w-0 border-l-2 border-accent bg-code">
-        {/* The header row OWNS the copy control (right edge), exactly like the
-            `ToolCard` result headline — never a chip floating over the source.
-            It is rendered even when the program is too short to collapse, so a
-            4-line snippet and a 40-line one carry the same chrome. */}
-        {/* The rule belongs to the CARD, not to the band: spelled on the band it ate
-            a pixel of the row's own 32px (boxes are border-box here), so the header
-            with a `Disclosure` in it measured 33 beside a plain one at 32. */}
-        <div className="border-b border-code-edge">
-          <div className={CARD_BAND}>
-            {collapsible ? (
-              <Disclosure
-                isOpen={expanded}
-                tone="step"
-                bleed
-                className="min-w-0 flex-1"
-                onClick={() => setExpanded((current) => !current)}
-              >
-                <span className="min-w-0 truncate">
-                  {label}
-                  {!expanded && <BandTally> +{hiddenLines} more</BandTally>}
-                </span>
-              </Disclosure>
-            ) : (
-              <BandLabel className="min-w-0 flex-1">{label}</BandLabel>
+      <div className="flex min-w-0 items-center gap-2 before:absolute before:left-0 before:top-4 before:h-px before:w-3 before:bg-code-edge before:content-[''] mouse:before:top-3">
+        {hiddenLines > 0 ? (
+          <Disclosure
+            isOpen={expanded}
+            tone="muted"
+            className="min-w-0 flex-1"
+            aria-label={expanded ? "Collapse code" : "Expand code"}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            {label}
+            {!expanded && (
+              <span className="shrink-0">
+                <BandTally>+{hiddenLines} more</BandTally>
+              </span>
             )}
-            <CopyChip value={value} label="Copy code" className="shrink-0">
-              Copy
-            </CopyChip>
+          </Disclosure>
+        ) : (
+          <div className="flex min-h-8 min-w-0 flex-1 items-center mouse:min-h-6">
+            {label}
           </div>
-        </div>
-        <SyntaxCodeBlock
-          value={visibleValue}
-          copyValue={value}
-          language={language}
-          compact
-          bare
-          frameless
-        />
+        )}
+        <CopyChip
+          value={value}
+          label="Copy code"
+          density="compact"
+          className="shrink-0"
+        >
+          Copy
+        </CopyChip>
       </div>
+      {expanded && hiddenLines > 0 && (
+        <div className="py-3" data-code-body>
+          <SyntaxCodeBlock
+            value={value}
+            language={language}
+            compact
+            bare
+            frameless
+          />
+        </div>
+      )}
     </div>
   );
 });
@@ -1385,13 +1368,12 @@ const CardGrid = memo(function CardGrid({
   cards,
   live = false,
   bare = false,
-  elapsedOnBand = false,
+  isCopyable = true,
 }: {
   cards: TranscriptForm[];
   live?: boolean;
   bare?: boolean;
-  /** The receipt band above this stack already carries the elapsed. */
-  elapsedOnBand?: boolean;
+  isCopyable?: boolean;
 }) {
   if (!cards.length) return null;
 
@@ -1408,7 +1390,7 @@ const CardGrid = memo(function CardGrid({
         <ToolCard
           key={`${card.scope ?? card.op ?? "result"}-${cardIndex}`}
           form={card}
-          elapsedOnBand={elapsedOnBand}
+          isCopyable={isCopyable}
         />
       ))}
     </div>
@@ -1450,29 +1432,6 @@ function pythonFormState(
 }
 
 /**
- * THE RECEIPT FOR A FORM THAT CALLED NOTHING: what ran, and how long it took.
- *
- * NO state word, not even a bad one. The mark on the thread beside this row is a
- * ring in its own ink for each of them, so `FAILED · PYTHON · 29ms` says the same
- * thing twice and spends the front of the line — where the eye lands — on the
- * half of it the mark already carried. The word survives for a screen reader
- * alone, which cannot see the ring: `formStep` hands it back as `status`.
- */
-function pythonReceiptText(
-  form: TranscriptForm,
-  live: boolean,
-  activityState?: ActivityProjection["state"],
-  activityDurationMs?: number,
-): string {
-  const state = pythonFormState(form, live, activityState);
-  const duration = activityDurationMs ?? form.duration_ms;
-  const role = form.tag === "user-shell" ? "SHELL" : "PYTHON";
-  return [role, state === "RUNNING" ? "" : formatDuration(duration)]
-    .filter(Boolean)
-    .join(" · ");
-}
-
-/**
  * THE FOUR STATES A STEP CAN BE IN, and the ring is the one that says them.
  *
  * `halted` is cancelled or interrupted: stopped on purpose, so neither the tick
@@ -1495,7 +1454,6 @@ function formStep(
   activity?: ActivityProjection;
   detected: boolean;
   settled: boolean;
-  receipt: string;
   running: boolean;
   /** Which ring the thread wears here — the ONE reading of how this step ended. */
   mark: StepMark;
@@ -1523,10 +1481,6 @@ function formStep(
     activity != null &&
     activity.state !== "running" &&
     activity.state !== "idle";
-  const receipt =
-    detected && activity
-      ? activityReceiptText(activity, form.duration_ms)
-      : pythonReceiptText(form, live, activity?.state, form.duration_ms);
   const state = pythonFormState(form, live, activity?.state);
   const running = detected ? !settled : state === "RUNNING";
   const mark: StepMark = running
@@ -1540,7 +1494,6 @@ function formStep(
     activity,
     detected,
     settled,
-    receipt,
     running,
     mark,
     status:
@@ -1550,109 +1503,103 @@ function formStep(
   };
 }
 
-const FormTrace = memo(function FormTrace({
-  form,
-  live = false,
-}: {
-  form: TranscriptForm;
-  live?: boolean;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  if (hiddenForm(form)) return null;
-  const code = formCode(form);
-  const showCode = showFormCode(form, code);
-  const cards = toolCards(form);
-  if (!showCode && !cards.length) return null;
-  const codeLabel = "PYTHON";
-  const comment = showCode && form.comment?.trim();
+/** A display-only group. Source forms and their wire projections stay untouched. */
+function executionGroup(
+  forms: TranscriptForm[],
+  live: boolean,
+): TranscriptForm {
+  if (forms.length === 1) return forms[0];
+  const states = forms.map((form) =>
+    pythonFormState(form, live, form.activity?.state),
+  );
+  const state = states.includes("RUNNING")
+    ? "running"
+    : states.includes("FAILED")
+      ? "failed"
+      : states.some((state) => state === "CANCELLED" || state === "INTERRUPTED")
+        ? "cancelled"
+        : "succeeded";
+  const counts = { running: 0, succeeded: 0, failed: 0, cancelled: 0 };
+  const omitted: ActivityProjection["omitted"] = {
+    rows: 0,
+    by_classification: {},
+  };
+  const rows: ActivityProjection["rows"] = [];
+  const scopedRow = (
+    row: ActivityProjection["rows"][number],
+    scope: string,
+  ): ActivityProjection["rows"][number] => ({
+    ...row,
+    id: `${scope}:${row.id}`,
+    ...(row.children
+      ? { children: row.children.map((child) => scopedRow(child, scope)) }
+      : {}),
+  });
+  forms.forEach((form, index) => {
+    const activity = form.activity;
+    if (!activity) return;
+    for (const key of Object.keys(counts) as Array<keyof typeof counts>)
+      counts[key] += activity.counts[key];
+    omitted.rows += activity.omitted.rows;
+    for (const [signal, count] of Object.entries(
+      activity.omitted.by_classification,
+    )) {
+      omitted.by_classification[signal] =
+        (omitted.by_classification[signal] ?? 0) + count;
+    }
+    for (const row of [...activity.rows].sort(
+      (a, b) => a.sequence - b.sequence,
+    )) {
+      rows.push({ ...scopedRow(row, String(index)), sequence: rows.length });
+    }
+  });
+  return {
+    source: forms.map(formCode).filter(Boolean).join("\n\n"),
+    display_language: formCodeLanguage(forms[0]),
+    // Concurrent form durations cannot be added and called elapsed time.
+    activity: { state, counts, rows, omitted },
+  };
+}
 
-  // Activity rides the form itself, so there is nothing to fetch and no loading
-  // state to paint: either this form did something and carries the record of
-  // it, or it did not. `formStep` reads it once, for the row and for the axis.
+const FormTrace = memo(function FormTrace({
+  forms,
+  live = false,
+  showCode,
+}: {
+  forms: TranscriptForm[];
+  live?: boolean;
+  showCode: boolean;
+}) {
+  const form = executionGroup(forms, live);
+  const code = formCode(form);
+  const cards = forms
+    .flatMap(toolCards)
+    .filter((member) => member.error != null || resultBody(member) !== "");
   const {
     activity,
     detected: detectedActivity,
-    receipt,
     running,
     status,
   } = formStep(form, live);
-  // The band is EVERYTHING THE READER GETS WITHOUT OPENING IT: how the call
-  // ended, how long it took, and what it cost the repository — what changed it,
-  // what only looked at it, what checked it. Those counters move while the run
-  // does, so a closed band is still a live one. WHICH tools were called, what
-  // each call did, and the program that made them are the chronology and the
-  // source INSIDE, because that is what a box is for.
-  const cost = activityCostParts(activity);
-
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : "min-w-0"}>
-      {comment && (
-        <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui not-italic text-vis-message">
-          <Markdown compact>{comment}</Markdown>
+      {forms[0].comment?.trim() && (
+        <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui text-vis-message">
+          <Markdown compact>{forms[0].comment}</Markdown>
         </div>
       )}
-      {/* Not a landmark: a transcript holds dozens of these, and a page whose
-          landmark list is forty identical "Execution trace" regions has no
-          landmark list at all. It stays a labelled live region while it runs,
-          which is the only time it has something to announce — and the axis
-          inside it turns that off for itself, so a thirteenth step does not
-          re-announce the twelve above it. */}
+      {showCode && code && (
+        <CollapsibleFormCode value={code} language={formCodeLanguage(form)} />
+      )}
       <div
         className="min-w-0"
         role={running ? "status" : undefined}
         aria-live={running ? "polite" : undefined}
         aria-label="Execution trace"
       >
-        <Disclosure
-          isOpen={expanded}
-          tone="step"
-          bleed
-          className="min-w-0 flex-wrap"
-          aria-label={
-            expanded ? "Collapse execution trace" : "Expand execution trace"
-          }
-          onClick={() => setExpanded((open) => !open)}
-        >
-          {/* One sentence, and its counters keep the line: on a phone they
-              wrap to their own row rather than clipping the calls off the
-              front. Colour repeats each noun and never carries it. The state
-              is the RING's to say — printed here only for a reader who cannot
-              see it, and only when it is a state worth stopping on. */}
-          <span className="min-w-0 flex-1 font-mono text-chip font-normal normal-case tracking-normal text-dialog-hint">
-            {status && <span className="sr-only">{status}: </span>}
-            <span className="font-bold text-code-result">{receipt}</span>
-            {detectedActivity &&
-              cost.map((part) => (
-                <Fragment key={part.text}>
-                  {" · "}
-                  <span className={part.tone || undefined}>{part.text}</span>
-                </Fragment>
-              ))}
-          </span>
-        </Disclosure>
-        {expanded && (
-          <>
-            {/* Opened, the iteration reads in the order the machine ran it: the
-                PROGRAM first, because it is the thing that produced every row
-                under it, then what each of its calls did. Closed, none of it is
-                on the page — a transcript of forty iterations is forty receipts,
-                not forty chronologies. */}
-            <div className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
-              {showCode && (
-                <CollapsibleFormCode
-                  value={code}
-                  label={codeLabel}
-                  language={formCodeLanguage(form)}
-                  bare
-                />
-              )}
-              <CardGrid cards={cards} bare elapsedOnBand />
-            </div>
-            {detectedActivity && activity && (
-              <ActivityPanel activity={activity} />
-            )}
-          </>
-        )}
+        {status && <span className="sr-only">{status}</span>}
+        {detectedActivity && activity && <ActivityPanel activity={activity} />}
+        <CardGrid cards={cards} bare isCopyable={false} />
       </div>
     </div>
   );
@@ -2434,10 +2381,8 @@ type Chunk =
   | {
       kind: "code";
       key: string;
-      form: TranscriptForm;
-      iterationPosition?: number;
-      formIndex: number;
-      attachment?: IterationAttachment;
+      forms: TranscriptForm[];
+      isPython: boolean;
     }
   | { kind: "cards"; key: string; cards: TranscriptForm[] };
 
@@ -2466,7 +2411,13 @@ function buildSegments(
   const segments: TraceSegmentData[] = [];
   visible.forEach((entry) => {
     const open = segments.at(-1);
-    if (open && !open.closed && !entry.thinking && !entry.prose)
+    if (
+      open &&
+      !open.closed &&
+      !entry.thinking &&
+      !entry.prose &&
+      !entry.attachments.length
+    )
       open.items.push(entry);
     else {
       segments.push({
@@ -2490,6 +2441,7 @@ type TraceSegmentProps = {
   live: boolean;
   /** The turn's last step: the thread stops at it instead of running on past it. */
   isLast: boolean;
+  showCode: boolean;
   client?: GatewayClient;
   sid?: string;
 };
@@ -2512,6 +2464,7 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
   if (
     a.live !== b.live ||
     a.isLast !== b.isLast ||
+    a.showCode !== b.showCode ||
     a.client !== b.client ||
     a.sid !== b.sid
   )
@@ -2534,11 +2487,11 @@ const TraceSegment = memo(function TraceSegment({
   segment,
   live,
   isLast,
+  showCode,
   client,
   sid,
 }: TraceSegmentProps) {
-  // Inside a segment, adjacent code-less forms pool into ONE grid; a python
-  // block keeps its own frame under its source and starts a new pool after it.
+  // Narration and attachments bound a run; consecutive Python forms share its source and axis.
   const chunks = useMemo(() => {
     const built: Chunk[] = [];
     segment.items.forEach((entry) => {
@@ -2546,13 +2499,17 @@ const TraceSegment = memo(function TraceSegment({
         if (hiddenForm(form)) return;
         const key = `${entry.index}-${formIndex}-${form.scope ?? "form"}`;
         if (showFormCode(form, formCode(form))) {
-          built.push({
-            kind: "code",
-            key,
-            form,
-            iterationPosition: entry.iteration.position,
-            formIndex,
-          });
+          const pool = built.at(-1);
+          const isPython =
+            formCodeLanguage(form) === "python" && form.tag !== "user-shell";
+          if (
+            isPython &&
+            !form.comment?.trim() &&
+            pool?.kind === "code" &&
+            pool.isPython
+          )
+            pool.forms.push(form);
+          else built.push({ kind: "code", key, forms: [form], isPython });
           return;
         }
         const cards = toolCards(form);
@@ -2592,15 +2549,20 @@ const TraceSegment = memo(function TraceSegment({
       {chunks.length > 0 && (
         <div className="grid min-w-0 gap-2.5">
           {chunks.map((chunk) => {
-            const form = chunk.kind === "code" ? chunk.form : chunk.cards[0];
+            const form =
+              chunk.kind === "code"
+                ? executionGroup(chunk.forms, live)
+                : chunk.cards[0];
             const step = form ? formStep(form, live) : undefined;
             return (
               <div key={chunk.key} className="relative min-w-0">
-                <StepNode
-                  mark={step ? step.mark : live ? "running" : "done"}
-                />
+                <StepNode mark={step ? step.mark : live ? "running" : "done"} />
                 {chunk.kind === "code" ? (
-                  <FormTrace form={chunk.form} live={live} />
+                  <FormTrace
+                    forms={chunk.forms}
+                    live={live}
+                    showCode={showCode || !chunk.isPython}
+                  />
                 ) : (
                   <CardGrid cards={chunk.cards} live={live} />
                 )}
@@ -2623,6 +2585,7 @@ export const IterationTrace = memo(function IterationTrace({
   whole = false,
   client,
   sid,
+  showCode: codeOverride,
 }: {
   iterations: TranscriptIteration[];
   /** Prose the ANSWER band already paints — see `answeredProse`. */
@@ -2632,7 +2595,10 @@ export const IterationTrace = memo(function IterationTrace({
   whole?: boolean;
   client?: GatewayClient;
   sid?: string;
+  showCode?: boolean;
 }) {
+  const preferredCode = usePythonCodeShown();
+  const showCode = codeOverride ?? preferredCode;
   const rootRef = useRef<HTMLDivElement>(null);
   // Identity in the ramp queue, so only the bottom-most trace backfills at once.
   const [rampId] = useState(() => Symbol("trace-ramp"));
@@ -2733,26 +2699,47 @@ export const IterationTrace = memo(function IterationTrace({
   const shown = hidden > 0 ? segments.slice(hidden) : segments;
 
   return (
-    <div ref={rootRef} className="mb-2.5 grid">
-      {rampDone && hidden > 0 && (
-        <LoadMore
-          label={`Show ${hidden} earlier step${hidden === 1 ? "" : "s"} of this turn`}
-          onClick={() => setUnfolded(true)}
-        >
-          {hidden} earlier step{hidden === 1 ? "" : "s"}
-        </LoadMore>
-      )}
-      {shown.map((segment, index) => (
-        <TraceSegment
-          key={segment.key}
-          segment={segment}
-          live={live}
-          isLast={index === shown.length - 1}
-          client={client}
-          sid={sid}
-        />
-      ))}
-    </div>
+    <ActivityAttachmentContext.Provider
+      value={(id) => {
+        const attachment = iterations
+          .flatMap((iteration) =>
+            (iteration.attachments ?? []).map((item) => ({
+              ...item,
+              iteration_id: item.iteration_id ?? iteration.id,
+            })),
+          )
+          .find((item) => item.attachment_id === id);
+        return attachment && client && sid ? (
+          <AttachmentRail
+            client={client}
+            sid={sid}
+            attachments={[attachment]}
+          />
+        ) : null;
+      }}
+    >
+      <div ref={rootRef} className="mb-2.5 grid">
+        {rampDone && hidden > 0 && (
+          <LoadMore
+            label={`Show ${hidden} earlier step${hidden === 1 ? "" : "s"} of this turn`}
+            onClick={() => setUnfolded(true)}
+          >
+            {hidden} earlier step{hidden === 1 ? "" : "s"}
+          </LoadMore>
+        )}
+        {shown.map((segment, index) => (
+          <TraceSegment
+            key={segment.key}
+            segment={segment}
+            live={live}
+            isLast={index === shown.length - 1}
+            showCode={showCode}
+            client={client}
+            sid={sid}
+          />
+        ))}
+      </div>
+    </ActivityAttachmentContext.Provider>
   );
 });
 
@@ -3084,9 +3071,12 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
   const nextStep = errorText(block.next_step);
   const provider = errorText(block.provider);
   const requestId = errorText(block.request_id);
-  const status = typeof block.status === "number" ? String(block.status) : undefined;
+  const status =
+    typeof block.status === "number" ? String(block.status) : undefined;
   const attempts = Array.isArray(block.attempts)
-    ? block.attempts.map(providerAttemptText).filter((one): one is string => Boolean(one))
+    ? block.attempts
+        .map(providerAttemptText)
+        .filter((one): one is string => Boolean(one))
     : [];
   const code = errorText(block.code);
   const body = errorText(block.body);
@@ -3119,7 +3109,9 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
 
       {nextStep && (
         <div className="border-t border-warn-edge px-3 py-2.5">
-          <p className={`${PROSE} text-body font-medium text-answer-foreground`}>
+          <p
+            className={`${PROSE} text-body font-medium text-answer-foreground`}
+          >
             {nextStep}
           </p>
         </div>
@@ -3166,7 +3158,9 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
               )}
               {attempts.length > 0 && (
                 <div>
-                  <p className="font-semibold uppercase tracking-wide">Providers tried</p>
+                  <p className="font-semibold uppercase tracking-wide">
+                    Providers tried
+                  </p>
                   <ul className="mt-1 grid gap-0.5">
                     {attempts.map((attempt, index) => (
                       <li
@@ -3181,7 +3175,9 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
               )}
               {body && (
                 <div>
-                  <p className="font-semibold uppercase tracking-wide">Provider response</p>
+                  <p className="font-semibold uppercase tracking-wide">
+                    Provider response
+                  </p>
                   <pre className="mt-1 whitespace-pre-wrap break-words text-answer-foreground">
                     {body}
                   </pre>
@@ -3854,7 +3850,11 @@ export const UserMessage = memo(function UserMessage({
           // A reserved slot on the role line, so the transcript never reflows: on a
           // pointer it surfaces with the turn under it, on touch it is simply there.
           <span className="-my-1 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
-            <MetaButton onClick={onFork} disabled={isForking} aria-label="Fork from here">
+            <MetaButton
+              onClick={onFork}
+              disabled={isForking}
+              aria-label="Fork from here"
+            >
               <ForkIcon className="size-3" aria-hidden />
               {isForking ? "Forking..." : "Fork from here"}
             </MetaButton>

@@ -97,3 +97,71 @@ def test_shared_activity_admission(sample):
     else:
         with pytest.raises(ValueError):
             ActivityProjection.from_wire(sample["projection"])
+
+
+def test_custom_activity_callbacks_preserve_results_and_errors(monkeypatch):
+    updates = []
+    monkeypatch.setattr(
+        vis._host, "activity", lambda blocks: updates.append(blocks) or True
+    )
+
+    def render(phase, result, **_):
+        return [
+            {"type": "heading", "text": phase},
+            {"type": "text", "text": str(result)},
+        ]
+
+    def check(value):
+        """Check one value."""
+        vis.publish_activity({"type": "progress", "label": "Working"})
+        if value < 0:
+            raise ValueError("negative")
+        return value + 1
+
+    tool = vis.symbol(check, activity=vis.Activity(render=render))
+    assert tool["fn"](2) == 3
+    assert [b[0].get("text", "Working") for b in updates] == [
+        "start",
+        "Working",
+        "success",
+    ]
+    with pytest.raises(ValueError, match="negative"):
+        tool["fn"](-1)
+    assert updates[-1][0]["text"] == "failure"
+    assert "render" not in tool["activity"]
+
+    def broken(**_):
+        raise RuntimeError("presentation error")
+
+    assert vis.symbol(check, activity=vis.Activity(render=broken))["fn"](2) == 3
+
+
+def test_custom_activity_async_and_wire_roundtrip(monkeypatch):
+    import asyncio
+
+    from blockether.vis.activity import ActivityProjection
+
+    updates = []
+    monkeypatch.setattr(
+        vis._host, "activity", lambda blocks: updates.append(blocks) or True
+    )
+
+    async def check():
+        """Check asynchronously."""
+        return 9
+
+    tool = vis.symbol(
+        check,
+        activity=vis.Activity(
+            render=lambda phase, **_: [{"type": "text", "text": phase}]
+        ),
+    )
+    assert asyncio.run(tool["fn"]()) == 9
+    assert [b[0]["text"] for b in updates] == ["start", "success"]
+    fixture = json.loads((vis_contract._DATA / "fixtures/activity.json").read_text())
+    fixture["rows"][0]["content"] = updates[-1]
+    projection = ActivityProjection.from_wire(fixture)
+    assert projection.to_wire() == fixture
+    with pytest.raises(TypeError):
+        projection.rows[0].content[0]["text"] = "changed"
+    assert fixture["rows"][0]["content"][0]["text"] == "success"

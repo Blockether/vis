@@ -2306,16 +2306,16 @@ therapy line 2"
               (:layout @state/app-db)
 
               before-receipt
-              (row-containing @before-grid "▾ INSPECT SOURCE · Polling the run")
+              (row-containing @before-grid "Inspect source Polling the run")
 
               after-receipt
-              (row-containing @after-grid "▾ INSPECT SOURCE · Polling the run")
+              (row-containing @after-grid "Inspect source Polling the run")
 
               before-surface
-              (row-containing @before-grid "PYTHON")
+              (row-containing @before-grid "grep({...})")
 
               after-surface
-              (row-containing @after-grid "PYTHON")]
+              (row-containing @after-grid "grep({...})")]
 
           (expect (str/ends-with? before-png "vis-activity-anchor-before-scroll.png"))
           (expect (str/ends-with? after-png "vis-activity-anchor-after-scroll.png"))
@@ -2326,10 +2326,10 @@ therapy line 2"
           (expect (= :at (get-in @state/app-db [:scroll :mode]))
                   "the history gesture went through the real scroll event")
           (expect (< (long (:eff-scroll after-layout)) (long (:eff-scroll before-layout))))
-          (expect (= (+ 3 (long before-receipt)) (long before-surface))
-                  "the first full frame keeps an outer margin and tinted pad before PYTHON")
-          (expect (= (+ 3 (long after-receipt)) (long after-surface))
-                  "the scrolled frame preserves the same receipt-to-surface rhythm")
+          (expect (= (- (long before-receipt) 2) (long before-surface))
+                  "the expanded code header and its source precede activity")
+          (expect (= (- (long after-receipt) 2) (long after-surface))
+                  "scrolling preserves code before activity")
           (expect (= (- (long after-receipt) (long before-receipt))
                      (- (long after-surface) (long before-surface)))
                   "receipt and expanded surface move by the same terminal rows"))
@@ -2349,3 +2349,37 @@ therapy line 2"
                                :rail-h 2
                                :echo-row 22}
                               geometry)))))
+
+(defdescribe
+  compact-code-copy-test
+  (it "copies the complete program from the single painted Copy target"
+      (let [code
+            "first_call()\nsecond_call()"
+
+            payload
+            (render/format-answer-with-thinking-data ""
+                                                     [{:forms [{:code code :success? true}]}]
+                                                     (- 80 (long render/MESSAGE_SIDE_PAD))
+                                                     {:show-thinking true :show-iterations true}
+                                                     nil
+                                                     false
+                                                     {:session-id "sid" :session-turn-id "turn"})
+
+            message
+            {:role :assistant :prewrapped-lines (:lines payload) :line-meta (:line-meta payload)}
+
+            grid
+            (painted-bubble-grid message 3)
+
+            row
+            (first (keep-indexed #(when (str/includes? %2 "❐") %1) grid))
+
+            col
+            (.indexOf ^String (nth grid row) "❐")
+
+            regions
+            (disclosure-copy-regions {:visible [{:top 0 :projected message}]} 3 50 80)]
+
+        (expect (= 1 (count regions)))
+        (expect (= code (:text (bubble-copy-hit {:row row :col col} regions))))
+        (expect (nil? (bubble-copy-hit {:row row :col 4} regions))))))

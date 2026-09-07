@@ -8,6 +8,7 @@
             [com.blockether.vis.contract.activity :as contract]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.util :as util])
   (:import [java.nio.charset StandardCharsets]
            [java.util UUID]
@@ -192,7 +193,7 @@
           (not (valid-id? (:invocation-id event))) "malformed invocation id"
           (and (:parent-invocation-id event) (not (valid-id? (:parent-invocation-id event))))
           "malformed parent invocation id"
-          (not (contains? #{:start :terminal} (:phase event))) "unknown lifecycle phase"
+          (not (contains? #{:start :content :terminal} (:phase event))) "unknown lifecycle phase"
           (and terminal? (not= 1 (count outcomes))) "terminal must have exactly one outcome"
           (and (not terminal?) (seq outcomes)) "start cannot carry an outcome"
           (and terminal? (not (number? (:duration-ms event)))) "terminal requires duration"
@@ -256,6 +257,12 @@
                          (-> current
                              (update :starts conj id)))
 
+                     :content
+                     (do (when (or (not (starts id)) (terminals id))
+                           (throw (ex-info "Activity content outside a running invocation"
+                                           {:type :activity/orphan-content})))
+                         current)
+
                      :terminal
                      (do (when-not (starts id)
                            (throw (ex-info "Activity terminal without start"
@@ -276,6 +283,26 @@
    :presenter presenter
    :phase phase
    :observed-at (util/now-ms)})
+
+(defn content-event
+  "Validate one content replacement. Content is data, never lifecycle authority.
+   Media names existing attachments rather than supplying executable markup or URLs."
+  [ctx invocation {:keys [operation presenter]} blocks]
+  (when (or (not (document/valid-json? "activity" "content" blocks))
+            (> (utf8-bytes (wire/json-str blocks)) 32768)
+            (some (fn [block]
+                    (and (= "progress" (get block "type"))
+                         (or (not= (contains? block "value") (contains? block "total"))
+                             (and (get block "value")
+                                  (> (double (get block "value")) (double (get block "total")))))))
+                  blocks)
+            (some (fn [block]
+                    (and (= "table" (get block "type"))
+                         (some #(not= (count %) (count (get block "columns"))) (get block "rows"))))
+                  blocks))
+    (throw (ex-info "Invalid or oversized Activity content" {:type :activity/invalid-content})))
+  (checked (assoc (base-event ctx invocation operation presenter :content)
+             :content (redact blocks))))
 
 (defn- map-value [m k] (when (map? m) (or (get m k) (get m (name k)))))
 

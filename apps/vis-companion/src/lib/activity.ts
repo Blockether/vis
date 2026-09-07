@@ -17,10 +17,10 @@
  * parser re-checks both, because a payload that broke the engine's own bound
  * is a contract violation, not a bigger picture to render.
  */
-import activityContract from '../../../../packages/vis-contract/resources/vis-contract/activity.json';
+import activityContract from "../../../../packages/vis-contract/resources/vis-contract/activity.json";
 const ACTIVITY_LIMITS = activityContract.limits;
 function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
+  return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
 }
@@ -38,32 +38,43 @@ function hasExactKeys(
 }
 
 function text(value: unknown): string {
-  return typeof value === 'string' ? value : '';
+  return typeof value === "string" ? value : "";
 }
 
 function optionalText(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
 export const ACTIVITY_PRESENTERS = [
-  'generic',
-  'shell',
-  'tests',
-  'patch',
-  'observation',
-  'lint',
-  'repl',
-  'format',
-  'list',
+  "generic",
+  "shell",
+  "tests",
+  "patch",
+  "observation",
+  "lint",
+  "repl",
+  "format",
+  "list",
 ] as const;
-export const ACTIVITY_SIGNALS = ['generic', 'observation', 'mutation', 'verification'] as const;
-export const ACTIVITY_STATES = ['idle', 'running', 'succeeded', 'failed', 'cancelled'] as const;
+export const ACTIVITY_SIGNALS = [
+  "generic",
+  "observation",
+  "mutation",
+  "verification",
+] as const;
+export const ACTIVITY_STATES = [
+  "idle",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
 /**
  * How a row's own words are to be READ. Absent means literal: a path, a glob or a command
  * must never be re-read as markup, so the engine DECLARES the format per field and the
  * renderer never guesses it from the characters.
  */
-export const ACTIVITY_TEXT_FORMATS = ['inline', 'markdown'] as const;
+export const ACTIVITY_TEXT_FORMATS = ["inline", "markdown"] as const;
 
 export type ActivityPresenter = (typeof ACTIVITY_PRESENTERS)[number];
 export type ActivityTextFormat = (typeof ACTIVITY_TEXT_FORMATS)[number];
@@ -76,18 +87,18 @@ export interface ActivityResource {
 }
 
 export interface ActivityTextEvidence {
-  kind: 'arguments' | 'result' | 'error';
+  kind: "arguments" | "result" | "error";
   text: string;
 }
 
 export interface ActivityDiffLine {
-  kind: 'header' | 'hunk' | 'context' | 'addition' | 'deletion';
+  kind: "header" | "hunk" | "context" | "addition" | "deletion";
   text: string;
   is_redacted?: true;
 }
 
 export interface ActivityDiffEvidence {
-  kind: 'diff';
+  kind: "diff";
   text: string;
   lines: ActivityDiffLine[];
   additions: number;
@@ -98,6 +109,108 @@ export interface ActivityDiffEvidence {
 }
 
 export type ActivityEvidence = ActivityTextEvidence | ActivityDiffEvidence;
+
+export type ActivityContent =
+  | { type: "heading" | "text" | "markdown"; text: string }
+  | { type: "code" | "diff"; text: string; language?: string }
+  | { type: "table"; columns: string[]; rows: string[][] }
+  | {
+      type: "image" | "video" | "audio" | "file";
+      attachment_id: string;
+      label: string;
+    }
+  | { type: "progress"; label: string; value?: number; total?: number };
+
+/** Closed, bounded content grammar shared with activity.json. Never accept markup as HTML. */
+function activityContentFromWire(value: unknown): ActivityContent[] | null {
+  if (
+    !Array.isArray(value) ||
+    value.length > 32 ||
+    new TextEncoder().encode(JSON.stringify(value)).length > 32768
+  )
+    return null;
+  const string = (v: unknown, max = 256): v is string =>
+    typeof v === "string" && [...v].length <= max;
+  for (const item of value) {
+    const b = record(item);
+    if (!b) return null;
+    switch (b.type) {
+      case "heading":
+      case "text":
+      case "markdown":
+        if (!hasExactKeys(b, ["type", "text"]) || !string(b.text, 16384))
+          return null;
+        break;
+      case "code":
+      case "diff":
+        if (
+          !hasExactKeys(b, ["type", "text"], ["language"]) ||
+          !string(b.text, 16384) ||
+          (b.language !== undefined && !string(b.language))
+        )
+          return null;
+        break;
+      case "table":
+        if (
+          !hasExactKeys(b, ["type", "columns", "rows"]) ||
+          !Array.isArray(b.columns) ||
+          !b.columns.length ||
+          b.columns.length > 16 ||
+          !b.columns.every((c) => string(c)) ||
+          !Array.isArray(b.rows) ||
+          b.rows.length > 200
+        )
+          return null;
+        {
+          const width = b.columns.length;
+          if (
+            !b.rows.every(
+              (row) =>
+                Array.isArray(row) &&
+                row.length === width &&
+                row.every((c) => string(c)),
+            )
+          )
+            return null;
+        }
+        break;
+      case "image":
+      case "video":
+      case "audio":
+      case "file":
+        if (
+          !hasExactKeys(b, ["type", "attachment_id", "label"]) ||
+          !string(b.attachment_id) ||
+          !b.attachment_id.trim() ||
+          !string(b.label)
+        )
+          return null;
+        break;
+      case "progress":
+        if (
+          !hasExactKeys(b, ["type", "label"], ["value", "total"]) ||
+          !string(b.label)
+        )
+          return null;
+        if (b.value !== undefined || b.total !== undefined) {
+          if (
+            typeof b.value !== "number" ||
+            !Number.isFinite(b.value) ||
+            typeof b.total !== "number" ||
+            !Number.isFinite(b.total) ||
+            b.value < 0 ||
+            b.total <= 0 ||
+            b.value > b.total
+          )
+            return null;
+        }
+        break;
+      default:
+        return null;
+    }
+  }
+  return value as ActivityContent[];
+}
 
 export interface ActivityRow {
   id: string;
@@ -117,6 +230,7 @@ export interface ActivityRow {
   evidence: ActivityEvidence[];
   children?: ActivityRow[];
   is_truncated?: boolean;
+  content?: ActivityContent[];
 }
 
 /**
@@ -127,7 +241,7 @@ export interface ActivityRow {
  */
 export interface ActivityProjection {
   state: ActivityState;
-  counts: Record<'running' | 'succeeded' | 'failed' | 'cancelled', number>;
+  counts: Record<"running" | "succeeded" | "failed" | "cancelled", number>;
   rows: ActivityRow[];
   omitted: {
     rows: number;
@@ -135,18 +249,23 @@ export interface ActivityProjection {
   };
 }
 
-function activityEnum<T extends string>(value: unknown, values: readonly T[]): T | null {
+function activityEnum<T extends string>(
+  value: unknown,
+  values: readonly T[],
+): T | null {
   const candidate = text(value);
   return values.includes(candidate as T) ? (candidate as T) : null;
 }
 
 function activityCount(value: unknown): number | null {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
 }
 
 function activityResourceFromWire(value: unknown): ActivityResource | null {
   const raw = record(value);
-  if (!raw || !hasExactKeys(raw, ['type', 'id'])) return null;
+  if (!raw || !hasExactKeys(raw, ["type", "id"])) return null;
   const type = optionalText(raw.type);
   const id = optionalText(raw.id);
   return type && id ? { type, id } : null;
@@ -155,22 +274,29 @@ function activityResourceFromWire(value: unknown): ActivityResource | null {
 function activityEvidenceFromWire(value: unknown): ActivityEvidence | null {
   const raw = record(value);
   if (!raw) return null;
-  const kind = activityEnum(raw.kind, ['arguments', 'result', 'error', 'diff'] as const);
-  if (!kind || typeof raw.text !== 'string') return null;
+  const kind = activityEnum(raw.kind, [
+    "arguments",
+    "result",
+    "error",
+    "diff",
+  ] as const);
+  if (!kind || typeof raw.text !== "string") return null;
   const evidenceText = raw.text;
-  if (kind !== 'diff') {
-    return hasExactKeys(raw, ['kind', 'text']) ? { kind, text: evidenceText } : null;
+  if (kind !== "diff") {
+    return hasExactKeys(raw, ["kind", "text"])
+      ? { kind, text: evidenceText }
+      : null;
   }
   if (
     !hasExactKeys(raw, [
-      'kind',
-      'text',
-      'lines',
-      'additions',
-      'deletions',
-      'modifications',
-      'is_truncated',
-      'is_redacted',
+      "kind",
+      "text",
+      "lines",
+      "additions",
+      "deletions",
+      "modifications",
+      "is_truncated",
+      "is_redacted",
     ])
   ) {
     return null;
@@ -185,25 +311,25 @@ function activityEvidenceFromWire(value: unknown): ActivityEvidence | null {
     additions === null ||
     deletions === null ||
     modifications === null ||
-    typeof raw.is_truncated !== 'boolean' ||
-    typeof raw.is_redacted !== 'boolean'
+    typeof raw.is_truncated !== "boolean" ||
+    typeof raw.is_redacted !== "boolean"
   )
     return null;
   const parsedLines = rawLines.map((line): ActivityDiffLine | null => {
     const entry = record(line);
-    if (
-      !entry ||
-      !hasExactKeys(entry, ['kind', 'text'], ['is_redacted'])
-    ) {
+    if (!entry || !hasExactKeys(entry, ["kind", "text"], ["is_redacted"])) {
       return null;
     }
-    const lineKind = activityEnum(
-      entry.kind,
-      ['header', 'hunk', 'context', 'addition', 'deletion'] as const,
-    );
+    const lineKind = activityEnum(entry.kind, [
+      "header",
+      "hunk",
+      "context",
+      "addition",
+      "deletion",
+    ] as const);
     if (
       !lineKind ||
-      typeof entry.text !== 'string' ||
+      typeof entry.text !== "string" ||
       (entry.is_redacted !== undefined && entry.is_redacted !== true)
     )
       return null;
@@ -233,16 +359,27 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     !raw ||
     !hasExactKeys(
       raw,
-      ['id', 'sequence', 'operation', 'presenter', 'signal', 'state', 'summary', 'resources', 'evidence'],
       [
-        'group_token',
-        'duration_ms',
-        'result_summary',
-        'error_summary',
-        'children',
-        'is_truncated',
-        'summary_format',
-        'result_format',
+        "id",
+        "sequence",
+        "operation",
+        "presenter",
+        "signal",
+        "state",
+        "summary",
+        "resources",
+        "evidence",
+      ],
+      [
+        "group_token",
+        "duration_ms",
+        "result_summary",
+        "error_summary",
+        "children",
+        "is_truncated",
+        "summary_format",
+        "result_format",
+        "content",
       ],
     )
   ) {
@@ -257,26 +394,44 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
   const resourcesRaw = Array.isArray(raw.resources) ? raw.resources : null;
   const evidenceRaw = Array.isArray(raw.evidence) ? raw.evidence : null;
   const resources = resourcesRaw
-    ? resourcesRaw.map(activityResourceFromWire).filter((item): item is ActivityResource => item !== null)
+    ? resourcesRaw
+        .map(activityResourceFromWire)
+        .filter((item): item is ActivityResource => item !== null)
     : null;
   const evidence = evidenceRaw
-    ? evidenceRaw.map(activityEvidenceFromWire).filter((item): item is ActivityEvidence => item !== null)
+    ? evidenceRaw
+        .map(activityEvidenceFromWire)
+        .filter((item): item is ActivityEvidence => item !== null)
     : null;
-  const groupToken = raw.group_token === undefined ? undefined : optionalText(raw.group_token);
-  const duration = raw.duration_ms === undefined ? undefined : activityCount(raw.duration_ms);
-  const resultSummary = typeof raw.result_summary === 'string' ? raw.result_summary : undefined;
-  const errorSummary = typeof raw.error_summary === 'string' ? raw.error_summary : undefined;
+  const groupToken =
+    raw.group_token === undefined ? undefined : optionalText(raw.group_token);
+  const duration =
+    raw.duration_ms === undefined ? undefined : activityCount(raw.duration_ms);
+  const resultSummary =
+    typeof raw.result_summary === "string" ? raw.result_summary : undefined;
+  const errorSummary =
+    typeof raw.error_summary === "string" ? raw.error_summary : undefined;
   const summaryFormat =
-    raw.summary_format === undefined ? undefined : activityEnum(raw.summary_format, ACTIVITY_TEXT_FORMATS);
+    raw.summary_format === undefined
+      ? undefined
+      : activityEnum(raw.summary_format, ACTIVITY_TEXT_FORMATS);
   const resultFormat =
-    raw.result_format === undefined ? undefined : activityEnum(raw.result_format, ACTIVITY_TEXT_FORMATS);
+    raw.result_format === undefined
+      ? undefined
+      : activityEnum(raw.result_format, ACTIVITY_TEXT_FORMATS);
   const childrenRaw =
     raw.children === undefined
       ? undefined
       : Array.isArray(raw.children) && raw.children.length > 0
         ? raw.children
         : null;
-  const children = childrenRaw?.map((child) => activityRowFromWire(child, depth + 1));
+  const children = childrenRaw?.map((child) =>
+    activityRowFromWire(child, depth + 1),
+  );
+  const content =
+    raw.content === undefined
+      ? undefined
+      : activityContentFromWire(raw.content);
   if (
     !id ||
     sequence === null ||
@@ -284,7 +439,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     !presenter ||
     !signal ||
     !state ||
-    typeof raw.summary !== 'string' ||
+    typeof raw.summary !== "string" ||
     resources === null ||
     resources.length !== resourcesRaw!.length ||
     resources.length > ACTIVITY_LIMITS.max_resources ||
@@ -296,6 +451,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     (raw.error_summary !== undefined && errorSummary === undefined) ||
     (raw.summary_format !== undefined && !summaryFormat) ||
     (raw.result_format !== undefined && !resultFormat) ||
+    content === null ||
     childrenRaw === null ||
     children?.some((child) => child === null) ||
     (raw.is_truncated !== undefined && raw.is_truncated !== true)
@@ -319,17 +475,24 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     ...(summaryFormat ? { summary_format: summaryFormat } : {}),
     ...(resultFormat ? { result_format: resultFormat } : {}),
     ...(children ? { children: children as ActivityRow[] } : {}),
+    ...(content ? { content } : {}),
     ...(raw.is_truncated === true ? { is_truncated: true } : {}),
   };
 }
 
 function activityRowIds(rows: readonly ActivityRow[]): string[] {
-  return rows.flatMap((row) => [row.id, ...(row.children ? activityRowIds(row.children) : [])]);
+  return rows.flatMap((row) => [
+    row.id,
+    ...(row.children ? activityRowIds(row.children) : []),
+  ]);
 }
 
-export function activityProjectionFromWire(value: unknown): ActivityProjection | null {
+export function activityProjectionFromWire(
+  value: unknown,
+): ActivityProjection | null {
   const raw = record(value);
-  if (!raw || !hasExactKeys(raw, ['state', 'counts', 'rows', 'omitted'])) return null;
+  if (!raw || !hasExactKeys(raw, ["state", "counts", "rows", "omitted"]))
+    return null;
   const state = activityEnum(raw.state, ACTIVITY_STATES);
   const countsRaw = record(raw.counts);
   const omittedRaw = record(raw.omitted);
@@ -337,9 +500,9 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
   if (
     !state ||
     !countsRaw ||
-    !hasExactKeys(countsRaw, ['running', 'succeeded', 'failed', 'cancelled']) ||
+    !hasExactKeys(countsRaw, ["running", "succeeded", "failed", "cancelled"]) ||
     !omittedRaw ||
-    !hasExactKeys(omittedRaw, ['rows', 'by_classification']) ||
+    !hasExactKeys(omittedRaw, ["rows", "by_classification"]) ||
     !omittedBy ||
     !Array.isArray(raw.rows)
   ) {
@@ -355,28 +518,35 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
   const omittedEntries = Object.entries(omittedBy);
   const parsedRows = raw.rows.map((row) => activityRowFromWire(row));
   const rows = parsedRows as ActivityRow[];
-  const ids = parsedRows.some((row) => row === null) ? [] : activityRowIds(rows);
+  const ids = parsedRows.some((row) => row === null)
+    ? []
+    : activityRowIds(rows);
   if (
     Object.values(counts).some((amount) => amount === null) ||
     omittedRows === null ||
     omittedEntries.some(
       ([classification, amount]) =>
-        !ACTIVITY_SIGNALS.includes(classification as ActivitySignal) || activityCount(amount) === null,
+        !ACTIVITY_SIGNALS.includes(classification as ActivitySignal) ||
+        activityCount(amount) === null,
     ) ||
     parsedRows.some((row) => row === null) ||
     new Set(ids).size !== ids.length ||
     parsedRows.length > ACTIVITY_LIMITS.max_rows ||
-    new TextEncoder().encode(JSON.stringify(raw)).length > ACTIVITY_LIMITS.max_receipt_bytes
+    new TextEncoder().encode(JSON.stringify(raw)).length >
+      ACTIVITY_LIMITS.max_receipt_bytes
   ) {
     return null;
   }
   return {
     state,
-    counts: counts as ActivityProjection['counts'],
+    counts: counts as ActivityProjection["counts"],
     rows,
     omitted: {
       rows: omittedRows,
-      by_classification: Object.fromEntries(omittedEntries) as Record<string, number>,
+      by_classification: Object.fromEntries(omittedEntries) as Record<
+        string,
+        number
+      >,
     },
   };
 }

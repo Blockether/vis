@@ -2560,16 +2560,19 @@
          [(keyword shared-theme/default-theme-id)])))
 
 (defn- settings-ui-options
-  "Terminal-UI-owned settings in the Terminal UI section: currently just the
-   theme picker. Feature toggles (mouse-selection auto-copy, etc.) live in the
-   toggles registry, not here."
+  "Terminal-local theme and transcript display preferences. Engine settings use the registry."
   []
   [{:key :theme-name
     :type :choice
     :choices (theme-choice-order)
     :label "Theme"
     :description
-    "Reusable channel theme from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}])
+    "Reusable channel theme from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}
+   {:key :show-python-code
+    :type :toggle
+    :label "Show Python code"
+    :description
+    "One expandable source line before Activity; hiding code keeps activities and results."}])
 
 (declare titleize-label)
 

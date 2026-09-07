@@ -43,6 +43,37 @@ function paintActivity(
 }
 
 describe("one form's Activity on the phone", () => {
+  it("keeps the leading content heading beside the action, once", () => {
+    const projection = activityProjection();
+    paintActivity({
+      activity: {
+        ...projection,
+        rows: [{
+          ...projection.rows[0],
+          operation: "ls",
+          summary: "",
+          resources: [],
+          evidence: [],
+          children: [],
+          content: [
+            { type: "heading", text: "apps/vis-companion/src" },
+            { type: "text", text: "3 directories · 2 files" },
+          ],
+        }],
+      },
+    });
+    expect(screen.getByRole("heading", {
+      name: "Listed apps/vis-companion/src",
+    })).toBeTruthy();
+    expect(screen.getAllByText("apps/vis-companion/src")).toHaveLength(1);
+    const toggle = screen.getByRole("button", { name: "Listed apps/vis-companion/src" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("3 directories · 2 files")).toBeNull();
+    fireEvent.click(toggle);
+    expect(screen.getByText("3 directories · 2 files")).toBeTruthy();
+  });
   it("draws the chronology without being asked, in engine sequence", () => {
     paintActivity();
 
@@ -165,14 +196,8 @@ describe("what the iteration cost", () => {
 describe("the axis is built from the closed vocabulary", () => {
   it("borrows the app's controls and writes no styles of its own", () => {
     expect(activityPanelSource).toContain("<Disclosure");
-    // TWO chevrons and no more: a file's own patch, and the pathless one a `patch`
-    // row folds under its bare name — the only things on the axis long enough to be
-    // worth folding. A STEP still never opens, and neither does the thread. What the
-    // axis HOLDS BACK wears no chevron at all: a cut is the one rule both surfaces
-    // draw (`LoadMore`), and only TWO things on this axis are ever cut - the paths a
-    // step touched, and the steps a long thread holds back. A patch and a failure's
-    // own words are never cut: they are what the reader came here to read.
-    expect((activityPanelSource.match(/<Disclosure/g) ?? []).length).toBe(2);
+    // Shared disclosures open patches and long outcomes; neither invents a new control.
+    expect((activityPanelSource.match(/<Disclosure/g) ?? []).length).toBe(4);
     expect((activityPanelSource.match(/<LoadMore/g) ?? []).length).toBe(2);
     // No spinner: a mark that turns says only "still here", while one word says
     // whether the form is still working and, once it is not, how it ended.
@@ -516,7 +541,10 @@ describe("the axis says a thing once", () => {
       summary: "one file",
       state: "succeeded" as const,
       resources: [
-        { type: "file", id: "src/com/blockether/vis/internal/channel/render.clj" },
+        {
+          type: "file",
+          id: "src/com/blockether/vis/internal/channel/render.clj",
+        },
       ],
       evidence: [],
     });
@@ -722,4 +750,68 @@ describe("a diff line carries its sign only once", () => {
     visit(storyData);
     expect(doubled).toEqual([]);
   });
+});
+
+describe("bounded activity outcomes", () => {
+  it("opens the complete result on demand, not a quoted payload wall", () => {
+    const activity = activityProjection();
+    const full = Array.from(
+      { length: 30 },
+      (_, i) => `match ${i}: source detail`,
+    ).join("\n");
+    activity.rows = [{ ...activity.rows[0], result_summary: full }];
+    paintActivity({ activity });
+    expect(screen.queryByText(/match 29/)).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Expand result summary" }),
+    );
+    expect(screen.getByText(/match 29/).textContent).toContain(full);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Collapse result summary" }),
+    );
+    expect(screen.queryByText(/match 29/)).toBeNull();
+  });
+});
+
+it("renders symbol content and replaces progress without changing lifecycle", () => {
+  const activity = activityProjection();
+  activity.rows = [
+    {
+      ...activity.rows[0],
+      state: "running",
+      content: [
+        { type: "heading", text: "Verification" },
+        { type: "markdown", text: "**Prepared** workspace" },
+        {
+          type: "table",
+          columns: ["Suite", "Result"],
+          rows: [["unit", "passed"]],
+        },
+        { type: "code", language: "python", text: "print(42)" },
+        { type: "diff", text: "+added\n-removed" },
+        { type: "progress", label: "Checking", value: 1, total: 2 },
+        { type: "image", attachment_id: "screen", label: "Screenshot" },
+      ],
+    },
+  ];
+  const { rerender } = render(<ActivityPanel activity={activity} />);
+  expect(screen.getByRole("heading", { name: /Verification/ })).toBeTruthy();
+  expect(screen.getByText("Prepared").tagName).toBe("STRONG");
+  expect(screen.getByRole("cell", { name: "passed" })).toBeTruthy();
+  expect(
+    screen.getByRole("progressbar", { name: "Checking" }).getAttribute("value"),
+  ).toBe("1");
+  expect(screen.getByText("Attachment unavailable")).toBeTruthy();
+  const next = {
+    ...activity,
+    rows: [
+      {
+        ...activity.rows[0],
+        content: [{ type: "text" as const, text: "Finished stage" }],
+      },
+    ],
+  };
+  rerender(<ActivityPanel activity={next} />);
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(screen.getByText("Finished stage")).toBeTruthy();
 });

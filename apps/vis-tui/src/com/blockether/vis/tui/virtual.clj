@@ -113,7 +113,8 @@
           fp))))
 
 (def ^:private settings-fingerprint-keys
-  [:show-thinking :show-iterations :show-silent :show-iteration-headers :preview/default-lines])
+  [:show-thinking :show-iterations :show-silent :show-python-code :show-iteration-headers
+   :preview/default-lines])
 
 ;; One-slot identity memo. `layout` threads the SAME `settings` object into
 ;; `height-key` for every message (~2x per bubble -> ~120 calls/tick), and each

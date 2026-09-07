@@ -592,6 +592,10 @@
                 validators-json
                 run))))
     (put! g
+          "__vis_host_activity__"
+          (fn [blocks]
+            (extension/publish-activity! blocks)))
+    (put! g
           "__vis_host_live__"
           ;; Live view: one JSON envelope in, one JSON answer out, and
           ;; NOTHING blocks. A view is work reporting on itself, so the

@@ -6,10 +6,12 @@
    not an envelope to unwrap), every failure is a Python exception a caller can
    catch, and the `:fs/access` gate still decides which trees may be seen."
   (:require [clojure.string :as string]
+            [charred.api :as json]
             [com.blockether.vis.internal.python.env :as ep]
+            [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.extension.core :as extension]
             ;; Registers the shim, exactly as the built-in loader does in production.
-            [com.blockether.vis.internal.foundation.shim-ls]
+            [com.blockether.vis.internal.foundation.shim-ls :as shim-ls]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -179,3 +181,76 @@
       ;; The gate's own sentence crosses the boundary verbatim, and a directory
       ;; it did not name stays readable.
       (expect (= "PermissionError:said none\n" (with-fs-gate! hook #(out ctx code)))))))
+
+(defdescribe
+  ls-symbol-content-test
+  "Symbol-owned listing presentation."
+  (it "publishes listing content on the real shim invocation without changing its returned tree"
+      (let [ctx
+            (sandbox)
+
+            events
+            (atom [])]
+
+        (binding [extension/*tool-event-sink* #(swap! events conj %)]
+          (expect (string/includes? (out ctx "print(ls('resources/vis-shims'))") "ls.py")))
+        (let [projection
+              (-> @events
+                  activity/replay
+                  activity/presentation)
+
+              row
+              (first (:rows projection))]
+
+          (expect (= 1 (count (:rows projection))))
+          (expect (= "ls" (:operation row)))
+          (expect (= "succeeded" (:state row)))
+          (expect (= ["progress" "heading"]
+                     (mapv #(get-in % [:content 0 "type"])
+                           (filter #(= :content (:phase %)) @events))))
+          (expect (= "table" (get-in row [:content 2 "type"])))
+          (expect (some #(= "ls.py" (first %)) (get-in row [:content 2 "rows"]))))))
+  (it "bounds batch content and reports omitted entries without losing nested paths"
+      (let [entry
+            {"name" "same.txt" "path" "root/nested/same.txt" "type" "file" "size" 42}
+
+            directory
+            {"path" "root" "entries" (vec (repeat 40 entry))}
+
+            content
+            (#'shim-ls/listing-content (repeat 5 directory))
+
+            tables
+            (filter #(= "table" (get % "type")) content)
+
+            hostile
+            (apply str (repeat 2000 (char 1)))
+
+            bounded
+            (#'shim-ls/listing-content
+             (repeat 5 {"path" hostile "entries" (repeat 40 (assoc entry "path" hostile))}))]
+
+        (expect (= 13 (count content)))
+        (expect (= [12 12 12 12] (mapv #(count (get % "rows")) tables)))
+        (expect (= "nested/same.txt" (get-in content [2 "rows" 0 0])))
+        (expect (string/includes? (get-in content [1 "text"]) "12 of 40"))
+        (expect (string/includes? (get (last content) "text") "1 more directories"))
+        (expect (< (alength (.getBytes ^String (json/write-json-str bounded) "UTF-8")) 32768))))
+  (it "keeps failure truthful and catchable when Activity is enabled"
+      (let [ctx
+            (sandbox)
+
+            events
+            (atom [])]
+
+        (binding [extension/*tool-event-sink* #(swap! events conj %)]
+          (expect
+            (= "caught\n"
+               (out ctx
+                    "try:\n    ls('deps.edn')\nexcept NotADirectoryError:\n    print('caught')"))))
+        (let [projection (-> @events
+                             activity/replay
+                             activity/presentation)]
+          (expect (= "failed" (:state projection)))
+          (expect (= 1 (get-in projection [:counts :failed])))
+          (expect (= 1 (count (:rows projection))))))))

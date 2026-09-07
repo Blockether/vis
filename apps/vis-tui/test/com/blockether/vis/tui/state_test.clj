@@ -603,19 +603,23 @@
         (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
         (expect (= :blockether-light (get-in @state/app-db [:settings :theme-name])))
         (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
-        (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))))
+        (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))
+        (expect (true? (get-in @state/app-db [:settings :show-python-code])))))
   (it "loads the persisted app theme"
       (with-redefs [vis/load-config-raw (fn []
-                                          {"theme_name" "vis-dark"})]
+                                          {"theme_name" "vis-dark" "show_python_code" false})]
         (state/init!)
-        (expect (= :vis-dark (get-in @state/app-db [:settings :theme-name])))))
-  (it "writes only the app-owned theme setting"
+        (expect (= :vis-dark (get-in @state/app-db [:settings :theme-name])))
+        (expect (false? (get-in @state/app-db [:settings :show-python-code])))))
+  (it "writes only the app-owned theme and transcript preferences"
       (let [written (atom nil)]
         (with-redefs [vis/update-machine-config! (fn [f]
                                                    (reset! written (f {"vision_memory"
                                                                        {"working_eye" {}}})))]
-          (#'state/persist-settings! {:theme-name :vis-dark})
-          (expect (= {"vision_memory" {"working_eye" {}} "theme_name" "vis-dark"} @written)))))
+          (#'state/persist-settings! {:theme-name :vis-dark :show-python-code false})
+          (expect
+            (= {"vision_memory" {"working_eye" {}} "theme_name" "vis-dark" "show_python_code" false}
+               @written)))))
   (it "hydrates persisted enum toggles into the registry"
       ;; The persistence shape now lives under `:toggles`, not
       ;; `:tui-settings`. `state/init!` keeps the `:settings`

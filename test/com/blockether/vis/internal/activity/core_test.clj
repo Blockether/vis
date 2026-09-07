@@ -324,3 +324,64 @@
                           (event-pair ctx :patch :failed "refused")]))]
 
         (expect (= (activity/replay events) (activity/replay events))))))
+
+(defdescribe
+  rich-content-test
+  (it
+    "replaces invocation content without changing lifecycle or counts"
+    (let [ctx
+          (event/context)
+
+          invocation
+          (event/invocation ctx nil)
+
+          details
+          {:operation :report :presenter :generic}
+
+          start
+          (event/start-event ctx invocation details)
+
+          blocks
+          [{"type" "heading" "text" "Checks"}
+           {"type" "table" "columns" ["Test" "Result"] "rows" [["unit" "passed"]]}
+           {"type" "progress" "label" "Checking" "value" 1 "total" 2}]
+
+          update
+          (event/content-event ctx invocation details blocks)
+
+          collector
+          (event/collector)
+
+          state
+          (activity/replay [start update])
+
+          end
+          (event/terminal-event ctx
+                                invocation
+                                (assoc details
+                                  :started-at-ms 0
+                                  :outcome :succeeded))
+
+          projection
+          (activity/presentation (activity/reduce-event state end))]
+
+      (expect (= :running (:state state)))
+      (expect (= 1 (get-in state [:counts :running])))
+      (expect (= blocks (get-in projection [:rows 0 :content])))
+      (expect (contract/valid-projection? projection))
+      (expect
+        (try (event/accept! collector update) false (catch clojure.lang.ExceptionInfo _ true)))
+      (event/accept! collector start)
+      (event/accept! collector update)
+      (event/accept! collector end)
+      (expect
+        (try (event/accept! collector update) false (catch clojure.lang.ExceptionInfo _ true)))))
+  (it "rejects unknown content and invalid progress without fabricating success"
+      (doseq [blocks [[{"type" "html" "text" "<script>"}]
+                      [{"type" "progress" "label" "Checking" "value" 3 "total" 2}]]]
+        (expect (try (event/content-event (event/context)
+                                          (event/invocation (event/context) nil)
+                                          {:operation :report :presenter :generic}
+                                          blocks)
+                     false
+                     (catch clojure.lang.ExceptionInfo _ true))))))

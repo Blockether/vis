@@ -75,7 +75,8 @@ describe("provider failure card", () => {
           id: "provider-error-1",
           type: "error",
           code: "provider_rate_limit",
-          message: "Flattened fallback that a structured client must not paint.",
+          message:
+            "Flattened fallback that a structured client must not paint.",
           title: "Provider rate limit reached",
           explanation: "The provider is throttling new requests.",
           next_step: "Wait and retry, or switch provider/model.",
@@ -100,8 +101,12 @@ describe("provider failure card", () => {
         view.getByRole("heading", { name: "Provider rate limit reached" }),
       ).toBeTruthy();
       const card = view.getByRole("alert");
-      expect(card.textContent).toContain("The provider is throttling new requests.");
-      expect(card.textContent).toContain("Wait and retry, or switch provider/model.");
+      expect(card.textContent).toContain(
+        "The provider is throttling new requests.",
+      );
+      expect(card.textContent).toContain(
+        "Wait and retry, or switch provider/model.",
+      );
       expect(card.textContent).not.toContain("What happened");
       expect(card.textContent).not.toContain("Next step");
       expect(card.textContent).toContain("HTTP 429");
@@ -113,9 +118,9 @@ describe("provider failure card", () => {
       fireEvent.click(view.getByRole("button", { name: "Diagnostics" }));
       expect(card.textContent).toContain("anthropic/claude-opus-4");
       expect(card.textContent).toContain("provider_rate_limit");
-      expect(card.textContent?.indexOf("Provider rate limit reached")).toBeLessThan(
-        card.textContent?.indexOf("provider_rate_limit") ?? -1,
-      );
+      expect(
+        card.textContent?.indexOf("Provider rate limit reached"),
+      ).toBeLessThan(card.textContent?.indexOf("provider_rate_limit") ?? -1);
     } finally {
       view.unmount();
     }
@@ -123,7 +128,11 @@ describe("provider failure card", () => {
   it("does not offer an empty diagnostics disclosure", () => {
     const view = render(
       <ContentBlockView
-        block={{ id: "internal-error-1", type: "error", message: "Unexpected failure." }}
+        block={{
+          id: "internal-error-1",
+          type: "error",
+          message: "Unexpected failure.",
+        }}
       />,
     );
 
@@ -812,10 +821,7 @@ describe("command turns expose one canonical result", () => {
     );
 
     expect(painted.container.textContent).not.toContain("PYTHON");
-    expect(painted.container.textContent).toContain("SHELL");
-    fireEvent.click(
-      painted.getByRole("button", { name: "Expand execution trace" }),
-    );
+    expect(painted.container.textContent).toContain("!ls");
     openResult(painted.container);
     expect(painted.container.textContent).toContain("exit 0");
     expect(painted.container.textContent).toContain("README.md");
@@ -844,12 +850,11 @@ describe("a Python evaluation without detected Activity", () => {
       />,
     );
 
-    const receipt = painted.getByRole("button", {
-      name: "Expand execution trace",
-    });
-    expect(receipt.textContent).toContain("PYTHON");
-    expect(receipt.textContent).not.toContain("RUNNING");
-    expect(painted.container.textContent).not.toContain("answer = 42");
+    const receipt = painted.container.querySelector(
+      '[aria-label="Execution trace"]',
+    )!;
+    expect(receipt.getAttribute("role")).toBe("status");
+    expect(painted.container.textContent).toContain("answer = 42");
     expect(painted.container.textContent).not.toContain("0 activities");
   });
 
@@ -864,11 +869,8 @@ describe("a Python evaluation without detected Activity", () => {
       />,
     );
 
-    expect(painted.container.textContent).toContain("PYTHON · 29ms");
-    expect(painted.container.textContent).not.toContain("print(42)");
-    fireEvent.click(
-      painted.getByRole("button", { name: "Expand execution trace" }),
-    );
+    expect(painted.container.textContent).toContain("29ms");
+    expect(painted.container.textContent).toContain("print(42)");
     expect(painted.container.textContent).toContain("print(42)");
     expect(painted.container.textContent).toContain("RESULT");
     expect(painted.container.textContent).not.toContain("ACTIVITY");
@@ -887,12 +889,12 @@ describe("a Python evaluation without detected Activity", () => {
 
     // Regression, T153: the row shouted FAILED beside a ring that already drew
     // the cross, and spent the front of the line — where the eye lands — on it.
-    expect(painted.container.textContent).toContain("PYTHON · 29ms");
+    expect(painted.container.textContent).toContain("29ms");
     expect(painted.container.textContent).not.toContain("FAILED · PYTHON");
     expect(announcedStates(painted.container)).toContain("Failed");
     expect(
-      painted.getByRole("button", { name: "Expand execution trace" }),
-    ).toBeTruthy();
+      painted.queryByRole("button", { name: "Expand execution trace" }),
+    ).toBeNull();
   });
 
   it("shows an interrupted Python execution as a stop, not a JVM failure", () => {
@@ -909,12 +911,9 @@ describe("a Python evaluation without detected Activity", () => {
       />,
     );
 
-    expect(painted.container.textContent).toContain("PYTHON · 29ms");
+    expect(painted.container.textContent).toContain("29ms");
     expect(painted.container.textContent).not.toContain("INTERRUPTED · PYTHON");
     expect(announcedStates(painted.container)).toContain("Interrupted");
-    fireEvent.click(
-      painted.getByRole("button", { name: "Expand execution trace" }),
-    );
     expect(painted.container.textContent).toContain("Interrupted");
     expect(painted.container.textContent).not.toContain("FutureTask/awaitDone");
   });
@@ -922,11 +921,10 @@ describe("a Python evaluation without detected Activity", () => {
   it("enhances the same receipt when semantic activity arrives", () => {
     const runningTurn = turnWith({ source: "answer = search()" }, "running");
     const painted = render(<AssistantMessage turn={runningTurn} streaming />);
-    const receipt = painted.getByRole("button", {
-      name: "Expand execution trace",
-    });
-    expect(receipt.textContent).toContain("PYTHON");
-    expect(receipt.textContent).not.toContain("RUNNING");
+    const receipt = painted.container.querySelector(
+      '[aria-label="Execution trace"]',
+    )!;
+    expect(receipt.getAttribute("role")).toBe("status");
 
     // Protocol 7: the snapshot arrives ON the form, from `block.activity`.
     painted.rerender(
@@ -958,13 +956,10 @@ describe("a Python evaluation without detected Activity", () => {
     );
 
     expect(
-      painted.getByRole("button", { name: "Expand execution trace" }),
+      painted.container.querySelector('[aria-label="Execution trace"]'),
     ).toBe(receipt);
-    // The band NAMES THE CALLS, in the order they were made. It used to lead with
-    // a state word instead, which said the same thing above every step in the
-    // transcript; the counters still keep the line after the names.
-    expect(receipt.textContent).toContain("GREP");
-    expect(receipt.textContent).toContain("0 mutations");
+    expect(receipt.textContent).toContain("searching");
+    expect(receipt.querySelectorAll("[data-activity-row]")).toHaveLength(1);
   });
 
   it("does not invent Activity when an empty projection settles", () => {
@@ -984,11 +979,8 @@ describe("a Python evaluation without detected Activity", () => {
       />,
     );
 
-    expect(painted.container.textContent).toContain("PYTHON · 29ms");
+    expect(painted.container.textContent).toContain("29ms");
     expect(painted.container.textContent).not.toContain("0 activities");
-    fireEvent.click(
-      painted.getByRole("button", { name: "Expand execution trace" }),
-    );
     expect(painted.container.textContent).not.toContain("ACTIVITY");
   });
 });
@@ -997,7 +989,7 @@ describe("a Python evaluation without detected Activity", () => {
 // row, so a multi-form iteration could not show which complete Python form owned it.
 // Protocol 7 answers that structurally: the snapshot IS a field of the form, so
 // there is no anchor to resolve and no way for it to land under the wrong one.
-describe("Activity owns the slot after its Python form and result", () => {
+describe("Activity follows the combined Python source", () => {
   const rows = [
     {
       id: "call-1",
@@ -1035,7 +1027,7 @@ describe("Activity owns the slot after its Python form and result", () => {
       iterations: [{ id: "iteration-1", position: 41, forms }],
     }) as unknown as TranscriptTurn;
 
-  it("puts each receipt under only its own form", () => {
+  it("groups adjacent calls without dropping either result", () => {
     const painted = render(
       <AssistantMessage
         turn={turnOf([
@@ -1044,20 +1036,21 @@ describe("Activity owns the slot after its Python form and result", () => {
         ])}
       />,
     );
-    const receipts = painted.getAllByRole("button", {
-      name: "Expand execution trace",
-    });
-
-    expect(receipts).toHaveLength(2);
-    expect(painted.container.textContent).not.toContain("first_form()");
-    fireEvent.click(receipts[0]);
+    expect(
+      painted.container.querySelectorAll("[data-execution-code]"),
+    ).toHaveLength(1);
     expect(painted.container.textContent).toContain("first_form()");
-    openResult(painted.container);
-    expect(painted.container.textContent).toContain("first result");
-    expect(painted.container.textContent).not.toContain("second_form()");
-    fireEvent.click(receipts[1]);
+    fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
     expect(painted.container.textContent).toContain("second_form()");
-    expect(painted.container.textContent).toContain("RESULT");
+    for (const details of painted.container.querySelectorAll("details")) {
+      details.open = true;
+      fireEvent(details, new Event("toggle", { bubbles: true }));
+    }
+    expect(painted.container.textContent).toContain("first result");
+    expect(painted.container.textContent).toContain("second result");
+    expect(painted.getAllByRole("button", { name: "Copy code" })).toHaveLength(
+      1,
+    );
     // Nothing is fetched for a receipt any more, so there is no loading state.
     expect(painted.container.textContent).not.toContain("Loading Activity");
   });
@@ -1074,16 +1067,13 @@ describe("Activity owns the slot after its Python form and result", () => {
         ])}
       />,
     );
-    const receipts = painted.getAllByRole("button", {
-      name: "Expand execution trace",
-    });
-    expect(receipts).toHaveLength(2);
-    // Only the SECOND form carries a snapshot, so only its band counts anything;
-    // the first can say no more than how its own program ended.
-    expect(painted.container.textContent).toContain(
-      "PYTHONGREP · RUN_TESTS · 0 mutations · 1 observation · 1 check",
-    );
-    receipts.forEach((receipt) => fireEvent.click(receipt));
+    expect(
+      painted.container.querySelectorAll("[data-execution-code]"),
+    ).toHaveLength(1);
+    // Grouping neither invents nor duplicates the second form's operations.
+    expect(
+      painted.container.querySelectorAll("[data-activity-row]"),
+    ).toHaveLength(2);
     expect(
       painted.container.querySelectorAll("[data-activity-axis]"),
     ).toHaveLength(1);
@@ -1093,7 +1083,7 @@ describe("Activity owns the slot after its Python form and result", () => {
   // Regression, issue td-f9035e: Python, Result, and Activity each painted an
   // independent receipt, while the live Activity headline claimed an unknowable total.
   it.each([320, 390, 768, 1440])(
-    "collapses one honest execution receipt and opens its three evidence bands at %ipx",
+    "keeps Activity visible while source independently expands at %ipx",
     (width) => {
       const painted = render(
         <div style={{ width }}>
@@ -1114,30 +1104,25 @@ describe("Activity owns the slot after its Python form and result", () => {
       });
 
       expect(
-        painted.getByRole("button", { name: "Expand execution trace" }),
-      ).toBeTruthy();
-      expect(painted.container.textContent).toContain(
-        "GREP · RUN_TESTS · 0 mutations · 1 observation · 1 check",
-      );
-      expect(painted.container.textContent).not.toContain("grep · run_tests");
-      expect(painted.container.textContent).not.toContain("line_1()");
-      expect(painted.container.textContent).not.toContain("RESULT");
-      // Closed, the band IS the whole receipt: the chronology, the program and
-      // the bytes it printed are all behind the one chevron.
-      expect(painted.container.textContent).not.toContain("18 matches");
-      fireEvent.click(
-        painted.getByRole("button", { name: "Expand execution trace" }),
-      );
-      expect(painted.container.textContent).toContain("PYTHON +1 more");
-      expect(painted.container.textContent).toContain("line_5()");
-      expect(painted.container.textContent).not.toContain("line_6()");
+        painted.queryByRole("button", { name: "Expand execution trace" }),
+      ).toBeNull();
+      expect(painted.container.textContent).toContain("line_1()");
+      expect(painted.container.textContent).not.toContain("line_2()");
       expect(painted.container.textContent).toContain("RESULT");
-      expect(painted.container.textContent).toContain("0 mutations");
+      expect(painted.container.textContent).toContain("18 matches");
+      expect(painted.container.textContent).not.toContain("PYTHON");
+      expect(painted.container.textContent).not.toContain("line_2()");
+      fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
+      expect(painted.container.textContent).toContain("line_6()");
+      expect(
+        painted.getAllByRole("button", { name: "Copy code" }),
+      ).toHaveLength(1);
+      expect(painted.container.textContent).toContain("RESULT");
       expect(painted.container.textContent).toContain("18 matches");
       // The program is what produced every row under it, so it stands at the top
       // of the box the chevron opened, and the chronology hangs beneath it.
       const opened = painted.container.innerHTML;
-      expect(opened.indexOf("PYTHON")).toBeLessThan(
+      expect(opened.indexOf("data-execution-code")).toBeLessThan(
         opened.indexOf("data-activity-chronology"),
       );
     },
@@ -1167,20 +1152,15 @@ describe("Activity owns the slot after its Python form and result", () => {
       ),
     );
 
-    // The count of CALLS is no longer part of the sentence: a closed band says
-    // how the iteration ended, how long it took, and what it cost, in the three
-    // kinds the wire classifies and no other.
-    expect(rendered).toContain(
-      "GREP · RUN_TESTS · 12.6s · 0 mutations · 1 observation · 1 check",
-    );
+    expect(rendered).toContain("12.6s");
+    expect(rendered).toContain("18 matches");
+    expect(rendered).toContain("companion suite");
     expect(rendered).not.toContain("1 read");
     expect(rendered).not.toContain("finished 2/2");
   });
 
-  // Regression, T137: the receipt printed its elapsed twice — the band above the fold and
-  // the card head inside it carried the same measurement, which reads as two of them. The
-  // band says it, and a card standing under a band stops repeating it.
-  it("prints the elapsed once, on the band, never again on what it opens", () => {
+  // Regression, T137: one duration must not appear on two nested bands.
+  it("prints elapsed once on the result rather than a redundant execution band", () => {
     const painted = render(
       <AssistantMessage
         turn={turnOf([
@@ -1202,9 +1182,7 @@ describe("Activity owns the slot after its Python form and result", () => {
       (painted.container.textContent?.match(/12\.6s/g) ?? []).length;
 
     expect(elapsed()).toBe(1);
-    fireEvent.click(
-      painted.getByRole("button", { name: "Expand execution trace" }),
-    );
+    openResult(painted.container);
     expect(painted.container.textContent).toContain("RESULT");
     expect(elapsed()).toBe(1);
   });
@@ -1230,10 +1208,10 @@ describe("Activity owns the slot after its Python form and result", () => {
     );
 
     // The dropped rows still count where the count is the margin's own: the
-    // axis's tail can say `+6 more`, never WHAT the six were, and naming them is
+    // axis's tail names the number of omitted steps without inventing their details.
     // exactly what this line is for.
     expect(rendered).not.toContain("FAILED");
-    expect(rendered).toContain("0 mutations · 6 observations");
+    expect(rendered).toContain("6 more steps");
     expect(rendered).not.toContain("finished 6/");
   });
 
@@ -1640,14 +1618,13 @@ describe("a turn drawn as one thread", () => {
       },
     );
 
-  it("marks every step, not every segment", () => {
+  it("marks every execution group, not every segment", () => {
     const { container } = render(
       <IterationTrace iterations={STORY_TURN_ITERATIONS_SETTLED} whole />,
     );
 
-    // Three steps, three markers — and the middle one carries no reasoning of
-    // its own, which is exactly the step a per-segment marker used to skip.
-    expect(marks(container)).toHaveLength(STORY_TURN_ITERATIONS_SETTLED.length);
+    // Adjacent Python calls share a marker. Narration starts the next group.
+    expect(marks(container)).toHaveLength(2);
   });
 
   it("keeps a step that ended badly findable from the gutter alone", () => {
@@ -1657,7 +1634,7 @@ describe("a turn drawn as one thread", () => {
 
     // The middle step FAILED and the last one was STOPPED before it finished:
     // a cross and a struck-through ring, never the same mark for both.
-    expect(marks(container)).toEqual(["check", "x", "slash"]);
+    expect(marks(container)).toEqual(["x", "slash"]);
   });
 
   it("leaves exactly one ring open while the turn is still moving", () => {
@@ -1667,7 +1644,7 @@ describe("a turn drawn as one thread", () => {
 
     // The open ring is the LAST thing on the thread: work in progress is where
     // the line has got to, never something the reader has to hunt for.
-    expect(marks(container)).toEqual(["check", "check", "dot"]);
+    expect(marks(container)).toEqual(["check", "dot"]);
   });
 
   // Regression, seen in the story sheet the moment the thread drew one marker
@@ -1680,15 +1657,13 @@ describe("a turn drawn as one thread", () => {
       <IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />,
     );
 
-    // The middle step detected no operations at all — its 940 ms is the only
-    // thing saying it is over, and that has to be enough.
+    // The first group is settled even though the next group is still running.
     const rows = Array.from(
       container.querySelectorAll('[aria-label="Execution trace"]'),
     );
-
-    expect(rows[1].textContent).toContain("940ms");
-    expect(rows[1].getAttribute("role")).toBeNull();
-    expect(rows[2].getAttribute("role")).toBe("status");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].getAttribute("role")).toBeNull();
+    expect(rows[1].getAttribute("role")).toBe("status");
   });
   it("gives a multi-step trace no repeated landmark", () => {
     const { container } = render(
@@ -1697,7 +1672,7 @@ describe("a turn drawn as one thread", () => {
 
     const traces = container.querySelectorAll('[aria-label="Execution trace"]');
 
-    expect(traces).toHaveLength(STORY_TURN_ITERATIONS_SETTLED.length);
+    expect(traces).toHaveLength(2);
     // A labelled `section` is a landmark, and three of them with the same name
     // is an axe `landmark-unique` failure: a step is a step, not a region.
     expect(
@@ -1717,5 +1692,37 @@ describe("a turn drawn as one thread", () => {
     );
 
     expect(live).toHaveLength(1);
+  });
+});
+
+describe("compact execution groups", () => {
+  it("shows one code line before one activity for adjacent Python calls", () => {
+    const painted = render(
+      <IterationTrace
+        whole
+        iterations={[
+          {
+            id: "batch-1",
+            position: 1,
+            forms: [
+              { source: "first_call()\nfirst_detail()", duration_ms: 10 },
+              { source: "second_call()", duration_ms: 20 },
+            ],
+          },
+        ]}
+      />,
+    );
+    expect(
+      painted.container.querySelectorAll('[aria-label="Execution trace"]'),
+    ).toHaveLength(1);
+    expect(painted.getAllByRole("button", { name: "Copy code" })).toHaveLength(
+      1,
+    );
+    expect(painted.container.textContent).not.toContain("PYTHON");
+    expect(painted.container.textContent).toContain("first_call()");
+    expect(painted.container.textContent).not.toContain("first_detail()");
+    fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
+    expect(painted.container.textContent).toContain("first_detail()");
+    expect(painted.container.textContent).toContain("second_call()");
   });
 });

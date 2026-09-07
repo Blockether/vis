@@ -280,6 +280,41 @@ vis.method(fn=None, tag="observation", is_hidden=False, activity=None)
   on the namespace itself. Activity is a `block.activity` replacement projection,
   never a View or a model-context block. The normative vocabulary and semantics are
   in the [Activity contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/activity.json).
+  Add `render=callback` to compose a symbol's own content. The synchronous callback
+  receives `phase`, `args`, `kwargs`, `result`, and `error` as keyword arguments;
+  phases are `start`, `success`, and `failure`. Return a list of blocks, or `None`
+  to retain the current content. Presentation errors do not replace tool results.
+  Inside the symbol, `vis.publish_activity(*blocks)` publishes intermediate stages.
+  Every update replaces the complete content; retain earlier stages explicitly.
+  An empty update clears it. Calls outside an active tool return `False`.
+
+  Supported blocks are `heading`, `text`, and `markdown` (`text`); `code` and
+  `diff` (`text`, optional `language`); `table` (`columns`, rectangular `rows`);
+  `progress` (`label`, optionally both `value` and `total`); and `image`, `video`,
+  `audio`, and `file` (`attachment_id`, `label`). Media references must identify
+  attachments produced by the tool, not external URLs. Companion uses its existing
+  media controls; TUI offers attachment opening rather than inline video playback.
+  A progress block without numbers is indeterminate only while the tool runs.
+  Content is bounded to 32 blocks and 32 KiB per update. Never include secrets.
+
+  ```python
+  def checks_activity(phase, result, **_):
+      blocks = [{"type": "heading", "text": "Checks"}]
+      if phase == "start":
+          blocks.append({"type": "progress", "label": "Running checks"})
+      elif phase == "success":
+          blocks.append({"type": "table", "columns": ["Suite", "Passed"],
+                         "rows": [["Unit", str(result)]]})
+      return blocks
+
+  def run_checks():
+      """Run the project's checks."""
+      # Publish additional stages here with vis.publish_activity(...).
+      return 12
+
+  vis.symbol(run_checks, activity=vis.Activity(
+      presenter="tests", label="Run checks", render=checks_activity))
+  ```
 - Boolean keys keep **one spelling** across the boundary: a Python `is_<name>` key
   is the Clojure `:is-<name>` keyword — the same mechanical `_` ↔ `-` mirror the
   gateway wire uses (`wire-key` / `engine-key` in `contract/wire.clj`). A provider's

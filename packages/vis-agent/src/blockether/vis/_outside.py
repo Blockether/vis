@@ -1036,6 +1036,7 @@ _IMPLEMENTATIONS = {
     "shell": shell,
     "request_input": request_input,
     "live": live,
+    "activity": lambda blocks: False,
     "reveal_secret": reveal_secret,
     "forget_secret": forget_secret,
     "declare_env": declare_env,

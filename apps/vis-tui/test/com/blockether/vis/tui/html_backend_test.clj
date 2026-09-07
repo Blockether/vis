@@ -205,7 +205,11 @@
          :session nil
          :title "Grid parity"
          :messages [{:id "user" :role :user :text "Zażółć gęślą — grid 界"}
-                    {:id "assistant" :role :assistant :text "The same cells reach both backends."}]
+                    {:id "assistant"
+                     :role :assistant
+                     :text "The same cells reach both backends."
+                     :traces [{:forms [{:code "first_call()\nfirst_detail()" :success? true}
+                                       {:code "second_call()" :success? true}]}]}]
          :scroll scroll/follow
          :input (input/paste-text (input/empty-input) "interactive draft")
          :settings {}

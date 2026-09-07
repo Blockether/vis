@@ -1603,13 +1603,9 @@
           {:row row :col bubble-left :width bubble-w :height clipped-height :text text})))))
 
 (defn- disclosure-copy-regions
-  "Per-disclosure copy targets. Each visible row of an EXPANDED disclosure
-   body carries `:meta {:kind :copy-block-body :node-id ... :text ...}`
-   from the renderer (see `tag-copy-block-body`). On a plain (no-drag)
-   click the screen handler picks these BEFORE the whole-bubble copy
-   region, so a click under a `▾ RESULT` summary copies just that
-   block's body, not the entire assistant message. Drag selection is
-   unaffected - it operates on screen cells via `selectable-ranges`."
+  "Copy targets for expanded bodies and the single compact source header.
+   Header targets occupy only the explicit Copy suffix; the rest toggles code.
+   These win over whole-bubble copy without affecting drag selection."
   [layout text-top inner-h cols]
   (let [bubble-left
         (long render/MESSAGE_MARGIN_LEFT)
@@ -1642,18 +1638,27 @@
                     (nth line-meta i nil)
 
                     abs-row
-                    (+ content-top (long i))]
+                    (+ content-top (long i))
+
+                    copy-width
+                    (long (or (:copy-width m) 0))
+
+                    header?
+                    (and (:copy-text m) (pos? copy-width))
+
+                    text
+                    (if header? (:copy-text m) (:text m))]
               :when (and (map? m)
-                         (= :copy-block-body (:kind m))
-                         (not (str/blank? (str (:text m))))
+                         (or header? (= :copy-block-body (:kind m)))
+                         (not (str/blank? (str text)))
                          (>= abs-row top-limit)
                          (< abs-row bottom-limit))]
 
           {:row abs-row
-           :col bubble-left
-           :width bubble-w
+           :col (if header? (+ bubble-left (- bubble-w copy-width)) bubble-left)
+           :width (if header? copy-width bubble-w)
            :height 1
-           :text (:text m)
+           :text text
            :node-id (:node-id m)})))))
 
 (defn- fitting-image-placements

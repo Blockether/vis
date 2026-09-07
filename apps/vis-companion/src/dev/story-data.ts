@@ -1182,6 +1182,60 @@ export const STORY_EXCHANGE_TURN: TranscriptTurn = {
   duration_ms: 11500,
 };
 
+export const STORY_COMPACT_EXECUTIONS: TranscriptIteration[] = [
+  {
+    id: 'compact-batch',
+    position: 1,
+    forms: [
+      {
+        source: "matches = grep({'query': 'Activity', 'paths': ['src']})\nprint(matches)",
+        duration_ms: 80,
+        activity: ACTIVITY_SETTLED,
+      },
+      {
+        source: "checks = await run_tests({'language': 'python'})\nprint(checks)",
+        activity: ACTIVITY_RUNNING,
+      },
+    ],
+  },
+];
+
+export const ACTIVITY_RICH: ActivityProjection = {
+  ...ACTIVITY_RUNNING,
+  rows: [{ ...ACTIVITY_RUNNING.rows[0], operation: 'run_checks', presenter: 'tests',
+    summary: 'Run checks', duration_ms: undefined, result_summary: undefined,
+    state: 'running', content: [
+    { type: 'heading', text: 'Verification' },
+    { type: 'markdown', text: '**Prepared** the workspace.\n\n- Source loaded\n- Checks selected' },
+    { type: 'table', columns: ['Suite', 'Passed', 'Failed'], rows: [['Unit', '285', '0'], ['Integration', '12', '0']] },
+    { type: 'diff', text: '-old presentation\n+symbol content' },
+    { type: 'progress', label: 'Checking browser scenarios', value: 12, total: 20 },
+    { type: 'progress', label: 'Waiting for video' },
+    { type: 'image', attachment_id: 'screenshot', label: 'Browser screenshot' },
+    { type: 'video', attachment_id: 'recording', label: 'Browser recording' },
+  ] }],
+};
+
+/** First migrated symbol: the listing owns its heading, totals and entries. */
+export const STORY_LISTING: TranscriptIteration[] = [{
+  id: 'listing', position: 1, forms: [{
+    source: 'paths = ls("apps/vis-companion/src")\nprint(paths)',
+    duration_ms: 42,
+    activity: { state: 'succeeded', counts: {running: 0, succeeded: 1, failed: 0, cancelled: 0},
+      omitted: {rows: 0, by_classification: {}}, rows: [{
+        id: 'ls-1', sequence: 1, operation: 'ls', presenter: 'observation', signal: 'observation',
+        state: 'succeeded', summary: '', resources: [], evidence: [], duration_ms: 42,
+        content: [
+          {type: 'heading', text: 'apps/vis-companion/src'},
+          {type: 'text', text: '3 directories · 2 files'},
+          {type: 'table', columns: ['Name', 'Kind', 'Bytes'], rows: [
+            ['components/', 'Directory', '—'], ['dev/', 'Directory', '—'],
+            ['lib/', 'Directory', '—'], ['main.tsx', 'File', '2048'], ['styles.css', 'File', '8192']
+          ]}
+        ]
+      }]}
+  }]
+}];
 /**
  * THE AXIS WITH SOMETHING ON IT — the same turn, drawn over a real chronology.
  *

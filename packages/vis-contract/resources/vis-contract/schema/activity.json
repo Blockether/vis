@@ -158,9 +158,8 @@
         },
         "label": {
           "type": "string",
-          "pattern": "\\S",
-          "maxLength": 96,
-        "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+          "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
+          "maxLength": 96
         }
       },
       "required": [
@@ -350,6 +349,9 @@
           "items": {
             "$ref": "#/$defs/row1"
           }
+        },
+        "content": {
+          "$ref": "#/$defs/content"
         }
       },
       "required": [
@@ -434,6 +436,9 @@
           "items": {
             "$ref": "#/$defs/row2"
           }
+        },
+        "content": {
+          "$ref": "#/$defs/content"
         }
       },
       "required": [
@@ -511,6 +516,9 @@
         },
         "is_truncated": {
           "const": true
+        },
+        "content": {
+          "$ref": "#/$defs/content"
         }
       },
       "required": [
@@ -604,6 +612,267 @@
         "rows",
         "omitted"
       ]
+    },
+    "content": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "heading"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 16384
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "text"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 16384
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "markdown"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 16384
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "code"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 16384
+              },
+              "language": {
+                "type": "string",
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "diff"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 16384
+              },
+              "language": {
+                "type": "string",
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "table"
+              },
+              "columns": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "items": {
+                  "type": "string",
+                  "maxLength": 256
+                }
+              },
+              "rows": {
+                "type": "array",
+                "maxItems": 200,
+                "items": {
+                  "type": "array",
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 256
+                  }
+                }
+              }
+            },
+            "required": [
+              "type",
+              "columns",
+              "rows"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "image"
+              },
+              "attachment_id": {
+                "type": "string",
+                "pattern": "\\S",
+                "maxLength": 256
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "type",
+              "attachment_id",
+              "label"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "video"
+              },
+              "attachment_id": {
+                "type": "string",
+                "pattern": "\\S",
+                "maxLength": 256
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "type",
+              "attachment_id",
+              "label"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "audio"
+              },
+              "attachment_id": {
+                "type": "string",
+                "pattern": "\\S",
+                "maxLength": 256
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "type",
+              "attachment_id",
+              "label"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "file"
+              },
+              "attachment_id": {
+                "type": "string",
+                "pattern": "\\S",
+                "maxLength": 256
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "type",
+              "attachment_id",
+              "label"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "progress"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "value": {
+                "type": "number",
+                "minimum": 0
+              },
+              "total": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "type",
+              "label"
+            ],
+            "dependentRequired": {
+              "value": [
+                "total"
+              ],
+              "total": [
+                "value"
+              ]
+            }
+          }
+        ]
+      }
     }
   }
 }

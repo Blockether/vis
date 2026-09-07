@@ -2069,10 +2069,24 @@
                 (let [in-answer? (> i (long answer-start))
                       ;; Text may be inset while marker-zone fills span the full message
                       ;; column. Receipt prose keeps its rail clear.
-                      x (+ (long bx) (long (if (or user? error? (:receipt-prose? meta)) h-pad 0)))
+                      x (+ (long bx)
+                           (long (if (:activity-content? meta)
+                                   4
+                                   (if (or user? error? (:receipt-prose? meta)) h-pad 0))))
                       y (+ (long btop) (long i))
-                      iw bubble-w
-                      fbx bx
+                      iw (if (:activity-content? meta) (max 0 (- (long bubble-w) 4)) bubble-w)
+                      fbx (if (:activity-content? meta) (+ (long bx) 4) bx)
+                      meta (if (:copy-width meta)
+                             (assoc meta
+                               :click-width (max 0 (- (long iw) (long (:copy-width meta)))))
+                             meta)
+                      line (if-let [suffix (not-empty (:right-suffix meta))]
+                             (let [room (max 0 (- (long iw) 1 (p/display-width suffix)))
+                                   prefix (p/ellipsize (:headline-prefix meta) (max 0 (dec room)))
+                                   padding (max 0 (- room (p/display-width prefix)))]
+
+                               (str (subs line 0 1) prefix (apply str (repeat padding " ")) suffix))
+                             line)
                       marker (when (pos? (count line)) (subs line 0 1))
                       body (when marker (subs line 1))
                       output-indented? (and (contains? output-indentable-markers marker)
@@ -2081,6 +2095,7 @@
                       (if output-indented? (str marker (subs body (count tool-output-indent))) line)
                       ;; Inset code/result rows unless a headline has no disclosure slot.
                       code-text-inset? (and (not user?)
+                                            (not (:activity-content? meta))
                                             (contains? code-text-inset-markers marker)
                                             (not (:band-flush? meta))
                                             (not= :result-headline (:kind meta)))
@@ -2089,7 +2104,7 @@
                           (+ (long tool-output-indent-cols))
 
                           code-text-inset?
-                          (+ (long code-text-inset-cols)))
+                          (+ (long (if (:code-source? meta) 4 code-text-inset-cols))))
                       iw
                       (if output-indented? (max 0 (- (long iw) (long tool-output-indent-cols))) iw)
                       fbx (if output-indented? (+ (long fbx) (long tool-output-indent-cols)) fbx)]
@@ -3472,11 +3487,6 @@
    (usually the plan) stays visible without the full wall of text."
   vis/reasoning-preview-line-limit)
 
-(def ^:private python-code-preview-line-limit
-  "Rows of a python_execution program shown before its disclosure. The shared
-   minimum-hidden threshold keeps one or two surplus program rows inline."
-  5)
-
 (defn- image-safe-split-n
   "Preview cut point for `entries` that never BISECTS a reserved image box.
 
@@ -3543,11 +3553,11 @@
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
   [{:keys [code comment display-code display-language render-segments stdout result-kind
-           result-detail error success? silent? runs activity]}]
+           result-detail error success? silent? runs activity tag]}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments (text-fingerprint stdout)
    result-kind
    ;; result-detail is a small op-metadata map; compared structurally.
-   result-detail error success? silent?
+   result-detail error success? silent? tag
    ;; A settled live view joins this exact form after it closes, and reopening
    ;; changes its chevron. Both transitions must invalidate the iteration cache.
    (mapv #(select-keys % [:view-id :title :reason :lines :elapsed-ms :is-reopened]) runs)
@@ -4732,11 +4742,6 @@
           str/trim
           not-empty))
 
-(defn- artifact-preview
-  [artifacts]
-  (when-let [filename (:filename (first artifacts))]
-    (str filename (when (< 1 (count artifacts)) " and more"))))
-
 (defn- artifact-disclosure-entries
   [artifacts session-id]
   (into []
@@ -5481,6 +5486,80 @@
 
     nil))
 
+(defn- activity-content-entries
+  "Render symbol content through the existing Markdown/table/code painter.
+   Media references use the durable artifact opener, not arbitrary paths or URLs."
+  [blocks width session-id artifacts running?]
+  (vec
+    (mapcat
+      (fn [block]
+        (let [field
+              (fn [k]
+                (or (get block k)
+                    (get block (name k))
+                    (get block (keyword (str/replace (name k) "_" "-")))))
+
+              kind
+              (field :type)
+
+              text
+              (field :text)
+
+              artifact
+              (get artifacts (field :attachment_id))
+
+              media?
+              (contains? #{"image" "video" "audio" "file"} kind)
+
+              ast
+              (case kind
+                "markdown"
+                (vis/markdown->ast text)
+
+                "heading"
+                [:ast {} [:h {:level 3} text]]
+
+                "text"
+                [:ast {} [:p {} text]]
+
+                ("code" "diff")
+                [:ast {} [:code {:lang (if (= kind "diff") "diff" (field :language))} text]]
+
+                "table"
+                [:ast {}
+                 (into [:table {} (into [:tr {}] (map #(vector :th {} %) (field :columns)))]
+                       (map (fn [row]
+                              (into [:tr {}] (map #(vector :td {} %) row)))
+                            (field :rows)))]
+
+                "progress"
+                [:ast {}
+                 [:p {}
+                  (str (field :label)
+                       " · "
+                       (if (field :total)
+                         (str (field :value) " / " (field :total))
+                         (if running? "In progress…" "Stopped")))]]
+
+                [:ast {}
+                 [:p {}
+                  (str (field :label)
+                       " · "
+                       (if artifact
+                         "↗ click to open in the system viewer"
+                         "Attachment unavailable"))]])
+
+              entries
+              (mapv #(assoc-in % [:meta :activity-content?] true)
+                    (layout/ast->entries ast
+                                         (max 1 (- (long width) 4))
+                                         {:mode :channel :session-id session-id}))]
+
+          (if (and media? artifact)
+            (mapv #(update % :meta merge {:artifact artifact :session-id session-id}) entries)
+            entries)))
+      blocks)))
+
 (defn- activity-detail-entries
   "Compact timeline rows for one expanded Activity receipt, drawn the way the web
    draws it: one line down the left, a tick to every mark, and THREE levels hanging
@@ -5496,7 +5575,8 @@
    paths the `+N more files` count folds away. One key per fold, because a step that
    changed eleven files behind a single chevron made the reader find a file by reading
    a header out of the diff."
-  [{:keys [node-id activity-rows activity-expanded? activity-omitted]} max-w session-id]
+  [{:keys [node-id activity-rows activity-expanded? activity-omitted activity-artifacts]} max-w
+   session-id]
   (let [rows
         (vec activity-rows)
 
@@ -5695,12 +5775,26 @@
 
                                                        ;; A step's own `4 files` over four visible paths counts a list the eye is
                                                        ;; already on, so the count gives way to the paths themselves.
+                                                       heading
+                                                       (let [block (first (:content row))]
+                                                         (when (= "heading"
+                                                                  (or (:type block)
+                                                                      (get block "type")))
+                                                           block))
+
+                                                       content
+                                                       (if heading
+                                                         (rest (:content row))
+                                                         (:content row))
+
                                                        object
-                                                       (when-not (activity-counts-visible-files?
-                                                                   summary
-                                                                   (min (count resources)
-                                                                        activity-files-shown))
-                                                         (activity-step-object row))
+                                                       (or (:text heading)
+                                                           (get heading "text")
+                                                           (when-not (activity-counts-visible-files?
+                                                                       summary
+                                                                       (min (count resources)
+                                                                            activity-files-shown))
+                                                             (activity-step-object row)))
 
                                                        delta
                                                        (let [{:keys [additions deletions]}
@@ -5712,6 +5806,11 @@
                                                        ;; A step that stands for several changes keeps ONE mark on the rail and
                                                        ;; hangs its children under it, sharing that mark's left edge: nested rows
                                                        ;; carry no mark of their own, because the indent already says whose they are.
+                                                       open?
+                                                       (or (expanded? id)
+                                                           (and (= id focused-id)
+                                                                (= :running state)))
+
                                                        prefix
                                                        (str (if (zero? (long depth))
                                                               (str activity-margin
@@ -5721,7 +5820,9 @@
                                                               (activity-lead col))
                                                             lead-word
                                                             (when object (str " " object))
-                                                            delta)
+                                                            delta
+                                                            (when (seq (:content row))
+                                                              (str " " (if open? "▾" "▸"))))
 
                                                        line
                                                        (first (with-right-suffix [prefix]
@@ -5751,20 +5852,17 @@
                                                                            (activity-inline-text
                                                                              result-format)))))
 
-                                                       open?
-                                                       (or (expanded? id)
-                                                           (and (= id focused-id)
-                                                                (= :running state)))
-
                                                        head
                                                        {:line (str activity-marker line)
                                                         :meta
                                                         (merge
                                                           meta-base
                                                           {:kind :activity-row
+                                                           :headline-prefix prefix
+                                                           :right-suffix (activity-row-tail row)
                                                            :item-id id
                                                            :node-id (str node-id ":" id)
-                                                           :collapsed? (not (expanded? id))
+                                                           :collapsed? (not open?)
                                                            :status-tone (activity-row-tone row)
                                                            :status-glyph (activity-row-glyph row)
                                                            :glyph-col
@@ -5793,7 +5891,18 @@
                                                        (activity-diffs row)]
 
                                                    (cond-> [head]
-                                                     (and detail open?)
+                                                     (and open? (seq (:content row)))
+                                                     (into (activity-content-entries
+                                                             content
+                                                             width
+                                                             session-id
+                                                             activity-artifacts
+                                                             (= :running state)))
+
+                                                     (and detail
+                                                          open?
+                                                          (or (empty? (:content row))
+                                                              (= :failed state)))
                                                      (conj detail-row)
 
                                                      (and open? (or (seq touched) (seq diffs)))
@@ -5824,15 +5933,6 @@
                            :mark-col (+ (long (count activity-margin)) 2)})}))]
 
     (vec (concat [blank] (mapcat row-entry rows) (when omitted-entry [omitted-entry]) [blank]))))
-
-(defn- activity-status-display
-  "The stable semantic execution sentence. Paint owns emphasis and state color."
-  [{:keys [elapsed-ms status-text status-tone cost-text]}]
-  (str/join " · "
-            (remove str/blank?
-              [(str status-text)
-               (when (and (not= :running status-tone) (pos? (long (or elapsed-ms 0))))
-                 (vis/format-duration elapsed-ms)) (str cost-text)])))
 
 (defn- run-row-entries
   "Transcript receipts for the extension runs a form left behind. Activity is not one
@@ -5895,16 +5995,108 @@
           {:iterations (vec (or iterations [])) :unplaced []}
           (or runs [])))
 
+(defn- execution-group
+  "Display-only aggregation. Wire forms, invocation ids and their lifecycles remain unchanged."
+  [forms]
+  (if (= 1 (count forms))
+    (first forms)
+    (let [states
+          (map (fn [form]
+                 (or (some-> (get-in form [:activity :state])
+                             name
+                             keyword)
+                     (cond (:error form) :failed
+                           (nil? (:success? form)) :running
+                           (:success? form) :succeeded
+                           :else :failed)))
+               forms)
+
+          state
+          (cond (some #{:running :idle} states) :running
+                (some #{:failed} states) :failed
+                (some #{:cancelled} states) :cancelled
+                :else :succeeded)
+
+          activities
+          (keep :activity forms)
+
+          scoped-row
+          (fn scoped-row [scope row]
+            (cond-> (update row :id #(str scope ":" %))
+              (seq (:children row))
+              (update :children #(mapv (partial scoped-row scope) %))))
+
+          rows
+          (->> forms
+               (map-indexed (fn [idx form]
+                              (map #(scoped-row idx %)
+                                   (sort-by :sequence (get-in form [:activity :rows])))))
+               (mapcat identity)
+               (map-indexed #(assoc %2 :sequence %1))
+               vec)]
+
+      {:code (str/join "\n\n" (map #(or (:display-code %) (:code %)) forms))
+       :display-language "python"
+       :comment (:comment (first forms))
+       :stdout (str/join "\n" (keep #(not-empty (:stdout %)) forms))
+       :error (some :error forms)
+       :group-errors (vec (keep :error forms))
+       :success? (case state
+                   :running
+                   nil
+
+                   :succeeded
+                   true
+
+                   false)
+       ;; Concurrent durations are not wall-clock elapsed time.
+       :runs (vec (mapcat :runs forms))
+       :activity
+       {:state (name state)
+        :counts (apply merge-with
+                  +
+                  {:running 0 :succeeded 0 :failed 0 :cancelled 0}
+                  (map :counts activities))
+        :rows rows
+        :omitted
+        {:rows (reduce + 0 (keep #(get-in % [:omitted :rows]) activities))
+         :by-classification
+         (apply merge-with + {} (keep #(get-in % [:omitted :by-classification]) activities))}}})))
+
+(defn- execution-groups
+  "One source and activity per adjacent Python run; comments and other languages are boundaries."
+  [forms]
+  (let [python? (fn [form]
+                  (and (not (str/blank? (:code form)))
+                       (not= "user-shell" (:tag form))
+                       (= "python" (or (not-empty (:display-language form)) "python"))))]
+    (->> forms
+         (reduce (fn [groups form]
+                   (if (and (python? form)
+                            (str/blank? (:comment form))
+                            (some-> groups
+                                    peek
+                                    peek
+                                    python?))
+                     (update groups (dec (count groups)) conj form)
+                     (conj groups [form])))
+                 [])
+         (mapv execution-group))))
+
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
-   [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?]
-     :or {show-header? false live-preview? false}}]]
+   [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?
+            show-python-code?]
+     :or {show-header? false live-preview? false show-python-code? true}}]]
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
   (let [{:keys [thinking content-stream assistant-prose forms recaps provider-fallbacks error
                 repeat-count attachments iteration-id]}
         entry
+
+        forms
+        (execution-groups forms)
 
         iteration-artifacts
         (iteration-artifact-rows iteration-id attachments)
@@ -6140,6 +6332,26 @@
                                       :else (activity-row-tone activity))
                    :elapsed-ms duration-ms
                    :activity-rows (:rows activity)
+                   :activity-artifacts
+                   (into {}
+                         (keep-indexed
+                           (fn [index artifact]
+                             (let [field
+                                   (fn [k]
+                                     (or (get artifact k)
+                                         (get artifact (name k))
+                                         (get artifact (keyword (str/replace (name k) "_" "-")))))
+
+                                   id
+                                   (field :attachment_id)]
+
+                               (when id
+                                 [id
+                                  {:filename (field :filename)
+                                   :media-type (field :media_type)
+                                   :iteration-id (str iteration-id)
+                                   :index index}])))
+                           (filter #(= "tool" (or (:source %) (get % "source"))) attachments)))
                    :activity-omitted (get-in activity [:omitted :rows] 0)
                    :activity-expanded? (fn [item-key]
                                          (detail-expanded? detail-expansions
@@ -6154,47 +6366,9 @@
                                                            (not (str/includes? (str item-key)
                                                                                "#"))))})
 
-                ;; The Python evaluation is the execution even when it produced no
-                ;; detectable host activities. Activity enriches this receipt; it does
-                ;; not decide whether the receipt exists.
-                execution-status
-                (or activity-run
-                    (when (and session-id (empty? runs) (or session-turn-id live-preview?))
-                      {:status-text (str (when (or is-error? error) "FAILED · ") "PYTHON")
-                       :status-tone (cond (or is-error? error) :error
-                                          (nil? success?) :running
-                                          :else :ok)
-                       :elapsed-ms duration-ms}))
-
-                execution-node-id
-                (when (and execution-status session-id)
-                  (detail-node-id {:session-turn-id session-turn-id
-                                   :iteration-number iteration-number
-                                   :block-number block-number
-                                   :section :iteration
-                                   :kind :execution}))
-
-                execution-expanded?
-                (and execution-node-id
-                     (or (get detail-expansions :vis.channel-tui/expand-execution-details?)
-                         (detail-expanded? detail-expansions session-id execution-node-id false)))
-
-                ;; THE ELAPSED IS SAID ONCE. The receipt's head band already carries the
-                ;; figure and is the ONE row present in both states, so RESULT, a bodyless
-                ;; form's stamp and a failure headline all stop repeating it — the same
-                ;; measurement printed twice reads as two of them. Without a head band
-                ;; (no session, no receipt) the result rows remain its only home.
+                ;; Results retain timing now that the duplicate execution receipt is gone.
                 result-duration-ms
-                (when-not execution-status duration-ms)
-
-                ;; on `show-header?` which is now always false). Keep
-                ;; `expr-hdr` defined as empty so the existing `(when
-                ;; show-header? ...)` branch is dead but type-safe.
-                _expr-num
-                block-number
-
-                expr-hdr
-                ""
+                duration-ms
 
                 ;; Code bands are status-NEUTRAL: one quiet code tint, whether the
                 ;; call is running, succeeded, or failed. Success/failure is carried
@@ -6203,9 +6377,6 @@
                 ;; verdict instead of as code.
                 c-marker
                 code-marker
-
-                c-pad
-                code-pad-marker
 
                 comment-lines
                 (when (and (string? comment) (not (str/blank? comment)))
@@ -6225,12 +6396,6 @@
                                 (str/split-lines trimmed))]
 
                     (mapv #(line-entry (str thinking-marker " " %)) wrapped)))
-
-                ;; Engine-mutation recap rows (TITLE/TASK/SPEC/FACT) were
-                ;; retired alongside the recap rail. Code body + op rows are
-                ;; the only per-form surface now.
-                title-lines
-                []
 
                 ;; THE PROGRAM THE MODEL WROTE, and no second dialect. The gateway attaches
                 ;; the cached ruff rendering as `:display-code` — on the live chunk and on
@@ -6253,7 +6418,8 @@
                         str/split-lines)
 
                 inline-error-code-lines
-                (when error (inline-error-context-lines code-text error colored-lines))
+                (when (and error (not (:group-errors form)))
+                  (inline-error-context-lines code-text error colored-lines))
 
                 ;; Soft-fold oversized source rows, but keep error caret alignment and
                 ;; count submitted source lines rather than display rows.
@@ -6261,7 +6427,7 @@
                 (or (some->> inline-error-code-lines
                              (mapv vector))
                     (mapv (fn [plain colored]
-                            (let [folded (p/fold-cols plain fill-w)]
+                            (let [folded (p/fold-cols plain (max 1 (- (long fill-w) 2)))]
                               (if (and colored (= 1 (count folded))) [colored] folded)))
                           (str/split-lines code-text)
                           (or colored-lines (repeat nil))))
@@ -6274,76 +6440,60 @@
                                    :section :iteration
                                    :kind :code}))
 
-                c-line-groups-full
-                (mapv #(tag-copy-block-body (mapv (fn [line]
-                                                    (line-entry (str c-marker line)))
-                                                  %)
-                                            code-node-id
-                                            code-text)
-                      code-line-groups)
-
-                c-lines-full
-                (vec (mapcat identity c-line-groups-full))
-
-                python-program-row-count
-                (count (str/split-lines code-text))
-
-                python-code-collapsible?
-                (and code-node-id
-                     (>= (- (long python-program-row-count) (long python-code-preview-line-limit))
-                         (long vis/reasoning-collapse-min-hidden)))
+                code-expanded?
+                (or (nil? code-node-id)
+                    (detail-expanded? detail-expansions session-id code-node-id false))
 
                 c-lines
-                (if-not python-code-collapsible?
-                  (if (and activity-run execution-expanded?)
-                    ;; The Activity receipt names the calls, never the language. Once its
-                    ;; disclosure opens, short source needs the PYTHON band worn by long source.
-                    ;; It never counts its own rows: `1 line shown` is a caption no other band says.
-                    (vec (concat [(line-entry (str c-marker (band-label "PYTHON")))
-                                  (line-entry (str c-pad ""))]
-                                 c-lines-full))
-                    c-lines-full)
-                  (let [expanded?
-                        ;; Python rests collapsed on success AND failure. A failed call
-                        ;; still exposes the source preview and concise error; opening
-                        ;; the disclosure reveals the complete program and caret.
-                        (detail-expanded? detail-expansions session-id code-node-id false)
+                (when (and (or show-python-code? (not= "python" code-language))
+                           (not (str/blank? code-text)))
+                  (let [header-width
+                        (max 1 (long fill-w))
 
-                        visible-groups
-                        (vec (take python-code-preview-line-limit c-line-groups-full))
+                        preview
+                        (first (str/split-lines code-text))
 
-                        hidden-groups
-                        (vec (drop python-code-preview-line-limit c-line-groups-full))
+                        header
+                        (let [hidden (dec (count code-line-groups))]
+                          (str (if (pos? hidden) "  " "    ")
+                               (when (pos? hidden) (str (if code-expanded? "▾" "▸") " "))
+                               preview
+                               (when (and (pos? hidden) (not code-expanded?))
+                                 (str "  +" hidden " more"))))
 
-                        visible
-                        (vec (mapcat identity visible-groups))
+                        copy?
+                        (and code-node-id (>= header-width 20))
 
-                        hidden
-                        (vec (mapcat identity hidden-groups))
+                        headline-prefix
+                        header
 
-                        summary
-                        (detail-summary-entries
-                          {:marker c-marker
-                           :max-w fill-w
-                           :summary
-                           (if expanded?
-                             (band-label "PYTHON")
-                             (str (band-label "PYTHON") " +" (count hidden-groups) " more"))
-                           :collapsed? (not expanded?)
-                           :session-id session-id
-                           :node-id code-node-id})]
+                        header
+                        (if copy?
+                          (first (with-right-suffix [header] " ❐" header-width))
+                          (ellipsize-cols header header-width))]
 
-                    ;; Accordion HEADER at the top of the code band (same rule as the
-                    ;; THINKING band and every op-card): the row labels the block
-                    ;; BENEATH it, so expanding never pushes the collapse control off
-                    ;; screen behind its own body.
-                    ;; Leave one execution-status band row between the disclosure
-                    ;; header and its preview body: PYTHON is a header, not the
-                    ;; first source line.
-                    (vec (concat summary
-                                 [(line-entry (str c-pad ""))]
-                                 visible
-                                 (when expanded? hidden)))))
+                    (into (if code-node-id
+                            [{:line (str c-marker header)
+                              :meta {:kind (if (> (count code-line-groups) 1)
+                                             :toggle-details
+                                             :code-headline)
+                                     :band-flush? true
+                                     :headline-prefix headline-prefix
+                                     :right-suffix (when copy? " ❐")
+                                     :node-id code-node-id
+                                     :session-id session-id
+                                     :collapsed? (not code-expanded?)
+                                     :click-width (if copy? (- header-width 3) header-width)
+                                     :copy-text code-text
+                                     :copy-width (when copy? 3)}}]
+                            [])
+                          (when (and code-expanded?
+                                     (or (nil? code-node-id) (> (count code-line-groups) 1)))
+                            (conj (into [(line-entry (str c-marker ""))]
+                                        (map #(assoc (line-entry (str c-marker %))
+                                                :meta {:code-source? true})
+                                             (mapcat identity code-line-groups)))
+                                  (line-entry (str c-marker "")))))))
 
                 ;; Human output surface: derive the local RESULT body solely from canonical
                 ;; stdout. Strip artifact transport markers first so live, restored, and
@@ -6378,6 +6528,7 @@
                 (when-let [d (and (nil? card)
                                   (nil? error)
                                   (empty? form-artifacts)
+                                  (or result-text (nil? activity-run))
                                   (some? result-duration-ms)
                                   (vis/format-duration result-duration-ms))]
                   {:line (str result-marker
@@ -6482,50 +6633,15 @@
                         ;; the error headline carries it — right-aligned inside the two
                         ;; columns every error row is inset by, and never when a card
                         ;; head already wears it.
-                        (cond-> (wrap-text (form-error-headline error) fill-w)
+                        (cond-> (mapcat #(wrap-text (form-error-headline %) fill-w)
+                                        (or (:group-errors form) [error]))
                           (and (nil? card) (some? result-duration-ms))
                           (with-right-suffix (vis/format-duration result-duration-ms)
                                              (max 1
                                                   (- (long fill-w) (long code-text-inset-cols)))))))
 
-                ;; Plain Python source is evidence by default. An Activity receipt instead owns
-                ;; the whole tool execution, so its source follows the receipt disclosure together
-                ;; with result and host activity. Blank code drops the empty chrome around it.
-                hide-code-chrome?
-                (and (not is-error?) (str/blank? code-text))
-
                 code-block
-                (cond hide-code-chrome?
-                      ;; No source to show; the error message still remains visible.
-                      (vec (concat (when (seq title-lines) [(line-entry "")])
-                                   title-lines
-                                   (when (seq title-lines) [(line-entry "")])
-                                   (when (seq inline-error-message-lines)
-                                     inline-error-message-lines)))
-                      :else (vec
-                              (concat
-                                ;; Title-recap call-out: one TRUE neutral
-                                ;; (terminal-bg) blank row above and below.
-                                ;; The thinking-pad row that may precede
-                                ;; this block paints with iteration-header-bg
-                                ;; (gray stripe) and reads as the tail of
-                                ;; thinking — NOT as a margin. The user
-                                ;; sees the recap glued to thinking unless
-                                ;; we add a terminal-bg blank here.
-                                (when (seq title-lines) [(line-entry "")])
-                                title-lines
-                                (when (seq title-lines) [(line-entry "")])
-                                (when show-header?
-                                  [(line-entry (str iteration-hdr-marker expr-hdr))])
-                                [(line-entry (str c-pad ""))]
-                                c-lines
-                                (when (seq inline-error-message-lines) inline-error-message-lines)
-                                ;; Bottom band edge. No per-form status
-                                ;; footer; code blocks stay source-only.
-                                [(line-entry (str c-pad ""))])))
-
-                source-visible?
-                (or (not activity-run) execution-expanded?)
+                (vec c-lines)
 
                 ;; A code band already closes with its one blank bottom edge, so the
                 ;; results begin immediately after that edge rather than adding a
@@ -6541,11 +6657,11 @@
                 generic-run-entries
                 (run-row-entries (vec runs) fill-w session-id false)
 
-                execution-body
-                (vec (concat code-block result-block artifact-block generic-run-entries))
-
                 execution-details
-                (vec (concat result-block artifact-block generic-run-entries))
+                (vec (concat inline-error-message-lines
+                             result-block
+                             artifact-block
+                             generic-run-entries))
 
                 ;; THE SENTENCE THAT INTRODUCES A CALL IS TRANSCRIPT TEXT, above the band and
                 ;; outside its fold. The companion prints a form's comment as an ordinary block
@@ -6560,38 +6676,7 @@
                 activity-surface
                 (when activity-run (activity-detail-entries activity-run fill-w session-id))]
 
-            (if-not execution-status
-              (vec (concat comment-block execution-body))
-              (let [summary-text
-                    (activity-status-display (cond-> execution-status
-                                               (seq form-artifacts)
-                                               (update :status-text str
-                                                       " · " (artifact-preview form-artifacts))))
-
-                    summary-line
-                    (ellipsize-cols (str "  " (if execution-expanded? "▾" "▸") " " summary-text)
-                                    (max 1 (long fill-w)))
-
-                    summary
-                    {:line (str execution-summary-marker summary-line)
-                     :meta {:kind :toggle-details
-                            :status-tone (:status-tone execution-status)
-                            :session-id session-id
-                            :node-id execution-node-id
-                            :collapsed? (not execution-expanded?)}}]
-
-                ;; A tool receipt is one disclosure: collapsed leaves its summary; expanded reveals
-                ;; Python, result and host activity together. Without Activity, source remains visible
-                ;; while the ordinary execution receipt folds output only.
-                (vec (concat comment-block
-                             [(line-entry "") summary]
-                             (when (or (and source-visible? (seq code-block))
-                                       (and execution-expanded? (seq execution-details)))
-                               [(line-entry "")])
-                             (when source-visible? code-block)
-                             (when execution-expanded? execution-details)
-                             (when (and execution-expanded? activity-surface)
-                               activity-surface)))))))
+            (vec (concat comment-block code-block activity-surface execution-details))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result
@@ -6941,8 +7026,13 @@
    thinking / prose renders above the merged forms — but breaks the run on an
    INTERIOR iteration so mid-burst commentary never floats out of place."
   [entry]
-  (let [{:keys [forms recaps provider-fallbacks error]} entry]
-    (when (and (nil? error) (empty? recaps) (empty? provider-fallbacks) (seq forms)) (vec forms))))
+  (let [{:keys [forms recaps provider-fallbacks error attachments]} entry]
+    (when (and (nil? error)
+               (empty? attachments)
+               (empty? recaps)
+               (empty? provider-fallbacks)
+               (seq forms))
+      (vec forms))))
 
 (defn- iteration-narration?
   "True when an iteration carries visible NARRATION that must render on its own —
@@ -7060,7 +7150,8 @@
                 k
                 [::iter-entries (if live? :live :final) iter-num (iteration-fingerprint stripped)
                  (long content-w) show-iteration-headers? (boolean show-thinking?)
-                 (boolean show-silent?) session-id session-turn-id
+                 (boolean show-silent?) (get settings :show-python-code true) session-id
+                 session-turn-id
                  ;; Tool-badge / op-row disclosures are keyed
                  ;; `iter<N>:t<frag>:op<M>` — scoped by the TURN
                  ;; token, NOT the `iteration:t<frag>:i<N>` base
@@ -7074,6 +7165,7 @@
 
                 inner-opts
                 {:show-header? show-iteration-headers?
+                 :show-python-code? (get settings :show-python-code true)
                  :session-id session-id
                  :session-turn-id session-turn-id
                  :detail-expansions detail-expansions
@@ -7320,7 +7412,8 @@
            [::progress-body (long content-w) (mapv iteration-fingerprint iterations)
             (boolean (get settings :show-thinking true))
             (boolean (get settings :show-iterations true))
-            (boolean (get settings :show-silent false)) session-id session-turn-id
+            (boolean (get settings :show-silent false)) (get settings :show-python-code true)
+            session-id session-turn-id
             (turn-detail-expansions-key {:section :iteration
                                          :session-id session-id
                                          :session-turn-id session-turn-id
@@ -7614,26 +7707,26 @@
   ([answer trace bubble-w settings confidence cancelled?]
    (format-answer-with-thinking-data answer trace bubble-w settings confidence cancelled? nil))
   ([answer trace bubble-w settings confidence cancelled? opts]
-   (cached* [::fawt-data (System/identityHashCode answer) (System/identityHashCode trace)
-             (long bubble-w) (boolean (get settings :show-thinking true))
-             (boolean (get settings :show-iterations true))
-             (boolean (get settings :show-silent false)) confidence (boolean cancelled?)
-             (:session-turn-id opts) (turn-detail-expansions-key opts)
-             ;; tail-lines opt switches to the back-walking renderer;
-             ;; must be in the cache key so a tail-pinned bubble's
-             ;; tail-N result doesn't shadow the same bubble's full
-             ;; render after the user scrolls up.
-             (:tail-lines opts)
-             ;; A run that FINISHED during this bubble adds a row to it, so the
-             ;; rail is part of what the cached render is OF.
-             (:runs opts)]
-            #(format-answer-with-thinking-data* answer
-                                                trace
-                                                bubble-w
-                                                settings
-                                                confidence
-                                                cancelled?
-                                                opts))))
+   (cached*
+     [::fawt-data (System/identityHashCode answer) (System/identityHashCode trace) (long bubble-w)
+      (boolean (get settings :show-thinking true)) (boolean (get settings :show-iterations true))
+      (boolean (get settings :show-silent false)) (get settings :show-python-code true) confidence
+      (boolean cancelled?) (:session-turn-id opts) (turn-detail-expansions-key opts)
+      ;; tail-lines opt switches to the back-walking renderer;
+      ;; must be in the cache key so a tail-pinned bubble's
+      ;; tail-N result doesn't shadow the same bubble's full
+      ;; render after the user scrolls up.
+      (:tail-lines opts)
+      ;; A run that FINISHED during this bubble adds a row to it, so the
+      ;; rail is part of what the cached render is OF.
+      (:runs opts)]
+     #(format-answer-with-thinking-data* answer
+                                         trace
+                                         bubble-w
+                                         settings
+                                         confidence
+                                         cancelled?
+                                         opts))))
 
 (defn format-answer-with-thinking
   ([answer trace bubble-w] (format-answer-with-thinking answer trace bubble-w nil nil false nil))

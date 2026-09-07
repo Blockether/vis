@@ -3,6 +3,10 @@ import { useCallback, useEffect, useState } from "react";
 import type { GatewayConn, SpeechPrefs, ThemePref } from "../lib/types";
 import { applyTheme } from "../lib/theme";
 import {
+  usePythonCodeShown,
+  setPythonCodeShown,
+} from "../lib/transcript-display";
+import {
   DEFAULT_SPEECH_PREFS,
   getSpeechPrefs,
   getThemePref,
@@ -21,6 +25,7 @@ import {
   DialogFrame,
   IconButton,
   Modal,
+  Switch,
 } from "../components/ui";
 import {
   AddMachine,
@@ -100,6 +105,7 @@ export function SettingsDialog({
   ) => void | Promise<void>;
   onClose: () => void;
 }) {
+  const showPythonCode = usePythonCodeShown();
   const [pref, setPref] = useState<ThemePref>(DEFAULT_THEME.id);
   const [speechPrefs, setSpeechPrefs] =
     useState<SpeechPrefs>(DEFAULT_SPEECH_PREFS);
@@ -202,10 +208,7 @@ export function SettingsDialog({
     // "Manage projects" and every ask already open in. `wide` is the one size that
     // holds two columns of settings side by side; the height is every dialog's.
     <Modal size="wide" onDismiss={onClose}>
-      <DialogFrame
-        title="Settings"
-        onClose={onClose}
-      >
+      <DialogFrame title="Settings" onClose={onClose}>
         {/* Each column scrolls ITSELF on desktop. One shared scroller made the short
             column a 1500px empty gutter: scrolling to a machine's Sandbox panel dragged
             Theme off the top of the screen for no reason. Below `sm:` the halves stack
@@ -281,6 +284,24 @@ export function SettingsDialog({
               </div>
             )}
 
+            <SettingsPanel title="Transcript">
+              <div className="flex items-center justify-between gap-4 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="font-mono text-ui font-bold text-white">
+                    Show Python code
+                  </p>
+                  <p className="text-ui text-dialog-hint">
+                    One expandable source line before Activity. Hiding code
+                    keeps every activity and result.
+                  </p>
+                </div>
+                <Switch
+                  label="Show Python code"
+                  isOn={showPythonCode}
+                  onClick={() => setPythonCodeShown(!showPythonCode)}
+                />
+              </div>
+            </SettingsPanel>
             <SettingsPanel title="Theme">
               <div className="grid grid-cols-1 gap-px bg-dialog-edge">
                 {/* NO MODE COLUMN. Every theme is named `Blockether Light`, `Solarized

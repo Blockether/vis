@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "ops": [
     {
       "name": "state_get",
@@ -47,7 +47,7 @@
       "name": "shell",
       "global": "__vis_host_shell__",
       "arity": 1,
-      "summary": "Run one shell op — start, logs, type, wait or stop.",
+      "summary": "Run one shell op \u2014 start, logs, type, wait or stop.",
       "outside": "local"
     },
     {
@@ -99,6 +99,13 @@
       "global": "__vis_host_declare_env__",
       "arity": 1,
       "summary": "Resolve the environment variables the extension declared.",
+      "outside": "local"
+    },
+    {
+      "name": "activity",
+      "global": "__vis_host_activity__",
+      "arity": 1,
+      "summary": "Replace presentation content of the currently running symbol without changing its outcome.",
       "outside": "local"
     }
   ],

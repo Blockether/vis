@@ -34,17 +34,24 @@ _ACTIVITY_PRESENTERS = (
 
 @dataclass(frozen=True, slots=True)
 class Activity:
-    """Static tool presentation, never a fabricated execution lifecycle.
+    """Symbol presentation; the engine owns identity, timing and outcome.
 
-    Use with symbol(activity=...) or method(activity=...). The engine owns state,
-    identity, duration, redaction and bounds. label is optional non-secret plain
-    text; omit it to let the engine summarize the invocation.
+    render is an optional synchronous callback receiving phase, args, kwargs,
+    result and error as keyword arguments; it returns a sequence of content blocks
+    (or None to keep the current content). It runs on start, success and failure.
+    Use publish_activity inside a long-running symbol for intermediate stages.
+    A rendering failure never changes the symbol's return value or exception.
     """
 
     presenter: str = "generic"
     label: str | None = None
+    render: object = None
 
     def __post_init__(self):
+        if self.render is not None and (
+            not callable(self.render) or inspect.iscoroutinefunction(self.render)
+        ):
+            raise TypeError("Activity render must be a synchronous callable")
         if self.presenter not in _ACTIVITY_PRESENTERS:
             raise ValueError("unknown Activity presenter")
         if self.label is not None and (
@@ -68,6 +75,66 @@ def _activity_spec(activity):
         "presenter": activity.presenter,
         **({"label": activity.label} if activity.label is not None else {}),
     }
+
+
+def publish_activity(*blocks):
+    """Replace this symbol's Activity content, never its engine-owned lifecycle.
+
+    Blocks are closed JSON objects: heading/text/markdown have text;
+    code/diff have text and optional language; table has columns and rows;
+    image/video/audio/file have attachment_id and label; progress has label and
+    optional value + total (omit both for a loader). At most 32 blocks / 32 KiB.
+    Use headings to retain earlier stages when replacing the current snapshot.
+    Media references existing attachments, not external URLs. Keep secrets out of
+    free text. Returns False if no invocation is active or presentation is rejected.
+    """
+    try:
+        return bool(_host.activity(list(blocks)))
+    except Exception:
+        return False
+
+
+def _activity_call(fn, activity):
+    _activity_spec(activity)
+    if activity is None or activity.render is None:
+        return fn
+
+    def render(phase, args, kwargs, result=None, error=None):
+        try:
+            blocks = activity.render(
+                phase=phase, args=args, kwargs=kwargs, result=result, error=error
+            )
+            if blocks is not None:
+                publish_activity(*blocks)
+        except Exception:
+            pass  # Presentation must not alter the operation's result or error.
+
+    if inspect.iscoroutinefunction(fn):
+
+        async def invoke(*args, **kwargs):
+            render("start", args, kwargs)
+            try:
+                result = await fn(*args, **kwargs)
+            except BaseException as error:
+                render("failure", args, kwargs, error=error)
+                raise
+            render("success", args, kwargs, result=result)
+            return result
+    else:
+
+        def invoke(*args, **kwargs):
+            render("start", args, kwargs)
+            try:
+                result = fn(*args, **kwargs)
+            except BaseException as error:
+                render("failure", args, kwargs, error=error)
+                raise
+            render("success", args, kwargs, result=result)
+            return result
+
+    from functools import wraps
+
+    return wraps(fn)(invoke)
 
 
 _registration = {"spec": None}
@@ -241,7 +308,7 @@ def _symbol_spec(fn, name, tag, is_hidden, activity=None):
             params.append(p.name)
     return {
         "marker": "symbol",
-        "fn": _kwargs_call(fn),
+        "fn": _kwargs_call(_activity_call(fn, activity)),
         "name": public_name,
         "tag": tag,
         "hidden": bool(is_hidden),

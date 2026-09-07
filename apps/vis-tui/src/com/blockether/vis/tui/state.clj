@@ -784,7 +784,7 @@
     (keyword (if (str/blank? s) shared-theme/default-theme-id s))))
 
 (defn- normalize-settings
-  "Coerce the app-local theme preference."
+  "Coerce app-local transcript and theme preferences."
   [settings]
   (update settings :theme-name normalize-theme-name))
 
@@ -809,18 +809,22 @@
 
 (def default-settings
   "Per-user terminal preferences stored by the standalone app."
-  {:theme-name (keyword shared-theme/default-theme-id)})
+  {:theme-name (keyword shared-theme/default-theme-id) :show-python-code true})
 
 (defn- load-persisted-settings
   []
   (let [raw (try (vis/load-config-raw) (catch Throwable _ nil))]
     (normalize-settings (merge default-settings
-                               (when (map? raw) {:theme-name (get raw "theme_name")})))))
+                               (when (map? raw)
+                                 {:theme-name (get raw "theme_name")
+                                  :show-python-code (get raw "show_python_code" true)})))))
 
 (defn- persist-settings!
   [settings]
-  (let [{:keys [theme-name]} (normalize-settings settings)]
-    (try (vis/update-machine-config! #(assoc % "theme_name" (name theme-name)))
+  (let [{:keys [theme-name show-python-code]} (normalize-settings settings)]
+    (try (vis/update-machine-config! #(assoc %
+                                        "theme_name" (name theme-name)
+                                        "show_python_code" show-python-code))
          (catch Throwable _ nil))))
 
 (defn- apply-settings-update!

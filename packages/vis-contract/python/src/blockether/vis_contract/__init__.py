@@ -209,6 +209,9 @@ class Host(Protocol):
     def live(self, envelope_json: str) -> str:
         """Open, patch, read or close one live view — the grammar is [[LIVE]]."""
 
+    def activity(self, blocks: list[dict]) -> bool:
+        """Replace the running symbol's bounded presentation content."""
+
     def reveal_secret(self, handle: str) -> Any:
         """Resolve a `vis-secret:` handle to its plaintext."""
 
