@@ -8,9 +8,9 @@
                  (let [syms (set (map :ext.symbol/symbol env-core/environment-symbols))]
                    (expect (not (contains? syms 'snapshot)))
                    (expect (not (contains? syms 'git)))
-                   (expect (contains? syms 'repositories))
-                   (expect (contains? syms 'languages))
-                   (expect (contains? syms 'monorepo))
+                   (expect (not (contains? syms 'repositories)))
+                   (expect (not (contains? syms 'languages)))
+                   (expect (not (contains? syms 'monorepo)))
                    ;; `refresh!` is HOST-ONLY: dropping the env snapshot and
                    ;; rescanning the tree is the user's `/reload`, never
                    ;; something the model can call from `python_execution`.
@@ -41,10 +41,8 @@
                                                env-core/environment-symbols))]
     (env-python/boundary-view (:result (fn)))))
 
-;; Regression, issue #115: every environment symbol handed Python its RAW
-;; keyword-keyed snapshot, so `await refresh()` died with "STRINGS-ONLY
-;; boundary violation: non-string-key :host at the TOP-LEVEL map key" — and so
-;; did repositories(), languages(), monorepo() and main_agent_instructions().
+;; Regression, issue #115: environment tools must encode engine data before
+;; crossing the strings-only Python boundary.
 (defdescribe environment-symbols-boundary-test
              (it "hands Python string-keyed payloads for every environment symbol"
                  (doseq [sym-map env-core/environment-symbols]
@@ -59,12 +57,5 @@
                      (expect (map? view) (str sym " must return a dict"))
                      (expect (every? string? (keys view)) (str sym " top-level keys")))))
              (it "spells its keys the way the docstrings promise"
-                 (let [languages
-                       (symbol-view 'languages)
-
-                       repositories
-                       (symbol-view 'repositories)]
-
-                   (expect (contains? languages "total_files"))
-                   (expect (contains? languages "is_truncated"))
-                   (expect (contains? repositories "count")))))
+                 (let [guidance (symbol-view 'main-agent-instructions)]
+                   (expect (contains? guidance "is_found")))))

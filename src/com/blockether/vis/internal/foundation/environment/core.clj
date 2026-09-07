@@ -10,9 +10,9 @@
      * monorepo / multi-package shape detection (polylith, workspace,
        submodules) by counting per-ecosystem manifests.
 
-   Model-facing VCS/workspace truth lives in `session[\"workspace\"]`.
-   Remaining helpers cover coarse project shape (`languages`,
-   `monorepo`, `repositories`).
+   Model-facing VCS/workspace truth lives in `session['workspace']`;
+   `session['env']['project']` supplies project kind and primary language.
+   Detailed scans remain host data for context and language-tool dispatch.
 
    Runtime facts are computed lazily on first access and cached per
    working-directory. The cache is invalidated automatically when
@@ -111,10 +111,8 @@
   "Drop the cached env snapshot, forget the repository inventory, rescan project
    guidance, and return the fresh snapshot.
 
-   HOST-ONLY, deliberately NOT a `v/` symbol: refreshing the environment is a
-   USER action. It is registered as a `/reload` hook below, and nothing running
-   inside `python_execution` can reach it — the sandbox reads the snapshot
-   through `repositories()` / `languages()` / `monorepo()`, it never reloads."
+   HOST-ONLY: refreshing the environment is a USER action registered as a
+   `/reload` hook. The sandbox receives project facts through `session`."
   []
   (reset! cache {:key nil :value nil})
   (repositories/refresh-inventory!)
@@ -130,36 +128,11 @@
 (defonce ^:private _environment-reload-hook
   (extension/register-reload-hook! ::environment-refresh refresh!))
 
-;; Extension definition.
-
-;; Local thin wrappers around the snapshot accessors so each `v/` callable
-;; corresponds to a real var with `:doc` + `:arglists` baked in. `vis/symbol`
-;; reads both straight from the var meta - no separate side-map at the
-;; registration callsite.
-
-(defn repositories
-  "await repositories()
-Returns {\"root\", \"count\": N, \"repositories\": [{\"path\", \"branch\", \"is_dirty\": bool, \"is_changes\": bool, \"is_stale\": bool, \"stash_count\": N, ...}], \"is_truncated\": bool}."
-  []
-  (:repositories (snapshot)))
-
 (defn git
   "Git facts for the environment block (host helper, not a model tool).
 Returns {\"root\", \"branch\", \"is_detached\": bool, \"is_submodules\": bool, \"is_worktree\": bool, \"stash_count\", \"upstream\", \"ahead\", \"behind\", \"is_stale\", \"is_dirty\", \"is_clean\", \"modified\", \"untracked\", \"added\", \"changed\", \"removed\", \"missing\", \"conflicting\"}, or None outside a repo."
   []
   (:git (snapshot)))
-
-(defn languages
-  "await languages()
-Returns {\"total_files\": N, \"total_bytes\": N, \"primary\": \"clojure\", \"languages\": [{\"language\", \"files\": N, \"bytes\": N, \"files_pct\", \"bytes_pct\"}, ...], \"is_truncated\": bool, \"elapsed_ms\": N}. List sorted by files desc."
-  []
-  (:languages (snapshot)))
-
-(defn monorepo
-  "await monorepo()
-Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": {\"clojure\": N, ...}, \"files\": {\"clojure\": [\"path/deps.edn\", ...], ...}, \"is_truncated\": bool}. \"shape\" is None for single-package repos."
-  []
-  (:monorepo (snapshot)))
 
 (defn- success-envelope
   "Envelope for a sandbox env symbol. The snapshot pieces are ENGINE data —
@@ -172,71 +145,6 @@ Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": 
    keys Python actually holds."
   [result]
   (extension/success {:result (wire/->wire result)}))
-
-(defn- repositories-tool
-  "Every git repository under the workspace root with its branch and working-tree
-state — the map of a multi-checkout tree, answered in one call.
-Returns {\"root\", \"count\": N, \"repositories\": [{\"path\", \"branch\", \"is_dirty\": bool, \"is_changes\": bool, \"is_stale\": bool, \"stash_count\": N, ...}], \"is_truncated\": bool}."
-  []
-  (success-envelope (repositories)))
-
-(defn- languages-tool
-  "What this workspace is WRITTEN IN: the primary language plus the whole
-distribution by file and byte count. Takes no arguments — it reads the scan.
-Returns {\"total_files\": N, \"total_bytes\": N, \"primary\": \"clojure\", \"languages\": [{\"language\", \"files\": N, \"bytes\": N, \"files_pct\", \"bytes_pct\"}, ...], \"is_truncated\": bool, \"elapsed_ms\": N}. List sorted by files desc."
-  []
-  (success-envelope (languages)))
-
-(defn- monorepo-tool
-  "Whether this workspace is a MONOREPO and of what shape, with the build files
-that prove it.
-Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": {\"clojure\": N, ...}, \"files\": {\"clojure\": [\"path/deps.edn\", ...], ...}, \"is_truncated\": bool}. \"shape\" is None for single-package repos."
-  []
-  (success-envelope (monorepo)))
-
-(defn- env-data-symbol
-  "Register an explicit envelope-returning tool var under a stable `v/` name.
-   The public helper vars above stay plain Clojure functions for host callers;
-   only the sandbox symbol implementation returns a tool envelope.
-   Every env data symbol is an :observation (pure read) taking NO arguments; the
-   inline `:tag` lets `register-extension!` populate the op registry
-   without an out-of-band `vis/register-op!` doseq.
-
-   `description` and `result` are the model-facing pair `doc(name)` renders under
-   the call line — the implementation docstring is developer documentation and
-   never substitutes for either."
-  [v sym description result]
-  (vis/symbol v {:symbol sym :tag :observation :description description :result result}))
-
-(def repositories-symbol
-  (env-data-symbol
-    #'repositories-tool
-    'repositories
-    (str "Every git repository under the workspace root with its branch and working-tree state — "
-         "the map of a multi-checkout tree in ONE call. Takes no arguments.")
-    (str "String-keyed `{root, count, repositories, is_truncated}`; each repository is "
-         "`{path, branch, is_dirty, is_changes, is_stale, stash_count, …}`.")))
-
-(def languages-symbol
-  (env-data-symbol
-    #'languages-tool
-    'languages
-    (str "What this workspace is WRITTEN IN: the primary language plus the whole distribution by "
-         "file and byte count, read off the workspace scan. Takes no arguments.")
-    (str
-      "String-keyed `{total_files, total_bytes, primary, languages, is_truncated, elapsed_ms}`; "
-      "each language is `{language, files, bytes, files_pct, bytes_pct}`, sorted by files desc.")))
-
-(def monorepo-symbol
-  (env-data-symbol
-    #'monorepo-tool
-    'monorepo
-    (str "Whether this workspace is a MONOREPO and of what shape, with the build files that prove "
-         "it. Takes no arguments.")
-    (str "String-keyed `{shape, totals, files, is_truncated}`; `shape` is "
-         "`polylith` | `workspace` | `submodules`, or None for a single-package repo.")))
-
-;; Project guidance surface.
 
 (defn main-agent-instructions
   "The project's own guidance file — AGENTS.md or CLAUDE.md — whole, with where
@@ -258,16 +166,17 @@ Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"
   (success-envelope (main-agent-instructions)))
 
 (def main-agent-instructions-symbol
-  (env-data-symbol
+  (vis/symbol
     #'main-agent-instructions-tool
-    'main-agent-instructions
-    (str "The project's own guidance file — AGENTS.md or CLAUDE.md — WHOLE, with where it was "
-         "found. Takes no arguments.")
-    (str "String-keyed `{is_found, source, path, bytes, content, files}`; a miss is "
-         "`{is_found: False}`, so check `is_found` first.")))
+    {:symbol 'main-agent-instructions
+     :tag :observation
+     :description
+     (str "The project's own guidance file — AGENTS.md or CLAUDE.md — WHOLE, with where it was "
+          "found. Takes no arguments.")
+     :result (str "String-keyed `{is_found, source, path, bytes, content, files}`; a miss is "
+                  "`{is_found: False}`, so check `is_found` first.")}))
 
-(def environment-symbols
-  [repositories-symbol languages-symbol monorepo-symbol main-agent-instructions-symbol])
+(def environment-symbols [main-agent-instructions-symbol])
 
 (defn environment-ctx
   "Foundation-owned structured ctx contribution. Runtime facts, project

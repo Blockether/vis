@@ -73,25 +73,28 @@
 ;; snapshot, so every one of them raised "STRINGS-ONLY boundary violation:
 ;; non-string-key :host at the TOP-LEVEL map key" instead of returning the
 ;; string-keyed dict their docstrings promised.
-(defdescribe
-  tool-surface-boundary-test
-  (it "reaches a real registry, so a green run is never vacuous"
-      (let [syms (readable-symbols)]
-        (expect (<= 4 (count syms)) "the registry must expose at least the environment symbols")
-        (expect (contains? (set (map (comp str :ext.symbol/symbol second) syms)) "repositories")
-                "issue #115's own symbols must be among the probed ones")
-        (expect (seq (ctx-fns)) "at least one extension contributes ctx")))
-  (it "hands Python string-keyed payloads for every no-arg observation tool"
-      (doseq [[ext e] (readable-symbols)]
-        (let [sym (:ext.symbol/symbol e)
-              [status v] (crossing #(extension/invoke-symbol-wrapper ext e [] (probe-env)))]
+(defdescribe tool-surface-boundary-test
+             (it "reaches a real registry, so a green run is never vacuous"
+                 (let [syms (readable-symbols)]
+                   (expect (seq syms) "the registry must expose observation tools")
+                   (let [names (set (map (comp str :ext.symbol/symbol second) syms))]
+                     (expect (contains? names "main-agent-instructions")
+                             "issue #115's remaining environment tool must be probed")
+                     (doseq [removed ["repositories" "languages" "monorepo"]]
+                       (expect (not (contains? names removed)))))
+                   (expect (seq (ctx-fns)) "at least one extension contributes ctx")))
+             (it "hands Python string-keyed payloads for every no-arg observation tool"
+                 (doseq [[ext e] (readable-symbols)]
+                   (let [sym (:ext.symbol/symbol e)
+                         [status v] (crossing
+                                      #(extension/invoke-symbol-wrapper ext e [] (probe-env)))]
 
-          (expect (not= :boundary-violation status) (str sym " -> " v))
-          (when (and (= :ok status) (map? v))
-            (expect (every? string? (keys v)) (str sym " top-level keys"))))))
-  (it "hands Python a string-keyed `session` context from every extension"
-      (doseq [[id f] (ctx-fns)]
-        (let [[status v] (crossing #(f (probe-env)))]
-          (expect (not= :boundary-violation status) (str id " ctx -> " v))
-          (when (and (= :ok status) (map? v))
-            (expect (every? string? (keys v)) (str id " ctx top-level keys")))))))
+                     (expect (not= :boundary-violation status) (str sym " -> " v))
+                     (when (and (= :ok status) (map? v))
+                       (expect (every? string? (keys v)) (str sym " top-level keys"))))))
+             (it "hands Python a string-keyed `session` context from every extension"
+                 (doseq [[id f] (ctx-fns)]
+                   (let [[status v] (crossing #(f (probe-env)))]
+                     (expect (not= :boundary-violation status) (str id " ctx -> " v))
+                     (when (and (= :ok status) (map? v))
+                       (expect (every? string? (keys v)) (str id " ctx top-level keys")))))))
