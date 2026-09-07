@@ -568,15 +568,42 @@
     ;; Durable events are correctness boundaries (turn.started/completed/failed,
     ;; queue mutations, titles). Put them behind any already-enqueued transient
     ;; deltas and wait, so the file is ordered and tests/hydration see them.
-    (let [done (promise)]
-      ;; Bounded: never park a turn/provider thread forever on a wedged writer.
-      (if (.offer ^ArrayBlockingQueue writer-queue
-                  {:sid sid :event event :opts opts :done done}
-                  durable-write-timeout-ms
-                  TimeUnit/MILLISECONDS)
-        (deref done durable-write-timeout-ms false)
-        (tel/log! :debug
-                  ["gateway-bus: dropped durable event; writer queue wedged" (get event "type")]))
+    ;; They are also the writes a CANCELLED turn lands from the very thread
+    ;; `cancel!` interrupted (`Future.cancel(true)`): a Responses WebSocket cancel
+    ;; reaches this hand-off with that flag still armed, and both the bounded
+    ;; offer and the acknowledgement wait are interruptible, so the hand-off threw
+    ;; at once and the terminal - the ONE write that retracts the liveness marker -
+    ;; was lost: every client kept re-adopting a turn that had already ended. Park
+    ;; the flag for the hand-off and hand it back afterwards: the cancellation
+    ;; belongs to the producer's next blocking call, never to the journal.
+    (let [done
+          (promise)
+
+          item
+          {:sid sid :event event :opts opts :done done}
+
+          enqueued?
+          (volatile! false)
+
+          interrupted?
+          (volatile! (Thread/interrupted))]
+
+      (try
+        ;; Bounded: never park a turn/provider thread forever on a wedged writer.
+        (if (.offer ^ArrayBlockingQueue writer-queue
+                    item
+                    durable-write-timeout-ms
+                    TimeUnit/MILLISECONDS)
+          (do (vreset! enqueued? true) (deref done durable-write-timeout-ms false))
+          (tel/log! :debug
+                    ["gateway-bus: dropped durable event; writer queue wedged" (get event "type")]))
+        ;; An interrupt ARRIVING mid-wait gives up only the acknowledgement: a line
+        ;; the writer already owns still lands, and one not yet handed over gets a
+        ;; last non-blocking offer instead of vanishing.
+        (catch InterruptedException _
+          (vreset! interrupted? true)
+          (when-not @enqueued? (.offer ^ArrayBlockingQueue writer-queue item)))
+        (finally (when @interrupted? (.interrupt (Thread/currentThread)))))
       nil)
     ;; Transient deltas are live hints. Never block provider/input threads on disk;
     ;; if the queue is saturated, sibling processes will catch the final canonical

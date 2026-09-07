@@ -505,6 +505,38 @@
               {"schema" 1 "seq" 2 "type" "turn.completed" "session_id" sid "turn_id" "T-2"}
               {:store? true})
             (expect (nil? (bus/live-turn-id sid)))))))
+  (it
+    "retracts it on a terminal published from an INTERRUPTED producer thread"
+    ;; Regression: cancelling a Codex (Responses WebSocket) turn from the companion
+    ;; app showed "Cancelled by user" for a second, then the bubble ran again and a
+    ;; second Stop was accepted as if nothing had happened. The gateway cancels a
+    ;; turn by interrupting its worker; the WebSocket transport keeps that
+    ;; interrupt armed on the worker, so the worker reached its `turn.cancelled`
+    ;; publish with the flag set. The durable hand-off blocks on an interruptible
+    ;; queue offer, which threw at once, `publish!` swallowed it, and the journal
+    ;; line - the SAME write that retracts the liveness marker - never happened.
+    ;; Every `/v1/sessions` row then said `live` with a `current_turn_id`, so each
+    ;; client re-adopted a turn that had already ended.
+    (with-temp-journal
+      (fn [_capture _write!]
+        (let [sid (str (random-uuid))]
+          (bus/publish! sid
+                        {"schema" 1 "seq" 1 "type" "turn.started" "session_id" sid "turn_id" "T-4"}
+                        {:store? true :truncate? true})
+          (expect (= "T-4" (bus/live-turn-id sid)))
+          (.interrupt (Thread/currentThread))
+          (let [still-interrupted?
+                (try (bus/publish!
+                       sid
+                       {"schema" 1 "seq" 2 "type" "turn.cancelled" "session_id" sid "turn_id" "T-4"}
+                       {:store? true})
+                     (.isInterrupted (Thread/currentThread))
+                     (finally (Thread/interrupted)))]
+            (expect (nil? (bus/live-turn-id sid)))
+            (expect (str/includes? (slurp (#'bus/session-file sid)) "\"turn.cancelled\""))
+            ;; The producer's cancellation is not the bus's to consume: the
+            ;; interrupt still stands for the next interruptible call.
+            (expect still-interrupted?))))))
   (it "ignores AND deletes a marker whose producer process is gone"
       (with-temp-journal
         (fn [_capture _write!]
