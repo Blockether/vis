@@ -6,6 +6,9 @@
    engine, so a test can only paint shapes an extension can really produce."
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.capture :as cap]
+            [com.blockether.vis.tui.chat :as chat]
+            [com.blockether.vis.tui.human-input :as hi]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.columns :as columns]
             [com.blockether.vis.tui.footer :as footer]
@@ -486,6 +489,58 @@
     (try (reset! state/app-db {:render-version 0 :session {:id "s1"}})
          (f)
          (finally (reset! state/app-db old)))))
+
+(deftest live-view-gateway-wire-patch-test
+  ;; Regression: the gateway advanced while the TUI kept the opening CI picture.
+  ;; Existing pane tests passed keyword ops directly, bypassing the JSON boundary.
+  (with-db
+    (fn []
+      (let [view
+            (assoc (ci-view :rows 1) :session-id "s1")
+
+            patch
+            {:view-id (:id view)
+             :seq 1
+             :ops [{:op :set :node-id "now" :text "Package Linux x64 failed" :tone :error}
+                   {:op :append
+                    :node-id "jobs"
+                    :rows [{:id "job-0" :cells ["job-0" "failure" "5m"] :tone :error}]}]}
+
+            chunk
+            (#'chat/gateway-event->chunk
+             {"type" "view.patch" "kind" "live" "patch" (wire/->wire patch)})]
+
+        (state/dispatch [:live-view-open (hi/live-view<-wire (wire/->wire view))])
+        (state/dispatch [:live-view-patch (hi/live-patch<-wire (:patch chunk))])
+        (let [panes
+              (:live-views @state/app-db)
+
+              updated
+              (:view (first panes))
+
+              frame
+              (painted-text panes 96 40)]
+
+          (is (= 1 (:seq updated)))
+          (is (= "Package Linux x64 failed" (get-in updated [:nodes 0 :text])))
+          (is (= :error (get-in updated [:nodes 1 :rows 0 :tone])))
+          (is (str/includes? frame "Package Linux x64 failed"))
+          (is (str/includes? frame "failure"))
+          (state/dispatch [:live-view-patch (hi/live-patch<-wire (:patch chunk))])
+          (is (= panes (:live-views @state/app-db)) "replayed frames remain idempotent"))))))
+
+(deftest live-view-wire-operation-vocabulary-test
+  (let [ops
+        [{:op :set :node-id "now" :text "set"} {:op :append :node-id "tail" :lines ["append"]}
+         {:op :clear :node-id "tail"} {:op :remove :node-id "jobs" :ids ["job-0"]}
+         {:op :add-node :after "now" :node-spec {:id "extra" :type :status :text "clear"}}
+         {:op :remove-node :node-id "extra"}]
+
+        patch
+        {:view-id "view-1" :seq 1 :ops ops}]
+
+    (is (= patch (hi/live-patch<-wire (wire/->wire patch)))
+        "all operation enums are restored without retyping text, lines or ids")))
 
 (deftest live-view-state-test
   (testing "open, patch, close — the three ops the channel carries"
