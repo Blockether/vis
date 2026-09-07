@@ -2,6 +2,25 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.43 (5457) — 2026-09-07
+<!-- commit: b716429ab7a6d126d09e94b61ad89ad204bd089a -->
+
+- Install Linux AppImage desktop helpers
+- Collect normalized Linux package names
+- Receive OAuth callbacks on native clients
+- Target Linux and universal macOS
+- V0.1.43
+- Repair release validation fixtures
+- Unify activity, SDK and authentication flows
+- Align session controls and reserve hover actions
+- Turn CODE red on failure instead of naming the error
+- Start every step shut behind its own chevron
+- Align verbosity with TUI model capabilities
+- Omit absent chooser group headers
+- Fold CODE and RESULT like THINKING in both clients
+- Record companion build 5421
+
+
 ## 0.1.42 (5421) — 2026-09-07
 <!-- commit: b474a223c91064abf40823ad86f04c34e374831f -->
 
