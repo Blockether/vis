@@ -131,7 +131,12 @@ export interface SessionHealthData {
   measured_at?: number;
   stale?: boolean;
   breakdown?: { label: string; tokens: number; path?: string }[];
-  roots?: { path: string; instructions_loaded?: boolean }[];
+  roots?: {
+    path: string;
+    guidance?:
+      | { status: "available"; path: string; tokens: number }
+      | { status: "missing" | "error" };
+  }[];
 }
 
 /**

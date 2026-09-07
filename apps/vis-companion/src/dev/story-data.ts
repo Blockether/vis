@@ -666,9 +666,9 @@ export const STORY_SESSION_HEALTH: import('../components/SessionHealth').Session
     { label: 'Conversation and tool results', tokens: 116_020 },
   ],
   roots: [
-    { path: '~/spel', instructionsLoaded: true },
-    { path: '~/svar', instructionsLoaded: false },
-    { path: '~/vis-python-runtime', instructionsLoaded: false },
+    { path: '~/spel', guidance: { status: 'available', path: '~/spel/AGENTS.md', tokens: 1200 } },
+    { path: '~/svar', guidance: { status: 'missing' } },
+    { path: '~/vis-python-runtime', guidance: { status: 'error' } },
   ],
 };
 

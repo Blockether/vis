@@ -47,9 +47,12 @@ describe("session health in metrics", () => {
       screen.getByRole("button", { name: /Linked filesystems/ }),
     );
     expect(screen.getByText("~/spel")).toBeInTheDocument();
-    expect(screen.getAllByText("Instructions not loaded")).toHaveLength(2);
+    expect(screen.getByText("AGENTS.md · ≈1.2k tokens on disk")).toBeInTheDocument();
+    expect(screen.getByText("No AGENTS.md or CLAUDE.md")).toBeInTheDocument();
+    expect(screen.getByText(/Could not read guidance/)).toBeInTheDocument();
+    expect(screen.getByRole("meter")).toHaveAttribute("value", "138020");
     expect(
-      screen.getByText(/Access does not load repository contents/),
+      screen.getByText(/Disk estimates do not add to context usage/),
     ).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: /Context breakdown/ }),
@@ -119,7 +122,7 @@ describe("session health in metrics", () => {
       screen.getByRole("button", { name: /Linked filesystems/ }),
     );
     expect(
-      screen.getByText("Instruction read not recorded"),
+      screen.getByText("Guidance estimate unavailable"),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Instructions not loaded"),

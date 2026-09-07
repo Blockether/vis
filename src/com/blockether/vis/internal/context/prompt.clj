@@ -838,6 +838,19 @@
                                :chars (text-chars turn-system-block)}]}))
                 (stable-prompt-message session-context-block)]))))
 
+(defn- root-guidance-estimate
+  "Disk-only estimate; never contributes to sent-message totals or model read status."
+  [{:keys [trunk clone]}]
+  (let [row {:path (paths/abbreviate-home clone)}]
+    (assoc row
+      :guidance (try (let [{:keys [result warnings]} (agents/scan-in (io/file (or trunk clone)))]
+                       (cond (seq warnings) {:status "error"}
+                             (:found? result) {:status "available"
+                                               :path (paths/abbreviate-home (:path result))
+                                               :tokens (quot (+ 3 (count (:content result))) 4)}
+                             :else {:status "missing"}))
+                     (catch Exception _ {:status "error"})))))
+
 (defn request-health
   "Compact, content-free provenance for the logical request sent to Svar.
 
@@ -887,6 +900,6 @@
                       (distinct (map (juxt :label :path) parts)))
      :roots (into []
                   (comp (remove #(or (:denied? %) (= own (:clone %)) (= own (:trunk %))))
-                        (map #(hash-map :path (paths/abbreviate-home (:clone %))))
+                        (map root-guidance-estimate)
                         (distinct))
                   (workspace/env-filesystem-roots environment))}))

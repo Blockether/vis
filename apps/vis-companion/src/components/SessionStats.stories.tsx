@@ -57,6 +57,9 @@ export const HealthInteractions: Story = {
     const roots = canvas.getByRole("button", { name: /Linked filesystems/ });
     await userEvent.click(roots);
     await expect(canvas.getByText("~/spel")).toBeVisible();
+    await expect(canvas.getByText("AGENTS.md · ≈1.2k tokens on disk")).toBeVisible();
+    await expect(canvas.getByText("No AGENTS.md or CLAUDE.md")).toBeVisible();
+    await expect(canvas.getByText(/Could not read guidance/)).toBeVisible();
     // Expanded details must leave the totals reachable inside the fixed viewport.
     const input = canvas.getByText("Total input");
     input.scrollIntoView({ block: "center" });

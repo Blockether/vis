@@ -5,7 +5,7 @@ import { Disclosure } from "./ui";
 /** Presentation data for one persisted request, never the lifetime usage rollup.
  * Optional fields remain unknown for measurements made before they were recorded.
  * Breakdown rows estimate disjoint message text, not disk sizes or image tokens.
- * Missing root read status is unknown, never proof that instructions were not loaded.
+ * Linked guidance estimates describe disk contents, not model read receipts.
  */
 export interface SessionHealthSnapshot {
   lastRequestTokens: number;
@@ -15,7 +15,12 @@ export interface SessionHealthSnapshot {
   call: number;
   stale?: boolean;
   breakdown?: { label: string; tokens: number; path?: string }[];
-  roots?: { path: string; instructionsLoaded?: boolean }[];
+  roots?: {
+    path: string;
+    guidance?:
+      | { status: "available"; path: string; tokens: number }
+      | { status: "missing" | "error" };
+  }[];
 }
 
 /** Context pressure, prompt provenance and filesystem access in session metrics. */
@@ -60,11 +65,8 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthSnapshot }
           : "Within budget";
   const ink =
     atLimit || overBudget ? "text-err" : reminded ? "text-warn" : "text-white";
-  const loadedRoots = roots?.filter(
-    (item) => item.instructionsLoaded === true,
-  ).length;
-  const unknownRoots = roots?.filter(
-    (item) => item.instructionsLoaded === undefined,
+  const estimatedRoots = roots?.filter(
+    (item) => item.guidance?.status === "available",
   ).length;
 
   return (
@@ -185,9 +187,7 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthSnapshot }
                 <span className="block">Linked filesystems</span>
                 <span className="block text-ui font-normal text-dialog-hint">
                   {roots.length} available ·{" "}
-                  {unknownRoots
-                    ? `${unknownRoots} with read status not recorded`
-                    : `${loadedRoots} with guidance loaded`}
+                  {estimatedRoots} with guidance estimates
                 </span>
               </span>
             </Disclosure>
@@ -198,18 +198,20 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthSnapshot }
                     <li key={item.path}>
                       <p className="break-all text-white">{item.path}</p>
                       <p className="mt-0.5 text-dialog-hint">
-                        {item.instructionsLoaded === undefined
-                          ? "Instruction read not recorded"
-                          : item.instructionsLoaded
-                            ? "AGENTS.md loaded"
-                            : "Instructions not loaded"}
+                        {item.guidance?.status === "available"
+                          ? `${item.guidance.path.split("/").pop()} · ≈${humanizeCount(item.guidance.tokens)} tokens on disk`
+                          : item.guidance?.status === "missing"
+                            ? "No AGENTS.md or CLAUDE.md"
+                            : item.guidance?.status === "error"
+                              ? "Could not read guidance · check file access"
+                              : "Guidance estimate unavailable"}
                       </p>
                     </li>
                   ))}
                 </ul>
                 <p className="mt-3 text-ui text-dialog-hint">
-                  Access does not load repository contents into context. Main
-                  workspace guidance is listed above.
+                  Disk estimates do not add to context usage or imply that the
+                  agent loaded the file. Main workspace guidance is listed above.
                 </p>
               </div>
             )}

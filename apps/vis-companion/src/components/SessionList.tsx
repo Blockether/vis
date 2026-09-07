@@ -542,7 +542,7 @@ export function SessionStatsPanel({
     breakdown: measured.breakdown,
     roots: measured.roots?.map((item) => ({
       path: item.path,
-      instructionsLoaded: item.instructions_loaded,
+      guidance: item.guidance,
     })),
   });
   const cacheReadShare = usage?.cache_read_share_percent;

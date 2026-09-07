@@ -5,6 +5,7 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.context.prompt :as prompt]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -45,6 +46,44 @@
                      [])]
         (expect (= [{:label "Conversation and tool results" :tokens 1}] (:breakdown health)))
         (expect (every? #(not (contains? % :instructions-loaded)) (:roots health))))))
+
+(defdescribe
+  linked-guidance-estimates-test
+  (it "estimates available guidance without adding it to sent context or recording a model read"
+      (with-redefs [workspace/env-filesystem-roots
+                    :filesystem-roots
+
+                    agents/scan-in
+                    (constantly {:result
+                                 {:found? true :path "/linked/AGENTS.md" :content "ąbcde"}})]
+
+        (let [health (prompt/request-health {:workspace {:root "/work"}
+                                             :filesystem-roots
+                                             [{:trunk "/linked" :clone "/linked" :draft :shared}]}
+                                            [{:role "user" :content "abcd"}]
+                                            [])]
+          (expect (= [{:label "Conversation and tool results" :tokens 1}] (:breakdown health)))
+          (expect (= [{:path "/linked"
+                       :guidance {:status "available" :path "/linked/AGENTS.md" :tokens 2}}]
+                     (:roots health))))))
+  (it "distinguishes missing guidance from read failures and never scans denied roots"
+      (doseq [[scan status] [[{:result {:found? false}} "missing"]
+                             [{:warnings [{:reason "unreadable"}]} "error"]]]
+        (let [calls (atom 0)]
+          (with-redefs [workspace/env-filesystem-roots :filesystem-roots
+                        agents/scan-in (fn [_]
+                                         (swap! calls inc)
+                                         scan)]
+
+            (let [health (prompt/request-health
+                           {:workspace {:root "/work"}
+                            :filesystem-roots [{:trunk "/linked" :clone "/linked" :draft :shared}
+                                               {:trunk "/denied" :clone "/denied" :denied? true}]}
+                           []
+                           [])]
+              (expect (= 1 @calls))
+              (expect (= status (get-in health [:roots 0 :guidance :status])))
+              (expect (nil? (get-in health [:roots 0 :guidance :tokens])))))))))
 
 (defdescribe prompt-assembly-test
              (it "normalizes core addendum and extension prompt text"

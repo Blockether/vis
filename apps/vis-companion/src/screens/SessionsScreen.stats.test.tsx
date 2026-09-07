@@ -22,7 +22,7 @@ describe("the expanded session card", () => {
       model_input_limit: 272_000,
       call: 5,
       breakdown: [{ label: "Main AGENTS.md", tokens: 1_200, path: "/work/AGENTS.md" }],
-      roots: [{ path: "/work/linked", instructions_loaded: false }],
+      roots: [{ path: "/work/linked", guidance: { status: "available", path: "/work/linked/AGENTS.md", tokens: 800 } }],
     },
     turn_count: 2,
     iteration_count: 5,
@@ -71,7 +71,7 @@ describe("the expanded session card", () => {
     await userEvent.click(screen.getByRole("button", { name: /Context breakdown/ }));
     expect(screen.getByText("/work/AGENTS.md")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: /Linked filesystems/ }));
-    expect(screen.getByText("Instructions not loaded")).toBeTruthy();
+    expect(screen.getByText("AGENTS.md · ≈800 tokens on disk")).toBeTruthy();
     expect(view.requests.filter((r) => r.path.endsWith("/usage"))).toHaveLength(1);
   });
 
