@@ -130,7 +130,7 @@ extension.
 
 ```clojure
 ;; deps.edn
-{:deps {com.blockether/vis {:mvn/version "0.1.41"}}}
+{:deps {com.blockether/vis {:mvn/version "0.1.43"}}}
 ```
 
 `com.blockether/vis` carries the language packs, providers and the SQLite store,

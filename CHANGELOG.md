@@ -7,6 +7,445 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.43] - 2026-09-07
+
+### Changed
+- chore(release): v0.1.43
+- fix(ci): repair release validation fixtures
+- feat(sdk): add reproducible verification gates
+- refactor(python): merge path aliases into filesystem roots
+- feat(python): register project path globals and align prompt
+- feat: unify activity, SDK and authentication flows
+- fix(companion): align session controls and reserve hover actions
+- fix(tui): prevent idle typing and scrolling stalls
+- fix(queue): resume TUI submissions after provider failures
+- fix(code-band): turn CODE red on failure instead of naming the error
+- fix(activity): start every step shut behind its own chevron
+- fix(companion): align verbosity with TUI model capabilities
+- fix(tui): keep iteration prose on settled and restored turns
+- fix(mcp): correct connection status and caller context
+- fix(tui): set a step's words one space after its mark
+- fix(gateway): preserve model verbosity capabilities
+- feat(tui): enable typing stall diagnostics
+- fix(tui): set iteration prose on the answer's edge, off the rail
+- fix(tui): close a failed call's error rows with a blank row
+- fix(tui): omit absent chooser group headers
+- feat(activity): fold CODE and RESULT like THINKING in both clients
+- fix(tui): remove redundant empty MCP message
+- fix(tui): enable native access in the JVM launcher
+- chore(release): record companion build 5421
+- fix(tui): explain gateway connection failures
+- fix(tui): repaint settings during theme preview
+- fix(companion): Expand Application from its whole band
+- fix(tui): show theme choices in a transient grid
+- feat(context): estimate linked repository guidance in metrics
+- fix(gateway): retract liveness marker on turn terminal synchronously
+- feat(activity): add rich symbol content and refine execution UI
+- docs(agents): authorize commit and push for simple bug fixes
+- fix(tui): infer bearer token for the default local gateway
+- chore(deps): bump svar to 0.7.160
+- fix(companion): pad queued turn rows
+- fix(tui): explain MCP sign-in before saving
+- fix(mcp): allow OAuth setup and preserve validation errors
+- fix(companion): shrink queued remove mark
+- fix(companion): compact queued remove control
+- fix(companion): reduce queued row padding
+- fix(companion): compact queued turn tray
+- refactor(python): remove interpreter configuration override
+- fix(context): publish fold counts without printed receipts
+- fix(gateway): land a cancelled turn's terminal from an interrupted worker
+- fix(context): refresh fold telemetry and record executed folds
+- refactor(core): finish engine and TUI cleanup
+- feat(sdk): unify Python clients and interaction contracts
+- refactor(companion): drop duplicate limits from session health
+- chore(release): record companion build 5397
+- fix(companion): keep outline icons unfilled
+- chore(release): record companion build 5395
+- Merge remote-tracking branch 'origin/main'
+- ci(macos): route trusted builds to self-hosted runner
+- fix(clojure): honor project runners and isolate shadow tests
+- feat(metrics): show persisted session health in app metrics
+- fix(gh): archive log snapshots with window_lines
+- chore(deps): bump svar to 0.7.159 for cancel-safe Responses WebSockets
+- fix(companion): reopen only the transcript the app died on
+- test(core): upgrade Lazytest and synchronize Python regressions
+- test(tui): make terminal reply draining deterministic
+- fix(gateway): run local speech without an AI session
+- docs(docs): remove completed implementation plan
+- fix(gateway): complete native Jetty set registrations
+- fix(gateway): register Jetty path sets for native startup
+- fix(gateway): register the native startup collection constructor
+- ci(release): expose native gateway startup failures
+- fix(cli): prepare the package directory before confining workers
+- chore(release): v0.1.42
+- refactor(cli): consolidate Python workers in the runtime
+- fix(companion): preserve touch-opened dialogs
+- ci(build): move macOS jobs to GitHub-hosted runners
+- fix(clojure): formatter owns the file edges too
+- feat(housekeeping): sweep stale Python runtime versions
+- refactor(core): group internal namespaces by domain
+- feat(clojure): keep exactly one blank line between top-level forms
+- build(sandbox): consume Python runtime v0.4.1
+- feat(cli): support recursive extension namespaces
+- fix(companion): match the diagnostics band height
+- fix(companion): compact the diagnostics panel
+- docs(cli): close resolved issues after shipping
+- fix(cli): load introspection in Python workers
+- fix(companion): shrink queued message remove faces
+- fix(cli): bind Python extension file metadata
+- fix(companion): fill starred session marks
+- fix(tui): route vis-agent tui to terminal client
+- docs(docs): point quick start at vis-agent TUI
+- chore(release): record companion build 5358
+- fix(cli): anchor the JVM classpath so --jvm runs from any directory
+- feat(companion): make drawing rail collapsible
+- refactor(gateway): fold the provider limits cache into the host
+- feat(jail): isolate Python execution in native worker
+- fix(companion): refine mobile drawing rail
+- fix(gateway): clear Anthropic status after OAuth
+- fix(companion): move drawing tools into side rail
+- fix(gateway): fall back after provider quota exhaustion
+- fix(companion): use icons and frame zoom controls
+- fix(companion): move drawing check into pencil slot
+- feat(companion): use JetBrains Mono throughout
+- chore(release): record companion build 5347
+- fix(companion): let the sessions list scroll under the home indicator
+- feat(companion): pair from a phone as a choice, not steps
+- feat(companion): pair through one field on a three-step page
+- fix(companion): pin parked sessions in their project and keep the band on the list
+- fix(tui): support WSL2 PipeWire recording
+- fix(gateway): enforce snake_case diagnostic codes
+- fix(jail): allow unrestricted shell working directories
+- feat(companion): ship desktop installers with Pake and hide Scan QR on desktop
+- fix(cli): isolate embedded pytest runtime
+- fix(companion): fork only from the turn, drop the row's fork verb
+- feat(companion): fork from the row, fork at a turn from the turn
+- fix(companion): cut the fork menu down to its two choices
+- fix(companion): keep a fit sheet that reaches its cap below the notch
+- fix(cli): serialize embedded pytest runs
+- fix(companion): move the list toggle off the app bar, read the Mac host natively
+- feat(companion): ship the desktop conversation sidebar
+- fix(companion): align and collapse the desktop sidebar
+- feat(companion): split the desk into a sidebar list and the transcript
+- fix(companion): desktop row verbs become icon discs in the row gutter
+- fix(ci): prepare git dependencies on the pinned JDK
+- feat(companion): set session titles in the prose face
+- build(jail): pin the released confinement runtime
+- refactor(jail): state the policy in Vis, let the runtime enforce it
+- refactor(sandbox): drop the dead :fs/access gate plumbing into Python
+- refactor(providers): fold the limits namespaces into their providers
+- refactor(providers): fold the provider packs into core and retire extensions/
+- refactor(languages): fold the Clojure and Python packs into core
+- refactor(persistance): fold the SQLite backend into core
+- refactor(cli): remove obsolete search extension
+- feat(cli): add GPT-6 Astra Codex model
+- test(ci): align retired feature checks
+- refactor(companion): remove obsolete terminal artifact bridge
+- test(core): trim redundant coverage and cap suite heap
+- test(cli): remove redundant schema validation cases
+- test(cli): remove duplicated Python runtime coverage
+- docs(audit): refresh dependency inventory
+- refactor(contract): remove aggregate and trim source commentary
+- refactor(contract): validate config only with JSON Schema
+- fix(companion): expand diagnostics from its whole band
+- refactor(contract): make JSON Schema the sole contract
+- chore(release): record companion build 5306
+- fix(companion): stop blurring the composer as the app backgrounds
+- feat(tui): ship standalone app with built-in speech
+- fix(engine): keep image descriptions on the foreground provider
+- fix(companion): set diagnostics facts at the dialog detail size
+- fix(companion): fold the diagnostics panel behind its band
+- refactor(companion): state the diagnostics panel as facts, not prose
+- feat(companion): add project swipe deletion
+- fix(cli): require exact patch anchors
+- refactor(gh): rebuild the gh extension on typed dataclasses
+- chore(deps): bump svar to 0.7.152
+- feat(companion): fold the application column behind its band chevron
+- refactor(extensions): adopt uplink in .vis, drop python examples
+- feat(python): object-first tool pattern docs and remote server example
+- fix(gateway): preserve long Copilot turns
+- fix(companion): remove divider before project plus
+- fix(companion): compact project creation and deletion
+- fix(companion): target copied session title events
+- refactor(cli): remove Nippy and Ruff sandbox shims
+- fix(gateway): scope session headers to provider kickoff
+- fix(gateway): reclaim cancelled Python workers
+- fix(tui): fold tool source with receipt
+- feat(gateway): add session-start provider header hooks
+- fix(tui): label visible Python source
+- fix(sandbox): hand a worker the interpreter its parent already resolved
+- feat(providers): add Claude Fable 5.1 support
+- fix(companion): move pull-to-search prompt into app bar
+- fix(companion): move favorites to row lead
+- fix(runtime): preserve Python extension result objects
+- fix(companion): restore queued action gutter
+- fix(companion): preserve partial output after cancellation
+- chore(companion): record release entry for build 5275
+- chore(companion): record release entries for builds 5209-5232
+- chore(config): catalog the vis-python-runtime sibling root
+- feat(sandbox): run a session's extensions in the same interpreter as its sandbox
+- fix(shell): resolve the runtime library in the process that spawns
+- revert(repo): take somebody else's working tree back out of my commit
+- feat(sandbox): give each gateway session its own Python worker process
+- refactor(sandbox): make the python child a worker, one per key
+- fix(gateway): stop every turn a session is running, and keep the session
+- perf(gateway): build a session when one is asked for, not four at boot
+- fix(sandbox): warn on a crossed session only when it was not the caller's
+- fix(extensions): bind the host only when there is an interpreter to bind
+- perf(cli): remember the prep answer instead of asking on every command
+- feat(extensions): give a trusted extension the filesystem through vis.fs
+- fix(sandbox): authorize a host call against the caller the interpreter names
+- build(lint): read a sandbox lease as its own shape, not as a let
+- feat(sandbox): let the jail switch decide the guest's confinement
+- fix(sandbox): stop the environment seeding from unbinding the runtime's own names
+- refactor(sandbox): stop repairing the subprocess redirect CPython does itself
+- refactor(sandbox): let CPython own the sandbox's descriptors
+- fix(sandbox): start the interpreter once and let the second session wait
+- fix(cli): provide a protected Python println
+- fix(companion): keep stop control circular
+- fix(companion): balance project header controls
+- fix(tui): increase new-session plus contrast
+- fix(companion): circle queued and send controls
+- fix(companion): align thinking with user prose
+- chore(cli): merge main into CPython migration
+- feat(runtime): adopt native CPython process runtime
+- fix(cli): protect Python output callables
+- fix(theme): strengthen TokyoNight companion contrast
+- feat(theme): add all TokyoNight styles
+- refactor(cli): remove extension helper commands
+- feat(cli): support object tool namespaces
+- chore(repo): merge current main into CPython migration
+- fix(tui): preserve prose beside receipt rail
+- fix(engine): stop retrying exhausted output requests
+- docs(providers): explain managed authentication setup
+- fix(providers): authenticate managed providers on first use
+- fix(tui): keep Python source visible
+- fix(companion): close session list with final edge
+- chore(repo): reformat Clojure sources with zprint
+- refactor(tui): drop cinema MP4 export and the commit convention test
+- refactor(python): drop the anydoc sandbox door
+- test(ci): stop policing the merge commit GitHub builds for a pull request
+- fix(sandbox): let a cold machine install a package and import it
+- feat(python): fetch the embedded interpreter from its release archive
+
+### Package changes
+
+#### com.blockether/vis
+- chore(release): v0.1.43 (05ba30e96)
+- fix(ci): repair release validation fixtures (22d89ca90)
+- feat(sdk): add reproducible verification gates (089b14c2a)
+- refactor(python): merge path aliases into filesystem roots (c06fc943f)
+- feat(python): register project path globals and align prompt (6720741f9)
+- feat: unify activity, SDK and authentication flows (4f9b7a0d6)
+- fix(companion): align session controls and reserve hover actions (00ba8d011)
+- fix(tui): prevent idle typing and scrolling stalls (5032bb463)
+- fix(queue): resume TUI submissions after provider failures (789527556)
+- fix(code-band): turn CODE red on failure instead of naming the error (5011ec941)
+- fix(activity): start every step shut behind its own chevron (9615517c5)
+- fix(companion): align verbosity with TUI model capabilities (70e90c3ea)
+- fix(tui): keep iteration prose on settled and restored turns (023e801a3)
+- fix(mcp): correct connection status and caller context (ec3a4ee87)
+- fix(tui): set a step's words one space after its mark (9ecd559ac)
+- fix(gateway): preserve model verbosity capabilities (a19b18c62)
+- feat(tui): enable typing stall diagnostics (4ae9e185b)
+- fix(tui): set iteration prose on the answer's edge, off the rail (913f44a6c)
+- fix(tui): close a failed call's error rows with a blank row (8ddafdd50)
+- fix(tui): omit absent chooser group headers (cd6b9913f)
+- feat(activity): fold CODE and RESULT like THINKING in both clients (085685aac)
+- fix(tui): remove redundant empty MCP message (006106f46)
+- fix(tui): enable native access in the JVM launcher (74c4f4049)
+- chore(release): record companion build 5421 (cbeef0e69)
+- fix(tui): explain gateway connection failures (9b5dd76ed)
+- fix(tui): repaint settings during theme preview (b474a223c)
+- fix(companion): Expand Application from its whole band (5ee698244)
+- fix(tui): show theme choices in a transient grid (2b4c6fd33)
+- feat(context): estimate linked repository guidance in metrics (83cfc111a)
+- fix(gateway): retract liveness marker on turn terminal synchronously (f5300cc0f)
+- feat(activity): add rich symbol content and refine execution UI (81532c9d0)
+- docs(agents): authorize commit and push for simple bug fixes (57361e612)
+- fix(tui): infer bearer token for the default local gateway (12112e7c6)
+- chore(deps): bump svar to 0.7.160 (dab3fdf2b)
+- fix(companion): pad queued turn rows (699a5bcb9)
+- fix(tui): explain MCP sign-in before saving (ab69c1680)
+- fix(mcp): allow OAuth setup and preserve validation errors (46c545ec3)
+- fix(companion): shrink queued remove mark (8afb50222)
+- fix(companion): compact queued remove control (5aee1261f)
+- fix(companion): reduce queued row padding (1f311d759)
+- fix(companion): compact queued turn tray (13e2b0109)
+- refactor(python): remove interpreter configuration override (f5a823c57)
+- fix(context): publish fold counts without printed receipts (cfc6bf22e)
+- fix(gateway): land a cancelled turn's terminal from an interrupted worker (9110095df)
+- fix(context): refresh fold telemetry and record executed folds (fe2069a5a)
+- refactor(core): finish engine and TUI cleanup (5f66784d2)
+- feat(sdk): unify Python clients and interaction contracts (186f0735e)
+- refactor(companion): drop duplicate limits from session health (6ddca8647)
+- chore(release): record companion build 5397 (c47e9fa98)
+- fix(companion): keep outline icons unfilled (48d1b443c)
+- chore(release): record companion build 5395 (271782cc9)
+- Merge remote-tracking branch 'origin/main' (e4baada06)
+- ci(macos): route trusted builds to self-hosted runner (a9e596247)
+- fix(clojure): honor project runners and isolate shadow tests (30f564552)
+- feat(metrics): show persisted session health in app metrics (2bdd91916)
+- fix(gh): archive log snapshots with window_lines (b19464c01)
+- chore(deps): bump svar to 0.7.159 for cancel-safe Responses WebSockets (4c69fad4f)
+- fix(companion): reopen only the transcript the app died on (bfd128712)
+- test(core): upgrade Lazytest and synchronize Python regressions (94942232c)
+- test(tui): make terminal reply draining deterministic (c837419ee)
+- fix(gateway): run local speech without an AI session (aa0baf83d)
+- docs(docs): remove completed implementation plan (708c55afb)
+- fix(gateway): complete native Jetty set registrations (2ebcef9f3)
+- fix(gateway): register Jetty path sets for native startup (a69059ab2)
+- fix(gateway): register the native startup collection constructor (c64210ea1)
+- ci(release): expose native gateway startup failures (d44c297f3)
+- fix(cli): prepare the package directory before confining workers (e3c571330)
+- chore(release): v0.1.42 (e759d7040)
+- refactor(cli): consolidate Python workers in the runtime (bae4c4862)
+- fix(companion): preserve touch-opened dialogs (065108c42)
+- ci(build): move macOS jobs to GitHub-hosted runners (1fb47ebec)
+- fix(clojure): formatter owns the file edges too (d66dbf0e8)
+- feat(housekeeping): sweep stale Python runtime versions (123363d97)
+- refactor(core): group internal namespaces by domain (e15c3ff8e)
+- feat(clojure): keep exactly one blank line between top-level forms (a906f25af)
+- build(sandbox): consume Python runtime v0.4.1 (e4aa77c77)
+- feat(cli): support recursive extension namespaces (3c6fd7a58)
+- fix(companion): match the diagnostics band height (f24472a6d)
+- fix(companion): compact the diagnostics panel (f9fc94ff2)
+- docs(cli): close resolved issues after shipping (566e761dc)
+- fix(cli): load introspection in Python workers (0eee0e98d)
+- fix(companion): shrink queued message remove faces (4043869ee)
+- fix(cli): bind Python extension file metadata (004c336ba)
+- fix(companion): fill starred session marks (11c7e1eab)
+- fix(tui): route vis-agent tui to terminal client (f5f7681c6)
+- docs(docs): point quick start at vis-agent TUI (51cfa79d7)
+- chore(release): record companion build 5358 (b3f38edf1)
+- fix(cli): anchor the JVM classpath so --jvm runs from any directory (630a7e52b)
+- feat(companion): make drawing rail collapsible (6d94cf315)
+- refactor(gateway): fold the provider limits cache into the host (8246f32fc)
+- feat(jail): isolate Python execution in native worker (697197a92)
+- fix(companion): refine mobile drawing rail (a9396825b)
+- fix(gateway): clear Anthropic status after OAuth (7812ab440)
+- fix(companion): move drawing tools into side rail (0c6e417e0)
+- fix(gateway): fall back after provider quota exhaustion (369888233)
+- fix(companion): use icons and frame zoom controls (7b10e6d91)
+- fix(companion): move drawing check into pencil slot (b60e4a6f1)
+- feat(companion): use JetBrains Mono throughout (e160f1b4b)
+- chore(release): record companion build 5347 (6c71f80da)
+- fix(companion): let the sessions list scroll under the home indicator (285fe174b)
+- feat(companion): pair from a phone as a choice, not steps (e497f04a2)
+- feat(companion): pair through one field on a three-step page (6414bf9b6)
+- fix(companion): pin parked sessions in their project and keep the band on the list (e9c6a98bb)
+- fix(tui): support WSL2 PipeWire recording (accd9987a)
+- fix(gateway): enforce snake_case diagnostic codes (50267f18a)
+- fix(jail): allow unrestricted shell working directories (8c2318cb5)
+- feat(companion): ship desktop installers with Pake and hide Scan QR on desktop (3c0b19da5)
+- fix(cli): isolate embedded pytest runtime (f116224f2)
+- fix(companion): fork only from the turn, drop the row's fork verb (797f3a1a4)
+- feat(companion): fork from the row, fork at a turn from the turn (39f240d8a)
+- fix(companion): cut the fork menu down to its two choices (732d13329)
+- fix(companion): keep a fit sheet that reaches its cap below the notch (5879cd361)
+- fix(cli): serialize embedded pytest runs (dc7378299)
+- fix(companion): move the list toggle off the app bar, read the Mac host natively (4f7e92890)
+- feat(companion): ship the desktop conversation sidebar (b6b84a7e9)
+- fix(companion): align and collapse the desktop sidebar (ebe133f14)
+- feat(companion): split the desk into a sidebar list and the transcript (d27a04802)
+- fix(companion): desktop row verbs become icon discs in the row gutter (f9f48bf25)
+- fix(ci): prepare git dependencies on the pinned JDK (3d2a551c3)
+- feat(companion): set session titles in the prose face (69d856be5)
+- build(jail): pin the released confinement runtime (7b0831a3d)
+- refactor(jail): state the policy in Vis, let the runtime enforce it (00c79662f)
+- refactor(sandbox): drop the dead :fs/access gate plumbing into Python (2b4b88d53)
+- refactor(providers): fold the limits namespaces into their providers (21b5733d1)
+- refactor(providers): fold the provider packs into core and retire extensions/ (ba955012c)
+- refactor(languages): fold the Clojure and Python packs into core (91a244578)
+- refactor(persistance): fold the SQLite backend into core (3e189d848)
+- refactor(cli): remove obsolete search extension (46dc1ce38)
+- feat(cli): add GPT-6 Astra Codex model (ad1c989ca)
+- test(ci): align retired feature checks (160d88ca7)
+- refactor(companion): remove obsolete terminal artifact bridge (5ca55fda5)
+- test(core): trim redundant coverage and cap suite heap (2052615d8)
+- test(cli): remove redundant schema validation cases (d0d3d2d65)
+- test(cli): remove duplicated Python runtime coverage (92023bbcc)
+- docs(audit): refresh dependency inventory (0cd7becf5)
+- refactor(contract): remove aggregate and trim source commentary (55f185796)
+- refactor(contract): validate config only with JSON Schema (6d185c334)
+- fix(companion): expand diagnostics from its whole band (8a3b1c0bc)
+- refactor(contract): make JSON Schema the sole contract (927f2ef05)
+- chore(release): record companion build 5306 (a569a5fdb)
+- fix(companion): stop blurring the composer as the app backgrounds (22cf694c3)
+- feat(tui): ship standalone app with built-in speech (d6b5d3871)
+- fix(engine): keep image descriptions on the foreground provider (db37597a8)
+- fix(companion): set diagnostics facts at the dialog detail size (f4f5fa0a1)
+- fix(companion): fold the diagnostics panel behind its band (2b3c3ac8b)
+- refactor(companion): state the diagnostics panel as facts, not prose (a3b8752d7)
+- feat(companion): add project swipe deletion (582e7c4d6)
+- fix(cli): require exact patch anchors (f492ef4de)
+- refactor(gh): rebuild the gh extension on typed dataclasses (b3fabd24a)
+- chore(deps): bump svar to 0.7.152 (abf347d02)
+- feat(companion): fold the application column behind its band chevron (dd7eac31d)
+- refactor(extensions): adopt uplink in .vis, drop python examples (61837fb82)
+- feat(python): object-first tool pattern docs and remote server example (8b374d870)
+- fix(gateway): preserve long Copilot turns (bdbce8d53)
+- fix(companion): remove divider before project plus (85f0ffd14)
+- fix(companion): compact project creation and deletion (0f74acffe)
+- fix(companion): target copied session title events (8505aba10)
+- refactor(cli): remove Nippy and Ruff sandbox shims (09d04eba6)
+- fix(gateway): scope session headers to provider kickoff (e22a7ec68)
+- fix(gateway): reclaim cancelled Python workers (91d453cf6)
+- feat(gateway): add session-start provider header hooks (ce942d0d7)
+- fix(sandbox): hand a worker the interpreter its parent already resolved (7c4a9990d)
+- feat(providers): add Claude Fable 5.1 support (b6d2b99b1)
+- fix(companion): move pull-to-search prompt into app bar (08420178f)
+- fix(companion): move favorites to row lead (c2c9bff7e)
+- fix(runtime): preserve Python extension result objects (faaf0a57d)
+- fix(companion): restore queued action gutter (1872145ef)
+- fix(companion): preserve partial output after cancellation (e49ac76f3)
+- chore(companion): record release entry for build 5275 (f2023ad63)
+- chore(companion): record release entries for builds 5209-5232 (b15d79597)
+- chore(config): catalog the vis-python-runtime sibling root (933cfebfb)
+- feat(sandbox): run a session's extensions in the same interpreter as its sandbox (e9158d8d2)
+- fix(shell): resolve the runtime library in the process that spawns (22d51ff00)
+- revert(repo): take somebody else's working tree back out of my commit (c37c135de)
+- feat(sandbox): give each gateway session its own Python worker process (6bb886915)
+- refactor(sandbox): make the python child a worker, one per key (4dce4ceb3)
+- fix(gateway): stop every turn a session is running, and keep the session (a951a8d70)
+- perf(gateway): build a session when one is asked for, not four at boot (367bb4a13)
+- fix(sandbox): warn on a crossed session only when it was not the caller's (8eba77e1d)
+- fix(extensions): bind the host only when there is an interpreter to bind (9e0f54b1e)
+- perf(cli): remember the prep answer instead of asking on every command (9ce67eead)
+- feat(extensions): give a trusted extension the filesystem through vis.fs (df514f6d0)
+- fix(sandbox): authorize a host call against the caller the interpreter names (7479ae44b)
+- build(lint): read a sandbox lease as its own shape, not as a let (2fb8d37da)
+- feat(sandbox): let the jail switch decide the guest's confinement (128d6d90e)
+- fix(sandbox): stop the environment seeding from unbinding the runtime's own names (6344faa4a)
+- refactor(sandbox): stop repairing the subprocess redirect CPython does itself (416f79df8)
+- refactor(sandbox): let CPython own the sandbox's descriptors (4621f1d13)
+- fix(sandbox): start the interpreter once and let the second session wait (e486a1de9)
+- fix(cli): provide a protected Python println (52231562f)
+- fix(companion): keep stop control circular (f030957e1)
+- fix(companion): balance project header controls (96a1c122c)
+- fix(companion): circle queued and send controls (c6cd6d1cc)
+- fix(companion): align thinking with user prose (67fe76eef)
+- chore(cli): merge main into CPython migration (95c11d80e)
+- feat(runtime): adopt native CPython process runtime (6eaff8b07)
+- fix(cli): protect Python output callables (4d1f465ff)
+- fix(theme): strengthen TokyoNight companion contrast (9a2c1a3d1)
+- feat(theme): add all TokyoNight styles (07d5639d8)
+- refactor(cli): remove extension helper commands (64b1de671)
+- feat(cli): support object tool namespaces (16076dc7f)
+- chore(repo): merge current main into CPython migration (af5e0dee1)
+- fix(engine): stop retrying exhausted output requests (c6d3317b2)
+- docs(providers): explain managed authentication setup (31bb9d090)
+- fix(providers): authenticate managed providers on first use (66586f212)
+- fix(companion): close session list with final edge (04dbe734e)
+- chore(repo): reformat Clojure sources with zprint (24cb0325f)
+- refactor(tui): drop cinema MP4 export and the commit convention test (345d741a3)
+- refactor(python): drop the anydoc sandbox door (966e46523)
+- test(ci): stop policing the merge commit GitHub builds for a pull request (0381c6b25)
+- fix(sandbox): let a cold machine install a package and import it (aca874e9e)
+- feat(python): fetch the embedded interpreter from its release archive (55226d959)
+
+
+
 ## [v0.1.42] - 2026-09-05
 
 ### Changed
@@ -5889,7 +6328,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.41...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.43...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -5923,3 +6362,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.39]: https://github.com/Blockether/vis/releases/tag/v0.1.39
 [v0.1.40]: https://github.com/Blockether/vis/releases/tag/v0.1.40
 [v0.1.41]: https://github.com/Blockether/vis/releases/tag/v0.1.41
+[v0.1.43]: https://github.com/Blockether/vis/releases/tag/v0.1.43
