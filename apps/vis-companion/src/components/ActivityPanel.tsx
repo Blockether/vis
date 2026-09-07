@@ -751,9 +751,17 @@ function ActivityStep({
   row: ActivityRow;
   depth?: number;
 }) {
-  const [open, setOpen] = useState(true);
   const nested = depth > 0;
   const failed = row.state === "failed";
+  const running = row.state === "running";
+  // EVERY STEP STARTS SHUT. What it did is one line; what it left waits behind the
+  // chevron, so a turn of thirty calls reads as thirty lines and not as thirty
+  // receipts. Only a step still running, or one that failed, opens on its own —
+  // the first because its progress is the point, the second because the reason
+  // is — and a press still shuts either. The default follows the state until the
+  // reader decides, so a running step that settles folds itself away.
+  const [toggled, setToggled] = useState<boolean | null>(null);
+  const open = toggled ?? (running || failed);
   const lead = activityStepLead(row);
   const heading =
     row.content?.[0]?.type === "heading" ? row.content[0] : undefined;
@@ -790,6 +798,18 @@ function ActivityStep({
   )
     ? ""
     : summary;
+  const showsOutcome = Boolean(outcome) && (!row.content?.length || failed);
+  const showsFiles = diffs.length === 0 && !hasChildren && touched.length > 0;
+  // A chevron that opens onto nothing is a promise the row cannot keep, so a step
+  // with no content, no outcome, no paths, no patch, no error and no grouped
+  // changes wears none and answers no press.
+  const openable =
+    Boolean(content?.length) ||
+    showsOutcome ||
+    showsFiles ||
+    diffs.length > 0 ||
+    Boolean(error) ||
+    hasChildren;
 
   const label = (
     <>
@@ -823,7 +843,7 @@ function ActivityStep({
           : "relative mb-[var(--text-ui--line-height)] min-w-0 pl-5 last:mb-0"
       }
     >
-      {!nested && <ActivityNode state={row.state} disclosure={Boolean(content?.length)} />}
+      {!nested && <ActivityNode state={row.state} disclosure={openable} />}
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
         <Headline
           className={
@@ -832,12 +852,12 @@ function ActivityStep({
               : "min-w-0 truncate font-sans text-ui font-bold text-code-result"
           }
         >
-          {content?.length ? (
+          {openable ? (
             <Disclosure
               isOpen={open}
               tone="chronology"
               className="min-w-0 max-w-full"
-              onClick={() => setOpen((value) => !value)}
+              onClick={() => setToggled(!open)}
             >
               <span className="min-w-0 truncate">{label}</span>
             </Disclosure>
@@ -858,9 +878,9 @@ function ActivityStep({
         )}
       </div>
       {open && content && (
-        <ActivityBody content={content} running={row.state === "running"} />
+        <ActivityBody content={content} running={running} />
       )}
-      {outcome && (!row.content?.length || failed) && (
+      {open && showsOutcome && (
         <ActivityOutcome
           text={outcome}
           format={failed ? undefined : row.result_format}
@@ -869,18 +889,16 @@ function ActivityStep({
       {/* A GROUP'S PATHS BELONG TO ITS CHANGES, not to the group as well: the head
           carries every child's resource, so painting them here and again under each
           child is the same twelve paths printed twice. */}
-      {diffs.length === 0 && !hasChildren && touched.length > 0 && (
-        <ActivityFiles resources={touched} />
-      )}
-      {diffs.length > 0 && (
+      {open && showsFiles && <ActivityFiles resources={touched} />}
+      {open && diffs.length > 0 && (
         <ActivityChanges
           row={row}
           diffs={diffs}
           files={hasChildren ? [] : touched}
         />
       )}
-      {error && <ActivityError evidence={error} />}
-      {hasChildren && (
+      {open && error && <ActivityError evidence={error} />}
+      {open && hasChildren && (
         <ol data-activity-children={row.id} className="mt-1.5 min-w-0 pl-4.5">
           {children.map((child) => (
             <ActivityStep key={child.id} row={child} depth={depth + 1} />

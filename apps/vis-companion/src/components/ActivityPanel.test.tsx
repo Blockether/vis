@@ -42,6 +42,23 @@ function paintActivity(
   return document.body.innerHTML;
 }
 
+/**
+ * Every step starts shut: what it did is one line, and what it left waits behind
+ * its chevron. A case that reads UNDER a step presses it first — the step's own
+ * headline is the toggle. Grouped changes appear with their group, so the press
+ * repeats until no step is shut; the folds inside a step (a patch, a count) are
+ * left as they stand.
+ */
+function openEverySettledStep() {
+  for (;;) {
+    const shut = document.querySelectorAll<HTMLElement>(
+      '[data-activity-row] > div > :is(h4, p) > [data-disclosure-toggle][aria-expanded="false"]',
+    );
+    if (shut.length === 0) return;
+    shut.forEach((toggle) => fireEvent.click(toggle));
+  }
+}
+
 describe("one form's Activity on the phone", () => {
   it("separates sibling activities by one UI line, without a trailing gap", () => {
     paintActivity();
@@ -76,17 +93,19 @@ describe("one form's Activity on the phone", () => {
     })).toBeTruthy();
     expect(screen.getAllByText("apps/vis-companion/src")).toHaveLength(1);
     const toggle = screen.getByRole("button", { name: "Listed apps/vis-companion/src" });
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    // A settled step starts shut: its line says what it did, the press says the rest.
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("3 directories · 2 files")).toBeNull();
     const row = toggle.closest("[data-activity-row]")!;
     expect(toggle.closest("h4")!.parentElement!.classList.contains("items-center")).toBe(true);
     const node = row.querySelector("span.absolute")!;
     expect(node.classList.contains("top-4")).toBe(true);
     expect(node.classList.contains("mouse:top-3")).toBe(true);
     fireEvent.click(toggle);
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText("3 directories · 2 files")).toBeNull();
-    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText("3 directories · 2 files")).toBeTruthy();
+    fireEvent.click(toggle);
+    expect(screen.queryByText("3 directories · 2 files")).toBeNull();
   });
   it("draws the chronology without being asked, in engine sequence", () => {
     paintActivity();
@@ -333,6 +352,7 @@ describe("a run reads as one thread", () => {
     // Regression, T107 design review: the patch hung its paths inside a bordered
     // card, under the word "Patch" in bold — the row's own head printed a second
     // time, twenty pixels lower. The head is gone; only the diff still folds.
+    openEverySettledStep();
     expect(screen.queryByText("Patch")).toBeNull();
     expect(screen.queryByText("Changed files")).toBeNull();
     expect(screen.queryByText("1 file")).toBeNull();
@@ -350,16 +370,46 @@ describe("a run reads as one thread", () => {
     expect(screen.getByText("added")).toBeTruthy();
   });
 
-  it("gives a step no chevron and no toggle of its own", () => {
+  it("gives a step with nothing to open no chevron and no toggle of its own", () => {
     paintActivity();
 
-    // The axis never closes and a step never opens: what the iteration DID is the
-    // one thing a reader is not asked to go looking for. The program and the bytes
-    // it printed stay behind the invocation's own disclosure, one level up.
+    // The axis never closes, and a step whose line already says all it has — no
+    // outcome, no paths, no patch, no grouped changes — is no disclosure either.
+    // The program and the bytes it printed stay behind the invocation's own
+    // disclosure, one level up.
     expect(screen.queryByRole("button", { name: /Searched/ })).toBeNull();
     expect(document.querySelectorAll("[data-disclosure-toggle]")).toHaveLength(
       0,
     );
+  });
+
+  it("keeps what a step left behind its chevron until the step is pressed", () => {
+    const projection = activityProjection();
+    const [first, ...rest] = projection.rows;
+
+    paintActivity({
+      activity: {
+        ...projection,
+        rows: [
+          {
+            ...first,
+            resources: [{ type: "file", id: "src/components/ui.tsx" }],
+            result_summary: "src/components/ui.tsx:12: matched\nsrc/components/ui.tsx:40: matched",
+          },
+          ...rest,
+        ],
+      },
+    });
+
+    const step = screen.getByRole("button", { name: /Searched/ });
+    expect(step.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeNull();
+    expect(screen.queryByText(/ui\.tsx:40: matched/)).toBeNull();
+
+    fireEvent.click(step);
+    expect(step.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeTruthy();
+    expect(screen.getByText(/ui\.tsx:40: matched/)).toBeTruthy();
   });
 
   it("lists the paths a step touched under its own line", () => {
@@ -379,6 +429,7 @@ describe("a run reads as one thread", () => {
       },
     });
 
+    openEverySettledStep();
     expect(
       document.querySelector('[data-path="src/components/ui.tsx"]'),
     ).toBeTruthy();
@@ -413,6 +464,7 @@ describe("a run reads as one thread", () => {
 
     // Six paths under one step is the row with the least to say spending the most
     // height on saying it. Four print; the rest are a count, one press away.
+    openEverySettledStep();
     expect(document.querySelectorAll("[data-path]")).toHaveLength(4);
     expect(
       document.querySelector('[data-path="src/lib/activity.ts"]'),
@@ -542,6 +594,7 @@ describe("the axis says a thing once", () => {
       evidence: [],
     });
 
+    openEverySettledStep();
     const chronology =
       screen.getByLabelText("Invocation chronology").textContent ?? "";
     expect(chronology).toContain("Read");
@@ -563,6 +616,7 @@ describe("the axis says a thing once", () => {
       evidence: [],
     });
 
+    openEverySettledStep();
     const path = document.querySelector(
       '[data-path="src/com/blockether/vis/internal/channel/render.clj"]',
     );
@@ -621,6 +675,7 @@ describe("what the axis does while the work is still moving", () => {
 describe("what a code block changed with its own hands", () => {
   it("hangs every change under one cause, indented, and stops at three levels", () => {
     render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
+    openEverySettledStep();
 
     const chronology = screen.getByLabelText("Invocation chronology");
     const heads = chronology.querySelectorAll(
@@ -650,6 +705,7 @@ describe("what a code block changed with its own hands", () => {
 
   it("says who did it in the head, and marks only what the engine marked", () => {
     render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
+    openEverySettledStep();
 
     const head = document.querySelector('[data-activity-depth="0"]');
     const moved = document.querySelectorAll('[data-activity-depth="1"]')[3];
@@ -665,6 +721,7 @@ describe("what a code block changed with its own hands", () => {
 
   it("leaves the paths to the change that touched them", () => {
     render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
+    openEverySettledStep();
 
     const head = document.querySelector('[data-activity-depth="0"]');
     const deleted = document.querySelectorAll('[data-activity-depth="1"]')[4];
@@ -684,9 +741,14 @@ describe("what a code block changed with its own hands", () => {
 describe("a change opens under the file it changed", () => {
   it("gives every changed file its own fold, and opens only that one", () => {
     render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
+    openEverySettledStep();
 
     const write = document.querySelectorAll('[data-activity-depth="1"]')[1];
-    const folds = write.querySelectorAll("[data-disclosure-toggle]");
+    // The change's own headline opened with the group; what is left to fold is
+    // one patch per file.
+    const folds = write.querySelectorAll(
+      "[data-disclosure-toggle][aria-label]",
+    );
 
     expect(
       Array.from(folds, (fold) => fold.getAttribute("aria-label")),
@@ -718,6 +780,7 @@ describe("a path reads short and stays addressable", () => {
         <ActivityPanel activity={ACTIVITY_TREE_CHANGES} />
       </WorkspaceRootsContext.Provider>,
     );
+    openEverySettledStep();
 
     expect(pathOf(written)?.textContent).toBe(
       "apps/vis-companion/src/lib/path.ts",
@@ -726,6 +789,7 @@ describe("a path reads short and stays addressable", () => {
 
   it("falls back to the home form when no root owns the file", () => {
     render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
+    openEverySettledStep();
 
     expect(pathOf(written)?.textContent).toBe(
       "~/vis/apps/vis-companion/src/lib/path.ts",
@@ -775,6 +839,7 @@ describe("bounded activity outcomes", () => {
     ).join("\n");
     activity.rows = [{ ...activity.rows[0], result_summary: full }];
     paintActivity({ activity });
+    openEverySettledStep();
     expect(screen.queryByText(/match 29/)).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "Expand result summary" }),

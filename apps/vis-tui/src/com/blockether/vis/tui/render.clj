@@ -5507,6 +5507,31 @@
           {:additions 0 :deletions 0}
           (activity-diffs row)))
 
+(defn- activity-row-detail
+  "The one line a settled step leaves under its head: the failure's summary, or the
+   result the engine reported. A running step has no outcome yet, and a failure that
+   quotes the machine's own error says why there instead."
+  [{:keys [error-summary result-summary result-format] :as row} state]
+  (let [error (first (filter #(= "error" (activity-evidence-kind %)) (:evidence row)))]
+    (cond (and (= :failed state) error) nil
+          (= :failed state) (not-empty (str/trim (str error-summary)))
+          :else (or (not-empty (str/trim (str error-summary)))
+                    (when-not (= :running state)
+                      (some-> (not-empty (str/trim (str result-summary)))
+                              (activity-inline-text result-format)))))))
+
+(defn- activity-row-openable?
+  "True when a step's chevron has something to open: its content, its outcome, the paths
+   it touched, a patch, an error, or the changes it groups. A chevron that opens onto
+   nothing is a promise the row cannot keep, so the slot stays blank for those."
+  [{:keys [summary children resources evidence content] :as row}]
+  (let [state (activity-row-state row)]
+    (boolean (or (seq content)
+                 (seq children)
+                 (seq evidence)
+                 (and (empty? children) (some #(not= (str (:id %)) (str summary)) resources))
+                 (and (or (empty? content) (= :failed state)) (activity-row-detail row state))))))
+
 (defn- activity-file-rows
   "THE LIST A STEP LEFT: every path it touched, each holding the diff that names it.
 
@@ -5675,33 +5700,30 @@
    The depth is HARD. A fourth level is a file tree printed into a chronology and
    nothing on this axis is worth that.
 
-   `activity-expanded?` answers for ONE fold key: a row id opens that step's evidence
-   and its paths, `<row-id>#<path>` opens one file's patch, and `<row-id>#` opens the
-   paths the `+N more files` count folds away. One key per fold, because a step that
-   changed eleven files behind a single chevron made the reader find a file by reading
-   a header out of the diff."
+   `activity-expanded?` answers for ONE fold key and the default it starts from: a row id
+   opens that step's evidence and its paths, `<row-id>#<path>` opens one file's patch, and
+   `<row-id>#` opens the paths the `+N more files` count folds away. One key per fold,
+   because a step that changed eleven files behind a single chevron made the reader find
+   a file by reading a header out of the diff. Steps start shut unless they are running
+   or failed; every `#` key starts shut."
   [{:keys [node-id activity-rows activity-expanded? activity-omitted activity-artifacts]} max-w
    session-id]
   (let [rows
         (vec activity-rows)
 
-        ;; A band whose steps open reserves the disclosure slot on every row, so their
-        ;; words line up under one another; a band nothing opens in sets each step's
+        ;; A band in which some step opens reserves the disclosure slot on every row, so
+        ;; their words line up under one another; a band nothing opens in sets each step's
         ;; words one space after its mark, the way the companion does.
         slot?
-        (boolean (some #(seq (:content %)) (concat rows (mapcat :children rows))))
+        (boolean (some activity-row-openable? (concat rows (mapcat :children rows))))
 
         expanded?
-        (or activity-expanded? (constantly false))
+        (let [answer (or activity-expanded? (constantly false))]
+          (fn [item-key default-open?]
+            (boolean (answer item-key default-open?))))
 
         width
         (max 1 (long max-w))
-
-        running-row
-        (first (filter #(= :running (activity-row-state %)) rows))
-
-        focused-id
-        (or (:id running-row) (:id (first rows)))
 
         meta-base
         {:session-id (str session-id)}
@@ -5751,7 +5773,7 @@
                 (str row-id "#")
 
                 show-all?
-                (expanded? more-key)
+                (expanded? more-key false)
 
                 shown
                 (if show-all? entries (vec (take activity-files-shown entries)))]
@@ -5764,7 +5786,7 @@
                           (str row-id "#" id)
 
                           open?
-                          (boolean (and diff (expanded? file-key)))
+                          (boolean (and diff (expanded? file-key false)))
 
                           mark
                           (cond (nil? diff) "›"
@@ -5819,7 +5841,7 @@
                   (str row-id "#diff")
 
                   open?
-                  (expanded? fold-key)
+                  (expanded? fold-key false)
 
                   mark
                   (if open? "▾" "▸")]
@@ -5865,9 +5887,7 @@
             (mapv #(band-row (if (str/blank? %) " " %)) lines)))
 
         row-entry
-        (fn row-entry ([row] (row-entry row 0)) ([{:keys [id error-summary result-summary
-                                                          result-format summary children]
-                                                   :as row} depth]
+        (fn row-entry ([row] (row-entry row 0)) ([{:keys [id summary children] :as row} depth]
                                                  (let [col
                                                        (activity-text-col depth slot?)
 
@@ -5917,10 +5937,21 @@
                                                        ;; A step that stands for several changes keeps ONE mark on the rail and
                                                        ;; hangs its children under it, sharing that mark's left edge: nested rows
                                                        ;; carry no mark of their own, because the indent already says whose they are.
+                                                       ;;
+                                                       ;; EVERY STEP STARTS SHUT. What it did is one line; what it left is behind the
+                                                       ;; chevron, so a turn of thirty calls reads as thirty lines and not as thirty
+                                                       ;; receipts. Only a step still running, or one that failed, opens on its
+                                                       ;; own: the first because its progress is the point, the second because
+                                                       ;; the reason is. A press on either still shuts it.
+                                                       openable?
+                                                       (activity-row-openable? row)
+
                                                        open?
-                                                       (or (expanded? id)
-                                                           (and (= id focused-id)
-                                                                (= :running state)))
+                                                       (and openable?
+                                                            (expanded? id
+                                                                       (contains? #{:running
+                                                                                    :failed}
+                                                                                  state)))
 
                                                        ;; The mark, one space, the words - with the band's disclosure slot
                                                        ;; between them only when some step in the band has something to open.
@@ -5933,7 +5964,7 @@
                                                               (activity-lead (- col
                                                                                 (if slot? 2 0))))
                                                             (when slot?
-                                                              (if (seq (:content row))
+                                                              (if openable?
                                                                 (str (if open? "▾" "▸") " ")
                                                                 "  "))
                                                             lead-word
@@ -5953,20 +5984,7 @@
                                                                       (:evidence row)))
 
                                                        detail
-                                                       (cond (and (= :failed state) error) nil
-                                                             (= :failed state)
-                                                             (not-empty (str/trim (str
-                                                                                    error-summary)))
-                                                             :else
-                                                             (or (not-empty (str/trim
-                                                                              (str error-summary)))
-                                                                 (when-not (= :running state)
-                                                                   (some-> (not-empty
-                                                                             (str/trim
-                                                                               (str
-                                                                                 result-summary)))
-                                                                           (activity-inline-text
-                                                                             result-format)))))
+                                                       (activity-row-detail row state)
 
                                                        head
                                                        {:line (str activity-marker line)
@@ -5977,7 +5995,8 @@
                                                            :headline-prefix prefix
                                                            :right-suffix (activity-row-tail row)
                                                            :item-id id
-                                                           :node-id (str node-id ":" id)
+                                                           :node-id (when openable?
+                                                                      (str node-id ":" id))
                                                            :collapsed? (not open?)
                                                            :status-tone (activity-row-tone row)
                                                            :status-glyph (activity-row-glyph row)
@@ -6004,7 +6023,33 @@
                                                        (if (seq nested) [] resources)
 
                                                        diffs
-                                                       (activity-diffs row)]
+                                                       (activity-diffs row)
+
+                                                       ;; Shut children stand one under another; a blank line parts a child
+                                                       ;; that opened from its neighbours on either side, so its evidence is
+                                                       ;; read as its own and never as the next child's head.
+                                                       nested-entries
+                                                       (fn []
+                                                         (:entries
+                                                           (reduce (fn [{:keys [entries prev-open?]}
+                                                                        child]
+                                                                     (let [chunk
+                                                                           (row-entry child 1)
+
+                                                                           open-child?
+                                                                           (< 1 (count chunk))]
+
+                                                                       {:entries
+                                                                        (into (cond-> entries
+                                                                                (and (seq entries)
+                                                                                     (or
+                                                                                       prev-open?
+                                                                                       open-child?))
+                                                                                (conj blank))
+                                                                              chunk)
+                                                                        :prev-open? open-child?}))
+                                                                   {:entries [] :prev-open? false}
+                                                                   nested)))]
 
                                                    (cond-> [head]
                                                      (and open? (seq (:content row)))
@@ -6029,11 +6074,8 @@
                                                      (into (error-entries id error col))
 
                                                      ;; Three levels - step, change, paths - is the whole depth either surface draws.
-                                                     (and (seq nested) (zero? (long depth)))
-                                                     (into (mapcat identity
-                                                                   (interpose [blank]
-                                                                     (map #(row-entry % 1)
-                                                                          nested))))))))
+                                                     (and open? (seq nested) (zero? (long depth)))
+                                                     (into (nested-entries))))))
 
         ;; The axis can say `+6 more` but never what the six WERE: the engine's own bound
         ;; dropped them, and a chronology that shows four of ten calls must say so.
@@ -6474,18 +6516,11 @@
                                    :index index}])))
                            (filter #(= "tool" (or (:source %) (get % "source"))) attachments)))
                    :activity-omitted (get-in activity [:omitted :rows] 0)
-                   :activity-expanded? (fn [item-key]
+                   :activity-expanded? (fn [item-key default-open?]
                                          (detail-expanded? detail-expansions
                                                            session-id
                                                            (str activity-node-id ":" item-key)
-                                                           ;; A STEP IS OPEN, ITS PATCH IS NOT.
-                                                           ;; The web hangs a step's outcome and
-                                                           ;; the paths it touched under it and
-                                                           ;; keeps the diff itself one press
-                                                           ;; away; the `#` keys are those
-                                                           ;; presses, and only they start shut.
-                                                           (not (str/includes? (str item-key)
-                                                                               "#"))))})
+                                                           default-open?))})
 
                 ;; Results retain timing now that the duplicate execution receipt is gone.
                 result-duration-ms

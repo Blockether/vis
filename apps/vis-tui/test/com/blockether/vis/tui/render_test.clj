@@ -5555,10 +5555,10 @@ h = 8"
           (expect (seq lines) "the expanded receipt paints an Activity band")
           (expect (not-any? #(str/includes? % "ACTIVITY") lines)
                   "the chronology stands on the rail and never names itself")
-          (expect (str/starts-with? (str (line-with text "Patched")) "├─●")
+          (expect (str/starts-with? (str (line-with text "Patched")) "├─● ▾")
                   "a step's mark is JOINED to the rail by a tick, never floating beside it")
-          (expect (= 4 (long (.indexOf ^String (str (line-with text "Patched")) "Patched")))
-                  "the verb follows the mark by one space: nothing in this band opens")
+          (expect (= 6 (long (.indexOf ^String (str (line-with text "Patched")) "Patched")))
+                  "the verb follows the mark and the open chevron: this step opens onto its paths")
           (expect (every? #(contains? #{\│ \├} (nth % 0 nil)) lines)
                   "the rail stands in the turn's own axis, the message column's first")
           (expect (not-any? #(str/includes? % "✓") lines)
@@ -5588,7 +5588,7 @@ h = 8"
         (expect (str/includes? patched-path "\u25be") "a path that opens a patch wears a chevron")
         (expect (str/includes? read-path "\u203a")
                 "a path that only names a file wears the quiet guillemet")
-        (expect (= 4 (long (.indexOf patched-path "▾")))
+        (expect (= 6 (long (.indexOf patched-path "▾")))
                 "paths hang one level in from the step's own mark")
         (expect (str/includes? added "+ (def added-line 1)")
                 "an added line carries its sign exactly once, in the marker column")
@@ -5603,7 +5603,10 @@ h = 8"
     (it "shows four paths and then a count, with every patch still folded"
         (let [entries
               ((deref #'render/activity-detail-entries)
-                {:node-id "n1" :activity-rows (:rows activity) :activity-expanded? #{"patch-1"}}
+                {:node-id "n1"
+                 :activity-rows (:rows activity)
+                 :activity-expanded? (fn [key _default-open?]
+                                       (= "patch-1" key))}
                 120
                 "s1")
 
@@ -5640,6 +5643,138 @@ h = 8"
         (expect (not-any? #(str/includes? % "/w/vis/") lines)
                 "its paths wait behind the step's own fold")
         (expect (not-any? #(str/includes? % "added-line") lines) "and so does the patch")))))
+
+;; Regression: every step painted its outcome, its paths and its grouped changes open, with
+;; no chevron to shut them - a turn of shell calls read as a wall of receipts, and the blank
+;; disclosure slot before each verb read as a margin nobody asked for.
+(defdescribe
+  activity-steps-start-shut-test
+  (let [outcome
+        "{\"keys\" nil, \"offset\" 0, \"command\" \"git push origin main\", \"id\" \"git\"}"
+
+        child
+        (fn [id operation summary state]
+          {:id id
+           :sequence 2
+           :operation operation
+           :summary summary
+           :state state
+           :duration-ms 46
+           :result-summary outcome
+           :resources [{:type "shell" :id "git"}]
+           :evidence [{:kind "result" :text outcome}]})
+
+        group
+        {:id "sh-1"
+         :sequence 1
+         :operation "shell"
+         :summary "cmd: git push origin main"
+         :state "succeeded"
+         :duration-ms 2400
+         :children [(child "sh-2" "shell" "cmd: git push origin main" "succeeded")
+                    (child "wait-1" "_shell-wait" "waiting up to 120s for the shell" "succeeded")
+                    (child "logs-1" "_shell-logs" "reading the log of the shell" "succeeded")]}
+
+        bare
+        {:id "grep-1"
+         :sequence 5
+         :operation "grep"
+         :summary "grep"
+         :state "succeeded"
+         :duration-ms 3}
+
+        failed
+        {:id "grep-2"
+         :sequence 6
+         :operation "grep"
+         :summary "needle"
+         :state "failed"
+         :error-summary "no matches in 3 paths"
+         :duration-ms 12}
+
+        entries
+        (fn [rows opened]
+          ((deref #'render/activity-detail-entries)
+            {:node-id "n1"
+             :activity-rows rows
+             :activity-expanded? (fn [key default-open?]
+                                   (get opened key default-open?))}
+            100
+            "s1"))
+
+        lines
+        (fn [rows opened]
+          (mapv (comp body-of strip-sentinels strip-ansi :line) (entries rows opened)))
+
+        line-with
+        (fn [lines needle]
+          (str (first (filter #(str/includes? % needle) lines))))]
+
+    (it "keeps a settled step to one line, with a chevron that says more waits behind it"
+        (let [shut (lines [group bare] {})]
+          (expect (str/starts-with? (line-with shut "Ran") "├─● ▸ Ran cmd")
+                  "the chevron stands between the mark and the verb")
+          (expect (= 1 (count (filter #(str/includes? % "Ran") shut)))
+                  "the grouped calls wait behind the group")
+          (expect (not-any? #(str/includes? % "\"keys\"") shut) "and so does every outcome")
+          (expect (not-any? #(str/includes? % "_shell-wait") shut))
+          (expect (str/starts-with? (line-with shut "Searched") "├─●   Searched")
+                  "a step with nothing to open keeps the slot, so the verbs line up")
+          (expect (nil? (some #(when (str/includes? (:line %) "Searched")
+                                 (get-in % [:meta :node-id]))
+                              (entries [group bare] {})))
+                  "and is no disclosure: a press on it has nothing to open")))
+    (it "opens a group onto its calls, each shut behind its own chevron"
+        (let [open
+              (lines [group] {"sh-1" true})
+
+              head
+              (line-with open "├─●")
+
+              wait
+              (line-with open "_shell-wait")]
+
+          (expect (str/starts-with? head "├─● ▾ Ran cmd"))
+          (expect (= 3 (count (filter #(str/includes? % "▸") open)))
+                  "three calls, three closed chevrons, and none of their outcomes")
+          (expect (str/starts-with? wait "│     ▸ _shell-wait")
+                  "a call hangs one level in from its group's words")
+          (expect (= (+ 2 (long (.indexOf head "Ran"))) (long (.indexOf wait "_shell-wait"))))
+          (expect (not-any? #(str/includes? % "\"keys\"") open))
+          (expect (not-any? str/blank? (map str/trim (remove #(= % "│") open)))
+                  "shut calls stand one under another, with no blank between them")))
+    (it "opens one call onto its outcome and keeps its siblings shut"
+        (let [open
+              (lines [group] {"sh-1" true "wait-1" true})
+
+              wait
+              (line-with open "_shell-wait")
+
+              outcome-line
+              (line-with open "\"keys\"")]
+
+          (expect (str/starts-with? wait "│     ▾ _shell-wait"))
+          (expect (= 1 (count (filter #(str/includes? % "\"keys\"") open)))
+                  "one outcome, under the one call that opened")
+          (expect (= (long (.indexOf wait "_shell-wait")) (long (.indexOf outcome-line "{")))
+                  "the outcome starts in the column the call's own words do")
+          (expect (str/includes? (line-with open "› git") "› git") "with the handle it touched")
+          (expect (= ["│"] (distinct (filter #(= "│" (str/trim %)) open)))
+                  "a blank line parts the opened call from its neighbours")))
+    (it
+      "starts a running step and a failed step open, because their progress and their reason are the point"
+      (let [running
+            (assoc group :state "running")
+
+            open
+            (lines [running failed] {})]
+
+        (expect (str/starts-with? (line-with open "Running") "├─● ▾ Running cmd"))
+        (expect (some #(str/includes? % "_shell-wait") open) "the running group shows its calls")
+        (expect (str/starts-with? (line-with open "Search failed") "├─● ▾ Search failed needle"))
+        (expect (some #(str/includes? % "no matches in 3 paths") open) "and the failure says why")
+        (expect (not-any? #(str/includes? % "no matches") (lines [failed] {"grep-2" false}))
+                "a press still shuts a failed step")))))
 
 ;; Regression, T126: the same step wore different words on the two surfaces - the app said
 ;; "Patch refused" where the terminal said "PATCHED" - because each surface kept its own
@@ -6568,7 +6703,8 @@ print(paths)"
                                           {:session-id "s"
                                            :session-turn-id "t"
                                            :detail-expansions
-                                           {:vis.channel-tui/expand-execution-details? true}})
+                                           {:vis.channel-tui/expand-execution-details? true
+                                            :vis.channel-tui/expand-all-details? true}})
 
           artifacts
           (keep #(get-in % [:meta :artifact]) entries)]
