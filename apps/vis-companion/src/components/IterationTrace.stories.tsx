@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, within } from "storybook/test";
+import { expect, userEvent, within } from "storybook/test";
 import {
   STORY_COMPACT_EXECUTIONS,
   STORY_LISTING,
@@ -189,4 +189,25 @@ export const HiddenCode: Story = {
 
 export const Listing: Story = {
   args: { live: false, showCode: true, iterations: STORY_LISTING },
+ };
+
+export const CodeWithResult: Story = {
+  args: { live: false, showCode: true, iterations: STORY_LISTING.map((iteration) => ({
+    ...iteration, forms: iteration.forms?.map((form) => ({ ...form, stdout: "Listed 5 entries.", duration_ms: 57 })),
+  })) },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.queryByText(/RESULT/)).toBeNull();
+    await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
+    const band = canvasElement.querySelector("[data-execution-code]")!;
+    await expect(band.textContent).toContain("RESULT +1 more");
+    await expect(band.textContent).not.toContain("Listed 5 entries.");
+    await userEvent.click(canvas.getByRole("button", { name: "Expand result" }));
+    await expect(band.textContent).toContain("Listed 5 entries.");
+    await expect(band.querySelector("summary")).toBeNull();
+    await expect(canvas.getByRole("button", { name: "Collapse code" }).querySelector("svg")).not.toBeNull();
+    await expect(canvas.getByRole("button", { name: "Collapse result" }).querySelector("svg")).not.toBeNull();
+    await expect(band.textContent).toContain("57ms");
+    await expect(canvas.getByText("42ms")).toBeTruthy();
+  },
 };

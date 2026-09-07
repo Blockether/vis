@@ -20,7 +20,6 @@ import {
   CircleDot,
   CircleSlash,
   CircleX,
-  Code,
   Copy,
   Crop,
   Download,
@@ -104,10 +103,6 @@ function Mark({
  */
 export const MARK_NUDGE = "translate-y-[2px]";
 
-/** Source code, distinct from the operations it invokes. */
-export function CodeIcon({ className }: { className?: string }) {
-  return <Mark icon={Code} className={className} />;
-}
 /** The mark of an ATTACHMENT. */
 export function ClipIcon({ className }: { className?: string }) {
   return <Mark icon={Paperclip} className={className} />;

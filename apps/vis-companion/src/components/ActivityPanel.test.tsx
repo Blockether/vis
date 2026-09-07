@@ -43,6 +43,15 @@ function paintActivity(
 }
 
 describe("one form's Activity on the phone", () => {
+  it("separates sibling activities by one UI line, without a trailing gap", () => {
+    paintActivity();
+    const rows = document.querySelectorAll("[data-activity-row]");
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) {
+      expect(row.classList.contains("mb-[var(--text-ui--line-height)]")).toBe(true);
+      expect(row.classList.contains("last:mb-0")).toBe(true);
+    }
+  });
   it("keeps the leading content heading beside the action, once", () => {
     const projection = activityProjection();
     paintActivity({
@@ -68,6 +77,11 @@ describe("one form's Activity on the phone", () => {
     expect(screen.getAllByText("apps/vis-companion/src")).toHaveLength(1);
     const toggle = screen.getByRole("button", { name: "Listed apps/vis-companion/src" });
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const row = toggle.closest("[data-activity-row]")!;
+    expect(toggle.closest("h4")!.parentElement!.classList.contains("items-center")).toBe(true);
+    const node = row.querySelector("span.absolute")!;
+    expect(node.classList.contains("top-4")).toBe(true);
+    expect(node.classList.contains("mouse:top-3")).toBe(true);
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText("3 directories · 2 files")).toBeNull();

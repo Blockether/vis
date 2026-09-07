@@ -1173,14 +1173,16 @@ function ToolSummary({
  * it. That padding is exactly what left one program header 41px tall beside a 33px
  * one, while a chip in a third header stood rule-to-rule with no air at all.
  */
-const CARD_BAND = "flex min-h-8 items-center gap-1.5 px-2";
+const CARD_BAND = "flex min-h-8 items-center gap-1.5";
 
 const ToolCard = memo(function ToolCard({
   form,
   isCopyable = true,
+  embedded = false,
 }: {
   form: TranscriptForm;
   isCopyable?: boolean;
+  embedded?: boolean;
 }) {
   const interrupted = interruptedPython(form);
   const resultText = resultBody(form);
@@ -1200,6 +1202,13 @@ const ToolCard = memo(function ToolCard({
   // one-way, so re-collapsing keeps the parsed body for the next open, and
   // "Copy result" copies `body` (the string), never the DOM.
   const [wasOpened, setWasOpened] = useState(false);
+  const stateTone = interrupted
+    ? "hint"
+    : failed
+      ? "err"
+      : running
+        ? "result"
+        : "accent";
   const stateClass = interrupted
     ? "text-dialog-hint"
     : failed
@@ -1207,8 +1216,28 @@ const ToolCard = memo(function ToolCard({
       : running
         ? "text-code-result"
         : "text-accent-ink";
-  // A card wears no OP-NAME badge. Successful content has one owner, stdout, and
-  // the disclosure row names that band RESULT rather than deriving another headline.
+  // Under a CODE fold the RESULT is its own fold and starts closed, like THINKING:
+  // the name is the control, the tally says how much it holds. A failure stays
+  // open — its message is the one thing the reader must not have to dig for.
+  const [resultOpen, setResultOpen] = useState(false);
+  // The tally counts what the reader would see: fence rows around a stdout block are not output.
+  const resultLines = body ? body.split("\n").filter((line) => !line.startsWith("```")).length : 0;
+  const resultShown = failed || interrupted || resultOpen;
+  if (embedded) return (
+    <div data-code-result className="min-w-0 bg-result py-3 text-meta text-code-result">
+      {failed || interrupted ? (
+        <BandLabel tone={stateTone}>{stateLabel}</BandLabel>
+      ) : (
+        <Disclosure isOpen={resultOpen} tone="muted" className="min-w-0"
+          aria-label={resultOpen ? "Collapse result" : "Expand result"}
+          onClick={() => setResultOpen((open) => !open)}>
+          <BandLabel tone={stateTone}>RESULT{!resultOpen && resultLines > 0 && <BandTally> +{resultLines} more</BandTally>}</BandLabel>
+        </Disclosure>
+      )}
+      {resultShown && (failed ? <pre className="mt-2 whitespace-pre-wrap break-words font-mono">{body}</pre>
+        : <div className="mt-2"><Markdown compact nested>{body}</Markdown></div>)}
+    </div>
+  );
   const headline = (
     <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
       {stateLabel ? (
@@ -1217,7 +1246,7 @@ const ToolCard = memo(function ToolCard({
         !running && <BandLabel className="min-w-0 flex-1">RESULT</BandLabel>
       )}
       {duration && (
-        <span className="shrink-0 font-mono text-chip tabular-nums text-code-duration">
+        <span className="ml-auto shrink-0 font-mono text-chip tabular-nums text-code-duration">
           {duration}
         </span>
       )}
@@ -1227,7 +1256,7 @@ const ToolCard = memo(function ToolCard({
   if (!body) {
     return (
       <div
-        className={`${CARD_BAND} border-l-2 ${failed ? "border-err" : "border-accent"} bg-result`}
+        className={`${CARD_BAND} ${isCopyable ? "px-2" : "pl-[33px] sm:pl-[35px] pr-0"} ${isCopyable ? `border-l-2 ${failed ? "border-err" : "border-accent"}` : ""} bg-result`}
       >
         {headline}
       </div>
@@ -1236,13 +1265,13 @@ const ToolCard = memo(function ToolCard({
 
   return (
     <details
-      className={`group min-w-0 border-l-2 ${failed ? "border-err" : "border-accent"} bg-result`}
+      className={`group min-w-0 ${isCopyable ? `border-l-2 ${failed ? "border-err" : "border-accent"}` : ""} bg-result`}
       onToggle={(event) => {
         if (event.currentTarget.open) setWasOpened(true);
       }}
     >
       <summary
-        className={`${CARD_BAND} list-none cursor-pointer select-none text-code-result hover:bg-hover [&::-webkit-details-marker]:hidden`}
+        className={`${CARD_BAND} ${isCopyable ? "px-2" : "pl-[15px] sm:pl-[17px] pr-0"} list-none cursor-pointer select-none text-code-result hover:bg-hover [&::-webkit-details-marker]:hidden`}
       >
         <ChevronIcon
           className={`size-3 shrink-0 group-open:rotate-90 ${failed ? "text-err" : "text-accent-ink"}`}
@@ -1297,70 +1326,37 @@ function showFormCode(form: TranscriptForm, code: string): boolean {
   return Boolean(code) && !hiddenForm(form);
 }
 
-/** A single source line opens the whole program; one copy always copies all of it. */
+/** One Thinking-style fold owns the submitted source and its output. */
 const CollapsibleFormCode = memo(function CollapsibleFormCode({
-  value,
-  language = "python",
+  value, language = "python", showCode, duration, outcome, children,
 }: {
   value: string;
   language?: string;
+  showCode: boolean;
+  duration: string | null;
+  outcome?: string;
+  children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const lines = value.split(/\r?\n/);
-  const firstLine = lines[0];
-  const hiddenLines = lines.length - 1;
-  const label = (
-    <code className="min-w-0 truncate font-mono text-ui font-normal normal-case tracking-normal text-code-foreground">
-      {firstLine}
-    </code>
-  );
+  const lineCount = value ? value.split("\n").length : 0;
   return (
-    <div
-      className={`relative z-0 min-w-0 bg-code py-2 pr-3 ${RAIL_BLEED}`}
-      data-execution-code
-    >
-      <div className="flex min-w-0 items-center gap-2 before:absolute before:left-0 before:top-4 before:h-px before:w-3 before:bg-code-edge before:content-[''] mouse:before:top-3">
-        {hiddenLines > 0 ? (
-          <Disclosure
-            isOpen={expanded}
-            tone="muted"
-            className="min-w-0 flex-1"
-            aria-label={expanded ? "Collapse code" : "Expand code"}
-            onClick={() => setExpanded((open) => !open)}
-          >
-            {label}
-            {!expanded && (
-              <span className="shrink-0">
-                <BandTally>+{hiddenLines} more</BandTally>
-              </span>
-            )}
-          </Disclosure>
-        ) : (
-          <div className="flex min-h-8 min-w-0 flex-1 items-center mouse:min-h-6">
-            {label}
-          </div>
-        )}
-        <CopyChip
-          value={value}
-          label="Copy code"
-          density="compact"
-          className="shrink-0"
-        >
-          Copy
-        </CopyChip>
+    <section className={`relative z-0 min-w-0 bg-code py-2 pr-3 ${RAIL_BLEED}`} data-execution-code>
+      <div className="-mr-3 flex min-w-0 items-center gap-2">
+        {showCode ? <Disclosure isOpen={expanded} tone="muted" className="min-w-0 flex-1"
+          aria-label={expanded ? "Collapse code" : "Expand code"}
+          onClick={() => setExpanded((open) => !open)}>
+          <BandLabel>CODE{!expanded && <BandTally> +{lineCount} more</BandTally>}</BandLabel>
+        </Disclosure>
+          : <BandLabel className="min-w-0 flex-1">CODE</BandLabel>}
+        {outcome && !expanded && showCode && <BandLabel tone="err">{outcome}</BandLabel>}
+        {showCode && <CopyChip value={value} label="Copy code" density="compact" className="shrink-0">Copy</CopyChip>}
+        {duration && <span className="ml-auto shrink-0 font-mono text-chip tabular-nums text-code-duration">{duration}</span>}
       </div>
-      {expanded && hiddenLines > 0 && (
-        <div className="py-3" data-code-body>
-          <SyntaxCodeBlock
-            value={value}
-            language={language}
-            compact
-            bare
-            frameless
-          />
-        </div>
-      )}
-    </div>
+      {(expanded || !showCode) && <div className="py-3" data-code-body>
+        {showCode && <SyntaxCodeBlock value={value} language={language} compact bare frameless />}
+        {children}
+      </div>}
+    </section>
   );
 });
 
@@ -1588,8 +1584,10 @@ const FormTrace = memo(function FormTrace({
           <Markdown compact>{forms[0].comment}</Markdown>
         </div>
       )}
-      {showCode && code && (
-        <CollapsibleFormCode value={code} language={formCodeLanguage(form)} />
+      {(showCode && code || cards.length > 0) && (
+        <CollapsibleFormCode value={code} language={formCodeLanguage(form)} showCode={showCode && Boolean(code)} duration={formatDuration(form.duration_ms)} outcome={cards.some((card) => card.error != null) ? (cards.some((card) => interruptedPython(card)) ? "Interrupted" : "Failed") : undefined}>
+          {cards.map((card, index) => <ToolCard key={index} form={card} embedded />)}
+        </CollapsibleFormCode>
       )}
       <div
         className="min-w-0"
@@ -1599,7 +1597,6 @@ const FormTrace = memo(function FormTrace({
       >
         {status && <span className="sr-only">{status}</span>}
         {detectedActivity && activity && <ActivityPanel activity={activity} />}
-        <CardGrid cards={cards} bare isCopyable={false} />
       </div>
     </div>
   );
@@ -2556,7 +2553,9 @@ const TraceSegment = memo(function TraceSegment({
             const step = form ? formStep(form, live) : undefined;
             return (
               <div key={chunk.key} className="relative min-w-0">
-                <StepNode mark={step ? step.mark : live ? "running" : "done"} />
+                {chunk.kind !== "code" && (
+                  <StepNode mark={step ? step.mark : live ? "running" : "done"} />
+                )}
                 {chunk.kind === "code" ? (
                   <FormTrace
                     forms={chunk.forms}
@@ -3680,7 +3679,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       ref={paintSkip}
     >
       <div
-        className={`mb-1 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
+        className={`mb-4 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
       >
         Vis
       </div>

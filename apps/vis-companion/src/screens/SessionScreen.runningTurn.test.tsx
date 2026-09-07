@@ -348,7 +348,7 @@ describe("a running transcript row without canonical session state", () => {
     });
 
     expect(
-      (await screen.findAllByRole("button", { name: "Expand execution trace" })).length,
+      (await screen.findAllByRole("button", { name: "Expand code" })).length,
     ).toBe(1);
   });
 

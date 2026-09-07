@@ -1352,6 +1352,13 @@
 
 (def ^:private tool-output-indent "Visible left margin for result rows under a tool call." "  ")
 
+(def ^:private result-body-indent
+  "Left margin of a RESULT body row inside the code band: two columns past the
+   inset, so output shares the column of the `CODE`/`RESULT` names and the code."
+  "  ")
+
+(def ^:private result-body-indent-cols (p/display-width result-body-indent))
+
 (def ^:private tool-output-indent-cols (p/display-width tool-output-indent))
 
 (def ^:private code-block-h-pad
@@ -2071,11 +2078,11 @@
                       ;; column. Receipt prose keeps its rail clear.
                       x (+ (long bx)
                            (long (if (:activity-content? meta)
-                                   4
+                                   8
                                    (if (or user? error? (:receipt-prose? meta)) h-pad 0))))
                       y (+ (long btop) (long i))
-                      iw (if (:activity-content? meta) (max 0 (- (long bubble-w) 4)) bubble-w)
-                      fbx (if (:activity-content? meta) (+ (long bx) 4) bx)
+                      iw (if (:activity-content? meta) (max 0 (- (long bubble-w) 8)) bubble-w)
+                      fbx (if (:activity-content? meta) (+ (long bx) 8) bx)
                       meta (if (:copy-width meta)
                              (assoc meta
                                :click-width (max 0 (- (long iw) (long (:copy-width meta)))))
@@ -3985,9 +3992,26 @@
          :node-id (str node-id)
          :collapsed? collapsed?}]
 
-    (mapv (fn [line]
-            {:line (str marker line) :meta meta})
-          wrapped)))
+    (if (= marker result-marker)
+      ;; The RESULT head reads like the THINKING head: a chevron, the name, and a
+      ;; tally of what it folds while collapsed.
+      (let [hidden-n
+            (count (remove #(str/blank? (subs (str (:line %)) 1)) (:hidden-entries detail-ctx)))
+
+            prefix
+            (str "  "
+                 (if collapsed? "▸ " "▾ ")
+                 (layout/ast->inline-sentinel-string (vis/markdown->ast summary))
+                 (when (and collapsed? (pos? hidden-n)) (str "  +" hidden-n " more")))]
+
+        [{:line (str marker (first (with-right-suffix [prefix] suffix (max 1 (dec (long max-w))))))
+          :meta (assoc meta
+                  :band-flush? true
+                  :headline-prefix prefix
+                  :right-suffix suffix)}])
+      (mapv (fn [line]
+              {:line (str marker line) :meta meta})
+            wrapped))))
 
 (defn- tag-copy-block-body
   "Stamp every body row of an independently copyable block so a single
@@ -4928,7 +4952,7 @@
 
             (assoc e
               :line (str result-marker
-                         (if (str/blank? stripped) stripped (str tool-output-indent stripped))))))
+                         (if (str/blank? stripped) stripped (str result-body-indent stripped))))))
 
         ast
         (some-> body-text
@@ -4947,7 +4971,7 @@
         (when ast
           (tag-copy-block-body (vec (paste-aware-ast->entries
                                       ast
-                                      (max 1 (- (long fill-w) (long tool-output-indent-cols)))
+                                      (max 1 (- (long fill-w) (long result-body-indent-cols)))
                                       ;; Card bodies are PROSE — a folded receipt's gist paragraph,
                                       ;; a tool's narrative — so overflow-wrapped lines sit flush to
                                       ;; both margins (`:justify?`); paragraph-terminal and code lines
@@ -5377,7 +5401,7 @@
    depth 0; every level below is two columns further in, because the group IS the
    indent."
   ^long [^long depth]
-  (+ (long (count activity-margin)) 4 (* 2 depth)))
+  (+ (long (count activity-margin)) 8 (* 2 depth)))
 
 (defn- activity-lead
   "The margin, the rail, and the blanks that carry the eye to column `col`."
@@ -5552,7 +5576,7 @@
               entries
               (mapv #(assoc-in % [:meta :activity-content?] true)
                     (layout/ast->entries ast
-                                         (max 1 (- (long width) 4))
+                                         (max 1 (- (long width) 8))
                                          {:mode :channel :session-id session-id}))]
 
           (if (and media? artifact)
@@ -5816,13 +5840,14 @@
                                                               (str activity-margin
                                                                    activity-tick
                                                                    (activity-row-glyph row)
-                                                                   " ")
-                                                              (activity-lead col))
+                                                                   "   ")
+                                                              (activity-lead (- col 2)))
+                                                            (if (seq (:content row))
+                                                              (str (if open? "▾" "▸") " ")
+                                                              "  ")
                                                             lead-word
                                                             (when object (str " " object))
-                                                            delta
-                                                            (when (seq (:content row))
-                                                              (str " " (if open? "▾" "▸"))))
+                                                            delta)
 
                                                        line
                                                        (first (with-right-suffix [prefix]
@@ -5913,9 +5938,10 @@
 
                                                      ;; Three levels - step, change, paths - is the whole depth either surface draws.
                                                      (and (seq nested) (zero? (long depth)))
-                                                     (into (mapcat (fn [child]
-                                                                     (row-entry child 1))
-                                                                   nested))))))
+                                                     (into (mapcat identity
+                                                                   (interpose [blank]
+                                                                     (map #(row-entry % 1)
+                                                                          nested))))))))
 
         ;; The axis can say `+6 more` but never what the six WERE: the engine's own bound
         ;; dropped them, and a chronology that shows four of ten calls must say so.
@@ -5932,7 +5958,10 @@
                            :label label
                            :mark-col (+ (long (count activity-margin)) 2)})}))]
 
-    (vec (concat [blank] (mapcat row-entry rows) (when omitted-entry [omitted-entry]) [blank]))))
+    (vec (concat [blank]
+                 (mapcat identity (interpose [blank] (map row-entry rows)))
+                 (when omitted-entry [omitted-entry])
+                 [blank]))))
 
 (defn- run-row-entries
   "Transcript receipts for the extension runs a form left behind. Activity is not one
@@ -6422,13 +6451,18 @@
                   (inline-error-context-lines code-text error colored-lines))
 
                 ;; Soft-fold oversized source rows, but keep error caret alignment and
-                ;; count submitted source lines rather than display rows.
+                ;; count submitted source lines rather than display rows. A colored row
+                ;; folds SGR-aware so a long string or shell command keeps its colour on
+                ;; every wrapped row; dropping to the plain fold left the widest lines —
+                ;; exactly the ones that wrap — as the only uncolored code on screen.
                 code-line-groups
                 (or (some->> inline-error-code-lines
                              (mapv vector))
                     (mapv (fn [plain colored]
-                            (let [folded (p/fold-cols plain (max 1 (- (long fill-w) 2)))]
-                              (if (and colored (= 1 (count folded))) [colored] folded)))
+                            (let [width (max 1 (- (long fill-w) 2))]
+                              (if colored
+                                (p/ansi-fold-cols colored width)
+                                (p/fold-cols plain width))))
                           (str/split-lines code-text)
                           (or colored-lines (repeat nil))))
 
@@ -6450,50 +6484,53 @@
                   (let [header-width
                         (max 1 (long fill-w))
 
-                        preview
-                        (first (str/split-lines code-text))
+                        duration
+                        (vis/format-duration duration-ms)
 
+                        code-rows
+                        (vec (mapcat identity code-line-groups))
+
+                        ;; Like the THINKING head: chevron, name, and a tally while folded.
                         header
-                        (let [hidden (dec (count code-line-groups))]
-                          (str (if (pos? hidden) "  " "    ")
-                               (when (pos? hidden) (str (if code-expanded? "▾" "▸") " "))
-                               preview
-                               (when (and (pos? hidden) (not code-expanded?))
-                                 (str "  +" hidden " more"))))
+                        (str "  "
+                             (if code-expanded? "▾ " "▸ ")
+                             (band-label "CODE")
+                             (when-not code-expanded? (str "  +" (count code-rows) " more"))
+                             (when (and error (not code-expanded?))
+                               (str " · " (form-error-headline error))))
 
                         copy?
                         (and code-node-id (>= header-width 20))
+
+                        suffix
+                        (str (when copy? "❐") (when duration (str "  " duration)))
 
                         headline-prefix
                         header
 
                         header
-                        (if copy?
-                          (first (with-right-suffix [header] " ❐" header-width))
-                          (ellipsize-cols header header-width))]
+                        (first (with-right-suffix [header] suffix header-width))]
 
                     (into (if code-node-id
-                            [{:line (str c-marker header)
-                              :meta {:kind (if (> (count code-line-groups) 1)
-                                             :toggle-details
-                                             :code-headline)
+                            [(line-entry (str c-marker ""))
+                             {:line (str c-marker header)
+                              :meta {:kind :toggle-details
                                      :band-flush? true
                                      :headline-prefix headline-prefix
-                                     :right-suffix (when copy? " ❐")
+                                     :right-suffix suffix
                                      :node-id code-node-id
                                      :session-id session-id
                                      :collapsed? (not code-expanded?)
-                                     :click-width (if copy? (- header-width 3) header-width)
                                      :copy-text code-text
-                                     :copy-width (when copy? 3)}}]
+                                     :copy-width (when copy? (inc (p/display-width suffix)))}}]
                             [])
-                          (when (and code-expanded?
-                                     (or (nil? code-node-id) (> (count code-line-groups) 1)))
+                          (if code-expanded?
                             (conj (into [(line-entry (str c-marker ""))]
                                         (map #(assoc (line-entry (str c-marker %))
                                                 :meta {:code-source? true})
-                                             (mapcat identity code-line-groups)))
-                                  (line-entry (str c-marker "")))))))
+                                             code-rows))
+                                  (line-entry (str c-marker "")))
+                            [(line-entry (str c-marker ""))]))))
 
                 ;; Human output surface: derive the local RESULT body solely from canonical
                 ;; stdout. Strip artifact transport markers first so live, restored, and
@@ -6525,7 +6562,8 @@
                 ;; figure-only row. A card head, `+N more` disclosure, or FAILED headline
                 ;; already carries the same figure: never paint it twice.
                 duration-stamp
-                (when-let [d (and (nil? card)
+                (when-let [d (and (not (and code-node-id (seq c-lines)))
+                                  (nil? card)
                                   (nil? error)
                                   (empty? form-artifacts)
                                   (or result-text (nil? activity-run))
@@ -6579,13 +6617,22 @@
                                 (assoc e :line (str result-marker stripped))))]
 
                         (cond
-                          ;; Stdout nests under the stable RESULT disclosure row.
-                          card (tool-card-entries card
-                                                  {:fill-w fill-w
-                                                   :session-id session-id
-                                                   :detail-expansions detail-expansions
-                                                   :node-id result-node-id
-                                                   :duration-ms result-duration-ms})
+                          ;; The RESULT under a CODE fold is its own fold, collapsed by
+                          ;; default; the CODE head alone carries the duration.
+                          card (mapv (fn [entry]
+                                       (if (and code-node-id
+                                                (seq c-lines)
+                                                (= :result-headline (get-in entry [:meta :kind])))
+                                         (update entry :line #(str (subs % 0 1) "  " (subs % 1)))
+                                         entry))
+                                     (tool-card-entries card
+                                                        {:fill-w fill-w
+                                                         :session-id session-id
+                                                         :detail-expansions detail-expansions
+                                                         :node-id result-node-id
+                                                         :duration-ms (when-not (and code-node-id
+                                                                                     (seq c-lines))
+                                                                        result-duration-ms)}))
                           ;; Long stdout without an op card: keep the first rows visible and
                           ;; collapse only the surplus behind the band's own name.
                           (and result-node-id (seq hidden))
@@ -6596,22 +6643,18 @@
                                 (vec (take preview-n entries))
 
                                 summary
-                                (detail-summary-entries
-                                  {:marker result-marker
-                                   :max-w fill-w
-                                   ;; Collapsed used to read `+N more result lines` with no
-                                   ;; name at all - the one band whose control never said what
-                                   ;; it folds. It wears `RESULT` in both states now, exactly
-                                   ;; like the code band above it.
-                                   :summary
-                                   (if expanded?
-                                     (band-label "RESULT")
-                                     (str (band-label "RESULT") " +" (count hidden) " more lines"))
-                                   :hidden-entries hidden
-                                   :collapsed? (not expanded?)
-                                   :session-id session-id
-                                   :node-id result-node-id
-                                   :duration-ms result-duration-ms})]
+                                (detail-summary-entries {:marker result-marker
+                                                         :max-w fill-w
+                                                         ;; Collapsed used to read `+N more result lines` with no
+                                                         ;; name at all - the one band whose control never said what
+                                                         ;; it folds. It wears `RESULT` in both states now, exactly
+                                                         ;; like the code band above it.
+                                                         :summary (band-label "RESULT")
+                                                         :hidden-entries hidden
+                                                         :collapsed? (not expanded?)
+                                                         :session-id session-id
+                                                         :node-id result-node-id
+                                                         :duration-ms result-duration-ms})]
 
                             (vec (concat visible summary (when expanded? hidden))))
                           :else (cond-> entries
@@ -6635,7 +6678,9 @@
                         ;; head already wears it.
                         (cond-> (mapcat #(wrap-text (form-error-headline %) fill-w)
                                         (or (:group-errors form) [error]))
-                          (and (nil? card) (some? result-duration-ms))
+                          (and (nil? card)
+                               (not (and code-node-id (seq c-lines)))
+                               (some? result-duration-ms))
                           (with-right-suffix (vis/format-duration result-duration-ms)
                                              (max 1
                                                   (- (long fill-w) (long code-text-inset-cols)))))))
@@ -6658,10 +6703,7 @@
                 (run-row-entries (vec runs) fill-w session-id false)
 
                 execution-details
-                (vec (concat inline-error-message-lines
-                             result-block
-                             artifact-block
-                             generic-run-entries))
+                (vec (concat inline-error-message-lines result-block))
 
                 ;; THE SENTENCE THAT INTRODUCES A CALL IS TRANSCRIPT TEXT, above the band and
                 ;; outside its fold. The companion prints a form's comment as an ordinary block
@@ -6676,7 +6718,12 @@
                 activity-surface
                 (when activity-run (activity-detail-entries activity-run fill-w session-id))]
 
-            (vec (concat comment-block code-block activity-surface execution-details))))
+            (vec (concat comment-block
+                         code-block
+                         (when (or (empty? code-block) code-expanded?) execution-details)
+                         artifact-block
+                         generic-run-entries
+                         activity-surface))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result
@@ -6732,7 +6779,10 @@
 
     ;; Compose recap, thinking, errors, prose and form output; the upstream coalescer
     ;; keeps at most one blank between sections and none between thinking and code.
-    (-> (vec (concat header header-lines recap-lines thinking-body trailing-errors))
+    ;; The leading neutral blank keeps one row of air under the bubble's name
+    ;; whatever the iteration opens with; coalescing folds it into a prior pad.
+    (-> (vec
+          (concat [(line-entry "")] header header-lines recap-lines thinking-body trailing-errors))
         (into (or prose-body []))
         (into body))))
 

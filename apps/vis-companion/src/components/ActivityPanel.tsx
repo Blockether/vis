@@ -276,7 +276,7 @@ function activityStepDelta(row: ActivityRow): {
  * is a bullet in a list; a dot JOINED to it is a moment on a timeline, and this
  * axis is the second thing.
  */
-function ActivityNode({ state }: { state: ActivityRow["state"] }) {
+function ActivityNode({ state, disclosure = false }: { state: ActivityRow["state"]; disclosure?: boolean }) {
   const hollow = state === "idle" || state === "cancelled";
   const edge =
     state === "failed"
@@ -295,7 +295,7 @@ function ActivityNode({ state }: { state: ActivityRow["state"] }) {
   return (
     <span
       aria-hidden="true"
-      className={`absolute -left-1 top-1 size-[9px] rounded-full border bg-ink before:absolute before:top-[3px] before:right-full before:h-px before:w-[8px] before:bg-edge-strong before:content-[''] sm:before:w-[10px] ${edge}`}
+      className={`absolute -left-1 ${disclosure ? "top-4 -translate-y-1/2 mouse:top-3" : "top-1"} size-[9px] rounded-full border bg-ink before:absolute before:top-[3px] before:right-full before:h-px before:w-[8px] before:bg-edge-strong before:content-[''] sm:before:w-[10px] ${edge}`}
     >
       {!hollow && (
         <span className={`absolute inset-0.5 rounded-full ${core}`} />
@@ -819,12 +819,12 @@ function ActivityStep({
       data-activity-depth={depth}
       className={
         nested
-          ? "relative mb-1.5 min-w-0 last:mb-0"
-          : "relative mb-4 min-w-0 pl-5 last:mb-0"
+          ? "relative mb-[var(--text-ui--line-height)] min-w-0 last:mb-0"
+          : "relative mb-[var(--text-ui--line-height)] min-w-0 pl-5 last:mb-0"
       }
     >
-      {!nested && <ActivityNode state={row.state} />}
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+      {!nested && <ActivityNode state={row.state} disclosure={Boolean(content?.length)} />}
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
         <Headline
           className={
             nested

@@ -45,6 +45,37 @@ afterEach(() => {
 });
 
 describe("execution grouping", () => {
+  it("owns source and result in one CODE disclosure before Activity", () => {
+    const view = render(<IterationTrace whole iterations={iterations([
+      { source: "print(42)\nprint(43)", stdout: "out-42\nout-43", duration_ms: 57,
+        activity: activity("succeeded", "first stage") },
+    ])} />);
+    const band = view.container.querySelector("[data-execution-code]")!;
+    // Like THINKING: a chevron leads the name, and a tally says what is folded.
+    expect(view.getByRole("button", { name: "Expand code" }).textContent).toBe("CODE +2 more");
+    expect(view.getByRole("button", { name: "Expand code" }).querySelector("svg")).not.toBeNull();
+    expect(band.querySelector("[data-code-node]")).toBeNull();
+    expect(view.queryByText("RESULT")).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Expand code" }));
+    expect(band.textContent).toContain("print(42)");
+    expect(view.getByRole("button", { name: "Collapse code" }).textContent).toBe("CODE");
+    // The RESULT is its own fold and starts closed.
+    expect(band.textContent).toContain("RESULT +2 more");
+    expect(band.textContent).not.toContain("out-42");
+    fireEvent.click(view.getByRole("button", { name: "Expand result" }));
+    expect(band.textContent).toContain("out-42");
+    expect(view.getByRole("button", { name: "Collapse result" }).querySelector("svg")).not.toBeNull();
+    expect(band.querySelector("summary")).toBeNull();
+    expect(band.querySelector("details")).toBeNull();
+    expect(band.compareDocumentPosition(view.container.querySelector("[data-activity-row]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(view.getByText("57ms")).toBeTruthy();
+    fireEvent.click(view.getByRole("button", { name: "Collapse code" }));
+    expect(view.queryByText(/RESULT/)).toBeNull();
+    act(() => setPythonCodeShown(false));
+    expect(view.getByRole("button", { name: "Expand result" })).toBeTruthy();
+    expect(view.container.textContent).not.toContain("print(42)");
+    expect(view.container.textContent).toContain("first stage");
+  });
   it("preserves ordered stages and scopes repeated invocation ids without changing wire data", () => {
     const forms = [
       {
@@ -189,6 +220,7 @@ describe("device-local source visibility", () => {
     const restored = render(<IterationTrace whole iterations={data} />);
     expect(restored.container.textContent).not.toContain("secret_source()");
     act(() => setPythonCodeShown(true));
+    fireEvent.click(restored.getByRole("button", { name: "Expand code" }));
     expect(restored.container.textContent).toContain("secret_source()");
   });
 });
@@ -221,10 +253,11 @@ it("anchors the first source line to the rail and opens the complete program aft
   expect(band.querySelector("pre")?.textContent).toContain("print(paths)");
 });
 
-it("does not offer an empty disclosure for a one-line program", () => {
+it("folds even a one-line program under the CODE header", () => {
   const view = render(
     <IterationTrace whole iterations={iterations([{ source: "print(42)" }])} />,
   );
-  expect(view.queryByRole("button", { name: "Expand code" })).toBeNull();
+  fireEvent.click(view.getByRole("button", { name: "Expand code" }));
+  expect(view.container.textContent).toContain("print(42)");
   expect(view.getByRole("button", { name: "Copy code" })).toBeTruthy();
 });

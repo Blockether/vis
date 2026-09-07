@@ -770,14 +770,25 @@ export function Disclosure({
  */
 export function BandLabel({
   className = '',
+  tone = 'accent',
   children,
 }: {
   className?: string;
+  /** The ink of the state the band reports: a failure, a stop, a call still running. */
+  tone?: 'accent' | 'err' | 'hint' | 'result';
   children: ReactNode;
 }) {
+  const ink =
+    tone === 'err'
+      ? 'text-err'
+      : tone === 'hint'
+        ? 'text-dialog-hint'
+        : tone === 'result'
+          ? 'text-code-result'
+          : 'text-accent-ink';
   return (
     <span
-      className={`select-none truncate font-mono text-chip ${BAND_NAME} text-accent-ink ${className}`}
+      className={`select-none truncate font-mono text-chip ${BAND_NAME} ${ink} ${className}`}
     >
       {children}
     </span>

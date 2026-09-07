@@ -345,7 +345,8 @@
               projected
               (:projected (first visible))]
 
-          (expect (str/includes? (:text projected) "▸ RESULT"))
+          (expect (str/includes? (:text projected) "CODE  +"))
+          (expect (str/includes? (:text projected) "▸ CODE"))
           (expect (str/includes? (:text projected) "1ms"))
           (expect (not (str/includes? (:text projected) "Execution")))
           (expect (not (str/includes? (:text projected) "chars hidden")))

@@ -51,19 +51,6 @@ const announcedStates = (root: HTMLElement) =>
 const count = (html: string, pattern: RegExp) =>
   (html.match(pattern) ?? []).length;
 
-/** Open the stdout disclosure nested inside an expanded execution receipt. */
-function openResult(container: HTMLElement): void {
-  const summary = Array.from(
-    container.querySelectorAll("details > summary"),
-  ).find((candidate) => candidate.textContent?.includes("RESULT"));
-  expect(summary).not.toBeUndefined();
-  const details = summary?.closest("details");
-  expect(details).not.toBeNull();
-  if (details) {
-    details.open = true;
-    fireEvent(details, new Event("toggle", { bubbles: true }));
-  }
-}
 
 describe("provider failure card", () => {
   // Regression, issue #167: the gateway preserved HTTP 429 on the content block,
@@ -821,8 +808,12 @@ describe("command turns expose one canonical result", () => {
     );
 
     expect(painted.container.textContent).not.toContain("PYTHON");
+    fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
     expect(painted.container.textContent).toContain("!ls");
-    openResult(painted.container);
+    // The RESULT under the code starts folded, its tally saying how much it holds.
+    expect(painted.container.textContent).toContain("RESULT +2 more");
+    expect(painted.container.textContent).not.toContain("exit 0");
+    fireEvent.click(painted.getByRole("button", { name: "Expand result" }));
     expect(painted.container.textContent).toContain("exit 0");
     expect(painted.container.textContent).toContain("README.md");
     expect(painted.container.textContent).not.toContain(
@@ -854,6 +845,7 @@ describe("a Python evaluation without detected Activity", () => {
       '[aria-label="Execution trace"]',
     )!;
     expect(receipt.getAttribute("role")).toBe("status");
+    fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
     expect(painted.container.textContent).toContain("answer = 42");
     expect(painted.container.textContent).not.toContain("0 activities");
   });
@@ -870,7 +862,7 @@ describe("a Python evaluation without detected Activity", () => {
     );
 
     expect(painted.container.textContent).toContain("29ms");
-    expect(painted.container.textContent).toContain("print(42)");
+    fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
     expect(painted.container.textContent).toContain("print(42)");
     expect(painted.container.textContent).toContain("RESULT");
     expect(painted.container.textContent).not.toContain("ACTIVITY");
@@ -1039,12 +1031,15 @@ describe("Activity follows the combined Python source", () => {
     expect(
       painted.container.querySelectorAll("[data-execution-code]"),
     ).toHaveLength(1);
-    expect(painted.container.textContent).toContain("first_form()");
+    expect(painted.container.textContent).toContain("CODE");
     fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
     expect(painted.container.textContent).toContain("second_form()");
     for (const details of painted.container.querySelectorAll("details")) {
       details.open = true;
       fireEvent(details, new Event("toggle", { bubbles: true }));
+    }
+    for (const toggle of painted.getAllByRole("button", { name: "Expand result" })) {
+      fireEvent.click(toggle);
     }
     expect(painted.container.textContent).toContain("first result");
     expect(painted.container.textContent).toContain("second result");
@@ -1106,9 +1101,9 @@ describe("Activity follows the combined Python source", () => {
       expect(
         painted.queryByRole("button", { name: "Expand execution trace" }),
       ).toBeNull();
-      expect(painted.container.textContent).toContain("line_1()");
+      expect(painted.container.textContent).toContain("CODE");
       expect(painted.container.textContent).not.toContain("line_2()");
-      expect(painted.container.textContent).toContain("RESULT");
+      expect(painted.container.textContent).not.toContain("RESULT");
       expect(painted.container.textContent).toContain("18 matches");
       expect(painted.container.textContent).not.toContain("PYTHON");
       expect(painted.container.textContent).not.toContain("line_2()");
@@ -1182,7 +1177,7 @@ describe("Activity follows the combined Python source", () => {
       (painted.container.textContent?.match(/12\.6s/g) ?? []).length;
 
     expect(elapsed()).toBe(1);
-    openResult(painted.container);
+    fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
     expect(painted.container.textContent).toContain("RESULT");
     expect(elapsed()).toBe(1);
   });
@@ -1607,16 +1602,9 @@ describe("the trace a settled row inherits from the running-turn bubble", () => 
 // reasoning band lost their own mark, and every step called itself the page's
 // "Execution trace" REGION, which put three identical landmarks on one screen.
 describe("a turn drawn as one thread", () => {
-  /** Which ring each step is wearing, top to bottom. */
+  /** Each source group has one Thinking-style CODE header, without a type icon. */
   const marks = (container: HTMLElement) =>
-    Array.from(container.querySelectorAll("[data-step-node] svg")).flatMap(
-      (mark) => {
-        const kind = Array.from(mark.classList).find((name) =>
-          /^lucide-circle-(check|dot|x|slash)$/.test(name),
-        );
-        return kind ? [kind.replace("lucide-circle-", "")] : [];
-      },
-    );
+    Array.from(container.querySelectorAll("[data-execution-code]"));
 
   it("marks every execution group, not every segment", () => {
     const { container } = render(
@@ -1627,24 +1615,21 @@ describe("a turn drawn as one thread", () => {
     expect(marks(container)).toHaveLength(2);
   });
 
-  it("keeps a step that ended badly findable from the gutter alone", () => {
+  it("does not turn source icons into failure or cancellation rings", () => {
     const { container } = render(
       <IterationTrace iterations={STORY_TURN_ITERATIONS_SETTLED} whole />,
     );
 
-    // The middle step FAILED and the last one was STOPPED before it finished:
-    // a cross and a struck-through ring, never the same mark for both.
-    expect(marks(container)).toEqual(["x", "slash"]);
+    expect(marks(container)).toHaveLength(2);
+    expect(container.querySelectorAll("[data-step-node]")).toHaveLength(0);
   });
 
-  it("leaves exactly one ring open while the turn is still moving", () => {
+  it("keeps the same source icons while invocations are running", () => {
     const { container } = render(
       <IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />,
     );
 
-    // The open ring is the LAST thing on the thread: work in progress is where
-    // the line has got to, never something the reader has to hunt for.
-    expect(marks(container)).toEqual(["check", "dot"]);
+    expect(marks(container)).toHaveLength(2);
   });
 
   // Regression, seen in the story sheet the moment the thread drew one marker
@@ -1719,7 +1704,7 @@ describe("compact execution groups", () => {
       1,
     );
     expect(painted.container.textContent).not.toContain("PYTHON");
-    expect(painted.container.textContent).toContain("first_call()");
+    expect(painted.container.textContent).toContain("CODE");
     expect(painted.container.textContent).not.toContain("first_detail()");
     fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
     expect(painted.container.textContent).toContain("first_detail()");
