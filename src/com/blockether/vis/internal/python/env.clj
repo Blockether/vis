@@ -1328,7 +1328,11 @@
   (let [retired? (true? (some-> (:python-context-retired-atom environment)
                                 deref))]
     (if-let [session (python-context-if-built environment)]
-      (and (not (contains? @disposed-sessions session)) (not retired?))
+      (and (not (contains? @disposed-sessions session))
+           (not retired?)
+           (if-let [worker (worker-of session)]
+             (pyext/worker-live? worker)
+             true))
       (boolean (and (:python-sandbox environment) (not retired?))))))
 
 (def ^:private guest-budget-ms

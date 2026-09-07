@@ -23,7 +23,8 @@
         (constantly [root])
 
         made
-        (env/create-python-context {}
+        (env/create-python-context {'worker-echo (fn [value]
+                                                   value)}
                                    roots-fn
                                    {:worker? true
                                     :worker-policy-fn (fn []
@@ -51,6 +52,29 @@
                 session
                 "import vis_introspection, vis_autoinstall\nworker_value = 41\nprint(worker_value)"))))
         (expect (= "42\n" (:stdout (env/run-python-block session "print(worker_value + 1)"))))))))
+
+(defdescribe worker-unexpected-exit-test
+             ;; Regression: a native image-library crash must not silently replace a fully
+             ;; equipped sandbox with a bare interpreter under the same context name.
+             (it "refuses a dead context and lets the next environment rebuild its tools"
+                 (with-worker-context
+                   (fn [session]
+                     (let [^Process process (:process (get @@#'worker/workers session))]
+                       (.destroyForcibly process)
+                       (expect (.waitFor process 10 java.util.concurrent.TimeUnit/SECONDS))
+                       (expect (false? (env/context-enterable? {:python-context session})))
+                       (let [answer (try (env/run-python-block session "print('must not run')")
+                                         (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                         (expect (re-find #"python-worker-retired" (str answer))))
+                       (expect (false? (worker/worker-live? session)))
+                       (with-worker-context
+                         (fn [fresh-session]
+                           (expect (not= session fresh-session))
+                           (expect (env/context-enterable? {:python-context fresh-session}))
+                           (expect (= "restored\n"
+                                      (:stdout (env/run-python-block
+                                                 fresh-session
+                                                 "print(await worker_echo('restored'))")))))))))))
 
 (defdescribe
   worker-long-home-test

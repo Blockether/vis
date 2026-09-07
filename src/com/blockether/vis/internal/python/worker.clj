@@ -348,26 +348,28 @@
        vec))
 
 (defn- live
-  "The worker for `k`, started if this is the first call or if the last one died.
-   Starting is per key and under a lock, so two turns opening the same session at
-   once share one worker instead of racing two interpreters into existence. A
-   RETIRED key is refused instead: its session has to be rebuilt first."
+  "Start a worker only for a new key. A dead or retired worker has lost its
+   namespace and host bindings; only a rebuilt environment may replace it."
   [k]
-  (when-let [reason (get @retired-workers k)]
-    (throw (ex-info (str "this session's Python worker was retired (" reason
-                         "). Its sandbox — every variable, import and tool — is gone until "
-                         "the next turn starts a fresh one; finish this turn with what you have.")
-                    {:type :vis/python-worker-retired :worker k :reason reason})))
-  (let [state (get @workers k)]
-    (if (alive? state)
-      state
-      (locking workers
-        (let [state (get @workers k)]
-          (if (alive? state)
-            state
-            (let [started (start! k)]
-              (swap! workers assoc k started)
-              started)))))))
+  (locking workers
+    (let [state
+          (get @workers k)
+
+          reason
+          (or (get @retired-workers k)
+              (when (and state (not (alive? state))) "exited unexpectedly"))]
+
+      (when reason
+        (swap! retired-workers assoc k reason)
+        (throw (ex-info (str
+                          "this session's Python worker was retired (" reason
+                          "). Its sandbox — every variable, import and tool — is gone until "
+                          "the next turn starts a fresh one; finish this turn with what you have.")
+                        {:type :vis/python-worker-retired :worker k :reason reason})))
+      (or state
+          (let [started (start! k)]
+            (swap! workers assoc k started)
+            started)))))
 
 (def ^:private INTERRUPT_REPLY_MS
   "Maximum wait for the worker control plane to acknowledge an interrupt."
