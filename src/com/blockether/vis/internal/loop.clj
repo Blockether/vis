@@ -1519,6 +1519,10 @@
         ;; the agent gets real dict ergonomics (.get / comprehensions / [k]).
         (env/bind-ctx! python-context (ctx-renderer/project-ctx snap)))
       (let [start-time (util/now-ms)
+            folds-before (long (or (get (some-> (:ctx-atom environment)
+                                                deref)
+                                        "engine_fold_count")
+                                   0))
             exec (try
                    ;; The Python sandbox surfaces its own syntax/empty-block
                    ;; errors via env/run-python-block.
@@ -1547,7 +1551,16 @@
         ;; and re-created by `restore-session-defs!` in the next process's fresh
         ;; sandbox. Best effort, after the outcome is in hand — never in its way.
         (env/persist-session-defs! python-context (:session-id environment))
-        exec))))
+        ;; Count successful operations even if their receipts were not printed or
+        ;; the rest of this block failed. Summary supersession cannot erase usage.
+        (let [folds (- (long (or (get (some-> (:ctx-atom environment)
+                                              deref)
+                                      "engine_fold_count")
+                                 0))
+                       folds-before)]
+          (cond-> exec
+            (pos? folds)
+            (assoc :vis/fold-count folds)))))))
 
 ;; Print-cap defaults for `fmt/bounded-value-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
@@ -3069,6 +3082,7 @@
                   ;; but discard superseded intents NOW. Rendering no longer has to
                   ;; refine an ever-growing fold-of-fold chain on every request.
                   (assoc ctx
+                    "engine_fold_count" (inc (long (or (get ctx "engine_fold_count") 0)))
                     "session_summaries" (into []
                                               (keep-indexed (fn [idx summary]
                                                               (when (contains? kept idx) summary)))
@@ -5564,6 +5578,9 @@
                       ;; its own durable wire event carried the same value above.
                       (some? (:activity execution))
                       (assoc :activity (:activity execution))
+
+                      (some? (:vis/fold-count execution))
+                      (assoc :vis/fold-count (:vis/fold-count execution))
 
                       ;; Provider-call identity rides onto the block so
                       ;; `blocks->forms` stamps each form envelope with the
@@ -8260,26 +8277,6 @@
                                                            (assoc :request routing))}
                                          (:error llm-provider)
                                          (assoc :error (:error llm-provider)))
-                 ;; Stamp :engine/utilization onto the ctx so the next
-                 ;; render surfaces :session/utilization (how much of
-                 ;; the window the LAST request used). :engine/* is
-                 ;; stripped before persist, so the transient count
-                 ;; never enters the durable snapshot.
-                 ;; Stamp :engine/utilization (rendered as :session/utilization
-                 ;; next iter). Monotonic — see `stamp-utilization!`: a
-                 ;; transient req=0 keeps the last value instead of blanking.
-                 _util-stamp (when-let [ca (:ctx-atom environment)]
-                               (let [u @usage-atom
-                                     req (if (pos? (long (:iter-count u)))
-                                           (long (:last-iter-input u))
-                                           (long (:previous-request-input u)))]
-
-                                 (stamp-utilization! ca
-                                                     (ctx-engine/utilization
-                                                       req
-                                                       effective-context-limit
-                                                       (:input-tokens u)
-                                                       effective-fold-budget))))
                  ;; Canonical history stays intact; folds affect only the provider projection. Each
                  ;; iteration appends its assistant replay and result, including any context change. Stamp
                  ;; the raw universe before applying folds, then price the visible projection.
@@ -8664,6 +8661,21 @@
                         ;; provider that answered, so the model budgets against the
                         ;; window it is now talking to instead of the pin's.
                         _ (stamp-served-route! environment iteration-result)
+                        ;; Publish this response's measurement before rendering its
+                        ;; context delta. Stamping at the next loop head made the
+                        ;; next model request read usage from TWO requests ago.
+                        _ (when-let [ca (:ctx-atom environment)]
+                            (let [u @usage-atom
+                                  window (iteration-context-limit max-context-tokens
+                                                                  (turn-served-model environment)
+                                                                  pre-resolved-model)]
+
+                              (stamp-utilization! ca
+                                                  (ctx-engine/utilization (:last-iter-input u)
+                                                                          window
+                                                                          (:input-tokens u)
+                                                                          (context-fold-budget
+                                                                            window)))))
                         ;; …and when the pin is the credential that died, the SESSION
                         ;; follows the rescue: the picker chip stops naming a provider
                         ;; this session cannot reach, and the next turn no longer re-pins

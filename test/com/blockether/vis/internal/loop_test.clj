@@ -128,6 +128,83 @@
            (expect (= 36000 (:input-tokens (persistance/db-session-usage-stats db sid))))
            (finally (lp/dispose-environment! environment))))))
 
+(defn- fold-usage-scenario
+  "Drive Python folding, persisted accounting and the next provider request together."
+  [fold-code]
+  (let [router
+        (svar/make-router [{:id :lmstudio
+                            :base-url "http://127.0.0.1:1234/v1"
+                            :api-key "test"
+                            :models [{:name "model" :input-limit 1000000}]}])
+
+        environment
+        (lp/create-environment router {:db :memory})
+
+        db
+        (:db-info environment)
+
+        sid
+        (:session-id environment)
+
+        tid
+        (persistance/db-store-session-turn! db
+                                            {:parent-session-id sid
+                                             :user-request "fold settled work"})
+
+        requests
+        (atom [])
+
+        steps
+        [{:input 150000 :code "print('settled evidence')"} {:input 157843 :code fold-code}
+         {:input 15614 :code "print('continue after fold')"} {:input 20736}]]
+
+    (try (with-redefs [svar/ask-code!
+                       (fn [_ opts]
+                         (let [idx (count @requests)
+                               {:keys [input code]} (nth steps idx)]
+
+                           (swap! requests conj (:messages opts))
+                           (merge {:api-usage {:input-tokens input :output-tokens 1} :tokens {}}
+                                  (if code
+                                    {:stop-reason :tool-calls
+                                     :tool-calls [{:id (str "call-" idx)
+                                                   :name "python_execution"
+                                                   :input {:code code}}]}
+                                    {:stop-reason :end :tool-calls [] :content "done"}))))]
+           (lp/iteration-loop environment "fold settled work" {:session-turn-id tid}))
+         (expect (= 4 (count @requests)))
+         (let [wire
+               (str/join "\n" (filter string? (tree-seq coll? seq (last @requests))))
+
+               readings
+               (re-seq #"last_request_tokens[^\n]*?(\d+)" wire)]
+
+           {:latest-input (some-> readings
+                                  last
+                                  second
+                                  parse-long)
+            :folds (:fold-count (persistance/db-session-usage-stats db sid))})
+         (finally (lp/dispose-environment! environment)))))
+
+(defdescribe post-fold-utilization-and-accounting-test
+             ;; Regression: a successful fold looked ineffective because the next request
+             ;; still carried pre-fold usage, and an unprinted receipt counted as zero folds.
+             (it "publishes fresh provider usage and counts a fold without its printed receipt"
+                 (expect (= {:latest-input 15614 :folds 1}
+                            (fold-usage-scenario
+                              "fold_session('-t1/i1', 'evidence retained')\nprint('folded')"))))
+             (it "counts folds invoked through a helper even when a later statement fails"
+                 (expect (= {:latest-input 15614 :folds 2}
+                            (fold-usage-scenario
+                              (str "def compact():\n    fold_session('-t1/i1', 'checkpoint')\n"
+                                   "compact()\ncompact()\nraise ValueError('after folds')")))))
+             (it "does not count fabricated receipts or a refused live-step fold"
+                 (expect (= {:latest-input 15614 :folds 0}
+                            (fold-usage-scenario
+                              (str
+                                "example = \"fold_session('-t1/i1', 'unused')\"\n"
+                                "print('folded through t1/i1')\nfold_session('t1/i2', 'live')"))))))
+
 (defdescribe
   loop-stage-logging-test
   (it "keeps routine telemetry debug-only but logs failed turns and timeouts at error level"

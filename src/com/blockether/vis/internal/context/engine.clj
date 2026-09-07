@@ -977,8 +977,8 @@
 
    `:stdout` is the single successful output surface: channels paint it and the
    model reads it back. `:error` may coexist when the block printed before it
-   failed. Duration, tool-call identity, timeout, and Activity metadata are copied
-   when present."
+   failed. Duration, tool-call identity, timeout, Activity metadata and engine-recorded
+   `:vis/fold-count` are copied when present."
   ([block position cursor] (block->envelope block position cursor nil))
   ([block _position cursor head-tag-resolver]
    (let [src
@@ -1014,6 +1014,9 @@
 
            (some? (:vis/tool-name block))
            (assoc :vis/tool-name (:vis/tool-name block))
+
+           (some? (:vis/fold-count block))
+           (assoc :vis/fold-count (:vis/fold-count block))
 
            ;; The eval wall-clock BACKSTOP fired. The flag drives the form's STATUS
            ;; (:timeout, painted like any other failure through `:error`); no card is

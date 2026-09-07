@@ -1796,38 +1796,17 @@
 
 (def ^:private empty-tally {:tools {} :folds 0})
 
-(def ^:private fold-call-re
-  "A direct fold invocation in a Python form. The non-name boundary refuses
-   lookalikes such as `my_fold_session`; a receipt below proves it actually ran."
-  #"(?m)(?:^|[^A-Za-z0-9_])(?:await[ \t]+)?fold_session[ \t]*\(")
-
-(def ^:private fold-receipt-re
-  "The stable prefix emitted only after `fold_session` records its intent."
-  #"(?m)^folded (?:through |since )?t[1-9][0-9]*(?:/i[1-9][0-9]*)?")
-
-(defn- fold-receipt-count
-  "Successful direct folds evidenced by BOTH the Python source and its stdout.
-
-   Source alone can be a comment/string or an unexecuted branch; stdout alone can
-   be arbitrary user output. Pairing and capping both counts identifies the
-   generated receipts while supporting several folds in one Python block."
-  [form]
-  (if (= "python_execution" (str (:vis/tool-name form)))
-    (min (count (re-seq fold-call-re (str (:src form))))
-         (count (re-seq fold-receipt-re (str (:stdout form)))))
-    0))
-
 (defn- forms-tally
   "ONE iteration's `{:tools {tool n} :folds n}` tally over decoded tool-call
-   `forms`. Tools are keyed by `:vis/tool-name`; folds are successful nested
-   `fold_session` receipts inside a `python_execution` form."
+   `forms`. Tools are keyed by `:vis/tool-name`; folds are engine-recorded
+   `:vis/fold-count` values, independent of source text and printed receipts."
   [forms]
   (reduce (fn [tally form]
             (let [tool
                   (str (:vis/tool-name form))
 
                   folds
-                  (fold-receipt-count form)]
+                  (long (or (:vis/fold-count form) 0))]
 
               (cond-> tally
                 (not (str/blank? tool))
@@ -1965,8 +1944,8 @@
    states, the only rows that know them.
 
    TOOL and FOLD counts live inside each iteration's Nippy `tool_calls` BLOB:
-   tools are keyed by `:vis/tool-name`; a fold is a successful `fold_session`
-   receipt nested inside a `python_execution` form. `usage-tally` thaws any one
+   tools are keyed by `:vis/tool-name`; `:vis/fold-count` records successful fold
+   operations independently of stdout. `usage-tally` thaws any one
    row's blob at most ONCE per process and memoises the merged result per
    session — a re-read costs two skinny id-only queries, a repeat read of an
    unchanged session costs nothing beyond them, and a live session pays only for

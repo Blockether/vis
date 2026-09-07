@@ -3631,10 +3631,10 @@
 ;; fold in the transcript.
 (defdescribe
   usage-fold-count-reads-transcript-test
-  "Folds are a whole-session usage fact, so the count comes from successful
-   `fold_session` receipts in immutable iteration forms, never the mutable summary ledger."
+  "Folds are a whole-session usage fact, so the count comes from engine-recorded
+   operations in immutable iteration forms, never stdout or the mutable summary ledger."
   (it
-    "counts superseded fold receipts without counting Python forms as extra tools"
+    "counts superseded folds without counting Python forms as extra tools"
     (let [s
           (h/store)
 
@@ -3650,11 +3650,11 @@
                            :idx 0
                            :code "fold twice"
                            :forms [{:vis/tool-name "python_execution"
-                                    :src (str "print(fold_session('t1/i1', 'first'))\n"
-                                              "print(fold_session('t1/i2', 'second'))")
-                                    :stdout "folded t1/i1 → first\nfolded t1/i2 → second"}
-                                   {:vis/tool-name "cat" :stdout "read\n"}]})
-      ;; Source text alone is not proof that a fold ran: no receipt, no fold.
+                                    :src (str "fold_session('t1/i1', 'first')\n"
+                                              "fold_session('t1/i2', 'second')")
+                                    :vis/fold-count 2
+                                    :stdout ""} {:vis/tool-name "cat" :stdout "read\n"}]})
+      ;; Even source plus a fabricated receipt cannot prove that a fold ran.
       (h/store-iteration! s
                           {:session-turn-id tid
                            :status :done
@@ -3662,7 +3662,7 @@
                            :code "mention only"
                            :forms [{:vis/tool-name "python_execution"
                                     :src "example = \"fold_session('t1/i3', 'not run')\""
-                                    :stdout ""}]})
+                                    :stdout "folded t1/i3 → not run"}]})
       (persistance/db-update-session-turn! s
                                            tid
                                            {:status :done
