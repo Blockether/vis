@@ -326,6 +326,7 @@
 
           (:llm-headers provider-md)
           (assoc :llm-headers (:llm-headers provider-md))
+
           (:extra-body provider-md)
           (assoc :extra-body (:extra-body provider-md))
 

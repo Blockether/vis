@@ -25,30 +25,42 @@
                      (select-keys (config/load-config false)
                                   [:providers :default-provider :default-model])))))))
 
-(defdescribe provider-preset-transport-test
-  (it "uses preset transport defaults after credentials and explicit configuration"
-    (let [preset {"X-Preset" "kept"}
-          credential {"X-Credential" "kept"}
-          explicit {"X-Configured" "kept"}]
+(defdescribe
+  provider-preset-transport-test
+  (it
+    "uses preset transport defaults after credentials and explicit configuration"
+    (let [preset
+          {"X-Preset" "kept"}
+
+          credential
+          {"X-Credential" "kept"}
+
+          explicit
+          {"X-Configured" "kept"}]
+
       (doseq [[literal-key token-headers configured-headers expected expected-path]
-              [["literal" nil nil preset "/preset-response"]
-               [nil nil nil preset "/preset-response"]
+              [["literal" nil nil preset "/preset-response"] [nil nil nil preset "/preset-response"]
                [nil credential nil credential "/credential-response"]
                [nil credential explicit explicit "/configured-response"]]]
         (with-redefs [registry/provider-by-id
-                      (constantly {:provider/preset {:llm-headers preset
-                                                      :responses-path "/preset-response"}
-                                   :provider/get-token-fn
-                                   (fn [] {:token "fixture" :llm-headers token-headers
-                                           :responses-path (when token-headers "/credential-response")})})]
+                      (constantly
+                        {:provider/preset {:llm-headers preset :responses-path "/preset-response"}
+                         :provider/get-token-fn (fn []
+                                                  {:token "fixture"
+                                                   :llm-headers token-headers
+                                                   :responses-path (when token-headers
+                                                                     "/credential-response")})})]
           (expect (= {:llm-headers expected :responses-path expected-path}
-                     (select-keys
-                       (config/->svar-provider
-                         (cond-> {:id :fixture :models [{:name "fixture-model"}]}
-                           literal-key (assoc :api-key literal-key)
-                           configured-headers (assoc :llm-headers configured-headers
-                                                     :responses-path "/configured-response")))
-                       [:llm-headers :responses-path]))))))))
+                     (select-keys (config/->svar-provider
+                                    (cond-> {:id :fixture :models [{:name "fixture-model"}]}
+                                      literal-key
+                                      (assoc :api-key literal-key)
+
+                                      configured-headers
+                                      (assoc :llm-headers
+                                        configured-headers :responses-path
+                                        "/configured-response")))
+                                  [:llm-headers :responses-path]))))))))
 
 (defdescribe
   router-opts-test

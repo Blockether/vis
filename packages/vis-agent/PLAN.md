@@ -153,13 +153,13 @@ and registration tests pass in the dependency-complete isolated environment.
 - Rationale: make the repeated SDK checks a repository-owned extension, close native acceptance with the exact CE pin, and publish only verified scoped changes.
 - Data: `.vis/extensions/sdk_checks.py`, its tests, `.graalvm-version`, `bin/require-graalvm`, installed/native suites and the product release workflows.
 - Acceptance criteria: `sdk.check` reports ordered typed gates, stops owned processes and cleans temporary environments, rejects source/artifact drift and distinguishes local-only from actual-engine verification; install the checksum-verified locked toolchain, test a release-only snapshot, mirror VIS_VERSION, commit/push/tag only after checks pass.
-- Unknowns: remote CI and release runners; PyPI requires the pending trusted publisher and protected `pypi` environment before SDK publication.
+- Unknowns: PyPI trusted-publisher setup, native publishing readiness and the companion release blockers recorded below.
 
 The repository already pins GraalVM CE 25.3.4.1 across version, vendor, assets, SHA-256
 and SDKMAN. The four pin invariants pass. Installed that exact CE release using
 `bin/require-graalvm --install --native-image` into a workspace-local toolchain directory;
 checksum and reported vendor/version both match. No downgrade, Oracle substitute or live
-service restart is involved. Release target: 0.1.43; publication is still pending.
+service restart is involved. Core release 0.1.43 is published on GitHub and Clojars.
 
 Implemented `sdk.check` as an object namespace with immutable results, ordered Activity
 steps, bounded subprocess output, timeout cleanup and disposable build/install environments.
@@ -179,15 +179,39 @@ Verification of the isolated native candidate (separate, overlapping suites):
 - The engine lifecycle fixture now owns provider configuration, HOME and JVM user.home;
   installed native tests no longer depend on developer credentials or saved providers.
 
-Rebuild and verify the final committed snapshot before tagging. Native tag publication is
-currently disabled by the repository workflow; default product releases are JVM-only.
-The public PyPI project and repository `pypi` environment are not available, so SDK package
-publication is a separate setup blocker, not a successful step.
+Final committed-snapshot and publication evidence:
+- Annotated `v0.1.43` points to `05ba30e96448063432d10e87b2a6a228c5b20baa`.
+  Tag, VIS_VERSION, current main and the green CI head agreed before the tag was pushed.
+- [Main CI](https://github.com/Blockether/vis/actions/runs/34139254583) passes all 18 jobs:
+  Linux/macOS JVM suites (4827 cases), all ten Python matrix jobs, both real-engine SDK
+  jobs, lint, classpath checks and AOT compilation.
+- Rebuilt that exact clean commit with the locked CE toolchain. The staged native wrapper
+  reports 0.1.43; all 11 SDK gates and six selected native assertions pass again. Its local
+  native artifact is explicitly stamped dry-run and was not uploaded as a stable binary.
+- The local full JVM suite is not universally green: shell-profile SDKMAN notices caused
+  fixture failures; an isolated HOME removes those, leaving two environment-sensitive
+  truststore/home-listing failures. Both full CI platform suites pass the same tests.
+- [Release v0.1.43](https://github.com/Blockether/vis/releases/tag/v0.1.43) is public.
+  The core release/Clojars job succeeded; the macOS companion DMG is attached. Release
+  automation committed its changelog separately. Unrelated working-tree edits were preserved.
+
+Remaining distribution blockers, not successful release steps:
+- Native tag publishing is disabled by repository policy; no native engine asset was published.
+- The public PyPI project and repository `pypi` environment are not available. SDK publication
+  requires trusted-publisher setup; no credentials or environment protection were changed.
+- The companion release is partial: iOS archive signing fails with `errSecInternalComponent`;
+  Windows/Linux desktop jobs use the app working directory before checkout. The Android
+  publication freeze remains in force. A separate Android CI run also reports four existing
+  Storybook accessibility failures; the 23 fixture tests changed here pass.
+- No live gateway restart, deployment outside the requested release pipeline, release-asset
+  overwrite, signing-key change or tag rewrite was performed.
 
 ## Plan state
 
-Phases 7–9 are implemented. Phase 10 has passed local SDK/native acceptance and is awaiting
-final committed-snapshot verification, main CI and product publication. No live service is restarted.
+Phases 7–9 and the SDK/native/core-release portion of phase 10 are complete. The reusable
+SDK extension is committed, main CI is green and core 0.1.43 is published. PyPI, native
+publishing and the remaining companion targets are blocked as recorded above. No live
+service was restarted.
 
 ### Historical phase 7 state
 Phase 7 is implemented and locally verified. Extension authors use `import blockether.vis.extension as vis`; engine clients use `from blockether.vis.engine import GatewayClient, LocalEngine`. The root package is inert, with no legacy aliases. The SDK bundles the private contract reader and all 24 canonical JSON resources in one wheel and rebuildable sdist; canonical Clojure/JSON sources are unchanged. The host-owned injector executes the same extension API shipped in that wheel. Consumers, documentation, version mirroring and CI use the new layout. Unrelated working-tree changes remain untouched. No commit, push, publication, deployment or runtime release was performed.
