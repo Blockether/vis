@@ -6336,7 +6336,37 @@ print(paths)"
       (expect (= long-line (str/join "" (map #(subs (strip-ansi %) 1) (butlast source)))))
       ;; The native highlighter colours the short row; every wrapped row then carries
       ;; colour too — the string spanning the fold reopens on the continuation row.
-      (when (colored? (last source)) (expect (every? colored? source))))))
+      (when (colored? (last source)) (expect (every? colored? source)))))
+  (it "closes a failed call's error rows with one blank row, like every other band"
+      (let [data
+            (render/format-answer-with-thinking-data*
+              ""
+              [{:forms
+                [{:code "print(42))"
+                  :error
+                  {:message
+                   "Unexpected `)` at line 1, col 10 - there is no open bracket for it to close."}
+                  :success? false
+                  :duration-ms 12}]}]
+              72
+              {:show-iterations true}
+              nil
+              false
+              {:session-id "error-air"
+               :detail-expansions {:vis.channel-tui/expand-all-details? true}})
+
+            lines
+            (mapv (fn [line]
+                    (str/replace line #"^." ""))
+                  (:lines data))
+
+            error-idx
+            (first (keep-indexed #(when (str/includes? %2 "to close.") %1) lines))]
+
+        (expect (some? error-idx))
+        ;; The row after the message is blank, so the red band ends on the same air
+        ;; a code band or a result band does.
+        (expect (= "" (nth lines (inc (long error-idx)) ::missing))))))
 
 (defdescribe
   activity-content-render-test

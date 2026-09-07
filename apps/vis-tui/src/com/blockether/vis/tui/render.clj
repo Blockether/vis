@@ -6702,8 +6702,14 @@
                 generic-run-entries
                 (run-row-entries (vec runs) fill-w session-id false)
 
+                ;; A failure closes with one blank error row, the same bottom edge a code
+                ;; band or a result band ends on; without it the red message sat hard
+                ;; against whatever followed while a success kept its air.
                 execution-details
-                (vec (concat inline-error-message-lines result-block))
+                (vec (concat inline-error-message-lines
+                             (when (seq inline-error-message-lines)
+                               [(line-entry (str err-result-marker ""))])
+                             result-block))
 
                 ;; THE SENTENCE THAT INTRODUCES A CALL IS TRANSCRIPT TEXT, above the band and
                 ;; outside its fold. The companion prints a form's comment as an ordinary block
