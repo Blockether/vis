@@ -586,14 +586,14 @@
       [root
        (temp-project!
          {"test/vis/fixture/core_test.clj" metadata-test-source
-          "src/vis/fixture/core.clj"
+          "src/blockether/vis/fixture/core.clj"
           "(ns ^{:clj-kondo/config '{:linters {:unused-public-var {:level :off}}}}\n    vis.fixture.core)\n"})]
       (expect
         (= ["vis.fixture.core-test"]
            (:nses
              (resolve-selection
                (.getPath root)
-               [{:path "src/vis/fixture/core.clj" :var nil}]
+               [{:path "src/blockether/vis/fixture/core.clj" :var nil}]
                []
                #'com.blockether.vis.internal.language.clojure.test-runner/test-source-file?))))))
   (it "finds a namespace declared after a leading form"

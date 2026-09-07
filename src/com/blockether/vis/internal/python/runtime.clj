@@ -29,8 +29,8 @@
 (set! *warn-on-reflection* true)
 
 (def ^:private release-base
-  "Where the platform archives live. The runtime's code is on Clojars; its
-   interpreter is too big for a maven repository and ships as a release asset."
+  "Where the platform archives live. Vis pins the runtime by immutable Git commit;
+   its JVM jar and platform interpreters are published as GitHub release assets."
   "https://github.com/Blockether/vis-python-runtime/releases/download")
 
 (defn archive-url

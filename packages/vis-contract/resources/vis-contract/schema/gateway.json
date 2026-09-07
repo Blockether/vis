@@ -38,6 +38,42 @@
         "$ref": "common.json#/$defs/non_blank_string"
       }
     },
+    "client_lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ttl_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "touch_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "keepalive_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "keepalive_timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "keepalive_route": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "semantics": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        }
+      },
+      "required": [
+        "ttl_ms",
+        "touch_ms",
+        "keepalive_ms",
+        "keepalive_timeout_ms",
+        "keepalive_route",
+        "semantics"
+      ]
+    },
     "routes": {
       "type": "array",
       "items": {
@@ -464,6 +500,7 @@
     "version",
     "protocol",
     "headers",
+    "client_lease",
     "routes",
     "events",
     "envelopes",

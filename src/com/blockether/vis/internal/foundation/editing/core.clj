@@ -2252,8 +2252,7 @@
    RENDERER (`render-grep-text`), so this is the map every shape, count, paging
    and hint assertion reads, and the rendering is pinned separately.
 
-   Search file CONTENT and match file NAMES/PATHS in one call (bound as `grep`;
-   `find_files`/`find` stay as compatibility aliases).
+   Search file CONTENT and match file NAMES/PATHS in one call, bound as `grep`.
 
      await grep({\"query\": \"grep-tool\", \"context\": 4})
      await grep({\"query\": \"channel_tui render\", \"paths\": [\"src\"], \"context\": 4, \"limit\": 20})

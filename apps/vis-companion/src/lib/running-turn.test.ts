@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import activityFixture from "./activity.fixture.json";
+import activityFixture from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json";
 import { reduceRunningTurnEvent } from "./running-turn";
 import type { SseEvent } from "./types";
 

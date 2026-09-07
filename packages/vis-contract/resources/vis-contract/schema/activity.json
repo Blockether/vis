@@ -1,0 +1,609 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/activity.json",
+  "title": "Activity contract",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "event": {
+      "const": "block.activity"
+    },
+    "presenters": {
+      "const": [
+        "generic",
+        "shell",
+        "tests",
+        "patch",
+        "observation",
+        "lint",
+        "repl",
+        "format",
+        "list"
+      ]
+    },
+    "signals": {
+      "const": [
+        "generic",
+        "observation",
+        "mutation",
+        "verification"
+      ]
+    },
+    "states": {
+      "const": [
+        "idle",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "text_formats": {
+      "const": [
+        "inline",
+        "markdown"
+      ]
+    },
+    "limits": {
+      "const": {
+        "max_rows": 128,
+        "max_depth": 2,
+        "max_resources": 8,
+        "max_receipt_bytes": 65536,
+        "max_summary_bytes": 512,
+        "max_detail_bytes": 2048,
+        "max_event_bytes": 262144,
+        "max_diff_line_bytes": 512
+      }
+    },
+    "semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ownership": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "delivery": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "lifecycle": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "counts": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "bounds": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "declaration": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "ownership",
+        "delivery",
+        "lifecycle",
+        "counts",
+        "bounds",
+        "declaration"
+      ]
+    }
+  },
+  "required": [
+    "version",
+    "event",
+    "presenters",
+    "signals",
+    "states",
+    "text_formats",
+    "limits",
+    "semantics"
+  ],
+  "$defs": {
+    "presenter": {
+      "type": "string",
+      "enum": [
+        "generic",
+        "shell",
+        "tests",
+        "patch",
+        "observation",
+        "lint",
+        "repl",
+        "format",
+        "list"
+      ]
+    },
+    "signal": {
+      "type": "string",
+      "enum": [
+        "generic",
+        "observation",
+        "mutation",
+        "verification"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "text_format": {
+      "type": "string",
+      "enum": [
+        "inline",
+        "markdown"
+      ]
+    },
+    "declaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "presenter": {
+          "$ref": "#/$defs/presenter"
+        },
+        "label": {
+          "type": "string",
+          "pattern": "\\S",
+          "maxLength": 96,
+        "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+        }
+      },
+      "required": [
+        "presenter"
+      ]
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ]
+    },
+    "diff_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "header",
+            "hunk",
+            "context",
+            "addition",
+            "deletion"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "is_redacted": {
+          "const": true
+        }
+      },
+      "required": [
+        "kind",
+        "text"
+      ]
+    },
+    "evidence": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "arguments",
+                "result",
+                "error"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "diff"
+            },
+            "text": {
+              "type": "string"
+            },
+            "lines": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/diff_line"
+              }
+            },
+            "additions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "deletions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "modifications": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "is_truncated": {
+              "type": "boolean"
+            },
+            "is_redacted": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "text",
+            "lines",
+            "additions",
+            "deletions",
+            "modifications",
+            "is_truncated",
+            "is_redacted"
+          ]
+        }
+      ]
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operation": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "presenter": {
+          "$ref": "#/$defs/presenter"
+        },
+        "signal": {
+          "$ref": "#/$defs/signal"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/resource"
+          },
+          "maxItems": 8
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "group_token": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "result_summary": {
+          "type": "string"
+        },
+        "error_summary": {
+          "type": "string"
+        },
+        "summary_format": {
+          "$ref": "#/$defs/text_format"
+        },
+        "result_format": {
+          "$ref": "#/$defs/text_format"
+        },
+        "is_truncated": {
+          "const": true
+        },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/row1"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "sequence",
+        "operation",
+        "presenter",
+        "signal",
+        "state",
+        "summary",
+        "resources",
+        "evidence"
+      ]
+    },
+    "row1": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operation": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "presenter": {
+          "$ref": "#/$defs/presenter"
+        },
+        "signal": {
+          "$ref": "#/$defs/signal"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/resource"
+          },
+          "maxItems": 8
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "group_token": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "result_summary": {
+          "type": "string"
+        },
+        "error_summary": {
+          "type": "string"
+        },
+        "summary_format": {
+          "$ref": "#/$defs/text_format"
+        },
+        "result_format": {
+          "$ref": "#/$defs/text_format"
+        },
+        "is_truncated": {
+          "const": true
+        },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/row2"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "sequence",
+        "operation",
+        "presenter",
+        "signal",
+        "state",
+        "summary",
+        "resources",
+        "evidence"
+      ]
+    },
+    "row2": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operation": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "presenter": {
+          "$ref": "#/$defs/presenter"
+        },
+        "signal": {
+          "$ref": "#/$defs/signal"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/resource"
+          },
+          "maxItems": 8
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "group_token": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "result_summary": {
+          "type": "string"
+        },
+        "error_summary": {
+          "type": "string"
+        },
+        "summary_format": {
+          "$ref": "#/$defs/text_format"
+        },
+        "result_format": {
+          "$ref": "#/$defs/text_format"
+        },
+        "is_truncated": {
+          "const": true
+        }
+      },
+      "required": [
+        "id",
+        "sequence",
+        "operation",
+        "presenter",
+        "signal",
+        "state",
+        "summary",
+        "resources",
+        "evidence"
+      ]
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "running": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "succeeded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cancelled": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "omitted": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_classification": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/signal"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "required": [
+        "rows",
+        "by_classification"
+      ]
+    },
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "counts": {
+          "$ref": "#/$defs/counts"
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/row"
+          }
+        },
+        "omitted": {
+          "$ref": "#/$defs/omitted"
+        }
+      },
+      "required": [
+        "state",
+        "counts",
+        "rows",
+        "omitted"
+      ]
+    }
+  }
+}

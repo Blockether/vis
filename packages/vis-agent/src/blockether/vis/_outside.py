@@ -19,7 +19,7 @@ import time
 import uuid
 from pathlib import Path
 
-import vis_contract
+from blockether import vis_contract
 
 __all__ = ["Refused", "answer_with", "contract", "host", "state_home"]
 

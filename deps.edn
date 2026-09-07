@@ -5,7 +5,7 @@
 ;; first, then third-party coordinates alphabetically, then aliases alphabetically.
 {;; "packages/vis-agent/src" is a RESOURCE root, not Clojure source: it holds the
  ;; distributable `vis` Python module (the one PyPI ships as `vis-agent`), which the
- ;; engine slurps off the classpath as `vis/__init__.py` and execs into every
+ ;; engine slurps off the classpath as `blockether/vis/__init__.py` and execs into every
  ;; extension context. One file, both distributions.
  :paths ["src" "resources" "packages/vis-agent/src"]
  ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
@@ -49,7 +49,7 @@
         ;; that repository's release archive, fetched once into ~/.vis/python/runtime/
         ;; (internal.python-runtime) or staged beside the native image. Git dependencies
         ;; with :deps/prep-lib require `clojure -X:deps prep` after a fresh checkout.
-        com.blockether/vis-python-runtime {:git/sha "60d5bc786a62d59d863286a35359b2bd6dbca3cd"
+        com.blockether/vis-python-runtime {:git/sha "5acd3f0e861b8735b56058ebea3bf9c5041b2291"
                                            :git/url
                                            "https://github.com/Blockether/vis-python-runtime.git"}
         com.cnuernber/charred {:mvn/version "1.041"}

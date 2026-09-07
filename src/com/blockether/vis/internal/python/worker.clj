@@ -60,6 +60,7 @@
            (java.net StandardProtocolFamily UnixDomainSocketAddress)
            (java.nio.channels SelectionKey Selector ServerSocketChannel SocketChannel)
            (java.nio.file Files)
+           (java.nio.file.attribute FileAttribute PosixFilePermissions)
            (java.util.concurrent TimeUnit)))
 
 (set! *warn-on-reflection* true)
@@ -142,6 +143,14 @@
    loading at startup, whose REGISTRATION is the gateway's and not a session's."
   "shared")
 
+(defn- worker-jvm-options
+  "Preserve runtime flags, but keep the parent's JFR recording process-local.
+   Its destination and repository are neither the worker's nor writable in its jail."
+  [options]
+  (remove #(or (str/starts-with? % "-XX:StartFlightRecording")
+               (str/starts-with? % "-XX:FlightRecorderOptions"))
+    options))
+
 (defn- child-argv
   "Start the runtime worker, never a second copy of Vis. JVM development uses
    the same Java entrypoint; native Vis requires the packaged runtime executable."
@@ -152,7 +161,7 @@
       (throw (ex-info "The Python runtime archive has no worker executable"
                       {:type :vis/python-worker-missing})))
     (vec (concat [(str (System/getProperty "java.home") File/separator "bin" File/separator "java")]
-                 (.getInputArguments (ManagementFactory/getRuntimeMXBean))
+                 (worker-jvm-options (.getInputArguments (ManagementFactory/getRuntimeMXBean)))
                  ["-cp" (System/getProperty "java.class.path") "com.blockether.vispython.Worker"
                   socket guest-dir]))))
 
@@ -249,8 +258,18 @@
         dir
         (worker-dir stamp)
 
+        ;; Keep logs under HOME, but not the AF_UNIX endpoint: home paths can
+        ;; exceed the portable 104-byte limit. A private random directory prevents
+        ;; another user connecting before our child; remove it after the handshake.
+        control-dir
+        (Files/createTempDirectory (.toPath (io/file "/tmp"))
+                                   "vis-py-"
+                                   (into-array FileAttribute
+                                               [(PosixFilePermissions/asFileAttribute
+                                                  (PosixFilePermissions/fromString "rwx------"))]))
+
         socket
-        (io/file dir "control.sock")
+        (.toFile (.resolve control-dir "control.sock"))
 
         log
         (io/file dir "worker.log")
@@ -258,9 +277,9 @@
         address
         (UnixDomainSocketAddress/of (.toPath socket))]
 
-    (with-open [server (doto (ServerSocketChannel/open StandardProtocolFamily/UNIX)
-                         (.bind address))]
+    (with-open [server (ServerSocketChannel/open StandardProtocolFamily/UNIX)]
       (try
+        (.bind server address)
         (let [library (try (python-runtime/ensure-library!)
                            (catch Throwable t
                              (tel/log! {:level :debug
@@ -311,7 +330,7 @@
               (.start thread)
               (tel/log! {:level :debug :id ::started} (str "python worker pid " (.pid process)))
               state)))
-        (finally (Files/deleteIfExists (.toPath socket)))))))
+        (finally (Files/deleteIfExists (.toPath socket)) (Files/deleteIfExists control-dir))))))
 
 (defn- alive? [state] (and state (.isAlive ^Process (:process state))))
 

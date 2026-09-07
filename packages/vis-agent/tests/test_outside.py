@@ -10,9 +10,8 @@ import inspect
 import json
 
 import pytest
-import vis
-import vis_contract
-from vis import _outside
+from blockether import vis, vis_contract
+from blockether.vis import _outside
 
 CONTRACT = _outside.contract
 

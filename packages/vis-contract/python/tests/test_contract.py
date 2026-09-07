@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
-import vis_contract
+from blockether import vis_contract
 
 
 def protocol_methods():
@@ -63,7 +63,10 @@ def test_gateway_contract_is_whole():
     by_path = {route["path"]: route for route in gateway["routes"]}
 
     assert gateway is vis_contract.CONTRACT["gateway"]
-    assert gateway["version"] == 4
+    assert gateway["version"] == 5
+    lease = gateway["client_lease"]
+    assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
+    assert 0 < lease["keepalive_timeout_ms"] < lease["keepalive_ms"]
     assert len(gateway["routes"]) == 107
     assert len(operations) == 131
     assert Counter(operation["request"] for operation in operations) == {
@@ -244,6 +247,39 @@ def test_check_host_names_the_ops_a_host_does_not_answer():
     assert "shell" in message
     assert "state_get" not in message
     assert str(vis_contract.VERSION) in message
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "ops",
+        "live",
+        "shell",
+        "version",
+        "test_runner",
+        "../view",
+        "https://example.com/schema",
+    ],
+)
+def test_schema_refuses_non_document_names(name):
+    with pytest.raises(ValueError):
+        vis_contract.schema(name)
+
+
+def test_activity_export_and_payload_free_validation():
+    assert vis_contract.ACTIVITY is vis_contract.CONTRACT["activity"]
+    declaration = {"presenter": "tests", "label": "Checking"}
+    assert vis_contract.validate("activity", "declaration", declaration) is declaration
+    for bad in (
+        {"presenter": "unknown"},
+        {"presenter": "tests", "label": "one\ntwo"},
+        {"presenter": "tests", "secret": "do-not-echo"},
+    ):
+        with pytest.raises(ValueError) as error:
+            vis_contract.validate("activity", "declaration", bad)
+        assert "do-not-echo" not in str(error.value)
+    with pytest.raises(ValueError):
+        vis_contract.validate("view", "missing-definition", {})
 
 
 def test_op_answers_one_entry_or_nothing():

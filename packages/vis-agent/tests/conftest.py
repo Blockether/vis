@@ -1,24 +1,22 @@
 """Make the package importable from the checkout, and give every test a clean host."""
 
+import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-# `vis-contract` is a dependency, not a copy: from a checkout it is the sibling
-# package, from a wheel it is whatever pip installed.
-sys.path.insert(
-    0,
-    str(Path(__file__).resolve().parents[2] / "vis-contract" / "python" / "src"),
-)
+if not os.environ.get("VIS_TEST_INSTALLED"):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    sys.path.insert(
+        0,
+        str(Path(__file__).resolve().parents[2] / "vis-contract" / "python" / "src"),
+    )
 
-# Whatever else claimed the name first — a Vis engine seeds its own `vis` into
-# `sys.modules`, and a bare `vis` directory beside the checkout makes an empty
-# namespace package — the module under test is the one in THIS checkout.
-sys.modules.pop("vis", None)
-sys.modules.pop("vis._outside", None)
+# Remove only our SDK modules, never an unrelated package named `vis`.
+sys.modules.pop("blockether.vis", None)
+sys.modules.pop("blockether.vis._outside", None)
 
 import pytest  # noqa: E402  (the path above is what makes `vis` importable)
-import vis  # noqa: E402
+from blockether import vis  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

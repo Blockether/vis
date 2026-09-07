@@ -197,6 +197,667 @@
     "live"
   ],
   "$defs": {
+    "operator_action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "submit"
+            },
+            "values": {
+              "type": "object",
+              "propertyNames": {
+                "minLength": 1
+              },
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "required": [
+            "action",
+            "values"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "cancel"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "select"
+            },
+            "node_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "item_ids": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              }
+            }
+          },
+          "required": [
+            "action",
+            "node_id",
+            "item_ids"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "const": "interrupt"
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      ]
+    },
+    "input_view": {
+      "description": "Public input View projection. Routing, validation rules and secret-storage flags stay at the host; created_at is the engine timestamp.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/request/properties/id"
+        },
+        "title": {
+          "$ref": "#/$defs/request/properties/title"
+        },
+        "description": {
+          "$ref": "#/$defs/request/properties/description"
+        },
+        "source": {
+          "$ref": "#/$defs/request/properties/source"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/input_node"
+          },
+          "minItems": 1
+        },
+        "submit_label": {
+          "$ref": "#/$defs/request/properties/submit_label"
+        },
+        "cancel_label": {
+          "$ref": "#/$defs/request/properties/cancel_label"
+        },
+        "is_cancellable": {
+          "$ref": "#/$defs/request/properties/is_cancellable"
+        },
+        "timeout_ms": {
+          "$ref": "#/$defs/request/properties/timeout_ms"
+        },
+        "session_id": {
+          "$ref": "#/$defs/request/properties/session_id"
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "fields",
+        "submit_label",
+        "cancel_label",
+        "is_cancellable",
+        "timeout_ms",
+        "created_at"
+      ]
+    },
+    "input_field": {
+      "description": "Public input fields omit engine-derived secrecy flags and executable validators. Constraints reference the same normalized field vocabulary.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/field/oneOf/0/properties/id"
+            },
+            "name": {
+              "$ref": "#/$defs/field/oneOf/0/properties/name"
+            },
+            "label": {
+              "$ref": "#/$defs/field/oneOf/0/properties/label"
+            },
+            "description": {
+              "$ref": "#/$defs/field/oneOf/0/properties/description"
+            },
+            "placeholder": {
+              "$ref": "#/$defs/field/oneOf/0/properties/placeholder"
+            },
+            "is_required": {
+              "$ref": "#/$defs/field/oneOf/0/properties/is_required"
+            },
+            "default": {
+              "$ref": "#/$defs/field/oneOf/0/properties/default"
+            },
+            "type": {
+              "$ref": "#/$defs/field/oneOf/0/properties/type"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/field/oneOf/1/properties/id"
+            },
+            "name": {
+              "$ref": "#/$defs/field/oneOf/1/properties/name"
+            },
+            "label": {
+              "$ref": "#/$defs/field/oneOf/1/properties/label"
+            },
+            "description": {
+              "$ref": "#/$defs/field/oneOf/1/properties/description"
+            },
+            "placeholder": {
+              "$ref": "#/$defs/field/oneOf/1/properties/placeholder"
+            },
+            "is_required": {
+              "$ref": "#/$defs/field/oneOf/1/properties/is_required"
+            },
+            "default": {
+              "$ref": "#/$defs/field/oneOf/1/properties/default"
+            },
+            "type": {
+              "$ref": "#/$defs/field/oneOf/1/properties/type"
+            },
+            "min_length": {
+              "$ref": "#/$defs/field/oneOf/1/properties/min_length"
+            },
+            "max_length": {
+              "$ref": "#/$defs/field/oneOf/1/properties/max_length"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/field/oneOf/2/properties/id"
+            },
+            "name": {
+              "$ref": "#/$defs/field/oneOf/2/properties/name"
+            },
+            "label": {
+              "$ref": "#/$defs/field/oneOf/2/properties/label"
+            },
+            "description": {
+              "$ref": "#/$defs/field/oneOf/2/properties/description"
+            },
+            "placeholder": {
+              "$ref": "#/$defs/field/oneOf/2/properties/placeholder"
+            },
+            "is_required": {
+              "$ref": "#/$defs/field/oneOf/2/properties/is_required"
+            },
+            "default": {
+              "$ref": "#/$defs/field/oneOf/2/properties/default"
+            },
+            "type": {
+              "$ref": "#/$defs/field/oneOf/2/properties/type"
+            },
+            "options": {
+              "$ref": "#/$defs/field/oneOf/2/properties/options"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required",
+            "options"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/field/oneOf/3/properties/id"
+            },
+            "name": {
+              "$ref": "#/$defs/field/oneOf/3/properties/name"
+            },
+            "label": {
+              "$ref": "#/$defs/field/oneOf/3/properties/label"
+            },
+            "description": {
+              "$ref": "#/$defs/field/oneOf/3/properties/description"
+            },
+            "placeholder": {
+              "$ref": "#/$defs/field/oneOf/3/properties/placeholder"
+            },
+            "is_required": {
+              "$ref": "#/$defs/field/oneOf/3/properties/is_required"
+            },
+            "default": {
+              "$ref": "#/$defs/field/oneOf/3/properties/default"
+            },
+            "type": {
+              "$ref": "#/$defs/field/oneOf/3/properties/type"
+            },
+            "min_length": {
+              "$ref": "#/$defs/field/oneOf/3/properties/min_length"
+            },
+            "max_length": {
+              "$ref": "#/$defs/field/oneOf/3/properties/max_length"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required",
+            "min_length",
+            "max_length"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/field/oneOf/4/properties/id"
+            },
+            "name": {
+              "$ref": "#/$defs/field/oneOf/4/properties/name"
+            },
+            "label": {
+              "$ref": "#/$defs/field/oneOf/4/properties/label"
+            },
+            "description": {
+              "$ref": "#/$defs/field/oneOf/4/properties/description"
+            },
+            "placeholder": {
+              "$ref": "#/$defs/field/oneOf/4/properties/placeholder"
+            },
+            "is_required": {
+              "$ref": "#/$defs/field/oneOf/4/properties/is_required"
+            },
+            "default": {
+              "$ref": "#/$defs/field/oneOf/4/properties/default"
+            },
+            "type": {
+              "$ref": "#/$defs/field/oneOf/4/properties/type"
+            },
+            "min_length": {
+              "$ref": "#/$defs/field/oneOf/4/properties/min_length"
+            },
+            "max_length": {
+              "$ref": "#/$defs/field/oneOf/4/properties/max_length"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/field/oneOf/5/properties/id"
+            },
+            "name": {
+              "$ref": "#/$defs/field/oneOf/5/properties/name"
+            },
+            "label": {
+              "$ref": "#/$defs/field/oneOf/5/properties/label"
+            },
+            "description": {
+              "$ref": "#/$defs/field/oneOf/5/properties/description"
+            },
+            "placeholder": {
+              "$ref": "#/$defs/field/oneOf/5/properties/placeholder"
+            },
+            "is_required": {
+              "$ref": "#/$defs/field/oneOf/5/properties/is_required"
+            },
+            "default": {
+              "$ref": "#/$defs/field/oneOf/5/properties/default"
+            },
+            "type": {
+              "$ref": "#/$defs/field/oneOf/5/properties/type"
+            },
+            "min_length": {
+              "$ref": "#/$defs/field/oneOf/5/properties/min_length"
+            },
+            "max_length": {
+              "$ref": "#/$defs/field/oneOf/5/properties/max_length"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/field/oneOf/6/properties/id"
+            },
+            "name": {
+              "$ref": "#/$defs/field/oneOf/6/properties/name"
+            },
+            "label": {
+              "$ref": "#/$defs/field/oneOf/6/properties/label"
+            },
+            "description": {
+              "$ref": "#/$defs/field/oneOf/6/properties/description"
+            },
+            "placeholder": {
+              "$ref": "#/$defs/field/oneOf/6/properties/placeholder"
+            },
+            "is_required": {
+              "$ref": "#/$defs/field/oneOf/6/properties/is_required"
+            },
+            "default": {
+              "$ref": "#/$defs/field/oneOf/6/properties/default"
+            },
+            "type": {
+              "$ref": "#/$defs/field/oneOf/6/properties/type"
+            },
+            "min": {
+              "$ref": "#/$defs/field/oneOf/6/properties/min"
+            },
+            "max": {
+              "$ref": "#/$defs/field/oneOf/6/properties/max"
+            },
+            "step": {
+              "$ref": "#/$defs/field/oneOf/6/properties/step"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required",
+            "min",
+            "max",
+            "step"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/field/oneOf/7/properties/id"
+            },
+            "name": {
+              "$ref": "#/$defs/field/oneOf/7/properties/name"
+            },
+            "label": {
+              "$ref": "#/$defs/field/oneOf/7/properties/label"
+            },
+            "description": {
+              "$ref": "#/$defs/field/oneOf/7/properties/description"
+            },
+            "placeholder": {
+              "$ref": "#/$defs/field/oneOf/7/properties/placeholder"
+            },
+            "is_required": {
+              "$ref": "#/$defs/field/oneOf/7/properties/is_required"
+            },
+            "default": {
+              "$ref": "#/$defs/field/oneOf/7/properties/default"
+            },
+            "type": {
+              "$ref": "#/$defs/field/oneOf/7/properties/type"
+            },
+            "options": {
+              "$ref": "#/$defs/field/oneOf/7/properties/options"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "label",
+            "is_required",
+            "options"
+          ]
+        }
+      ]
+    },
+    "input_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/group/properties/id"
+        },
+        "name": {
+          "$ref": "#/$defs/group/properties/name"
+        },
+        "type": {
+          "$ref": "#/$defs/group/properties/type"
+        },
+        "label": {
+          "$ref": "#/$defs/group/properties/label"
+        },
+        "description": {
+          "$ref": "#/$defs/group/properties/description"
+        },
+        "direction": {
+          "$ref": "#/$defs/group/properties/direction"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/input_node"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "type",
+        "direction",
+        "fields"
+      ]
+    },
+    "input_node": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/input_field"
+        },
+        {
+          "$ref": "#/$defs/input_group"
+        },
+        {
+          "$ref": "#/$defs/decor"
+        }
+      ]
+    },
+    "open_event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "input"
+            },
+            "view_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "view": {
+              "$ref": "#/$defs/input_view"
+            }
+          },
+          "required": [
+            "kind",
+            "view_id",
+            "view"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "live"
+            },
+            "view_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "view": {
+              "$ref": "#/$defs/live_view"
+            }
+          },
+          "required": [
+            "kind",
+            "view_id",
+            "view"
+          ]
+        }
+      ]
+    },
+    "close_event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "input"
+            },
+            "view_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "result": {
+              "$ref": "#/$defs/input_result"
+            }
+          },
+          "required": [
+            "kind",
+            "view_id",
+            "result"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "live"
+            },
+            "view_id": {
+              "$ref": "common.json#/$defs/non_blank_string"
+            },
+            "result": {
+              "$ref": "#/$defs/live_close"
+            }
+          },
+          "required": [
+            "kind",
+            "view_id",
+            "result"
+          ]
+        }
+      ]
+    },
+    "patch_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "live"
+        },
+        "view_id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "first_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "patch": {
+          "$ref": "#/$defs/live_patch"
+        }
+      },
+      "required": [
+        "kind",
+        "view_id",
+        "first_seq",
+        "patch"
+      ]
+    },
     "option": {
       "type": "object",
       "additionalProperties": false,
@@ -1790,6 +2451,62 @@
         "storage_uri",
         "size",
         "line_count"
+      ]
+    },
+    "input_result": {
+      "description": "Public input close receipt. Submitted values and secret handles are returned only to the waiting extension, never to the event stream.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/answer/properties/reason"
+        }
+      },
+      "required": [
+        "reason"
+      ]
+    },
+    "live_close": {
+      "description": "Public live close receipt. SSE may omit the already-streamed view; consumers retain the picture assembled from open and patch events. Journal polling may include the settled view.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "view_id": {
+          "$ref": "#/$defs/live_result/properties/view_id"
+        },
+        "is_completed": {
+          "$ref": "#/$defs/live_result/properties/is_completed"
+        },
+        "reason": {
+          "$ref": "#/$defs/live_result/properties/reason"
+        },
+        "is_from_human": {
+          "$ref": "#/$defs/live_result/properties/is_from_human"
+        },
+        "note": {
+          "$ref": "#/$defs/live_result/properties/note"
+        },
+        "view": {
+          "$ref": "#/$defs/live_result/properties/view"
+        },
+        "elided": {
+          "$ref": "#/$defs/live_result/properties/elided"
+        },
+        "summary": {
+          "$ref": "#/$defs/live_result/properties/summary"
+        },
+        "artifact_id": {
+          "$ref": "#/$defs/live_result/properties/artifact_id"
+        },
+        "error": {
+          "$ref": "#/$defs/live_result/properties/error"
+        }
+      },
+      "required": [
+        "view_id",
+        "is_completed",
+        "reason",
+        "is_from_human"
       ]
     }
   }

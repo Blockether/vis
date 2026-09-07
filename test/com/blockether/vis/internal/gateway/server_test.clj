@@ -1760,7 +1760,7 @@
                   (java.io.ByteArrayOutputStream.)
 
                   body
-                  (multi-sse-body [[sid-a 0] [sid-b 0]] false nil false)
+                  (multi-sse-body [[sid-a 0] [sid-b 0]] false nil)
 
                   fut
                   (future (try (write-body body {} baos) (catch Throwable _ nil)))]
@@ -1925,7 +1925,7 @@
                 true
                 {"type" "turn.started" "turn_id" "t-live" "session_id" sid-live})
               (let [body
-                    (multi-sse-body [[sid-live 0] [sid-idle 0]] false nil false)
+                    (multi-sse-body [[sid-live 0] [sid-idle 0]] false nil)
 
                     fut
                     (future (try (write-body body {} baos) (catch Throwable _ nil)))]
@@ -1997,7 +1997,7 @@
                 true
                 {"type" "iteration.completed" "turn_id" "t-live" "iteration" 420 "session_id" sid})
               (let [body
-                    (multi-sse-body [[sid 0]] false nil false)
+                    (multi-sse-body [[sid 0]] false nil)
 
                     fut
                     (future (try (write-body body {} baos) (catch Throwable _ nil)))]
@@ -3790,48 +3790,30 @@
       (is (= 1024 (.getMinGzipSize g))
           "Jetty's own 32-byte floor spends a deflate on bodies smaller than its header"))))
 
-;; Protocol 3 stops repeating a live view's finished picture to clients that
-;; rebuild it themselves. The negotiation is per CONNECTION, so both shapes have
-;; to keep leaving this server — a client that never announced a protocol is the
-;; oldest peer there is and still gets the copy.
-(deftest live-close-sheds-its-picture-only-for-clients-that-rebuild-it-test
-  (let [omits?
-        (rv 'omits-settled-picture?)
-
-        slim
+;; Every admitted client speaks the canonical protocol and rebuilds the picture.
+(deftest live-close-uses-one-canonical-shape-test
+  (let [slim
         (rv 'without-settled-picture)
 
-        close-frame
+        frame
         {"type" "view.close"
          "kind" "live"
          "seq" 7
-         "result" {"view" {"id" "v1" "nodes" []} "reason" "completed" "is_completed" true}}]
+         "result" {"view" {"id" "v1" "nodes" []} "reason" "completed" "is_completed" true}}
 
-    (testing "the protocol header decides, and silence means the oldest peer"
-      (is (true? (omits? {:headers {"x-vis-protocol" "3"}})))
-      (is (true? (omits? {:headers {"x-vis-protocol" "4"}})))
-      (is (false? (omits? {:headers {"x-vis-protocol" "2"}})))
-      (is (false? (omits? {:headers {}})))
-      (is (false? (omits? {:headers {"x-vis-protocol" "not-a-number"}}))))
-    (testing "only the picture goes; the verdict is the point of the frame"
-      (let [out (slim close-frame)]
-        (is (nil? (get-in out ["result" "view"])))
-        (is (= "completed" (get-in out ["result" "reason"])))
-        (is (true? (get-in out ["result" "is_completed"])))
-        (is (= 7 (get out "seq")))))
-    (testing "no other frame is touched"
-      (doseq [other [{"type" "view.open" "view" {"id" "v1"}}
-                     {"type" "view.patch" "patch" {"ops" []}}
-                     {"type" "content.block.delta" "result" {"view" "not a live close"}}]]
-        (is (= other (slim other)))))
-    (testing "a close carrying no result map is left alone rather than reshaped"
-      (is (= {"type" "view.close"} (slim {"type" "view.close"}))))))
+        out
+        (slim frame)]
 
-;; The unit case above proves the RESHAPE; this proves the WIRING — that the
-;; per-connection flag actually reaches the socket writer, and that two clients
-;; reading the same session at once are each served their own shape from one
-;; stored event.
-(deftest live-close-shape-is-per-connection-not-per-event-test
+    (is (nil? (get-in out ["result" "view"])))
+    (is (= "completed" (get-in out ["result" "reason"])))
+    (is (true? (get-in out ["result" "is_completed"])))
+    (is (= 7 (get out "seq")))
+    (doseq [other [{"type" "view.open" "view" {"id" "v1"}} {"type" "view.patch" "patch" {"ops" []}}
+                   {"type" "view.close"}
+                   {"type" "content.block.delta" "result" {"view" "not a live close"}}]]
+      (is (= other (slim other))))))
+
+(deftest live-close-canonical-shape-reaches-every-socket-test
   (with-redefs-fn {#'server/stop! (fn []
                                     nil)}
     (fn []
@@ -3847,44 +3829,36 @@
                 sid
                 (str (java.util.UUID/randomUUID))
 
-                legacy
-                (java.io.ByteArrayOutputStream.)
-
-                modern
-                (java.io.ByteArrayOutputStream.)
+                outputs
+                [(java.io.ByteArrayOutputStream.) (java.io.ByteArrayOutputStream.)]
 
                 text
-                (fn [^java.io.ByteArrayOutputStream o]
-                  (String. (.toByteArray o) "UTF-8"))
+                (fn [^java.io.ByteArrayOutputStream out]
+                  (.toString out "UTF-8"))
 
-                legacy-fut
-                (future (try (write-body (multi-sse-body [[sid 0]] false nil false) {} legacy)
-                             (catch Throwable _ nil)))
+                pumps
+                (mapv (fn [out]
+                        (future (try (write-body (multi-sse-body [[sid 0]] false nil) {} out)
+                                     (catch Throwable _ nil))))
+                      outputs)]
 
-                modern-fut
-                (future (try (write-body (multi-sse-body [[sid 0]] false nil true) {} modern)
-                             (catch Throwable _ nil)))]
-
-            (is (wait-until #(and (re-find #"subscription.ready" (text legacy))
-                                  (re-find #"subscription.ready" (text modern)))))
-            (state/append-event! sid
-                                 "view.close"
-                                 {:kind :live
-                                  :view-id "v1"
-                                  :result {:view {:id "v1" :title "Activity" :nodes []}
-                                           :reason "completed"
-                                           :is-completed true}})
-            (is (wait-until #(and (re-find #"view.close" (text legacy))
-                                  (re-find #"view.close" (text modern)))))
-            (future-cancel legacy-fut)
-            (future-cancel modern-fut)
-            (testing "a protocol-2 reader still receives the finished picture"
-              (is (re-find #"\"view\"" (text legacy)))
-              (is (re-find #"Activity" (text legacy))))
-            (testing "a protocol-3 reader receives the verdict and nothing else"
-              (is (nil? (re-find #"\"view\"" (text modern))))
-              (is (nil? (re-find #"Activity" (text modern)))))
-            (testing "the verdict itself survives on both"
-              (doseq [out [(text legacy) (text modern)]]
-                (is (re-find #"completed" out))
-                (is (re-find #"v1" out))))))))))
+            (try (is (wait-until #(every? (fn [out]
+                                            (re-find #"subscription.ready" (text out)))
+                                          outputs)))
+                 (state/append-event! sid
+                                      "view.close"
+                                      {:kind :live
+                                       :view-id "v1"
+                                       :result {:view {:id "v1" :title "Activity" :nodes []}
+                                                :reason "completed"
+                                                :is-completed true}})
+                 (is (wait-until #(every? (fn [out]
+                                            (re-find #"view.close" (text out)))
+                                          outputs)))
+                 (doseq [out (map text outputs)]
+                   (is (nil? (re-find #"\"view\"" out)))
+                   (is (nil? (re-find #"Activity" out)))
+                   (is (re-find #"completed" out))
+                   (is (re-find #"v1" out)))
+                 (finally (doseq [pump pumps]
+                            (future-cancel pump))))))))))

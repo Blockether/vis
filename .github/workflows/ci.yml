@@ -229,35 +229,6 @@ jobs:
             exit 1
           fi
 
-  # The `vis` module, its outside-the-sandbox host and the declaration both of them
-  # read are what PyPI installs as `vis-agent` and `vis-contract`, and the harness
-  # cannot run their tests: this is the one suite that needs a stock CPython on
-  # PATH. It depends on nothing the Clojure jobs build, so it runs beside them.
-  # Test on the minimum CPython version the packages advertise.
+  # The installed distributions and real HTTP/stdio SDK lifecycle share one gate.
   python-package:
-    name: tests / vis-agent + vis-contract (PyPI packages)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-      # Test the sibling packages from this checkout.
-      - name: Install the test tools
-        run: python -m pip install --disable-pip-version-check pytest ruff
-      - name: Run both package suites
-        run: python -m pytest vis-agent/tests vis-contract/python/tests -q
-      - name: Lint and format-check both packages
-        run: |
-          python -m ruff check .
-          python -m ruff format --check .
-      # Build and import the installed wheels.
-      - name: Build both wheels and import the installed pair
-        run: |
-          python -m pip install --disable-pip-version-check ./vis-contract
-          python -m pip install --disable-pip-version-check --no-deps ./vis-agent
-          cd "$RUNNER_TEMP"
-          python -c 'import vis, vis_contract; print(vis_contract.VERSION, len(vis_contract.OPS), vis.__file__)'
+    uses: ./.github/workflows/python-packages.yml

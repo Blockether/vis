@@ -43,6 +43,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from functools import cache
 
 HERE = os.path.dirname(os.path.abspath(__file__))  # <repo>/e2e
 REPO = os.path.dirname(HERE)
@@ -56,6 +57,18 @@ MODELS = [
 TIMEOUT = int(os.environ.get("VIS_E2E_TIMEOUT", "300"))
 WORKERS = int(os.environ.get("VIS_E2E_WORKERS", "5"))
 TRACES = os.environ.get("VIS_E2E_TRACES", "/tmp/vis_e2e/traces")
+
+
+@cache
+def source_classpath():
+    """Resolve once at the checkout; changing user.dir must not relocate source roots."""
+    classpath = subprocess.check_output(
+        [CLOJURE, "-Spath", "-A:vis"], cwd=REPO, text=True, timeout=120
+    ).strip()
+    return os.pathsep.join(
+        entry if os.path.isabs(entry) else os.path.join(REPO, entry)
+        for entry in classpath.split(os.pathsep)
+    )
 
 
 def literal_fold_keys(code):
@@ -257,7 +270,7 @@ def start_source_gateway():
         stop_source_gateway(gateway)
         raise RuntimeError(
             f"source gateway failed (exit {result.returncode})"
-            + (f": {detail[-1]}" if detail else "")
+            + (": " + " | ".join(detail[:6])[:800] if detail else "")
         )
     return gateway
 
@@ -315,6 +328,8 @@ def run_one(job):
         try:
             command = [
                 CLOJURE,
+                "-Scp",
+                source_classpath(),
                 f"-J-Duser.dir={work}",
                 "-M:vis",
                 "--full-trace-json-stream",

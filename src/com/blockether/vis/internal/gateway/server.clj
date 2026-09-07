@@ -103,12 +103,12 @@
    remote client is counted through its open SSE stream anyway (that one dies with
    its socket). Short enough that a client which vanished mid-flight stops pinning
    the daemon past an update."
-  120000)
+  (:ttl-ms gateway-contract/client-lease))
 
 (def ^:private CLIENT_LEASE_TOUCH_MS
   "Granularity of the lease refresh. A lease already seen this recently is not
    written again, so a busy client costs no `swap!` per request."
-  5000)
+  (:touch-ms gateway-contract/client-lease))
 
 (defonce ^:private server-state (atom nil))
 
@@ -665,32 +665,8 @@
   (some-> (get-in request [:headers "x-vis-client-pid"])
           parse-long))
 
-(def ^:private SETTLED_PICTURE_PROTOCOL
-  "First client protocol that rebuilds a live view's finished picture itself, so
-   the close frame no longer has to carry a copy of it."
-  3)
-
-(defn- omits-settled-picture?
-  "True when the client on this connection speaks a protocol that settles a live
-   view from the patches it already applied.
-
-   A missing or unparseable `x-vis-protocol` reads as the OLDEST possible peer:
-   a caller that never announced itself is handed the fullest shape rather than
-   one it may not know how to rebuild.
-
-   With `min-client-protocol` at 3 the 426 gate already turns every older peer
-   away, so today this answers true for everything that reaches a socket. It
-   stays a per-connection question because the FLOOR is what moves — a protocol
-   this decides for itself does not have to be re-derived the next time the
-   oldest served client changes."
-  [request]
-  (>= (long (or (some-> (get-in request [:headers (gateway-contract/header :protocol)])
-                        parse-long)
-                0))
-      (long SETTLED_PICTURE_PROTOCOL)))
-
 (defn- without-settled-picture
-  "Drop a live `view.close` frame's repeated `result.view` for modern peers."
+  "Drop the repeated live close picture; every supported client rebuilds it."
   [event]
   (if (and (= "view.close" (get event "type"))
            (= "live" (get event "kind"))
@@ -924,7 +900,7 @@
    each session's monotonic stream independently. Replays each session
    (events past its cursor) then drains live; an idle gap emits the shared
    heartbeat, and a dead client's IO error → unsubscribe of every session."
-  [sid+cursors proxied? owner-pid slim-close?]
+  [sid+cursors proxied? owner-pid]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
@@ -932,7 +908,7 @@
               output-stream
 
               outbound
-              (if slim-close? without-settled-picture identity)
+              without-settled-picture
 
               sub-id
               (str (java.util.UUID/randomUUID))
@@ -1072,10 +1048,7 @@
         (if (seq sid+cursors)
           {:status 200
            :headers sse-headers
-           :body (multi-sse-body sid+cursors
-                                 proxied?
-                                 (request-client-pid request)
-                                 (omits-settled-picture? request))}
+           :body (multi-sse-body sid+cursors proxied? (request-client-pid request))}
           (error-response 400 :bad-request "no valid sids"))))))
 
 ;; /metrics (§6.5)
@@ -4424,6 +4397,12 @@
     (ring-cookies/wrap-cookies)
     (wrap-errors)
     (wrap-cors)))
+
+(defn local-handler
+  "Build the SDK handler for an owned stdio engine, without opening HTTP listeners.
+   The caller owns process lifetime and must select an isolated database."
+  []
+  (app nil []))
 
 (defonce ^:private live-app
   ;; `{:handler ring-handler :fp routes-fingerprint}` — the handler Jetty

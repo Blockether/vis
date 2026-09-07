@@ -1,5 +1,8 @@
 (ns com.blockether.vis.tui.chat-test
   (:require [clojure.string :as str]
+            [clojure.java.io :as io]
+            [charred.api :as json]
+            [com.blockether.vis.contract.activity :as activity]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.chat :as chat]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -31,6 +34,9 @@
         (sequential? value) (mapv wire-canonical value)
         (keyword? value) (subs (str value) 1)
         :else value))
+
+(def ^:private activity-fixture
+  (json/read-json (slurp (io/resource "vis-contract/fixtures/activity.json"))))
 
 (defn- compose-transcript
   [sid]
@@ -517,56 +523,86 @@
                    (expect (not (str/includes? rendered "Provider openai-codex")))
                    (expect (not (str/includes? rendered "HTTP"))))))
 
-(defdescribe gateway-event-chunk-test
-             ;; The gateway wire event ships the raw `:code`; the TUI renders it directly
-             ;; (the canonical web `block-code` contract), so the projection just carries
-             ;; `:code` straight through — no `:render-segments` reconstruction.
-             (let [g->c @#'chat/gateway-event->chunk]
-               (it "block.started carries the raw code straight through"
-                   (let [chunk (g->c {"type" "block.started"
-                                      "iteration" 1
-                                      "form_index" 0
-                                      "code" "git_status()\nprint(42)"})]
-                     (expect (= :form-start (:phase chunk)))
-                     (expect (= "git_status()\nprint(42)" (:code chunk)))))
-               (it "block.output carries the raw code + stdout straight through"
-                   (let [chunk (g->c {"type" "block.output"
-                                      "iteration" 1
-                                      "form_index" 0
-                                      "code" "git_status()"
-                                      "stdout" "ok"})]
-                     (expect (= :form-result (:phase chunk)))
-                     (expect (= "git_status()" (:code chunk)))
-                     (expect (= "ok" (:stdout chunk)))))
-               (it "block.activity projects the form-owned replacement into the progress reducer"
-                   (let [chunk (g->c {"type" "block.activity"
-                                      "iteration" 1
-                                      "form_index" 0
-                                      "activity" {"state" "succeeded" "rows" []}})]
-                     (expect (= :form-activity (:phase chunk)))
-                     (expect (= 0 (:position chunk)))
-                     (expect (= {:state "succeeded" :rows []} (:activity chunk)))))
-               (it "typed reasoning block delta projects onto :thinking"
-                   (let [chunk (g->c {"type" "content.block.delta"
-                                      "iteration" 2
-                                      "block_id" "t1:reasoning:2"
-                                      "field" "text"
-                                      "text" "ponder"
-                                      "cumulative" "pondering"})]
-                     (expect (= :reasoning (:phase chunk)))
-                     (expect (= 2 (:iteration chunk)))
-                     (expect (= "pondering" (:thinking chunk)))))
-               (it "block.preview remains a block preview rather than reasoning/content"
-                   (let [chunk (g->c {"type" "block.preview"
-                                      "iteration" 1
-                                      "form_index" 0
-                                      "code" "print(4"
-                                      "op" "grep"
-                                      "tool_call_id" "call_1"})]
-                     (expect (= :tool-preview (:phase chunk)))
-                     (expect (= "print(4" (:code chunk)))
-                     (expect (= "grep" (:op chunk)))
-                     (expect (= "call_1" (:svar/tool-call-id chunk)))))))
+(defdescribe
+  gateway-event-chunk-test
+  ;; The gateway wire event ships the raw `:code`; the TUI renders it directly
+  ;; (the canonical web `block-code` contract), so the projection just carries
+  ;; `:code` straight through — no `:render-segments` reconstruction.
+  (let [g->c @#'chat/gateway-event->chunk]
+    (it "block.started carries the raw code straight through"
+        (let [chunk (g->c {"type" "block.started"
+                           "iteration" 1
+                           "form_index" 0
+                           "code" "git_status()\nprint(42)"})]
+          (expect (= :form-start (:phase chunk)))
+          (expect (= "git_status()\nprint(42)" (:code chunk)))))
+    (it "block.output carries the raw code + stdout straight through"
+        (let [chunk (g->c {"type" "block.output"
+                           "iteration" 1
+                           "form_index" 0
+                           "code" "git_status()"
+                           "stdout" "ok"})]
+          (expect (= :form-result (:phase chunk)))
+          (expect (= "git_status()" (:code chunk)))
+          (expect (= "ok" (:stdout chunk)))))
+    (it "block.activity projects the form-owned replacement into the progress reducer"
+        (let [chunk
+              (g->c
+                {"type" "block.activity" "iteration" 1 "form_index" 0 "activity" activity-fixture})]
+          (expect (= :form-activity (:phase chunk)))
+          (expect (= 0 (:position chunk)))
+          (expect (= (activity/from-wire activity-fixture) (:activity chunk)))
+          (doseq [invalid [(assoc activity-fixture "schema_version" 1)
+                           {"state" "succeeded" "rows" []}]]
+            (expect (nil? (g->c {"type" "block.activity"
+                                 "iteration" 1
+                                 "form_index" 0
+                                 "activity" invalid}))))))
+    (it "reads the canonical SDK input/live View lifecycle without an Activity detour"
+        (let [samples (json/read-json (slurp (io/resource "vis-contract/fixtures/view.json")))
+              input (get samples "input")
+              live (get samples "live")
+              patch (get samples "patch")
+              answer (get samples "input_result")
+              result (get samples "result")]
+
+          (expect (= {:phase :human-input-open :request input}
+                     (g->c {"type" "view.open" "kind" "input" "view_id" "input-one" "view" input})))
+          (expect (= {:phase :live-view-open :view live}
+                     (g->c {"type" "view.open" "kind" "live" "view_id" "live-one" "view" live})))
+          (expect (= {:phase :live-view-patch :patch patch}
+                     (g->c {"type" "view.patch"
+                            "kind" "live"
+                            "view_id" "live-one"
+                            "first_seq" 1
+                            "patch" patch})))
+          (expect (= {:phase :human-input-close :request-id "input-one" :reason "submitted"}
+                     (g->c
+                       {"type" "view.close" "kind" "input" "view_id" "input-one" "result" answer})))
+          (expect (= {:phase :live-view-close :view-id "live-one" :result result}
+                     (g->c
+                       {"type" "view.close" "kind" "live" "view_id" "live-one" "result" result})))))
+    (it "typed reasoning block delta projects onto :thinking"
+        (let [chunk (g->c {"type" "content.block.delta"
+                           "iteration" 2
+                           "block_id" "t1:reasoning:2"
+                           "field" "text"
+                           "text" "ponder"
+                           "cumulative" "pondering"})]
+          (expect (= :reasoning (:phase chunk)))
+          (expect (= 2 (:iteration chunk)))
+          (expect (= "pondering" (:thinking chunk)))))
+    (it "block.preview remains a block preview rather than reasoning/content"
+        (let [chunk (g->c {"type" "block.preview"
+                           "iteration" 1
+                           "form_index" 0
+                           "code" "print(4"
+                           "op" "grep"
+                           "tool_call_id" "call_1"})]
+          (expect (= :tool-preview (:phase chunk)))
+          (expect (= "print(4" (:code chunk)))
+          (expect (= "grep" (:op chunk)))
+          (expect (= "call_1" (:svar/tool-call-id chunk)))))))
 
 (defdescribe
   turn-progress-event-chunk-test
@@ -636,56 +672,49 @@
                      (expect (= :provider-unavailable (get-in chunk [:event :reason])))
                      (expect (= "openai" (get-in chunk [:event :provider])))))))
 
-(defdescribe restore-block-record-test
-             ;; The restore chain — persisted envelope → `envelope->block` → `block->form-record`
-             ;; — used to be TWO hand-listed projections, so a display field either forgot
-             ;; silently vanished on RESUME while the live stream kept it (exactly how
-             ;; the card's own `:op` identity was dropped). Both
-             ;; builders now project through `vis/form->display` (the ONE display-key
-             ;; projection). This guard drives a PERSISTED-SHAPED envelope through the REAL
-             ;; restore entry (`it->iteration-entry`) so a drop anywhere in the chain fails.
-             (let [it->ie
-                   @#'chat/it->iteration-entry
+(defdescribe
+  restore-block-record-test
+  ;; The restore chain — persisted envelope → `envelope->block` → `block->form-record`
+  ;; — used to be TWO hand-listed projections, so a display field either forgot
+  ;; silently vanished on RESUME while the live stream kept it (exactly how
+  ;; the card's own `:op` identity was dropped). Both
+  ;; builders now project through `vis/form->display` (the ONE display-key
+  ;; projection). This guard drives a PERSISTED-SHAPED envelope through the REAL
+  ;; restore entry (`it->iteration-entry`) so a drop anywhere in the chain fails.
+  (let [it->ie
+        @#'chat/it->iteration-entry
 
-                   restore
-                   (fn [env]
-                     (-> (it->ie {:produced-answer? false :last-iteration-id :iter-1}
-                                 (wire-canonical {:id :iter-1 :code (:src env) :forms [env]}))
-                         :forms
-                         first))]
+        restore
+        (fn [env]
+          (-> (it->ie {:produced-answer? false :last-iteration-id :iter-1}
+                      (wire-canonical {:id :iter-1 :code (:src env) :forms [env]}))
+              :forms
+              first))]
 
-               ;; Regression: a settled envelope carried the step's Activity and the
-               ;; restore chain dropped it, so a REOPENED session showed each step's
-               ;; program and its result with no record of what the step CALLED.
-               (it "a restored envelope keeps the Activity the step recorded"
-                   (let [rec
-                         (restore {:scope "t1/i1"
-                                   :src "print(1)"
-                                   :stdout "1\n"
-                                   :activity {:state "succeeded"
-                                              :counts {:succeeded 1}
-                                              :rows [{:presenter "observation"
-                                                      :title "Searched"}]}})
+    ;; Regression: a settled envelope carried the step's Activity and the
+    ;; restore chain dropped it, so a REOPENED session showed each step's
+    ;; program and its result with no record of what the step CALLED.
+    (it "a restored envelope keeps the Activity the step recorded"
+        (let [rec
+              (restore {:scope "t1/i1" :src "print(1)" :stdout "1\n" :activity activity-fixture})
 
-                         activity
-                         (:activity rec)]
+              activity
+              (:activity rec)]
 
-                     (expect (= "succeeded" (:state activity)))
-                     (expect (= 1 (count (:rows activity))))
-                     (expect (= "Searched" (:title (first (:rows activity)))))))
-               (it "a restored stdout envelope keeps its card identity"
-                   (let [rec
-                         (restore {:scope "t1/i1"
-                                   :tag :host
-                                   :src "print(await grep(query='defn', paths=['src']))"
-                                   :op "grep"
-                                   :stdout "a.clj:1: x\n"})
+          (expect (= (com.blockether.vis.contract.activity/from-wire activity-fixture) activity))))
+    (it "a restored stdout envelope keeps its card identity"
+        (let [rec
+              (restore {:scope "t1/i1"
+                        :tag :host
+                        :src "print(await grep(query='defn', paths=['src']))"
+                        :op "grep"
+                        :stdout "a.clj:1: x\n"})
 
-                         card
-                         (vis/result-card rec)]
+              card
+              (vis/result-card rec)]
 
-                     (expect (= "grep" (:op card)))
-                     (expect (str/includes? (:body card) "a.clj:1: x"))))))
+          (expect (= "grep" (:op card)))
+          (expect (str/includes? (:body card) "a.clj:1: x"))))))
 
 ;; Regression: a FAILED provider turn's styled card must survive the
 ;; `turn!`/`attach!` fold. Those fold the engine's provider-error IR onto

@@ -1030,7 +1030,7 @@
          :omitted {:rows 0 :by-classification {}}}
 
         file
-        (companion-fixture-file "activity.fixture.json")
+        (io/resource "vis-contract/fixtures/activity.json")
 
         fixture
         (some-> file

@@ -1,6 +1,8 @@
 (ns com.blockether.vis.internal.activity.core-test
   (:require [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as event]
+            [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.contract.activity :as contract]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- event-pair
@@ -30,6 +32,26 @@
 
                               (not= outcome :succeeded)
                               (assoc :error (ex-info (str result) {}))))])))
+
+(defdescribe canonical-presentation-test
+             (it "keeps required lines for an empty structured diff"
+                 (let [evidence (#'activity/presentation-evidence
+                                 {:kind :diff
+                                  :text "file.clj"
+                                  :lines []
+                                  :additions 0
+                                  :deletions 0
+                                  :modifications 0
+                                  :is-truncated false
+                                  :is-redacted false})]
+                   (expect (= [] (:lines evidence)))
+                   (expect (document/valid? "activity" "evidence" evidence))))
+             (it "produces a contract-valid receipt for every terminal outcome"
+                 (doseq [outcome [:succeeded :failed :cancelled]]
+                   (let [projection (-> (event-pair (event/context) :check outcome "result")
+                                        activity/replay
+                                        activity/presentation)]
+                     (expect (contract/valid-projection? projection))))))
 
 (defdescribe
   activity-reducer-test

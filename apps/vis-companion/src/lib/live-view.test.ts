@@ -1,6 +1,7 @@
 /** The TypeScript materializer against `internal.view.materializer` laws. */
 import { describe, expect, it } from 'vitest';
 import fixture from './live-view.fixture.json';
+import canonical from '../../../../packages/vis-contract/resources/vis-contract/fixtures/view.json';
 import {
   applyLivePatch,
   applyLiveViewEvent,
@@ -18,6 +19,15 @@ import {
 } from './live-view';
 import type { SseEvent } from './types';
 import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, isViewEvent } from './view';
+
+it('materializes the canonical SDK live View lifecycle', () => {
+  const opened = liveViewFromWire(canonical.live);
+  expect(opened?.id).toBe('live-one');
+  if (!opened) throw new Error('canonical live View must be paintable');
+  const patched = applyLivePatch(opened, { type: VIEW_PATCH_EVENT, kind: 'live', view_id: canonical.live.id, first_seq: 1, patch: canonical.patch });
+  expect(patched.nodes[0]).toMatchObject({ id: 'status', text: 'Done', tone: 'ok' });
+  expect(patched.nodes).toEqual(canonical.result.view.nodes);
+});
 
 /** The engine's own fixture, read the way the section reads a snapshot. */
 function opened(): LiveView {

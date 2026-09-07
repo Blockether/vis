@@ -90,7 +90,7 @@
                 (pyext/eval-str
                   pyext/shared-key
                   ctx
-                  "','.join(sorted(n for n in vars(__import__('vis')._host) if not n.startswith('_')))")
+                  "','.join(sorted(n for n in vars(__import__('blockether.vis', fromlist=['vis'])._host) if not n.startswith('_')))")
                 (str/split #","))))
           (finally (pyx/close-context! ctx)))))
     (it "batches on the window the document declares"
@@ -101,5 +101,8 @@
           (try (pyx/bind-inert-host! ctx nil)
                (pyext/exec! pyext/shared-key ctx pyx/bootstrap-python)
                (expect (= (str (:live/flush-ms (contract/live-vocabulary)))
-                          (pyext/eval-str pyext/shared-key ctx "str(__import__('vis')._FLUSH_MS)")))
+                          (pyext/eval-str
+                            pyext/shared-key
+                            ctx
+                            "str(__import__('blockether.vis', fromlist=['vis'])._FLUSH_MS)")))
                (finally (pyx/close-context! ctx)))))))

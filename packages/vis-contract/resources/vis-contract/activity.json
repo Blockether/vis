@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "event": "block.activity",
+  "presenters": [
+    "generic",
+    "shell",
+    "tests",
+    "patch",
+    "observation",
+    "lint",
+    "repl",
+    "format",
+    "list"
+  ],
+  "signals": [
+    "generic",
+    "observation",
+    "mutation",
+    "verification"
+  ],
+  "states": [
+    "idle",
+    "running",
+    "succeeded",
+    "failed",
+    "cancelled"
+  ],
+  "text_formats": [
+    "inline",
+    "markdown"
+  ],
+  "limits": {
+    "max_rows": 128,
+    "max_depth": 2,
+    "max_resources": 8,
+    "max_receipt_bytes": 65536,
+    "max_summary_bytes": 512,
+    "max_detail_bytes": 2048,
+    "max_event_bytes": 262144,
+    "max_diff_line_bytes": 512
+  },
+  "semantics": {
+    "ownership": "A projection belongs to its containing form. Only the event envelope carries session, turn, iteration and form_index. Activity is not a View and never enters model context.",
+    "delivery": "Each block.activity is a complete replacement, not a delta. Envelope seq orders revisions. Reconnect replays the latest replacement; settled evidence is durable.",
+    "lifecycle": "The engine allocates invocation identity and entry sequence, records running before execution, and exactly one succeeded, failed or cancelled result. Presentation cannot control the operation.",
+    "counts": "Counts describe observed invocations, including omitted rows. Group rows are presentation, not additional invocations. omitted.by_classification counts omitted evidence by signal.",
+    "bounds": "Redact credential-bearing structured fields before summarizing; enforce UTF-8 byte limits. Row ids are globally unique within a projection. At most max_rows top-level rows and max_depth child edges. Omission is explicit, never invented success.",
+    "declaration": "Extensions may select a closed presenter and a static non-secret label. They cannot author ids, timestamps, states or progress events. Tool observation/mutation tag remains the authority for effect classification."
+  }
+}

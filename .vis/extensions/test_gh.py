@@ -16,7 +16,7 @@ from dataclasses import FrozenInstanceError
 
 import gh
 import pytest
-import vis
+from blockether import vis
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 

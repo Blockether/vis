@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-09-05.
+> Generated 2026-09-06.
 
 Vis is a coding agent that writes Python into a sandboxed CPython runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -197,7 +197,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.159` | Apache-2.0 | 615 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.39` | MIT | 175 KB | Blockether (in-house) |
-| `com.blockether/vis-python-runtime` | `git:60d5bc786a62d59d863286a35359b2bd6dbca3cd` | MIT | source checkout | Blockether (in-house) |
+| `com.blockether/vis-python-runtime` | `git:5acd3f0e861b8735b56058ebea3bf9c5041b2291` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.fasterxml.jackson.core/jackson-core` | `2.22.1` | Apache-2.0 | 580 KB | 3rd-party |
 | `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.22.1` | Apache-2.0 | 72 KB | 3rd-party |
@@ -218,7 +218,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `io.github.clj-holmes/clj-watson` | `git:be98e4db74fb8927db4825cc73bbe2606e44e5e3` | EPL-2.0 | source checkout | 3rd-party |
 | `io.github.clojure/tools.build` | `0.10.14` | EPL-1.0 | 32 KB | 3rd-party |
 | `io.github.java-diff-utils/java-diff-utils` | `4.17` | Apache-2.0 | 77 KB | 3rd-party |
-| `io.github.noahtheduke/lazytest` | `2.0.0` | EPL-1.0 | 46 KB | 3rd-party |
+| `io.github.noahtheduke/lazytest` | `2.1.0` | EPL-1.0 | 47 KB | 3rd-party |
 | `io.github.tonsky/clojure-plus` | `1.7.2` | MIT | 33 KB | 3rd-party |
 | `metosin/reitit-ring` | `0.10.1` | EPL-1.0 | 9 KB | 3rd-party |
 | `nrepl/nrepl` | `1.7.0` | EPL-1.0 | 103 KB | 3rd-party |

@@ -1,9 +1,10 @@
 (ns com.blockether.vis.internal.activity.presenter
   "Closed semantic presenter registry for Activity rows. Presenters return data,
    never channel markup, and never inspect Python source."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.contract.activity :as contract]))
 
-(def presenters #{:generic :shell :tests :patch :observation :lint :repl :format :list})
+(def presenters contract/presenters)
 
 (defn presenter-for
   "The explicitly declared presenter, or the bounded generic fallback."

@@ -48,7 +48,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass
 
-import vis
+from blockether import vis
 
 # `gh run view --json <these>` is the whole payload the view is built from: one call per poll.
 RUN_FIELDS = "jobs,status,conclusion,workflowName,headBranch,url,displayTitle,number,event,databaseId"

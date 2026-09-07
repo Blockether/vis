@@ -27,7 +27,10 @@
   gateway-contract-test
   (it
     "loads a closed, independently owned gateway declaration"
-    (expect (= 4 contract/version))
+    (expect (= 5 contract/version))
+    (let [{:keys [ttl-ms touch-ms keepalive-ms keepalive-timeout-ms]} contract/client-lease]
+      (expect (< 0 touch-ms keepalive-ms ttl-ms))
+      (expect (< 0 keepalive-timeout-ms keepalive-ms)))
     (expect (= 107 (count contract/route-table)))
     (expect (= 131 (count (contract/route-methods))))
     (expect (= {:none 92 :json 35 :binary 4}
@@ -46,7 +49,7 @@
             devices
             (first (filter #(= "/v1/devices" (get % "path")) (get gateway "routes")))]
 
-        (expect (= 4 (get gateway "version")))
+        (expect (= 5 (get gateway "version")))
         (expect (= {"request" "none" "response" "json"} (get-in devices ["operations" "get"])))
         (expect (= {"request" "json" "response" "json"} (get-in devices ["operations" "post"])))
         (expect (= (sort (get-in gateway ["events" "session"]))

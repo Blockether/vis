@@ -75,7 +75,7 @@ Channels, persistence backends and sandbox shims stay Clojure-side. The separate
 ```python
 # ~/.vis/extensions/greeter.py
 """Greeter — smallest possible tool extension."""
-import vis
+from blockether import vis
 
 
 def greeter_hello(name):
@@ -100,13 +100,13 @@ This repo ships its own project-local extensions under `.vis/extensions/` —
 
 ### Outside Vis — `pip install vis-agent`
 
-The `vis` module is a real package: the same `vis/__init__.py` the engine injects
+The `blockether.vis` module is a real package: the same `blockether/vis/__init__.py` the engine injects
 into the sandbox is what `packages/vis-agent` publishes to PyPI as `vis-agent`,
 so an extension file is importable, testable and lintable in an ordinary Python
 process — `pip install vis-agent` once a release has uploaded it, or
 `pip install ./packages/vis-agent` from a checkout of this repository.
 
-With no engine on the other side the module binds `vis._outside` instead — a
+With no engine on the other side the module binds `blockether.vis._outside` instead — a
 local host implementing every op in the declaration `vis-contract` ships: state,
 secrets, logging and `shell` run against the machine you are on, the jailed
 sandbox ops refuse by name rather than pretend to be a sandbox, and
@@ -121,7 +121,7 @@ Neither host is special: `vis` calls every op the contract declares on whatever 
 its `_host`, and `vis_contract.Host` is that interface — a `typing.Protocol`, with
 `vis_contract.check_host(obj)` refusing an object that misses an op and naming the
 ones it missed. A third runtime that wants to run extension files implements it and
-seeds it; the engine seeds one, `vis._outside` builds one, and the file cannot tell.
+seeds it; the engine seeds one, `blockether.vis._outside` builds one, and the file cannot tell.
 
 ### `vis.extension(...)`
 
@@ -154,7 +154,7 @@ checkout it maintains — through `vis.fs`, and those calls do the work in C,
 inside the runtime, past the confinement that exists for the model's sandbox:
 
 ```python
-import vis
+from blockether import vis
 
 vis.fs.mkdir("~/.cache/acme")                     # every parent too
 vis.fs.write("~/.cache/acme/state.json", payload)  # str or bytes
@@ -255,8 +255,8 @@ vis.extension(
 ### Tools
 
 ```python
-vis.symbol(fn_or_object, name=None, tag="observation", is_hidden=False)
-vis.method(fn=None, *, tag="observation", is_hidden=False)
+vis.symbol(fn_or_object, name=None, tag="observation", is_hidden=False, activity=None)
+vis.method(fn=None, tag="observation", is_hidden=False, activity=None)
 ```
 
 - `tag` declares what the tool does: `"observation"` (reads state) or `"mutation"`
@@ -273,6 +273,13 @@ vis.method(fn=None, *, tag="observation", is_hidden=False)
 - Parameter names are read from the real signature and shown to the model — name
   them the way the model should type them.
 - `is_hidden=True` hides the tool from the model-facing listing (still callable).
+- `activity=vis.Activity(presenter="tests", label="Run checks")` declares presentation,
+  not execution. The engine owns identity, state, timing, redaction and bounds; the
+  observation/mutation `tag` remains authoritative. Labels are static non-secret text.
+  Put Activity metadata on each `vis.method` when exporting an object namespace, not
+  on the namespace itself. Activity is a `block.activity` replacement projection,
+  never a View or a model-context block. The normative vocabulary and semantics are
+  in the [Activity contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/activity.json).
 - Boolean keys keep **one spelling** across the boundary: a Python `is_<name>` key
   is the Clojure `:is-<name>` keyword — the same mechanical `_` ↔ `-` mirror the
   gateway wire uses (`wire-key` / `engine-key` in `contract/wire.clj`). A provider's
@@ -319,8 +326,9 @@ ordinary Python objects become namespace nodes recursively. Names beginning with
 values are rejected with their full path instead of being silently serialized, and
 cycles or repeated object references are rejected with both conflicting paths.
 
-`vis.method(...)` overrides `tag` or `is_hidden` for one leaf; otherwise the enclosing
-`vis.symbol(...)` defaults apply. Every leaf keeps its signature and docstring under
+`vis.method(...)` overrides `tag` or `is_hidden` for one leaf and can declare its
+Activity presentation; otherwise the enclosing `vis.symbol(...)` defaults apply.
+Every leaf keeps its signature and docstring under
 its full dotted name in `apropos`/`doc`, and runs through the same deferred worker and
 result envelope as a flat tool. Namespace values themselves have a concise readable
 representation in `python_execution` rather than exposing runtime class names or
@@ -669,7 +677,7 @@ the same two as an `h3` and a `p`.
 
 ### Builders instead of dicts
 
-A field is a dict, and a dict is easy to misspell. The `vis` module ships one
+A field is a dict, and a dict is easy to misspell. The `blockether.vis` module ships one
 builder per node type: the type is the function you call, and the node is checked
 the moment it is built, so a bad `default` or an unknown key raises at the line
 that wrote it instead of in front of the human.
@@ -829,7 +837,7 @@ human watches it in the terminal, in the companion app, or both.
 ```python
 import json
 
-import vis
+from blockether import vis
 
 TONES = {"": "running", "success": "ok", "skipped": "idle"}  # anything else is an error
 
@@ -1352,7 +1360,7 @@ out of the active session, records only what the extension emitted, and lets a t
 simulate surface actions against the same materialized state:
 
 ```python
-import vis
+from blockether import vis
 
 recorder = vis.testing.LiveRecorder(vis._host)
 monkeypatch.setattr(vis, "_host", recorder)

@@ -2,7 +2,7 @@
   "Backend for file-picking UIs (the `@` mention picker, TUI + web).
 
    Everything here rides the ONE canonical pooled fff index
-   (`internal.fff-index`) that the `grep` / `find_files` tools use: fff owns the
+   (`internal.fff-index`) that the `grep` tool use: fff owns the
    tree walk, the gitignore policy, the git-status metadata and the
    frecency-ranked fuzzy match. This namespace only leases that index and turns
    fff rows into display rows.
@@ -51,7 +51,7 @@
 
 (defn cwd-lease
   "The canonical pooled-fff lease for the current workspace cwd: gitignore
-   respected, exactly like the `@` picker and the `find_files` tool. Every
+   respected, exactly like the `@` picker and the `grep` tool. Every
    picker search goes through this so the UI shares ONE index with the search
    tools instead of scanning the tree again per popup."
   []
@@ -71,7 +71,7 @@
 
 (defn fuzzy-file-rows
   "Frecency-ranked, typo-tolerant fuzzy file search via fff — the SAME pooled
-   index (and therefore the same ranking) the `grep`/`find_files` tools use.
+   index (and therefore the same ranking) the `grep` tool use.
    Returns display rows (`:path :label :status-label :size-label :age-label`),
    capped at `limit`.
 

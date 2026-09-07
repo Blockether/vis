@@ -278,11 +278,7 @@
    marker) is dropped; a trailing `?` (predicate) becomes an `is_` prefix. So
    `git/status` -> `git_status`, `git/commit!` -> `git_commit`, and `file-exists` ->
    `file_exists`. FULL SNAKE:
-   this is how the agent reaches the tools — `git_status()` calls `git/status`.
-
-   A tiny compatibility alias layer may additionally expose selected historical
-   short names (currently `find_files`/`find` for `grep`), but the snake name remains
-   canonical."
+   this is how the agent reaches the tools — `git_status()` calls `git/status`."
   ^String [sym]
   (let [s
         (str sym)
@@ -298,27 +294,6 @@
             (str/replace "-" "_"))]
 
     (if pred? (str "is_" base) base)))
-
-(defn- py-aliases-for-sym
-  "Additional Python names intentionally accepted for a Clojure tool symbol.
-   Keep tiny: aliases are prompt/API compatibility, not another naming scheme."
-  [sym]
-  (case sym
-    grep
-    ["find_files" "find"]
-
-    find_files
-    ["find"]
-
-    ;; `grep` is canonical; `find_files`/`find` stay as compatibility aliases.
-    ;; Keep the older symbol branch while contexts/extensions may still expose it.
-    []))
-
-(defn python-binding-names
-  "Canonical Python global plus intentional compatibility aliases for `sym`.
-   Used by provider/native discovery to deduplicate the same capability."
-  [sym]
-  (into [(sym->py-name sym)] (py-aliases-for-sym sym)))
 
 (defn- python-string-literal
   ^String [x]
@@ -583,11 +558,8 @@
   (let [nm
         (sym->py-name sym)
 
-        aliases
-        (py-aliases-for-sym sym)
-
         names
-        (cons nm aliases)
+        [nm]
 
         protected
         (map #(first (str/split % #"\." 2)) names)]
@@ -609,12 +581,12 @@
     nil))
 
 (defn- set-python-binding-meta!
-  "Record one piece of model-facing metadata for `sym` (and its aliases) in the
-   guest table `dict-name`, then RE-STAMP those names so the bound callable
-   carries it: a tool deferred before its metadata arrived only gets it here."
+  "Record one piece of model-facing metadata for `sym` in the guest table
+   `dict-name`, then re-stamp the canonical callable. A tool deferred before its
+   metadata arrived only gets it here."
   [session sym dict-name text]
   (when (and session (string? text))
-    (let [names (cons (sym->py-name sym) (py-aliases-for-sym sym))]
+    (let [names [(sym->py-name sym)]]
       (update-json! session
                     dict-name
                     (into {}
@@ -648,7 +620,7 @@
   "Remove `sym` from `session` entirely, including dotted namespace members and
    every discovery metadata table."
   [session sym]
-  (let [names (cons (sym->py-name sym) (py-aliases-for-sym sym))]
+  (let [names [(sym->py-name sym)]]
     (exec! session
            (str "for __vis_n__ in " (py-json-literal (vec names))
                 ":\n" "    if '.' in __vis_n__:\n"
@@ -1194,11 +1166,8 @@
     ;; Tools first as ONE registration — the guest gets every name in one pass,
     ;; and the contracts below stamp the wrappers that pass leaves behind.
     (let [tools (into {}
-                      (mapcat (fn [[sym val]]
-                                (when (fn? val)
-                                  (map (fn [nm]
-                                         [nm val])
-                                       (cons (sym->py-name sym) (py-aliases-for-sym sym))))))
+                      (keep (fn [[sym val]]
+                              (when (fn? val) [(sym->py-name sym) val])))
                       (or custom-bindings {}))]
       (when (seq tools) (python-host/install-tools! session tools (partial py-install-tool!))))
     ;; …and the DATA bindings, which cross as JSON like every other value.
@@ -1210,12 +1179,9 @@
     ;; the same Python names the bindings above wired.
     (try (let [by-py-name (fn [sym->text]
                             (into {}
-                                  (mapcat (fn [[sym _]]
-                                            (when-let [d (get sym->text sym)]
-                                              (map (fn [nm]
-                                                     [nm d])
-                                                   (cons (sym->py-name sym)
-                                                         (py-aliases-for-sym sym))))))
+                                  (keep (fn [[sym _]]
+                                          (when-let [d (get sym->text sym)]
+                                            [(sym->py-name sym) d])))
                                   (or custom-bindings {})))]
            (update-json! session "__vis_docs__" (by-py-name (extension/sandbox-symbol-docs)))
            (update-json! session "__vis_sigs__" (by-py-name (extension/sandbox-symbol-signatures)))

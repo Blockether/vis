@@ -1,0 +1,32 @@
+name: Publish Python SDK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact VIS_VERSION to publish; both PyPI trusted publishers must exist
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/python-packages.yml
+    with:
+      version: ${{ inputs.version }}
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: python-sdk-distributions
+          path: dist
+      - name: Publish the verified pair (never overwrite existing versions)
+        uses: pypa/gh-action-pypi-publish@release/v1

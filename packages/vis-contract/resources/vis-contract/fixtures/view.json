@@ -1,0 +1,79 @@
+{
+  "input": {
+    "id": "input-one",
+    "title": "Name",
+    "fields": [
+      {
+        "id": "name",
+        "name": "name",
+        "type": "plaintext",
+        "label": "Name",
+        "is_required": true
+      }
+    ],
+    "submit_label": "Submit",
+    "cancel_label": "Cancel",
+    "is_cancellable": true,
+    "timeout_ms": 30000,
+    "created_at": 1
+  },
+  "live": {
+    "id": "live-one",
+    "title": "Build",
+    "nodes": [
+      {
+        "id": "status",
+        "type": "status",
+        "text": "Building",
+        "tone": "running"
+      }
+    ],
+    "timeout_ms": 30000,
+    "channel_ids": [
+      "operator"
+    ],
+    "seq": 0,
+    "created_at": 1
+  },
+  "patch": {
+    "view_id": "live-one",
+    "seq": 1,
+    "ops": [
+      {
+        "op": "set",
+        "node_id": "status",
+        "text": "Done",
+        "tone": "ok"
+      }
+    ]
+  },
+  "answer": {
+    "is_submitted": true,
+    "reason": "submitted",
+    "request_id": "input-one",
+    "values": {
+      "name": "Ada"
+    }
+  },
+  "result": {
+    "view_id": "live-one",
+    "is_completed": true,
+    "reason": "completed",
+    "is_from_human": false,
+    "view": {
+      "title": "Build",
+      "nodes": [
+        {
+          "id": "status",
+          "type": "status",
+          "text": "Done",
+          "tone": "ok"
+        }
+      ]
+    },
+    "elided": []
+  },
+  "input_result": {
+    "reason": "submitted"
+  }
+}

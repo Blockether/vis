@@ -17,7 +17,8 @@
  * parser re-checks both, because a payload that broke the engine's own bound
  * is a contract violation, not a bigger picture to render.
  */
-
+import activityContract from '../../../../packages/vis-contract/resources/vis-contract/activity.json';
+const ACTIVITY_LIMITS = activityContract.limits;
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -41,8 +42,7 @@ function text(value: unknown): string {
 }
 
 function optionalText(value: unknown): string | undefined {
-  const trimmed = text(value).trim();
-  return trimmed === '' ? undefined : trimmed;
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 export const ACTIVITY_PRESENTERS = [
@@ -147,8 +147,8 @@ function activityCount(value: unknown): number | null {
 function activityResourceFromWire(value: unknown): ActivityResource | null {
   const raw = record(value);
   if (!raw || !hasExactKeys(raw, ['type', 'id'])) return null;
-  const type = text(raw.type).trim();
-  const id = text(raw.id).trim();
+  const type = optionalText(raw.type);
+  const id = optionalText(raw.id);
   return type && id ? { type, id } : null;
 }
 
@@ -227,7 +227,7 @@ function activityEvidenceFromWire(value: unknown): ActivityEvidence | null {
 }
 
 function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
-  if (depth > 2) return null;
+  if (depth > ACTIVITY_LIMITS.max_depth) return null;
   const raw = record(value);
   if (
     !raw ||
@@ -248,9 +248,9 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
   ) {
     return null;
   }
-  const id = text(raw.id).trim();
+  const id = optionalText(raw.id);
   const sequence = activityCount(raw.sequence);
-  const operation = text(raw.operation).trim();
+  const operation = optionalText(raw.operation);
   const presenter = activityEnum(raw.presenter, ACTIVITY_PRESENTERS);
   const signal = activityEnum(raw.signal, ACTIVITY_SIGNALS);
   const state = activityEnum(raw.state, ACTIVITY_STATES);
@@ -264,8 +264,8 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     : null;
   const groupToken = raw.group_token === undefined ? undefined : optionalText(raw.group_token);
   const duration = raw.duration_ms === undefined ? undefined : activityCount(raw.duration_ms);
-  const resultSummary = raw.result_summary === undefined ? undefined : optionalText(raw.result_summary);
-  const errorSummary = raw.error_summary === undefined ? undefined : optionalText(raw.error_summary);
+  const resultSummary = typeof raw.result_summary === 'string' ? raw.result_summary : undefined;
+  const errorSummary = typeof raw.error_summary === 'string' ? raw.error_summary : undefined;
   const summaryFormat =
     raw.summary_format === undefined ? undefined : activityEnum(raw.summary_format, ACTIVITY_TEXT_FORMATS);
   const resultFormat =
@@ -287,7 +287,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     typeof raw.summary !== 'string' ||
     resources === null ||
     resources.length !== resourcesRaw!.length ||
-    resources.length > 8 ||
+    resources.length > ACTIVITY_LIMITS.max_resources ||
     evidence === null ||
     evidence.length !== evidenceRaw!.length ||
     (raw.group_token !== undefined && groupToken === undefined) ||
@@ -365,8 +365,8 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
     ) ||
     parsedRows.some((row) => row === null) ||
     new Set(ids).size !== ids.length ||
-    parsedRows.length > 128 ||
-    new TextEncoder().encode(JSON.stringify(raw)).length > 64 * 1024
+    parsedRows.length > ACTIVITY_LIMITS.max_rows ||
+    new TextEncoder().encode(JSON.stringify(raw)).length > ACTIVITY_LIMITS.max_receipt_bytes
   ) {
     return null;
   }

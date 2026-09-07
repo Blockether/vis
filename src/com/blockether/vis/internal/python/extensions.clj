@@ -22,7 +22,7 @@
    The model can call an extension TOOL through the ordinary host wrapper, envelope-
    checked like any tool, but cannot choose the trusted identity or evaluate code in
    the extension namespace. Host capabilities are reachable only through the bound
-   `vis` API: what crosses is JSON text, so no host object is reachable from Python.
+   `blockether.vis` API: what crosses is JSON text, so no host object is reachable from Python.
    Startup, reload and calls with no owning session use the shared registration worker.
 
    A context is only a NAMESPACE in its owning embedded interpreter: opening one costs
@@ -39,6 +39,7 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.document :as contract-document]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.validation :as config-validation]
@@ -64,10 +65,10 @@
 
 (set! *warn-on-reflection* true)
 
-;; The `vis` Python module (bootstrap source)
+;; The `blockether.vis` Python module (bootstrap source)
 ;;
 ;; Executed in each extension session BEFORE the extension file. Builds a
-;; real `vis` module (registered in `sys.modules`, so `import vis` works)
+;; real `blockether.vis` module (registered in `sys.modules`, so `from blockether import vis` works)
 ;; whose functions live in the module's own namespace — the extension
 ;; file's globals stay clean. Host callbacks (`__vis_host_*`, installed as
 ;; session globals before this runs) are handed in through the module dict.
@@ -92,21 +93,21 @@
                     {:type ::missing-python-source :path path}))))
 
 (def ^:no-doc bootstrap-python
-  "The `vis` module bootstrap. Executed in each extension session BEFORE the
-   extension file: it builds a real `vis` module (registered in `sys.modules`, so
-   `import vis` works) whose functions live in the module's own namespace, while
+  "The `blockether.vis` module bootstrap. Executed in each extension session BEFORE the
+   extension file: it builds a real `blockether.vis` module (registered in `sys.modules`, so
+   `from blockether import vis` works) whose functions live in the module's own namespace, while
    the extension file's globals stay clean. Host callbacks (`__vis_host_*`,
    installed as session globals before this runs) are handed in through the
    module dict.
 
    TWO real `.py` files, assembled here and nowhere else. The BODY is the
-   distributable package `packages/vis-agent/src/vis/__init__.py` — the very file
+   distributable package `packages/vis-agent/src/blockether/vis/__init__.py` — the very file
    PyPI ships as `vis-agent`, so an author reads, lints and unit-tests the code
    the sandbox runs — handed to the injector as the `_vis_body` literal, because
    `exec` into a module dict is the one thing that keeps the API off the
    extension's globals. The INJECTOR is `vis-python/extension_bootstrap.py`,
    which also seals this session's Python callables so the host can hold them."
-  (str "_vis_body = " (python-string-literal (classpath-src "vis/__init__.py"))
+  (str "_vis_body = " (python-string-literal (classpath-src "blockether/vis/__init__.py"))
        "\n" (classpath-src "vis-python/extension_bootstrap.py")))
 
 ;; Marshalling helpers
@@ -663,7 +664,7 @@
   (contract/host-globals))
 
 (defn ^:no-doc bind-inert-host!
-  "Install every host member as a REFUSAL, so the `vis` module can be BUILT without
+  "Install every host member as a REFUSAL, so the `blockether.vis` module can be BUILT without
    any of it being usable.
 
    `vis-agent extension check` needs the real module -- it reads the builders and
@@ -1118,10 +1119,26 @@
           (-> (conj '&)
               (conj 'args)))
 
+        activity
+        (get spec "activity")
+
+        _
+        (when (and activity (not (contract-document/valid-json? "activity" "declaration" activity)))
+          (throw (ex-info "Invalid Python Activity declaration"
+                          {:type :extension/invalid-activity})))
+
         opts
         (cond-> {:tag (get symbol-tags (str (get spec "tag")) :observation)}
           (get spec "hidden")
-          (assoc :hidden? true))]
+          (assoc :hidden? true)
+
+          activity
+          (assoc :presenter (keyword (get activity "presenter")))
+
+          (get activity "label")
+          (assoc :ticker-fn
+            (fn [_env _args]
+              (get activity "label"))))]
 
     (extension/symbol-entry {:symbol sym
                              :fn (tool-adapter ext-name sym ctx pyfn)

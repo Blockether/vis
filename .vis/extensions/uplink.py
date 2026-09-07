@@ -40,7 +40,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 
-import vis
+from blockether import vis
 
 _CONNECT_TIMEOUT_S = 15
 _MAX_CAPTURE_BYTES = 256 * 1024

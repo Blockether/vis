@@ -81,26 +81,27 @@
           (expect (str/includes? (:message err) "ValueError: probe-degraded"))
           (expect (not (str/includes? (:message err) "host call returned null")))))))
 
-(defdescribe python-binding-aliases-test
-             ;; A host verb is reachable in the sandbox under its canonical Python name
-             ;; PLUS the intentional compatibility aliases; a missing alias is a bare
-             ;; NameError to the model, which reads as "the tool is gone" and invites a spin.
-             (it "exposes grep as grep/find_files/find and unaliased tools as themselves"
-                 (expect (= ["grep" "find_files" "find"] (ep/python-binding-names 'grep)))
-                 (expect (= ["shell"] (ep/python-binding-names 'shell)))
-                 (expect (= ["_shell_logs"] (ep/python-binding-names '_shell-logs))))
-             (it "routes every alias to the SAME tool in a live context"
-                 (let [ctx
-                       (tpc/shared-with! {'grep (fn grep-stub [& args]
-                                                  {"op" "grep" "args" (vec args)})})
-
-                       result
-                       (ep/run-python-block ctx
-                                            (str
-                                              "print(grep('a')['op'], grep('a')['args'])\n"
-                                              "print(find('x')['op'], find_files('x')['args'])"))]
-
-                   (expect (= "grep ['a']\ngrep ['x']\n" (:stdout result))))))
+(defdescribe
+  canonical-python-bindings-test
+  (it "maps every tool to one canonical Python name"
+      (expect (= "grep" (ep/sym->py-name 'grep)))
+      (expect (= "shell" (ep/sym->py-name 'shell)))
+      (expect (= "_shell_logs" (ep/sym->py-name '_shell-logs))))
+  (it
+    "does not install retired search aliases or their discovery metadata"
+    (tpc/with-own
+      [ctx
+       {'grep (fn grep-stub [& args]
+                {"op" "grep" "args" (vec args)})}]
+      (let
+        [result
+         (ep/run-python-block
+           ctx
+           (str
+             "print(grep('a')['op'], grep('a')['args'])\n"
+             "print('find' in globals(), 'find_files' in globals())\n"
+             "print(any(n in __vis_docs__ or n in __vis_sigs__ or n in __vis_keys__ for n in ('find', 'find_files')))"))]
+        (expect (= "grep ['a']\nFalse False\nFalse\n" (:stdout result)))))))
 
 (defdescribe
   gathered-grep-options-test

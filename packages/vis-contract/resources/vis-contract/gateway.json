@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "protocol": {
     "minimum_client": 12,
     "minimum_gateway": 12,
@@ -20,6 +20,14 @@
     "content_type": "content-type",
     "client_id": "x-vis-client-id",
     "client_pid": "x-vis-client-pid"
+  },
+  "client_lease": {
+    "ttl_ms": 120000,
+    "touch_ms": 5000,
+    "keepalive_ms": 30000,
+    "keepalive_timeout_ms": 5000,
+    "keepalive_route": "/v1/capabilities",
+    "semantics": "Authenticated requests carrying client_id refresh an existing lease; idle connected clients send a bounded GET keepalive. Failure invalidates the client until it is closed and connected anew. Closing releases only its lease, never the gateway or sessions."
   },
   "routes": [
     {

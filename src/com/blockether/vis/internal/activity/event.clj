@@ -5,6 +5,7 @@
    before measuring, collectors reject broken lifecycle order, and a sink failure
    must never change the value or exception the Python caller observes."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.activity :as contract]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util])
@@ -12,15 +13,15 @@
            [java.util UUID]
            [java.util.concurrent.atomic AtomicLong]))
 
-(def max-event-bytes (* 256 1024))
+(def max-event-bytes (get contract/limits "max_event_bytes"))
 
-(def max-summary-bytes 512)
+(def max-summary-bytes (get contract/limits "max_summary_bytes"))
 
-(def max-detail-bytes (* 2 1024))
+(def max-detail-bytes (get contract/limits "max_detail_bytes"))
 
-(def max-resources 8)
+(def max-resources (get contract/limits "max_resources"))
 
-(def max-diff-line-bytes 512)
+(def max-diff-line-bytes (get contract/limits "max_diff_line_bytes"))
 
 (def ^:private max-summary-nodes 128)
 

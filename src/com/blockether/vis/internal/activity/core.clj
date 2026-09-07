@@ -2,13 +2,14 @@
   "Pure bounded reducer from immutable lifecycle events to channel-neutral Activity.
 
    Wrapper-entry sequence owns row placement and terminal events update rows in place."
-  (:require [com.blockether.vis.internal.activity.event :as event]
+  (:require [com.blockether.vis.contract.activity :as contract]
+            [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.contract.wire :as wire]))
 
-(def max-rows 128)
+(def max-rows (get contract/limits "max_rows"))
 
-(def max-receipt-bytes (* 64 1024))
+(def max-receipt-bytes (get contract/limits "max_receipt_bytes"))
 
 (def empty-state
   "Initial rendered Activity state.
@@ -370,7 +371,7 @@
 (defn- presentation-evidence
   [{:keys [kind text lines additions deletions modifications is-truncated is-redacted]}]
   (cond-> {:kind (enum-name kind) :text (str text)}
-    (seq lines)
+    (= :diff kind)
     (assoc :lines
       (mapv (fn [{:keys [kind text is-redacted]}]
               (cond-> {:kind (enum-name kind) :text (str text)}

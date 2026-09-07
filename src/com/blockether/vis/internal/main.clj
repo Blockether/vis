@@ -50,6 +50,8 @@
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
+            [com.blockether.vis.internal.gateway.server :as gateway-server]
+            [com.blockether.vis.internal.gateway.stdio :as gateway-stdio]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.persistance.core :as persistance]
@@ -3309,7 +3311,24 @@
 
 (doseq
   [spec
-   [{:cmd/name "providers"
+   [{:cmd/name "sdk-stdio"
+     :cmd/doc "Run an owned local SDK engine over stdin/stdout without HTTP."
+     :cmd/usage "vis-agent sdk-stdio"
+     :cmd/run-fn
+     (fn [_ _]
+       (config/init-cli!)
+       (when (str/blank? (System/getenv "VIS_DB_PATH"))
+         (throw (ex-info "sdk-stdio requires an explicit VIS_DB_PATH" {:vis/user-error true})))
+       (try (gateway-stdio/serve!
+              (java.io.BufferedReader.
+                (java.io.InputStreamReader. System/in java.nio.charset.StandardCharsets/UTF_8))
+              (java.io.OutputStreamWriter. config/original-stdout
+                                           java.nio.charset.StandardCharsets/UTF_8)
+              (gateway-server/local-handler))
+            (finally (doseq [sid (gateway-state/session-ids)]
+                       (gateway-state/release-session! sid))
+                     (shutdown-agents))))}
+    {:cmd/name "providers"
      :cmd/doc "Inspect, authenticate, and introspect LLM providers."
      :cmd/usage "vis-agent providers <list|status|limits|auth|logout> [...]"
      :cmd/subcommands #(registry/registered-under ["providers"])}
@@ -3845,7 +3864,7 @@
     ;; Console handler: re-add only when the user asked for verbosity.
     ;; Boot-time noise is already gone (registry.clj removed it during
     ;; namespace load); this restores the stdout stream for debugging.
-    (when debug?
+    (when (and debug? (not= "sdk-stdio" (first args)))
       (try (tel/add-handler! :default/console (tel/handler:console)) (catch Throwable _ nil)))
     ;; Persistence handler: scopes signals to the right DB rows via
     ;; `:db-info` / `:session-soul-id` / `:session-turn-id` /
@@ -3867,7 +3886,7 @@
 (defn- deferred-python-dispatch?
   "True for long-lived processes that load Python only at the gateway execution boundary."
   [args]
-  (= ["gateway" "start"] (vec (take 2 args))))
+  (or (= "sdk-stdio" (first args)) (= ["gateway" "start"] (vec (take 2 args)))))
 
 ;; Root command
 ;;

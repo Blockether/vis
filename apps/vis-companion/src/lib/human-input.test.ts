@@ -22,6 +22,13 @@ import {
   type HumanInputRequest,
 } from './human-input';
 
+it('reads the canonical SDK input View and its field values', async () => {
+  const { default: canonical } = await import('../../../../packages/vis-contract/resources/vis-contract/fixtures/view.json');
+  const request = humanInputRequestFromWire(canonical.input);
+  expect(request?.id).toBe(canonical.answer.request_id);
+  expect(request?.fields[0]).toMatchObject({ id: 'name', name: 'name', type: 'plaintext', is_required: true });
+});
+
 /** Engine `view/request->view` output; `gateway.view-test` pins these bytes. */
 const WIRE = fixture as unknown;
 

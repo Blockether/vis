@@ -1,0 +1,105 @@
+name: Python SDK packages
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Optional exact VIS_VERSION gate
+        default: ''
+        type: string
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  distribution:
+    name: ${{ matrix.os }} / ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26]
+        python: ['3.11', '3.12', '3.13', '3.14', 'pypy3.11']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install build and test tools
+        run: python -m pip install build twine pytest ruff
+      - name: Lint and format
+        run: |
+          python -m ruff check packages
+          python -m ruff format --check packages
+      - name: Build wheels from sdists
+        run: |
+          python -m build packages/vis-contract --outdir dist
+          python -m build packages/vis-agent --outdir dist
+          python -m twine check --strict dist/*
+      - name: Verify versions and installed distributions outside the checkout
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          python -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          python - <<'PY'
+          import importlib.metadata as metadata
+          import os
+          from pathlib import Path
+          from blockether import vis, vis_contract
+          version = (Path(os.environ['GITHUB_WORKSPACE']) / 'VIS_VERSION').read_text().strip()
+          assert metadata.version('vis-agent') == metadata.version('vis-contract') == version
+          assert not os.environ.get('EXPECTED_VERSION') or os.environ['EXPECTED_VERSION'] == version
+          assert not str(Path(vis.__file__).resolve()).startswith(os.environ['GITHUB_WORKSPACE'])
+          assert vis_contract.VERSION
+          PY
+          VIS_TEST_INSTALLED=1 python -m pytest "$GITHUB_WORKSPACE/packages/vis-agent/tests" "$GITHUB_WORKSPACE/packages/vis-contract/python/tests" -q
+      - uses: actions/upload-artifact@v6
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        with:
+          name: python-sdk-distributions
+          path: dist/*
+          if-no-files-found: error
+
+  engine:
+    needs: distribution
+    name: real SDK engine / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-graalvm-25
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v7
+        with:
+          name: python-sdk-distributions
+          path: dist
+      - name: Install tested wheels
+        run: python -m pip install pytest dist/*.whl
+      - name: Exercise real HTTP and stdio engines with an isolated model double
+        run: |
+          clojure -X:deps prep
+          python - <<'PY'
+          import os, shlex, subprocess
+          from pathlib import Path
+          root = Path.cwd()
+          cp = subprocess.check_output(['clojure', '-Spath', '-A:vis'], text=True).strip()
+          cp = os.pathsep.join(str((root / entry).resolve()) for entry in cp.split(os.pathsep))
+          env = {**os.environ, 'VIS_TEST_INSTALLED': '1', 'VIS_TEST_LOCAL_COMMAND': shlex.join([
+              'java', '--enable-native-access=ALL-UNNAMED', '--enable-preview', '-Xmx2g',
+              '-cp', cp, 'clojure.main', '-m', 'com.blockether.vis.core'])}
+          subprocess.run(['python', '-m', 'pytest', str(root / 'packages/vis-agent/tests/test_engine.py'),
+                          str(root / 'packages/vis-agent/tests/test_local.py'), '-q'],
+                         cwd=os.environ['RUNNER_TEMP'], env=env, check=True)
+          PY

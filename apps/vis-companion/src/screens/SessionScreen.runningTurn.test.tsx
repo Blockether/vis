@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { act, screen, waitFor } from "@testing-library/react";
 
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
-import activityFixture from "../lib/activity.fixture.json";
+import activityFixture from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json";
 import { reduceRunningTurnEvent } from "../lib/running-turn";
 import type { SseEvent } from "../lib/types";
 

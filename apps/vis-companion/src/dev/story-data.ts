@@ -20,7 +20,7 @@
  */
 
 import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
-import activityWire from '../lib/activity.fixture.json';
+import activityWire from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
 import type { SessionArtifact } from '../lib/artifacts';
 import type { PendingAttachment } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';

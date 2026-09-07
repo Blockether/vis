@@ -5,18 +5,26 @@
             [com.blockether.vis.contract.wire :as wire]))
 
 (def ^:private source (delay (document/load! "gateway")))
+
 (def ^:private engine-source (delay (wire/->engine @source)))
 
 (def version "Gateway contract document version." (get @source "version"))
+
 (def protocol "Canonical gateway compatibility numbers." (:protocol @engine-source))
+
 (def protocol-version "Wire protocol spoken by this contract." (:version protocol))
+
 (def minimum-client-protocol
   "Oldest client protocol served by this gateway contract."
   (:minimum-client protocol))
+
 (def minimum-gateway-protocol
   "Oldest gateway protocol accepted by this client contract."
   (:minimum-gateway protocol))
+
 (def headers "Semantic header key to canonical lower-case spelling." (:headers @engine-source))
+
+(def client-lease "Remote lease lifetime and keepalive policy." (:client-lease @engine-source))
 
 (def route-table
   "Complete built-in gateway route table, one record per path."
@@ -28,6 +36,7 @@
                                     [method (update-vals operation keyword)]))
                              operations)})
         (:routes @engine-source)))
+
 (def route-operations
   "Complete `[method path]` to request/response transport declaration."
   (into {}
@@ -41,61 +50,91 @@
   "Request/response transport declaration for built-in `method` and `path`, or nil."
   [method path]
   (get route-operations [method path]))
+
 (def session-event-types
   "Closed built-in vocabulary carried by the session journal and multiplexed session SSE stream."
   (set (get-in @source ["events" "session"])))
+
 (def job-events
   "Directional event names carried by dedicated speech job streams."
   (get-in @engine-source [:events :jobs]))
+
 (def job-event-types "All dedicated job-stream event names." (set (vals job-events)))
+
 (def voice-job-event "Transcription job stream event name." (:transcribe job-events))
+
 (def speech-job-event "Speech synthesis job stream event name." (:synthesize job-events))
+
 (def push-event-types
   "Event names used by relay push payloads."
   (set (get-in @source ["events" "push"])))
+
 (def turn-terminal-event-types
   "Every built-in event type that ends a turn."
   (set (get-in @source ["events" "turn_terminal"])))
+
 (def queue-mirror-event-types
   "Queue lifecycle events mirrored by attached channels."
   (set (get-in @source ["events" "queue_mirror"])))
+
 (def view-events
   "Open, patch and close event names for both View kinds."
   (get-in @engine-source [:events :view]))
+
 (def view-open-event "Session event that mounts either View kind." (:open view-events))
+
 (def view-patch-event "Session event carrying accepted View operations." (:patch view-events))
+
 (def view-close-event "Session event that ends either View kind." (:close view-events))
+
 (def envelopes "Canonical gateway envelope declarations." (:envelopes @engine-source))
+
 (def handshake-envelope "Gateway identity handshake declaration." (:handshake envelopes))
+
 (def handshake-keys "Semantic handshake key to canonical wire spelling." (:keys handshake-envelope))
+
 (def error-response-envelope "Shared JSON error response declaration." (:error-response envelopes))
+
 (def error-response-body-keys
   "Semantic error body key to canonical wire spelling."
   (:body-keys error-response-envelope))
+
 (def error-response-error-keys
   "Semantic error detail key to canonical wire spelling."
   (:error-keys error-response-envelope))
+
 (def session-event-envelope "Stamped session stream event declaration." (:session-event envelopes))
+
 (def session-event-schema
   "Schema number stamped onto every session event."
   (:schema session-event-envelope))
+
 (def session-event-keys
   "Semantic session stamp key to canonical wire spelling."
   (:stamp-keys session-event-envelope))
+
 (def journal-line-envelope
   "Private cross-process journal metadata declaration."
   (:journal-line envelopes))
+
 (def journal-metadata-keys
   "Semantic journal metadata key to canonical wire spelling."
   (:metadata-keys journal-line-envelope))
+
 (def journal-pid-key (:pid journal-metadata-keys))
+
 (def journal-producer-key (:producer journal-metadata-keys))
+
 (def journal-store-key (:store journal-metadata-keys))
+
 (def subscription-ready-envelope
   "First-frame session subscription declaration."
   (:subscription-ready envelopes))
+
 (def subscription-ready-required-keys (:required-keys subscription-ready-envelope))
+
 (def subscription-ready-optional-keys (:optional-keys subscription-ready-envelope))
+
 (def turn-meta-keys
   "Wire keys copied from a settled turn row into blocking submit/attach results."
   (get-in envelopes [:settled-turn :meta-keys]))
@@ -135,8 +174,11 @@
     journal-store-key (boolean store?)))
 
 (defn journal-producer [event] (get event journal-producer-key))
+
 (defn journal-pid [event] (get event journal-pid-key))
+
 (defn journal-stored? [event] (boolean (get event journal-store-key)))
+
 (defn strip-journal-metadata
   "Remove private journal metadata before an event reaches a session consumer."
   [event]
@@ -160,7 +202,9 @@
              (get required :server-time-ms) server-time-ms}
       (some? latest-iteration)
       (assoc (get optional :latest-iteration) latest-iteration))))
+
 (def replay "Cursor and generation anchors for session replay." (:replay @engine-source))
+
 (def event-types
   "All event names on session, dedicated-job and relay-push streams."
   (into session-event-types (concat job-event-types push-event-types)))
@@ -171,7 +215,6 @@
   "Exact built-in `[method path]` pairs declared by the contract."
   []
   (set (keys route-operations)))
-
 
 (defn session-event-type?
   "True when `event-type` belongs to the closed session-stream vocabulary."

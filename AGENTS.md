@@ -44,7 +44,7 @@ Paths below are relative to this repository. Internal namespace paths begin at
 
 | Area | Canonical owner and non-obvious boundary |
 |---|---|
-| Python host API | `packages/vis-agent/src/vis/__init__.py` is also executed by the engine; never mirror it. |
+| Python host API | `packages/vis-agent/src/blockether/vis/__init__.py` is also executed by the engine; never mirror it. |
 | Sandbox | `sandbox/` owns host policy and process integration; `python/` owns host execution. Interpreter, handles, descriptor limits and guest runtime Python belong in `vis-python-runtime`; read that repo's `AGENTS.md` before changing it. Vis keeps host-call doors in `resources/vis-shims/` and host guest modules in `resources/vis-guest/`, not runtime copies. |
 | Shims | `attach` and `ls` are host doors, not wheel replacements. Python docstrings in `resources/vis-shims/` generate the apropos resources; `apropos-resource-test/regenerate!` refreshes them. |
 | Contracts | `packages/vis-contract/resources/vis-contract/` owns canonical JSON documents and same-named schemas; Skjema validates portable shapes. Callbacks, IO and mutable state remain local. |

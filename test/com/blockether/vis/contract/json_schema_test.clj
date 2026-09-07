@@ -30,7 +30,7 @@
   (it "checks in no generated aggregate"
       (expect (every? #(not (.exists (io/file %)))
                       ["packages/vis-contract/contract.json"
-                       "packages/vis-contract/python/src/vis_contract/contract.json"])))
+                       "packages/vis-contract/python/src/blockether/vis_contract/contract.json"])))
   (it "has one schema for every contract document"
       (let [documents
             (json-names contract-root)

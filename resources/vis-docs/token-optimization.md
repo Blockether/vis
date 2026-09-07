@@ -124,7 +124,7 @@ When the same helper survives across turns — a deploy check, a fixture loader,
 `fold_session(key, gist)` removes **settled wire steps** from future model calls; it does not delete database history. Settled means every completed prior turn AND the current turn's already-finished iterations. At the start of a new turn, understand the new request first, then fold earlier work that no longer needs raw detail:
 
 ```python
-fold_session("t2/i4-i5", "HTTP timeout fixed in src/vis/net/http.clj:52; regression test passes")
+fold_session("t2/i4-i5", "HTTP timeout fixed in src/blockether/vis/net/http.clj:52; regression test passes")
 ```
 
 The only step the runtime refuses to fold is the **live iteration you are emitting right now** (and any future step) — it is not settled yet. Every completed iteration is foldable, including finished iterations of the current turn: trim the current turn up to the last settled iteration with `"-tN/iK"`. A blocked attempt names only the live scope, so drop it and keep the settled ones. Keep active reproduction output, reads, edits, failures, and verification live until they settle.

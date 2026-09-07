@@ -11,7 +11,7 @@ import {
   activityReceiptText,
 } from "./ActivityPanel";
 import activityPanelSource from "./ActivityPanel.tsx?raw";
-import activityFixture from "../lib/activity.fixture.json";
+import activityFixture from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json";
 import { ACTIVITY_TREE_CHANGES } from "../dev/story-data";
 import * as storyData from "../dev/story-data";
 import { WorkspaceRootsContext } from "../lib/workspace-roots";

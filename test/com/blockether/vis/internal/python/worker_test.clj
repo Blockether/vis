@@ -52,6 +52,49 @@
                 "import vis_introspection, vis_autoinstall\nworker_value = 41\nprint(worker_value)"))))
         (expect (= "42\n" (:stdout (env/run-python-block session "print(worker_value + 1)"))))))))
 
+(defdescribe
+  worker-long-home-test
+  ;; The installed SDK's isolated HOME exposed the Unix socket's 104/108-byte limit.
+  (it
+    "starts from a long home without broadening or retaining its IPC grant"
+    (let [base
+          (java.nio.file.Files/createTempDirectory (.toPath (java.io.File. "target"))
+                                                   "worker-home-"
+                                                   (make-array java.nio.file.attribute.FileAttribute
+                                                               0))
+
+          dir
+          (.toFile (.resolve base (apply str (repeat 110 "x"))))
+
+          socket
+          (atom nil)
+
+          launch
+          @#'worker/launch-policy!]
+
+      (.mkdirs dir)
+      (try (with-redefs-fn {#'worker/worker-dir (constantly dir)
+                            #'worker/launch-policy!
+                            (fn [k run-directory control-socket boot-read-paths]
+                              (reset! socket (java.io.File. ^String control-socket))
+                              (expect (< (count (.getBytes ^String control-socket "UTF-8")) 104))
+                              (expect (= "rwx------"
+                                         (java.nio.file.attribute.PosixFilePermissions/toString
+                                           (java.nio.file.Files/getPosixFilePermissions
+                                             (.toPath (.getParentFile ^java.io.File @socket))
+                                             (make-array java.nio.file.LinkOption 0)))))
+                              (launch k run-directory control-socket boot-read-paths))}
+             (fn []
+               (with-worker-context
+                 (fn [session]
+                   (expect (= "42\n" (:stdout (env/run-python-block session "print(42)"))))))))
+           (expect (some? @socket))
+           (when-let [^java.io.File path @socket]
+             (expect (not (.exists path)))
+             (expect (not (.exists (.getParentFile path)))))
+           (finally (doseq [^java.io.File file (reverse (file-seq (.toFile base)))]
+                      (java.nio.file.Files/deleteIfExists (.toPath file))))))))
+
 ;; Regression, CI run 33987564965: the first pip install was invisible to
 ;; a worker whose package directory did not exist when its jail was installed.
 (defdescribe
@@ -85,6 +128,22 @@
                       "import importlib; importlib.invalidate_caches(); import cold_release_module; print(cold_release_module.answer)")))))))
         (finally (doseq [path [module packages base]]
                    (java.nio.file.Files/deleteIfExists path)))))))
+
+(defdescribe worker-profiler-options-test
+             ;; Full-suite JFR reproduction: a confined worker inherited the parent's
+             ;; recording path and failed before connecting to its control socket.
+             (it "does not inherit a parent recording or repository"
+                 (expect (= ["-Xmx2g" "--enable-native-access=ALL-UNNAMED" "-Dvis.example=true"]
+                            (vec (#'worker/worker-jvm-options
+                                  ["-Xmx2g" "-XX:StartFlightRecording=filename=parent.jfr"
+                                   "--enable-native-access=ALL-UNNAMED"
+                                   "-XX:FlightRecorderOptions=repository=parent-recordings"
+                                   "-Dvis.example=true"])))))
+             (it "launches the worker without the current JVM's recording options"
+                 (with-redefs [com.blockether.vis.internal.util/native-image? (constantly false)]
+                   (expect (not-any?
+                             #(re-find #"^-XX:(StartFlightRecording|FlightRecorderOptions)" %)
+                             (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules"))))))
 
 (defdescribe worker-entrypoint-test
              (it "launches the runtime Java worker with the control socket and host modules"

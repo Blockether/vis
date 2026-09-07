@@ -1,13 +1,31 @@
 # Gateway, pairing & remote access
 
-Every vis channel talks to one long-lived **gateway daemon**: an HTTP + SSE
-runtime that owns
+The TUI, Companion and gateway clients talk to one long-lived **gateway daemon**:
+an HTTP + SSE runtime that owns
 the sessions, turns, and the live event bus. You rarely start it by hand; a
 channel spawns it for you. This page explains its lifecycle, why
 `vis-agent gateway start` stays in the foreground, the token model (and the
 `HTTP 401` you hit on `--host 0.0.0.0`), and how to pair a phone over LAN or
 Tailscale.
 
+## Python SDK: remote or gateway-free
+
+The `vis-agent` Python distribution exposes `blockether.vis.client.GatewayClient`
+for an explicitly supplied gateway URL and token. It manages its client lease,
+not the server process. Session events, typed View/Activity projections and
+operator actions use the same canonical contracts as the TUI and Companion.
+
+`blockether.vis.local.LocalEngine` is the gateway-free alternative: it starts a
+compatible Vis executable with `sdk-stdio` and owns that subprocess. It reuses the
+same engine and SDK objects, but opens no HTTP listener and performs no gateway
+discovery. This is **not** a JVM embedded in the Python process, and importing the
+extension module alone does not start an agent.
+
+The [Python SDK reference](https://github.com/Blockether/vis/blob/main/packages/vis-agent/README.md)
+owns installation, API examples, transport differences and distribution gates.
+The [gateway contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/gateway.json)
+owns route, protocol and lease vocabulary; View and Activity have their own
+schemas in the same contract package.
 ## The gateway starts itself (in the background)
 
 When you run a client such as:

@@ -159,7 +159,7 @@
     (host-filesystem-roots)))
 
 (defn no-search-roots
-  "Roots excluded from the DEFAULT rg/find_files sweep; explicit paths still reach
+  "Roots excluded from the DEFAULT grep sweep; explicit paths still reach
    them. With the jail disabled, host filesystem roots are excluded so granting
    unrestricted explicit access does not make an unscoped grep crawl the machine."
   [policy]

@@ -1,6 +1,8 @@
 /** The Activity projection against `internal.activity.core`'s own bounded snapshot. */
 import { describe, expect, it } from 'vitest';
-import { activityProjectionFromWire } from './activity';
+import { activityProjectionFromWire, ACTIVITY_PRESENTERS, ACTIVITY_SIGNALS, ACTIVITY_STATES, ACTIVITY_TEXT_FORMATS } from './activity';
+import contract from '../../../../packages/vis-contract/resources/vis-contract/activity.json';
+import cases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-cases.json';
 
 const activityProjection = (
   state: 'running' | 'succeeded' | 'failed' | 'cancelled' = 'running',
@@ -26,6 +28,20 @@ const activityProjection = (
     },
   ],
   omitted: { rows: 0, by_classification: {} },
+});
+
+describe('canonical Activity admission across SDK, engine and surfaces', () => {
+  it('uses the canonical vocabulary', () => {
+    expect(ACTIVITY_PRESENTERS).toEqual(contract.presenters);
+    expect(ACTIVITY_SIGNALS).toEqual(contract.signals);
+    expect(ACTIVITY_STATES).toEqual(contract.states);
+    expect(ACTIVITY_TEXT_FORMATS).toEqual(contract.text_formats);
+  });
+  for (const sample of cases) {
+    it(sample.name, () => {
+      expect(activityProjectionFromWire(sample.projection)).toEqual(sample.valid ? sample.projection : null);
+    });
+  }
 });
 
 describe("one form's Activity read off the wire", () => {

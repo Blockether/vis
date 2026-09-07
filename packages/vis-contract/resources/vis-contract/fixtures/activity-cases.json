@@ -1,0 +1,947 @@
+[
+  {
+    "name": "canonical receipt",
+    "valid": true,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "literal whitespace and empty summaries",
+    "valid": true,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": " call-1 ",
+          "sequence": 1,
+          "operation": " grep ",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [
+            {
+              "type": " file ",
+              "id": " file.txt "
+            }
+          ],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "result_summary": "",
+          "error_summary": " "
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "empty structured diff",
+    "valid": true,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "diff",
+              "text": "file.txt",
+              "lines": [],
+              "additions": 0,
+              "deletions": 0,
+              "modifications": 0,
+              "is_truncated": false,
+              "is_redacted": false
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "retired schema_version",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "schema_version": 1
+    }
+  },
+  {
+    "name": "retired anchor",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "anchor": 1
+    }
+  },
+  {
+    "name": "retired view_id",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "view_id": 1
+    }
+  },
+  {
+    "name": "missing counter",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "boolean count",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": true,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "duplicate row ids",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        },
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "unknown presenter",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "legacy",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "unknown signal",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "read",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "unowned field",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "title": "not a summary"
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "unknown omitted classification",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {
+          "read": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "empty children",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "children": []
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "false truncation marker",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "is_truncated": false
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "malformed evidence",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "diff",
+              "text": ""
+            }
+          ]
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  }
+]

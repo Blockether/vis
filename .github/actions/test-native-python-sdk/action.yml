@@ -1,0 +1,27 @@
+name: Test native Python SDK
+description: Exercise installed SDK packages against the staged native release and its Python worker.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+    - name: Install SDK wheels and test runner
+      shell: bash
+      run: python -m pip install pytest ./packages/vis-contract ./packages/vis-agent
+    - name: Exercise native HTTP and stdio outside the checkout
+      shell: bash
+      run: |
+        python - <<'PY'
+        import os, shlex, subprocess
+        from pathlib import Path
+        root = Path.cwd()
+        binary = root / 'target/release-bundle/vis-agent'
+        assert binary.is_file(), 'Stage the release before testing its SDK'
+        env = {**os.environ, 'VIS_TEST_INSTALLED': '1',
+               'VIS_TEST_LOCAL_COMMAND': shlex.join([str(binary)]), 'VIS_JVM': '0'}
+        env.pop('VIS_PYTHON_NATIVE_PATH', None)  # exercise the bundled worker, not an override
+        subprocess.run(['python', '-m', 'pytest', str(root / 'packages/vis-agent/tests/test_engine.py'),
+                        str(root / 'packages/vis-agent/tests/test_local.py'), '-q'],
+                       cwd=os.environ['RUNNER_TEMP'], env=env, check=True)
+        PY

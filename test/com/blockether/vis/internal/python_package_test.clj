@@ -22,19 +22,21 @@
   python-package-test
   (describe "the module `vis-agent` ships"
             (it "is the very file the engine execs into an extension context"
-                (expect (= (slurp (io/file agent-dir "src/vis/__init__.py"))
-                           (slurp (io/resource "vis/__init__.py")))))
+                (expect (= (slurp (io/file agent-dir "src/blockether/vis/__init__.py"))
+                           (slurp (io/resource "blockether/vis/__init__.py")))))
             (it "is the only copy — the injector carries the host and nothing else"
                 (let [injector (slurp (io/resource "vis-python/extension_bootstrap.py"))]
                   (expect (str/includes? injector "_vis_body"))
                   (expect (not (str/includes? injector "def ask(")))))
             (it "imports nothing a sandbox cannot give it"
                 (expect (nil? (re-find #"(?m)^\s*(?:import|from)\s+vis_contract"
-                                       (slurp (io/file agent-dir "src/vis/__init__.py")))))))
+                                       (slurp (io/file agent-dir
+                                                       "src/blockether/vis/__init__.py")))))))
   (describe "the outside host"
             (it "answers the engine's own shell result keys, so no lookup can KeyError"
                 (expect (= (set (keys @#'shell/shell-result-base))
-                           (set (python-tuple (slurp (io/file agent-dir "src/vis/_outside.py"))
+                           (set (python-tuple (slurp (io/file agent-dir
+                                                              "src/blockether/vis/_outside.py"))
                                               "_SHELL_RESULT_KEYS"))))))
   (describe "the distributions"
             (it "carry the one version the rest of the product is cut at"

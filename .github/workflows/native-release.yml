@@ -241,6 +241,7 @@ jobs:
         env:
           VIS_NATIVE_BIN: ${{ matrix.bin }}
         run: clojure -M:test-native
+      - uses: ./.github/actions/test-native-python-sdk
       - name: Build and stage standalone TUI
         run: |
           cd apps/vis-tui
@@ -390,6 +391,7 @@ jobs:
         env:
           VIS_NATIVE_BIN: target/vis
         run: clojure -M:test-native
+      - uses: ./.github/actions/test-native-python-sdk
       - name: Build and stage standalone TUI
         run: |
           cd apps/vis-tui

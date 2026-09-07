@@ -1,5 +1,8 @@
+import os
 import unittest
+from unittest.mock import patch
 
+from e2e import run
 from e2e.run import cache_metric_failures, decode_usage_body, usage_percent
 
 
@@ -61,6 +64,25 @@ class CacheMetricValidationTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "no usage object"):
             decode_usage_body('{"usage":null}')
+
+
+class SourceClasspathTest(unittest.TestCase):
+    def test_source_classpath_remains_absolute_when_user_dir_changes(self):
+        run.source_classpath.cache_clear()
+        try:
+            with patch.object(
+                run.subprocess,
+                "check_output",
+                return_value="src" + os.pathsep + "/tmp/dependency.jar\n",
+            ) as resolve:
+                expected = (
+                    os.path.join(run.REPO, "src") + os.pathsep + "/tmp/dependency.jar"
+                )
+                self.assertEqual(expected, run.source_classpath())
+                self.assertEqual(expected, run.source_classpath())
+                self.assertEqual(1, resolve.call_count)
+        finally:
+            run.source_classpath.cache_clear()
 
 
 if __name__ == "__main__":

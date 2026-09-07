@@ -1219,7 +1219,7 @@
       ;; the extension handle both call the host op.
       (doseq [[f marker] {"vis-python/async_runtime.py" "_shell_wait"
                           ;; An extension authors the op map by hand; same host loop.
-                          "vis/__init__.py" "\"op\": \"wait\""}]
+                          "blockether/vis/__init__.py" "\"op\": \"wait\""}]
         (let [src (slurp (io/resource f))]
           (expect (str/includes? src marker) f)
           (expect (not (str/includes? src "time.sleep(poll)")) f)))

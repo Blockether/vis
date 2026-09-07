@@ -1129,7 +1129,7 @@
              "-H:IncludeResources=vis-shims/.*"
              ;; Host modules are materialized for the runtime worker at first use.
              "-H:IncludeResources=vis-guest/.*"
-             ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/vis/*.py, on
+             ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/blockether/vis/*.py, on
              ;; :paths as a resource root): the body every extension context execs, and
              ;; the same file PyPI ships as `vis-agent`. `vis/VERSION` above is an
              ;; exact resource, so the module needs its own pattern. The Python host

@@ -1,13 +1,13 @@
 """The Vis extension API.
 
 The engine injects the host declared by `vis-contract`; an installed wheel uses
-`vis._outside` for local behavior, terminal prompts, and explicit jail refusals.
+`blockether.vis._outside` for local behavior, terminal prompts, and explicit jail refusals.
 """
 
 try:
     _host  # noqa: B018, F821 — the host seeds this into the module dict before exec.
 except NameError:  # Installed from PyPI: no host in the room, so bring one.
-    from vis import _outside as outside
+    from blockether.vis import _outside as outside
 
     _host = outside.host
 
@@ -15,6 +15,60 @@ import inspect
 import time
 from collections.abc import MutableMapping as _MutableMapping
 from contextlib import contextmanager
+from dataclasses import dataclass
+
+# Hosted SDK code has no package-loader dependency; cross-language contract tests
+# pin this vocabulary to activity.json, just as they pin the live-node table.
+_ACTIVITY_PRESENTERS = (
+    "generic",
+    "shell",
+    "tests",
+    "patch",
+    "observation",
+    "lint",
+    "repl",
+    "format",
+    "list",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Activity:
+    """Static tool presentation, never a fabricated execution lifecycle.
+
+    Use with symbol(activity=...) or method(activity=...). The engine owns state,
+    identity, duration, redaction and bounds. label is optional non-secret plain
+    text; omit it to let the engine summarize the invocation.
+    """
+
+    presenter: str = "generic"
+    label: str | None = None
+
+    def __post_init__(self):
+        if self.presenter not in _ACTIVITY_PRESENTERS:
+            raise ValueError("unknown Activity presenter")
+        if self.label is not None and (
+            not isinstance(self.label, str)
+            or not self.label.strip()
+            or len(self.label) > 96
+            or "\n" in self.label
+            or "\r" in self.label
+        ):
+            raise ValueError(
+                "Activity label must be one nonblank line of at most 96 characters"
+            )
+
+
+def _activity_spec(activity):
+    if activity is None:
+        return None
+    if not isinstance(activity, Activity):
+        raise TypeError("activity must be a vis.Activity declaration")
+    return {
+        "presenter": activity.presenter,
+        **({"label": activity.label} if activity.label is not None else {}),
+    }
+
 
 _registration = {"spec": None}
 
@@ -155,7 +209,7 @@ def _kwargs_call(fn):
     return _call
 
 
-def _symbol_spec(fn, name, tag, is_hidden):
+def _symbol_spec(fn, name, tag, is_hidden, activity=None):
     if not callable(fn):
         raise ValueError("vis.symbol(fn, ...) requires a callable")
     public_name = name or fn.__name__
@@ -194,13 +248,15 @@ def _symbol_spec(fn, name, tag, is_hidden):
         "doc": doc,
         "params": params,
         "varargs": varargs,
+        **({"activity": _activity_spec(activity)} if activity is not None else {}),
     }
 
 
-def method(fn=None, *, tag="observation", is_hidden=False):
+def method(fn=None, *, tag="observation", is_hidden=False, activity=None):
     """Declare per-method tool metadata for an object exported by vis.symbol()."""
     if tag not in ("observation", "mutation"):
         raise ValueError(f"vis.method tag must be observation or mutation, got {tag!r}")
+    _activity_spec(activity)
 
     def _mark(actual):
         declared = (
@@ -212,6 +268,7 @@ def method(fn=None, *, tag="observation", is_hidden=False):
             raise ValueError("vis.method(...) requires a callable method")
         declared.__vis_symbol_tag__ = tag
         declared.__vis_symbol_hidden__ = bool(is_hidden)
+        declared.__vis_symbol_activity__ = activity
         return actual
 
     return _mark if fn is None else _mark(fn)
@@ -276,7 +333,13 @@ def _object_symbol_specs(obj, path, tag, is_hidden, seen):
             raw = declared or value
             method_tag = getattr(raw, "__vis_symbol_tag__", tag)
             method_hidden = getattr(raw, "__vis_symbol_hidden__", is_hidden)
-            spec = _symbol_spec(value, member_name, method_tag, method_hidden)
+            spec = _symbol_spec(
+                value,
+                member_name,
+                method_tag,
+                method_hidden,
+                getattr(raw, "__vis_symbol_activity__", None),
+            )
             spec["name"] = member_path.split(".", 1)[1]
             specs.append(spec)
         elif _is_namespace_object(value):
@@ -290,9 +353,14 @@ def _object_symbol_specs(obj, path, tag, is_hidden, seen):
     return specs
 
 
-def symbol(fn, name=None, tag="observation", is_hidden=False):
+def symbol(fn, name=None, tag="observation", is_hidden=False, *, activity=None):
+    """Expose a tool or object namespace; Activity for objects belongs on each method."""
     if inspect.isroutine(fn):
-        return _symbol_spec(fn, name, tag, is_hidden)
+        return _symbol_spec(fn, name, tag, is_hidden, activity)
+    if activity is not None:
+        raise ValueError(
+            "declare object Activity on each vis.method(), not its namespace"
+        )
     if (
         not name
         or not isinstance(name, str)
@@ -1847,9 +1915,8 @@ class _LiveRecorder:
                 "reason": reason,
                 "is_completed": reason == "completed",
                 "is_from_human": False,
-                "summary": ending.get("summary"),
                 "view": self.picture(),
-                "elided": {},
+                "elided": [],
             }
             verdict.update(
                 {

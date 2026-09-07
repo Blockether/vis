@@ -2,7 +2,7 @@
 
 import json
 
-import vis
+from blockether import vis
 
 
 def test_live_recorder_isolates_extension_output_from_surface_actions():

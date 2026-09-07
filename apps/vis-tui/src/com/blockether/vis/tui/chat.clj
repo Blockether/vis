@@ -5,6 +5,7 @@
    Pass `--session-id ID` or `--resume` to pick up an existing one.
    Session data is persisted in `~/.vis/vis.mdb` so you can come back to it."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.composer-attachment-rail :as attachment-rail]
             [com.blockether.vis.tui.terminal-image :as timg]
@@ -177,7 +178,7 @@
               ;; activity and a reopened session painted none of it — every step lost
               ;; its receipt the moment the turn stopped streaming.
               (some? (get env "activity"))
-              (assoc :activity (vis/wire->engine (get env "activity")))
+              (assoc :activity (activity-contract/from-wire (get env "activity")))
 
               (seq segments)
               (assoc :render-segments segments)
@@ -1048,10 +1049,8 @@
              (vis/form<-wire event))
 
       "block.activity"
-      {:phase :form-activity
-       :iteration iteration
-       :position form-index
-       :activity (vis/wire->engine (event-get event :activity))}
+      (when-let [activity (activity-contract/from-wire (event-get event :activity))]
+        {:phase :form-activity :iteration iteration :position form-index :activity activity})
 
       "block.output"
       (merge {:phase :form-result
