@@ -6617,14 +6617,17 @@
                         code-rows
                         (vec (mapcat identity code-line-groups))
 
-                        ;; Like the THINKING head: chevron, name, and a tally while folded.
+                        ;; Like the THINKING head: chevron, name, and a tally while folded. A
+                        ;; failed call turns the NAME red instead of dragging its error headline
+                        ;; onto the control row: the band stays the program, and the message
+                        ;; keeps its own red row under the code (`inline-error-message-lines`).
                         header
                         (str "  "
                              (if code-expanded? "▾ " "▸ ")
-                             (band-label "CODE")
-                             (when-not code-expanded? (str "  +" (count code-rows) " more"))
-                             (when (and error (not code-expanded?))
-                               (str " · " (form-error-headline error))))
+                             (if error
+                               (str p/INLINE_ERR_ON (band-label "CODE") p/INLINE_ERR_OFF)
+                               (band-label "CODE"))
+                             (when-not code-expanded? (str "  +" (count code-rows) " more")))
 
                         copy?
                         (and code-node-id (>= header-width 20))

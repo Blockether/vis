@@ -1345,10 +1345,9 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
         {showCode ? <Disclosure isOpen={expanded} tone="muted" className="min-w-0 flex-1"
           aria-label={expanded ? "Collapse code" : "Expand code"}
           onClick={() => setExpanded((open) => !open)}>
-          <BandLabel>CODE{!expanded && <BandTally> +{lineCount} more</BandTally>}</BandLabel>
+          <BandLabel tone={outcome ? "err" : "accent"}>CODE{!expanded && <BandTally> +{lineCount} more</BandTally>}</BandLabel>
         </Disclosure>
-          : <BandLabel className="min-w-0 flex-1">CODE</BandLabel>}
-        {outcome && !expanded && showCode && <BandLabel tone="err">{outcome}</BandLabel>}
+          : <BandLabel tone={outcome ? "err" : "accent"} className="min-w-0 flex-1">CODE</BandLabel>}
         {showCode && <CopyChip value={value} label="Copy code" density="compact" className="shrink-0">Copy</CopyChip>}
         {duration && <span className="ml-auto shrink-0 font-mono text-chip tabular-nums text-code-duration">{duration}</span>}
       </div>

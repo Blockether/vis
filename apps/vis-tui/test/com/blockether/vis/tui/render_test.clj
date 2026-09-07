@@ -177,42 +177,51 @@
       (expect (not (str/includes? txt "java.util.concurrent.ExecutionException")))
       (expect (not (str/includes? txt "{:type :clj/bad-args")))))
   (it
-    "keeps the failed program compact while its error remains readable"
+    "keeps the failed program compact: a red CODE name shut, the error readable once open"
     (let [code
           (str "first = 1\n"
                "second = 2\n" "third = 3\n"
                "fourth = 4\n" "fifth = 5\n"
                "print(PYCODEMARKER)\n" "x = 1/0")
 
-          entries
-          (format-iteration-entry-entries
-            (iteration/canonicalize
-              {:position 0
-               :thinking nil
-               :forms [{:success? false
-                        :code code
-                        :error {:message (str "ZeroDivisionError: division by zero\n\n"
-                                              "7: x = 1/0\n"
-                                              "   ^")
-                                ;; Runtime metadata may contain only an
-                                ;; excerpt; it must not replace `code`.
-                                :block {:source "RUNTIME_EXCERPT_ONLY" :row 7 :col 1}}}]})
-            80
-            1
-            {:session-id "s1"
-             :session-turn-id "t1"
-             :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
+          entries-with
+          (fn [expansions]
+            (format-iteration-entry-entries
+              (iteration/canonicalize
+                {:position 0
+                 :thinking nil
+                 :forms [{:success? false
+                          :code code
+                          :error {:message (str "ZeroDivisionError: division by zero\n\n"
+                                                "7: x = 1/0\n"
+                                                "   ^")
+                                  ;; Runtime metadata may contain only an
+                                  ;; excerpt; it must not replace `code`.
+                                  :block {:source "RUNTIME_EXCERPT_ONLY" :row 7 :col 1}}}]})
+              80
+              1
+              {:session-id "s1" :session-turn-id "t1" :detail-expansions expansions}))
 
-          txt
-          (str/join "\n" (map (comp strip-ansi :line) entries))]
+          text-of
+          (fn [entries]
+            (str/join "\n" (map (comp strip-ansi :line) entries)))
 
-      (expect (not (str/includes? txt "PYTHON +")))
-      (expect (str/includes? txt "CODE"))
-      (expect (not (str/includes? txt "x = 1/0")))
-      (expect (not (str/includes? txt "PYCODEMARKER")))
-      (expect (not (str/includes? txt "RUNTIME_EXCERPT_ONLY")))
-      (expect (= 1 (count (re-seq #"ZeroDivisionError" txt))))))
-  (it "defaults a long failed program collapsed without hiding its source preview or error"
+          shut
+          (text-of (entries-with {:vis.channel-tui/expand-execution-details? true}))
+
+          open
+          (text-of (entries-with {:vis.channel-tui/expand-execution-details? true
+                                  :vis.channel-tui/expand-all-details? true}))]
+
+      (expect (not (str/includes? shut "PYTHON +")))
+      (expect (str/includes? shut (str p/INLINE_ERR_ON p/INLINE_BOLD_ON "CODE")))
+      (expect (not (str/includes? shut "x = 1/0")))
+      (expect (not (str/includes? shut "PYCODEMARKER")))
+      (expect (not (str/includes? shut "ZeroDivisionError")))
+      (expect (not (str/includes? open "RUNTIME_EXCERPT_ONLY")))
+      (expect (str/includes? open "PYCODEMARKER"))
+      (expect (= 1 (count (re-seq #"ZeroDivisionError" open))))))
+  (it "defaults a long failed program collapsed: source and error wait behind a red CODE name"
       (let [code
             (str "first = 1\nsecond = 2\nthird = 3\nfourth = 4\nfifth = 5\n"
                  "sixth = 6\nseventh = 7\neighth = 8\nx = 1/0")
@@ -240,7 +249,57 @@
         (expect (not (str/includes? txt "first = 1")))
         (expect (not (str/includes? txt "sixth = 6")))
         (expect (not (str/includes? txt "x = 1 / 0")))
-        (expect (= 1 (count (re-seq #"ZeroDivisionError" txt)))))))
+        (expect (not (str/includes? txt "ZeroDivisionError"))))))
+
+(defdescribe
+  failed-code-band-name-test
+  ;; The CODE row is a control that names what folds. Dragging the error headline
+  ;; onto it replaced the program with the failure; the failure already has its own
+  ;; red row under the code, so the band NAME turns red and says nothing else.
+  (it "turns the CODE name red on a failed form and keeps the error off the control row"
+      (let [entries
+            (format-iteration-entry-entries
+              (iteration/canonicalize {:position 0
+                                       :thinking nil
+                                       :forms [{:success? false
+                                                :code "root = 1\nprint(root)\nx = 1/0"
+                                                :error {:message
+                                                        "NameError: `root` is not defined"}}]})
+              80
+              1
+              {:session-id "s1"
+               :session-turn-id "t1"
+               :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
+
+            header
+            (some #(when (str/includes? (str %) "CODE") (str %))
+                  (map (comp strip-ansi :line) entries))
+
+            txt
+            (str/join "\n" (map (comp strip-sentinels strip-ansi :line) entries))]
+
+        (expect (some? header))
+        (expect (str/includes? header (str p/INLINE_ERR_ON p/INLINE_BOLD_ON "CODE")))
+        (expect (not (str/includes? header "NameError")))
+        (expect (not (str/includes? header " · ")))
+        ;; Shut, the red name is the whole signal; the message waits behind the fold.
+        (expect (not (str/includes? txt "NameError")))))
+  (it "keeps the CODE name plain when the form succeeded"
+      (let [header
+            (some #(when (str/includes? (str %) "CODE") (str %))
+                  (map (comp strip-ansi :line)
+                       (format-iteration-entry-entries
+                         (iteration/canonicalize
+                           {:position 0
+                            :thinking nil
+                            :forms [{:success? true :code "print(1)\nprint(2)" :stdout "1\n2"}]})
+                         80
+                         1
+                         {:session-id "s1"
+                          :session-turn-id "t1"
+                          :detail-expansions {:vis.channel-tui/expand-execution-details? true}})))]
+        (expect (some? header))
+        (expect (not (str/includes? header p/INLINE_ERR_ON))))))
 
 (defdescribe failed-form-error-row-test
              ;; Inside a code band the error row is the ONLY status signal a failed call has:
@@ -2635,7 +2694,8 @@
             opts
             {:session-id "session"
              :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
-             :detail-expansions {:vis.channel-tui/expand-execution-details? true}}
+             :detail-expansions {:vis.channel-tui/expand-execution-details? true
+                                 :vis.channel-tui/expand-all-details? true}}
 
             payload
             (render/format-answer-with-thinking-data nil
