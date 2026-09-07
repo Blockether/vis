@@ -350,11 +350,20 @@ export interface ProviderLimits {
   error?: { message?: string };
 }
 
+/** Safe model capabilities supplied by the gateway's Svar-normalized router. */
+export interface RouterModelDetails {
+  name: string;
+  is_reasoning_effort_configurable: boolean;
+  verbosity_style: string | null;
+}
+
 export interface RouterProvider {
   id: string;
   label: string;
   base_url?: string;
   models: string[];
+  /** Missing metadata is unknown support, never permission to send a wire field. */
+  model_details?: RouterModelDetails[];
   is_default: boolean;
   default_model: string | null;
   /** The FALLBACK tag — always a different provider than the default one. */

@@ -3,7 +3,34 @@ import { describe, expect, it, vi } from "vitest";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import type { RouterProvider } from "../lib/types";
 import { renderSessionScreen, subscriptionHub } from "./session-screen-harness";
+
+function routerProvider(id: string, overrides: Partial<RouterProvider> = {}): RouterProvider {
+  return {
+    id,
+    label: id,
+    models: ["gpt-6-astra"],
+    is_default: true,
+    default_model: "gpt-6-astra",
+    is_fallback: false,
+    fallback_model: null,
+    model_details: [{
+      name: "gpt-6-astra",
+      is_reasoning_effort_configurable: true,
+      verbosity_style: "openai-text",
+    }],
+    ...overrides,
+  };
+}
+
+function turnSubmitter() {
+  let turn = 0;
+  return vi.fn(
+    (_sid: string, _request: string, _options?: { extraBody?: Record<string, unknown> }) =>
+      Promise.resolve({ turn_id: `turn-${++turn}`, status: "running" }),
+  );
+}
 
 const toggle = (id: string, label: string, value: string, choices: string[]) => ({
   id,
@@ -55,11 +82,13 @@ describe("composer response controls", () => {
     const setSetting = vi.fn((id: string) =>
       Promise.resolve(id === "verbosity" ? { ...verbosity, value: "medium" } : fast),
     );
-
+    const fleet = [routerProvider("openai-codex")];
     renderSessionScreen({
       client: {
-        cachedDefaultModel: () => ({ provider: "openai-codex", model: "gpt-5.6" }),
-        defaultModel: () => Promise.resolve({ provider: "openai-codex", model: "gpt-5.6" }),
+        cachedDefaultModel: () => ({ provider: "openai-codex", model: "gpt-6-astra" }),
+        defaultModel: () => Promise.resolve({ provider: "openai-codex", model: "gpt-6-astra" }),
+        cachedRouter: () => fleet,
+        router: () => Promise.resolve(fleet),
         cachedSetting: (id: string) =>
           id === "reasoning_level" ? reasoning : id === "verbosity" ? verbosity : fast,
         setting: (id: string) =>
@@ -126,6 +155,144 @@ describe("composer response controls", () => {
     expect(options?.turnFeatures).toEqual({ codex_fast_mode: true });
   });
 
+  // Regression: the chip was provider-gated and its value never reached submitTurn.
+  it.each(["openai-codex", "github-copilot", "custom-responses"])(
+    "sends the chosen Astra verbosity from %s on immediate and queued turns",
+    async (provider) => {
+      const user = userEvent.setup();
+      const pref = { provider, model: "gpt-6-astra" };
+      let verbosity = toggle("verbosity", "Verbosity", "low", ["low", "medium", "high"]);
+      const submitTurn = turnSubmitter();
+      const fleet = [routerProvider(provider)];
+      renderSessionScreen({
+        client: {
+          cachedSessionModel: () => pref,
+          sessionModel: () => Promise.resolve(pref),
+          cachedRouter: () => fleet,
+          router: () => Promise.resolve(fleet),
+          cachedSetting: (id: string) => id === "verbosity" ? verbosity : null,
+          setting: (id: string) => Promise.resolve(id === "verbosity" ? verbosity : null),
+          setSetting: vi.fn(async () => {
+            const choices = verbosity.choices;
+            verbosity = {
+              ...verbosity,
+              value: choices[(choices.indexOf(verbosity.value) + 1) % choices.length]!,
+            };
+            return verbosity;
+          }),
+          submitTurn,
+        },
+      });
+      for (const [index, level] of ["low", "medium", "high", "low"].entries()) {
+        const chip = await screen.findByRole("button", {
+          name: `Verbosity — ${level}, tap for the next level`,
+        });
+        await user.type(screen.getByRole("textbox", { name: "Message Vis" }), `answer ${index}`);
+        await user.click(screen.getByRole("button", { name: index ? "Queue message" : "Send message" }));
+        await waitFor(() => expect(submitTurn).toHaveBeenCalledTimes(index + 1));
+        expect(submitTurn.mock.calls[index]?.[2]?.extraBody).toEqual({ text: { verbosity: level } });
+        await user.click(chip);
+      }
+    },
+  );
+
+  it.each([null, undefined])(
+    "hides verbosity and omits its request field when wire capability is %s, even on Codex",
+    async (style) => {
+      const user = userEvent.setup();
+      const pref = { provider: "openai-codex", model: "gpt-6-astra" };
+      const verbosity = toggle("verbosity", "Verbosity", "high", ["low", "medium", "high"]);
+      const fleet = [routerProvider(pref.provider, {
+        model_details: style === undefined ? undefined : [{
+          name: pref.model,
+          is_reasoning_effort_configurable: true,
+          verbosity_style: style,
+        }],
+      })];
+      const submitTurn = turnSubmitter();
+      renderSessionScreen({
+        client: {
+          cachedSessionModel: () => pref,
+          sessionModel: () => Promise.resolve(pref),
+          cachedRouter: () => fleet,
+          router: () => Promise.resolve(fleet),
+          cachedSetting: (id: string) => id === "verbosity" ? verbosity : null,
+          setting: (id: string) => Promise.resolve(id === "verbosity" ? verbosity : null),
+          submitTurn,
+        },
+      });
+      expect(screen.queryByRole("button", { name: /verbosity/i })).not.toBeInTheDocument();
+      await user.type(screen.getByRole("textbox", { name: "Message Vis" }), "hello");
+      await user.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(submitTurn).toHaveBeenCalledOnce());
+      expect(submitTurn.mock.calls[0]?.[2]?.extraBody).toBeUndefined();
+      expect(screen.queryByRole("button", { name: /verbosity/i })).not.toBeInTheDocument();
+    },
+  );
+
+  it("uses the session model, not the global default, and follows model changes", async () => {
+    const user = userEvent.setup();
+    const hub = subscriptionHub();
+    const verbosity = toggle("verbosity", "Verbosity", "high", ["low", "medium", "high"]);
+    const defaultPref = { provider: "openai-codex", model: "gpt-6-astra" };
+    const sessionPref = { provider: "github-copilot", model: "claude-opus-5" };
+    const fleet = [routerProvider(defaultPref.provider), routerProvider(sessionPref.provider, {
+      is_default: false,
+      models: ["gpt-6-astra", "claude-opus-5"],
+      model_details: [
+        { name: "gpt-6-astra", is_reasoning_effort_configurable: true, verbosity_style: "openai-text" },
+        { name: "claude-opus-5", is_reasoning_effort_configurable: true, verbosity_style: null },
+      ],
+    })];
+    const submitTurn = turnSubmitter();
+    renderSessionScreen({
+      client: {
+        cachedSessionModel: () => sessionPref,
+        sessionModel: () => Promise.resolve(sessionPref),
+        noteSessionModel: (_sid: string, pref: unknown) => pref,
+        cachedDefaultModel: () => defaultPref,
+        defaultModel: () => Promise.resolve(defaultPref),
+        cachedRouter: () => fleet,
+        router: () => Promise.resolve(fleet),
+        cachedSetting: (id: string) => id === "verbosity" ? verbosity : null,
+        setting: (id: string) => Promise.resolve(id === "verbosity" ? verbosity : null),
+        submitTurn,
+      },
+      subscriptions: hub,
+    });
+    for (const [index, model] of ["claude-opus-5", "gpt-6-astra", "claude-opus-5"].entries()) {
+      if (index) {
+        act(() => hub.emit({ type: "session.model_updated", provider: sessionPref.provider, model } as never));
+      }
+      const expected = model === "gpt-6-astra" ? { text: { verbosity: "high" } } : undefined;
+      await waitFor(() =>
+        expect(Boolean(screen.queryByRole("button", { name: /verbosity — high/i }))).toBe(Boolean(expected)),
+      );
+      await user.type(screen.getByRole("textbox", { name: "Message Vis" }), `answer ${index}`);
+      await user.click(screen.getByRole("button", { name: index ? "Queue message" : "Send message" }));
+      await waitFor(() => expect(submitTurn).toHaveBeenCalledTimes(index + 1));
+      expect(submitTurn.mock.calls[index]?.[2]?.extraBody).toEqual(expected);
+    }
+  });
+
+  it("enables verbosity when an uncached fleet arrives for the default model", async () => {
+    let resolveRouter!: (fleet: RouterProvider[]) => void;
+    const router = new Promise<RouterProvider[]>((resolve) => { resolveRouter = resolve; });
+    const pref = { provider: "github-copilot", model: "gpt-6-astra" };
+    const verbosity = toggle("verbosity", "Verbosity", "high", ["low", "medium", "high"]);
+    renderSessionScreen({
+      client: {
+        cachedDefaultModel: () => pref,
+        defaultModel: () => Promise.resolve(pref),
+        router: () => router,
+        cachedSetting: (id: string) => id === "verbosity" ? verbosity : null,
+        setting: (id: string) => Promise.resolve(id === "verbosity" ? verbosity : null),
+      },
+    });
+    expect(screen.queryByRole("button", { name: /verbosity/i })).not.toBeInTheDocument();
+    await act(async () => { resolveRouter([routerProvider(pref.provider)]); });
+    expect(await screen.findByRole("button", { name: /verbosity — high/i })).toBeInTheDocument();
+  });
   it("does not let an initial model read overwrite a newer gateway model event", async () => {
     let resolveSessionModel!: (pref: { provider: string; model: string }) => void;
     const sessionModel = vi.fn(

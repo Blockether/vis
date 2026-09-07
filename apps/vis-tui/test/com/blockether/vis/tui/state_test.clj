@@ -803,54 +803,34 @@
           (expect (= ["Answer length is not configurable for this model"
                       [:level :warn :ttl-ms 1500]]
                      @notified)))))
-  (it "cycles verbosity low -> medium -> high -> low on a GitHub Copilot GPT session"
-      ;; The reported gap: Copilot rides `/v1/responses` exactly as Codex does, so
-      ;; the cycle must work there without the provider being named anywhere.
-      (with-redefs [vis/load-config-raw
-                    (fn []
-                      {})
+  (it "cycles and sends Astra verbosity through real gateway capabilities on any Responses provider"
+      ;; Exercise the production decoder/resolver, not a capability stub.
+      (let [before @state/app-db]
+        (try (doseq [provider ["openai-codex" "github-copilot" "custom-responses"]]
+               (with-redefs [vis/load-config-raw (constantly {})
+                             vis/save-config! (fn [_])
+                             vis/update-machine-config! (fn [& _])
+                             vis/notify! (fn [& _])
+                             vis/router-cached
+                             (constantly [{"id" provider
+                                           "is_default" true
+                                           "default_model" "gpt-6-astra"
+                                           "models" ["gpt-6-astra"]
+                                           "model_details" [{"name" "gpt-6-astra"
+                                                             "is_reasoning_effort_configurable" true
+                                                             "verbosity_style" "openai-text"}]}])]
 
-                    vis/save-config!
-                    (fn [_])
-
-                    vis/update-machine-config!
-                    (fn [& _])
-
-                    vis/get-router
-                    (constantly :router)
-
-                    vis/resolve-model-info
-                    (fn [_ _provider _model]
-                      {:provider :github-copilot
-                       :name "gpt-5.6-sol"
-                       :reasoning? true
-                       :reasoning-effort? true
-                       :verbosity-style :openai-text})
-
-                    vis/resolve-effective-model
-                    (fn [_]
-                      {:provider :github-copilot
-                       :name "gpt-5.6-sol"
-                       :reasoning? true
-                       :reasoning-effort? true
-                       :verbosity-style :openai-text})
-
-                    vis/notify!
-                    (fn [& _])]
-
-        ;; The cycle advances the GLOBAL toggles registry, not app-db — pin it
-        ;; to its :low default so a value another test left in the shared
-        ;; registry can't shift where the first step lands (order-dependent flake).
-        (vis/toggle-reset-to-default! "verbosity")
-        (try (reset! state/app-db {:settings {:reasoning-level "balanced" :verbosity "low"}
-                                   :render-version 0})
-             (state/dispatch [:cycle-verbosity])
-             (expect (= "medium" (get-in @state/app-db [:settings :verbosity])))
-             (state/dispatch [:cycle-verbosity])
-             (expect (= "high" (get-in @state/app-db [:settings :verbosity])))
-             (state/dispatch [:cycle-verbosity])
-             (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
-             (finally (vis/toggle-reset-to-default! "verbosity"))))))
+                 ;; Cycling reads the global registry; isolate the starting value.
+                 (vis/toggle-reset-to-default! "verbosity")
+                 (reset! state/app-db {:session {:id "s1"}
+                                       :session-model-pref {:provider provider :model "gpt-6-astra"}
+                                       :settings {:reasoning-level "balanced" :verbosity "low"}
+                                       :render-version 0})
+                 (doseq [level ["low" "medium" "high" "low"]]
+                   (expect (= level (get-in @state/app-db [:settings :verbosity])))
+                   (expect (= {:text {:verbosity level}} (#'state/turn-extra-body @state/app-db)))
+                   (state/dispatch [:cycle-verbosity]))))
+             (finally (vis/toggle-reset-to-default! "verbosity") (reset! state/app-db before))))))
 
 (defdescribe
   session-model-pref-scope-test

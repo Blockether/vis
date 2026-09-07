@@ -559,6 +559,20 @@ describe('GatewayClient turn cancellation', () => {
     expect(body.turn_features).toEqual({ voice_projection: true });
   });
 
+  it.each(['low', 'medium', 'high'])('serializes %s verbosity on the gateway wire', async (verbosity) => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ turn_id: 'turn-verbosity' })),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+
+    await new GatewayClient(conn).submitTurn('session-1', 'hello', {
+      extraBody: { text: { verbosity } },
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.extra_body).toEqual({ text: { verbosity } });
+  });
   it('uploads attachment bytes before submitting only opaque references', async () => {
     const fetchMock = vi
       .fn()

@@ -149,6 +149,7 @@ import type {
   VoiceModelState,
   VoiceProgress,
   ModelPref,
+  RouterProvider,
   Toggle,
   GatewayAttachment,
 } from "../lib/types";
@@ -689,6 +690,9 @@ export function SessionScreen({
   // seed: resolving it costs a `/v1/router` probe on a cold daemon.
   const [defaultPref, setDefaultPref] = useState<ModelPref | null>(() =>
     client.cachedDefaultModel(),
+  );
+  const [modelFleet, setModelFleet] = useState<RouterProvider[] | null>(() =>
+    client.cachedRouter(),
   );
   const [routerOpen, setRouterOpen] = useState(false);
   // A cached transcript is already the honest first frame. Reserve the veil for
@@ -1264,10 +1268,19 @@ export function SessionScreen({
   const reasoningLevel = pendingLevel ?? reasoning?.value ?? "default";
   const activeProvider = modelPref?.provider ?? defaultPref?.provider;
   const codexFastAvailable = activeProvider === "openai-codex" && codexFast;
-  // Codex rides the OpenAI Responses wire, whose `text.verbosity` field is the
-  // registered knob's destination. Other providers need model-level wire
-  // capability in the session-model response before this control may appear.
-  const verbosityAvailable = activeProvider === "openai-codex" && verbosity;
+  const selectedModel = modelPref?.model ?? defaultPref?.model;
+  // Match the TUI resolver: session provider/model, then the provider's default.
+  // Capabilities belong to the model's wire, never to a provider name.
+  const modelProvider = modelFleet?.find((row) => row.id === activeProvider)
+    ?? modelFleet?.find((row) => row.is_default)
+    ?? modelFleet?.[0];
+  const modelInfo = modelProvider?.model_details?.find((model) => model.name === selectedModel)
+    ?? modelProvider?.model_details?.find((model) => model.name === modelProvider.default_model)
+    ?? modelProvider?.model_details?.[0];
+  const verbosityAvailable = modelInfo?.verbosity_style != null && verbosity;
+  const turnExtraBody = verbosityAvailable
+    ? { text: { verbosity: verbosityAvailable.value ?? "low" } }
+    : undefined;
   function turnFeaturesFor(voiceProjection: boolean): Record<string, boolean> | undefined {
     const codexFastMode = Boolean(codexFastAvailable && codexFast.enabled);
     if (!voiceProjection && !codexFastMode) return undefined;
@@ -1300,10 +1313,13 @@ export function SessionScreen({
   // default may have just been changed from it.
   useEffect(() => {
     let live = true;
-    void client
-      .defaultModel()
-      .then((pref) => {
-        if (live) setDefaultPref(pref);
+    // defaultModel() shares router()'s in-flight read and cache; this is one probe.
+    void Promise.all([client.defaultModel(), client.router()])
+      .then(([pref, fleet]) => {
+        if (live) {
+          setDefaultPref(pref);
+          setModelFleet(fleet);
+        }
       })
       .catch(() => {
         /* Without a readable default the chip simply falls back to the pin. */
@@ -3589,6 +3605,7 @@ export function SessionScreen({
         const submitted = await client.submitTurn(sid, request, {
           displayRequest,
           attachments: sent,
+          extraBody: turnExtraBody,
           turnFeatures: turnFeaturesFor(voiceProjection),
         });
         const queuedId = submitted.turn_id;
@@ -3676,6 +3693,7 @@ export function SessionScreen({
       const submitted = await client.submitTurn(sid, request, {
         displayRequest,
         attachments: sent,
+        extraBody: turnExtraBody,
         turnFeatures: turnFeaturesFor(voiceProjection),
       });
       const submittedId = submitted.turn_id;
@@ -3972,7 +3990,6 @@ export function SessionScreen({
   const activePastes = Array.from(pastes.values()).filter((paste) =>
     prompt.includes(paste.token),
   );
-  const selectedModel = modelPref?.model ?? defaultPref?.model;
   const responseControls: ComposerResponseControlsModel = {
     model: {
       value: selectedModel ?? "model",

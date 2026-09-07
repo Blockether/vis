@@ -41,5 +41,7 @@ export const AvailableOptions: Story = {
       canvas.getByRole("button", { name: "Change provider and model" }),
     );
     await expect(args.controls.model.choose).toHaveBeenCalledOnce();
+    await userEvent.click(canvas.getByRole("button", { name: /^Verbosity —/ }));
+    await expect(args.controls.verbosity?.cycle).toHaveBeenCalledOnce();
   },
 };
