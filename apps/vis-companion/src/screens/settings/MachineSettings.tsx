@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { clientCallbackMode, watchAuth, type AuthWatch } from "../../lib/oauth";
 import { McpAuth } from "../../components/McpAuth";
+import { SwipeActions, type SwipeAction } from "../../components/SwipeActions";
 
 import {
   GatewayClient,
@@ -18,13 +19,29 @@ import type {
   Toggle,
   ToggleGroup,
 } from "../../lib/types";
-import { PlusIcon } from "../../components/icons";
+import {
+  ArrowOutIcon,
+  ChevronIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleDotIcon,
+  CircleSlashIcon,
+  MARK_NUDGE,
+  PencilIcon,
+  PlayIcon,
+  PlusIcon,
+  StopIcon,
+  TrashIcon,
+} from "../../components/icons";
 import {
   Banner,
   Button,
   Chip,
+  ConfirmRow,
   IconButton,
   Input,
+  ListRow,
   PROSE,
   Switch,
 } from "../../components/ui";
@@ -352,6 +369,26 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   // ORIGINAL name: `POST /v1/mcp/servers` replaces by name, so a renamed field
   // would fork a second server instead of updating this one.
   const [editing, setEditing] = useState<McpServer | null>(null);
+  // Rows standing open to show the whole spec: the arguments, working directory
+  // and timeout the one-line meta cannot carry.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  // The one destructive question open at a time, asked in the row itself.
+  const [confirming, setConfirming] = useState<{
+    name: string;
+    kind: "remove" | "signout";
+  } | null>(null);
+
+  // Escape unwinds the row's own question first, before the dialog hears it.
+  useEffect(() => {
+    if (confirming === null) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setConfirming(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [confirming]);
 
   const load = useCallback(async () => {
     try {
@@ -560,10 +597,6 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   }
 
   async function signOut(server: McpServer) {
-    if (
-      !window.confirm(`Forget ${server.name}'s OAuth tokens on this gateway?`)
-    )
-      return;
     setBusy(server.name);
     try {
       await client.mcpAuthLogout(server.name);
@@ -576,7 +609,6 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   }
 
   async function remove(server: McpServer) {
-    if (!window.confirm(`Remove ${server.name} from this gateway?`)) return;
     setBusy(server.name);
     try {
       await client.deleteMcpServer(server.name);
@@ -587,6 +619,152 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
       setBusy(null);
     }
   }
+
+  function toggleOpen(name: string) {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  // The editor: under the row it edits, or at the foot of the list when adding.
+  const form = showForm && (
+    <div className="space-y-3 border-t border-dialog-edge bg-panel-2 p-3">
+      {!editing && (
+        <div
+          className="grid grid-cols-2 gap-1"
+          role="group"
+          aria-label="MCP transport"
+        >
+          {(["stdio", "streamable_http"] as const).map((kind) => (
+            <Chip
+              key={kind}
+              isOn={transport === kind}
+              onClick={() => setTransport(kind)}
+              className="w-full uppercase"
+            >
+              {kind === "stdio" ? "Local command" : "Streamable HTTP"}
+            </Chip>
+          ))}
+        </div>
+      )}
+      {!editing && (
+        <FormLabel label="Server name">
+          <Input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="filesystem"
+            autoCapitalize="none"
+            autoCorrect="off"
+          />
+        </FormLabel>
+      )}
+      {transport === "stdio" ? (
+        <>
+          <FormLabel label="Executable">
+            <Input
+              value={command}
+              onChange={(event) => setCommand(event.target.value)}
+              placeholder="npx"
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </FormLabel>
+          <FormLabel
+            label="Arguments — one per line"
+            hint="Arguments are passed directly, never through a shell."
+          >
+            <textarea
+              value={args}
+              onChange={(event) => setArgs(event.target.value)}
+              placeholder={
+                "-y\n@modelcontextprotocol/server-filesystem\n/path"
+              }
+              className="min-h-24 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
+            />
+          </FormLabel>
+          <FormLabel label="Working directory (optional)">
+            <Input
+              value={cwd}
+              onChange={(event) => setCwd(event.target.value)}
+              placeholder="/workspace"
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </FormLabel>
+          <FormLabel
+            label="Environment variables (optional)"
+            hint={
+              editing
+                ? "One NAME=value per line. Leave blank to keep the values already stored."
+                : "One NAME=value per line. Values are write-only after saving."
+            }
+          >
+            <textarea
+              value={env}
+              onChange={(event) => setEnv(event.target.value)}
+              placeholder="API_TOKEN=…"
+              className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
+            />
+          </FormLabel>
+        </>
+      ) : (
+        <>
+          <FormLabel label="Streamable HTTP endpoint">
+            <Input
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              placeholder="https://mcp.example.com/mcp"
+              inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+          </FormLabel>
+          <FormLabel
+            label="Headers (optional)"
+            hint={
+              editing
+                ? "One NAME=value per line. Leave blank to keep the values already stored."
+                : "One NAME=value per line. Values are write-only after saving."
+            }
+          >
+            <textarea
+              value={headers}
+              onChange={(event) => setHeaders(event.target.value)}
+              placeholder="Authorization=Bearer …"
+              className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
+            />
+          </FormLabel>
+        </>
+      )}
+      {test && (
+        <Banner kind="ok">
+          Validated {test.name}: {test.tools.length} tools discovered.
+        </Banner>
+      )}
+      <div className="flex flex-wrap justify-end gap-2 border-t border-dialog-edge pt-2">
+        <Button
+          variant="secondary"
+          disabled={busy !== null}
+          onClick={() => closeForm()}
+        >
+          Cancel
+        </Button>
+        <Button
+          disabled={busy !== null}
+          onClick={() => void validateAndSave()}
+        >
+          {busy === "save"
+            ? "Validating…"
+            : editing
+              ? "Validate & update"
+              : "Validate & save"}
+        </Button>
+      </div>
+    </div>
+  );
 
   return (
     <SettingsPanel
@@ -606,237 +784,279 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
       }
     >
       <div className="divide-y divide-dialog-edge">
-        {error && <Banner kind="err">{error}</Banner>}
-        {servers?.map((server) => (
-          <div
-            key={server.name}
-            className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 px-3 py-3 sm:px-4 sm:py-2.5"
-          >
-            <div className="min-w-0">
-              <p className="truncate font-mono text-ui font-bold text-white">
-                {server.name}
-              </p>
-              <p className="mt-0.5 truncate font-mono text-meta text-dialog-hint">
-                {server.transport === "stdio" ? server.command : server.url} ·{" "}
-                {server.tools} tools ·{" "}
-                {server.is_killed
-                  ? "killed"
-                  : server.is_connected
-                    ? "connected"
-                    : server.enabled
-                      ? "connecting"
-                      : "disabled"}
-                {server.url
-                  ? server.is_authorized
-                    ? " · signed in"
-                    : " · not signed in"
-                  : null}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
-              {server.url && (
-                <Button
-                  variant="secondary"
-                  disabled={busy !== null}
-                  onClick={() => void authorize(server)}
-                >
-                  {server.is_authorized ? "Re-auth" : "Sign in"}
-                </Button>
-              )}
-              {server.url && server.is_authorized && (
-                <Button
-                  variant="secondary"
-                  disabled={busy !== null}
-                  onClick={() => void signOut(server)}
-                >
-                  Sign out
-                </Button>
-              )}
-              <Button
-                variant="secondary"
-                disabled={busy !== null}
-                onClick={() => void setRunning(server, server.is_killed)}
-              >
-                {server.is_killed ? "Start" : "Kill"}
-              </Button>
-              {server.is_managed ? (
-                <>
-                  <Switch
-                    label={`${server.name} MCP server`}
-                    isOn={server.enabled}
-                    isBusy={busy === server.name}
-                    disabled={busy !== null}
-                    onClick={() => void toggle(server)}
-                  />
-                  <Button
-                    variant="secondary"
-                    disabled={busy !== null}
-                    onClick={() => openForm(server)}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    disabled={busy !== null}
-                    onClick={() => void remove(server)}
-                  >
-                    Remove
-                  </Button>
-                </>
-              ) : (
-                <p className="font-mono text-chip text-dialog-hint">
-                  config file
-                </p>
-              )}
-            </div>
-            {authFlow?.server === server.name && (
-              <McpAuth flow={authFlow} input={authInput} busy={busy !== null}
-                onInput={setAuthInput} onFinish={() => void finishAuth()} onCancel={cancelAuth} onOpen={() => stopAuth.current?.open()} />
-            )}
+        {error && (
+          <div className="p-3">
+            <Banner kind="err">{error}</Banner>
           </div>
-        ))}
+        )}
+        {servers?.map((server) => {
+          const state = mcpServerMark(server);
+          const isOpen = expanded.has(server.name);
+          const panelId = `mcp-server-${server.name}`;
+          const idle = busy === null;
+
+          // The confirm IS the row, at the row's own height — the way a session's
+          // delete asks. A cost sentence made it taller than the row it replaces.
+          if (confirming?.name === server.name)
+            return confirming.kind === "remove" ? (
+              <ConfirmRow
+                key={server.name}
+                question={`Remove ${server.name}?`}
+                confirmLabel="Yes, remove"
+                isBusy={busy === server.name}
+                onKeep={() => setConfirming(null)}
+                onConfirm={() => {
+                  setConfirming(null);
+                  void remove(server);
+                }}
+              />
+            ) : (
+              <ConfirmRow
+                key={server.name}
+                question={`Sign out of ${server.name}?`}
+                confirmLabel="Yes, sign out"
+                isBusy={busy === server.name}
+                onKeep={() => setConfirming(null)}
+                onConfirm={() => {
+                  setConfirming(null);
+                  void signOut(server);
+                }}
+              />
+            );
+
+          // THE VERBS OF THIS SERVER, waiting under its own row's trailing edge,
+          // the way a provider's and a machine's do. Kill and start are runtime
+          // verbs, so a config-file server carries them too; only the edits that
+          // would rewrite somebody's `vis.yml` are missing from it.
+          const actions: SwipeAction[] = [];
+          if (server.url)
+            actions.push({
+              key: "auth",
+              label: server.is_authorized ? "Re-auth" : "Sign in",
+              name: server.is_authorized
+                ? `Sign in to ${server.name} again`
+                : `Sign in to ${server.name}`,
+              icon: <ArrowOutIcon className="size-4" />,
+              // The one verb a server cannot work without wears the accent.
+              tone: server.is_authorized ? "neutral" : "accent",
+              onSelect: () => {
+                if (idle) void authorize(server);
+              },
+            });
+          if (server.url && server.is_authorized)
+            actions.push({
+              key: "signout",
+              label: "Sign out",
+              name: `Sign out of ${server.name}`,
+              icon: <CircleSlashIcon className="size-4" />,
+              onSelect: () => setConfirming({ name: server.name, kind: "signout" }),
+            });
+          actions.push({
+            key: "run",
+            label: server.is_killed ? "Start" : "Kill",
+            name: server.is_killed
+              ? `Start ${server.name}`
+              : `Kill ${server.name} until it is started again`,
+            icon: server.is_killed ? (
+              <PlayIcon className="size-4" />
+            ) : (
+              <StopIcon className="size-4" />
+            ),
+            onSelect: () => {
+              if (idle) void setRunning(server, server.is_killed);
+            },
+          });
+          if (server.is_managed) {
+            actions.push({
+              key: "edit",
+              label: "Edit",
+              name: `Edit ${server.name}`,
+              icon: <PencilIcon className="size-4" />,
+              onSelect: () => {
+                if (idle) openForm(server);
+              },
+            });
+            actions.push({
+              key: "remove",
+              label: "Remove",
+              name: `Remove ${server.name} from this machine`,
+              icon: <TrashIcon className="size-4" />,
+              tone: "danger",
+              onSelect: () => setConfirming({ name: server.name, kind: "remove" }),
+            });
+          }
+
+          return (
+            <div key={server.name} className="min-w-0">
+              <SwipeActions
+                label={server.name}
+                actions={actions}
+                // The switch is the ONE permanent control, the way every other
+                // on/off setting in this dialog ends its row; a config-file server
+                // has nothing this API may flip, so its row ends in the chevron.
+                trailing={
+                  server.is_managed ? (
+                    <div className="flex items-center pr-3 sm:pr-4">
+                      <Switch
+                        label={`${server.name} MCP server`}
+                        isOn={server.enabled}
+                        isBusy={busy === server.name}
+                        disabled={!idle}
+                        onClick={() => void toggle(server)}
+                      />
+                    </div>
+                  ) : undefined
+                }
+              >
+                <div className="min-w-0">
+                  <ListRow
+                    className="min-w-0 gap-3"
+                    aria-expanded={isOpen}
+                    aria-controls={isOpen ? panelId : undefined}
+                    onClick={() => toggleOpen(server.name)}
+                  >
+                    {/* One rule with the provider rows: the mark rides the name's
+                        own line, and the state is the RING's interior, never the
+                        ink alone. */}
+                    <span
+                      className={`shrink-0 self-start ${state.isSettling ? "animate-pulse motion-reduce:animate-none" : ""}`}
+                      title={state.label}
+                    >
+                      <state.Mark className={`${MARK_NUDGE} ${state.tone}`} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-mono text-body font-bold text-white">
+                          {server.name}
+                        </span>
+                        {!server.is_managed && (
+                          <span
+                            className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint"
+                            title="Listed from a hand-written config file; edit it there."
+                          >
+                            Config file
+                          </span>
+                        )}
+                      </span>
+                      <span className="block truncate font-mono text-meta text-dialog-hint">
+                        {server.transport === "stdio" ? server.command : server.url}
+                      </span>
+                    </span>
+                    <span
+                      className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${state.tone === "text-ok" ? "text-dialog-hint" : state.tone}`}
+                      title={state.label}
+                    >
+                      {/* A managed server's switch already says "off"; the word is
+                          for the config-file row that has no switch to say it. */}
+                      {server.is_managed && !server.enabled ? "" : state.word}
+                    </span>
+                    <ChevronIcon
+                      open={isOpen}
+                      className="size-3 shrink-0 text-dialog-hint"
+                      aria-hidden
+                    />
+                  </ListRow>
+                </div>
+              </SwipeActions>
+              {isOpen && !(showForm && editing?.name === server.name) && (
+                <McpServerDetails id={panelId} server={server} />
+              )}
+              {showForm && editing?.name === server.name && form}
+              {authFlow?.server === server.name && (
+                <div className="px-3 pb-3 sm:px-4">
+                  <McpAuth flow={authFlow} input={authInput} busy={busy !== null}
+                    onInput={setAuthInput} onFinish={() => void finishAuth()} onCancel={cancelAuth} onOpen={() => stopAuth.current?.open()} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {servers === null && (
+          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+            Checking MCP servers…
+          </p>
+        )}
         {servers?.length === 0 && !showForm && (
-          <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4">
+          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
             No MCP servers on this gateway.
           </p>
         )}
-        {showForm && (
-          <div className="space-y-3 p-2.5">
-            <div
-              className="grid grid-cols-2 gap-1"
-              role="group"
-              aria-label="MCP transport"
-            >
-              {(["stdio", "streamable_http"] as const).map((kind) => (
-                <Chip
-                  key={kind}
-                  isOn={transport === kind}
-                  onClick={() => setTransport(kind)}
-                  className="w-full uppercase"
-                >
-                  {kind === "stdio" ? "Local command" : "Streamable HTTP"}
-                </Chip>
-              ))}
-            </div>
-            <FormLabel label="Server name">
-              {editing ? (
-                <p className="font-mono text-ui text-white">{editing.name}</p>
-              ) : (
-                <Input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="filesystem"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                />
-              )}
-            </FormLabel>
-            {transport === "stdio" ? (
-              <>
-                <FormLabel label="Executable">
-                  <Input
-                    value={command}
-                    onChange={(event) => setCommand(event.target.value)}
-                    placeholder="npx"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                  />
-                </FormLabel>
-                <FormLabel
-                  label="Arguments — one per line"
-                  hint="Arguments are passed directly, never through a shell."
-                >
-                  <textarea
-                    value={args}
-                    onChange={(event) => setArgs(event.target.value)}
-                    placeholder={
-                      "-y\n@modelcontextprotocol/server-filesystem\n/path"
-                    }
-                    className="min-h-24 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
-                  />
-                </FormLabel>
-                <FormLabel label="Working directory (optional)">
-                  <Input
-                    value={cwd}
-                    onChange={(event) => setCwd(event.target.value)}
-                    placeholder="/workspace"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                  />
-                </FormLabel>
-                <FormLabel
-                  label="Environment variables (optional)"
-                  hint={
-                    editing
-                      ? "One NAME=value per line. Leave blank to keep the values already stored."
-                      : "One NAME=value per line. Values are write-only after saving."
-                  }
-                >
-                  <textarea
-                    value={env}
-                    onChange={(event) => setEnv(event.target.value)}
-                    placeholder="API_TOKEN=…"
-                    className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
-                  />
-                </FormLabel>
-              </>
-            ) : (
-              <>
-                <FormLabel label="Streamable HTTP endpoint">
-                  <Input
-                    value={url}
-                    onChange={(event) => setUrl(event.target.value)}
-                    placeholder="https://mcp.example.com/mcp"
-                    inputMode="url"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                  />
-                </FormLabel>
-                <FormLabel
-                  label="Headers (optional)"
-                  hint={
-                    editing
-                      ? "One NAME=value per line. Leave blank to keep the values already stored."
-                      : "One NAME=value per line. Values are write-only after saving."
-                  }
-                >
-                  <textarea
-                    value={headers}
-                    onChange={(event) => setHeaders(event.target.value)}
-                    placeholder="Authorization=Bearer …"
-                    className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none"
-                  />
-                </FormLabel>
-              </>
-            )}
-            {test && (
-              <Banner kind="ok">
-                Validated {test.name}: {test.tools.length} tools discovered.
-              </Banner>
-            )}
-            <div className="flex flex-wrap justify-end gap-2 border-t border-dialog-edge pt-2">
-              <Button
-                variant="secondary"
-                disabled={busy !== null}
-                onClick={() => closeForm()}
-              >
-                Cancel
-              </Button>
-              <Button
-                disabled={busy !== null}
-                onClick={() => void validateAndSave()}
-              >
-                {busy === "save"
-                  ? "Validating…"
-                  : editing
-                    ? "Validate & update"
-                    : "Validate & save"}
-              </Button>
-            </div>
-          </div>
-        )}
+        {showForm && !editing && form}
       </div>
     </SettingsPanel>
+  );
+}
+
+/**
+ * THE VERDICT AS A SHAPE, one rule with `providerStatusMark`: a ring whose
+ * interior says the state, in an ink that agrees with it. `word` is the row's
+ * trailing chip — the count of what a connected server offers, the state of one
+ * that is not — so the row never says the same thing twice.
+ */
+function mcpServerMark(server: McpServer): {
+  Mark: typeof CircleCheckIcon;
+  tone: string;
+  label: string;
+  word: string;
+  isSettling?: boolean;
+} {
+  const tools = `${server.tools} ${server.tools === 1 ? "tool" : "tools"}`;
+  if (server.is_killed)
+    return {
+      Mark: CircleSlashIcon,
+      tone: "text-dialog-hint",
+      label: "Killed — start it to reconnect",
+      word: "killed",
+    };
+  if (!server.enabled)
+    return { Mark: CircleDashedIcon, tone: "text-dialog-hint", label: "Disabled", word: "off" };
+  if (server.is_connected)
+    return { Mark: CircleCheckIcon, tone: "text-ok", label: "Connected", word: tools };
+  if (server.url && !server.is_authorized)
+    return {
+      Mark: CircleAlertIcon,
+      tone: "text-warn",
+      label: "Not signed in — sign in to connect",
+      word: "sign in",
+    };
+  return {
+    Mark: CircleDotIcon,
+    tone: "text-warn",
+    label: "Connecting",
+    word: "connecting",
+    isSettling: true,
+  };
+}
+
+/** The whole non-secret spec of one server, under its own row. */
+function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
+  const rows: [string, string][] = [];
+  if (server.transport === "stdio") {
+    rows.push(["Command", server.command ?? ""]);
+    if (server.args?.length) rows.push(["Arguments", server.args.join(" ")]);
+    if (server.cwd) rows.push(["Directory", server.cwd]);
+  } else {
+    rows.push(["Endpoint", server.url ?? ""]);
+    rows.push(["Sign-in", server.is_authorized ? "Signed in" : "Not signed in"]);
+  }
+  rows.push(["Tools", String(server.tools)]);
+  if (server.timeout_ms) rows.push(["Timeout", `${Math.round(server.timeout_ms / 1000)}s`]);
+  return (
+    <div
+      id={id}
+      role="region"
+      aria-label={`${server.name} details`}
+      className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-dialog-edge bg-panel-2 p-3"
+    >
+      {rows.map(([term, value]) => (
+        <Fragment key={term}>
+          <span className="font-mono text-chip font-black uppercase tracking-wider text-dialog-hint">
+            {term}
+          </span>
+          <span className="break-all font-mono text-meta text-dialog-foreground">{value}</span>
+        </Fragment>
+      ))}
+    </div>
   );
 }
 

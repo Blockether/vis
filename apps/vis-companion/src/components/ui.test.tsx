@@ -1294,7 +1294,7 @@ describe("settings is ONE dialog with two columns", () => {
     // the list's own full-width last row, which is where the reader found it again.
     const mcp = settings.slice(
       settings.indexOf('title="MCP servers"'),
-      settings.indexOf("MCP transport"),
+      settings.indexOf("function mcpServerMark"),
     );
     expect(mcp).not.toContain("description=");
     expect(mcp).not.toContain("meta=");
@@ -1303,9 +1303,16 @@ describe("settings is ONE dialog with two columns", () => {
     expect(mcp).toContain('label="Add an MCP server"');
     expect(mcp).not.toContain("w-full justify-center");
     // The ＋ IS the form's door, so it steps out of the band while the form is open
-    // rather than standing over it offering to open a second one.
+    // rather than standing over it offering to open a second one. The form for a
+    // NEW server is the list's last row; an edit hangs under the row it edits.
     expect(mcp).toContain("showForm ? null : (");
-    expect(mcp).toContain("{showForm && (");
+    expect(mcp).toContain("{showForm && !editing && form}");
+    expect(mcp).toContain("{showForm && editing?.name === server.name && form}");
+    // One row-verb surface in this app: the verbs slide out from under the row,
+    // and the destructive ones ask in the row itself instead of `window.confirm`.
+    expect(mcp).toContain("<SwipeActions");
+    expect(mcp).toContain("<ConfirmRow");
+    expect(mcp).not.toContain("window.confirm");
   });
 
   it("keeps speech engines and voices unboxed under the machine", () => {
@@ -1372,10 +1379,20 @@ describe("settings is ONE dialog with two columns", () => {
   // nothing. A row gets ONE anchor (anti-slop 3 and 5, and "say a state only when
   // it is worth saying"); the band's meta counted rows the reader is looking at.
   it("gives a settings row one anchor, and no ring that restates its control", () => {
-    expect(settings).not.toContain("CircleCheckIcon");
-    expect(settings).not.toContain("CircleDashedIcon");
-    expect(settings).not.toContain("CircleDotIcon");
-    expect(settings).not.toContain("MARK_NUDGE");
+    // The MCP list is the one settings list whose rows carry a mark, because a
+    // server's REACH is something its switch cannot say; every other settings
+    // row ends in the control that is its whole state.
+    const mcp = machineSettingsSource.slice(
+      machineSettingsSource.indexOf("export function McpServersPanel"),
+    );
+    const rows = settings
+      .replace(mcp, "")
+      .replace(/^import \{[^}]*\} from "\.\.\/\.\.\/components\/icons";/m, "");
+    expect(rows).not.toContain("CircleCheckIcon");
+    expect(rows).not.toContain("CircleDashedIcon");
+    expect(rows).not.toContain("CircleDotIcon");
+    expect(rows).not.toContain("MARK_NUDGE");
+    expect(mcp).toContain("<state.Mark className={`${MARK_NUDGE} ${state.tone}`} />");
     // Label then control: the name starts on the same left edge as the band
     // title above it, and the description gets the glyph column's width back.
     expect(settings).toContain(

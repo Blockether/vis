@@ -23,7 +23,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 it('starts native MCP auth, returns directly, closes the pending UI and refreshes the server', async () => {
   vi.spyOn(window, 'open').mockReturnValue(null);
   const gateway = client(); render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Sign in/ }));
   await screen.findByText('Waiting for authorization…');
   expect(gateway.mcpAuthStart).toHaveBeenCalledWith('work', 'app');
   expect(screen.queryByRole('textbox')).toBeNull();
@@ -37,7 +37,7 @@ it('cancels a start that returns after unmount without opening the browser', asy
   const gateway = client(); let release!: (value: typeof flow) => void;
   gateway.mcpAuthStart.mockReturnValue(new Promise(resolve => { release = resolve; }));
   const view = render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Sign in' })); view.unmount();
+  fireEvent.click(screen.getByRole('button', { name: /^Sign in/ })); view.unmount();
   await act(async () => release(flow));
   expect(opened).not.toHaveBeenCalled(); expect(gateway.mcpAuthCancel).toHaveBeenCalledWith('work', 'test-flow');
 });
@@ -45,7 +45,7 @@ it('does not send an old callback to a different paired gateway', async () => {
   vi.spyOn(window, 'open').mockReturnValue(null);
   const first = client(); const second = client();
   const view = render(<McpServersPanel client={first as unknown as GatewayClient} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Sign in' })); await screen.findByText('Waiting for authorization…');
+  fireEvent.click(screen.getByRole('button', { name: /^Sign in/ })); await screen.findByText('Waiting for authorization…');
   view.rerender(<McpServersPanel client={second as unknown as GatewayClient} />);
   await act(async () => native.handler({ url: `${flow.redirect_uri}?state=test-state&code=test-code` }));
   expect(second.mcpAuthComplete).not.toHaveBeenCalled(); expect(first.mcpAuthComplete).not.toHaveBeenCalled();
@@ -70,7 +70,7 @@ it('starts native MCP sign-in on a paired HTTP gateway without another consent d
   vi.stubGlobal('fetch', fetch);
   const gateway = pairedHttpClient();
   render(<McpServersPanel client={gateway} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Sign in/ }));
   await screen.findByText('Waiting for authorization…');
   expect(confirm).not.toHaveBeenCalled();
   await waitFor(() => expect(opened).toHaveBeenCalledWith(flow.url, '_blank', 'noopener,noreferrer'));
@@ -95,7 +95,7 @@ it.each([
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
   const gateway = client(); gateway.mcpAuthStart.mockRejectedValue(error);
   render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Sign in/ }));
   await screen.findByText(message as string);
   expect(screen.queryByText('test-sensitive-callback-value')).toBeNull();
   expect(confirm).not.toHaveBeenCalled();
