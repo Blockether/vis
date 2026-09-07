@@ -1577,7 +1577,7 @@ export function NotifyConnectionSwitch({
  *   full 48×48 target (36×36 for a mouse), stands alone at the end of a compact row
  *   (`isStandalone`) as a 24px / 20px target, or sits inside another control as a
  *   32px mark (`mouse:size-6`). Band and standalone controls each carry a circular
- *   FACE: 32px for the band and 20px for a row, shrinking to 28px and 16px for a
+ *   FACE: 32px for the band and 16px for a row, shrinking to 28px and 14px for a
  *   mouse. A wrapped title can make the band taller; the target still stretches with
  *   it while its face stays round.
  * - A BAND CLOSE IS A COMPACT BRANDED DISC, NOT A SECOND VERB. The two Blockether
@@ -1620,7 +1620,7 @@ export function CloseButton({
   /** This ✕ ends a row: its compact target carries a smaller circular face. */
   isStandalone?: boolean;
 }) {
-  const mark = <CloseIcon className={isStandalone ? 'size-3' : undefined} />;
+  const mark = <CloseIcon className={isStandalone ? 'size-2.5' : undefined} />;
   return (
     <button
       type="button"
@@ -1640,7 +1640,7 @@ export function CloseButton({
           {mark}
         </span>
       ) : isStandalone ? (
-        <span className="pointer-events-none grid size-5 place-items-center rounded-full border border-current/20 transition-[background-color,color,transform] duration-150 group-hover:bg-err/15 group-hover:text-err group-focus-visible:bg-err/15 group-focus-visible:text-err group-focus-visible:ring-2 group-focus-visible:ring-accent/60 group-active:scale-[0.94] blockether-light:bg-accent blockether-light:text-accent-foreground blockether-light:group-hover:bg-accent-2 blockether-light:group-hover:text-accent-foreground blockether-light:group-focus-visible:bg-accent blockether-light:group-focus-visible:text-accent-foreground motion-reduce:transition-none mouse:size-4">
+        <span className="pointer-events-none grid size-4 place-items-center rounded-full border border-current/20 transition-[background-color,color,transform] duration-150 group-hover:bg-err/15 group-hover:text-err group-focus-visible:bg-err/15 group-focus-visible:text-err group-focus-visible:ring-2 group-focus-visible:ring-accent/60 group-active:scale-[0.94] blockether-light:bg-accent blockether-light:text-accent-foreground blockether-light:group-hover:bg-accent-2 blockether-light:group-hover:text-accent-foreground blockether-light:group-focus-visible:bg-accent blockether-light:group-focus-visible:text-accent-foreground motion-reduce:transition-none mouse:size-3.5">
           {mark}
         </span>
       ) : (

@@ -116,14 +116,14 @@ describe("queued turns tray", () => {
       expect(remove.className).toContain("size-6");
       expect(remove.className).toContain("mouse:size-5");
       const face = remove.querySelector("span");
-      expect(face?.className).toContain("size-5");
-      expect(face?.className).toContain("mouse:size-4");
+      expect(face?.className).toContain("size-4");
+      expect(face?.className).toContain("mouse:size-3.5");
       expect(face?.className).toContain("blockether-light:bg-accent");
       expect(face?.className).toContain(
         "blockether-light:text-accent-foreground",
       );
       expect(remove.querySelector("svg")?.className.baseVal).toContain(
-        "size-3",
+        "size-2.5",
       );
     }
   });
