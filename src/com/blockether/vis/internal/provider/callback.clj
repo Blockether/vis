@@ -5,7 +5,8 @@
    state before accepting ONE response, and closes on completion, stop or expiry.
    The browser sees a receipt, not a claim that token exchange has succeeded.
    No request values are reflected into HTML or logged. Shared by provider and MCP auth."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.net InetSocketAddress URI URLDecoder]
            [java.nio.charset StandardCharsets]))
@@ -44,8 +45,7 @@
              q
              (query (.getRawQuery actual))]
 
-         (boolean (and (string? expected-state)
-                       (not (str/blank? expected-state))
+         (boolean (and (util/non-blank-string? expected-state)
                        (= expected-state (get q "state"))
                        (= [(.getScheme expected) (.getRawAuthority expected) (.getRawPath expected)]
                           [(.getScheme actual) (.getRawAuthority actual) (.getRawPath actual)])
@@ -100,8 +100,7 @@
                    (nil? (.getRawUserInfo uri))
                    (nil? (.getRawQuery uri))
                    (nil? (.getRawFragment uri))
-                   (string? expected-state)
-                   (not (str/blank? expected-state))
+                   (util/non-blank-string? expected-state)
                    (<= 1 (long ttl-ms) 900000))
       (throw (ex-info "Invalid OAuth loopback receiver" {})))
     (let [server

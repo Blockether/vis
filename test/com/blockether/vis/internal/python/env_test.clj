@@ -141,7 +141,7 @@
                     {"workspace" {"root" "/workspace/main"
                                   "filesystem_roots"
                                   [{"cwd" "/workspace/fff" "python_name" "fff_path"}
-                                   {"cwd" "/workspace/spel" "python_name" "spel_path"}
+                                   {"cwd" "/workspace/library" "python_name" "library_path"}
                                    {"cwd" "/cache"} {"cwd" "/private" "is_denied" true}]}})
       (expect
         (=
@@ -151,9 +151,9 @@
               ctx
               "print(all(isinstance(globals()[e['python_name']], pathlib.Path) and str(globals()[e['python_name']]) == e['cwd'] for e in session['workspace']['filesystem_roots'] if 'python_name' in e))"))))
       (expect (nil? (:error (ep/run-python-block ctx
-                                                 "fff_path = None\ndel spel_path\nsaved = 42"))))
-      (expect (= "/workspace/fff /workspace/spel 42\n"
-                 (:stdout (ep/run-python-block ctx "print(fff_path, spel_path, saved)"))))
+                                                 "fff_path = None\ndel library_path\nsaved = 42"))))
+      (expect (= "/workspace/fff /workspace/library 42\n"
+                 (:stdout (ep/run-python-block ctx "print(fff_path, library_path, saved)"))))
       (expect (some? (:error (ep/run-python-block ctx "def fff_path():\n    return 1"))))
       (expect (= 0 (tpc/ev ctx "__vis_restore_defs__('fff_path = 1')")))
       (expect (nil? (:error (ep/run-python-block
@@ -170,7 +170,7 @@
           (:stdout
             (ep/run-python-block
               ctx
-              "print(fff_src(), svar_path, 'spel_path' in globals(), 'spel_path' in __vis_protected_names__)"))))
+              "print(fff_src(), svar_path, 'library_path' in globals(), 'library_path' in __vis_protected_names__)"))))
       (ep/bind-ctx! ctx {"workspace" {"root" "/workspace/main"}})
       (expect (= "False False\n"
                  (:stdout (ep/run-python-block

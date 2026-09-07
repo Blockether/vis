@@ -56,7 +56,7 @@ export const HealthInteractions: Story = {
     await expect(canvas.getByText("~/vis/AGENTS.md")).toBeVisible();
     const roots = canvas.getByRole("button", { name: /Linked filesystems/ });
     await userEvent.click(roots);
-    await expect(canvas.getByText("~/spel")).toBeVisible();
+    await expect(canvas.getByText("~/library")).toBeVisible();
     await expect(canvas.getByText("AGENTS.md · ≈1.2k tokens on disk")).toBeVisible();
     await expect(canvas.getByText("No AGENTS.md or CLAUDE.md")).toBeVisible();
     await expect(canvas.getByText(/Could not read guidance/)).toBeVisible();
@@ -136,7 +136,7 @@ export const UnrecordedReads: Story = {
     usage: STORY_HEALTH_USAGE,
     health: {
       ...STORY_SESSION_HEALTH,
-      roots: [{ path: "~/spel" }, { path: "~/svar" }],
+      roots: [{ path: "~/library" }, { path: "~/svar" }],
     },
   },
 };

@@ -46,7 +46,7 @@ describe("session health in metrics", () => {
     await userEvent.click(
       screen.getByRole("button", { name: /Linked filesystems/ }),
     );
-    expect(screen.getByText("~/spel")).toBeInTheDocument();
+    expect(screen.getByText("~/library")).toBeInTheDocument();
     expect(screen.getByText("AGENTS.md · ≈1.2k tokens on disk")).toBeInTheDocument();
     expect(screen.getByText("No AGENTS.md or CLAUDE.md")).toBeInTheDocument();
     expect(screen.getByText(/Could not read guidance/)).toBeInTheDocument();

@@ -192,7 +192,10 @@
        (.start (doto (ProcessBuilder. ^java.util.List
                                       [java "-cp" (System/getProperty "java.class.path")
                                        "clojure.main" "-e" code])
-                 (.redirectErrorStream true)))]
+                 ;; The launcher emits a stderr notice whenever this is set.
+                 (-> .environment
+                     (.put "JAVA_TOOL_OPTIONS" "-Dvis.test.analyzer-lazy=true"))
+                 (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT)))]
 
       (try (expect (.waitFor child 30 java.util.concurrent.TimeUnit/SECONDS))
            (when-not (.isAlive child)

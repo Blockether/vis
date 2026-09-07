@@ -290,6 +290,7 @@ vis.method(fn=None, tag="observation", is_hidden=False, activity=None)
   on the namespace itself. Activity is a `block.activity` replacement projection,
   never a View or a model-context block. The normative vocabulary and semantics are
   in the [Activity contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/activity.json).
+
   Add `render=callback` to compose a symbol's presentation. The synchronous callback
   receives `phase`, `args`, `kwargs`, `result`, and `error` as keyword arguments;
   phases are `start`, `success`, and `failure`. Return `vis.ActivityPresentation`, or

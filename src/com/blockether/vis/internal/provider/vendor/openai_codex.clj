@@ -481,10 +481,7 @@
                         status
                         "). Check that device code authorization is enabled in ChatGPT settings.")
                       {:type :vis/openai-codex-device-unavailable :status status})))
-    (when-not (and (string? device_auth_id)
-                   (not (str/blank? device_auth_id))
-                   (string? user-code)
-                   (not (str/blank? user-code)))
+    (when-not (and (util/non-blank-string? device_auth_id) (util/non-blank-string? user-code))
       (throw (ex-info "Codex returned an incomplete device authorization response."
                       {:type :vis/openai-codex-device-response})))
     {:kind :device
@@ -520,8 +517,7 @@
                                              {:device_auth_id device-auth-id :user_code user-code})]
       (cond (<= 200 (long status) 299)
             (let [{:keys [authorization_code code_verifier]} json]
-              (when-not (every? #(and (string? %) (not (str/blank? %)))
-                                [authorization_code code_verifier])
+              (when-not (every? util/non-blank-string? [authorization_code code_verifier])
                 (throw (ex-info "Codex returned an incomplete device grant."
                                 {:type :vis/openai-codex-device-response})))
               (assert-device-active! expires-at)

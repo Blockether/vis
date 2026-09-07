@@ -681,12 +681,12 @@ export const STORY_SESSION_HEALTH: import('../components/SessionHealth').Session
   breakdown: [
     { label: 'System instructions', tokens: 9_400 },
     { label: 'Main AGENTS.md', tokens: 3_100, path: '~/vis/AGENTS.md' },
-    { label: 'Linked AGENTS.md', tokens: 1_900, path: '~/spel/AGENTS.md' },
+    { label: 'Linked AGENTS.md', tokens: 1_900, path: '~/library/AGENTS.md' },
     { label: 'Tools and skills', tokens: 7_600 },
     { label: 'Conversation and tool results', tokens: 116_020 },
   ],
   roots: [
-    { path: '~/spel', guidance: { status: 'available', path: '~/spel/AGENTS.md', tokens: 1200 } },
+    { path: '~/library', guidance: { status: 'available', path: '~/library/AGENTS.md', tokens: 1200 } },
     { path: '~/svar', guidance: { status: 'missing' } },
     { path: '~/vis-python-runtime', guidance: { status: 'error' } },
   ],
