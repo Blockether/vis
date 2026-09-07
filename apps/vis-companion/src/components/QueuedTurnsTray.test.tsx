@@ -94,7 +94,7 @@ describe("queued turns tray", () => {
       expect(onError).toHaveBeenCalledWith("queue changed first"),
     );
   });
-  it("keeps the queued label while matching each row to the input rhythm", () => {
+  it("keeps the queued label while letting compact removal set the row rhythm", () => {
     render(
       <QueuedTurnsTray
         client={gateway()}
@@ -113,8 +113,18 @@ describe("queued turns tray", () => {
     for (const remove of screen.getAllByRole("button", {
       name: /Remove queued message/,
     })) {
-      expect(remove.className).toContain("size-8");
-      expect(remove.className).toContain("mouse:size-7");
+      expect(remove.className).toContain("size-6");
+      expect(remove.className).toContain("mouse:size-5");
+      const face = remove.querySelector("span");
+      expect(face?.className).toContain("size-5");
+      expect(face?.className).toContain("mouse:size-4");
+      expect(face?.className).toContain("blockether-light:bg-accent");
+      expect(face?.className).toContain(
+        "blockether-light:text-accent-foreground",
+      );
+      expect(remove.querySelector("svg")?.className.baseVal).toContain(
+        "size-3",
+      );
     }
   });
 

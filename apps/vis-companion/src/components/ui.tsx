@@ -1574,12 +1574,12 @@ export function NotifyConnectionSwitch({
  * So there is one, and everything about its face is decided here:
  *
  * - TARGET AND FACE ARE DIFFERENT. A ✕ either ends a band (`isBand`) with the band's
- *   full 48×48 target (36×36 for a mouse), stands alone at the end of a row
- *   (`isStandalone`) on the same 32px / 28px control rhythm as the input, or sits
- *   inside another control as a 32px mark (`mouse:size-6`). Band and standalone
- *   controls each carry a compact circular FACE: 32px for the band and 28px for a
- *   row, shrinking to 28px and 24px for a mouse. A wrapped title can make the band
- *   taller; the target still stretches with it while its face stays round.
+ *   full 48×48 target (36×36 for a mouse), stands alone at the end of a compact row
+ *   (`isStandalone`) as a 24px / 20px target, or sits inside another control as a
+ *   32px mark (`mouse:size-6`). Band and standalone controls each carry a circular
+ *   FACE: 32px for the band and 20px for a row, shrinking to 28px and 16px for a
+ *   mouse. A wrapped title can make the band taller; the target still stretches with
+ *   it while its face stays round.
  * - A BAND CLOSE IS A COMPACT BRANDED DISC, NOT A SECOND VERB. The two Blockether
  *   palettes carry the SAME amber pair, mirrored: on Light's dark title paper the face is
  *   an amber fill with dark ink, and on Dark's amber title band it is that pair swapped —
@@ -1591,6 +1591,8 @@ export function NotifyConnectionSwitch({
  *   licenses another filled label in chrome. Hover deepens the disc — amber to its darker
  *   step, ink to the theme's hover paper — and never paints a square across the band's
  *   last cell.
+ * - A standalone row close stays subordinate, except on Blockether Light where its compact
+ *   face carries the palette's amber fill so the removal mark does not disappear into paper.
  * - A close inside another control keeps the established hairline and red intent wash.
  *   Its parent already supplies the face, so wrapping that mark in another circle would
  *   be a box inside a box.
@@ -1618,7 +1620,7 @@ export function CloseButton({
   /** This ✕ ends a row: its compact target carries a smaller circular face. */
   isStandalone?: boolean;
 }) {
-  const mark = <CloseIcon />;
+  const mark = <CloseIcon className={isStandalone ? 'size-3' : undefined} />;
   return (
     <button
       type="button"
@@ -1628,7 +1630,7 @@ export function CloseButton({
         isBand
           ? 'group w-12 self-stretch transition-opacity duration-150 focus-visible:outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-40 mouse:w-9'
           : isStandalone
-            ? 'group size-8 self-center focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 mouse:size-7'
+            ? 'group size-6 self-center focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 mouse:size-5'
             : 'size-8 self-center border-l border-current/20 transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current mouse:size-6'
       } ${className}`}
       {...props}
@@ -1638,7 +1640,7 @@ export function CloseButton({
           {mark}
         </span>
       ) : isStandalone ? (
-        <span className="pointer-events-none grid size-7 place-items-center rounded-full border border-current/20 transition-[background-color,color,transform] duration-150 group-hover:bg-err/15 group-hover:text-err group-focus-visible:bg-err/15 group-focus-visible:text-err group-focus-visible:ring-2 group-focus-visible:ring-accent/60 group-active:scale-[0.94] motion-reduce:transition-none mouse:size-6">
+        <span className="pointer-events-none grid size-5 place-items-center rounded-full border border-current/20 transition-[background-color,color,transform] duration-150 group-hover:bg-err/15 group-hover:text-err group-focus-visible:bg-err/15 group-focus-visible:text-err group-focus-visible:ring-2 group-focus-visible:ring-accent/60 group-active:scale-[0.94] blockether-light:bg-accent blockether-light:text-accent-foreground blockether-light:group-hover:bg-accent-2 blockether-light:group-hover:text-accent-foreground blockether-light:group-focus-visible:bg-accent blockether-light:group-focus-visible:text-accent-foreground motion-reduce:transition-none mouse:size-4">
           {mark}
         </span>
       ) : (
