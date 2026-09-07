@@ -1442,6 +1442,90 @@
     code-pad-marker code-ok-pad-marker code-err-pad-marker result-marker err-result-marker
     activity-marker})
 
+(defn- turn-rail-rows
+  "The rows `turn-rail` runs down, as a set of `lines` indices.
+
+   Every band from the first receipt row to the last, the blank rows between bands
+   included - a line with a gap in it reads as two lines. The one thing the line
+   never crosses is prose Vis speaks between two calls (`:receipt-prose?` meta):
+   those words stand on the paper's edge, the same edge the answer and the
+   bubble's name stand on, so the line breaks above them and resumes below. The
+   break takes the air with it: of the blank edges a band leaves beside the prose,
+   one stays on the line as the band's own bottom or top, the rest go blank, so
+   the words read as set between two receipts, not wedged against a line."
+  [lines line-meta]
+  (let [n
+        (count lines)
+
+        marker?
+        (fn [idx]
+          (let [^String l (nth lines idx)]
+            (and (pos? (count l)) (contains? turn-rail-markers (subs l 0 1)))))
+
+        prose?
+        (fn [idx]
+          (boolean (:receipt-prose? (nth line-meta idx nil))))
+
+        ;; A band's blank edge: a marker row with no words on it, or the Activity
+        ;; band's bare line (its rail is its own text).
+        pad?
+        (fn [idx]
+          (and (marker? idx)
+               (let [body (str/trim (subs (nth lines idx) 1))]
+                 (or (str/blank? body) (= turn-rail body)))))
+
+        marker-rows
+        (filterv marker? (range n))]
+
+    (if (empty? marker-rows)
+      #{}
+      (let [head
+            (long (first marker-rows))
+
+            tail
+            (long (peek marker-rows))
+
+            ;; Every gap between two bands that holds prose, as inclusive [from to].
+            breaks
+            (loop [idx
+                   head
+
+                   gap-start
+                   nil
+
+                   gap-prose?
+                   false
+
+                   acc
+                   []]
+
+              (cond (> idx tail) acc
+                    (marker? idx)
+                    (recur (inc idx)
+                           nil
+                           false
+                           (if (and gap-start gap-prose?) (conj acc [gap-start (dec idx)]) acc))
+                    :else (recur (inc idx) (or gap-start idx) (or gap-prose? (prose? idx)) acc)))
+
+            ;; Widen a break over the pads on either side, leaving the band its one edge.
+            widen
+            (fn [[from to]]
+              (let [back
+                    (count (take-while pad? (range (dec (long from)) (dec head) -1)))
+
+                    ahead
+                    (count (take-while pad? (range (inc (long to)) (inc tail))))]
+
+                [(- (long from) (max 0 (dec back))) (+ (long to) (max 0 (dec ahead)))]))
+
+            off
+            (into #{}
+                  (mapcat (fn [[from to]]
+                            (range from (inc (long to))))
+                          (map widen breaks)))]
+
+        (into #{} (remove off) (range head (inc tail)))))))
+
 (defn- ansi-code->fg
   [code current-fg base-fg]
   ;; `(long code)` is what keeps this a constant-time tableswitch: the tests are
@@ -2041,19 +2125,12 @@
                                         (answer-marker? (nth lines i)) i
                                         :else (recur (inc i)))))
 
-            ;; The receipt's own extent - see `turn-rail`. Cached by `lines`-identity
+            ;; The receipt's own extent - see `turn-rail-rows`. Cached by `lines`-identity
             ;; like the answer scan above, so a redraw costs no scan.
-            rail-span
+            rail-rows
             (when-not (or user? error?)
-              (cached* [::rail-span (System/identityHashCode lines)]
-                       #(loop [idx 0 head nil tail nil] (if (>= idx (count lines))
-                                                          (when head [(long head) (long tail)])
-                                                          (let [l (nth lines idx)]
-                                                            (if (and (pos? (count l))
-                                                                     (contains? turn-rail-markers
-                                                                                (subs l 0 1)))
-                                                              (recur (inc idx) (or head idx) idx)
-                                                              (recur (inc idx) head tail)))))))]
+              (cached* [::rail-rows (System/identityHashCode lines)]
+                       #(turn-rail-rows lines line-meta)))]
 
         (loop [i i-start]
           (when (< i i-end)
@@ -2075,11 +2152,11 @@
                 (p/clear-styles! g)
                 (let [in-answer? (> i (long answer-start))
                       ;; Text may be inset while marker-zone fills span the full message
-                      ;; column. Receipt prose keeps its rail clear.
+                      ;; column. An iteration's prose sits flush with the answer and the
+                      ;; bubble's name, not padded like a user bubble: one left edge for
+                      ;; everything Vis says, whether it lands before a call or after it.
                       x (+ (long bx)
-                           (long (if (:activity-content? meta)
-                                   8
-                                   (if (or user? error? (:receipt-prose? meta)) h-pad 0))))
+                           (long (if (:activity-content? meta) 8 (if (or user? error?) h-pad 0))))
                       y (+ (long btop) (long i))
                       iw (if (:activity-content? meta) (max 0 (- (long bubble-w) 8)) bubble-w)
                       fbx (if (:activity-content? meta) (+ (long bx) 8) bx)
@@ -3189,10 +3266,8 @@
                   ;; rub out a tick. The row's paper is whatever its branch just
                   ;; filled, so only the INK changes here: the line crosses each band
                   ;; instead of punching a hole in it.
-                  (when (and rail-span
-                             (<= (long (first rail-span))
-                                 (long lines-idx)
-                                 (long (second rail-span)))
+                  (when (and rail-rows
+                             (contains? rail-rows lines-idx)
                              (not (str/starts-with? line activity-marker)))
                     (p/clear-styles! g)
                     (p/set-fg! g t/code-duration-fg)
@@ -6776,6 +6851,8 @@
                              not-empty)]
           ;; Keep one neutral blank on either side; coalescing removes duplicates.
           (-> [(line-entry "")]
+              ;; Tagged so the turn's line breaks around these rows: they are Vis's words,
+              ;; off the line like the answer, not a band hanging from it.
               (into (mapv #(update % :meta assoc :receipt-prose? true)
                           (layout/ast->entries (vis/markdown->ast p) fill-w {:mode :channel})))
               (conj (line-entry ""))))

@@ -5757,20 +5757,42 @@ h = 8"
                                  (when (str/includes? l needle) i))
                                rows)))]
 
-    (it "runs one unbroken line from the first band of the receipt to the last"
+    (it "runs one unbroken line down the receipt's bands, breaking only for the prose"
         (let [head
               (row-with "Read the app first")
+
+              prose
+              (row-with "Balanced. Now inspect the schema.")
 
               tail
               (row-with "3 files")]
 
-          (expect (and head tail) "the receipt paints the thinking and the chronology")
-          (expect (every? rail-at? (range (long head) (inc (long tail))))
-                  "every row between them stands on the same column")))
+          (expect (and head prose tail)
+                  "the receipt paints the thinking, the prose and the chronology")
+          ;; One blank of air on each side of the prose is off the line too; the band
+          ;; edges beyond that air stay on it, so each receipt keeps its own top and bottom.
+          (expect (every? rail-at? (range (long head) (dec (long prose))))
+                  "the line runs from the first band to the edge above the prose")
+          (expect (not-any? rail-at? [(dec (long prose)) prose (inc (long prose))])
+                  "the prose and its air are off the line")
+          (expect (every? rail-at? (range (+ (long prose) 2) (inc (long tail))))
+                  "the line resumes below the prose and runs to the last band")))
     ;; Regression, issue photo-2026-09-02: the receipt rail overwrote the first character
-    ;; of model prose between tool blocks, so `Balanced` was painted as `│alanced`.
-    (it "keeps receipt prose clear of the rail"
-        (expect (some? (row-with "Balanced. Now inspect the schema."))))
+    ;; of model prose between tool blocks, so `Balanced` was painted as `│alanced`. The
+    ;; prose was then inset two columns to dodge the line; now the line breaks for it and
+    ;; the words stand on the message column's own edge, flush with the answer.
+    (it "keeps receipt prose clear of the rail, on the answer's edge"
+        (let [prose
+              (row-with "Balanced. Now inspect the schema.")
+
+              answer
+              (row-with "Done.")]
+
+          (expect (some? prose))
+          (expect (= rail-col
+                     (.indexOf ^String (nth rows prose) "Balanced")
+                     (.indexOf ^String (nth rows answer) "Done."))
+                  "prose and answer share the column the line stands in")))
     (it "crosses the program's own paper instead of stopping at its edge"
         (let [python
               (row-with "print(1)")
@@ -6366,7 +6388,45 @@ print(paths)"
         (expect (some? error-idx))
         ;; The row after the message is blank, so the red band ends on the same air
         ;; a code band or a result band does.
-        (expect (= "" (nth lines (inc (long error-idx)) ::missing))))))
+        (expect (= "" (nth lines (inc (long error-idx)) ::missing)))))
+  (it
+    "paints an iteration's prose on the answer's left edge, flush with the bubble's name"
+    (let [data
+          (render/format-answer-with-thinking-data*
+            "Done: diagnostics added."
+            [{:assistant-prose "I'll add diagnostics for slow input handling."
+              :forms [{:code "paths = ls(root)" :stdout "[]" :success? true :duration-ms 12}]}]
+            66
+            {:show-iterations true}
+            nil
+            false
+            {:session-id "prose-edge"
+             :detail-expansions {:vis.channel-tui/expand-all-details? false}})
+
+          captured
+          (cap/capture! {:cols 74
+                         :rows 16
+                         :paint! (fn [{:keys [screen]}]
+                                   (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                                     (render/draw-chat-bubble! (.newTextGraphics s)
+                                                               {:role :assistant
+                                                                :text ""
+                                                                :prewrapped-lines (:lines data)
+                                                                :line-meta (:line-meta data)}
+                                                               2 1
+                                                               70 {:viewport-h 14})
+                                     (.refresh s)))})
+
+          lines
+          (str/split-lines (cap/frame-text captured))
+
+          column-of
+          (fn [needle]
+            (some #(let [idx (.indexOf ^String % ^String needle)] (when (<= 0 idx) idx)) lines))]
+
+      ;; The interim prose used to sit two columns in, like a user bubble, while the
+      ;; answer below it and the name above it were flush: one left edge now.
+      (expect (= (column-of "Vis") (column-of "I'll add") (column-of "Done:"))))))
 
 (defdescribe
   activity-content-render-test
