@@ -1,7 +1,7 @@
 name: Desktop companion
 
-# Packages the Vis Companion (apps/vis-companion) as a DESKTOP app for macOS, Windows
-# and Linux with Pake — the same web bundle the phones get, wrapped in a Tauri window
+# Packages Vis Companion as a DESKTOP app for universal macOS and Linux x64/ARM64
+# with Pake — the same web bundle the phones get, wrapped in a Tauri window
 # (see apps/vis-companion/scripts/desktop-package.mjs for the flags and asset names).
 # A regular Vis `vX.Y.Z` release calls this after its own release succeeds and the
 # installers are attached to that release. A dispatch from a BRANCH is a DRY RUN: it
@@ -40,15 +40,22 @@ jobs:
         include:
           - runner: [self-hosted, macOS, ARM64, vis-macos-arm64]
             label: macOS universal
-          - runner: windows-latest
-            label: Windows x64
-          - runner: ubuntu-latest
+            asset: macos-universal
+          - runner: ubuntu-24.04
             label: Linux x64
+            asset: linux-x64
+          - runner: ubuntu-24.04-arm
+            label: Linux ARM64
+            asset: linux-arm64
     defaults:
       run:
         working-directory: apps/vis-companion
         shell: bash
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+
       - name: Decide where this build lands
         id: target
         run: |
@@ -57,10 +64,6 @@ jobs:
             v[0-9]*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo "attaching to $ref" ;;
             *) echo 'publish=false' >> "$GITHUB_OUTPUT"; echo "dry run on $ref: packaging, publishing nothing" ;;
           esac
-
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -91,6 +94,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test desktop packaging
+        run: npm exec vitest -- run scripts/desktop-package.test.mjs
+
       - name: Build web bundle
         run: npm run build
 
@@ -103,7 +109,7 @@ jobs:
       - name: Keep installers as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vis-companion-desktop-${{ matrix.runner }}
+          name: vis-companion-desktop-${{ matrix.asset }}
           path: apps/vis-companion/build/desktop/*
           if-no-files-found: error
 

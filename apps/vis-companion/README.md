@@ -254,10 +254,12 @@ git tag v1.0.2 && git push origin v1.0.2
 ```
 
 That tag also runs `.github/workflows/desktop-companion.yml`, which packages the same web
-bundle as a desktop app with [Pake](https://github.com/tw93/pake) on macOS (universal
-`.dmg`), Windows (`.msi`) and Linux (`.deb`, `.AppImage`) and attaches the installers to the
-GitHub Release. `scripts/desktop-package.mjs` holds the flags and asset names; locally,
-`npm run build && npm run package:desktop` writes this OS's installer to `build/desktop/`
+bundle as a desktop app with [Pake](https://github.com/tw93/pake): macOS Universal
+(Intel + Apple Silicon, `.dmg`) and Linux x86_64/ARM64 (`.deb`, `.AppImage`). Windows
+is not a desktop release target. Each Linux architecture builds on its native runner,
+with distinct `linux-x64` and `linux-arm64` asset names attached to the GitHub Release.
+`scripts/desktop-package.mjs` holds the flags and asset names; locally,
+`npm run build && npm run package:desktop` writes this host's installers to `build/desktop/`
 (needs a Rust toolchain). A **Run workflow** from a branch is a dry run that keeps the
 installers as workflow artifacts and publishes nothing.
 

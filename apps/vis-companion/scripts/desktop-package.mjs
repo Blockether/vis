@@ -11,8 +11,8 @@
  * asset name that carries the product version, platform and arch:
  *
  *   macOS    vis-companion-<v>-macos-universal.dmg     (Apple silicon + Intel)
- *   Windows  vis-companion-<v>-windows-x64.msi
  *   Linux    vis-companion-<v>-linux-x64.deb / .AppImage
+ *   Linux    vis-companion-<v>-linux-arm64.deb / .AppImage
  *
  * A release tag runs this on each OS runner (.github/workflows/desktop-companion.yml)
  * and attaches the files to the GitHub Release. Locally:
@@ -35,18 +35,17 @@ export const APP_NAME = 'Vis';
 export const ICON = join(appDir, 'native-assets', 'ios', 'AppIcon-512@2x.png');
 export const OUT_DIR = join(appDir, 'build', 'desktop');
 
-/**
- * What one OS packages. `targets` is Pake's `--targets` word, `ext` the file it
- * writes as `<name>.<ext>` in the working directory, `asset` the release suffix.
- */
-export const DESKTOP_TARGETS = {
-  darwin: [{ targets: 'universal', ext: 'dmg', asset: 'macos-universal' }],
-  win32: [{ targets: 'x64', ext: 'msi', asset: 'windows-x64' }],
-  linux: [
-    { targets: 'deb', ext: 'deb', asset: 'linux-x64' },
-    { targets: 'appimage', ext: 'AppImage', asset: 'linux-x64' },
-  ],
-};
+/** Native Linux installers or one universal macOS installer; refuse other hosts. */
+export function desktopTargets(platform, arch) {
+  if (!['darwin', 'linux'].includes(platform) || !['x64', 'arm64'].includes(arch)) {
+    throw new Error(`no desktop target for platform ${platform}/${arch}`);
+  }
+  if (platform === 'darwin') return [{ targets: 'universal', ext: 'dmg', asset: 'macos-universal' }];
+  return [
+    { targets: 'deb', ext: 'deb', asset: `linux-${arch}` },
+    { targets: 'appimage', ext: 'AppImage', asset: `linux-${arch}` },
+  ];
+}
 
 /** Release asset name for one installer: `vis-companion-<version>-<platform-arch>.<ext>`. */
 export const assetName = (version, target) => `vis-companion-${version}-${target.asset}.${target.ext}`;
@@ -67,10 +66,9 @@ export function pakeArgs({ distDir, version, target, icon = ICON }) {
   ];
 }
 
-/** Package every target of THIS platform; returns the asset paths written. */
-export function packageDesktop({ platform = process.platform, log = console.log } = {}) {
-  const targets = DESKTOP_TARGETS[platform];
-  if (!targets) throw new Error(`no desktop target for platform ${platform}`);
+/** Package THIS host architecture (both on macOS); return the asset paths written. */
+export function packageDesktop({ platform = process.platform, arch = process.arch, log = console.log } = {}) {
+  const targets = desktopTargets(platform, arch);
   const distDir = join(appDir, 'dist');
   if (!existsSync(join(distDir, 'index.html'))) {
     throw new Error(`${distDir} has no index.html — run \`npm run build\` first`);
@@ -81,11 +79,9 @@ export function packageDesktop({ platform = process.platform, log = console.log 
   for (const target of targets) {
     const args = pakeArgs({ distDir, version, target });
     log(`▸ pake ${args.join(' ')}`);
-    const npx = platform === 'win32' ? 'npx.cmd' : 'npx';
-    const run = spawnSync(npx, ['-y', `pake-cli@${PAKE_VERSION}`, ...args], {
+    const run = spawnSync('npx', ['-y', `pake-cli@${PAKE_VERSION}`, ...args], {
       cwd: OUT_DIR,
       stdio: 'inherit',
-      shell: platform === 'win32',
     });
     if (run.status !== 0) throw new Error(`pake failed for --targets ${target.targets}`);
     const produced = join(OUT_DIR, `${APP_NAME}.${target.ext}`);
