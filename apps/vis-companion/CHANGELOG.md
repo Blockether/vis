@@ -2,6 +2,14 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.43 (5463) — 2026-09-07
+<!-- commit: 548183a79fd7a98368a3085c93df1f1705d04c35 -->
+
+- Align thinking and code bands
+- Use paired transport without VPN prompts
+- Allow confirmed VPN gateway connections
+- Record companion build 5457
+
 ## 0.1.43 (5457) — 2026-09-07
 <!-- commit: b716429ab7a6d126d09e94b61ad89ad204bd089a -->
 
