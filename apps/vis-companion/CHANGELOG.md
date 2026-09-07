@@ -2,6 +2,21 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.42 (5421) — 2026-09-07
+<!-- commit: b474a223c91064abf40823ad86f04c34e374831f -->
+
+- Expand Application from its whole band
+- Estimate linked repository guidance in metrics
+- Add rich symbol content and refine execution UI
+- Pad queued turn rows
+- Shrink queued remove mark
+- Compact queued remove control
+- Reduce queued row padding
+- Compact queued turn tray
+- Unify Python clients and interaction contracts
+- Drop duplicate limits from session health
+- Record companion build 5397
+
 ## 0.1.42 (5397) — 2026-09-06
 <!-- commit: 48d1b443c46e526638964b35aec1a6a9ca91d211 -->
 
