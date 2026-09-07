@@ -5,7 +5,7 @@ import { McpServersPanel } from './MachineSettings';
 import type { GatewayClient } from '../../lib/gateway';
 const native = vi.hoisted(() => ({ handler: (_: { url: string }) => {}, remove: vi.fn() }));
 vi.mock('@capacitor/core', async importOriginal => ({ ...await importOriginal<typeof import('@capacitor/core')>(),
-  Capacitor: { isNativePlatform: () => true, getPlatform: () => 'ios' } }));
+  Capacitor: { isNativePlatform: () => true, isPluginAvailable: () => false, getPlatform: () => 'ios' } }));
 vi.mock('@capacitor/app', () => ({ App: { addListener: vi.fn(async (_event, handler) => {
   native.handler = handler; return { remove: native.remove };
 }) } }));

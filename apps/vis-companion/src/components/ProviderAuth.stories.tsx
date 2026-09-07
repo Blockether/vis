@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, userEvent } from 'storybook/test';
+import { expect, fn, userEvent } from 'storybook/test';
 import { STORY_PROVIDERS, STORY_BROWSER_AUTH, STORY_DEVICE_AUTH, STORY_APP_AUTH, storyProviderAuth } from '../dev/story-data';
 import { ProviderRows } from './ProviderAuth';
 
@@ -73,5 +73,19 @@ export const AppReturn: Story = {
     await expect(canvas.getByText('Approve sign-in in the browser. The callback opens Vis and sign-in finishes automatically.')).toBeVisible();
     await expect(canvas.queryByLabelText('Paste the final redirect URL')).not.toBeInTheDocument();
     await expect(canvas.getByRole('button', { name: 'Cancel' })).toBeVisible();
+  },
+ };
+
+/** Shipped native-loopback presentation; this fixture does not simulate provider consent. */
+export const NativeLoopbackReturn: Story = {
+  args: { auth: { ...STORY_APP_AUTH, openSignInPage: fn(), flow: { ...STORY_APP_AUTH.flow!,
+    callback_mode: 'loopback', redirect_uri: 'http://localhost:53692/callback',
+    url: 'https://gateway.example.com/authorize?state=test-state&redirect_uri=http%3A%2F%2Flocalhost%3A53692%2Fcallback',
+    instructions: ['Approve sign-in in the browser. Vis receives the callback on this device and finishes automatically.'],
+  } } },
+  play: async ({ canvas, args }) => {
+    await expect(canvas.queryByLabelText('Paste the final redirect URL')).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByRole('button', { name: 'Open sign-in page again' }));
+    await expect(args.auth.openSignInPage).toHaveBeenCalledOnce();
   },
 };

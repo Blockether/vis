@@ -5,7 +5,7 @@ import { McpAuth } from './McpAuth';
 const meta = {
   title: 'Components/MCP sign-in', component: McpAuth,
   parameters: { layout: 'padded' },
-  args: { flow: STORY_MCP_AUTH, input: '', busy: false, onInput: fn(), onFinish: fn(), onCancel: fn() },
+  args: { flow: STORY_MCP_AUTH, input: '', busy: false, onInput: fn(), onFinish: fn(), onCancel: fn(), onOpen: fn() },
 } satisfies Meta<typeof McpAuth>;
 export default meta;
 type Story = StoryObj<typeof meta>;

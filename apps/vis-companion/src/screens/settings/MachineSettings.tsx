@@ -689,7 +689,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
             </div>
             {authFlow?.server === server.name && (
               <McpAuth flow={authFlow} input={authInput} busy={busy !== null}
-                onInput={setAuthInput} onFinish={() => void finishAuth()} onCancel={cancelAuth} />
+                onInput={setAuthInput} onFinish={() => void finishAuth()} onCancel={cancelAuth} onOpen={() => stopAuth.current?.open()} />
             )}
           </div>
         ))}

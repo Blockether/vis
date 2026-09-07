@@ -7,13 +7,15 @@
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import type { AuthVerdict, SignInFlow } from './types';
-
+import { hasNativeLoopback, nativeOAuth } from './oauth-native';
 const APP_CALLBACK = 'com.blockether.viscompanion://oauth/callback';
 export const clientCallbackMode = (): 'app' | 'loopback' => Capacitor.isNativePlatform() ? 'app' : 'loopback';
 export const openAuthUrl = (url: string): void => { window.open(url, '_blank', 'noopener,noreferrer'); };
 
 /** A browser on this device cannot reach loopback on a remote gateway. */
 export function clientAuthFlow<T extends SignInFlow>(flow: T, gatewayBase: string): T {
+  if (hasNativeLoopback(flow)) return { ...flow, callback_mode: 'loopback', instructions: [
+    'Approve sign-in in the browser. Vis receives the callback on this device and finishes automatically.'] };
   if (flow.callback_mode !== 'loopback') return flow;
   try { if (['127.0.0.1', 'localhost', '[::1]'].includes(new URL(gatewayBase).hostname)) return flow; }
   catch { /* Unknown is not proof of a local gateway. */ }
@@ -26,20 +28,30 @@ export interface AuthTransport {
   poll(): Promise<AuthVerdict>;
   cancel(): Promise<unknown>;
 }
-export interface AuthWatch { stop(): void; complete(input: string): Promise<void> }
-
-function verifiedReturn(input: string, state: string): string | undefined {
+export interface AuthWatch { stop(): void; open(): void; complete(input: string): Promise<void> }
+function authorizationState(url: string | undefined, redirect: string | undefined): string | undefined {
+  try {
+    const authorization = new URL(url ?? '');
+    const state = authorization.searchParams.get('state');
+    if (!state || authorization.protocol !== 'https:' || authorization.username || authorization.password || authorization.hash
+        || authorization.searchParams.getAll('state').length !== 1
+        || authorization.searchParams.getAll('redirect_uri').length !== 1
+        || authorization.searchParams.get('redirect_uri') !== redirect) return;
+    return state;
+  } catch { return; }
+}
+function verifiedReturn(input: string, state: string, redirect = APP_CALLBACK): string | undefined {
   if (input.length > 8192) return;
   try {
     const url = new URL(input);
-    if (`${url.protocol}//${url.host}${url.pathname}` !== APP_CALLBACK || url.username || url.password || url.hash) return;
+    if (`${url.protocol}//${url.host}${url.pathname}` !== redirect || url.username || url.password || url.hash) return;
     const query = url.searchParams;
     if ([...query.keys()].some(key => query.getAll(key).length !== 1)
         || query.get('state') !== state || query.has('code') === query.has('error')) return;
     const key = query.has('code') ? 'code' : 'error';
     const value = query.get(key);
     if (!value?.trim()) return;
-    return `${APP_CALLBACK}?${new URLSearchParams({ state, [key]: value })}`;
+    return `${redirect}?${new URLSearchParams({ state, [key]: value })}`;
   } catch { return; }
 }
 
@@ -105,19 +117,35 @@ export function watchAuth(flow: SignInFlow, transport: AuthTransport,
     })();
     return running;
   };
+  const url = flow.url ?? flow.verification_uri;
+  const local = hasNativeLoopback(flow) ? nativeOAuth() : undefined;
+  const open = () => {
+    if (stopped || expired() || !url) return;
+    if (local) void local.reopen({ flowId: flow.flow_id }).catch(() => fail('Cannot reopen sign-in. Start sign-in again.'));
+    else openAuthUrl(url);
+  };
   const start = async () => {
     try {
       if (expired()) { fail('Authorization timed out. Start sign-in again.'); return; }
       expiry = setTimeout(() => fail('Authorization timed out. Start sign-in again.'), deadline - Date.now());
-      const url = flow.url ?? flow.verification_uri;
+      if (local && url) {
+        const state = authorizationState(url, flow.redirect_uri);
+        if (!state) {
+          fail('This host cannot receive the requested callback. Start sign-in again.'); return;
+        }
+        removeListener = () => { void local.cancel({ flowId: flow.flow_id }).catch(() => {}); };
+        void local.authorize({ flowId: flow.flow_id, authorizationUrl: url, redirectUri: flow.redirect_uri!,
+          state, expiresAt: deadline }).then(({ url: returned }) => {
+          if (stopped || claimed || expired()) return;
+          const input = verifiedReturn(returned, state, flow.redirect_uri);
+          if (!input) { fail('Invalid sign-in return. Start sign-in again.'); return; }
+          claimed = true; pendingInput = input; void step();
+        }).catch(() => { if (!stopped) fail('Sign-in was closed or could not receive its callback. Start sign-in again.'); });
+        schedule(); return;
+      }
       if (flow.callback_mode === 'app') {
-        const authorization = new URL(url ?? '');
-        const state = authorization.searchParams.get('state');
-        if (flow.kind !== 'pkce' || !Capacitor.isNativePlatform() || flow.redirect_uri !== APP_CALLBACK || !state
-            || authorization.protocol !== 'https:' || authorization.username || authorization.password || authorization.hash
-            || authorization.searchParams.getAll('state').length !== 1
-            || authorization.searchParams.getAll('redirect_uri').length !== 1
-            || authorization.searchParams.get('redirect_uri') !== APP_CALLBACK) {
+        const state = authorizationState(url, APP_CALLBACK);
+        if (flow.kind !== 'pkce' || !Capacitor.isNativePlatform() || flow.redirect_uri !== APP_CALLBACK || !state) {
           fail('This host cannot receive the requested callback. Start sign-in again.'); return;
         }
         const listener = await App.addListener('appUrlOpen', ({ url: inputUrl }) => {
@@ -135,5 +163,5 @@ export function watchAuth(flow: SignInFlow, transport: AuthTransport,
     } catch { fail('Cannot open secure sign-in. Start sign-in again.'); }
   };
   void start();
-  return { stop, complete };
+  return { stop, open, complete };
 }

@@ -279,6 +279,7 @@ export interface ProviderAuth extends ProviderFleet {
   finishPkce: () => Promise<void>;
   finishApiKey: () => Promise<void>;
   cancelFlow: () => Promise<void>;
+  openSignInPage: () => void;
   /**
    * Presets this machine can still add. `null` means nobody has asked the
    * gateway yet; an empty array is the daemon's answer that there is nothing
@@ -625,6 +626,7 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     finishPkce,
     finishApiKey,
     cancelFlow,
+    openSignInPage: () => watchRef.current?.open(),
     presets,
     loadPresets,
     addProvider,
@@ -690,7 +692,7 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
         <Button
           variant="secondary"
           className="w-full"
-          onClick={() => openProviderUrl(flow.url as string)}
+          onClick={auth.openSignInPage}
         >
           Open sign-in page again
         </Button>

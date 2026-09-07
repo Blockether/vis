@@ -91,13 +91,28 @@ through the notification relay/Cloudflare, including authorization codes and bro
   any adapter declaring the supported app return, without provider-name branches.
 - Unknowns: registered provider redirects and native OS constraints remain unchanged.
 
+## 6. Native fixed-loopback transport
+- Rationale: a phone browser cannot return to localhost on a remote gateway. Provider
+  registrations stay unchanged; a generic receiver must run on the initiating device.
+- Data: shared Companion watcher; iOS system Safari view and explicit IPv4/IPv6 sockets;
+  Android system browser and bounded loopback listener, installed by native preparation.
+- Acceptance criteria: no provider-name branches; readiness before opening, strict callback
+  validation, cancellation/expiry, no callback in navigation or persistent storage; native
+  socket tests and platform compilation, followed by fresh real-provider/device evidence.
+- Unknowns: desktop Pake has no native callback bridge; Android task-return policy and
+  provider consent in real system browsers still need actual-device verification.
+- State: implemented in the shared watcher and canonical native sources under
+  `apps/vis-companion/native/`. Preparation registers both bridges; native socket suites
+  and iOS/Android builds pass. Real consent and platform-return acceptance remain open.
+
 ## Plan state
 1. Callback lifecycle implemented: one-shot state/destination validation, bounded expiry,
    cancellation and retained verdicts for lost completion responses. PKCE and tokens stay
    on the gateway. Anthropic's CSRF nonce is independent of its PKCE verifier.
 2. Client paths partially complete: TUI receives loopback returns locally; Codex/Copilot
-   use direct device flow; Companion forwards native MCP returns to the initiating paired
-   gateway and cancels stale generations. Desktop/web retains explicit manual fallback.
+   use direct device flow. Companion forwards native app returns and device-local fixed
+   loopback callbacks to the initiating paired gateway, without changing provider redirects.
+   Desktop/Pake and web retain explicit manual fallback for remote fixed-loopback flows.
 3. No-relay requirement implemented: removed the callback handler, Durable Objects,
    migrations, origin setting and direct runtime-test dependencies. Notification behavior
    is unchanged. OAuth routes return 404 and do not forward or echo callback query values.
@@ -108,7 +123,8 @@ through the notification relay/Cloudflare, including authorization codes and bro
 5. Regressions cover retained manual verdicts, MCP supersession, slow old starts, namespace
    isolation, expiry, cancellation, serialized client submissions and hung-poll deadlines.
    Public errors from the shared engine are sanitized; adapters keep protocol-specific IO.
-6. Local verification complete; real-provider consent and native OS return remain open.
+6. Native transport code and deterministic verification are complete. Fresh provider consent
+   and native OS return remain open.
 
 MCP app mode registers only `com.blockether.viscompanion://oauth/callback`, with no
 public HTTPS fallback or gateway listener. Both the advertised redirect and authorization
@@ -121,20 +137,42 @@ Companion and the canonical Clojure gateway client require paired HTTPS off loop
 model/MCP auth and refuse HTTP redirects. A real local redirect regression reproduces the
 old forwarding behavior and verifies that callback bodies now stay on the paired origin.
 
-Current refactor verification: 261 gateway/MCP/provider tests, 88 TUI tests and 127
-Companion unit/script tests pass. Clojure formatting and lint/reflection, Companion typecheck,
-compiler lint and production build pass. All 152 Storybook interactions pass; 152 stories
-across all 10 themes pass contrast checks. The new model app-return story uses a synthetic
-adapter/flow fixture, never a real Claude redirect or an authenticated provider session.
-The no-relay suite (38 tests) and MCP visual checks passed in the preceding implementation.
+Current verification: the full Companion suite passes 2,277 tests, with one existing skip
+  (248 files, including 153 Storybook interactions). Typecheck, React compiler lint and web
+  production build pass. All 153 stories across 10 themes pass contrast checks. The first full
+  run caught the old exact native-plugin registration expectation; it was updated to include
+  OAuthLoopback while preserving the existing plugins, then the full suite was rerun green.
+  Earlier shared-engine verification passed 261 gateway/MCP/provider and 88 TUI tests, plus
+  Clojure formatting and lint/reflection; those production namespaces did not change here.
+  The no-relay suite passed 38 tests in the preceding implementation.
 
-Before this refactor, GraalVM CE 25.3.4.1 built `target/vis`; after an uberjar assembly failure, a fresh
-build succeeded. Five existing linked-binary cases pass: artifact/version, an isolated
-mock-provider agent turn and embedded Python. This is runtime coverage, not proof of a
-native mobile OAuth return. This refactor has not rebuilt that binary. Mobile preparation tests cover source contracts only.
+Swift XCTest and Android JUnit each pass four native cases, including real IPv4/IPv6 socket
+  callbacks, invalid state/destination, cancellation and expiry. iOS simulator and Android
+  debug app builds pass; iOS preparation passes its check. Android lint now passes with zero
+  errors and 21 existing warnings. The splash preparation uses the AndroidX attribute only,
+  including on already-generated projects; five regressions cover this without suppressions.
 
-Not complete: Claude callback reception on iOS/Android/Pake with a remote gateway;
-provider acceptance of the app callback and fresh consent/automatic return on real devices.
-The real Codex endpoint accepted device-flow initiation, but no live consent, token exchange
-or credential write was performed. Temporary browser/test services were stopped. No
-deployment, live gateway restart, commit or push; unrelated local changes were preserved.
+Spel captured the native-loopback UI fixture at 393x852 and 834x1194 with a measured coarse
+  pointer, and 1280x800 with a fine pointer, without horizontal overflow. The fixture and
+  provider-hook regression use a synthetic adapter/flow, not actual provider consent.
+
+Before the shared-engine refactor, GraalVM CE 25.3.4.1 built `target/vis`; five linked-binary
+  smoke cases passed. That refactor has not rebuilt this binary. Those checks are not proof
+  of a native mobile OAuth return.
+
+The iOS test app installed and launched on a dedicated iPhone 17 Pro/iOS 26.5 simulator.
+  Spel 0.9.31 could inspect the native screen but exposed only NATIVE_APP, not an inspectable
+  WKWebView, even after explicitly reinstalling a debug build with CAPACITOR_DEBUG=true.
+  This blocked exercising the actual Capacitor callback promise through automation; it is
+  not evidence that a fresh provider login succeeded. Ordinary build settings were restored.
+
+Not complete: fresh real-provider consent and automatic native return with a remote gateway,
+  including Claude; Android system-browser task-return policy; Pake has no native callback
+  bridge. Codex/Copilot device flows finish authentication but cannot guarantee an automatic
+  browser-to-app switch. The earlier real Codex endpoint check accepted initiation only;
+  no live consent, token exchange or credential write was performed.
+
+Temporary browsers, Appium and test servers were stopped; only the simulator created for
+  this check was shut down and removed. No deployment or live gateway restart was performed.
+  The user authorized committing and pushing the scoped changes; unrelated shared-worktree
+  work is excluded. The preceding shared-engine refactor was included by a concurrent commit.

@@ -2,9 +2,9 @@
 import type { McpAuthFlow } from '../lib/types';
 import { Button, Input } from './ui';
 
-export function McpAuth({ flow, input, busy, onInput, onFinish, onCancel }: {
+export function McpAuth({ flow, input, busy, onInput, onFinish, onCancel, onOpen }: {
   flow: McpAuthFlow; input: string; busy: boolean; onInput: (value: string) => void;
-  onFinish: () => void; onCancel: () => void;
+  onFinish: () => void; onCancel: () => void; onOpen: () => void;
 }) {
   const app = flow.callback_mode === 'app';
   return <div className="col-span-2 mt-2 space-y-2 border-t border-dialog-edge pt-2">
@@ -14,7 +14,7 @@ export function McpAuth({ flow, input, busy, onInput, onFinish, onCancel }: {
         : 'Approve sign-in in the browser. If it cannot reach your gateway, paste the final callback URL below.'}
       {' '}Tokens stay on your gateway. No OAuth data goes through the notification relay.
     </p>
-    <Button variant="secondary" onClick={() => window.open(flow.url, '_blank', 'noopener,noreferrer')}>
+    <Button variant="secondary" onClick={onOpen}>
       Open sign-in page again
     </Button>
     {!app && <Input aria-label="Paste the final callback URL" value={input} onChange={event => onInput(event.target.value)}

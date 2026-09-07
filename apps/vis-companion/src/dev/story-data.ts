@@ -805,6 +805,7 @@ export function storyProviderAuth(
     finishPkce: nothing,
     finishApiKey: nothing,
     cancelFlow: nothing,
+    openSignInPage: () => {},
     loadPresets: nothing,
     addProvider: nothing,
     removeProvider: nothing,

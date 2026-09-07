@@ -40,7 +40,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { syncPackageVersion } from './version.mjs';
 import { configureAndroidPushPlugin } from './android-push-plugin.mjs';
-
+import { prepareAndroidOAuth } from './oauth-native.mjs';
+import { brandLaunchTheme, prepareAndroidSplash } from './android-splash.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(root, '..', '..');
 const args = process.argv.slice(2);
@@ -121,8 +122,11 @@ const stockSplashBitmaps = () =>
     : [];
 
 const stylesPath = join(androidResources, 'values', 'styles.xml');
-const SPLASH_THEME_ITEM = '<item name="windowSplashScreenBackground">@color/vis_splash</item>';
-const launchThemeOk = () => existsSync(stylesPath) && readFileSync(stylesPath, 'utf8').includes(SPLASH_THEME_ITEM);
+const launchThemeOk = () => {
+  if (!existsSync(stylesPath)) return false;
+  const styles = readFileSync(stylesPath, 'utf8');
+  return styles === brandLaunchTheme(styles);
+};
 
 if (has('check')) {
   const mismatched = mismatchedLauncherAssets();
@@ -131,7 +135,7 @@ if (has('check')) {
   }
   const stock = stockSplashBitmaps();
   if (stock.length) die(`Capacitor's stock splash is still in the project: ${stock.join(', ')}`);
-  if (!launchThemeOk()) die('values/styles.xml launch theme has no Vis splash colour for Android 12+');
+  if (!launchThemeOk()) die('values/styles.xml launch theme does not match the Vis AndroidX splash theme');
   console.log('✓ launcher icons match tracked Vis branding');
   process.exit(0);
 }
@@ -378,15 +382,7 @@ console.log('✓ notification icon → @drawable/ic_stat_vis + @color/vis_notifi
 // opened on somebody else's mark, and on newer phones on the platform's near-white instead of
 // the paper the web layer paints a frame later.
 for (const relative of stockSplashBitmaps()) rmSync(join(androidResources, relative));
-if (!launchThemeOk()) {
-  const styles = readFileSync(stylesPath, 'utf8');
-  const branded = styles.replace(
-    /(<style name="AppTheme\.NoActionBarLaunch"[^>]*>)/,
-    `$1\n        ${SPLASH_THEME_ITEM}\n        <item name="android:windowSplashScreenBackground">@color/vis_splash</item>`,
-  );
-  if (branded === styles) die('values/styles.xml has no AppTheme.NoActionBarLaunch to brand');
-  writeFileSync(stylesPath, branded);
-}
+prepareAndroidSplash(stylesPath);
 console.log('✓ launch screen  @drawable/splash → Vis mark on @color/vis_splash  (+ Android 12 splash colour)');
 
 // ── Push notification channel ─────────────────────────────────────────────────────────
@@ -466,6 +462,7 @@ public class MainActivity extends BridgeActivity {
         setIntent(asShareLink(getIntent()));
         registerPlugin(AudioRoutePlugin.class);
         registerPlugin(NativeSpeechPlugin.class);
+        registerPlugin(OAuthLoopbackPlugin.class);
         super.onCreate(savedInstanceState);
     }
 
@@ -704,7 +701,7 @@ mkdirSync(javaPackageDir, { recursive: true });
 if (!existsSync(mainActivityPath) || readFileSync(mainActivityPath, 'utf8') !== mainActivity) {
   writeFileSync(mainActivityPath, mainActivity);
 }
-
+prepareAndroidOAuth(root, appId);
 const audioRoutePluginPath = join(javaPackageDir, 'AudioRoutePlugin.java');
 const audioRoutePlugin = `package ${appId};
 

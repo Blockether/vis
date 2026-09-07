@@ -67,6 +67,7 @@ const state = (fields: Partial<ProviderAuth>): ProviderAuth =>
     finishApiKey: async () => {},
     finishPkce: async () => {},
     cancelFlow: async () => {},
+    openSignInPage: () => {},
     ...fields,
   }) as unknown as ProviderAuth;
 

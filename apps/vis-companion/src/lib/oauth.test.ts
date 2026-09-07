@@ -4,7 +4,7 @@ import type { SignInFlow } from './types';
 import { clientCallbackMode, watchAuth } from './oauth';
 
 const native = vi.hoisted(() => ({ on: true, handler: (_: { url: string }) => {}, remove: vi.fn() }));
-vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => native.on } }));
+vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => native.on, isPluginAvailable: () => false } }));
 vi.mock('@capacitor/app', () => ({ App: { addListener: vi.fn(async (_event, callback) => {
   native.handler = callback; return { remove: native.remove };
 }) } }));

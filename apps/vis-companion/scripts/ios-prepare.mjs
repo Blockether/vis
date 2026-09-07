@@ -982,17 +982,21 @@ public class VisHostPlugin: CAPPlugin, CAPBridgedPlugin {
 }
 `;
 const hostFileOk = fileOk(hostSwift, hostSource);
-
+const oauthSwift = join(appDir, 'OAuthLoopback.swift');
+const oauthSource = readFileSync(join(root, 'native/oauth/Sources/OAuthLoopback/OAuthLoopback.swift'), 'utf8')
+  + '\n' + readFileSync(join(root, 'native/ios/OAuthLoopbackPlugin.swift'), 'utf8');
+const oauthFileOk = fileOk(oauthSwift, oauthSource);
 // `cap sync` rewrites this file from the INSTALLED packages, so plugin classes
 // that live in the app target are dropped from it every time. Putting them back
 // is exactly what this hook is for — it runs as `postsync`.
-const appPluginClasses = ['VisBadgePlugin', 'NativeSpeechPlugin', 'VisHostPlugin'];
+const appPluginClasses = ['VisBadgePlugin', 'NativeSpeechPlugin', 'VisHostPlugin', 'OAuthLoopbackPlugin'];
 const capConfigJson = existsSync(capConfig) ? JSON.parse(readFileSync(capConfig, 'utf8')) : null;
 const packageClassList = capConfigJson?.packageClassList ?? [];
 const badgeConfigOk = !capConfigJson || packageClassList.includes('VisBadgePlugin');
 const speechConfigOk = !capConfigJson || packageClassList.includes('NativeSpeechPlugin');
 const hostConfigOk = !capConfigJson || packageClassList.includes('VisHostPlugin');
-const capConfigOk = badgeConfigOk && speechConfigOk && hostConfigOk;
+const oauthConfigOk = !capConfigJson || packageClassList.includes('OAuthLoopbackPlugin');
+const capConfigOk = badgeConfigOk && speechConfigOk && hostConfigOk && oauthConfigOk;
 
 let project = existsSync(pbxprojPath) ? readFileSync(pbxprojPath, 'utf8') : '';
 if (!project) die('no ios/App/App.xcodeproj/project.pbxproj — run `npm run add:ios` first');
@@ -1492,13 +1496,26 @@ if (!hostProjectOk) {
     `\t\t${hostIds.swiftRef} /* VisHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisHost.swift; sourceTree = "<group>"; };\n`,
   );
 }
+const oauthIds = { swiftRef: objectId(40), swiftBuild: objectId(41) };
+const oauthProjectOk = project.includes(oauthIds.swiftRef) && project.includes(oauthIds.swiftBuild);
+if (!oauthProjectOk) {
+  after(new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift in Sources [*]/,'),
+    `\n\t\t\t\t${oauthIds.swiftBuild} /* OAuthLoopback.swift in Sources */,`, 'App Sources phase');
+  after(new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift [*]/,'),
+    `\n\t\t\t\t${oauthIds.swiftRef} /* OAuthLoopback.swift */,`, 'App group');
+  before('/* End PBXBuildFile section */',
+    `\t\t${oauthIds.swiftBuild} /* OAuthLoopback.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${oauthIds.swiftRef} /* OAuthLoopback.swift */; };\n`);
+  before('/* End PBXFileReference section */',
+    `\t\t${oauthIds.swiftRef} /* OAuthLoopback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthLoopback.swift; sourceTree = "<group>"; };\n`);
+}
+const oauthOk = oauthFileOk && oauthProjectOk && oauthConfigOk;
 const shareOk = shareFilesOk && projectOk;
 const badgeOk = notifyFilesOk && notifyProjectOk && badgeConfigOk;
 const speechOk = speechFileOk && speechProjectOk && speechConfigOk;
 const hostOk = hostFileOk && hostProjectOk && hostConfigOk;
 
 if (check) {
-  if (delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk && speechOk && hostOk && splashOk) {
+  if (delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk && speechOk && hostOk && oauthOk && splashOk) {
     console.log('· ios: prepared stock Capacitor host with required app capabilities, branded icon and launch screen, share extension, Shortcuts, badge extension, public speech bridge and host plugin');
     process.exit(0);
   }
@@ -1518,7 +1535,8 @@ if (check) {
                 ? 'ios: no NativeSpeech public TTS plugin — run `node scripts/ios-prepare.mjs`'
                 : !hostOk
                   ? 'ios: no VisHost plugin — run `node scripts/ios-prepare.mjs`'
-                  : !splashOk
+                   : !oauthOk ? 'ios: no OAuth loopback browser — run `node scripts/ios-prepare.mjs`'
+                   : !splashOk
                     ? 'ios: launch screen still shows Capacitor\'s splash — run `node scripts/ios-prepare.mjs`'
                     : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
   );
@@ -1565,6 +1583,7 @@ if (!notifyFilesOk) {
 }
 if (!speechFileOk) writeFileSync(speechSwift, speechSource);
 if (!hostFileOk) writeFileSync(hostSwift, hostSource);
+if (!oauthFileOk) writeFileSync(oauthSwift, oauthSource);
 if (!capConfigOk && capConfigJson) {
   capConfigJson.packageClassList = Array.from(
     new Set([...(capConfigJson.packageClassList ?? []), ...appPluginClasses]),

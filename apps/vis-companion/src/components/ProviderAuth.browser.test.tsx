@@ -6,7 +6,7 @@ import type { AuthFlow, RouterProvider } from '../lib/types';
 import { useProviderAuth } from './ProviderAuth';
 
 const native = vi.hoisted(() => ({ handler: (_: { url: string }) => {}, remove: vi.fn() }));
-vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => true } }));
+vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => true, isPluginAvailable: () => false } }));
 vi.mock('@capacitor/app', () => ({ App: { addListener: vi.fn(async (_event, callback) => {
   native.handler = callback; return { remove: native.remove };
 }) } }));

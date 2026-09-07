@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { brandLaunchTheme } from './android-splash.mjs';
 
 /**
  * The launch screen and the notification channel, as `scripts/android-prepare.mjs` stamps them.
@@ -71,9 +72,7 @@ describe('android launch screen assets', () => {
 
   it('paints the colour the web layer paints a frame later', () => {
     const colours = readFileSync(join(resources, 'values', 'vis_splash_color.xml'), 'utf8');
-    const page = /--bg:\s*(#[0-9a-f]{6})/i.exec(
-      readFileSync(join(root, 'src', 'lib', 'themes.generated.css'), 'utf8'),
-    );
+    const page = /--bg:\s*(#[0-9a-f]{6})/i.exec(readFileSync(join(root, 'src', 'lib', 'themes.generated.css'), 'utf8'));
     expect(page).not.toBeNull();
     expect(colours).toContain(`<color name="vis_splash">${page[1]}</color>`);
   });
@@ -92,14 +91,39 @@ describe('android launch screen assets', () => {
     // draws the launcher icon over `windowSplashScreenBackground` and ignores the drawable.
     expect(source).toContain('stockSplashBitmaps');
     expect(source).toContain('rmSync(join(androidResources, relative))');
-    expect(source).toContain('<item name="windowSplashScreenBackground">@color/vis_splash</item>');
-    expect(source).toContain('android:windowSplashScreenBackground');
+    expect(source).toContain('prepareAndroidSplash(stylesPath)');
   });
 
   it('--check refuses a project still showing the stock splash', () => {
     const check = source.slice(source.indexOf("if (has('check'))"), source.indexOf('// ── Launch screen'));
     expect(check).toContain('stockSplashBitmaps()');
     expect(check).toContain('launchThemeOk()');
+  });
+  // Regression: lintDebug rejected the API-31 platform attribute with minSdk 26.
+  // Preparation must handle both a fresh scaffold and an already-branded generated project.
+  it.each([
+    '',
+    '<item name="android:windowSplashScreenBackground">@color/vis_splash</item>',
+    '<item name="windowSplashScreenBackground">@color/old</item>',
+    '<item name="windowSplashScreenBackground">@color/vis_splash</item><item name="android:windowSplashScreenBackground">@color/vis_splash</item>',
+  ])('uses only the AndroidX splash attribute, idempotently: %s', (previousColour) => {
+    const otherTheme = '<style name="AppTheme"><item name="android:background">@color/other</item></style>';
+    const styles = `<resources>${otherTheme}<style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        ${previousColour}
+        <item name="android:background">@drawable/splash</item>
+    </style></resources>`;
+    const branded = brandLaunchTheme(styles);
+    expect(branded).not.toContain('android:windowSplashScreenBackground');
+    expect(branded.match(/name="windowSplashScreenBackground"/g)).toHaveLength(1);
+    expect(branded).toContain('<item name="windowSplashScreenBackground">@color/vis_splash</item>');
+    expect(branded).toContain('parent="Theme.SplashScreen"');
+    expect(branded).toContain('<item name="android:background">@drawable/splash</item>');
+    expect(branded).toContain(otherTheme);
+    expect(brandLaunchTheme(branded)).toBe(branded);
+  });
+
+  it('refuses a scaffold without the launch theme instead of silently skipping branding', () => {
+    expect(() => brandLaunchTheme('<resources/>')).toThrow('no AppTheme.NoActionBarLaunch');
   });
 });
 
