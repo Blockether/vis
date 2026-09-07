@@ -1171,7 +1171,7 @@ if (( tui_requested )); then
   measure_log "JVM TUI → $tui_root"
   cd "$tui_root"
   tui_classpath="$(absolute_project_classpath "$tui_root" -Spath -M:run)" || exit 1
-  run_measured_or_exec "process JVM TUI" clojure "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} -Scp "$tui_classpath" -M:run "$@"
+  run_measured_or_exec "process JVM TUI" clojure -J--enable-native-access=ALL-UNNAMED "-J-Duser.dir=$invocation_cwd" ${trust_jvm_args[@]+"${trust_jvm_args[@]}"} -Scp "$tui_classpath" -M:run "$@"
 fi
 
 stream_trace_jvm_opts=()

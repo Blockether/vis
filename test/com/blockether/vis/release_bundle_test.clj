@@ -1068,6 +1068,7 @@
                               "VIS_NO_AUTO_INSTALL" "1"
                               "PATH" (str (.getAbsolutePath path-dir) ":" (System/getenv "PATH"))})]
                (expect (zero? exit) output)
+               (expect (str/includes? output "<-J--enable-native-access=ALL-UNNAMED>") output)
                (expect (str/includes? output "<-M:run>") output)
                (expect (not (str/includes? output "<-M:vis>")) output)
                (expect (str/includes? output "<--help>") output))
