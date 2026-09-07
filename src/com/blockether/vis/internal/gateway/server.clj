@@ -1850,7 +1850,6 @@
           :mcp/oauth-flow-not-found
           404
 
-          409
           400)]
 
     (error-response status (or type :mcp/invalid-request) (ex-message e))))

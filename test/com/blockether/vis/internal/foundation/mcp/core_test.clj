@@ -1,12 +1,23 @@
 (ns com.blockether.vis.internal.foundation.mcp.core-test
-  (:require [clojure.string :as str]
+  (:require [babashka.http-client :as http]
+            [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.context.renderer :as renderer]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.mcp.client :as client]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]
             [com.blockether.vis.contract.wire :as wire]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
+
+;; Direct MCP calls need the same op registration the distribution manifest supplies.
+(set-ns-context!
+  [(around-each
+     [f]
+     (let [registered? (some #(= "foundation-mcp" (:ext/name %)) (extension/registered-extensions))]
+       (when-not registered? (mcp/register!))
+       (try (f)
+            (finally (when-not registered? (extension/deregister-extension! "foundation-mcp"))))))])
 
 (defdescribe mcp-native-contract-test
              (it "keeps native/Python alias routing in each compact description"
@@ -28,6 +39,40 @@
                  ;; using, nor be expected to establish one the daemon already owes it.
                  (expect (not (contains? names "mcp__connect")))
                  (expect (not (contains? names "mcp__disconnect"))))))
+
+(defdescribe
+  gateway-mcp-auth-validation-test
+  (it "allows an OAuth challenge to be saved for sign-in without claiming a connection"
+      (with-redefs [oauth/make-bearer-fn
+                    (fn [& _]
+                      (constantly nil))
+
+                    http/request
+                    (fn [_]
+                      {:status 401
+                       :headers {"www-authenticate"
+                                 "Bearer resource_metadata=\"https://gateway.example.com/oauth\""}
+                       :body "Unauthorized"})]
+
+        (expect (= {"name" "remote" "is_connected" false "tools" []}
+                   (mcp/test-gateway-server! "remote"
+                                             {"transport" "streamable_http"
+                                              "url" "https://gateway.example.com/mcp"})))))
+  (it "does not accept missing challenges, static credentials, or non-auth failures"
+      (doseq [[status challenge headers] [[401 nil {}] [401 "Basic realm=mcp" {}] [500 "Bearer" {}]
+                                          [401 "Bearer" {"Authorization" "Bearer private"}]]]
+        (let [failure (ex-info "Rejected" {:type :mcp/http-error :status status})]
+          (with-redefs [client/connect (fn [_ spec]
+                                         (when-let [a (:www-auth-atom spec)]
+                                           (reset! a challenge))
+                                         (throw failure))]
+            (expect (identical? failure
+                                (try (mcp/test-gateway-server! "remote"
+                                                               {"transport" "streamable_http"
+                                                                "url"
+                                                                "https://gateway.example.com/mcp"
+                                                                "headers" headers})
+                                     (catch clojure.lang.ExceptionInfo e e)))))))))
 
 (defdescribe
   gateway-mcp-management-test

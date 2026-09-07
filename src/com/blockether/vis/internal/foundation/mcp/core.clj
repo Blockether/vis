@@ -799,8 +799,10 @@
     (mcp-oauth/token-status name)))
 
 (defn test-gateway-server!
-  "Connect a candidate spec without saving it. The connection is always closed;
-   only non-secret tool metadata is returned, string-keyed like the inventory."
+  "Probe a candidate without saving it; return only non-secret tool metadata.
+   An HTTP 401 Bearer challenge without static credentials returns disconnected
+   with no tools, allowing save followed by OAuth sign-in. Other failures throw.
+   Any opened connection is always closed."
   [name raw-spec]
   (let [name
         (server-name name)
@@ -808,17 +810,24 @@
         spec
         (->> (dissoc raw-spec "name")
              config/runtime-config
-             (->client-spec name))
+             (->client-spec name))]
 
-        conn
-        (mcp/connect name spec)]
-
-    (try {"name" name
-          "is_connected" true
-          "tools" (mapv (fn [tool]
-                          {"name" (get tool "name") "description" (get tool "description")})
-                        (mcp/list-tools conn))}
-         (finally (mcp/close conn)))))
+    (try (let [conn (mcp/connect name spec)]
+           (try {"name" name
+                 "is_connected" true
+                 "tools" (mapv (fn [tool]
+                                 {"name" (get tool "name") "description" (get tool "description")})
+                               (mcp/list-tools conn))}
+                (finally (mcp/close conn))))
+         (catch clojure.lang.ExceptionInfo e
+           (if (and (= :mcp/http-error (:type (ex-data e)))
+                    (= 401 (:status (ex-data e)))
+                    (:bearer-fn spec)
+                    (some->> (some-> ^clojure.lang.IDeref (:www-auth-atom spec)
+                                     deref)
+                             (re-find #"(?i)^\s*Bearer(?:\s|$)")))
+             {"name" name "is_connected" false "tools" []}
+             (throw e))))))
 
 ;; Verb implementations (env injected by the gate as the first arg)
 

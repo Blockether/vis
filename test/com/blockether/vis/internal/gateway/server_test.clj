@@ -2712,6 +2712,22 @@
           (is (= "oauth-flow-not-found"
                  (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))
 
+(deftest mcp-validation-errors-preserve-the-original-failure-test
+  (doseq [type [:mcp/http-error :mcp/oauth-required :mcp/protocol :mcp/unknown]]
+    (with-redefs-fn {(rv 'body-json) (constantly {"name" "remote" "server" {}})
+                     #'mcp-core/test-gateway-server!
+                     (fn [& _]
+                       (throw (ex-info "MCP remote HTTP 401 on initialize"
+                                       {:type type :body "private upstream response"})))}
+      (fn []
+        (let [response ((rv 'test-mcp-server-handler) {})
+              body (wire/parse-json (:body response))]
+
+          (is (= 400 (:status response)))
+          (is (= (name type) (get-in body ["error" "type"])))
+          (is (= "MCP remote HTTP 401 on initialize" (get-in body ["error" "message"])))
+          (is (not (str/includes? (:body response) "private upstream response"))))))))
+
 (deftest admin-stop-handler-names-its-requester
   (testing
     "POST /v1/admin/stop takes the whole ring request (so the log can name who killed a busy daemon) and still stops"
