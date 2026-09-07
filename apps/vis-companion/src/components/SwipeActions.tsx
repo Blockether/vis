@@ -55,29 +55,25 @@ let openDrawer: (() => void) | null = null;
 const OPEN_PAST_PX = 8;
 
 /**
- * Shared row-action drawer. Touch uses a two-panel scroll-snap track; fine pointers place
- * an opaque action strip over the trailing edge on hover/focus. Hidden actions cannot
- * intercept input, and hybrid devices retain the touch behavior.
+ * Shared row-action drawer. Touch uses a two-panel scroll-snap track; fine pointers
+ * reserve a trailing slot and reveal it on hover/focus without covering or moving
+ * row controls. Hidden actions cannot intercept input; touch keeps the swipe drawer.
  *
- * ONE CELL, TWO FACES. On touch a cell is the drawer's 72px captioned slab — an icon
- * over a word, tinted by what the verb means, because a thumb slid it open and reads
- * the caption. Under a pointer the same cell is `IconButton`'s 28px disc: the glyph
- * alone, on the row's own hover tint, the row's trailing gutter between the last disc
- * and the paper's edge. The desktop face is written HERE and not composed from
- * `IconButton` because the touch face has no `ui.tsx` control to stand in for it, and
- * two sets of buttons under one name are two rows of verbs to a screen reader and to
- * every test that asks for `Rename` by name. Reported (paraphrased: the star, rename,
- * fork and delete look ridiculous and stand too close to the margins): four 34px slabs
- * on a 32px row, flush against the paper's right edge, over a date they hid.
+ * One button serves both inputs: a captioned 72px cell on touch, a 28px target with
+ * a smaller 20px face and 14px mark under a pointer. This stays here rather than
+ * duplicating IconButton and exposing each action twice to keyboard/screen readers.
  */
 export function SwipeActions({
   actions,
   children,
   label,
+  trailing,
 }: {
   actions: SwipeAction[];
   children: ReactNode;
   label?: string;
+  /** Permanent row controls: inside the touch panel, after the hover strip on desktop. */
+  trailing?: ReactNode;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -161,7 +157,15 @@ export function SwipeActions({
     };
   }, [open, close]);
 
-  if (actions.length === 0) return <>{children}</>;
+  if (actions.length === 0) {
+    if (!trailing) return <>{children}</>;
+    return (
+      <div className="grid grid-cols-[minmax(0,1fr)_auto]">
+        {children}
+        {trailing}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -188,22 +192,13 @@ export function SwipeActions({
       // Under a pointer the TRACK is the row's hover slab: the strip and the row are two
       // panels of one track, and a hover that belongs to only one of them leaves a seam
       // — the row went back to plain paper the moment the cursor reached its own verbs.
-      className="group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:relative mouse:snap-none mouse:overflow-hidden mouse:transition-colors mouse:duration-150 mouse:hover:bg-hover mouse:motion-reduce:transition-none"
+      className="group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:snap-none mouse:overflow-hidden mouse:transition-colors mouse:duration-150 mouse:hover:bg-hover mouse:motion-reduce:transition-none"
     >
-      {/* A GRID, not a plain block: the track is as tall as its TALLEST panel, and the
-          action strip (a 16px icon over a 10px caption) stands 34px against a 32px
-          desktop session row. This panel stretches to the track, so its single child
-          has to stretch to IT — otherwise the row's hover slab stops short of the rule
-          under it and the row reads as if it had lost two pixels of its own height.
-
-          The one column is `minmax(0, 1fr)`, never `auto`: a grid item's automatic
-          minimum is its min-content width, and a header whose count, live pulse and
-          path are all `nowrap` has a min-content width far past any phone. Measured
-          on the 393px rail, a project band of `~/rewrite · 113 sessions · 1 live · 1
-          needs input` grew its track to 528px: nothing truncated, and the pager and
-          the `+` stood 135px past the edge of the list, under the swipe strip. */}
+      {/* Touch keeps content and permanent controls in one full-width snap panel.
+          On desktop its children join the track: content, reserved verbs, then the
+          permanent trailing edge. The controls are mounted only once. */}
       <div
-        className="grid w-full shrink-0 grid-cols-[minmax(0,1fr)] snap-start bg-panel mouse:bg-transparent"
+        className="grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start bg-panel mouse:contents"
         onClickCapture={(event) => {
           // While the drawer is open the row itself is a dismiss target, never a
           // navigation: a thumb resting on it must not open the session.
@@ -213,10 +208,11 @@ export function SwipeActions({
           close();
         }}
       >
-        {children}
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] mouse:flex-1">{children}</div>
+        {trailing && <div className="flex shrink-0 mouse:order-last">{trailing}</div>}
       </div>
       <div
-        className={`flex shrink-0 snap-end mouse:pointer-events-none mouse:absolute mouse:inset-y-0 mouse:right-0 mouse:items-center mouse:gap-1 mouse:pl-6 mouse:bg-hover mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/swipe:pointer-events-auto mouse:group-hover/swipe:opacity-100 mouse:group-focus-within/swipe:pointer-events-auto mouse:group-focus-within/swipe:opacity-100 mouse:motion-reduce:transition-none ${LIST_EDGE_END}`}
+        className={`flex shrink-0 snap-end mouse:pointer-events-none mouse:items-center mouse:gap-2 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/swipe:pointer-events-auto mouse:group-hover/swipe:opacity-100 mouse:group-focus-within/swipe:pointer-events-auto mouse:group-focus-within/swipe:opacity-100 mouse:motion-reduce:transition-none ${LIST_EDGE_END} ${trailing ? 'mouse:pr-2' : ''}`}
         role="group"
         aria-label={label ? `${label} actions` : 'Row actions'}
       >
@@ -228,10 +224,10 @@ export function SwipeActions({
             title={action.name ?? action.label}
             className={`flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-1 border-l font-mono text-chip font-bold uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none mouse:size-7 mouse:rounded-full mouse:border-l-0 mouse:bg-transparent mouse:text-white ${
               action.tone === 'danger'
-                ? 'border-err-edge bg-err-surface text-err-ink hover:bg-err hover:text-white mouse:hover:bg-err-surface mouse:hover:text-err'
+                ? 'border-err-edge bg-err-surface text-err-ink hover:bg-err hover:text-white mouse:hover:bg-transparent mouse:hover:text-err-ink mouse:hover:[&>span:first-child]:bg-err-surface'
                 : action.tone === 'accent'
-                  ? 'border-accent/40 bg-accent/15 text-accent-ink hover:bg-accent hover:text-accent-foreground mouse:hover:bg-panel'
-                  : 'border-dialog-edge bg-panel-2 text-accent-ink hover:bg-hover mouse:hover:bg-panel'
+                  ? 'border-accent/40 bg-accent/15 text-accent-ink hover:bg-accent hover:text-accent-foreground mouse:hover:bg-transparent mouse:hover:[&>span:first-child]:bg-panel'
+                  : 'border-dialog-edge bg-panel-2 text-accent-ink hover:bg-hover mouse:hover:bg-transparent mouse:hover:[&>span:first-child]:bg-panel'
             }`}
             onClick={(event) => {
               const anchor = event.currentTarget;
@@ -239,7 +235,12 @@ export function SwipeActions({
               action.onSelect(anchor);
             }}
           >
-            <span aria-hidden="true">{action.icon}</span>
+            <span
+              aria-hidden="true"
+              className="mouse:grid mouse:size-5 mouse:place-items-center mouse:rounded-full mouse:transition-colors mouse:duration-150 mouse:[&>svg]:size-3.5 motion-reduce:transition-none"
+            >
+              {action.icon}
+            </span>
             <span className="mouse:sr-only">{action.label}</span>
           </button>
         ))}

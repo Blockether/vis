@@ -267,6 +267,15 @@ export const SessionRow = memo(function SessionRow({
               onSelect: () => commands.requestDelete(session, conn),
             },
           ]}
+          trailing={
+            <HeaderActions>
+              <RowDisclosure
+                isOpen={statsOpen}
+                label={`${statsOpen ? "Hide" : "Show"} details for ${title}`}
+                onClick={toggleStats}
+              />
+            </HeaderActions>
+          }
         >
           {/* THE ROW IS ONE SLAB, and the hover tint is ITS colour, not the open
           button's. The button stops where the disclosure begins, so a pointer
@@ -444,16 +453,6 @@ export const SessionRow = memo(function SessionRow({
                 </span>
               </span>
             </SessionRowSurface>
-            {/* The same box, the same column and the same right edge as the `⋯` in the
-            project header directly above: both promise "there is more here", so
-            neither is allowed its own geometry. */}
-            <HeaderActions>
-              <RowDisclosure
-                isOpen={statsOpen}
-                label={`${statsOpen ? "Hide" : "Show"} details for ${title}`}
-                onClick={toggleStats}
-              />
-            </HeaderActions>
           </div>
         </SwipeActions>
       )}

@@ -1,3 +1,4 @@
+import tailwindcss from '@tailwindcss/vite';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
 import path from 'node:path';
@@ -12,8 +13,8 @@ const buildInfo = companionBuildInfo();
 
 // Deliberately NOT an extension of `vite.config.ts`: the app config exists to
 // build a browser bundle (React Compiler, Tailwind, the dev gateway proxy), and
-// none of that helps the node suite. The Storybook project below brings only
-// Storybook's own Vite plugin back, then drives every story in real Chromium.
+// none of that helps the node suite. The browser project compiles the same Tailwind
+// CSS as the app so geometry and hit-testing assertions exercise the shipped layout.
 export default defineConfig({
   // `compat.ts` reads the release string the app build injects; the tests need
   // the SAME source of truth, not a hand-written stand-in.
@@ -38,13 +39,15 @@ export default defineConfig({
       },
       {
         extends: true,
-        plugins: [storybookTest({ configDir: path.join(dirname, '.storybook') })],
+        plugins: [tailwindcss(), storybookTest({ configDir: path.join(dirname, '.storybook') })],
         test: {
           name: 'storybook',
           browser: {
             enabled: true,
             headless: true,
-            provider: playwright({}),
+            // Exercise the shipped reduced-motion path; immediate interaction assertions
+            // must not race the first transparent frame of real CSS entrance animations.
+            provider: playwright({ contextOptions: { reducedMotion: 'reduce' } }),
             instances: [{ browser: 'chromium' }],
           },
         },

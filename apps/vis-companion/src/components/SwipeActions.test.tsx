@@ -52,7 +52,7 @@ describe('SwipeActions tones', () => {
   // 2px short of the rule under it. The panel is a GRID: one child, stretched on both
   // axes, so whatever height the track ends up with is the row's height too.
   it('lets the row fill the swipe track', () => {
-    expect(strip()).toContain('grid w-full shrink-0 grid-cols-[minmax(0,1fr)] snap-start');
+    expect(strip()).toContain('grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] snap-start');
   });
 
   // The verbs are under the row's TRAILING edge and nowhere else: the row is panel
@@ -77,7 +77,15 @@ describe('a mouse never slides', () => {
     renderToStaticMarkup(
       <SwipeActions
         label="a session"
-        actions={[{ key: 'delete', label: 'Delete', icon: <TrashIcon />, tone: 'danger', onSelect: () => {} }]}
+        actions={[
+          {
+            key: 'delete',
+            label: 'Delete',
+            icon: <TrashIcon />,
+            tone: 'danger',
+            onSelect: () => {},
+          },
+        ]}
       >
         <span>row</span>
       </SwipeActions>,
@@ -97,37 +105,41 @@ describe('a mouse never slides', () => {
     expect(html).toContain('mouse:group-focus-within/swipe:opacity-100');
   });
 
-  // Regression, user report (paraphrased: make sure things do not sit on top of
-  // each other): the strip stood over the row's own status chip and timestamp
-  // with no slab of its own, so an `accent/15` cell printed its caption over an
-  // `IDLE` that read straight through it — and while invisible it still took the
-  // pointer, four unseeable buttons covering the date of every row.
-  // The slab is the row's HOVER tint, not the card's paper: the strip is only ever
-  // seen while its row is hovered or focused, and `bg-panel` cut a plain-paper
-  // rectangle out of the trailing end of the one row the pointer was lighting.
-  it('owns the pixels it stands on, and takes no pointer while unseen', () => {
+  it('takes no pointer while unseen', () => {
     const html = markup();
     expect(html).toContain('mouse:group-hover/swipe:pointer-events-auto');
     expect(html).toContain('mouse:group-focus-within/swipe:pointer-events-auto');
   });
 
-  // Regression, user report (paraphrased: the star, rename, fork and delete look
-  // ridiculous and stand too close to the margins): under a pointer each cell was
-  // still the drawer's 72px captioned slab — four tinted 34px boxes standing on a
-  // 32px row, flush against the paper's right edge, over the date they hid.
-  it('wears the icon-only disc under a pointer, inside the row\'s trailing gutter', () => {
+  // Regression: desktop hover put Delete over the project's + and pager.
+  // Browser geometry and hit-testing live in the ProjectHeader story.
+  it('reserves space beside row controls rather than overlaying them', () => {
     const html = markup();
-    // The cell is the 28px disc every other icon-only control in the app is.
-    expect(html).toContain('mouse:size-7 mouse:rounded-full');
-    // The caption stays for the screen reader and leaves the screen.
+    expect(html).not.toContain('mouse:absolute');
+    expect(html).toContain('mouse:flex-1');
     expect(html).toContain('class="mouse:sr-only">Delete<');
-    // The strip ends where the row's own content does, not on the paper's edge.
-    expect(html).toContain('mouse:pl-6');
     expect(html).toContain('pr-3 sm:pr-4');
-    // The hover slab is the TRACK's, so the row and its verbs never show a seam.
-    expect(html).toContain('mouse:hover:bg-hover');
-    expect(html).toContain('snap-start bg-panel mouse:bg-transparent');
   });
+});
+
+it.each([false, true])('retains one permanent control with actions=%s', (hasActions) => {
+  const onDetails = vi.fn();
+  render(
+    <SwipeActions
+      actions={
+        hasActions
+          ? [{ key: 'delete', label: 'Delete', icon: <TrashIcon />, onSelect: vi.fn() }]
+          : []
+      }
+      trailing={<button onClick={onDetails}>Details</button>}
+    >
+      <button>Open session</button>
+    </SwipeActions>,
+  );
+  expect(screen.getAllByRole('button', { name: 'Details' })).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+  expect(onDetails).toHaveBeenCalledOnce();
+  expect(screen.getByRole('button', { name: 'Open session' })).toBeInTheDocument();
 });
 
 describe('the slide', () => {
@@ -259,7 +271,7 @@ describe('the slide', () => {
   // whose state said shut. The mark the verb had just left was off-screen to the left
   // behind that strip, the row was a navigation again, and the next row opened beside
   // it instead of in place of it.
-  it('takes the way home out of the platform\'s hands when a verb is pressed', () => {
+  it("takes the way home out of the platform's hands when a verb is pressed", () => {
     const onSelect = vi.fn();
     render(
       <SwipeActions
@@ -370,6 +382,24 @@ describe('the slide', () => {
     );
     const panel = /<div class="([^"]*\bgrid\b[^"]*)"/.exec(html)?.[1] ?? '';
     expect(panel).toContain('w-full');
-    expect(panel).toContain('grid-cols-[minmax(0,1fr)]');
+    expect(panel).toContain('grid-cols-[minmax(0,1fr)_auto]');
+  });
+
+  it('treats the permanent control as a dismiss target while the touch drawer is open', () => {
+    const onDetails = vi.fn();
+    render(
+      <SwipeActions
+        actions={[{ key: 'delete', label: 'Delete', icon: <TrashIcon />, onSelect: vi.fn() }]}
+        trailing={<button onClick={onDetails}>Details</button>}
+      >
+        <span>row</span>
+      </SwipeActions>,
+    );
+    slide(track());
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+    expect(onDetails).not.toHaveBeenCalled();
+    expect(closed).toContain(track());
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+    expect(onDetails).toHaveBeenCalledOnce();
   });
 });

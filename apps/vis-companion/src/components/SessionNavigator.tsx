@@ -533,17 +533,10 @@ export function HeaderActions({
 /**
  * "There is more inside this row", and there is only one of it.
  *
- * The sibling of `KebabButton`: where the `⋯` holds the rarer VERBS of a row, this
- * holds the rest of its FACTS — a session's usage rollup, opened in place. They are
- * the same promise in two directions, so they are the same box, in the same column,
- * with the same border-on-hover and the same focus ring; only the glyph and the
- * `aria-expanded` differ. It was a hand-built 32px strip welded to the screen edge,
- * at 40% opacity, which is why it read as a decoration rather than as the control it
- * is — and why it never lined up with the `⋯` directly above it.
- *
- * Opacity is NOT the resting state: a control that fades to 0.4 to look quiet is one
- * that fails contrast while doing it. It rests in the same hint ink as every other
- * quiet glyph in the list and answers the pointer with the button's own frame.
+ * The permanent trailing control uses the same compact disc as the project's +.
+ * Hover verbs occupy their own slot before it, so the two bands keep one visible
+ * right edge instead of centring their glyphs in different gutter geometries.
+ * Quiet ink and an explicit expanded state keep it readable without hover.
  */
 export const RowDisclosure = forwardRef<
   HTMLButtonElement,
@@ -558,7 +551,6 @@ export const RowDisclosure = forwardRef<
       ref={ref}
       label={label}
       variant="quiet"
-      edge
       aria-expanded={isOpen}
       className={className}
       {...props}

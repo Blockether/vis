@@ -819,7 +819,7 @@ describe("Pager", () => {
 // under the band for the whole of a project, and it is gone: the pager is a cluster
 // in the band's own trailing column and the count rides on the name's second line.
 describe("a project band carries its own count and its own pager", () => {
-  const band = /<ProjectCrumb[\s\S]*?<\/SectionHeader>/.exec(sessionsListSource)?.[0] ?? "";
+  const band = /<SwipeActions\s+label=\{project\}[\s\S]*?<\/SectionHeader>/.exec(sessionsListSource)?.[0] ?? "";
   const qualifier = band.slice(
     band.indexOf("qualifier={"),
     band.indexOf("qualifierTitle="),
@@ -1071,42 +1071,28 @@ describe("the list grid", () => {
   // The trailing gutter lives INSIDE the last control, not on the cluster: a box
   // that respects the gutter and then centres a 12px glyph in 28px of its own put
   // the right-hand INK 30px from the paper while the left-hand ink sat at 19px.
-  it("ends every row on one trailing edge, carried by the control itself", () => {
-
-    for (const html of [
-      renderToStaticMarkup(<IconButton label="Actions for vis" variant="quiet" edge />),
-      renderToStaticMarkup(
-        <RowDisclosure isOpen={false} label="Show details" />,
-      ),
-    ]) {
-      expect(html).toContain("justify-items-end");
-    }
+  it("keeps the edge variant available for controls that fill a row end", () => {
+    const html = renderToStaticMarkup(
+      <IconButton label="Actions for vis" variant="quiet" edge />,
+    );
+    expect(html).toContain("justify-items-end");
   });
 });
 
-// The disclosure is the `⋯`'s sibling — the rarer FACTS of a row where the kebab
-// holds its rarer VERBS — so it is the same box in the same column, not a hand-built
-// strip welded to the screen edge at 40% opacity.
+// The permanent disclosure shares the project + geometry; verbs have their own slot.
 describe("RowDisclosure", () => {
   const html = (isOpen: boolean) =>
     renderToStaticMarkup(
       <RowDisclosure isOpen={isOpen} label="Show details for Untitled" />,
     );
 
-  it("uses the canonical edge IconButton geometry", () => {
-    const edge = renderToStaticMarkup(
-      <IconButton label="Actions for vis" variant="quiet" edge />,
+  it("uses the canonical compact IconButton geometry", () => {
+    const compact = renderToStaticMarkup(
+      <IconButton label="Actions for vis" variant="quiet" />,
     );
-    for (const token of [
-      "min-w-10",
-      "sm:min-w-12",
-      "mouse:min-w-10",
-      " h-8 ",
-      "mouse:h-6",
-    ]) {
-      expect(html(false)).toContain(token);
-      expect(edge).toContain(token);
-    }
+    expect(/class="([^"]*)"/.exec(html(false))?.[1]).toBe(
+      /class="([^"]*)"/.exec(compact)?.[1],
+    );
   });
 
   it("names what it opens and reports whether it is open", () => {
