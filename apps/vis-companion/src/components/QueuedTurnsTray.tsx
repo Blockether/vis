@@ -92,7 +92,7 @@ export function QueuedTurnsTray({
                 <div
                   key={item.turnId}
                   role="listitem"
-                  className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 first:border-t-0 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${isBusy ? " opacity-50" : ""}`}
+                  className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 py-0.5 first:border-t-0 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${isBusy ? " opacity-50" : ""}`}
                 >
                 <span className="shrink-0 font-mono text-meta font-bold text-accent-ink">
                   #{index + 1}

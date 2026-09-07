@@ -108,7 +108,7 @@ describe("queued turns tray", () => {
     expect(screen.getByText("Queued · 1")).toBeTruthy();
     const queue = screen.getByRole("region", { name: "Queued messages" });
     for (const row of queue.querySelectorAll('[role="listitem"]')) {
-      expect(row.className).not.toMatch(/(?:^|:)py-/);
+      expect(row.className).toContain("py-0.5");
     }
     for (const remove of screen.getAllByRole("button", {
       name: /Remove queued message/,
