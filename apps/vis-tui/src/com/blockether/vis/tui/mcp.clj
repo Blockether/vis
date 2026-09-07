@@ -274,10 +274,17 @@
              (let [verdict (try (vis/gateway-mcp-test-server! server spec)
                                 (catch Exception e {"error" (ex-message e)}))
                    tools (tool-count verdict)
-                   summary (if (get verdict "is_connected")
-                             (str "Connected · " tools (if (= 1 tools) " tool" " tools"))
-                             (str "Could not connect: "
-                                  (or (get verdict "error") "the server did not answer")))]
+                   summary (cond (get verdict "is_connected")
+                                 (str "Connected · " tools (if (= 1 tools) " tool" " tools"))
+                                 ;; A successful disconnected HTTP probe is the gateway's
+                                 ;; OAuth challenge verdict, not an unreachable endpoint.
+                                 (and (= "streamable_http" (get spec "transport"))
+                                      (false? (get verdict "is_connected"))
+                                      (not (get verdict "error")))
+                                 "Sign-in required · save, then choose Sign in"
+                                 :else (str "Could not connect: "
+                                            (or (get verdict "error")
+                                                "the server did not answer")))]
 
                (when ((:confirm! q)
                        (str (if row "Save changes to `" "Add MCP server `") server "`?")

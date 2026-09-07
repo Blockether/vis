@@ -319,6 +319,31 @@
         (let [[_ _ opts] (last @log)]
           (expect (= "Connected · 3 tools" (:cost opts)))
           (expect (= "Yes, add it" (:yes-label opts)))))))
+  (it "distinguishes OAuth sign-in from connection failures before saving"
+      (doseq [[verdict expected] [[{"is_connected" false "tools" []}
+                                   "Sign-in required · save, then choose Sign in"]
+                                  [{"error" "HTTP 500"} "Could not connect: HTTP 500"]
+                                  [{} "Could not connect: the server did not answer"]]]
+        (let [log (atom [])
+              saved (atom nil)]
+
+          (with-redefs [dlg/host-band-region (fn [_ region]
+                                               region)
+                        dlg/band-questions (band-stub {"MCP · add server" "streamable_http"
+                                                       "Name:" "remote"
+                                                       "URL:" "https://gateway.example.com/mcp"
+                                                       "Headers, KEY=value, comma separated:" ""
+                                                       "Timeout in ms (blank for the default):" ""
+                                                       "Add MCP server `remote`?" true}
+                                                      log)
+                        vis/gateway-mcp-test-server! (fn [& _]
+                                                       verdict)
+                        vis/gateway-mcp-save-server! (fn [server spec]
+                                                       (reset! saved [server spec]))]
+
+            (mcp/save-server! nil nil nil nil)
+            (expect (= expected (get-in (last @log) [2 :cost])))
+            (expect (= "remote" (first @saved)))))))
   (it "abandons the whole form when one field is escaped, and saves nothing"
       (let [log
             (atom [])
