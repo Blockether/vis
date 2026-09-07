@@ -3148,139 +3148,79 @@
           {:theme-id theme-id :label (theme-display-label theme-id)})
         choices))
 
-(defn- theme-picker-content-width [cols] (settings-content-width cols))
+(defn- theme-picker!
+  "Preview themes on single keys in Settings' own transient band. * applies;
+   Esc cancels. Long catalogs page with n/p without opening another window."
+  [screen g region choices current preview!]
+  (let [region
+        (assoc (host-band-region screen region) :grid? true)
 
-(defn- theme-picker-dialog!
-  "Small theme chooser. Moving selection previews the theme immediately;
-   Enter commits the preview, Esc restores the original theme."
-  [^TerminalScreen screen choices current preview!]
-  (let [items
-        (theme-picker-items choices)
+        bindings
+        "abcdefghijklmoqrstuvwxyz"
 
-        total
-        (count items)
+        page-size
+        (long (p/clamp (- (long (:hint-row region)) (long (or (:min-row region) 0)) 10)
+                       1
+                       (count bindings)))
 
-        original
-        (or current (:theme-id (first items)))
+        pages
+        (max 1 (quot (+ (count choices) (dec page-size)) page-size))]
 
-        selected
-        (atom (max 0 (.indexOf ^java.util.List (vec choices) original)))
+    (when (seq choices)
+      (loop [page
+             0
 
-        scroll
-        (atom 0)
+             selected
+             current]
 
-        last-preview
-        (atom ::none)
+        (let [items
+              (mapv (fn [i {:keys [theme-id label]}]
+                      {:key (str (nth bindings i))
+                       :type :action
+                       :id theme-id
+                       :label (str label (when (= theme-id selected) "  ● current"))})
+                    (range)
+                    (theme-picker-items (take page-size (drop (* (long page) page-size) choices))))
 
-        preview-selected!
-        (fn []
-          (when-let [theme-id (:theme-id (nth items @selected nil))]
-            (when-not (= theme-id @last-preview)
-              (reset! last-preview theme-id)
-              (preview! theme-id))))]
+              spec
+              {:title "Theme"
+               :groups
+               (conj
+                 (let [cell-w
+                       (+ 9 (long (reduce max 0 (map #(p/display-width (:label %)) items))))
 
-    (when (pos? total)
-      (loop []
+                       columns
+                       (max 1 (quot (max 1 (- (long (:inner-w region)) 24)) cell-w))
 
-        (preview-selected!)
-        (let [size
-              (modal-size! screen)
+                       per-column
+                       (max 1 (quot (+ (count items) (dec columns)) columns))]
 
-              cols
-              (.getColumns size)
+                   (mapv (fn [i column]
+                           {:title
+                            (if (zero? (long i)) (str "Preview  " (inc (long page)) "/" pages) "")
+                            :items (vec column)})
+                         (range)
+                         (partition-all per-column items)))
+                 {:title "Commands"
+                  :items (cond-> [{:key "*" :type :action :id ::apply-theme :label "Apply theme"}]
+                           (> pages 1)
+                           (into [{:key "n" :type :action :id ::next-theme-page :label "Next page"}
+                                  {:key "p"
+                                   :type :action
+                                   :id ::previous-theme-page
+                                   :label "Previous page"}]))})}
 
-              rows
-              (.getRows size)
+              action
+              (:action (embed-transient! screen g region spec))]
 
-              g
-              (frame/surface-graphics screen cols rows)
-
-              content-w
-              (theme-picker-content-width cols)
-
-              content-h
-              ;; Size the box to the ACTUAL theme count (floored, terminal-clamped)
-              ;; so a short list gets a compact chooser instead of a full-height
-              ;; frame with the rows marooned in the vertical center.
-              (adaptive-content-height rows total)
-
-              bounds
-              (draw-dialog-chrome! g cols rows "Theme" content-w content-h)
-
-              {:keys [left inner-w]}
-              bounds
-
-              {:keys [content-top content-h hint-row]}
-              (dialog-layout bounds total)
-
-              visible
-              (min (long total) (long content-h))
-
-              _
-              (swap! selected #(p/clamp % 0 (max 0 (dec total))))
-
-              _
-              (swap! scroll #(visible-window-start @selected % content-h total))]
-
-          (dotimes [i visible]
-            (let [idx (+ (long @scroll) (long i))
-                  row-y (+ (long content-top) (long i))]
-
-              (when (< (long idx) (long total))
-                (draw-list-item! g
-                                 left
-                                 row-y
-                                 (if (> (long total) (long content-h)) (dec (long inner-w)) inner-w)
-                                 (= idx @selected)
-                                 (:label (nth items idx))))))
-          (ScrollBar/draw g
-                          Direction/VERTICAL
-                          (TerminalPosition. (int (+ (long left) (long inner-w))) (int content-top))
-                          (int content-h)
-                          (int total)
-                          (int content-h)
-                          (when (some? @scroll) (Integer/valueOf (int @scroll)))
-                          t/dialog-border
-                          t/dialog-bg
-                          t/dialog-hint-key
-                          t/dialog-bg)
-          (draw-hint-bar! g
-                          left
-                          hint-row
-                          inner-w
-                          [["↑/↓" "preview"] ["Enter" "choose"] ["Esc" "cancel"]])
-          (.setCursorPosition screen (p/cursor-pos 0 0))
-          (.refresh screen Screen$RefreshType/DELTA)
-          (let [key (read-modal-key! screen)]
-            (when key
-              (if (instance? MouseAction key)
-                (if-let [step (ScrollBar/wheelStep ^KeyStroke key)]
-                  (do (swap! selected #(p/clamp (+ (long %) (long step)) 0 (max 0 (dec total))))
-                      (recur))
-                  (if-let [row-offset (mouse-row-offset key
-                                                        left
-                                                        content-top
-                                                        (if (> (long total) (long content-h))
-                                                          (dec (long inner-w))
-                                                          inner-w)
-                                                        visible)]
-                    (let [idx (p/clamp (+ (long @scroll) (long row-offset)) 0 (max 0 (dec total)))]
-                      (reset! selected idx)
-                      (if (= MouseActionType/CLICK_RELEASE (.getActionType ^MouseAction key))
-                        (:theme-id (nth items idx))
-                        (recur)))
-                    (recur)))
-                (condp = (key-type key)
-                  KeyType/Escape (do (preview! original) nil)
-                  KeyType/ArrowUp
-                  (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))
-                  KeyType/ArrowDown
-                  (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
-                  KeyType/Enter (:theme-id (nth items @selected))
-                  (recur))))))))))
+          (cond (nil? action) nil
+                (= action ::apply-theme) selected
+                (= action ::next-theme-page) (recur (mod (inc (long page)) pages) selected)
+                (= action ::previous-theme-page) (recur (mod (dec (long page)) pages) selected)
+                :else (do (preview! action) (recur page action))))))))
 
 (defn- activate-theme-row!
-  [screen values callbacks {:keys [choices key]}]
+  [screen g region values callbacks {:keys [choices key]}]
   (let [original
         (get @values key)
 
@@ -3290,7 +3230,7 @@
             (reset! values next-values)
             (notify-settings-change! callbacks next-values)))]
 
-    (if-let [selected (theme-picker-dialog! screen choices original preview!)]
+    (if-let [selected (theme-picker! screen g region choices original preview!)]
       (preview! selected)
       (preview! original))))
 
@@ -3335,7 +3275,7 @@
         @values)
 
     (if (= :theme-name (:key row))
-      (activate-theme-row! screen values callbacks row)
+      (activate-theme-row! screen g region values callbacks row)
       (->> (swap! values apply-settings-option row)
            (notify-settings-change! callbacks)))))
 

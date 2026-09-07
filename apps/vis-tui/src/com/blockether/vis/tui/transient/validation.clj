@@ -142,6 +142,7 @@
         (not (optional-valid? region :min-row nat-int?)) "region :min-row must be a natural integer"
         (not (optional-valid? region :cols pos-int?)) "region :cols must be a positive integer"
         (not (optional-valid? region :is-sideless boolean?)) "region :is-sideless must be boolean"
+        (not (optional-valid? region :grid? boolean?)) "region :grid? must be boolean"
         (not (optional-valid? region :restore! ifn?)) "region :restore! must be callable"
         (and (:is-sideless region) (nil? (:cols region))) "a sideless region needs :cols"
         :else nil))

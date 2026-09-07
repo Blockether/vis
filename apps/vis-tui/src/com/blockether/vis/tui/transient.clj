@@ -395,9 +395,10 @@
 
    The width the panes ACTUALLY measure ([[pane-natural]]) is the last word: if
    the dealt panes do not stand side by side, one column is dropped and the deal
-   is retried. No region ⇒ one column."
+   is retried. Framed hosts opt into this layout with `:grid? true`, independently
+   of border and background styling. No region ⇒ one column."
   ^long [spec region]
-  (if (or (nil? region) (not (:is-sideless region)))
+  (if (or (nil? region) (not (or (:is-sideless region) (:grid? region))))
     1
     (let [inner-w
           (long (or (:inner-w region) 0))

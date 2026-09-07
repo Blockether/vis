@@ -647,14 +647,10 @@
                        (var-get #'dlg/settings-content-width)
 
                        settings-content-height
-                       (var-get #'dlg/settings-content-height)
-
-                       theme-picker-content-width
-                       (var-get #'dlg/theme-picker-content-width)]
+                       (var-get #'dlg/settings-content-height)]
 
                    (expect (= (dlg/default-content-width 160) (settings-content-width 160)))
                    (expect (= (dlg/default-content-height 50) (settings-content-height 50)))
-                   (expect (= (settings-content-width 160) (theme-picker-content-width 160)))
                    (expect (<= (+ (dlg/default-content-width 60) 4) 60))
                    (expect (<= (+ (dlg/default-content-height 16) 6) 16))))
              (it "extension headings are flush; options are indented by renderer"
@@ -845,63 +841,61 @@
         (expect (= [{:theme-id :vis-dark :label "Vis Dark"}
                     {:theme-id :vis-light :label "Vis Light"}]
                    (theme-picker-items [:vis-dark :vis-light])))))
+  (it "theme choices share a grid row when wide and stack when narrow"
+      (doseq [width [40 134]]
+        (let [terminal (DefaultVirtualTerminal. (TerminalSize. (+ width 6) 25))
+              screen (TerminalScreen. terminal)]
+
+          (try
+            (.startScreen screen)
+            (.addInput terminal (term/keystroke :esc))
+            (#'dlg/theme-picker!
+             screen
+             (.newTextGraphics screen)
+             {:left 2 :inner-w width :text-w (- width 2) :hint-row 22 :min-row 2}
+             [:vis-light :vis-dark :blockether-dark]
+             :vis-light
+             (constantly nil))
+            (let [lines (for [y (range 25)]
+                          (apply str
+                            (for [x (range (+ width 6))]
+                              (.getCharacterString ^com.googlecode.lanterna.TextCharacter
+                                                   (.getCharacter terminal
+                                                                  (TerminalPosition. x y))))))
+                  choice-lines (filter #(re-find #"Vis Light|Vis Dark|Blockether Dark" %) lines)]
+
+              (expect (= (if (= width 134) 1 3) (count choice-lines)))
+              (expect (every? #(str/includes? (str/join "\n" lines) %)
+                              ["Vis Light" "Vis Dark" "Blockether Dark" "Apply theme"
+                               "● current"])))
+            (finally (.stopScreen screen))))))
   (it
-    "theme choices preview by wheel and commit by pointer"
-    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-          (term/virtual-screen)
+    "theme selection previews, applies, cancels and pages in Settings' own band"
+    (doseq [[keys expected] [[[\b \*] :vis-dark] [[\b :esc] :vis-light]
+                             [[\n \a \*] :blockether-dark] [[\n \p \b \*] :vis-dark]]]
+      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)
+            values (atom {:theme-name :vis-light})
+            region {:left 2 :inner-w 60 :text-w 58 :hint-row 14 :min-row 2}
+            changes (atom [])]
 
-          choose-theme!
-          (var-get #'dlg/theme-picker-dialog!)
-
-          adaptive-content-height
-          (var-get #'dlg/adaptive-content-height)
-
-          dialog-layout
-          (var-get #'dlg/dialog-layout)
-
-          choices
-          [:vis-light :vis-dark :blockether-dark]
-
-          size
-          (.getTerminalSize screen)
-
-          cols
-          (.getColumns size)
-
-          rows
-          (.getRows size)
-
-          content-w
-          ((var-get #'dlg/theme-picker-content-width) cols)
-
-          content-h
-          (adaptive-content-height rows (count choices))
-
-          bounds
-          (dlg/draw-dialog-chrome! (.newTextGraphics screen) cols rows "Theme" content-w content-h)
-
-          left
-          (:left bounds)
-
-          {:keys [content-top]}
-          (dialog-layout bounds (count choices))
-
-          target
-          (TerminalPosition. (int (inc (long left))) (int (+ (long content-top) 2)))
-
-          previews
-          (atom [])]
-
-      (try (.addInput terminal (wheel-down))
-           (.addInput terminal (MouseAction. MouseActionType/CLICK_DOWN 0 target))
-           (.addInput terminal (MouseAction. MouseActionType/CLICK_RELEASE 0 target))
-           ;; Keeps the pre-fix loop bounded: ignored pointer events fall through
-           ;; to Enter and reveal that the original row was never changed.
-           (.addInput terminal (KeyStroke. KeyType/Enter))
-           (expect (= :blockether-dark
-                      (choose-theme! screen choices :vis-light #(swap! previews conj %))))
-           (expect (some #{:vis-dark} @previews))
-           (finally (.stopScreen screen)))))
+        (try (.putString (.newTextGraphics screen) 3 1 "Settings stays")
+             (doseq [k keys]
+               (.addInput terminal (term/keystroke k)))
+             (with-redefs [dlg/draw-dialog-chrome! (fn [& _]
+                                                     (throw (ex-info "Theme opened a dialog" {})))]
+               (#'dlg/activate-settings-row!
+                screen
+                (.newTextGraphics screen)
+                region
+                values
+                {:on-change #(swap! changes conj %)}
+                {:key :theme-name :type :choice :choices [:vis-light :vis-dark :blockether-dark]}))
+             (expect (= expected (:theme-name @values)))
+             (expect (= expected (:theme-name (last @changes))))
+             (expect (str/includes? (str/join "\n" (map :text (term/painted-rows terminal)))
+                                    "Settings stays"))
+             (expect (some #(not= :vis-light (:theme-name %)) @changes))
+             (finally (.stopScreen screen))))))
   (it
     "Settings is ONE flat list (no tabs): Terminal UI + grouped toggles + Models"
     (let [settings-rows (var-get #'dlg/settings-rows)]

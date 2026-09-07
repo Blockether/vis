@@ -505,6 +505,23 @@
   (it "a MODAL keeps a single column: its paper is sized to the spec"
       (expect (= 1 (tr/pane-count leader-spec (dissoc leader-band-region :is-sideless))))
       (expect (= 1 (tr/pane-count leader-spec nil))))
+  (it "a framed theme grid uses responsive columns without changing its chrome"
+      (let [spec
+            {:groups [{:title "Preview"
+                       :items (mapv (fn [k]
+                                      {:key (str k) :type :action :id k :label (str "Theme " k)})
+                                    "abcdef")}]}
+
+            region
+            {:left 2 :inner-w 120 :text-w 118 :hint-row 20 :min-row 2 :grid? true}]
+
+        (expect (> (tr/pane-count spec region) 1))
+        (expect (= 1
+                   (tr/pane-count spec
+                                  (assoc region
+                                    :inner-w 24
+                                    :text-w 22))))
+        (expect (not (:is-sideless region)))))
   (it "panes are never invented: two short categories stay two columns"
       (expect (= 2 (count (:groups commit-transient-spec))))
       ;; neither category is tall enough to cut, so the default four columns
