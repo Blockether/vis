@@ -237,7 +237,6 @@ it("anchors the first source line to the rail and opens the complete program aft
   );
   const band = view.container.querySelector("[data-execution-code]")!;
   expect(band.classList.contains("-ml-4")).toBe(true);
-  expect(band.classList.contains("py-2")).toBe(true);
   expect(
     view.queryByRole("button", { name: "Expand execution trace" }),
   ).toBeNull();

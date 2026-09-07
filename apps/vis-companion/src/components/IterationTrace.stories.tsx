@@ -8,6 +8,7 @@ import {
   STORY_TURN_ITERATIONS_ACTIVITY,
   STORY_TURN_ITERATIONS_LONG,
   STORY_TURN_ITERATIONS_SETTLED,
+  STORY_THINKING_AND_CODE,
 } from "../dev/story-data";
 import { AssistantMessage, IterationTrace, UserMessage } from "./ChatContent";
 
@@ -72,6 +73,31 @@ export const Settled: Story = {
 /** One step alone — the shortest turn there is, and the case the line must not look broken in. */
 export const SingleStep: Story = {
   args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED.slice(0, 1) },
+};
+
+/** Reasoning and its program read as one step, with the same vertical inset. */
+export const ThinkingAndCode: Story = {
+  args: {
+    live: false,
+    showCode: true,
+    iterations: STORY_THINKING_AND_CODE,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const thinking = canvas.getByText("Checking files").closest("section")!;
+    const code = canvasElement.querySelector("[data-execution-code]")!;
+    const thought = thinking.getBoundingClientRect();
+    const program = code.getBoundingClientRect();
+    // Regression: a margin split the step, and CODE padded an already padded control.
+    await expect(program.top).toBeCloseTo(thought.bottom, 0);
+    await expect(program.height).toBeCloseTo(thought.height, 0);
+    await expect(program.left).toBeCloseTo(thought.left, 0);
+    await expect(program.right).toBeCloseTo(thought.right, 0);
+    await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
+    await expect(code.querySelector("pre")?.textContent).toContain("print(paths)");
+    await userEvent.click(canvas.getByRole("button", { name: "Collapse code" }));
+    await expect(code.getBoundingClientRect().height).toBeCloseTo(thought.height, 0);
+  },
 };
 
 /** A step that only called: no reasoning above it, and no hole in the thread either. */

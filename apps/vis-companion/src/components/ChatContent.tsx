@@ -1340,8 +1340,8 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   const [expanded, setExpanded] = useState(false);
   const lineCount = value ? value.split("\n").length : 0;
   return (
-    <section className={`relative z-0 min-w-0 bg-code py-2 pr-3 ${RAIL_BLEED}`} data-execution-code>
-      <div className="-mr-3 flex min-w-0 items-center gap-2">
+    <section className={`relative z-0 min-w-0 bg-code pr-3 ${RAIL_BLEED}`} data-execution-code>
+      <div className="-mr-3 flex min-h-8 min-w-0 items-center gap-2">
         {showCode ? <Disclosure isOpen={expanded} tone="muted" className="min-w-0 flex-1"
           aria-label={expanded ? "Collapse code" : "Expand code"}
           onClick={() => setExpanded((open) => !open)}>
@@ -1786,12 +1786,10 @@ export const ThinkingBand = memo(function ThinkingBand({
   const collapsible = hiddenRows >= REASONING_COLLAPSE_MIN_HIDDEN;
 
   return (
-    // A band never pushes ITSELF down: when it opens a step it is the first
-    // block of that section and the transcript stack has already spaced it.
-    // Spelling the gap twice is what made the whitespace under a picture wider
-    // than the whitespace over it.
+    // A step's reasoning and code share one edge with no margin between them.
+    // Standalone bands retain their spacing among other message blocks.
     <section
-      className={`my-2 min-w-0 bg-thinking-surface py-2 text-ui text-thinking first:mt-0 ${railed ? `relative z-0 pr-3 ${RAIL_BLEED}` : "px-3"}`}
+      className={`min-w-0 bg-thinking-surface py-2 text-ui text-thinking ${railed ? `relative z-0 pr-3 ${RAIL_BLEED}` : "my-2 px-3 first:mt-0"}`}
     >
       {collapsible && (
         <Disclosure

@@ -1300,6 +1300,12 @@ export const STORY_LISTING: TranscriptIteration[] = [{
       }]}
   }]
 }];
+/** One short thought directly above its program, without intervening narration. */
+export const STORY_THINKING_AND_CODE: TranscriptIteration[] = STORY_LISTING.map((iteration) => ({
+  ...iteration,
+  thinking: 'Checking files',
+}));
+
 /** The exact single-directory contract plus explicit batch sections. */
 export const ACTIVITY_LISTING = STORY_LISTING[0].forms![0].activity!;
 export const ACTIVITY_LISTING_BATCH: ActivityProjection = {
