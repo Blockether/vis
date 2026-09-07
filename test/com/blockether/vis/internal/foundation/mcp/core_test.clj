@@ -7,6 +7,8 @@
             [com.blockether.vis.internal.foundation.mcp.client :as client]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]
+            [com.blockether.vis.internal.python.env :as ep]
+            [com.blockether.vis.test-python-context :as tpc]
             [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
@@ -39,6 +41,91 @@
                  ;; using, nor be expected to establish one the daemon already owes it.
                  (expect (not (contains? names "mcp__connect")))
                  (expect (not (contains? names "mcp__disconnect"))))))
+
+(defdescribe
+  mcp-call-env-injection-test
+  (it
+    "injects the live caller session through the Python boundary for every call shape"
+    ;; Regression: mcp_call("alpha") reached an env-first implementation without env.
+    (let [env
+          (atom nil)
+
+          seen
+          (atom [])
+
+          called
+          (atom [])]
+
+      (with-redefs-fn {#'mcp/ensure-connected! (fn [sid server]
+                                                 (swap! seen conj [sid server])
+                                                 ::connection)
+                       #'client/list-tools (constantly [{"name" "read"
+                                                         "inputSchema" {"type" "object"}}])
+                       #'client/call-tool (fn [_ tool args]
+                                            (swap! called conj [tool args])
+                                            {"content" [{"type" "text" "text" "ok"}]})}
+        (fn []
+          (tpc/with-own
+            [ctx
+             {'mcp-call (get (extension/wrap-extension-thunked mcp/vis-extension #(deref env))
+                             'call)}]
+            (doseq [sid ["caller-session" "other-session"]]
+              (reset! env {:session-id sid})
+              (let
+                [result
+                 (ep/run-python-block
+                   ctx
+                   (str
+                     "assert (await mcp_call('alpha'))['tools'][0]['name'] == 'read'\n"
+                     "assert (await mcp_call('alpha', 'read'))['content'][0]['text'] == 'ok'\n"
+                     "assert (await mcp_call('alpha', 'read', {'query': 'one'}))['content'][0]['text'] == 'ok'\n"
+                     "assert (await mcp_call(server='alpha', tool='read', args={'query': 'two'}))['content'][0]['text'] == 'ok'\n"
+                     "print('mcp-ok')"))]
+                (expect (nil? (:error result)))
+                (expect (= "mcp-ok\n" (:stdout result)))))
+            (expect (= (concat (repeat 4 ["caller-session" "alpha"])
+                               (repeat 4 ["other-session" "alpha"]))
+                       @seen))
+            (expect (= (apply concat
+                         (repeat 2 [["read" {}] ["read" {"query" "one"}] ["read" {"query" "two"}]]))
+                       @called))))))))
+
+(defdescribe
+  mcp-failed-catalog-status-test
+  (it "marks a failed inventory listing disconnected in the same snapshot"
+      ;; Regression: Linear rejected credentials while inventory still claimed connected, 0 tools.
+      (let [alive
+            (atom true)
+
+            conn
+            {:tools (atom nil) :alive-fn #(deref alive) :close-fn #(reset! alive false)}]
+
+        (with-redefs-fn {#'mcp/conn-of (constantly conn)
+                         #'client/list-tools
+                         (fn [_]
+                           (throw (ex-info "Rejected" {:type :mcp/http-error :status 401})))
+                         #'oauth/token-status (constantly {"is_authorized" false})
+                         #'mcp/reconcile-async! (constantly nil)
+                         #'mcp/visible-servers (constantly {"remote" {:transport :streamable-http}})
+                         #'mcp/needs-auth? (constantly true)}
+          (fn []
+            (let [row (#'mcp/server-summary "remote" {"transport" "streamable_http"} false)]
+              (expect (false? (get row "is_connected")))
+              (expect (= 0 (get row "tools")))
+              (expect (false? @alive))
+              (expect (= "needs_auth"
+                         (get-in (#'mcp/contribute {:session-id "s"})
+                                 ["session_env" "mcp" "servers" "remote" "status"]))))))))
+  (it "reports a tool catalog failure instead of returning a successful empty catalog"
+      (with-redefs-fn {#'mcp/ensure-connected! (constantly {:tools (atom nil)})
+                       #'client/list-tools (fn [_]
+                                             (throw (ex-info "Catalog unavailable"
+                                                             {:type :mcp/http-error :status 503})))
+                       #'mcp/needs-auth? (constantly false)}
+        (fn []
+          (let [result (#'mcp/mcp-call-impl {:session-id "s"} "remote")]
+            (expect (str/includes? (str result) "Catalog unavailable"))
+            (expect (nil? (:result result))))))))
 
 (defdescribe
   gateway-mcp-auth-validation-test
@@ -237,8 +324,10 @@
         (with-redefs [client/list-tools (constantly [{"name" "a"} {"name" "b"}])]
           ;; A freshly connected server's tool cache is still nil; reading the atom
           ;; alone reported 0 tools for every healthy server.
-          (expect (= 2 (tool-count {:name "owned" :tools (atom nil)})))
-          (expect (= 1 (tool-count {:name "owned" :tools (atom [{"name" "a"}])})))
+          (expect (= 2 (tool-count {:name "owned" :tools (atom nil) :alive-fn (constantly true)})))
+          (expect (= 1
+                     (tool-count
+                       {:name "owned" :tools (atom [{"name" "a"}]) :alive-fn (constantly true)})))
           (expect (= 0 (tool-count nil)))))))
 
 (defdescribe
@@ -268,7 +357,7 @@
                                                (reset! store value))
                        #'client/connect (fn [name _spec]
                                           (swap! connects conj name)
-                                          ::connection)
+                                          {:tools (atom []) :alive-fn (constantly true)})
                        #'client/list-tools (constantly [])
                        #'client/close (constantly nil)}
         (fn []

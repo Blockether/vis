@@ -420,6 +420,12 @@
             :www-authenticate www-auth}
            cause))
 
+(defn forget!
+  "Drop persisted tokens for `server-name` after sign-out or a revoked refresh grant."
+  [server-name]
+  (let [f (token-file server-name)]
+    (when (.exists f) (.delete f))))
+
 (defn make-bearer-fn
   "Build a 0/1-arg fn returning the current Bearer token string for `server-name`.
    0-arg yields the persisted token; 1-arg (the token the server just rejected)
@@ -444,15 +450,12 @@
       (let [creds (read-tokens server-name)]
         (if (:refresh-token creds)
           (try (:token (refresh-token-exchange! server-name creds))
-               (catch Throwable t (throw (oauth-required server-name server-url @www-auth-atom t))))
+               (catch Throwable t
+                 (when (and (= "invalid_grant" (get-in (ex-data t) [:body "error"]))
+                            (= creds (read-tokens server-name)))
+                   (forget! server-name))
+                 (throw (oauth-required server-name server-url @www-auth-atom t))))
           (throw (oauth-required server-name server-url @www-auth-atom nil)))))))
-
-(defn forget!
-  "Drop persisted tokens for `server-name` (e.g. on a gateway sign-out, or when a
-   401 recurs after refresh)."
-  [server-name]
-  (let [f (token-file server-name)]
-    (when (.exists f) (.delete f))))
 
 (defn token-status
   "Non-secret view of the persisted OAuth tokens for `server-name`. Never returns

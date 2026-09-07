@@ -505,14 +505,14 @@
    later read is free. Reading the raw `:tools` atom instead reports NOTHING for a
    freshly connected server — that cache is only filled on demand — which is what
    made a healthy gateway server look empty in the Companion inventory and in the
-   model's own `env.mcp` view. Never throws: a server that dies mid-read is simply
-   toolless until the next reconcile."
+   model's own `env.mcp` view. Never throws: a failed listing closes the stale
+   connection so this snapshot reports it disconnected and reconciliation can retry."
   [conn]
-  (if-not conn
+  (if-not (and conn (mcp/alive? conn))
     []
     (or (some-> (:tools conn)
                 deref)
-        (try (mcp/list-tools conn) (catch Throwable _ nil))
+        (try (mcp/list-tools conn) (catch Throwable _ (mcp/close conn) []))
         [])))
 
 (defn- tool-count
@@ -551,18 +551,21 @@
         (config/runtime-config raw-spec)
 
         conn
-        (conn-of name)]
+        (conn-of name)
+
+        tools
+        (tool-count conn)]
 
     (cond-> {"name" name
              "transport" (wire-transport spec)
              "enabled" (enabled? spec)
-             "is_connected" (boolean conn)
+             "is_connected" (boolean (and conn (mcp/alive? conn)))
              ;; Whether the GATEWAY owns this entry. A server declared in a hand-written
              ;; tier is the user's file: listed, never rewritten from here.
              "is_managed" (boolean is-managed)
              ;; Stopped by a client and HELD down until explicitly started again.
              "is_killed" (killed? name)
-             "tools" (tool-count conn)}
+             "tools" tools}
       (:command spec)
       (assoc "command" (:command spec))
 
@@ -925,7 +928,7 @@
           {"name" (get t "name")
            "description" (get t "description")
            "input_schema" (get t "inputSchema")})
-        (conn-tools conn)))
+        (mcp/list-tools conn)))
 
 (defn- doc-corpus-entries
   "Every tool of every VISIBLE MCP server as a `doc-corpus` entry, so
@@ -1067,6 +1070,7 @@
       "Call a tool on an MCP server; auto-connects. Servers and their tool names are already in `session[\"env\"][\"mcp\"]`, so just name them. Omit `tool` for that server's input schemas. In `python_execution`, call `await mcp_call(...)`."
       :call {:pos ["server"] :opt-pos ["tool" "args"]}
       :tag :mutation
+      :inject-env? true
       :on-error-fn (mcp-on-error :mcp/call)})])
 
 (defn- contribute
@@ -1103,16 +1107,19 @@
                 (conn-of sid nm)
 
                 {:keys [names omitted]}
-                (ctx-tool-names conn)]
+                (ctx-tool-names conn)
+
+                connected?
+                (and conn (mcp/alive? conn))]
 
             [nm
              (cond-> {"scope" (if session? "session" "global")
                       "transport" (wire-transport spec)
-                      "status" (cond conn "connected"
+                      "status" (cond connected? "connected"
                                      (and (not session?) (killed? nm)) "killed"
                                      (needs-auth? sid nm) "needs_auth"
                                      :else "disconnected")}
-               conn
+               connected?
                (assoc "tools" names)
 
                (pos? (long omitted))

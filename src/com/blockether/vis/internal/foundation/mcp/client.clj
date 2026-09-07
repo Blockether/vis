@@ -414,18 +414,24 @@
                   :else (get msg "result"))))]
 
     (cond-> {:request-fn (fn [method params timeout-ms]
-                           (let [req-id
-                                 (str (System/nanoTime))
+                           (try (let [req-id
+                                      (str (System/nanoTime))
 
-                                 body
-                                 (->json (cond-> {"jsonrpc" "2.0" "id" req-id "method" method}
-                                           (some? params)
-                                           (assoc "params" params)))
+                                      body
+                                      (->json (cond-> {"jsonrpc" "2.0" "id" req-id "method" method}
+                                                (some? params)
+                                                (assoc "params" params)))
 
-                                 {:keys [status body]}
-                                 (post! body timeout-ms)]
+                                      {:keys [status body]}
+                                      (post! body timeout-ms)]
 
-                             (parse-reply name method status body req-id)))
+                                  (parse-reply name method status body req-id))
+                                (catch Throwable t
+                                  ;; A peer's RPC refusal is a valid response, not a lost transport.
+                                  (when-not (or (= :mcp/rpc-error (:type (ex-data t)))
+                                                (instance? InterruptedException t))
+                                    (reset! closed? true))
+                                  (throw t))))
              :notify-fn (fn [method params]
                           (try (post! (->json (cond-> {"jsonrpc" "2.0" "method" method}
                                                 (some? params)

@@ -2,7 +2,8 @@
   "Exercises the MCP client's stdio transport + JSON-RPC handshake against a
    tiny fake server (test/resources/fake_mcp_server.py). Skips gracefully when
    python3 or the script isn't present so CI without python stays green."
-  (:require [clojure.java.io :as io]
+  (:require [babashka.http-client :as http]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -187,3 +188,37 @@
                                                       {"k" m})
                                                     {"leaf" 1}
                                                     (range 400))))))))
+
+(defdescribe
+  mcp-http-failed-request-status-test
+  (it
+    "invalidates failed HTTP connections but preserves RPC refusals and cancellation"
+    ;; Regression: a cached catalog kept an unauthorized HTTP connection marked alive.
+    (doseq
+      [[response connected?]
+       [[{:status 401 :body "Unauthorized"} false] [{:status 503 :body "Unavailable"} false]
+        [(java.io.IOException. "Connection lost") false] [{:status 200 :body "not JSON"} false]
+        [{:status 200
+          :body
+          "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Invalid arguments\"}}"}
+         true] [(InterruptedException. "Cancelled") true]
+        [{:status 200 :body "{\"jsonrpc\":\"2.0\",\"result\":{\"isError\":true,\"content\":[]}}"}
+         true]]]
+      (let
+        [reply
+         (atom
+           {:status 200
+            :body
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"serverInfo\":{\"name\":\"fake\",\"version\":\"1\"}}}"})]
+        (with-redefs [http/request (fn [_]
+                                     (let [r @reply]
+                                       (if (instance? Throwable r) (throw r) r)))]
+          (let [conn (mcp/connect "fake"
+                                  {:transport :streamable-http
+                                   :url "https://gateway.example.com/mcp"})]
+            (try (expect (true? (mcp/alive? conn)))
+                 (reset! reply response)
+                 (let [result (try (mcp/call-tool conn "read" {}) (catch Throwable t t))]
+                   (expect (or (instance? Throwable result) (true? (get result "isError"))))
+                   (expect (= connected? (mcp/alive? conn))))
+                 (finally (mcp/close conn)))))))))
