@@ -94,7 +94,7 @@
         :else value))
 
 (defn- bounded-redact-result
-  "Redact a representative prefix without traversing an unbounded result graph."
+  "Redact a bounded public view, unwrapping Python transport objects before rendering."
   [value]
   (let [remaining
         (volatile! max-summary-nodes)
@@ -109,37 +109,41 @@
       [(visit [x]
          (if-not (pos? (long @remaining))
            (do (vreset! truncated? true) omitted)
-           (do (vswap! remaining #(unchecked-dec (long %)))
-               (cond (map? x)
-                     (loop [entries
-                            (seq x)
+           (do
+             (vswap! remaining #(unchecked-dec (long %)))
+             (cond (map? x)
+                   (loop [entries
+                          (seq (if (and (string? (get x "__vis_object__"))
+                                        (map? (get x "__vis_attrs__")))
+                                 (get x "__vis_attrs__")
+                                 x))
 
-                            result
-                            (transient {})]
+                          result
+                          (transient {})]
 
-                       (cond (nil? entries) (persistent! result)
-                             (not (pos? (long @remaining)))
-                             (do (vreset! truncated? true)
-                                 (persistent! (assoc! result omitted "omitted")))
-                             :else (let [[k v] (first entries)]
-                                     (recur (next entries)
-                                            (assoc! result
-                                                    k
-                                                    (if (secret-key? k) "[REDACTED]" (visit v)))))))
-                     (or (vector? x) (set? x) (sequential? x))
-                     (loop [items
-                            (seq x)
+                     (cond (nil? entries) (persistent! result)
+                           (not (pos? (long @remaining))) (do (vreset! truncated? true)
+                                                              (persistent!
+                                                                (assoc! result omitted "omitted")))
+                           :else (let [[k v] (first entries)]
+                                   (recur (next entries)
+                                          (assoc! result
+                                                  k
+                                                  (if (secret-key? k) "[REDACTED]" (visit v)))))))
+                   (or (vector? x) (set? x) (sequential? x))
+                   (loop [items
+                          (seq x)
 
-                            result
-                            (transient [])]
+                          result
+                          (transient [])]
 
-                       (cond (nil? items) (persistent! result)
-                             (not (pos? (long @remaining)))
-                             (do (vreset! truncated? true) (persistent! (conj! result omitted)))
-                             :else (recur (next items) (conj! result (visit (first items))))))
-                     (and (string? x) (str/starts-with? x "vis-secret:")) "[SECRET HANDLE]"
-                     (string? x) (bounded-text x max-detail-bytes)
-                     :else x))))]
+                     (cond (nil? items) (persistent! result)
+                           (not (pos? (long @remaining))) (do (vreset! truncated? true)
+                                                              (persistent! (conj! result omitted)))
+                           :else (recur (next items) (conj! result (visit (first items))))))
+                   (and (string? x) (str/starts-with? x "vis-secret:")) "[SECRET HANDLE]"
+                   (string? x) (bounded-text x max-detail-bytes)
+                   :else x))))]
       {:value (visit value) :is-truncated @truncated?})))
 
 (defn- bounded-rendered

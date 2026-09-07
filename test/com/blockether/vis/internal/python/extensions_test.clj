@@ -359,6 +359,36 @@ vis.register(vis.Extension(
 ))
 ")
 
+(defdescribe python-object-activity-test
+             (it "keeps typed runtime results intact while publishing only their public fields"
+                 (with-loaded {"object_namespace.py" object-namespace-py}
+                              (fn [_ _]
+                                (let [ext
+                                      (registered "glms")
+
+                                      entry
+                                      (first (get-in ext [:ext/engine :ext.engine/symbols]))
+
+                                      events
+                                      (atom [])
+
+                                      value
+                                      (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                                        (extension/invoke-symbol-wrapper ext entry ["job" 4 0] {}))
+
+                                      projection
+                                      (-> @events
+                                          activity/replay
+                                          activity/presentation)]
+
+                                  (expect (= "BuildStatus" (get value "__vis_object__")))
+                                  (expect (= "job:4:0" (get-in value ["__vis_attrs__" "state"])))
+                                  (expect (= 2 (count @events)))
+                                  (expect (= (pr-str {"state" "job:4:0"})
+                                             (get-in projection [:rows 0 :result-summary])))
+                                  (expect (not (str/includes? (pr-str projection) "__vis_")))
+                                  (expect (activity-contract/valid-projection? projection)))))))
+
 (defdescribe python-object-namespace-test
              ;; Regression, issue #166: object integrations had to flatten every method into a
              ;; separately prefixed function, or expose a raw object that bypassed tool execution.
@@ -799,14 +829,19 @@ vis.register(vis.Extension(name=\"env-bad\", description=\"bad env fixture.\", e
 ;; silently.
 (defdescribe
   declared-host-env-test
-  (it "resolve-declared-env reads System/getenv and drops unset/malformed names"
-      (let [path (System/getenv "PATH")]
-        (expect (some? path))
-        (expect (= path (get (pyx/resolve-declared-env ["PATH"]) "PATH")))
-        (expect (= {} (pyx/resolve-declared-env ["VIS_TEST_NEVER_SET_129"])))
-        (expect (= {"PATH" path} (pyx/resolve-declared-env ["9BAD" "" "BAD-NAME" "PATH"])))
-        (expect (= {} (pyx/resolve-declared-env nil)))
-        (expect (= {} (pyx/resolve-declared-env [])))))
+  (it "resolve-declared-env reads the process environment and drops unset/malformed names"
+      ;; Local config and dotenv values must never reach assertion diagnostics.
+      (with-redefs [config/current-config (constantly {})]
+        (binding [config/*extension-dotenv-path* nil
+                  config/*extension-dotenv-local-path* nil
+                  config/*extension-getenv* {"PATH" "fixture-path"}]
+
+          (expect (= {"PATH" "fixture-path"} (pyx/resolve-declared-env ["PATH"])))
+          (expect (= {} (pyx/resolve-declared-env ["VIS_TEST_NEVER_SET_129"])))
+          (expect (= {"PATH" "fixture-path"}
+                     (pyx/resolve-declared-env ["9BAD" "" "BAD-NAME" "PATH"])))
+          (expect (= {} (pyx/resolve-declared-env nil)))
+          (expect (= {} (pyx/resolve-declared-env []))))))
   (it "a name declared only under `environment:` reaches an extension unasked"
       (let [previous @config/active-config]
         (try (reset! config/active-config {:environment {"VIS_TEST_ENV_BLOCK"

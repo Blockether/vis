@@ -5,6 +5,86 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
+  python-transport-presentation-test
+  (it
+    "shows public fields, not Python object envelopes, in arguments and outcomes"
+    (let [nested
+          {"__vis_object__" "Job"
+           "__vis_attrs__" {"status" "success" "api_key" "fixture-credential"}
+           "__vis_object_ref__" "fixture-job-reference"}
+
+          result
+          {"__vis_object__" "WatchOutcome"
+           "__vis_attrs__" {"jobs" [nested]}
+           "__vis_object_ref__" "fixture-outcome-reference"}
+
+          ctx
+          (event/context)
+
+          invocation
+          (event/invocation ctx nil)
+
+          details
+          {:operation :gh.watch :presenter :generic :args [result]}
+
+          start
+          (event/start-event ctx invocation details)
+
+          terminal
+          (event/terminal-event ctx
+                                invocation
+                                (assoc details
+                                  :started-at-ms 0
+                                  :outcome :succeeded
+                                  :result result))]
+
+      (doseq [summary [(:argument-summary start) (:result-summary terminal)]]
+        (expect (string/includes? summary "success"))
+        (expect (string/includes? summary "[REDACTED]"))
+        (expect (not (string/includes? summary "__vis_")))
+        (expect (not (string/includes? summary "fixture-credential")))
+        (expect (not (string/includes? summary "fixture-job-reference")))
+        (expect (not (string/includes? summary "fixture-outcome-reference"))))
+      (expect (= "fixture-outcome-reference" (get result "__vis_object_ref__")))))
+  (it "keeps the traversal budget when public object fields contain an unbounded sequence"
+      (let [result
+            {"__vis_object__" "WatchOutcome"
+             "__vis_attrs__" {"jobs" (concat (range 200)
+                                             (lazy-seq (throw (ex-info "traversed too far" {}))))}}
+
+            ctx
+            (event/context)
+
+            terminal
+            (event/terminal-event ctx
+                                  (event/invocation ctx nil)
+                                  {:operation :gh.watch
+                                   :presenter :generic
+                                   :started-at-ms 0
+                                   :outcome :succeeded
+                                   :result result})]
+
+        (expect (:result-truncated terminal))
+        (expect (not (string/includes? (:result-summary terminal) "__vis_")))))
+  (it "does not rewrite source text that mentions a transport marker"
+      (let [ctx
+            (event/context)
+
+            result
+            "return {'__vis_object__': 'Example'}"
+
+            terminal
+            (event/terminal-event ctx
+                                  (event/invocation ctx nil)
+                                  {:operation :cat
+                                   :presenter :observation
+                                   :started-at-ms 0
+                                   :outcome :succeeded
+                                   :result result})]
+
+        (expect (= (pr-str result) (:result-summary terminal))))))
+
+(defdescribe
   activity-event-contract-test
   (it
     "accepts one start and terminal in event order"
