@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync } from 'node:fs';
 import { basename } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { desktopTargets, assetName, pakeArgs, packageDesktop } from './desktop-package.mjs';
@@ -50,14 +50,20 @@ describe('desktop package', () => {
 const workflow = readFileSync(new URL('../../../.github/workflows/desktop-companion.yml', import.meta.url), 'utf8');
 
 describe('desktop release platforms', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    existsSync.mockReturnValue(true);
+  });
 
   it.each(['x64', 'arm64'])('packages native Linux %s with truthful asset names', (arch) => {
+    // Pake lowercases Linux names; the runner filesystem is case-sensitive.
+    existsSync.mockImplementation((path) => ['index.html', 'vis.deb', 'vis.AppImage'].includes(basename(path)));
     const assets = packageDesktop({ platform: 'linux', arch, log: vi.fn() });
     expect(assets.map((asset) => basename(asset))).toEqual([
       `vis-companion-1.0.0-linux-${arch}.deb`,
       `vis-companion-1.0.0-linux-${arch}.AppImage`,
     ]);
+    expect(renameSync.mock.calls.map(([source]) => basename(source))).toEqual(['vis.deb', 'vis.AppImage']);
     expect(spawnSync).toHaveBeenCalledTimes(2);
     for (const [command, args] of spawnSync.mock.calls) {
       expect(command).toBe('npx');
@@ -68,6 +74,7 @@ describe('desktop release platforms', () => {
   it.each(['x64', 'arm64'])('packages universal macOS on a %s host', (arch) => {
     const assets = packageDesktop({ platform: 'darwin', arch, log: vi.fn() });
     expect(assets.map((asset) => basename(asset))).toEqual(['vis-companion-1.0.0-macos-universal.dmg']);
+    expect(renameSync.mock.calls.map(([source]) => basename(source))).toEqual(['Vis.dmg']);
     expect(spawnSync).toHaveBeenCalledTimes(1);
     expect(spawnSync.mock.calls[0][1]).toContain('--multi-arch');
   });

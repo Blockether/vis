@@ -84,7 +84,9 @@ export function packageDesktop({ platform = process.platform, arch = process.arc
       stdio: 'inherit',
     });
     if (run.status !== 0) throw new Error(`pake failed for --targets ${target.targets}`);
-    const produced = join(OUT_DIR, `${APP_NAME}.${target.ext}`);
+    // Pake normalizes Linux package names to lowercase, unlike macOS.
+    const bundleName = platform === 'linux' ? APP_NAME.toLowerCase() : APP_NAME;
+    const produced = join(OUT_DIR, `${bundleName}.${target.ext}`);
     if (!existsSync(produced)) throw new Error(`pake reported success but ${produced} is missing`);
     const asset = join(OUT_DIR, assetName(version, target));
     rmSync(asset, { force: true });
