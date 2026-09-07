@@ -11,12 +11,28 @@ healthy user-owned application server as incidental cleanup.
 
 ## Inspect the shipped render
 
-Serve the exact production component with `HtmlTerminalView.serve(...)`, or launch the full
-channel with `vis-agent channels tui-html`. In one Spel session, test keyboard, paste, pointer, wheel,
-resize, focus, every changed show/hide transition and any image/video/audio layer. Inspect resolved
-cell boxes and computed SGR styles; `Ctrl+Shift+G` exposes the cell grid when geometry is disputed.
-CSS Grid is only the projection: the JVM's `GridLayout`/`LinearLayout` and terminal buffer must have
-already resolved every integer cell.
+For local HTML-backend development, build the sibling Lanterna checkout (`mvn test` in
+`~/lanterna`), then run from `apps/vis-tui`:
+
+```bash
+clojure -M:html-review /absolute/path/activity-tui.html
+```
+
+This starts the production Activity fixture at 40 columns, prints its loopback URL and updates
+that HTML file after each repaint. The `:html-review` alias explicitly selects the sibling's
+compiled classes; the normal application dependency stays pinned to the published library.
+Stop the process after review. From a REPL with that alias, `vis-tui.review/start!` returns a
+Closeable handle with `:url`.
+
+For another GUI2 component, use `HtmlTerminalView.serve(component, configuredTerminal)`;
+for an existing application loop, use `HtmlTerminalPreview.start(terminal)`. Close the returned
+handle; do not handwrite another HTTP/SSE relay. Production gateway hosting continues to use
+its authenticated, framework-neutral endpoint instead of this local helper.
+
+In one Spel session, test the component's supported keyboard, paste, pointer, wheel, resize,
+focus, visibility and media behavior. The Activity fixture supplies pointer disclosures and
+resize, not the full channel keyboard map. Inspect cell positions and SGR styles;
+`Ctrl+Shift+G` displays the cell grid. CSS Grid displays positions calculated by the JVM.
 
 ## Attach a design review
 
@@ -28,9 +44,13 @@ exported from the final production render. It is temporary evidence, never track
    reimplement layout in HTML/CSS.
 2. Spel exercises the live loopback URL and verifies interaction, computed styles, geometry, Unicode
    width and media persistence before export.
-3. Export the reviewed frame with `writeHtml(Path)` and attach that one self-contained file. It has no
-   token, loopback dependency or external asset. Because arbitrary terminal callbacks remain in the
-   JVM, call the attachment a portable exact frame, not a still-interactive application.
+3. Configure the terminal's default foreground/background to match the application theme. Export
+   the intended content height with `writeHtml(Path, visibleRows)`. Do not export unused terminal
+   rows or assume a desktop frame will reflow on a phone. Render phone-sized columns for phone
+   review; Fit width is an overview, Actual size provides zoom and pan. Open the **exported file**
+   at phone, tablet and desktop sizes and inside Companion's unchanged sandboxed `DocFrame`.
+   Check the right edge, background, Fit width/Actual size and absence of network dependencies.
+   Attach that one self-contained file. JVM callbacks are absent: label it a static frame.
 4. HTML is the primary make/review artifact. After it passes, the real `DefaultVirtualTerminal` PNG
    capture and terminal-grid assertions remain the final parity gate for terminal-specific glyph width
    and back-buffer behaviour; the PNG is private verification evidence, not the review attachment.

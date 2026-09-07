@@ -51,7 +51,7 @@ describe("execution grouping", () => {
         activity: activity("succeeded", "first stage") },
     ])} />);
     const band = view.container.querySelector("[data-execution-code]")!;
-    // Like THINKING: a chevron leads the name, and a tally says what is folded.
+    // The label starts the row; its chevron and tally still expose the fold.
     expect(view.getByRole("button", { name: "Expand code" }).textContent).toBe("CODE +2 more");
     expect(view.getByRole("button", { name: "Expand code" }).querySelector("svg")).not.toBeNull();
     expect(band.querySelector("[data-code-node]")).toBeNull();
@@ -228,7 +228,7 @@ describe("device-local source visibility", () => {
   });
 });
 
-it("anchors the first source line to the rail and opens the complete program after a gap", () => {
+it("opens the complete program below its own CODE header", () => {
   const code = "paths = await ls(root)\nprint(paths)";
   const view = render(
     <IterationTrace
@@ -239,7 +239,6 @@ it("anchors the first source line to the rail and opens the complete program aft
     />,
   );
   const band = view.container.querySelector("[data-execution-code]")!;
-  expect(band.classList.contains("-ml-4")).toBe(true);
   expect(
     view.queryByRole("button", { name: "Expand execution trace" }),
   ).toBeNull();

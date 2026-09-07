@@ -1,5 +1,9 @@
 (ns com.blockether.vis.tui.html-backend-test
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.tui.render :as render]
+            [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.header :as header]
@@ -7,6 +11,7 @@
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.scroll :as scroll]
             [com.blockether.vis.tui.terminal-image :as timg]
+            [com.blockether.vis.tui.theme :as theme]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.gui2 Button GridLayout Panel TextGraphicsComponent]
@@ -22,6 +27,186 @@
                   (.getCharacter terminal (TerminalPosition. (int col) (int row))))
                 (range cols)))
         (range rows)))
+
+(defn activity-review-rows
+  "Deterministic execution fixture for live HTML and native grid review."
+  [state]
+  (mapv (fn [i operation]
+          (cond-> {:id (str "call-" i)
+                   :sequence i
+                   :operation operation
+                   :presenter "generic"
+                   :signal "generic"
+                   :state "succeeded"
+                   :summary (if (= operation "shell") "cmd: npm test" (str "src/file-" i ".clj"))
+                   :resources
+                   (if (= operation "shell") [] [{:type "file" :id (str "src/file-" i ".clj")}])
+                   :evidence (if (= operation "patch")
+                               [{:kind "diff"
+                                 :text (str "src/file-" i ".clj")
+                                 :additions 2
+                                 :deletions 1
+                                 :lines [{:kind "addition" :text "updated"}]}]
+                               [])}
+            (= i 6)
+            (assoc :state state)
+
+            (and (= i 6) (= state "failed"))
+            (assoc :error-summary "Test suite failed")))
+        (range 7)
+        ["cat" "cat" "cat" "patch" "patch" "shell" "shell"]))
+
+(defn activity-review-terminal
+  "Configure review defaults to match the actual TUI theme, including empty cells."
+  ^HtmlTerminal [cols rows]
+  (doto (-> (HtmlTerminal/builder)
+            (.initialSize (TerminalSize. cols rows))
+            (.defaultForeground theme/text-fg)
+            (.defaultBackground theme/terminal-bg)
+            (.title "Activity review")
+            (.build))
+    (.setCursorVisible false)))
+
+(defn paint-activity-review!
+  "Paint the production joined execution surface; no copied browser layout."
+  [^TerminalScreen screen rows expansions]
+  (.doResizeIfNecessary screen)
+  (.clear screen)
+  (let [cols
+        (.getColumns (.getTerminalSize screen))
+
+        height
+        (.getRows (.getTerminalSize screen))
+
+        projection
+        {:state "running"
+         :rows rows
+         :counts (merge {:running 0 :succeeded 0 :failed 0 :cancelled 0}
+                        (frequencies (map (comp keyword :state) rows)))
+         :omitted {:rows 0 :by-classification {}}}
+
+        rendered
+        (render/format-answer-with-thinking-data*
+          ""
+          [{:thinking "Inspect files, apply the patch, then run tests."
+            :forms [{:code "inspect_files()\napply_patch()\nrun_checks()"
+                     :duration-ms 1200
+                     :activity projection}]}]
+          (- cols 4)
+          {:show-thinking true :show-iterations true}
+          nil
+          false
+          {:session-id "activity-review" :detail-expansions expansions})]
+
+    (doto (.newTextGraphics screen)
+      (.setBackgroundColor theme/terminal-bg)
+      (.setForegroundColor theme/text-fg)
+      (.fill \space))
+    (.beginFrame interactions/hit-map)
+    (let [consumed (render/draw-chat-bubble! (.newTextGraphics screen)
+                                             {:role :assistant
+                                              :text ""
+                                              :prewrapped-lines (:lines rendered)
+                                              :line-meta (:line-meta rendered)}
+                                             2
+                                             1
+                                             (- cols 4)
+                                             {:viewport-h (- height 2)})]
+      (.commitFrame interactions/hit-map)
+      (.refresh screen)
+      (assoc rendered :review-rows (min height (+ 2 consumed))))))
+
+(defn toggle-review-region
+  "Use the same pure detail event that mouse and keyboard dispatch in the TUI."
+  [expansions region]
+  (let [handler (:fn (get (deref (deref #'state/event-registry)) :toggle-detail))]
+    (:detail-expansions (handler {:detail-expansions expansions :scroll scroll/follow}
+                                 [:toggle-detail (:session-id region) (:node-id region)
+                                  (:collapsed? region)]))))
+
+(deftest joined-activity-html-native-parity-test
+  (doseq [cols
+          [40 80 120]
+
+          status
+          ["running" "succeeded" "failed"]]
+
+    (let [size
+          (TerminalSize. cols 50)
+
+          rows
+          (activity-review-rows status)]
+
+      (with-open [html
+                  (activity-review-terminal cols 50)
+
+                  terminal
+                  (DefaultVirtualTerminal. size)
+
+                  hs
+                  (doto (TerminalScreen. html) (.startScreen))
+
+                  ts
+                  (doto (TerminalScreen. terminal) (.startScreen))]
+
+        (paint-activity-review! hs rows {})
+        (let [band
+              (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
+                             (.current interactions/hit-map)))
+
+              read-group
+              (first (filter #(str/ends-with? (str (:node-id %)) "call-0#group")
+                             (.current interactions/hit-map)))
+
+              expanded
+              (toggle-review-region {} read-group)
+
+              collapsed
+              (toggle-review-region expanded band)]
+
+          (is (some? band))
+          (is (some? read-group))
+          (doseq [expansions [{} expanded collapsed]]
+            (paint-activity-review! hs rows expansions)
+            (paint-activity-review! ts rows expansions)
+            (is (= (cell-grid html cols 50) (cell-grid terminal cols 50)))
+            (is (str/includes? (.renderHtml html) "ACTIVITY")))
+          (paint-activity-review! hs rows expanded)
+          (let [rendered (paint-activity-review! ts rows expanded)]
+            (is (some #(str/includes? % "src/file-0.clj") (:lines rendered)))
+            (when (= status "failed")
+              (is (some #(str/includes? % "Test suite failed") (:lines rendered)))))
+          ;; A streamed replacement keeps the group's manual expansion.
+          (let [replacement (paint-activity-review! ts (activity-review-rows "succeeded") expanded)]
+            (is (some #(str/includes? % "src/file-0.clj") (:lines replacement)))))))))
+
+(deftest joined-execution-text-left-edge-test
+  ;; Removing the rail must also remove its text gutter, in both folded states.
+  (doseq [cols [40 80 120]]
+    (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
+                screen (doto (TerminalScreen. terminal) (.startScreen))]
+
+      (let [rows (activity-review-rows "failed")
+            _ (paint-activity-review! screen rows {})
+            code (first (filter #(str/ends-with? (str (:node-id %)) ":code")
+                                (.current interactions/hit-map)))
+            expanded (toggle-review-region {} code)]
+
+        (is (some? code))
+        (doseq [expansions [{} expanded]]
+          (paint-activity-review! screen rows expansions)
+          (let [lines (mapv (fn [row]
+                              (apply str
+                                (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %)
+                                     row)))
+                            (cell-grid terminal cols 50))
+                column (fn [text]
+                         (some #(when (str/includes? % text) (str/index-of % text)) lines))]
+
+            (doseq [label ["Inspect files" "CODE" "ACTIVITY" "Read ×3" "Patch ×2" "Shell ×2"]]
+              (is (= (column "Vis") (column label)) (str label " shares the transcript text edge")))
+            (when (seq expansions) (is (= (column "Vis") (column "inspect_files()"))))
+            (is (= (+ 2 (column "Vis")) (column "Command failed")))))))))
 
 (deftest screen-accepts-a-transport-neutral-html-terminal-test
   (with-open [terminal (-> (HtmlTerminal/builder)

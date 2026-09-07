@@ -14,25 +14,12 @@ import {
 import { AssistantMessage, IterationTrace, UserMessage } from "./ChatContent";
 
 /**
- * A TURN, DRAWN AS ONE THREAD.
+ * A TURN, DRAWN AS JOINED EXECUTION BANDS.
  *
- * The transcript's unit is not the message, it is the STEP: the model reasons,
- * writes a program, reads what came back, and does it again. Painted as loose
- * blocks those steps read as a pile — nothing says which reasoning belongs to
- * which call, or that the call under your thumb is the fourth of five. So the
- * turn hangs on one vertical line: the line is the turn, a marker on it is a
- * step, and the line stops at the last one, which is the only "this is where it
- * has got to" the screen needs.
- *
- * What to look at, in order:
- *
- * - the line is CONTINUOUS between steps and stops at the last marker, so the
- *   end of the work has a shape and not just an absence;
- * - a thinking band CROSSES the line rather than starting inside it — reasoning
- *   is what a step did first, not a note beside the thread;
- * - a step with no reasoning leaves no hole: the line runs on, the marker still
- *   lands on it;
- * - the running step is the one open ring, and it is the last thing on screen.
+ * Thinking, Code, Activity and the final answer share the transcript's text edge.
+ * Removing a rail means removing its gutter too: no top-level label, paragraph or
+ * source line reserves a leading disclosure slot. Only nested details are indented.
+ * Adjacent bands touch; a new step keeps its own spacing, facts and disclosure state.
  *
  * The data is `STORY_TURN_ITERATIONS` — the same iteration objects the gateway
  * ships — and the activity inside each step is an engine payload parsed by the
@@ -246,30 +233,80 @@ export const CodeWithResult: Story = {
 
 /** The shipped composition, reviewed with deterministic operation snapshots. */
 export const JoinedActivity: Story = {
-  args: { live: true, showCode: true, iterations: STORY_JOINED_ACTIVITY.running },
+  args: {
+    live: true,
+    showCode: true,
+    iterations: STORY_JOINED_ACTIVITY.running,
+  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const code = canvasElement.querySelector("[data-execution-code]")!;
     const activity = canvasElement.querySelector("[data-execution-activity]")!;
-    const thought = canvas.getByText("Checking the Activity layout and grouping.").closest("section")!;
-    await expect(code.getBoundingClientRect().top).toBeCloseTo(thought.getBoundingClientRect().bottom, 0);
-    await expect(activity.getBoundingClientRect().top).toBeCloseTo(code.getBoundingClientRect().bottom, 0);
-    await expect(activity.getBoundingClientRect().left).toBeCloseTo(code.getBoundingClientRect().left, 0);
-    await expect(activity.getBoundingClientRect().right).toBeCloseTo(code.getBoundingClientRect().right, 0);
+    const thought = canvas
+      .getByText("Checking the Activity layout and grouping.")
+      .closest("section")!;
+    await expect(code.getBoundingClientRect().top).toBeCloseTo(
+      thought.getBoundingClientRect().bottom,
+      0,
+    );
+    await expect(activity.getBoundingClientRect().top).toBeCloseTo(
+      code.getBoundingClientRect().bottom,
+      0,
+    );
+    await expect(activity.getBoundingClientRect().left).toBeCloseTo(
+      code.getBoundingClientRect().left,
+      0,
+    );
+    await expect(activity.getBoundingClientRect().right).toBeCloseTo(
+      code.getBoundingClientRect().right,
+      0,
+    );
+    // Removing the rail also removes its reserved gutter, not just the stroke.
+    const trace = thought.parentElement!;
+    const edge = trace.parentElement!.getBoundingClientRect().left;
+    const textEdge = (element: Element) => {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node && !node.textContent?.trim()) node = walker.nextNode();
+      const range = document.createRange();
+      range.selectNodeContents(node!);
+      return range.getBoundingClientRect().left;
+    };
+    for (const element of [
+      thought,
+      code,
+      activity,
+      canvas.getByText("Checking the Activity layout and grouping."),
+      canvas.getByRole("button", { name: "Expand code" }),
+      canvas.getByRole("button", { name: "Collapse Activity" }),
+      canvas.getByRole("button", { name: /Read ×8/ }),
+      canvas.getByRole("button", { name: /Patch ×3/ }),
+    ]) {
+      await expect(textEdge(element)).toBeCloseTo(edge, 0);
+    }
     const reads = canvas.getByRole("button", { name: /Read ×8/ });
     await expect(reads).toHaveTextContent("6 files");
-    await expect(canvas.getByRole("button", { name: /Patch ×3/ })).toHaveTextContent("+42 −11");
+    await expect(
+      canvas.getByRole("button", { name: /Patch ×3/ }),
+    ).toHaveTextContent("+42 −11");
     reads.focus();
     await userEvent.keyboard("{Enter}");
     await expect(reads).toHaveAttribute("aria-expanded", "true");
-    await userEvent.click(canvas.getByRole("button", { name: "Collapse Activity" }));
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Collapse Activity" }),
+    );
     await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
     await expect(code.querySelector("pre")).not.toBeNull();
-    await userEvent.click(canvas.getByRole("button", { name: "Expand Activity" }));
+    await expect(textEdge(code.querySelector("pre")!)).toBeCloseTo(edge, 0);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
     await expect(reads).toHaveAttribute("aria-expanded", "true");
     // Leave the design story in its compact initial state for visual review.
     await userEvent.click(reads);
-    await userEvent.click(canvas.getByRole("button", { name: "Collapse code" }));
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Collapse code" }),
+    );
   },
 };
 export const JoinedActivitySettled: Story = {
@@ -298,19 +335,55 @@ export const JoinedActivityReview: Story = {
 
 /** Prose and reasoning share their text edge, including the final answer. */
 export const ProseAlignment: Story = {
-  render: () => <AssistantMessage whole turn={{ ...STORY_EXCHANGE_TURN,
-    iterations: STORY_JOINED_ACTIVITY.succeeded.map((iteration) => ({ ...iteration, assistant_prose: "I checked the files before making these changes." })),
-    content: [{ id: "alignment-answer", type: "prose", markdown: "The changes are ready for review.\n\n- Read the files\n- Check the results" }],
-  }} />,
+  render: () => (
+    <AssistantMessage
+      whole
+      turn={{
+        ...STORY_EXCHANGE_TURN,
+        iterations: STORY_JOINED_ACTIVITY.succeeded.map((iteration) => ({
+          ...iteration,
+          assistant_prose: "I checked the files before making these changes.",
+        })),
+        content: [
+          {
+            id: "alignment-answer",
+            type: "prose",
+            markdown:
+              "The changes are ready for review.\n\n- Read the files\n- Check the results",
+          },
+        ],
+      }}
+    />
+  ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const thought = canvas.getByText("Checking the Activity layout and grouping.");
-    const prose = canvas.getByText("I checked the files before making these changes.");
+    const thought = canvas.getByText(
+      "Checking the Activity layout and grouping.",
+    );
+    const prose = canvas.getByText(
+      "I checked the files before making these changes.",
+    );
     const answer = canvas.getByText("The changes are ready for review.");
     for (const paragraph of [prose, answer]) {
-      await expect(paragraph.getBoundingClientRect().left).toBeCloseTo(thought.getBoundingClientRect().left, 0);
-      await expect(paragraph.getBoundingClientRect().right).toBeCloseTo(thought.getBoundingClientRect().right, 0);
+      await expect(paragraph.getBoundingClientRect().left).toBeCloseTo(
+        thought.getBoundingClientRect().left,
+        0,
+      );
+      await expect(paragraph.getBoundingClientRect().right).toBeCloseTo(
+        thought.getBoundingClientRect().right,
+        0,
+      );
     }
+    // Regression: narration touched Thinking but kept a gap before Code.
+    const thinkingBand = thought.closest("section")!.getBoundingClientRect();
+    const codeBand = canvasElement
+      .querySelector("[data-execution-code]")!
+      .getBoundingClientRect();
+    const paragraph = prose.getBoundingClientRect();
+    const above = paragraph.top - thinkingBand.bottom;
+    const below = codeBand.top - paragraph.bottom;
+    await expect(above).toBeGreaterThanOrEqual(8);
+    await expect(above).toBeCloseTo(below, 0);
     await expect(canvasElement.querySelector("[data-step-node]")).toBeNull();
   },
 };

@@ -475,7 +475,7 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
           {lines.map((segments, index) => (
             <div
               key={index}
-              className={`flex w-fit min-w-full whitespace-pre px-3 ${frameless ? "" : "first:pr-16"}`}
+              className={`flex w-fit min-w-full whitespace-pre ${frameless ? "pr-3" : "px-3 first:pr-16"}`}
             >
               {gutter && (
                 <span
@@ -1324,7 +1324,12 @@ function showFormCode(form: TranscriptForm, code: string): boolean {
 
 /** One Thinking-style fold owns the submitted source and its output. */
 const CollapsibleFormCode = memo(function CollapsibleFormCode({
-  value, language = "python", showCode, duration, outcome, children,
+  value,
+  language = "python",
+  showCode,
+  duration,
+  outcome,
+  children,
 }: {
   value: string;
   language?: string;
@@ -1336,21 +1341,58 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   const [expanded, setExpanded] = useState(false);
   const lineCount = value ? value.split("\n").length : 0;
   return (
-    <section className={`relative z-0 min-w-0 bg-code pr-3 ${RAIL_BLEED}`} data-execution-code>
+    <section className="relative z-0 min-w-0 bg-code pr-3" data-execution-code>
       <div className="flex min-h-8 min-w-0 items-center gap-2">
-        {showCode ? <Disclosure isOpen={expanded} tone="execution" className="min-w-0 flex-1"
-          aria-label={expanded ? "Collapse code" : "Expand code"}
-          onClick={() => setExpanded((open) => !open)}>
-          <BandLabel tone={outcome ? "err" : "accent"}>CODE{!expanded && <BandTally> +{lineCount} more</BandTally>}</BandLabel>
-        </Disclosure>
-          : <BandLabel tone={outcome ? "err" : "accent"} className="min-w-0 flex-1">CODE</BandLabel>}
-        {duration && <span className="shrink-0 whitespace-nowrap font-mono text-chip tabular-nums text-code-duration">{duration}</span>}
-        {showCode && <CopyChip value={value} label="Copy code" density="compact" className="shrink-0">Copy</CopyChip>}
+        {showCode ? (
+          <Disclosure
+            isOpen={expanded}
+            tone="execution"
+            className="min-w-0 flex-1"
+            aria-label={expanded ? "Collapse code" : "Expand code"}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            <BandLabel tone={outcome ? "err" : "accent"}>
+              CODE{!expanded && <BandTally> +{lineCount} more</BandTally>}
+            </BandLabel>
+          </Disclosure>
+        ) : (
+          <BandLabel
+            tone={outcome ? "err" : "accent"}
+            className="min-w-0 flex-1"
+          >
+            CODE
+          </BandLabel>
+        )}
+        {duration && (
+          <span className="shrink-0 whitespace-nowrap font-mono text-chip tabular-nums text-code-duration">
+            {duration}
+          </span>
+        )}
+        {showCode && (
+          <CopyChip
+            value={value}
+            label="Copy code"
+            density="compact"
+            className="shrink-0"
+          >
+            Copy
+          </CopyChip>
+        )}
       </div>
-      {(expanded || !showCode) && <div className="py-3" data-code-body>
-        {showCode && <SyntaxCodeBlock value={value} language={language} compact bare frameless />}
-        {children}
-      </div>}
+      {(expanded || !showCode) && (
+        <div className="py-3" data-code-body>
+          {showCode && (
+            <SyntaxCodeBlock
+              value={value}
+              language={language}
+              compact
+              bare
+              frameless
+            />
+          )}
+          {children}
+        </div>
+      )}
     </section>
   );
 });
@@ -1575,7 +1617,7 @@ const FormTrace = memo(function FormTrace({
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : "min-w-0"}>
       {forms[0].comment?.trim() && (
-        <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui text-vis-message">
+        <div className="mb-1 bg-thinking-surface pr-3 py-1.5 text-ui text-vis-message">
           <Markdown compact>{forms[0].comment}</Markdown>
         </div>
       )}
@@ -1585,7 +1627,7 @@ const FormTrace = memo(function FormTrace({
         </CollapsibleFormCode>
       )}
       <div
-        className={detectedActivity ? `relative z-0 min-w-0 bg-code pr-3 ${RAIL_BLEED}` : "min-w-0"}
+        className={detectedActivity ? "relative z-0 min-w-0 bg-code pr-3" : "min-w-0"}
         data-execution-activity={detectedActivity || undefined}
         role={running ? "status" : undefined}
         aria-live={running ? "polite" : undefined}
@@ -1690,9 +1732,7 @@ function observeBox(
   };
 }
 
-// Joined execution surfaces share one inset, without a decorative timeline.
-const RAIL_GUTTER = "pl-6";
-const RAIL_BLEED = "-ml-4 pl-3";
+// Execution text starts at the transcript edge; only nested details are indented.
 // Human content places its own stroke on the shared spine.
 const RAIL_SPINE = "ml-1.5";
 // Unstroked media begins at the spine's paper edge.
@@ -1746,7 +1786,7 @@ export const ThinkingBand = memo(function ThinkingBand({
     // A step's reasoning and code share one edge with no margin between them.
     // Standalone bands retain their spacing among other message blocks.
     <section
-      className={`min-w-0 bg-thinking-surface py-2 text-ui text-thinking ${railed ? `relative z-0 pr-3 ${RAIL_BLEED}` : "my-2 px-3 first:mt-0"}`}
+      className={`min-w-0 bg-thinking-surface py-2 pr-3 text-ui text-thinking ${railed ? "relative z-0" : "my-2 first:mt-0"}`}
     >
       {collapsible && (
         <Disclosure
@@ -2475,16 +2515,14 @@ const TraceSegment = memo(function TraceSegment({
 
   return (
     <section
-      className={`relative min-w-0 pb-2.5 ${RAIL_GUTTER} ${live ? transcriptEnterClass : ""}`}
+      className={`relative min-w-0 pb-2.5 ${live ? transcriptEnterClass : ""}`}
     >
       {segment.head.thinking && (
         <ThinkingBand railed>{segment.head.thinking}</ThinkingBand>
       )}
       {segment.head.prose && (
-        // Same rhythm as every other block in the stack: the gap above this
-        // prose is the stack's, so neither the block nor its first paragraph
-        // adds one of its own on top of it.
-        <div className="-ml-1 mb-2.5 pr-3 text-ui text-vis-message [&>:first-child]:mt-0">
+        // Narration owns equal space above and below; adjacent execution bands still touch.
+        <div className="py-2.5 pr-3 text-ui text-vis-message">
           <Markdown>{segment.head.prose}</Markdown>
         </div>
       )}
@@ -3636,7 +3674,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             answer at `text-body` (12px) was one px of drift, not a hierarchy. The role
             label (`text-meta`) and the meta footer (`text-chip`) still step down from it. */}
         <div
-          className={`ml-2 bg-answer px-3 text-ui ${cancelled ? "italic text-cancelled-foreground" : "text-answer-foreground"}`}
+          className={`bg-answer pr-3 text-ui ${cancelled ? "italic text-cancelled-foreground" : "text-answer-foreground"}`}
         >
           {blocks.map((block) => (
             <ContentBlockView

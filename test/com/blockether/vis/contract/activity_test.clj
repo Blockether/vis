@@ -30,3 +30,18 @@
           (json/read-str (slurp (io/resource "vis-contract/fixtures/activity-cases.json")))]
     (is (= valid (boolean (activity/from-wire projection))) name)
     (when valid (is (= projection (wire/->wire (activity/from-wire projection))) name))))
+
+(deftest shared-operation-groups-test
+  (doseq [{:strs [name projection groups]}
+          (json/read-str (slurp (io/resource "vis-contract/fixtures/activity-groups.json")))]
+    (let [receipt (activity/from-wire projection)
+          group-rows (ns-resolve 'com.blockether.vis.contract.activity 'operation-groups)]
+
+      (is (some? receipt) name)
+      (is (some? group-rows) "The contract owns chronological grouping")
+      (when group-rows
+        (is (= groups
+               (mapv (fn [{:keys [id label rows]}]
+                       {"id" id "label" label "rows" (mapv :id rows)})
+                     (group-rows (:rows receipt))))
+            name)))))

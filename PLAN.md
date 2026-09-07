@@ -266,4 +266,97 @@ Phases 1–3 complete locally. Commit and push to main authorized; SDK and deplo
 - Production story and standalone HTML match at phone, tablet and desktop frames. Phone prose
   measures left 34 / right 367 for thinking, commentary and answer at 393px width.
 - Review uses deterministic fixtures, not a gateway. Native iOS/WKWebView remains unverified.
-- SDK semantic requirements (including command correlation) remain the next, separate phase.
+- SDK semantic requirements (including command correlation) are continued below.
+
+# Activity across every client
+
+One grouping contract, joined execution sections in Companion and TUI, typed groups in the SDK.
+
+## Context
+
+The Companion-only design is on main. TUI still renders a separate timeline. Portable receipts
+already contain operation, sequence, resources, evidence and shell-handle groups; adding another
+transport shape or parsing human summaries would duplicate that information.
+
+## Phases
+
+1. Specify portable grouping behavior in tests.
+   - Rationale: all readers must preserve chronology and shell correlation.
+   - Data: contract vocabulary and shared fixtures, Clojure/TypeScript/Python tests.
+   - Acceptance criteria: adjacent families, unknown operations, state changes, stable shell identity.
+   - Unknowns: consumer test environments.
+2. Join TUI sections and integrate readers.
+   - Rationale: every client must support the same interaction, not just the app.
+   - Data: production renderer, expansion store, shared contract and SDK receipt types.
+   - Acceptance criteria: aligned continuous sections, independent folds, visible errors and facts.
+   - Unknowns: older timeline assertions and terminal geometry.
+3. Verify all affected clients.
+   - Rationale: wire compatibility, reader choices and terminal rendering need separate checks.
+   - Data: affected suites, formatting, lint/reflection and production visual captures.
+   - Acceptance criteria: passing checks and reviewed terminal/browser render; no deployment or restart.
+   - Unknowns: local toolchain availability.
+
+## Plan state
+
+Phases 1–3 complete locally. No release, gateway restart or remote publication requested.
+
+- Canonical operation families and eight shared fixtures drive Clojure, TypeScript and Python grouping.
+  The SDK exposes immutable groups; existing serialized receipts and raw operation counts are unchanged.
+- TUI now joins Thinking, Code and Activity in one panel. Adjacent groups preserve sequence,
+  shell identity, independent disclosure choices, resource/diff facts and visible failures.
+- Verification: 1,766 TUI tests, 43 contract/engine tests, 102 Companion tests and 316 SDK tests pass
+  (three SDK skips). Formatting, lint/reflection and the Companion production build pass.
+- Live production HtmlTerminal review checked group/code/band folds, streaming replacement, focus,
+  aligned cells and resize down to 390px without horizontal overflow. An exact-frame HTML export
+  and a native terminal PNG were inspected; parity tests cover 40/80/120 columns and three states.
+- Native mobile/WKWebView and an installed release binary were not rebuilt or exercised. Browser
+  interaction review used the production renderer with a fixture relay, not the full channel input loop.
+
+# Portable HTML review workflow
+
+Readable static exports and a one-call local live preview, without changing gateway transport.
+
+## Context
+
+`~/lanterna/src/main/resources/com/googlecode/lanterna/terminal/html/terminal.html` shares live
+and static presentation. Static frames retain desktop columns and full viewport height.
+The review fixture did not configure terminal defaults to match its painted theme.
+Do not fix this by weakening Companion's opaque-origin iframe sandbox or copying a renderer.
+
+## Phases
+
+1. Repair static export in Lanterna.
+   - Rationale: attachments must remain readable outside a live JVM.
+   - Data: exported frame, browser geometry, renderer tests.
+   - Acceptance criteria: fit/actual-size controls, explicit row bounds, configured theme, unchanged cells.
+   - Unknowns: mobile frame sizing and font measurement.
+2. Simplify live review and integrate a reusable TUI fixture workflow.
+   - Rationale: review should not require handwritten HTTP/SSE adapters each time.
+   - Data: framework-neutral endpoint, production fixture and local server lifecycle.
+   - Acceptance criteria: one closeable preview handle, loopback-only server, maintained export path.
+   - Unknowns: local dependency verification without publishing a library release.
+3. Verify exported bytes in the Companion frame.
+   - Rationale: a live desktop screenshot does not verify a static mobile attachment.
+   - Data: phone/tablet/desktop geometry, fit/zoom actions and affected suites.
+   - Acceptance criteria: no initial horizontal clipping, no incorrect background, safe sandbox retained.
+   - Unknowns: native WKWebView availability.
+
+## Plan state
+
+Phases 1–3 complete locally. Lanterna checkout was fast-forwarded to published 3.1.5-vis.49
+before edits; its release version and Vis's production dependency pin remain unchanged.
+
+- Static exports have Fit width/Actual size, explicit visible-row bounds, correct configured
+  theme defaults, no input cursor and no invisible keyboard-input tab stop.
+- HtmlTerminalPreview owns only a loopback development server; HtmlTerminal remains transport-neutral.
+  HtmlTerminalView.serve owns GUI2 plus that preview. Closeable lifecycle and request validation are tested.
+- The :html-review alias selects sibling compiled classes explicitly. One CLI command runs the
+  production Activity fixture, handles disclosures/resize and updates the bounded HTML export.
+- Verification: 241 Lanterna tests, 15 affected TUI/development tests against local classes,
+  14 HTML-backend tests against the unchanged published dependency, and 23 Companion DocArtifact
+  tests pass. Clojure formatting and lint/reflection are clean; both repository diff checks pass.
+- Browser review covered live code/group disclosure and resize, static fit/actual-size at
+  393/834/1280px, and the exact exported bytes in Companion's opaque-origin DocFrame. Native
+  terminal PNG and grid parity were checked. No Companion sandbox relaxation or app-code change.
+- Native iOS/WKWebView and a native-image binary were not exercised. No release, remote mutation
+  or gateway restart; installed binaries and previously generated HTML files are unchanged.

@@ -2,6 +2,12 @@
                    :extra-paths ["build"]
                    :ns-default vis-tui.build}
            :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}
+           ;; Local HTML backend development; build the sibling Lanterna checkout first.
+           :html-review {:classpath-overrides {com.blockether/lanterna
+                                               "../../../lanterna/target/classes"}
+                         :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}}
+                         :extra-paths ["build" "test"]
+                         :main-opts ["-m" "vis-tui.review"]}
            :run {:main-opts ["-m" "com.blockether.vis.tui.main"]}
            :test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}
                                org.jcodec/jcodec {:mvn/version "0.2.5"}}

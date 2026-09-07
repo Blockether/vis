@@ -10,6 +10,7 @@ import type {
   ActivityTextEvidence,
   ActivityTextFormat,
 } from "../lib/activity";
+import { operationGroups, type OperationGroup } from "../lib/activity";
 import { workspaceRelativePath } from "../lib/path";
 import { useWorkspaceRoots } from "../lib/workspace-roots";
 
@@ -925,32 +926,6 @@ function ActivityStep({
       )}
     </li>
   );
-}
-
-/** Only engine operation names establish adjacency; labels and presenter text never do. */
-const OPERATION_GROUPS: Record<string, string> = {
-  cat: "Read",
-  patch: "Patch",
-  shell: "Shell",
-  grep: "Search",
-  ls: "List",
-  run_tests: "Test",
-  lint_code: "Lint",
-  format_code: "Format",
-  repl_eval: "Eval",
-};
-
-type OperationGroup = { id: string; label?: string; rows: ActivityRow[] };
-
-function operationGroups(rows: readonly ActivityRow[]): OperationGroup[] {
-  const groups: OperationGroup[] = [];
-  for (const row of [...rows].sort((a, b) => a.sequence - b.sequence)) {
-    const label = OPERATION_GROUPS[row.operation];
-    const last = groups.at(-1);
-    if (label && last?.label === label) last.rows.push(row);
-    else groups.push({ id: row.id, label, rows: [row] });
-  }
-  return groups;
 }
 
 function groupFacts(rows: readonly ActivityRow[]): string {

@@ -98,6 +98,19 @@ class ActivityRow:
 
 
 @dataclass(frozen=True, slots=True)
+class ActivityGroup:
+    """Adjacent operations; rows retain their evidence, not extra invocations.
+
+    The id survives shell polling and appending operations. Unknown operations stay
+    separate. UI disclosure state belongs to the reader, never to this receipt.
+    """
+
+    id: str
+    label: str | None
+    rows: tuple[ActivityRow, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ActivityCounts:
     running: int
     succeeded: int
@@ -119,6 +132,24 @@ class ActivityProjection:
     counts: ActivityCounts
     rows: tuple[ActivityRow, ...]
     omitted: ActivityOmitted
+
+    @property
+    def groups(self) -> tuple[ActivityGroup, ...]:
+        """The same chronological runs used by Companion and TUI; not serialized."""
+        groups: list[ActivityGroup] = []
+        for row in sorted(self.rows, key=lambda row: row.sequence):
+            label = ACTIVITY["operation_groups"].get(row.operation)
+            if label and groups and groups[-1].label == label:
+                previous = groups[-1]
+                groups[-1] = ActivityGroup(previous.id, label, (*previous.rows, row))
+            else:
+                first = (
+                    row.children[0]
+                    if row.operation == "shell" and row.children
+                    else row
+                )
+                groups.append(ActivityGroup(first.id, label, (row,)))
+        return tuple(groups)
 
     @classmethod
     def from_wire(cls, value: Any) -> ActivityProjection:

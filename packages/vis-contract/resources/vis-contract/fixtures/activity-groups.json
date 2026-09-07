@@ -1,0 +1,766 @@
+[
+  {
+    "name": "adjacent runs preserve chronology",
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 7,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "cat",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "cat",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "patch",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "patch",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-4",
+          "sequence": 4,
+          "operation": "patch",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "patch",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-5",
+          "sequence": 5,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "cat",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-6",
+          "sequence": 6,
+          "operation": "shell",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "shell",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-7",
+          "sequence": 7,
+          "operation": "shell",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "shell",
+          "resources": [],
+          "evidence": []
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "call-1",
+        "label": "Read",
+        "rows": [
+          "call-1",
+          "call-2"
+        ]
+      },
+      {
+        "id": "call-3",
+        "label": "Patch",
+        "rows": [
+          "call-3",
+          "call-4"
+        ]
+      },
+      {
+        "id": "call-5",
+        "label": "Read",
+        "rows": [
+          "call-5"
+        ]
+      },
+      {
+        "id": "call-6",
+        "label": "Shell",
+        "rows": [
+          "call-6",
+          "call-7"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "unknown operations stay separate",
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 4,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "custom",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "custom",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "custom",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "custom",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "grep",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-4",
+          "sequence": 4,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "grep",
+          "resources": [],
+          "evidence": []
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "call-1",
+        "label": null,
+        "rows": [
+          "call-1"
+        ]
+      },
+      {
+        "id": "call-2",
+        "label": null,
+        "rows": [
+          "call-2"
+        ]
+      },
+      {
+        "id": "call-3",
+        "label": "Search",
+        "rows": [
+          "call-3",
+          "call-4"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "empty receipt",
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "rows": []
+    },
+    "groups": []
+  },
+  {
+    "name": "all operation families",
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 10,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "ls",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "ls",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "ls",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "ls",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "run_tests",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "run_tests",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-4",
+          "sequence": 4,
+          "operation": "run_tests",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "run_tests",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-5",
+          "sequence": 5,
+          "operation": "lint_code",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "lint_code",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-6",
+          "sequence": 6,
+          "operation": "lint_code",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "lint_code",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-7",
+          "sequence": 7,
+          "operation": "format_code",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "format_code",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-8",
+          "sequence": 8,
+          "operation": "format_code",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "format_code",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-9",
+          "sequence": 9,
+          "operation": "repl_eval",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "repl_eval",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-10",
+          "sequence": 10,
+          "operation": "repl_eval",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "repl_eval",
+          "resources": [],
+          "evidence": []
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "call-1",
+        "label": "List",
+        "rows": [
+          "call-1",
+          "call-2"
+        ]
+      },
+      {
+        "id": "call-3",
+        "label": "Test",
+        "rows": [
+          "call-3",
+          "call-4"
+        ]
+      },
+      {
+        "id": "call-5",
+        "label": "Lint",
+        "rows": [
+          "call-5",
+          "call-6"
+        ]
+      },
+      {
+        "id": "call-7",
+        "label": "Format",
+        "rows": [
+          "call-7",
+          "call-8"
+        ]
+      },
+      {
+        "id": "call-9",
+        "label": "Eval",
+        "rows": [
+          "call-9",
+          "call-10"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "entry order wins over arrival order",
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 7,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "rows": [
+        {
+          "id": "call-7",
+          "sequence": 7,
+          "operation": "shell",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "shell",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-6",
+          "sequence": 6,
+          "operation": "shell",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "shell",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-5",
+          "sequence": 5,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "cat",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-4",
+          "sequence": 4,
+          "operation": "patch",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "patch",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "patch",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "patch",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "cat",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "cat",
+          "resources": [],
+          "evidence": []
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "call-1",
+        "label": "Read",
+        "rows": [
+          "call-1",
+          "call-2"
+        ]
+      },
+      {
+        "id": "call-3",
+        "label": "Patch",
+        "rows": [
+          "call-3",
+          "call-4"
+        ]
+      },
+      {
+        "id": "call-5",
+        "label": "Read",
+        "rows": [
+          "call-5"
+        ]
+      },
+      {
+        "id": "call-6",
+        "label": "Shell",
+        "rows": [
+          "call-6",
+          "call-7"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "state and presentation do not split groups",
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 5,
+        "failed": 1,
+        "cancelled": 0
+      },
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "cat",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "failed",
+          "summary": "cat",
+          "resources": [],
+          "evidence": [],
+          "error_summary": "Read refused",
+          "presentation": {
+            "headline": "Not a grouping label",
+            "summary": "Synthetic",
+            "content": []
+          }
+        },
+        {
+          "id": "call-3",
+          "sequence": 3,
+          "operation": "patch",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "patch",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-4",
+          "sequence": 4,
+          "operation": "patch",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "running",
+          "summary": "patch",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-5",
+          "sequence": 5,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "cat",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-6",
+          "sequence": 6,
+          "operation": "shell",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "shell",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "call-7",
+          "sequence": 7,
+          "operation": "shell",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "shell",
+          "resources": [],
+          "evidence": []
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "call-1",
+        "label": "Read",
+        "rows": [
+          "call-1",
+          "call-2"
+        ]
+      },
+      {
+        "id": "call-3",
+        "label": "Patch",
+        "rows": [
+          "call-3",
+          "call-4"
+        ]
+      },
+      {
+        "id": "call-5",
+        "label": "Read",
+        "rows": [
+          "call-5"
+        ]
+      },
+      {
+        "id": "call-6",
+        "label": "Shell",
+        "rows": [
+          "call-6",
+          "call-7"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "shell launch",
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "shell",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "shell",
+          "resources": [],
+          "evidence": []
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "call-1",
+        "label": "Shell",
+        "rows": [
+          "call-1"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "polls retain the launch group identity",
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 2,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      },
+      "rows": [
+        {
+          "id": "group-call-1",
+          "sequence": 1,
+          "operation": "shell",
+          "presenter": "generic",
+          "signal": "generic",
+          "state": "succeeded",
+          "summary": "shell",
+          "resources": [],
+          "evidence": [],
+          "children": [
+            {
+              "id": "call-1",
+              "sequence": 1,
+              "operation": "shell",
+              "presenter": "generic",
+              "signal": "generic",
+              "state": "succeeded",
+              "summary": "shell",
+              "resources": [],
+              "evidence": []
+            },
+            {
+              "id": "poll-1",
+              "sequence": 2,
+              "operation": "_shell_wait",
+              "presenter": "generic",
+              "signal": "generic",
+              "state": "succeeded",
+              "summary": "shell",
+              "resources": [],
+              "evidence": []
+            }
+          ]
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "call-1",
+        "label": "Shell",
+        "rows": [
+          "group-call-1"
+        ]
+      }
+    ]
+  }
+]

@@ -5,6 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "operation_groups": {"const": {"cat": "Read", "patch": "Patch", "shell": "Shell", "grep": "Search", "ls": "List", "run_tests": "Test", "lint_code": "Lint", "format_code": "Format", "repl_eval": "Eval"}},
     "version": {
       "const": 1
     },
@@ -99,6 +100,7 @@
     }
   },
   "required": [
+    "operation_groups",
     "version",
     "event",
     "presenters",

@@ -1,5 +1,6 @@
 (ns com.blockether.vis.tui.render
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.tui.attachments :as attach]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.interactions :as interactions]
@@ -1396,136 +1397,6 @@
 
 (def ^:private turn-stamp-pattern #"\bt\d+/i\d+/(?:b|f)\d+\b")
 
-(def ^:private code-text-inset-markers
-  #{code-marker code-ok-marker code-err-marker result-marker err-result-marker th-md-code-marker
-    thinking-marker th-md-h1-marker th-md-h2-marker th-md-h3-marker th-md-bold-marker
-    th-md-bullet-marker th-md-quote-marker th-md-hr-marker th-md-summary-marker
-    th-md-table-head-marker th-md-table-sep-marker th-md-table-row-marker})
-
-(def ^:private code-text-inset-cols
-  "Columns the painter insets a code/result row by (`code-text-inset-markers`).
-   A row that RIGHT-ALIGNS a tail — a head's id badge, a call's duration — must
-   budget for them, or its figure lands two columns past every flush-painted
-   headline and the band's right edge reads ragged."
-  2)
-
-(def ^:private turn-rail
-  "ONE LINE DOWN THE TURN, the way the companion draws one.
-
-   `RAIL_LINE` in `ChatContent` hangs a segment's every block off a single hairline
-   at the turn's left edge: the thinking band, each call's program, its result and
-   the Activity chronology read as ONE thread of work, and the line crosses the
-   paper of every band instead of stopping at its edge. A terminal cannot float a
-   hairline between two columns, so the line IS a column, painted in the quiet
-   border ink over whatever that row's band already filled. The final answer is not
-   on it - the answer is what the thread arrived at, not a step in it."
-  "│")
-
-(def ^:private turn-rail-col
-  "The column `turn-rail` stands in, counted from the message column's own edge.
-
-   Column zero, the same column a user or error bubble paints its own edge bar in,
-   so one axis runs down the whole turn instead of the receipt hanging a second
-   thread one column inside the first. Nothing further left belongs to the turn -
-   that is the screen's selection gutter. Spelled once: the Activity band's margin
-   is measured from it, because two lines one column apart are two threads."
-  0)
-
-(def ^:private turn-rail-markers
-  "The bands that HANG OFF the turn's line - the receipt, never the answer. The line
-   runs from the first of these rows to the last, the blanks between them included,
-   because a line with a gap in it reads as two lines."
-  #{thinking-marker th-md-h1-marker th-md-h2-marker th-md-h3-marker th-md-bold-marker
-    th-md-code-marker th-md-bullet-marker th-md-quote-marker th-md-hr-marker th-md-summary-marker
-    th-md-table-head-marker th-md-table-sep-marker th-md-table-row-marker iteration-hdr-marker
-    iteration-pad-marker execution-summary-marker code-marker code-ok-marker code-err-marker
-    code-pad-marker code-ok-pad-marker code-err-pad-marker result-marker err-result-marker
-    activity-marker})
-
-(defn- turn-rail-rows
-  "The rows `turn-rail` runs down, as a set of `lines` indices.
-
-   Every band from the first receipt row to the last, the blank rows between bands
-   included - a line with a gap in it reads as two lines. The one thing the line
-   never crosses is prose Vis speaks between two calls (`:receipt-prose?` meta):
-   those words stand on the paper's edge, the same edge the answer and the
-   bubble's name stand on, so the line breaks above them and resumes below. The
-   break takes the air with it: of the blank edges a band leaves beside the prose,
-   one stays on the line as the band's own bottom or top, the rest go blank, so
-   the words read as set between two receipts, not wedged against a line."
-  [lines line-meta]
-  (let [n
-        (count lines)
-
-        marker?
-        (fn [idx]
-          (let [^String l (nth lines idx)]
-            (and (pos? (count l)) (contains? turn-rail-markers (subs l 0 1)))))
-
-        prose?
-        (fn [idx]
-          (boolean (:receipt-prose? (nth line-meta idx nil))))
-
-        ;; A band's blank edge: a marker row with no words on it, or the Activity
-        ;; band's bare line (its rail is its own text).
-        pad?
-        (fn [idx]
-          (and (marker? idx)
-               (let [body (str/trim (subs (nth lines idx) 1))]
-                 (or (str/blank? body) (= turn-rail body)))))
-
-        marker-rows
-        (filterv marker? (range n))]
-
-    (if (empty? marker-rows)
-      #{}
-      (let [head
-            (long (first marker-rows))
-
-            tail
-            (long (peek marker-rows))
-
-            ;; Every gap between two bands that holds prose, as inclusive [from to].
-            breaks
-            (loop [idx
-                   head
-
-                   gap-start
-                   nil
-
-                   gap-prose?
-                   false
-
-                   acc
-                   []]
-
-              (cond (> idx tail) acc
-                    (marker? idx)
-                    (recur (inc idx)
-                           nil
-                           false
-                           (if (and gap-start gap-prose?) (conj acc [gap-start (dec idx)]) acc))
-                    :else (recur (inc idx) (or gap-start idx) (or gap-prose? (prose? idx)) acc)))
-
-            ;; Widen a break over the pads on either side, leaving the band its one edge.
-            widen
-            (fn [[from to]]
-              (let [back
-                    (count (take-while pad? (range (dec (long from)) (dec head) -1)))
-
-                    ahead
-                    (count (take-while pad? (range (inc (long to)) (inc tail))))]
-
-                [(- (long from) (max 0 (dec back))) (+ (long to) (max 0 (dec ahead)))]))
-
-            off
-            (into #{}
-                  (mapcat (fn [[from to]]
-                            (range from (inc (long to))))
-                          (map widen breaks)))]
-
-        (into #{} (remove off) (range head (inc tail)))))))
-
 (defn- ansi-code->fg
   [code current-fg base-fg]
   ;; `(long code)` is what keeps this a constant-time tableswitch: the tests are
@@ -2123,14 +1994,7 @@
             (cached* [::ans-start (System/identityHashCode lines)]
                      #(loop [i 0] (cond (>= i n) n
                                         (answer-marker? (nth lines i)) i
-                                        :else (recur (inc i)))))
-
-            ;; The receipt's own extent - see `turn-rail-rows`. Cached by `lines`-identity
-            ;; like the answer scan above, so a redraw costs no scan.
-            rail-rows
-            (when-not (or user? error?)
-              (cached* [::rail-rows (System/identityHashCode lines)]
-                       #(turn-rail-rows lines line-meta)))]
+                                        :else (recur (inc i)))))]
 
         (loop [i i-start]
           (when (< i i-end)
@@ -2155,6 +2019,8 @@
                       ;; column. An iteration's prose sits flush with the answer and the
                       ;; bubble's name, not padded like a user bubble: one left edge for
                       ;; everything Vis says, whether it lands before a call or after it.
+                      bg-color (if (:activity-content? meta) t/code-block-bg bg-color)
+                      fg-color (if (:activity-content? meta) t/code-block-fg fg-color)
                       content-col (long (or (:activity-content-col meta) 0))
                       x (+ (long bx)
                            (long (if (:activity-content? meta)
@@ -2182,24 +2048,17 @@
                                             (str/starts-with? body tool-output-indent))
                       line
                       (if output-indented? (str marker (subs body (count tool-output-indent))) line)
-                      ;; Inset code/result rows unless a headline has no disclosure slot.
-                      code-text-inset? (and (not user?)
-                                            (not (:activity-content? meta))
-                                            (contains? code-text-inset-markers marker)
-                                            (not (:band-flush? meta))
-                                            (not= :result-headline (:kind meta)))
-                      x (cond-> x
-                          output-indented?
-                          (+ (long tool-output-indent-cols))
-
-                          code-text-inset?
-                          (+ (long (if (:code-source? meta) 4 code-text-inset-cols))))
+                      ;; Only nested output owns an inset; execution bands start at the text edge.
+                      x (if output-indented? (+ x (long tool-output-indent-cols)) x)
                       iw
                       (if output-indented? (max 0 (- (long iw) (long tool-output-indent-cols))) iw)
                       fbx (if output-indented? (+ (long fbx) (long tool-output-indent-cols)) fbx)]
 
                   ;; Pre-fill the answer zone for every line type.
                   (when in-answer? (p/set-bg! g zone-bg) (p/fill-rect! g fbx y iw 1))
+                  (when (:activity-content? meta)
+                    (p/set-bg! g t/code-block-bg)
+                    (p/fill-rect! g bx y bubble-w 1))
                   ;; Record exact screen coordinates for the post-refresh image pass.
                   (when (and *image-placements* (contains? #{:image :image-pad} (:kind meta)))
                     (swap! *image-placements* conj
@@ -2422,16 +2281,11 @@
                                     :session-id (:session-id meta)
                                     :node-id (:node-id meta)
                                     :collapsed? (:collapsed? meta)})))
-                    ;; Activity is a compact timeline grid on its own quiet surface.
+                    ;; Activity continues the Code surface, with independent disclosure.
                     (str/starts-with? line activity-marker)
                     (let [raw (subs line 1)
-                          ;; ACTIVITY IS NOT A BAND. The web hangs its chronology on the
-                          ;; turn's own line and paints NO surface behind it; a slab here
-                          ;; reads as a second thinking block, which is the one thing this
-                          ;; axis must not look like. The paper stays the transcript's own,
-                          ;; and the rail, the marks and the words carry the structure.
-                          band-bg (if in-answer? zone-bg bg-color)
-                          band-fg (if in-answer? zone-fg fg-color)
+                          band-bg t/code-block-bg
+                          band-fg t/code-block-fg
                           tone-fg (case (:status-tone meta)
                                     :running
                                     t/warning-fg
@@ -2454,34 +2308,22 @@
                                             band-bg
                                             t/code-block-fg
                                             t/code-block-bg)
-                      ;; THE RAIL IS THE TURN'S LINE, standing one margin in from the
-                      ;; paper's edge: `│` on a continuation, `├─` where a step's mark
-                      ;; stands on it. It is drawn in the quiet border ink, so the line
-                      ;; reads as structure and never as a character somebody typed.
-                      (let [inset (count (take-while #{\space} raw))
-                            rail (subs raw inset)
-                            rail-n (count (take-while #{\│ \├ \─} rail))]
-
-                        (when (pos? rail-n)
-                          (p/set-colors! g t/code-duration-fg band-bg)
-                          (p/put-str! g (+ (long x) (long inset)) y (subs rail 0 rail-n))))
                       (case (:kind meta)
-                        :activity-row
-                        (do (when-let [glyph-col (:glyph-col meta)]
-                              (p/set-colors! g tone-fg band-bg)
-                              (p/styled g
-                                        [p/BOLD]
-                                        (p/put-str! g
-                                                    (+ (long x) (long glyph-col))
-                                                    y
-                                                    (str (:status-glyph meta)))))
-                            (p/set-colors! g t/result-highlight-fg band-bg)
+                        (:activity-row :activity-header)
+                        (do (p/set-colors! g
+                                           (if (contains? #{:error :running} (:status-tone meta))
+                                             tone-fg
+                                             t/result-highlight-fg)
+                                           band-bg)
                             (p/styled g
                                       [p/BOLD]
-                                      (p/put-str! g
-                                                  (+ (long x) (long (:operation-col meta)))
-                                                  y
-                                                  (str (:operation-label meta))))
+                                      (p/put-str!
+                                        g
+                                        (+ (long x) (long (:operation-col meta)))
+                                        y
+                                        (p/ellipsize
+                                          (str (:operation-label meta))
+                                          (max 0 (- (long iw) (long (:operation-col meta)))))))
                             ;; An Activity row IS a disclosure: pressing it opens that
                             ;; invocation's bounded evidence through the one detail
                             ;; expansion store, so bulk fold and `C-x t` reach it too.
@@ -3264,19 +3106,7 @@
                   (when (or user? error?)
                     (p/clear-styles! g)
                     (p/set-colors! g (if error? t/warning-border role-fg) bg-color)
-                    (p/put-str! g bx (+ (long btop) (long i)) "│"))
-                  ;; THE TURN'S LINE, down every band of the receipt (see `turn-rail`).
-                  ;; An Activity row already carries it in its own text - that band
-                  ;; draws the marks standing ON it - so painting over that row would
-                  ;; rub out a tick. The row's paper is whatever its branch just
-                  ;; filled, so only the INK changes here: the line crosses each band
-                  ;; instead of punching a hole in it.
-                  (when (and rail-rows
-                             (contains? rail-rows lines-idx)
-                             (not (str/starts-with? line activity-marker)))
-                    (p/clear-styles! g)
-                    (p/set-fg! g t/code-duration-fg)
-                    (p/put-str! g (+ (long bx) (long turn-rail-col)) y turn-rail)))
+                    (p/put-str! g bx (+ (long btop) (long i)) "│")))
                 (recur (inc i))))))
         ;; Below-content footer row: optional right-aligned meta, with
         ;; one breathing row between answer body and footer.
@@ -3569,7 +3399,7 @@
   "Reasoning PREVIEW height. Up to this many rows of reasoning are
    ALWAYS shown — short reasoning (≤ this many rows) renders inline with
    no disclosure; longer reasoning shows these first rows as a peek and
-   collapses only the REMAINDER behind a ▸ THINKING `+N more` toggle
+   collapses only the REMAINDER behind a THINKING `+N more` toggle
    (same affordance as tool op rows). The opening of the reasoning
    (usually the plan) stays visible without the full wall of text."
   vis/reasoning-preview-line-limit)
@@ -4064,7 +3894,7 @@
         wrapped
         (-> (wrap-text (layout/ast->inline-sentinel-string (vis/markdown->ast left))
                        (max 1 (long max-w)))
-            (with-right-suffix suffix (max 1 (- (long max-w) (long code-text-inset-cols)))))
+            (with-right-suffix suffix (max 1 (long max-w))))
 
         meta
         {:kind :toggle-details
@@ -4079,14 +3909,14 @@
             (count (remove #(str/blank? (subs (str (:line %)) 1)) (:hidden-entries detail-ctx)))
 
             prefix
-            (str "  "
-                 (if collapsed? "▸ " "▾ ")
-                 (layout/ast->inline-sentinel-string (vis/markdown->ast summary))
-                 (when (and collapsed? (pos? hidden-n)) (str "  +" hidden-n " more")))]
+            (str (layout/ast->inline-sentinel-string (vis/markdown->ast summary))
+                 (when (and collapsed? (pos? hidden-n)) (str "  +" hidden-n " more")))
+
+            suffix
+            (str (if collapsed? "▸" "▾") (when (seq suffix) (str "  " suffix)))]
 
         [{:line (str marker (first (with-right-suffix [prefix] suffix (max 1 (dec (long max-w))))))
           :meta (assoc meta
-                  :band-flush? true
                   :headline-prefix prefix
                   :right-suffix suffix)}])
       (mapv (fn [line]
@@ -4166,10 +3996,10 @@
 
    Short reasoning (≤ `reasoning-auto-collapse-line-threshold` rows)
    paints in full with no disclosure. Longer reasoning shows the
-   clickable header `▸ THINKING  +N more` as the band's TOP line and
+   clickable header `THINKING  +N more` as the band's TOP line and
    PEEKS the first N rows below it; clicking expands in place to the
-   full reasoning (`▾ THINKING`). Standard accordion: chevron at the
-   header, content below.
+   full reasoning. The label shares the body's left edge, with the disclosure
+   chevron at the trailing edge and content below.
 
    The header carries `:toggle-details` meta on a `thinking-marker`
    row — the painter registers the click region for that marker so the
@@ -4249,8 +4079,10 @@
             ;; registers as a click region.
             header
             {:line (str thinking-marker
-                        (ellipsize-cols (str chevron " " label) (max 1 (long (or max-w 1)))))
+                        (first (with-right-suffix [label] chevron (max 1 (long (or max-w 1))))))
              :meta {:kind :toggle-details
+                    :headline-prefix label
+                    :right-suffix chevron
                     :session-id (str session-id)
                     :node-id (str node-id)
                     :collapsed? (not expanded?)}}]
@@ -5397,32 +5229,6 @@
     (str/join " · "
               (remove str/blank? [trouble (or ops (when-not terminal? "running activity"))]))))
 
-(def ^:private activity-margin
-  "THE PAPER'S OWN EDGE, kept clear before the rail.
-
-   Measured from `turn-rail-col`, so the band's rail lands in the very column the
-   rest of the turn already runs down; at column zero this is empty and the band
-   opens on the axis itself."
-  (repeat-str \space turn-rail-col))
-
-(def ^:private activity-rail
-  "THE TURN'S OWN LINE, drawn down the whole Activity band.
-
-   The web hangs its chronology on the line the turn already runs down its column
-   (`RAIL_LINE` in `ChatContent`) and reaches every mark with a tick: a dot floating
-   beside a line is a bullet in a list, a dot JOINED to it is a moment on a timeline,
-   and this axis is the second thing. A terminal cannot float a hairline between two
-   columns, so the line IS `turn-rail-col` of every row this band paints - the very
-   column the whole turn already runs down - and `activity-tick` is the join a step's
-   mark stands on. Nothing closes the group - a `╰` would be a bracket saying what
-   the named row above it already said."
-  turn-rail)
-
-(def ^:private activity-tick
-  "The join from the rail to a step's mark: two columns, so the mark stands ON the
-   line instead of floating beside it."
-  "├─")
-
 (defn- more-count
   "`2 more files`, `3 more steps` - what a rule holds back, counted and named. One
    noun, one plural rule, so no call site spells `1 more files`."
@@ -5476,19 +5282,14 @@
                   (= shown (parse-long (second match)))))))
 
 (defn- activity-text-col
-  "Column the words of a row at `depth` start in, counted from the paper's edge. The
-   margin, the rail, the tick, the mark and one space fill the columns before them at
-   depth 0, plus the disclosure slot's two when `slot?`; every level below is two
-   columns further in, because the group IS the indent."
-  ^long [^long depth slot?]
-  (+ (long (count activity-margin)) 4 (if slot? 2 0) (* 2 depth)))
+  "Activity headings align with CODE; only disclosed details gain one inset."
+  ^long [^long depth _slot?]
+  (* 2 depth))
 
 (defn- activity-lead
-  "The margin, the rail, and the blanks that carry the eye to column `col`."
+  "Whitespace to the detail column; no nested timeline or step marks."
   ^String [^long col]
-  (str activity-margin
-       activity-rail
-       (repeat-str \space (max 0 (- col (long (count activity-margin)) 1)))))
+  (repeat-str \space col))
 
 (defn- activity-evidence-kind
   [evidence]
@@ -5693,38 +5494,84 @@
 
 (def ^:private activity-steps-shown 4)
 
+(defn- activity-operation-rows
+  "The shared adjacent runs, expressed as local disclosures without changing receipts."
+  [rows]
+  (mapv
+    (fn [{:keys [id label rows]}]
+      (if (= 1 (count rows))
+        (first rows)
+        (let [files
+              (set (map :id (filter #(= "file" (:type %)) (mapcat :resources rows))))
+
+              complete?
+              (every? #(and (not (:is-truncated %))
+                            (some (fn [r]
+                                    (= "file" (:type r)))
+                                  (:resources %)))
+                      rows)
+
+              deltas
+              (map activity-step-delta rows)
+
+              additions
+              (reduce + 0 (map :additions deltas))
+
+              deletions
+              (reduce + 0 (map :deletions deltas))
+
+              states
+              (frequencies (map activity-row-state rows))
+
+              facts
+              (str/join " · "
+                        (remove nil?
+                          [(when (seq files)
+                             (str (count files)
+                                  (if complete? " " " known ")
+                                  (if (= 1 (count files)) "file" "files")))
+                           (when (pos? (+ additions deletions)) (str "+" additions " −" deletions))
+                           (not-empty (str/join " · "
+                                                (for [state
+                                                      [:running :failed :cancelled]
+
+                                                      :when (get states state)]
+
+                                                  (str (get states state) " " (name state)))))
+                           (when (some :is-truncated rows) "partial details")]))]
+
+          {:id (str id "#group")
+           :sequence (:sequence (first rows))
+           :operation label
+           :summary ""
+           :activity-group? true
+           :state (name (or (some #(when (get states %) %) [:failed :running :cancelled])
+                            :succeeded))
+           :presentation {:headline (str label " ×" (count rows)) :summary facts}
+           :children rows
+           :resources []
+           :evidence []})))
+    (activity-contract/operation-groups rows)))
+
 (defn- activity-detail-entries
-  "Compact timeline rows for one expanded Activity receipt, drawn the way the web
-   draws it: one line down the left, a tick to every mark, and THREE levels hanging
-   off it — the step, the change, and the paths the change touched. The semantic
-   summary is invocation evidence, not invented prose; default summaries equal to the
-   operation vanish.
-
-   The depth is HARD. A fourth level is a file tree printed into a chronology and
-   nothing on this axis is worth that.
-
-   `activity-expanded?` answers for ONE fold key and the default it starts from: a row id
-   opens that step's evidence and its paths, `<row-id>#<path>` opens one file's patch, and
-   `<row-id>#` opens the paths and `#steps` opens the retained chronology past its preview.
-   Running, failed and cancelled steps remain visible outside that preview. One key per fold,
-   because a step that changed eleven files behind a single chevron made the reader find
-   a file by reading a header out of the diff. Steps start shut unless they are running
-   or failed; every `#` key starts shut."
+  "A joined, independently folded Activity band. Adjacent operation groups start shut;
+   live/failure context survives manual folding. Row, file and group keys retain reader choices.
+   #band folds Activity; #steps reveals retained groups beyond the four-group preview."
   [{:keys [node-id activity-rows activity-expanded? activity-omitted activity-artifacts]} max-w
    session-id]
   (let [rows
-        (vec activity-rows)
+        (activity-operation-rows activity-rows)
 
-        ;; A band in which some step opens reserves the disclosure slot on every row, so
-        ;; their words line up under one another; a band nothing opens in sets each step's
-        ;; words one space after its mark, the way the companion does.
         slot?
-        (boolean (some activity-row-openable? (concat rows (mapcat :children rows))))
+        true
 
         expanded?
         (let [answer (or activity-expanded? (constantly false))]
           (fn [item-key default-open?]
             (boolean (answer item-key default-open?))))
+
+        band-open?
+        (expanded? "#band" true)
 
         show-all?
         (expanded? "#steps" false)
@@ -5750,7 +5597,7 @@
         {:session-id (str session-id)}
 
         blank
-        {:line (str activity-marker activity-margin activity-rail) :meta nil}
+        {:line activity-marker :meta nil}
 
         diff-entries
         (fn [item-id diff ^long col]
@@ -5973,10 +5820,7 @@
                                                                         (long deletions)))
                                                            (str " +" additions " −" deletions)))
 
-                                                       ;; A step that stands for several changes keeps ONE mark on the rail and
-                                                       ;; hangs its children under it, sharing that mark's left edge: nested rows
-                                                       ;; carry no mark of their own, because the indent already says whose they are.
-                                                       ;;
+                                                       ;; Only child rows are indented, never a top-level operation.
                                                        ;; The header stays visible; only content follows the disclosure.
                                                        ;; Live and failed content starts open until the reader chooses.
                                                        openable?
@@ -5984,35 +5828,29 @@
 
                                                        open?
                                                        (and openable?
-                                                            (expanded? id
-                                                                       (contains? #{:running
-                                                                                    :failed}
-                                                                                  state)))
+                                                            (expanded?
+                                                              id
+                                                              (and (not (:activity-group? row))
+                                                                   (contains? #{:running :failed}
+                                                                              state))))
 
-                                                       ;; The mark, one space, the words - with the band's disclosure slot
-                                                       ;; between them only when some step in the band has something to open.
                                                        prefix
-                                                       (str (if (zero? (long depth))
-                                                              (str activity-margin
-                                                                   activity-tick
-                                                                   (activity-row-glyph row)
-                                                                   " ")
-                                                              (activity-lead (- col
-                                                                                (if slot? 2 0))))
-                                                            (when slot?
-                                                              (if openable?
-                                                                (str (if open? "▾" "▸") " ")
-                                                                "  "))
+                                                       (str (activity-lead col)
                                                             lead-word
                                                             (when object (str " " object))
                                                             (when caption (str " · " caption))
                                                             delta)
 
+                                                       suffix
+                                                       (str/join "  "
+                                                                 (remove str/blank?
+                                                                   [(activity-row-tail row)
+                                                                    (when openable?
+                                                                      (if open? "▾" "▸"))]))
+
                                                        line
-                                                       (first (with-right-suffix [prefix]
-                                                                                 (activity-row-tail
-                                                                                   row)
-                                                                                 width))
+                                                       (first
+                                                         (with-right-suffix [prefix] suffix width))
 
                                                        error
                                                        (first (filter #(= "error"
@@ -6026,22 +5864,19 @@
                                                        head
                                                        {:line (str activity-marker line)
                                                         :meta
-                                                        (merge
-                                                          meta-base
-                                                          {:kind :activity-row
-                                                           :headline-prefix prefix
-                                                           :right-suffix (activity-row-tail row)
-                                                           :item-id id
-                                                           :node-id (when openable?
-                                                                      (str node-id ":" id))
-                                                           :collapsed? (not open?)
-                                                           :status-tone (activity-row-tone row)
-                                                           :status-glyph (activity-row-glyph row)
-                                                           :glyph-col
-                                                           (when (zero? (long depth))
-                                                             (+ (long (count activity-margin)) 2))
-                                                           :operation-col col
-                                                           :operation-label lead-word})}
+                                                        (merge meta-base
+                                                               {:kind :activity-row
+                                                                :headline-prefix prefix
+                                                                :right-suffix suffix
+                                                                :item-id id
+                                                                :node-id (when openable?
+                                                                           (str node-id ":" id))
+                                                                :collapsed? (not open?)
+                                                                :status-tone (activity-row-tone row)
+                                                                :status-glyph (activity-row-glyph
+                                                                                row)
+                                                                :operation-col col
+                                                                :operation-label lead-word})}
 
                                                        detail-row
                                                        {:line (str activity-marker
@@ -6068,25 +5903,26 @@
                                                        nested-entries
                                                        (fn []
                                                          (:entries
-                                                           (reduce (fn [{:keys [entries prev-open?]}
-                                                                        child]
-                                                                     (let [chunk
-                                                                           (row-entry child 1)
+                                                           (reduce
+                                                             (fn [{:keys [entries prev-open?]}
+                                                                  child]
+                                                               (let [chunk
+                                                                     (row-entry child
+                                                                                (inc (long depth)))
 
-                                                                           open-child?
-                                                                           (< 1 (count chunk))]
+                                                                     open-child?
+                                                                     (< 1 (count chunk))]
 
-                                                                       {:entries
-                                                                        (into (cond-> entries
-                                                                                (and (seq entries)
-                                                                                     (or
-                                                                                       prev-open?
-                                                                                       open-child?))
-                                                                                (conj blank))
-                                                                              chunk)
-                                                                        :prev-open? open-child?}))
-                                                                   {:entries [] :prev-open? false}
-                                                                   nested)))]
+                                                                 {:entries
+                                                                  (into (cond-> entries
+                                                                          (and (seq entries)
+                                                                               (or prev-open?
+                                                                                   open-child?))
+                                                                          (conj blank))
+                                                                        chunk)
+                                                                  :prev-open? open-child?}))
+                                                             {:entries [] :prev-open? false}
+                                                             nested)))]
 
                                                    (cond-> [head]
                                                      (and open? (seq content))
@@ -6099,7 +5935,7 @@
                                                              (= :running state)))
 
                                                      (and detail
-                                                          open?
+                                                          (or open? (= :failed state))
                                                           (or (nil? presentation)
                                                               (= :failed state)))
                                                      (conj detail-row)
@@ -6144,7 +5980,7 @@
                                                      (and open? (or (seq touched) (seq diffs)))
                                                      (into (change-entries id touched diffs col))
 
-                                                     (and open? error)
+                                                     (and (or open? (= :failed state)) error)
                                                      (into (error-entries id error col))
 
                                                      (and open? (:is-truncated row))
@@ -6157,17 +5993,22 @@
                                                                          {:kind :activity-evidence
                                                                           :item-id id})})
 
-                                                     ;; Three levels - step, change, paths - is the whole depth either surface draws.
-                                                     (and open? (seq nested) (zero? (long depth)))
+                                                     (and (not open?) (seq nested))
+                                                     (into (mapcat #(row-entry % (inc (long depth)))
+                                                                   (remove #(= :succeeded
+                                                                               (activity-row-state
+                                                                                 %))
+                                                                     nested)))
+
+                                                     (and open? (seq nested))
                                                      (into (nested-entries))))))
 
         more-entry
         (when (pos? hidden)
           (let [label (more-rule
-                        (if show-all? "show fewer steps" (str "show " (more-count hidden "step")))
-                        (max 1 (- width (long (count activity-margin)) 2)))]
-            {:line (str activity-marker
-                        (ellipsize-cols (str activity-margin activity-tick label) width))
+                        (if show-all? "show fewer groups" (str "show " (more-count hidden "group")))
+                        width)]
+            {:line (str activity-marker (ellipsize-cols label width))
              :meta (merge meta-base
                           {:kind :activity-more
                            :item-id "#steps"
@@ -6175,7 +6016,7 @@
                            :label label
                            :node-id (str node-id ":#steps")
                            :collapsed? (not show-all?)
-                           :mark-col (+ (long (count activity-margin)) 2)})}))
+                           :mark-col 0})}))
 
         ;; A hard transport limit is not a disclosure: those bytes are unavailable.
         omitted-entry
@@ -6184,20 +6025,61 @@
                            " step"
                            (when (not= 1 activity-omitted) "s")
                            " omitted · Activity limit")]
-            {:line (str activity-marker
-                        (ellipsize-cols (str activity-margin activity-rail " " label) width))
-             :meta (merge meta-base
-                          {:kind :activity-more
-                           :item-id "omitted"
-                           :mark ""
-                           :label label
-                           :mark-col (+ (long (count activity-margin)) 2)})}))]
+            {:line (str activity-marker (ellipsize-cols label width))
+             :meta
+             (merge meta-base
+                    {:kind :activity-more :item-id "omitted" :mark "" :label label :mark-col 0})}))]
 
-    (vec (concat [blank]
-                 (mapcat identity (interpose [blank] (map row-entry shown)))
-                 (when more-entry [more-entry])
-                 (when omitted-entry [omitted-entry])
-                 [blank]))))
+    (when (or (seq rows) (pos? (long (or activity-omitted 0))))
+      (let [states
+            (frequencies (map activity-row-state activity-rows))
+
+            status
+            (str/join " · "
+                      (for [state
+                            [:running :failed :cancelled]
+
+                            :when (get states state)]
+
+                        (str (get states state) " " (name state))))
+
+            summary
+            (if band-open?
+              (str (count activity-rows) " operation" (when (not= 1 (count activity-rows)) "s"))
+              (str/join " · "
+                        (map #(or (activity-field (:presentation %) :headline) (:operation %))
+                             rows)))
+
+            suffix
+            (str/join " · "
+                      (remove str/blank?
+                        [status summary
+                         (when (and (not band-open?) (pos? (long (or activity-omitted 0))))
+                           (str activity-omitted " omitted"))]))
+
+            prefix
+            (band-label "ACTIVITY")
+
+            suffix
+            (str (ellipsize-cols suffix (max 0 (- (long width) 12))) "  " (if band-open? "▾" "▸"))
+
+            header
+            {:line (str activity-marker (first (with-right-suffix [prefix] suffix width)))
+             :meta (merge meta-base
+                          {:kind :activity-header
+                           :headline-prefix prefix
+                           :right-suffix suffix
+                           :node-id (str node-id ":#band")
+                           :item-id "#band"
+                           :collapsed? (not band-open?)
+                           :operation-col 0
+                           :operation-label "ACTIVITY"})}]
+
+        (vec (concat [header]
+                     (when band-open? (mapcat row-entry shown))
+                     (when (and band-open? more-entry) [more-entry])
+                     (when (and band-open? omitted-entry) [omitted-entry])
+                     [blank]))))))
 
 (defn- run-row-entries
   "Transcript receipts for the extension runs a form left behind. Activity is not one
@@ -6451,7 +6333,7 @@
                       texts)]
 
             (when (seq entries)
-              ;; THINKING ALWAYS collapses behind the plain ▸ THINKING badge
+              ;; THINKING ALWAYS collapses behind its plain THINKING badge
               ;; (op-row look) — live or finalized — to match the tool
               ;; affordance. `live-preview?` no longer forces it open; the
               ;; user expands on demand and the state persists across frames.
@@ -6721,14 +6603,12 @@
                         code-rows
                         (vec (mapcat identity code-line-groups))
 
-                        ;; Like the THINKING head: chevron, name, and a tally while folded. A
+                        ;; Like the THINKING head: a flush name, tally and trailing chevron. A
                         ;; failed call turns the NAME red instead of dragging its error headline
                         ;; onto the control row: the band stays the program, and the message
                         ;; keeps its own red row under the code (`inline-error-message-lines`).
                         header
-                        (str "  "
-                             (if code-expanded? "▾ " "▸ ")
-                             (if error
+                        (str (if error
                                (str p/INLINE_ERR_ON (band-label "CODE") p/INLINE_ERR_OFF)
                                (band-label "CODE"))
                              (when-not code-expanded? (str "  +" (count code-rows) " more")))
@@ -6737,7 +6617,9 @@
                         (and code-node-id (>= header-width 20))
 
                         suffix
-                        (str (when copy? "❐") (when duration (str "  " duration)))
+                        (str (if code-expanded? "▾" "▸")
+                             (when duration (str "  " duration))
+                             (when copy? "  ❐"))
 
                         headline-prefix
                         header
@@ -6749,14 +6631,13 @@
                             [(line-entry (str c-marker ""))
                              {:line (str c-marker header)
                               :meta {:kind :toggle-details
-                                     :band-flush? true
                                      :headline-prefix headline-prefix
                                      :right-suffix suffix
                                      :node-id code-node-id
                                      :session-id session-id
                                      :collapsed? (not code-expanded?)
                                      :copy-text code-text
-                                     :copy-width (when copy? (inc (p/display-width suffix)))}}]
+                                     :copy-width (when copy? 2)}}]
                             [])
                           (if code-expanded?
                             (conj (into [(line-entry (str c-marker ""))]
@@ -6907,17 +6788,15 @@
                   (mapv #(line-entry (str err-result-marker %))
                         ;; A failed call is where the terminal was most silent: the
                         ;; companion bands it `Failed` and still paints the figure, so
-                        ;; the error headline carries it — right-aligned inside the two
-                        ;; columns every error row is inset by, and never when a card
-                        ;; head already wears it.
+                        ;; the error headline carries it, right-aligned at the same text edge,
+                        ;; and never when a card head already wears it.
                         (cond-> (mapcat #(wrap-text (form-error-headline %) fill-w)
                                         (or (:group-errors form) [error]))
                           (and (nil? card)
                                (not (and code-node-id (seq c-lines)))
                                (some? result-duration-ms))
                           (with-right-suffix (vis/format-duration result-duration-ms)
-                                             (max 1
-                                                  (- (long fill-w) (long code-text-inset-cols)))))))
+                                             (max 1 (long fill-w))))))
 
                 code-block
                 (vec c-lines)
@@ -6960,10 +6839,10 @@
 
             (vec (concat comment-block
                          code-block
+                         activity-surface
                          (when (or (empty? code-block) code-expanded?) execution-details)
                          artifact-block
-                         generic-run-entries
-                         activity-surface))))
+                         generic-run-entries))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result

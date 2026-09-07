@@ -41,6 +41,25 @@ def test_method_activity_is_explicit_and_does_not_inherit_a_fake_state():
     assert set(vis._ACTIVITY_PRESENTERS) == set(_contracts.ACTIVITY["presenters"])
 
 
+@pytest.mark.parametrize(
+    "sample",
+    json.loads((_contracts._DATA / "fixtures/activity-groups.json").read_text()),
+    ids=lambda sample: sample["name"],
+)
+def test_shared_operation_groups(sample):
+    from blockether.vis.activity import ActivityProjection
+
+    projection = ActivityProjection.from_wire(sample["projection"])
+    assert [
+        {"id": group.id, "label": group.label, "rows": [row.id for row in group.rows]}
+        for group in projection.groups
+    ] == sample["groups"]
+    assert projection.to_wire() == sample["projection"]
+    if projection.groups:
+        with pytest.raises(FrozenInstanceError):
+            projection.groups[0].label = "changed"
+
+
 def test_activity_event_uses_the_shared_fixture_and_named_records():
     from blockether.vis.activity import ActivityProjection
 

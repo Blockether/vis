@@ -63,3 +63,26 @@
   [value]
   (when (and (document/valid-json? "activity" "projection" value) (valid-projection? value))
     (wire/->engine value)))
+
+(defn operation-groups
+  "Chronological, adjacent operation runs for an admitted receipt (engine spelling).
+   Labels come only from the canonical vocabulary; unknown operations remain separate.
+   Preserve rows and shell evidence, using the first invocation for stable disclosure identity."
+  [rows]
+  (reduce (fn [groups row]
+            (let [label
+                  (get-in vocabulary ["operation_groups" (:operation row)])
+
+                  previous
+                  (peek groups)
+
+                  first-row
+                  (if (and (= "shell" (:operation row)) (seq (:children row)))
+                    (first (:children row))
+                    row)]
+
+              (if (and label (= label (:label previous)))
+                (update-in groups [(dec (count groups)) :rows] conj row)
+                (conj groups {:id (:id first-row) :label label :rows [row]}))))
+          []
+          (sort-by :sequence rows)))

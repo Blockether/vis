@@ -19,6 +19,34 @@
  */
 import activityContract from "../../../../packages/vis-contract/resources/vis-contract/activity.json";
 const ACTIVITY_LIMITS = activityContract.limits;
+
+export type OperationGroup = {
+  id: string;
+  label: string | null;
+  rows: ActivityRow[];
+};
+
+/** Portable adjacent runs. Keep engine shell groups intact and their launch identity stable. */
+export function operationGroups(
+  rows: readonly ActivityRow[],
+): OperationGroup[] {
+  const labels: Readonly<Record<string, string>> =
+    activityContract.operation_groups;
+  const groups: OperationGroup[] = [];
+  for (const row of [...rows].sort((a, b) => a.sequence - b.sequence)) {
+    const label = Object.hasOwn(labels, row.operation)
+      ? labels[row.operation]
+      : null;
+    const last = groups.at(-1);
+    if (label && last?.label === label) last.rows.push(row);
+    else {
+      const first =
+        row.operation === "shell" ? (row.children?.[0] ?? row) : row;
+      groups.push({ id: first.id, label, rows: [row] });
+    }
+  }
+  return groups;
+}
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
