@@ -302,7 +302,6 @@ const currentPlist = readFileSync(infoPlist, 'utf8');
 const launchStoryboardEntry = /[\t ]*<key>UILaunchStoryboardName<\/key>\n[\t ]*<string>[^<]*<\/string>\n/;
 const launchStoryboardStale = launchStoryboardEntry.test(currentPlist);
 const missingPlistEntries = plistEntries.filter(([key]) => !currentPlist.includes(`<key>${key}</key>`));
-const plistOk = missingPlistEntries.length === 0 && !launchStoryboardStale;
 let preparedPlist = currentPlist.replace(launchStoryboardEntry, '');
 if (missingPlistEntries.length > 0) {
   const at = preparedPlist.lastIndexOf('</dict>');
@@ -310,6 +309,18 @@ if (missingPlistEntries.length > 0) {
   const additions = `${missingPlistEntries.map(([, xml]) => xml).join('\n')}\n`;
   preparedPlist = preparedPlist.slice(0, at) + additions + preparedPlist.slice(at);
 }
+// Existing generated projects already have CFBundleURLTypes, often with only
+// vis://. The key's presence (or the bundle ID in CFBundleURLName) does not
+// register the OAuth callback scheme; prepare and --check must inspect its array.
+preparedPlist = preparedPlist.replace(
+  /(<key>CFBundleURLSchemes<\/key>\s*<array>)([\s\S]*?)(<\/array>)/g,
+  (entry, start, schemes, end) =>
+    /<string>\s*vis\s*<\/string>/.test(schemes) &&
+    !/<string>\s*com\.blockether\.viscompanion\s*<\/string>/.test(schemes)
+      ? `${start}${schemes}<string>com.blockether.viscompanion</string>${end}`
+      : entry,
+);
+const plistOk = !launchStoryboardStale && preparedPlist === currentPlist;
 
 // ── 4. share extension + App Intents, and the Xcode target that builds them ───
 //
@@ -1519,7 +1530,7 @@ if (check) {
     console.log('· ios: prepared stock Capacitor host with required app capabilities, branded icon and launch screen, share extension, Shortcuts, badge extension, public speech bridge and host plugin');
     process.exit(0);
   }
-  const missing = missingPlistEntries.map(([key]) => key).join(', ');
+  const missing = missingPlistEntries.map(([key]) => key).join(', ') || 'updated app capabilities';
   die(
     !appIconOk
       ? 'ios: generated AppIcon is not the tracked Vis icon — run `node scripts/ios-prepare.mjs`'
@@ -1538,7 +1549,7 @@ if (check) {
                    : !oauthOk ? 'ios: no OAuth loopback browser — run `node scripts/ios-prepare.mjs`'
                    : !splashOk
                     ? 'ios: launch screen still shows Capacitor\'s splash — run `node scripts/ios-prepare.mjs`'
-                    : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
+                    : `ios: Info.plist needs ${missing} — run \`node scripts/ios-prepare.mjs\``,
   );
 }
 
@@ -1615,7 +1626,7 @@ if (project !== projectBefore) writeFileSync(pbxprojPath, project);
 console.log(
   `· ios: ${delegateOk ? 'AppDelegate already prepared' : 'prepared AppDelegate'}; ${
     boardOk ? 'stock Capacitor bridge' : 'removed the viewport bridge'
-  }; ${plistOk ? 'app capabilities already present' : `stamped ${missingPlistEntries.map(([key]) => key).join(', ')}`
+  }; ${plistOk ? 'app capabilities already present' : `stamped ${missingPlistEntries.map(([key]) => key).join(', ') || 'app capabilities'}`
   }; ${appIconOk ? 'branded icon already present' : 'stamped branded app icon'}; ${
     shareOk ? 'share extension + Shortcuts already present' : 'stamped VisShare extension + App Intents'
   }; ${badgeOk ? 'badge extension already present' : 'stamped VisNotify extension + VisBadge plugin'}; ${
