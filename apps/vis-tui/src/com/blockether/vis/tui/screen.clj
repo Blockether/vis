@@ -2294,44 +2294,12 @@
 
       (components/button! g col row label :jump-bottom))))
 
-(defn- open-click-target!
-  ([{:keys [kind url]}]
-   (vis/worker-future "vis-tui-open-click-target"
-                      #(try (case kind
-                              :file
-                              (opener/open-file-in-editor! url)
-
-                              ;; Inline transcript image: the PNG lives in the
-                              ;; system temp dir (outside the workspace), so the
-                              ;; cwd-confined `open!` would reject it — use the
-                              ;; local-file opener (OS previewer).
-                              :image
-                              (opener/open-local! url)
-
-                              ;; A `vis-doc` card: the PDF/HTML the sandbox
-                              ;; produced lives in the display cache outside the
-                              ;; workspace, so it takes the same local-file
-                              ;; opener the inline images use.
-                              :doc
-                              (opener/open-local! url)
-
-                              (opener/open! url))
-                            (catch Throwable _ nil))))
-  ([^TerminalScreen _screen ref] (open-click-target! ref)))
-
-(defn- inspect-attachment!
-  "Open a staged item in the OS viewer without requiring it to be under cwd."
-  [attachment]
-  (when-let [path (:path attachment)]
-    (vis/worker-future "vis-tui-inspect-attachment"
-                       #(try (opener/open-local! path) (catch Throwable _ nil)))))
-
 (defn- open-produced-artifact!
-  [session-id row]
+  [session-id target]
   (vis/worker-future
     "vis-tui-open-produced-artifact"
     #(try
-       (if-let [file (artifact-inspector/materialize-artifact! session-id row)]
+       (if-let [file (artifact-inspector/materialize-artifact! session-id target)]
          (let [{:keys [status error]} (opener/open-local! file)]
            (when-not (= :ok status)
              (vis/notify! (or error "Artifact could not be opened")
@@ -2340,6 +2308,42 @@
          (vis/notify! "Artifact bytes are unavailable." :level :warn :ttl-ms status-error-ttl-ms))
        (catch Throwable _
          (vis/notify! "Artifact could not be opened." :level :warn :ttl-ms status-error-ttl-ms)))))
+
+(defn- open-click-target!
+  ([{:keys [kind url session-id]}]
+   (if (and (= :url kind) (re-find #"(?i)^attachment:" (str url)))
+     ;; Capture the clicked session before the worker runs: changing tabs must
+     ;; not resolve the link against another session's attachments.
+     (open-produced-artifact! (or session-id (get-in @state/app-db [:session :id])) url)
+     (vis/worker-future "vis-tui-open-click-target"
+                        #(try (case kind
+                                :file
+                                (opener/open-file-in-editor! url)
+
+                                ;; Inline transcript image: the PNG lives in the
+                                ;; system temp dir (outside the workspace), so the
+                                ;; cwd-confined `open!` would reject it — use the
+                                ;; local-file opener (OS previewer).
+                                :image
+                                (opener/open-local! url)
+
+                                ;; A `vis-doc` card: the PDF/HTML the sandbox
+                                ;; produced lives in the display cache outside the
+                                ;; workspace, so it takes the same local-file
+                                ;; opener the inline images use.
+                                :doc
+                                (opener/open-local! url)
+
+                                (opener/open! url))
+                              (catch Throwable _ nil)))))
+  ([^TerminalScreen _screen ref] (open-click-target! ref)))
+
+(defn- inspect-attachment!
+  "Open a staged item in the OS viewer without requiring it to be under cwd."
+  [attachment]
+  (when-let [path (:path attachment)]
+    (vis/worker-future "vis-tui-inspect-attachment"
+                       #(try (opener/open-local! path) (catch Throwable _ nil)))))
 
 (defn- open-attachment-inspector!
   "Open the unified staged-file and whole-session artifact surface. Removing a

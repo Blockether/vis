@@ -239,21 +239,38 @@
   [^TerminalScreen screen staged artifacts load-error]
   (dlg/run-modal! screen (inspector-modal-component staged artifacts load-error)))
 
+(defn- artifact-link-row!
+  [session-id url]
+  (when-let [[_ attachment-id]
+             (re-matches
+               #"(?i)attachment://([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+               url)]
+    (when-let [artifact (some #(when (= (str/lower-case attachment-id) (field % "attachment_id")) %)
+                              (:artifacts (fetch-session-artifacts! session-id)))]
+      {:filename (field artifact "filename")
+       :iteration-id (field artifact "iteration_id")
+       :index (field artifact "index")})))
+
 (defn materialize-artifact!
   "Fetch one produced artifact's durable bytes and write them under its original
-   basename in a unique temporary directory. Returns the local File or nil."
-  [session-id {:keys [filename iteration-id index]}]
-  (when (and (not (str/blank? (str session-id)))
-             (not (str/blank? (str iteration-id)))
-             (number? index))
-    (when-let [^bytes bytes (vis/gateway-iteration-attachment-bytes session-id iteration-id index)]
-      (let [dir (doto (File. (System/getProperty "java.io.tmpdir")
-                             (str "vis-artifact-" (random-uuid)))
-                  (.mkdirs))
-            basename (let [name (.getName (File. (str filename)))]
-                       (if (str/blank? name) "artifact.bin" name))
-            target (File. dir basename)]
+   basename in a unique temporary directory. Returns the local File or nil.
+   `target` is an inspector row or an attachment://<uuid> link. Links resolve the
+   exact version in this session's human-visible index, never a filesystem path."
+  [session-id target]
+  (let [{:keys [filename iteration-id index]}
+        (if (string? target) (artifact-link-row! session-id target) target)]
+    (when (and (not (str/blank? (str session-id)))
+               (not (str/blank? (str iteration-id)))
+               (number? index))
+      (when-let [^bytes bytes
+                 (vis/gateway-iteration-attachment-bytes session-id iteration-id index)]
+        (let [dir (doto (File. (System/getProperty "java.io.tmpdir")
+                               (str "vis-artifact-" (random-uuid)))
+                    (.mkdirs))
+              basename (let [name (.getName (File. (str filename)))]
+                         (if (str/blank? name) "artifact.bin" name))
+              target (File. dir basename)]
 
-        (with-open [out (FileOutputStream. target)]
-          (.write out bytes))
-        target))))
+          (with-open [out (FileOutputStream. target)]
+            (.write out bytes))
+          target)))))

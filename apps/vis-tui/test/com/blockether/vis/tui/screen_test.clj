@@ -11,6 +11,7 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.render :as render]
@@ -1615,6 +1616,170 @@ therapy line 2"
           (fn []
             (open-click-target! {:kind :url :url "https://example.com"})
             (expect (= "https://example.com" (deref url-opened 1000 ::timeout))))))))
+
+(def ^:private linked-artifact-id "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+
+(def ^:private linked-artifact-url (str "attachment://" linked-artifact-id))
+
+(defn- attachment-click-outcome
+  [target opts]
+  (let [{:keys [artifacts bytes session-id viewer-result]}
+        (merge {:artifacts [{"attachment_id" linked-artifact-id
+                             "filename" "vis-czapka.zip"
+                             "iteration_id" "iteration-old"
+                             "index" 0}
+                            {"attachment_id" "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+                             "filename" "vis-czapka.zip"
+                             "iteration_id" "iteration-new"
+                             "index" 1}]
+                :bytes "linked version"
+                :session-id "session-1"
+                :viewer-result {:status :ok}}
+               opts)
+
+        requests
+        (atom [])
+
+        opened
+        (atom nil)
+
+        urls
+        (atom [])
+
+        notifications
+        (atom [])]
+
+    (with-redefs [state/app-db
+                  (atom {:session {:id session-id}})
+
+                  vis/worker-future
+                  (fn [_ run]
+                    (delay (run)))
+
+                  vis/gateway-session-artifacts
+                  (fn [sid]
+                    (swap! requests conj [:index sid])
+                    artifacts)
+
+                  vis/gateway-iteration-attachment-bytes
+                  (fn [sid iid index]
+                    (swap! requests conj [:bytes sid iid index])
+                    (when bytes (.getBytes ^String bytes "UTF-8")))
+
+                  opener/open-local!
+                  (fn [file]
+                    (try (reset! opened [(.getName ^java.io.File file) (slurp file)])
+                         viewer-result
+                         (finally (.delete ^java.io.File file)
+                                  (.delete (.getParentFile ^java.io.File file)))))
+
+                  opener/open!
+                  (fn [url]
+                    (swap! urls conj url))
+
+                  vis/notify!
+                  (fn [message & kvs]
+                    (swap! notifications conj [message (apply hash-map kvs)]))]
+
+      (let [worker (open-click-target! target)]
+        ;; Run only AFTER the user switches tabs, deterministically.
+        (swap! state/app-db assoc-in [:session :id] "session-after-click")
+        @worker)
+      {:requests @requests :opened @opened :urls @urls :notifications @notifications})))
+
+;; Regression: assistant attachment:// links looked clickable but the URL opener
+;; silently rejected them. An id names one exact version, not the newest filename.
+(defdescribe
+  attachment-link-click-test
+  (it "opens the exact linked version and captures the session before starting work"
+      (doseq [url [linked-artifact-url (str/upper-case linked-artifact-url)]]
+        (let [result (attachment-click-outcome {:kind :url :url url} {})]
+          (expect (= [[:index "session-1"] [:bytes "session-1" "iteration-old" 0]]
+                     (:requests result)))
+          (expect (= ["vis-czapka.zip" "linked version"] (:opened result)))
+          (expect (empty? (:urls result)))
+          (expect (empty? (:notifications result))))))
+  (it "prefers a session carried by the click target to the active tab"
+      (let [result (attachment-click-outcome
+                     {:kind :url :url linked-artifact-url :session-id "clicked-session"}
+                     {})]
+        (expect (= [[:index "clicked-session"] [:bytes "clicked-session" "iteration-old" 0]]
+                   (:requests result)))))
+  (it "reports invalid or unavailable links without handing them to the OS"
+      (doseq [[url opts requests] [["attachment://not-an-id" {} []] ["attachment://" {} []]
+                                   [(str linked-artifact-url "?download=1") {} []]
+                                   [linked-artifact-url {:session-id nil} []]
+                                   [linked-artifact-url {:artifacts []} [[:index "session-1"]]]
+                                   [linked-artifact-url {:artifacts nil} [[:index "session-1"]]]]]
+        (let [result (attachment-click-outcome {:kind :url :url url} opts)]
+          (expect (= requests (:requests result)))
+          (expect (nil? (:opened result)))
+          (expect (empty? (:urls result)))
+          (expect (= 1 (count (:notifications result))))
+          (expect (= :warn (get-in result [:notifications 0 1 :level]))))))
+  (it "reports missing bytes and local viewer failures"
+      (doseq [opts [{:bytes nil}
+                    {:viewer-result {:status :spawn-failed :error "No system viewer available"}}]]
+        (let [result (attachment-click-outcome {:kind :url :url linked-artifact-url} opts)]
+          (expect (= [[:index "session-1"] [:bytes "session-1" "iteration-old" 0]]
+                     (:requests result)))
+          (expect (empty? (:urls result)))
+          (expect (= 1 (count (:notifications result))))
+          (expect (= :warn (get-in result [:notifications 0 1 :level])))
+          (when-let [error (get-in opts [:viewer-result :error])]
+            (expect (= error (get-in result [:notifications 0 0])))))))
+  (it
+    "opens the attachment from the actual painted Markdown link hit region"
+    (let [rendered
+          (render/format-answer-markdown-data (vis/markdown->ast
+                                                (str "[Pobierz ZIP](" linked-artifact-url ")"))
+                                              60
+                                              nil)
+
+          capture
+          (cap/capture!
+            {:cols 80
+             :rows 8
+             :paint! (fn [{:keys [g screen]}]
+                       (try (.reset interactions/hit-map)
+                            (.beginFrame interactions/hit-map)
+                            (render/draw-chat-bubble! g
+                                                      {:role :assistant
+                                                       :text ""
+                                                       :prewrapped-lines (:lines rendered)
+                                                       :line-meta (:line-meta rendered)}
+                                                      0 2
+                                                      60 {:viewport-top 0 :viewport-h 8})
+                            (.commitFrame interactions/hit-map)
+                            (.refresh ^TerminalScreen screen)
+                            (first (for [row
+                                         (range 8)
+
+                                         col
+                                         (range 80)
+
+                                         :let [hit
+                                               (.lookup interactions/hit-map col row)]
+                                         :when (= :url (:kind hit))]
+
+                                     hit))
+                            (finally (.stopScreen ^TerminalScreen screen)
+                                     (.reset interactions/hit-map))))})
+
+          hit
+          (:ret capture)
+
+          {:keys [row col width]}
+          (:bounds hit)]
+
+      (expect (nil? (:error capture)))
+      (expect (= linked-artifact-url (:url hit)))
+      (expect (= "Pobierz ZIP"
+                 (subs (nth (str/split-lines (cap/frame-text capture)) row)
+                       col
+                       (+ (long col) (long width)))))
+      (expect (= ["vis-czapka.zip" "linked version"]
+                 (:opened (attachment-click-outcome hit {})))))))
 
 (defdescribe session-id-exit-print-test
              (it "prints the active session id after the TUI exits"
