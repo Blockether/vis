@@ -1575,11 +1575,10 @@ export function NotifyConnectionSwitch({
  *
  * - TARGET AND FACE ARE DIFFERENT. A ✕ either ends a band (`isBand`) with the band's
  *   full 48×48 target (36×36 for a mouse), stands alone at the end of a row
- *   (`isStandalone`) with a 44×44 target (28×28 for a mouse), or sits inside another
- *   control as a 32px mark (`mouse:size-6`). Band and standalone targets each carry a
- *   compact circular FACE: 32px for the band and 28px for a row, shrinking to 28px and
- *   24px for a mouse. The visible control rides the local rhythm while the invisible room
- *   around it keeps the way out comfortably hittable. A wrapped title can make the band
+ *   (`isStandalone`) on the same 32px / 28px control rhythm as the input, or sits
+ *   inside another control as a 32px mark (`mouse:size-6`). Band and standalone
+ *   controls each carry a compact circular FACE: 32px for the band and 28px for a
+ *   row, shrinking to 28px and 24px for a mouse. A wrapped title can make the band
  *   taller; the target still stretches with it while its face stays round.
  * - A BAND CLOSE IS A COMPACT BRANDED DISC, NOT A SECOND VERB. The two Blockether
  *   palettes carry the SAME amber pair, mirrored: on Light's dark title paper the face is
@@ -1616,7 +1615,7 @@ export function CloseButton({
    * face inside it stays on the control rhythm instead of inflating to the touch target.
    */
   isBand?: boolean;
-  /** This ✕ ends a row: its generous target carries a compact circular face. */
+  /** This ✕ ends a row: its compact target carries a smaller circular face. */
   isStandalone?: boolean;
 }) {
   const mark = <CloseIcon />;
@@ -1629,7 +1628,7 @@ export function CloseButton({
         isBand
           ? 'group w-12 self-stretch transition-opacity duration-150 focus-visible:outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-40 mouse:w-9'
           : isStandalone
-            ? 'group size-11 self-center focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 mouse:size-7'
+            ? 'group size-8 self-center focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 mouse:size-7'
             : 'size-8 self-center border-l border-current/20 transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current mouse:size-6'
       } ${className}`}
       {...props}

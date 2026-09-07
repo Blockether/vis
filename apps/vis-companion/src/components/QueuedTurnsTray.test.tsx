@@ -94,7 +94,7 @@ describe("queued turns tray", () => {
       expect(onError).toHaveBeenCalledWith("queue changed first"),
     );
   });
-  it("keeps one queued turn to one row instead of stacking a title above it", () => {
+  it("keeps the queued label while matching each row to the input rhythm", () => {
     render(
       <QueuedTurnsTray
         client={gateway()}
@@ -105,8 +105,17 @@ describe("queued turns tray", () => {
       />,
     );
 
+    expect(screen.getByText("Queued · 1")).toBeTruthy();
     const queue = screen.getByRole("region", { name: "Queued messages" });
-    expect(queue.parentElement?.childElementCount).toBe(1);
+    for (const row of queue.querySelectorAll('[role="listitem"]')) {
+      expect(row.className).not.toMatch(/(?:^|:)py-/);
+    }
+    for (const remove of screen.getAllByRole("button", {
+      name: /Remove queued message/,
+    })) {
+      expect(remove.className).toContain("size-8");
+      expect(remove.className).toContain("mouse:size-7");
+    }
   });
 
   it("keeps a long queue in a named keyboard-scrollable region", () => {
