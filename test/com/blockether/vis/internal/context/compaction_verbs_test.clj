@@ -829,6 +829,18 @@
         ;; Q/A weight alone (no iteration weights) still yields the clause
         (expect (= {"now" "saved 2/3 (67%, ~6k tok) · live t2/*"}
                    (folds-view [{"scopes" #{"t1"} "gist" "g"}] uni nil nil {1 6000})))))
+  (it "projects recorded folds without provider usage, receipts or a summary ledger"
+      (expect (= {"fold_count" 2}
+                 (get (eng/session-view {"engine_fold_count" 2}) "session_utilization"))))
+  (it "emits a count-only utilization delta even when the summary ledger is unchanged"
+      (let [before
+            (assoc base-ctx "engine_fold_count" 0)
+
+            after
+            (assoc before "engine_fold_count" 2)]
+
+        (expect (= "session[\"utilization\"][\"fold_count\"] = 2"
+                   (cr/render-ctx-delta (delta-map before) (delta-map after))))))
   (it "session-view merges only `now` INTO session_utilization — no top-level key, no `folds` leaf"
       (expect (not (contains? (eng/session-view base-ctx) "fold_sessions")))
       (let [util (get (eng/session-view (assoc base-ctx

@@ -122,6 +122,14 @@ def usage_percent(part, total):
     return min(100, int((100.0 * part / total) + 0.5))
 
 
+def fold_count_failures(usage):
+    """Verify executed prefix folds from engine accounting, never printed receipts."""
+    count = usage.get("fold_count")
+    if type(count) is not int or count != 1:
+        return [f"one prefix fold produced {count!r} recorded folds, expected 1"]
+    return []
+
+
 def cache_metric_failures(usage, result_tokens, provider_call_count, folded_prefix):
     """Independently reconcile one real run's provider, DB, and wire cache totals."""
     failures = []
@@ -183,6 +191,7 @@ def cache_metric_failures(usage, result_tokens, provider_call_count, folded_pref
             f"estimated samples {estimated_samples} exceed all samples {samples}"
         )
     if folded_prefix:
+        failures.extend(fold_count_failures(usage))
         if estimated_samples != 1:
             failures.append(
                 f"one prefix fold produced {estimated_samples} estimated samples, expected 1"
@@ -338,7 +347,7 @@ def run_one(job):
                 "--model",
                 model,
             ]
-            if sc.get("want_cache_metrics"):
+            if sc.get("want_cache_metrics") or sc.get("want_folded_prefix"):
                 command.append("--persist")
             command.append(sc["prompt"])
             p = subprocess.run(
@@ -366,7 +375,6 @@ def run_one(job):
 
         forms = []
         form_events = []
-        form_outputs = {}
         provider_calls = []
         tools = []
         errs = []
@@ -431,7 +439,6 @@ def run_one(job):
                 if sym:
                     tools.append(sym)
             elif ph == "form-result":
-                form_outputs[pl.get("scope", "")] = str(pl.get("stdout") or "")
                 if pl.get("error"):
                     e = pl.get("error")
                     errs.append(
@@ -502,7 +509,6 @@ def run_one(job):
                 detail.append(f"expected one prefix fold, observed {len(fold_forms)}")
             else:
                 fold_event = fold_forms[0]
-                fold_receipt = form_outputs.get(fold_event["scope"], "")
                 scope_match = re.match(r"t(\d+)/i(\d+)(?:/|$)", fold_event["scope"])
                 if not scope_match:
                     correct = False
@@ -518,12 +524,6 @@ def run_one(job):
                         correct = False
                         detail.append(
                             f"fold form did not use exact prior-prefix key: expected {expected_key!r}, got {fold_keys!r}"
-                        )
-                    expected_receipt = f"folded through t{turn}/i{iteration - 1}"
-                    if iteration <= 1 or expected_receipt not in fold_receipt:
-                        correct = False
-                        detail.append(
-                            f"fold receipt did not return to prior prefix: expected {expected_receipt!r}"
                         )
                     if not any(
                         isinstance(call["iteration"], int)
@@ -541,7 +541,7 @@ def run_one(job):
             detail.append("provider reported zero prompt-cache read tokens")
 
         cache_usage = None
-        if sc.get("want_cache_metrics"):
+        if sc.get("want_cache_metrics") or sc.get("want_folded_prefix"):
             if not result_session_id:
                 correct = False
                 detail.append("persistent run returned no session id")
@@ -552,7 +552,7 @@ def run_one(job):
                     )
                 except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
                     correct = False
-                    detail.append(f"could not read persisted cache metrics: {exc}")
+                    detail.append(f"could not read persisted usage metrics: {exc}")
                 else:
                     if usage_status != 200 or not isinstance(cache_usage, dict):
                         correct = False
@@ -560,12 +560,15 @@ def run_one(job):
                             f"usage endpoint returned status {usage_status} and {type(cache_usage).__name__}"
                         )
                     else:
-                        metric_failures = cache_metric_failures(
-                            cache_usage,
-                            result_tokens,
-                            len(provider_calls),
-                            bool(sc.get("want_folded_prefix")),
-                        )
+                        if sc.get("want_cache_metrics"):
+                            metric_failures = cache_metric_failures(
+                                cache_usage,
+                                result_tokens,
+                                len(provider_calls),
+                                bool(sc.get("want_folded_prefix")),
+                            )
+                        else:
+                            metric_failures = fold_count_failures(cache_usage)
                         if metric_failures:
                             correct = False
                             detail.extend(metric_failures)

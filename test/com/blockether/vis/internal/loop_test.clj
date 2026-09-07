@@ -130,80 +130,118 @@
 
 (defn- fold-usage-scenario
   "Drive Python folding, persisted accounting and the next provider request together."
-  [fold-code]
-  (let [router
-        (svar/make-router [{:id :lmstudio
-                            :base-url "http://127.0.0.1:1234/v1"
-                            :api-key "test"
-                            :models [{:name "model" :input-limit 1000000}]}])
+  ([fold-code] (fold-usage-scenario fold-code 0))
+  ([fold-code prior-folds]
+   (let [router
+         (svar/make-router [{:id :lmstudio
+                             :base-url "http://127.0.0.1:1234/v1"
+                             :api-key "test"
+                             :models [{:name "model" :input-limit 1000000}]}])
 
-        environment
-        (lp/create-environment router {:db :memory})
+         environment
+         (lp/create-environment router {:db :memory})
 
-        db
-        (:db-info environment)
+         db
+         (:db-info environment)
 
-        sid
-        (:session-id environment)
+         sid
+         (:session-id environment)
 
-        tid
-        (persistance/db-store-session-turn! db
-                                            {:parent-session-id sid
-                                             :user-request "fold settled work"})
+         _
+         (when (pos? prior-folds)
+           (let [prior-tid (persistance/db-store-session-turn! db
+                                                               {:parent-session-id sid
+                                                                :user-request "prior work"})]
+             (persistance/db-store-iteration! db
+                                              {:session-turn-id prior-tid
+                                               :idx 0
+                                               :code "compact()"
+                                               :status :done
+                                               :forms [{:vis/tool-name "python_execution"
+                                                        :src "compact()"
+                                                        :stdout ""
+                                                        :vis/fold-count prior-folds}]})))
 
-        requests
-        (atom [])
+         snapshots
+         (atom [])
 
-        steps
-        [{:input 150000 :code "print('settled evidence')"} {:input 157843 :code fold-code}
-         {:input 15614 :code "print('continue after fold')"} {:input 20736}]]
+         tid
+         (persistance/db-store-session-turn! db
+                                             {:parent-session-id sid
+                                              :user-request "fold settled work"})
 
-    (try (with-redefs [svar/ask-code!
-                       (fn [_ opts]
-                         (let [idx (count @requests)
-                               {:keys [input code]} (nth steps idx)]
+         requests
+         (atom [])
 
-                           (swap! requests conj (:messages opts))
-                           (merge {:api-usage {:input-tokens input :output-tokens 1} :tokens {}}
-                                  (if code
-                                    {:stop-reason :tool-calls
-                                     :tool-calls [{:id (str "call-" idx)
-                                                   :name "python_execution"
-                                                   :input {:code code}}]}
-                                    {:stop-reason :end :tool-calls [] :content "done"}))))]
-           (lp/iteration-loop environment "fold settled work" {:session-turn-id tid}))
-         (expect (= 4 (count @requests)))
-         (let [wire
-               (str/join "\n" (filter string? (tree-seq coll? seq (last @requests))))
+         steps
+         [{:input 150000 :code "print('settled evidence')"} {:input 157843 :code fold-code}
+          {:input 15614
+           :code "print('sandbox-fold-count:', session['utilization'].get('fold_count'))"}
+          {:input 20736}]]
 
-               readings
-               (re-seq #"last_request_tokens[^\n]*?(\d+)" wire)]
+     (try (with-redefs [svar/ask-code!
+                        (fn [_ opts]
+                          (let [idx (count @requests)
+                                {:keys [input code]} (nth steps idx)]
 
-           {:latest-input (some-> readings
-                                  last
-                                  second
-                                  parse-long)
-            :folds (:fold-count (persistance/db-session-usage-stats db sid))})
-         (finally (lp/dispose-environment! environment)))))
+                            (swap! requests conj (:messages opts))
+                            (swap! snapshots conj (ctx-loop/session-snapshot environment))
+                            (merge {:api-usage {:input-tokens input :output-tokens 1} :tokens {}}
+                                   (if code
+                                     {:stop-reason :tool-calls
+                                      :tool-calls [{:id (str "call-" idx)
+                                                    :name "python_execution"
+                                                    :input {:code code}}]}
+                                     {:stop-reason :end :tool-calls [] :content "done"}))))]
+            (lp/iteration-loop environment "fold settled work" {:session-turn-id tid}))
+          (expect (= 4 (count @requests)))
+          (let [wire
+                (str/join "\n" (filter string? (tree-seq coll? seq (last @requests))))
 
-(defdescribe post-fold-utilization-and-accounting-test
-             ;; Regression: a successful fold looked ineffective because the next request
-             ;; still carried pre-fold usage, and an unprinted receipt counted as zero folds.
-             (it "publishes fresh provider usage and counts a fold without its printed receipt"
-                 (expect (= {:latest-input 15614 :folds 1}
-                            (fold-usage-scenario
-                              "fold_session('-t1/i1', 'evidence retained')\nprint('folded')"))))
-             (it "counts folds invoked through a helper even when a later statement fails"
-                 (expect (= {:latest-input 15614 :folds 2}
-                            (fold-usage-scenario
-                              (str "def compact():\n    fold_session('-t1/i1', 'checkpoint')\n"
-                                   "compact()\ncompact()\nraise ValueError('after folds')")))))
-             (it "does not count fabricated receipts or a refused live-step fold"
-                 (expect (= {:latest-input 15614 :folds 0}
-                            (fold-usage-scenario
-                              (str
-                                "example = \"fold_session('-t1/i1', 'unused')\"\n"
-                                "print('folded through t1/i1')\nfold_session('t1/i2', 'live')"))))))
+                readings
+                (re-seq #"last_request_tokens[^\n]*?(\d+)" wire)
+
+                folds
+                (:fold-count (persistance/db-session-usage-stats db sid))]
+
+            (expect (= [prior-folds prior-folds folds folds]
+                       (mapv #(get-in % ["session_utilization" "fold_count"]) @snapshots)))
+            (expect (str/includes? wire (str "sandbox-fold-count: " folds)))
+            {:latest-input (some-> readings
+                                   last
+                                   second
+                                   parse-long)
+             :wire-folds (some-> (re-seq #"fold_count[^\n]*?(\d+)" wire)
+                                 last
+                                 second
+                                 parse-long)
+             :folds folds})
+          (finally (lp/dispose-environment! environment))))))
+
+(defdescribe
+  post-fold-utilization-and-accounting-test
+  ;; Regression: a successful fold looked ineffective because the next request
+  ;; still carried pre-fold usage, and an unprinted receipt counted as zero folds.
+  (it "publishes fresh provider usage and counts a fold without its printed receipt"
+      (expect (= {:latest-input 15614 :folds 1 :wire-folds 1}
+                 (fold-usage-scenario
+                   "fold_session('-t1/i1', 'evidence retained')\nprint('folded')"))))
+  (it "publishes the fold count when the Python block prints nothing"
+      (expect (= {:latest-input 15614 :folds 1 :wire-folds 1}
+                 (fold-usage-scenario "fold_session('-t1/i1', 'silent checkpoint')"))))
+  (it "seeds resumed utilization from recorded operations before the first request"
+      (expect (= {:latest-input 15614 :folds 4 :wire-folds 4}
+                 (fold-usage-scenario "fold_session('-t2/i1', 'resumed checkpoint')" 3))))
+  (it "counts folds invoked through a helper even when a later statement fails"
+      (expect (= {:latest-input 15614 :folds 2 :wire-folds 2}
+                 (fold-usage-scenario (str
+                                        "def compact():\n    fold_session('-t1/i1', 'checkpoint')\n"
+                                        "compact()\ncompact()\nraise ValueError('after folds')")))))
+  (it "does not count fabricated receipts or a refused live-step fold"
+      (expect (= {:latest-input 15614 :folds 0 :wire-folds 0}
+                 (fold-usage-scenario
+                   (str "example = \"fold_session('-t1/i1', 'unused')\"\n"
+                        "print('folded through t1/i1')\nfold_session('t1/i2', 'live')"))))))
 
 (defdescribe
   loop-stage-logging-test

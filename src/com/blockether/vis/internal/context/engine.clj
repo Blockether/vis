@@ -872,8 +872,10 @@
      - `ctx-loop/session-snapshot` binds this view as read-only `session`
 
    Keeps ONLY `model-facing-keys` (so engine bookkeeping never leaks) and
-   projects `\"engine_utilization\"` → `\"session_utilization\"`. The second
-   arity takes legacy `warnings` for call-site compatibility but ignores them.
+   projects `engine_utilization` → `session_utilization`. Its `fold_count`
+   is the session's executed-operation count, independent of receipts, summary
+   supersession and provider measurements. The second arity takes legacy
+   `warnings` for call-site compatibility but ignores them.
    Pure; STRING keys in and out."
   ([ctx] (session-view ctx nil))
   ([ctx _warnings]
@@ -884,7 +886,10 @@
    ;; breadcrumb where the step collapsed (with its file:line anchors), so nothing
    ;; is echoed. Before any request is measured (no universe) `folds-view` yields
    ;; `{}` and the breadcrumbs alone carry the gists until the next send re-stamps.
-   (let [budget
+   (let [fold-count
+         (get ctx "engine_fold_count")
+
+         budget
          (when (seq (get ctx "session_summaries"))
            (folds-view (get ctx "session_summaries")
                        (get ctx "engine_iter_universe")
@@ -898,7 +903,11 @@
                            (get ctx "engine_overbudget_hint_turn"))
 
          util
-         (-> (cond-> (or (get ctx "engine_utilization") (when (seq budget) {}))
+         (-> (cond-> (or (get ctx "engine_utilization")
+                         (when (or (seq budget) (some? fold-count)) {}))
+               (some? fold-count)
+               (assoc "fold_count" fold-count)
+
                (seq budget)
                (merge budget)
 

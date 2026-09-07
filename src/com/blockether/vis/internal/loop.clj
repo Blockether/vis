@@ -7868,6 +7868,15 @@
 
         _initial-utilization
         (when-let [ctx-atom (:ctx-atom environment)]
+          ;; Restore the same whole-session operation count used by usage stats.
+          ;; Live fold execution increments it before rendering the next delta;
+          ;; neither a printed receipt nor a provider measurement is required.
+          (when-let [sid (:session-id environment)]
+            (swap! ctx-atom assoc
+              "engine_fold_count"
+              (long (or (:fold-count (persistance/db-session-usage-stats (:db-info environment)
+                                                                         sid))
+                        0))))
           (if-let [measured (ctx-engine/utilization (:last-request-tokens previous-usage)
                                                     initial-context-limit
                                                     0

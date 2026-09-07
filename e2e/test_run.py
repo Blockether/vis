@@ -9,6 +9,7 @@ from e2e.run import cache_metric_failures, decode_usage_body, usage_percent
 class CacheMetricValidationTest(unittest.TestCase):
     def usage(self):
         return {
+            "fold_count": 1,
             "input_tokens": 30_000,
             "input_cache_read_tokens": 19_000,
             "prompt_cache_reusable_tokens": 20_000,
@@ -36,6 +37,7 @@ class CacheMetricValidationTest(unittest.TestCase):
         usage = self.usage()
         usage.update(
             {
+                "fold_count": 0,
                 "input_tokens": 29_999,
                 "cache_read_share_percent": 62,
                 "prompt_cache_estimated_sample_count": 0,
@@ -52,6 +54,17 @@ class CacheMetricValidationTest(unittest.TestCase):
         self.assertTrue(any("cache-read share" in failure for failure in failures))
         self.assertTrue(any("estimated samples" in failure for failure in failures))
         self.assertTrue(any("rebuilds" in failure for failure in failures))
+        self.assertTrue(any("recorded folds" in failure for failure in failures))
+
+    def test_fold_count_ignores_printed_receipts(self):
+        self.assertEqual([], run.fold_count_failures({"fold_count": 1}))
+        for count in (None, False, True, 0, 2):
+            with self.subTest(count=count):
+                self.assertTrue(
+                    run.fold_count_failures(
+                        {"fold_count": count, "stdout": "folded through t1/i2"}
+                    )
+                )
 
     def test_percentage_rounds_half_up_like_gateway(self):
         self.assertEqual(13, usage_percent(1, 8))
