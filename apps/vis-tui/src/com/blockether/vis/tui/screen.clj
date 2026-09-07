@@ -109,10 +109,8 @@
   120)
 
 (def ^:private slow-live-frame-threshold-ms
-  "Log live/streaming TUI frames at or above this wall-clock duration.
-
-   The normal live path runs at most every ~80ms; logging only slow frames keeps
-   the default log quiet while surfacing stutter candidates in Lanterna/layout."
+  "Log TUI frames at or above this wall-clock duration. Only slow frames
+   warn; every repaint contributes to the rate-limited trend."
   35)
 
 (def ^:private slow-refresh-threshold-ms
@@ -120,6 +118,90 @@
   20)
 
 (defn- nanos->ms [start-ns end-ns] (/ (double (- (long end-ns) (long start-ns))) 1000000.0))
+
+(defn- diagnostic-state
+  "Content-free local UI facts for a stall. Never log drafts, key characters,
+   progress payloads, view titles, credentials, or session configuration."
+  [db]
+  (let [max-scroll
+        (max 0
+             (- (long (or (get-in db [:layout :total-h]) 0))
+                (long (or (get-in db [:layout :inner-h]) 0))))
+
+        sc
+        (:scroll db)
+
+        lines
+        (get-in db [:input :lines])]
+
+    {:session-id (get-in db [:session :id])
+     :tab-id (:active-tab-id db)
+     :gateway-turn-id (:gateway-turn-id db)
+     :loading? (boolean (:loading? db))
+     :cancelling? (boolean (:cancelling? db))
+     :background-loading? (boolean (state/any-background-loading? db))
+     :turn-age-ms (when-let [started (:turn-start-ms db)]
+                    (max 0 (- (System/currentTimeMillis) (long started))))
+     :progress? (some? (:progress db))
+     :progress-iterations (count (get-in db [:progress :iterations]))
+     :open-views (count (remove lv/settled? (:live-views db)))
+     :dialog-open? (boolean (:dialog-open? db))
+     :messages (count (:messages db))
+     :input-lines (count lines)
+     :input-chars (reduce (fn [n line]
+                            (+ (long n) (count line)))
+                          0
+                          lines)
+     :scroll-mode (:mode sc)
+     :scroll-displayed (scroll/displayed sc max-scroll)
+     :scroll-desired (scroll/desired sc max-scroll)
+     :scroll-animating? (scroll/animating? sc max-scroll)
+     :render-version (:render-version db)}))
+
+(def ^:private ^:dynamic *frame-metrics*
+  "Phase measurements collected by the selected painter; the outer frame owns
+   the total, including work after terminal refresh, and emits exactly once."
+  nil)
+
+(defn- record-frame-phases! [data] (when *frame-metrics* (vreset! *frame-metrics* data)))
+
+(def ^:private slow-input-threshold-ms 100)
+
+(defn- log-slow-input!
+  "Time nonblocking polling or draft-key handling, never the deliberate idle read.
+   key-type is an enum name, NOT KeyStroke/toString or its character/text."
+  [phase key-type started-ns db]
+  (let [elapsed-ms (double (nanos->ms started-ns (System/nanoTime)))]
+    (when (>= elapsed-ms (long slow-input-threshold-ms))
+      (tel/log! {:level :warn
+                 :id ::slow-input
+                 :data (assoc (diagnostic-state db)
+                         :phase phase
+                         :key-type key-type
+                         :elapsed-ms elapsed-ms)}
+                (format "slow TUI input %s: %.1fms" (name phase) elapsed-ms)))))
+
+(defn- begin-input-timing!
+  "Keep one content-free timer for ordinary editing, not commands/modal dwell time."
+  [pending ^KeyStroke key db]
+  (when (and key
+             (not (.isCtrlDown key))
+             (not (.isAltDown key))
+             (not (get-in db [:input :prefix]))
+             (not (:human-input db))
+             (not (:detail-labels-active? db))
+             (not (:attachment-focus? db))
+             (contains? #{KeyType/Character KeyType/Backspace KeyType/Delete KeyType/ArrowLeft
+                          KeyType/ArrowRight KeyType/Home KeyType/End}
+                        (.getKeyType key)))
+    (vreset! pending [(.name (.getKeyType key)) (System/nanoTime)])))
+
+(defn- finish-input-timing!
+  "Finish before the next poll/idle wait so human think time is never a stall."
+  [pending db]
+  (when-let [[key-type started-ns] @pending]
+    (vreset! pending nil)
+    (log-slow-input! :handle key-type started-ns db)))
 
 (defn- paint-phase-detail
   "Render the sub-paint phase split as a compact ` [messages n.n, chrome n.n,
@@ -137,16 +219,9 @@
     (if (seq phases) (str " [" (str/join ", " phases) "]") "")))
 
 (defn- log-slow-frame!
-  "Warn-log a TUI frame whose wall-clock total OR Lanterna DELTA refresh crosses
-   the stutter thresholds. `:path` (\"live\" / \"full\" / \"scroll\") tags WHICH
-   render path produced it, and the message spells out the layout/paint/refresh
-   split - plus, on the full path, the per-sub-pass `paint` breakdown
-   (`paint-phase-detail`) and the render cardinalities (`:copy-regions`,
-   `:images`, `:total-h`) that actually drive paint cost - so a stutter report
-   says where the time went AND what was on screen instead of guessing (the raw
-   `:data` map carries the rest). Only slow frames log, so the default file
-   handler stays quiet during smooth playback."
-  [data]
+  "Warn on slow totals or DELTA refreshes for every repaint path. Attach local
+   turn/scroll state, phase timings and cardinalities, never transcript content."
+  [data db]
   (let [total-ms
         (double (:total-ms data 0.0))
 
@@ -164,14 +239,17 @@
 
     (when (or (>= total-ms (long slow-live-frame-threshold-ms))
               (>= refresh-ms (long slow-refresh-threshold-ms)))
-      (tel/log! {:level :warn :id ::slow-frame :data data}
-                (format "slow TUI %s frame: %.1fms total (layout %.1f, paint %.1f%s, refresh %.1f)"
-                        path
-                        total-ms
-                        layout-ms
-                        paint-ms
-                        (paint-phase-detail data)
-                        refresh-ms)))))
+      (tel/log!
+        {:level :warn :id ::slow-frame :data (merge (diagnostic-state db) data)}
+        (format
+          "slow TUI %s frame: %.1fms total (setup %.1f, layout %.1f, paint %.1f%s, refresh %.1f)"
+          path
+          total-ms
+          (double (:setup-ms data 0.0))
+          layout-ms
+          paint-ms
+          (paint-phase-detail data)
+          refresh-ms)))))
 
 (def ^:private frame-trend-interval-ms
   "Emit the always-on `::frame-trend` summary at most this often (ms). Rate
@@ -187,14 +265,14 @@
   (atom nil))
 
 (defn- record-frame!
-  "Fold one rendered frame (any heavy path) into the trend accumulator and, once
+  "Fold every rendered frame into the trend accumulator and, once
    per `frame-trend-interval-ms`, emit a compact `::frame-trend` INFO line -
    frame count, avg/max wall-clock, and per-path counts. This is the always-on
    half: a slow creep (avg 400->430->460ms across a session) shows up in the
    trend BEFORE any single frame trips the `log-slow-frame!` stutter threshold,
    which is the regression the one-shot slow-frame warning misses. Runs on the
    single render thread, so the swap is uncontended."
-  [path total-ms]
+  [path total-ms db]
   (let [now
         (System/currentTimeMillis)
 
@@ -232,7 +310,8 @@
                    :data (-> w
                              (dissoc :emit)
                              (assoc :avg-ms avg-ms
-                                    :window-ms (- now (long (:since-ms w)))))}
+                                    :window-ms (- now (long (:since-ms w)))
+                                    :current-state (diagnostic-state db)))}
                   (format "TUI frame-trend: %d frames, avg %.1fms, max %.1fms (%s)"
                           frames
                           avg-ms
@@ -337,13 +416,27 @@
 (defn- read-chat-input!
   "Read one canonical chat-loop event through Lanterna's stateful input coalescer."
   ^KeyStroke [^TerminalScreen screen ^InputCoalescer input-coalescer]
-  (let [poller (reify
-                 java.util.function.Supplier
-                   (get [_] (.pollInput screen)))]
-    (loop []
+  (let [started-ns
+        (System/nanoTime)
 
-      (let [key (.next input-coalescer poller poller)]
-        (if (and (input/bare-escape? key) (swallow-post-dialog-escape?)) (recur) key)))))
+        poller
+        (reify
+          java.util.function.Supplier
+            (get [_] (.pollInput screen)))
+
+        key
+        (loop []
+
+          (let [key (.next input-coalescer poller poller)]
+            (if (and (input/bare-escape? key) (swallow-post-dialog-escape?)) (recur) key)))]
+
+    (log-slow-input! :poll
+                     (some-> ^KeyStroke key
+                             .getKeyType
+                             .name)
+                     started-ns
+                     @state/app-db)
+    key))
 
 (defn- throwable-log-data
   [^Throwable t]
@@ -2559,6 +2652,9 @@
         ;; resulting `:total-h` feeds the scrollbar geometry +
         ;; gets published into app-db so input-thread scroll handlers
         ;; have an accurate ceiling.
+        layout-start-ns
+        (System/nanoTime)
+
         layout
         (virtual/layout messages
                         bubble-w
@@ -2816,10 +2912,11 @@
           (let [frame-end-ns (System/nanoTime)
                 total-ms (nanos->ms frame-start-ns frame-end-ns)]
 
-            (log-slow-frame!
+            (record-frame-phases!
               {:path "full"
                :total-ms total-ms
-               :layout-ms (nanos->ms frame-start-ns layout-end-ns)
+               :setup-ms (nanos->ms frame-start-ns layout-start-ns)
+               :layout-ms (nanos->ms layout-start-ns layout-end-ns)
                :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
                ;; Sub-paint phase split: a regression names its own
                ;; pass instead of hiding in :paint-ms (issue #24).
@@ -2837,8 +2934,7 @@
                :copy-regions (+ (count transcript-bubble-copy-regions)
                                 (count transcript-disclosure-copy-regions))
                :images (count @image-sink)
-               :total-h total-h})
-            (record-frame! "full" total-ms)))
+               :total-h total-h})))
         ;; Inline images ride the terminal's graphics layer, which Lanterna
         ;; doesn't model. Draw them AFTER the delta so they sit on top of the
         ;; blank cells the renderer reserved for each expanded `vis-image`.
@@ -3135,10 +3231,20 @@
    Bind header registration off so header-only redraws do not fill the
    staging buffer."
   [^TerminalScreen screen cols _rows db]
-  (let [g (frame/surface-graphics screen cols _rows)]
+  (let [started-ns
+        (System/nanoTime)
+
+        g
+        (frame/surface-graphics screen cols _rows)]
+
     (binding [header/*register-click-regions?* false]
       (header/draw-header! g db 0 cols))
-    (.refresh screen Screen$RefreshType/DELTA)))
+    (let [refresh-ns (System/nanoTime)]
+      (.refresh screen Screen$RefreshType/DELTA)
+      (let [ended-ns (System/nanoTime)]
+        (record-frame-phases! {:total-ms (nanos->ms started-ns ended-ns)
+                               :paint-ms (nanos->ms started-ns refresh-ns)
+                               :refresh-ms (nanos->ms refresh-ns ended-ns)})))))
 
 (defn- render-scrollbar!
   [g cols bar-top inner-h track-h total-h eff-scroll]
@@ -3235,6 +3341,9 @@
          :queue-paused (:queue-paused db)
          :live-title (lv/watching-title (:live-views db))}
 
+        layout-start-ns
+        (System/nanoTime)
+
         layout
         (virtual/layout messages
                         bubble-w
@@ -3248,6 +3357,9 @@
                          ;; estimate→real height fixes must keep the scrolled
                          ;; content visually put instead of lurching.
                          :prev-offsets (get-in db [:layout :offsets])})
+
+        layout-end-ns
+        (System/nanoTime)
 
         ;; Persist that anchor correction, exactly as `render-frame!` /
         ;; `render-scroll-frame!` do. This path PAINTS and republishes the
@@ -3263,9 +3375,6 @@
                    (not= anchored-scroll messages-scroll))
           (state/dispatch [:reanchor-scroll anchored-scroll
                            (- (long anchored-scroll) (long messages-scroll))]))
-
-        layout-end-ns
-        (System/nanoTime)
 
         ;; In-session search consumes its pending scroll target
         ;; here — the layout's `:offsets` vec gives the Y of any
@@ -3459,10 +3568,11 @@
     (let [refresh-start-ns (System/nanoTime)]
       (.refresh screen Screen$RefreshType/DELTA)
       (let [refresh-end-ns (System/nanoTime)]
-        (log-slow-frame!
+        (record-frame-phases!
           {:path "live"
            :total-ms (nanos->ms frame-start-ns refresh-end-ns)
-           :layout-ms (nanos->ms frame-start-ns layout-end-ns)
+           :setup-ms (nanos->ms frame-start-ns layout-start-ns)
+           :layout-ms (nanos->ms layout-start-ns layout-end-ns)
            :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
            :refresh-ms (nanos->ms refresh-start-ns refresh-end-ns)
            :cols cols
@@ -3478,8 +3588,7 @@
            :total-h (long (:total-h layout))
            :inner-h inner-h
            :eff-scroll (long (:eff-scroll layout))
-           :search-active? (boolean (get-in db [:search :active?]))})
-        (record-frame! "live" (nanos->ms frame-start-ns refresh-end-ns))))
+           :search-active? (boolean (get-in db [:search :active?]))})))
     ;; Re-anchor inline images to the rows this tick just painted — cheap
     ;; transmit-once `a=p` placements, the same ones `render-scroll-frame!`
     ;; emits. The cheap live-band path deliberately does NOT paint: it repaints
@@ -3565,6 +3674,9 @@
          :queue-paused (:queue-paused db)
          :live-title (lv/watching-title (:live-views db))}
 
+        layout-start-ns
+        (System/nanoTime)
+
         layout
         (virtual/layout messages
                         bubble-w
@@ -3612,17 +3724,17 @@
       (let [frame-end-ns (System/nanoTime)
             total-ms (nanos->ms frame-start-ns frame-end-ns)]
 
-        (log-slow-frame! {:path "scroll"
-                          :total-ms total-ms
-                          :layout-ms (nanos->ms frame-start-ns layout-end-ns)
-                          :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
-                          :refresh-ms (nanos->ms refresh-start-ns frame-end-ns)
-                          :cols cols
-                          :rows rows
-                          :messages (count messages)
-                          :visible (count (:visible layout))
-                          :total-h (long (:total-h layout))})
-        (record-frame! "scroll" total-ms)))
+        (record-frame-phases! {:path "scroll"
+                               :total-ms total-ms
+                               :setup-ms (nanos->ms frame-start-ns layout-start-ns)
+                               :layout-ms (nanos->ms layout-start-ns layout-end-ns)
+                               :paint-ms (nanos->ms layout-end-ns refresh-start-ns)
+                               :refresh-ms (nanos->ms refresh-start-ns frame-end-ns)
+                               :cols cols
+                               :rows rows
+                               :messages (count messages)
+                               :visible (count (:visible layout))
+                               :total-h (long (:total-h layout))})))
     ;; Re-anchor inline images to the scrolled rows. Transmit-once + placement means
     ;; this is a handful of tiny `a=p` escapes, not a per-tick re-upload — so image
     ;; sessions get the cheap scroll path instead of a forced full frame.
@@ -3658,7 +3770,10 @@
    The caller reuses `previous-layout` verbatim (returned as `[last-layout
    false]`), so no layout is republished."
   [^TerminalScreen screen cols rows {:keys [input slash-command-index] :as db} now-ms]
-  (let [cols
+  (let [started-ns
+        (System/nanoTime)
+
+        cols
         (long cols)
 
         rows
@@ -3674,7 +3789,10 @@
         (- rows 2)
 
         slash-suggestions
-        (slash-suggestions-for-db screen db)]
+        (slash-suggestions-for-db screen db)
+
+        paint-ns
+        (System/nanoTime)]
 
     (draw-bottom-chrome! screen
                          g
@@ -3689,7 +3807,13 @@
                           :footer-row footer-row
                           :slash-suggestions slash-suggestions
                           :slash-command-index slash-command-index})
-    (.refresh screen Screen$RefreshType/DELTA)))
+    (let [refresh-ns (System/nanoTime)]
+      (.refresh screen Screen$RefreshType/DELTA)
+      (let [ended-ns (System/nanoTime)]
+        (record-frame-phases! {:total-ms (nanos->ms started-ns ended-ns)
+                               :setup-ms (nanos->ms started-ns paint-ns)
+                               :paint-ms (nanos->ms paint-ns refresh-ns)
+                               :refresh-ms (nanos->ms refresh-ns ended-ns)})))))
 
 ;;; ── Render thread ───────────────────────────────────────────────────────────────
 (def ^:private spinner-tick-ms
@@ -3823,28 +3947,51 @@
         :else :full))
 
 (defn- paint-frame!
-  "Run the chosen repaint `path`. Returns [layout publish-layout?]:
-   publish-layout? is true only for paths that recomputed a fresh layout
-   (which then gets published back to app-db without bumping the version)."
+  "Run and measure EVERY repaint path, including input-only and header-only.
+   Returns [layout publish-layout?]; only geometry changes publish a layout."
   [^TerminalScreen screen path cols rows db now-ms last-layout]
-  (case path
-    :header-hover
-    (do (render-header-hover-frame! screen cols rows db) [last-layout false])
+  (let [started-ns
+        (System/nanoTime)
 
-    :partial-live
-    [(render-live-bubble-frame! screen cols rows db now-ms last-layout) true]
+        phases
+        (volatile! nil)
 
-    :header-spinner
-    (do (render-header-hover-frame! screen cols rows db) [last-layout false])
+        result
+        (binding [*frame-metrics* phases]
+          (case path
+            :header-hover
+            (do (render-header-hover-frame! screen cols rows db) [last-layout false])
 
-    :scroll
-    [(render-scroll-frame! screen cols rows db now-ms last-layout) true]
+            :partial-live
+            [(render-live-bubble-frame! screen cols rows db now-ms last-layout) true]
 
-    :input
-    (do (render-input-frame! screen cols rows db now-ms) [last-layout false])
+            :header-spinner
+            (do (render-header-hover-frame! screen cols rows db) [last-layout false])
 
-    :full
-    [(render-frame! screen cols rows db now-ms) true]))
+            :scroll
+            [(render-scroll-frame! screen cols rows db now-ms last-layout) true]
+
+            :input
+            (do (render-input-frame! screen cols rows db now-ms) [last-layout false])
+
+            :full
+            [(render-frame! screen cols rows db now-ms) true]))
+
+        total-ms
+        (nanos->ms started-ns (System/nanoTime))
+
+        path-name
+        (name path)]
+
+    (log-slow-frame! (assoc @phases
+                       :path path-name
+                       :total-ms total-ms
+                       :cols cols
+                       :rows rows
+                       :outside-phases-ms (max 0.0 (- total-ms (double (:total-ms @phases 0.0)))))
+                     db)
+    (record-frame! path-name total-ms db)
+    result))
 
 (defn- park-wait-ms
   "How long the render thread should sleep before re-checking for work:
@@ -5178,6 +5325,7 @@
                  ;; Lanterna owns queued lookahead and pointer burst coalescing. The same
                  ;; input queue also retains application-replayed keys without a Vis stash.
                  input-coalescer (InputCoalescer.)
+                 input-timing (volatile! nil)
                  ;; Running wheel momentum per scrollable surface. Lanterna owns the
                  ;; inertia-tail smoothing and hold window; Vis stores only each surface's
                  ;; independent state and last-event time so crossing an edge cannot leak one
@@ -5788,6 +5936,7 @@
              ;; only after the gateway-backed session has been bound.
              (loop []
 
+               (finish-input-timing! input-timing @state/app-db)
                ;; The worker is polled only while startup is pending, keeping the
                ;; input thread live without a cross-thread terminal read.
                (settle-startup!)
@@ -5812,6 +5961,7 @@
                      drag-events (when (instance? MouseAction key)
                                    (long (.getCount ^MouseAction key)))]
 
+                 (when-not @paste-buffer (begin-input-timing! input-timing key db))
                  (cond
                    (:shutdown? db) nil
                    ;; An open human-input dialog swallows the keyboard: every
@@ -7328,9 +7478,8 @@
    start-time-labelled file under `~/.vis/logs/` before any other code runs -
    otherwise stray bytes corrupt the screen."
   []
-  (try (require 'taoensso.telemere)
-       ((resolve 'taoensso.telemere/remove-handler!) :default/console)
-       (catch Throwable _ nil))
+  (vis-paths/set-log-role! :tui)
+  (tel/remove-handler! :default/console)
   (let [log-path
         (vis-paths/log-file)
 

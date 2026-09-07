@@ -22,6 +22,7 @@
             [com.blockether.vis.tui.terminals :as term]
             [com.blockether.vis.tui.virtual :as virtual]
             [com.blockether.vis.tui.external-opener :as opener]
+            [taoensso.telemere :as tel]
             [lazytest.core :refer [defdescribe it expect]])
   (:import [com.googlecode.lanterna TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
@@ -1662,6 +1663,149 @@ therapy line 2"
                  (expect (user-error? #(parse-args ["--session-id" "--resume"]))))
              (it "non-flag positional arg also errors (no positional API today)"
                  (expect (user-error? #(parse-args ["stray-positional"])))))
+
+(defdescribe
+  typing-diagnostics-test
+  (it
+    "measures each repaint path once and keeps all six in the trend"
+    (let [paths
+          [:input :header-hover :header-spinner :partial-live :scroll :full]
+
+          trend
+          (atom nil)
+
+          db
+          {:session {:id "s1" :secret "private-sentinel"}
+           :input {:lines ["private-sentinel"]}
+           :progress {:iterations [{:content "private-sentinel"}]}
+           :loading? true
+           :scroll {:mode :follow :pos 5}
+           :layout {:total-h 40 :inner-h 20}}
+
+          paint
+          (fn [& _]
+            (#'screen/record-frame-phases! {:total-ms 0.0 :refresh-ms 0.0})
+            :new-layout)
+
+          {:keys [signals error value]}
+          (with-redefs-fn {#'screen/slow-live-frame-threshold-ms 0
+                           #'screen/frame-trend-state trend
+                           #'screen/render-input-frame! paint
+                           #'screen/render-header-hover-frame! paint
+                           #'screen/render-live-bubble-frame! paint
+                           #'screen/render-scroll-frame! paint
+                           #'screen/render-frame! paint}
+            #(tel/with-signals true
+                               (mapv (fn [path]
+                                       (#'screen/paint-frame! nil path 80 30 db 0 :old-layout))
+                                     paths)))
+
+          frames
+          (filter #(= ::screen/slow-frame (:id %)) signals)]
+
+      (expect (nil? error))
+      (expect (= [[:old-layout false] [:old-layout false] [:old-layout false] [:new-layout true]
+                  [:new-layout true] [:new-layout true]]
+                 value))
+      (expect (= (mapv name paths) (mapv #(get-in % [:data :path]) frames)))
+      (expect (= (zipmap (map name paths) (repeat 1)) (:by-path @trend)))
+      (expect (every? #(true? (get-in % [:data :loading?])) frames))
+      (expect (every? #(true? (get-in % [:data :scroll-animating?])) frames))
+      (expect (= 20 (get-in (first frames) [:data :scroll-desired])))
+      (expect (not (str/includes? (pr-str (map :data frames)) "private-sentinel")))))
+  (it "the real input painter separates setup, paint and refresh without laying out history"
+      (let [{:keys [screen terminal]}
+            (term/virtual-screen)
+
+            db
+            {:input (input/paste-text (input/empty-input) "private-sentinel")
+             :messages []
+             :loading? false
+             :scroll scroll/follow}]
+
+        (try (let [{:keys [error signals]}
+                   (with-redefs-fn {#'screen/slow-live-frame-threshold-ms 0
+                                    #'screen/frame-trend-state (atom nil)
+                                    #'virtual/layout (fn [& _]
+                                                       (throw (ex-info "unexpected layout" {})))}
+                     #(tel/with-signals true (#'screen/paint-frame! screen :input 80 30 db 0 nil)))
+
+                   data
+                   (:data (first (filter #(= ::screen/slow-frame (:id %)) signals)))]
+
+               (expect (nil? error))
+               (expect (= "input" (:path data)))
+               (expect (false? (:loading? data)))
+               (expect (every? number? (map data [:total-ms :setup-ms :paint-ms :refresh-ms])))
+               (expect (some #(str/includes? % "private-sentinel") (term/grid terminal)))
+               (expect (not (str/includes? (pr-str data) "private-sentinel"))))
+             (finally (.close ^TerminalScreen screen)))))
+  (it "ordinary-key handling is measured, while idle waits and command dwell are excluded"
+      (let [pending
+            (volatile! nil)
+
+            db
+            {:input {:lines ["private-sentinel"]}}
+
+            {:keys [signals error]}
+            (tel/with-signals true
+                              (do (#'screen/begin-input-timing! pending (term/keystroke \z) db)
+                                  (expect (= "Character" (first @pending)))
+                                  ;; Inject elapsed time instead of sleeping or depending on scheduler speed.
+                                  (vreset! pending ["Character" (- (System/nanoTime) 150000000)])
+                                  (#'screen/finish-input-timing! pending db)
+                                  (#'screen/finish-input-timing! pending db)
+                                  (doseq [key [nil (KeyStroke. KeyType/Enter)
+                                               (KeyStroke. \x true false)]]
+                                    (#'screen/begin-input-timing! pending key db)
+                                    (expect (nil? @pending)))))]
+
+        (expect (nil? error))
+        (expect (= 1 (count signals)))
+        (expect (= :handle (get-in (first signals) [:data :phase])))
+        (expect (not (str/includes? (pr-str (map :data signals)) "private-sentinel")))))
+  (it "polling logs no key payload and preserves the coalescer's actual event"
+      (let [{:keys [screen terminal]}
+            (term/virtual-screen)
+
+            key
+            (term/keystroke \z)]
+
+        (try (.addInput ^DefaultVirtualTerminal terminal key)
+             (let [{:keys [value signals error]}
+                   (with-redefs-fn {#'screen/slow-input-threshold-ms 0}
+                     #(tel/with-signals true
+                                        (#'screen/read-chat-input!
+                                         screen
+                                         (com.googlecode.lanterna.input.InputCoalescer.))))]
+               (expect (nil? error))
+               (expect (= key value))
+               (expect (= :poll (get-in (first signals) [:data :phase])))
+               (expect (= "Character" (get-in (first signals) [:data :key-type])))
+               (expect (not (contains? (:data (first signals)) :character))))
+             (finally (.close ^TerminalScreen screen)))))
+  (it "quiet frames do not log; a slow refresh does, and the trend is rate limited"
+      (let [trend
+            (atom nil)
+
+            {:keys [signals error]}
+            (with-redefs-fn {#'screen/frame-trend-state trend
+                             #'screen/frame-trend-interval-ms Long/MAX_VALUE}
+              #(tel/with-signals true
+                                 (do (#'screen/log-slow-frame! {:total-ms 1 :refresh-ms 0} {})
+                                     (#'screen/log-slow-frame! {:total-ms 25 :refresh-ms 25} {})
+                                     (#'screen/record-frame! "input" 1 {})
+                                     (#'screen/record-frame! "input" 2 {}))))]
+
+        (expect (nil? error))
+        (expect (= [::screen/slow-frame] (mapv :id signals)))
+        (expect (= 2 (:frames @trend)))
+        (swap! trend assoc :since-ms 0)
+        (let [sig (with-redefs-fn {#'screen/frame-trend-state trend}
+                    #(tel/with-signal true (#'screen/record-frame! "input" 3 {:loading? false})))]
+          (expect (= ::screen/frame-trend (:id sig)))
+          (expect (= 2 (get-in sig [:data :frames])))
+          (expect (false? (get-in sig [:data :current-state :loading?])))))))
 
 (defdescribe
   input-only-fast-path-test

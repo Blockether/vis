@@ -4029,6 +4029,11 @@
               "code" code
               "message" message}]))))))
 
+(reg-fx :log-turn-terminal
+        (fn [data]
+          (tel/log!
+            {:level :info :id ::turn-terminal :data data :msg "TUI received turn terminal"})))
+
 (reg-event-fx :sync-turn-terminal
               ;; The persistent mux is independent of the blocking submit/attach worker.
               ;; Stop the matching optimistic spinner immediately, but retain its exact
@@ -4063,17 +4068,29 @@
                       terminal
                       (assoc chunk
                         :status (terminal-status (:status chunk))
-                        :trace (vec (or (get-in target [:progress :iterations]) [])))]
+                        :trace (vec (or (get-in target [:progress :iterations]) [])))
 
-                  (if-not (and workspace-id (:loading? target) matching-turn?)
-                    {:db db}
+                      accepted?
+                      (boolean (and workspace-id (:loading? target) matching-turn?))
+
+                      diagnostic
+                      [:log-turn-terminal
+                       {:tab-id workspace-id
+                        :session-id (get-in target [:session :id])
+                        :matching-turn? (boolean matching-turn?)
+                        :accepted? accepted?
+                        :loading-before? (boolean (:loading? target))
+                        :loading-after? (boolean (and (:loading? target) (not accepted?)))}]]
+
+                  (if-not accepted?
+                    {:db db :fx [diagnostic]}
                     {:db (update-tab db
                                      workspace-id
                                      (fn [workspace]
                                        (cond-> (clear-active-turn-state workspace)
                                          idx
                                          (assoc-in [:messages idx :terminal-pending] terminal))))
-                     :fx (cond-> []
+                     :fx (cond-> [diagnostic]
                            idx
                            (conj [:settle-turn-terminal-later workspace-id terminal]))}))))
 

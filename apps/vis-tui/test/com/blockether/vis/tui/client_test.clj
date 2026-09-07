@@ -2,6 +2,8 @@
   (:require [babashka.http-client :as http]
             [clojure.java.io :as io]
             [com.blockether.vis.tui.client :as client]
+            [com.blockether.vis.tui.paths :as paths]
+            [taoensso.telemere :as tel]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
 (deftest default-gateway-infers-local-bearer-token
@@ -119,3 +121,44 @@
       (with-redefs [http/request (fn [_]
                                    {:status status :body "{}"})]
         (is (= status (:status (#'client/gw-send! entry "GET" "/healthz" {}))))))))
+
+(deftest standalone-tui-installs-diagnostic-file-handler
+  ;; The standalone client's no-op init left slow-frame signals with no file sink.
+  (let [calls (atom [])]
+    (with-redefs [paths/log-file (constantly "tui-test.log")
+                  tel/handler:file (fn [opts]
+                                     (swap! calls conj [:file opts])
+                                     identity)
+                  tel/add-handler! (fn [id _ opts]
+                                     (swap! calls conj [:add id opts]))]
+
+      (client/init!))
+    (is (= [:file :add] (mapv first @calls)))
+    (is (= "tui-test.log" (get-in @calls [0 1 :path])))
+    (is (= :info (get-in @calls [1 2 :min-level])))
+    (is (= :dropping (get-in @calls [1 2 :async :mode])))))
+
+(deftest standalone-diagnostics-reach-a-real-file-and-flush-on-shutdown
+  (let [dir
+        (.toFile (java.nio.file.Files/createTempDirectory
+                   "vis-tui-diagnostics-"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+
+        log
+        (io/file dir "tui.log")]
+
+    (try (with-redefs-fn {#'paths/log-file (constantly (.getPath log))
+                          #'client/shutdown-subscriptions! (fn []
+                                                             nil)
+                          #'client/release-client! (fn []
+                                                     nil)
+                          #'client/client-finalizing? (atom false)}
+           #(do (client/init!)
+                (tel/log! {:level :warn :id ::diagnostic-probe :msg "diagnostic-probe"})
+                (client/shutdown!)))
+         (is (.exists log))
+         (is (.contains (slurp log) "diagnostics-ready"))
+         (is (.contains (slurp log) "diagnostic-probe"))
+         (finally (tel/remove-handler! :file/tui)
+                  (doseq [f (reverse (file-seq dir))]
+                    (.delete ^java.io.File f))))))

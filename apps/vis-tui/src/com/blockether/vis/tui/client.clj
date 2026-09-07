@@ -16,7 +16,8 @@
             [com.blockether.vis.tui.progress :as progress]
             [com.blockether.vis.tui.toggles :as toggles]
             [com.blockether.vis.tui.tty :as tty]
-            [com.blockether.vis.tui.util :as util])
+            [com.blockether.vis.tui.util :as util]
+            [taoensso.telemere :as tel])
   (:import (java.io BufferedReader File InputStream InputStreamReader)
            (java.net URI URLEncoder)
            (java.nio.charset StandardCharsets)))
@@ -2632,11 +2633,25 @@
 
 (def original-stdout tty/original-stdout)
 
-(defn init! [& _] true)
+(defn init!
+  "The standalone client owns its file sink; no engine init runs in this process.
+   A bounded dropping queue keeps diagnostic IO off the input and render threads."
+  []
+  (tel/add-handler! :file/tui
+                    (tel/handler:file {:path (paths/log-file)
+                                       :interval :monthly
+                                       :max-file-size 4000000
+                                       :max-num-parts 8
+                                       :max-num-intervals 6
+                                       :gzip-archives? true})
+                    {:min-level :info :async {:mode :dropping :buffer-size 2048 :n-threads 1}})
+  (tel/log! {:level :info
+             :id ::diagnostics-ready
+             :msg "TUI diagnostics enabled: all frames, input stalls, and terminal events"})
+  true)
 
 (defn shutdown!
   []
   (reset! client-finalizing? true)
-  (shutdown-subscriptions!)
-  (release-client!)
+  (try (shutdown-subscriptions!) (release-client!) (finally (tel/remove-handler! :file/tui)))
   true)

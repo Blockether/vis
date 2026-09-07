@@ -8,6 +8,7 @@
             [com.blockether.vis.tui.transient :as tr]
             [com.blockether.vis.tui.virtual :as virtual]
             [clojure.string :as str]
+            [taoensso.telemere :as tel]
             [lazytest.core :refer [defdescribe expect it]]))
 
 ;; `"verbosity"` is a BUILTIN toggle (`internal/config/toggles.clj`), not a provider
@@ -4310,6 +4311,27 @@
                       (keep :terminal-pending)
                       first)]
     (state/dispatch [:settle-turn-terminal nil terminal])))
+
+(defdescribe
+  turn-terminal-diagnostics-test
+  (it "records ignored and accepted completions without request, answer or trace payloads"
+      (let [before @state/app-db]
+        (try (reset! state/app-db (terminal-test-db))
+             (let [{:keys [signals error]} (tel/with-signals true
+                                                             (doseq [turn-id ["other" "t1" "t1"]]
+                                                               (sync-terminal-without-timer!
+                                                                 {:turn-id turn-id
+                                                                  :status "completed"
+                                                                  :answer "private-sentinel"
+                                                                  :trace ["private-sentinel"]})))
+                   data (mapv :data (filter #(= ::state/turn-terminal (:id %)) signals))]
+
+               (expect (nil? error))
+               (expect (= [false true false] (mapv :accepted? data)))
+               (expect (= [true true false] (mapv :loading-before? data)))
+               (expect (= [true false false] (mapv :loading-after? data)))
+               (expect (not (str/includes? (pr-str data) "private-sentinel"))))
+             (finally (reset! state/app-db before))))))
 
 (defdescribe
   sync-turn-terminal-test
