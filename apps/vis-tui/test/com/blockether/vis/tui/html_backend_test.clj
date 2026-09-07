@@ -1,5 +1,6 @@
 (ns com.blockether.vis.tui.html-backend-test
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.header :as header]
             [com.blockether.vis.tui.input :as input]
@@ -231,7 +232,10 @@
              (.setTerminalSize html size)
              (.doResizeIfNecessary terminal-screen)
              (.doResizeIfNecessary html-screen)
-             (with-redefs [timg/images-protocol (constantly nil)]
+             ;; Compare one metadata snapshot, not two sides of an async footer refresh.
+             (with-redefs [timg/images-protocol (constantly nil)
+                           client/get-router (constantly nil)]
+
                (#'screen/render-frame! terminal-screen cols rows db 1000)
                (#'screen/render-frame! html-screen cols rows db 1000))
              (is (= (cell-grid terminal cols rows) (cell-grid html cols rows))

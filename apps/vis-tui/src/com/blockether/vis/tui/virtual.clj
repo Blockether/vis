@@ -1489,10 +1489,7 @@
         (nth messages idx)
 
         pm
-        (project-message m
-                         bubble-w
-                         settings
-                         {:session-id session-id :detail-expansions detail-expansions})
+        (project-message-cached m bubble-w settings detail-expansions session-id)
 
         pm
         (with-turn-separator pm messages settings idx)

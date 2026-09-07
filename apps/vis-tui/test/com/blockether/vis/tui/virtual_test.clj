@@ -564,6 +564,31 @@
 
           (expect (= 0 warmed))
           (expect (= 0 (virtual/height-cache-size)))))
+    (it "pre-warming also caches the projection used when scrolling into a message"
+        ;; Heights alone did not warm the scroll path: it re-projected the same trace.
+        (virtual/invalidate-heights!)
+        (let [messages
+              [(trace-assistant-msg 8 4 "scroll projection fixture") (plain-assistant-msg "tail")]
+
+              calls
+              (atom 0)]
+
+          (try (expect
+                 (= 2
+                    (virtual/pre-warm-recent! messages bubble-w settings {:count 2 :budget-ms -1})))
+               (with-redefs-fn {#'virtual/project-message
+                                (fn [message ^long width opts extra]
+                                  (swap! calls inc)
+                                  (project-message message width opts extra))}
+                 #(doseq [offset [0 1 2 1 0]] (let [layout (virtual/layout messages
+                                                                           bubble-w
+                                                                           settings
+                                                                           offset
+                                                                           5
+                                                                           {})]
+                                                (expect (seq (:visible layout))))))
+               (expect (zero? @calls))
+               (finally (virtual/invalidate-heights!)))))
     (it "warms the cache so a subsequent layout call is cheap"
         ;; The whole point: after pre-warm finishes, calling
         ;; format-answer-with-thinking on the warmed assistants must

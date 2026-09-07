@@ -2252,9 +2252,15 @@
 
 (def ^:private router-cache-ttl-ms 30000)
 
-(defn- invalidate-router-cache! [] (reset! router-cache* nil))
+(defn- invalidate-router-cache!
+  []
+  ;; Keep the displayed rows, but revoke any in-flight refresh's publication rights.
+  (swap! router-cache* dissoc :at))
 
 (defn- router-cached
+  "Render-frequency read: return the last snapshot immediately, even when cold.
+   One background fetch refreshes stale data. Failures retain the snapshot and
+   back off for the TTL; invalidation cannot let an older request win."
   []
   (let [now
         (now-ms)
@@ -2262,11 +2268,34 @@
         cached
         @router-cache*]
 
-    (if (and cached (< (- now (long (:at cached))) (long router-cache-ttl-ms)))
-      (:rows cached)
-      (let [rows (vec (router))]
-        (reset! router-cache* {:at now :rows rows})
-        rows))))
+    (when (and (not (:refreshing? cached))
+               (or (nil? (:at cached)) (>= (- now (long (:at cached))) (long router-cache-ttl-ms))))
+      (let [pending (assoc cached
+                      :at now
+                      :refreshing? true)]
+        (when (compare-and-set! router-cache* cached pending)
+          (future (let [result (try {:rows (vec (router))} (catch Exception _ {}))
+                        completed-at (now-ms)]
+
+                    (swap! router-cache* (fn [current]
+                                           (if (identical? pending current)
+                                             (merge (dissoc current :refreshing?)
+                                                    result
+                                                    {:at completed-at})
+                                             ;; Config changed while fetching. Release the single flight,
+                                             ;; preserving the invalidation or newer authoritative rows.
+                                             (dissoc current :refreshing?)))))))))
+    (:rows cached)))
+
+(defn watch-router!
+  "Call listener (no arguments) when fresh router rows change. Never on cache misses."
+  [id listener]
+  (add-watch router-cache*
+             id
+             (fn [_ _ before after]
+               (when (not= (:rows before) (:rows after)) (listener)))))
+
+(defn unwatch-router! [id] (remove-watch router-cache* id))
 
 (defn- model-entry
   [model]
@@ -2301,7 +2330,12 @@
       (get row "auth_kind")
       (assoc :auth-kind (keyword (get row "auth_kind"))))))
 
-(defn configured-providers [] (mapv provider-entry (router)))
+(defn configured-providers
+  "Explicit startup/dialog fetch. Seed the renderer's snapshot with the response."
+  []
+  (let [rows (vec (router))]
+    (swap! router-cache* assoc :at (now-ms) :rows rows)
+    (mapv provider-entry rows)))
 
 (defn configured-providers-cached [] (mapv provider-entry (router-cached)))
 
@@ -2366,7 +2400,11 @@
 
 (defn model-routing-status [& _] nil)
 
-(defn router-initialized? [] (some? @router-cache*))
+(defn router-initialized?
+  "A successful router snapshot is present and has not been invalidated."
+  []
+  (let [cached @router-cache*]
+    (boolean (and (:at cached) (contains? cached :rows)))))
 
 (defn rebuild-router! [& _] (invalidate-router-cache!) (get-router))
 
@@ -2385,7 +2423,7 @@
 (defn load-config
   []
   (let [providers
-        (configured-providers-cached)
+        (configured-providers)
 
         primary
         (or (some #(when (:is-default %) %) providers) (first providers))

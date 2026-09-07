@@ -5101,6 +5101,8 @@
      (vis/watch-notifications! :tui-screen
                                (fn [_snapshot]
                                  (state/dispatch [:bump-render-version])))
+     ;; A completed async footer refresh must repaint even while the user is idle.
+     (vis/watch-router! :tui-screen #(state/dispatch [:bump-render-version]))
      (vis/add-channel-event-listener! :tui :tui-screen handle-channel-event!)
      ;; Load persisted config
      (let [c (vis/load-config)]
@@ -7398,6 +7400,7 @@
              ;; relative to the JVM - leaving stale watchers around would
              ;; eventually hold references to dead atoms).
              (try (vis/unwatch-notifications! :tui-screen) (catch Throwable _ nil))
+             (try (vis/unwatch-router! :tui-screen) (catch Throwable _ nil))
              (try (vis/remove-channel-event-listener! :tui :tui-screen) (catch Throwable _ nil))
              (when-let [dispose! @toggle-listener-dispose]
                (try (dispose!) (catch Throwable _ nil)))

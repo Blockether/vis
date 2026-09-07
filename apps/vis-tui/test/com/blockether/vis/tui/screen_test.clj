@@ -1808,6 +1808,72 @@ therapy line 2"
           (expect (false? (get-in sig [:data :current-state :loading?])))))))
 
 (defdescribe
+  renderer-router-refresh-test
+  (it
+    "typing and scrolling repaint while the footer's gateway request is blocked"
+    (let [{:keys [screen terminal]}
+          (term/virtual-screen)
+
+          entered
+          (promise)
+
+          release
+          (promise)
+
+          cache
+          (atom {:at 0 :rows []})
+
+          calls
+          (atom 0)
+
+          text
+          (str/join "\n" (map #(str "history row " %) (range 60)))
+
+          db
+          {:input (input/empty-input)
+           :messages
+           [{:role :user :text text :content [{"id" "history" "type" "prose" "markdown" text}]}]
+           :loading? false
+           :scroll scroll/follow}]
+
+      (try
+        (with-redefs-fn {#'vis/router-cache* cache
+                         #'vis/router (fn []
+                                        (swap! calls inc)
+                                        (deliver entered true)
+                                        @release
+                                        [])
+                         #'screen/slash-suggestions-for-db (constantly [])
+                         #'state/app-db (atom db)}
+          (fn []
+            (let [painted (future (let [[layout _]
+                                        (#'screen/paint-frame! screen :full 80 30 db 0 nil)
+                                        typed (assoc db
+                                                :layout layout
+                                                :input (input/paste-text (input/empty-input)
+                                                                         "typing fixture"))]
+
+                                    (#'screen/paint-frame! screen :input 80 30 typed 0 layout)
+                                    (let [[scrolled _] (#'screen/paint-frame!
+                                                        screen
+                                                        :scroll
+                                                        80
+                                                        30
+                                                        (assoc typed :scroll (scroll/parked 0))
+                                                        0
+                                                        layout)]
+                                      {:painted? true :offset (:eff-scroll scrolled)})))]
+              (try (expect (= true (deref entered 5000 ::timeout)))
+                   (expect (= {:painted? true :offset 0} (deref painted 2000 ::blocked)))
+                   (expect (= 1 @calls))
+                   (expect (not (realized? release)))
+                   (expect (some #(str/includes? % "typing fixture") (term/grid terminal)))
+                   (finally (deliver release true)
+                            (deref painted 5000 ::timeout)
+                            (expect (await-pred #(not (:refreshing? @cache)) 5000)))))))
+        (finally (.close ^TerminalScreen screen))))))
+
+(defdescribe
   input-only-fast-path-test
   (it "classifies a same-height input edit as an input-only frame"
       (let [cols

@@ -162,3 +162,138 @@
          (finally (tel/remove-handler! :file/tui)
                   (doseq [f (reverse (file-seq dir))]
                     (.delete ^java.io.File f))))))
+
+(defn- with-router-cache
+  "Run a cache scenario with a controllable clock and queued background work."
+  [cached f]
+  (let [cache
+        (atom cached)
+
+        pending
+        (atom [])
+
+        now
+        (atom 60000)
+
+        calls
+        (atom 0)
+
+        response
+        (atom [{"id" "test-provider" "default_model" "new-model"}])]
+
+    (with-redefs-fn {#'client/router-cache* cache
+                     #'client/now-ms (fn ^long []
+                                       (long @now))
+                     #'client/router (fn []
+                                       (swap! calls inc)
+                                       (let [value @response]
+                                         (if (instance? Throwable value) (throw value) value)))
+                     #'clojure.core/future-call (fn [task]
+                                                  (swap! pending conj task)
+                                                  nil)}
+      #(f {:cache cache :pending pending :now now :calls calls :response response}))))
+
+(defn- run-router-refresh!
+  [pending]
+  (let [[tasks _] (swap-vals! pending #(vec (rest %)))]
+    (when-let [task (first tasks)]
+      (task))))
+
+(deftest footer-router-cache-never-fetches-on-the-render-thread
+  ;; Typing and scrolling paused together when the footer's 30s cache expired.
+  (doseq [cached [nil {:at 0 :rows [{"id" "test-provider" "default_model" "old-model"}]}]]
+    (with-router-cache cached
+                       (fn [{:keys [pending calls response]}]
+                         (is (= (:rows cached) (#'client/router-cached)))
+                         (is (zero? @calls) "A cold or stale read must not call the gateway inline")
+                         (dotimes [_ 20]
+                           (#'client/router-cached))
+                         (is (= 1 (count @pending)) "Render-frequency misses share one refresh")
+                         (run-router-refresh! pending)
+                         (is (= @response (#'client/router-cached)))
+                         (is (= 1 @calls))
+                         (is (empty? @pending))))))
+
+(deftest router-refresh-failure-keeps-data-and-backs-off
+  (let [rows [{"id" "test-provider" "default_model" "old-model"}]]
+    (with-router-cache {:at 0 :rows rows}
+                       (fn [{:keys [pending calls response now]}]
+                         (reset! response (ex-info "test gateway unavailable" {}))
+                         (is (= rows (#'client/router-cached)))
+                         (run-router-refresh! pending)
+                         (dotimes [_ 20]
+                           (is (= rows (#'client/router-cached))))
+                         (is (= 1 @calls) "A failing gateway must not be retried every frame")
+                         (is (empty? @pending))
+                         (swap! now + 30000)
+                         (reset! response [{"id" "test-provider"
+                                            "default_model" "recovered-model"}])
+                         (is (= rows (#'client/router-cached)))
+                         (run-router-refresh! pending)
+                         (is (= @response (#'client/router-cached)))
+                         (is (= 2 @calls))))))
+
+(deftest router-invalidation-does-not-publish-an-obsolete-in-flight-response
+  (let [rows [{"id" "test-provider" "default_model" "old-model"}]]
+    (with-router-cache
+      {:at 0 :rows rows}
+      (fn [{:keys [pending response calls]}]
+        (#'client/router-cached)
+        (client/refresh-cached-routers!)
+        (is (= rows (#'client/router-cached)) "Invalidation keeps the displayed snapshot")
+        (is (= 1 (count @pending)) "Invalidation must not overlap requests")
+        (run-router-refresh! pending)
+        (is (= rows (#'client/router-cached)) "The pre-invalidation request cannot win")
+        (is (= 1 (count @pending)))
+        (reset! response [{"id" "test-provider" "default_model" "latest-model"}])
+        (run-router-refresh! pending)
+        (is (= @response (#'client/router-cached)))
+        (is (= 2 @calls))))))
+
+(deftest router-refresh-notifies-only-when-displayed-data-changes
+  (with-router-cache nil
+                     (fn [{:keys [pending now response]}]
+                       (let [wakes (atom 0)]
+                         (client/watch-router! ::test #(swap! wakes inc))
+                         (try (#'client/router-cached)
+                              (is (zero? @wakes))
+                              (run-router-refresh! pending)
+                              (is (= 1 @wakes))
+                              (swap! now + 30000)
+                              (#'client/router-cached)
+                              (run-router-refresh! pending)
+                              (is (= 1 @wakes) "Unchanged metadata does not force extra frames")
+                              (client/unwatch-router! ::test)
+                              (reset! response [{"id" "test-provider"
+                                                 "default_model" "another-model"}])
+                              (swap! now + 30000)
+                              (#'client/router-cached)
+                              (run-router-refresh! pending)
+                              (is (= 1 @wakes))
+                              (finally (client/unwatch-router! ::test)))))))
+
+(deftest explicit-config-load-primes-the-nonblocking-footer-cache
+  (with-router-cache
+    nil
+    (fn [{:keys [pending calls]}]
+      (is (false? (client/router-initialized?)))
+      (is (= "new-model" (:default-model (client/load-config))))
+      (is (true? (client/router-initialized?)))
+      (is (= "new-model" (get-in (client/get-router) [:providers 0 :default-model])))
+      (is (= 1 @calls))
+      (is (empty? @pending))
+      (client/reload-config!)
+      (is (false? (client/router-initialized?)))
+      (is (= "new-model" (get-in (client/get-router) [:providers 0 :default-model])))
+      (is (= 1 @calls)))))
+
+(deftest explicit-config-load-wins-over-an-older-background-refresh
+  (with-router-cache nil
+                     (fn [{:keys [pending response]}]
+                       (#'client/router-cached)
+                       (client/load-config)
+                       (reset! response [{"id" "test-provider" "default_model" "obsolete-model"}])
+                       (run-router-refresh! pending)
+                       (is (= "new-model"
+                              (get-in (client/get-router) [:providers 0 :default-model])))
+                       (is (empty? @pending)))))
