@@ -537,6 +537,31 @@
             ;; The producer's cancellation is not the bus's to consume: the
             ;; interrupt still stands for the next interruptible call.
             (expect still-interrupted?))))))
+  (it "retracts it on a terminal whose journal write was LOST, so a failed turn never stays lit"
+      ;; Regression: a stall-watchdog cancel published `turn.failed`; the registry took
+      ;; it, but the durable journal line never reached disk (seq 4 missing from the
+      ;; ndjson), and the marker retract rode ONLY that write on the writer thread. The
+      ;; session header then answered `live` with the dead turn for as long as the
+      ;; gateway process lived. The retract belongs to the PRODUCER's publish, not to
+      ;; the line landing.
+      (with-temp-journal
+        (fn [_capture _write!]
+          (let [sid (str (random-uuid))]
+            (bus/publish!
+              sid
+              {"schema" 1 "seq" 1 "type" "turn.started" "session_id" sid "turn_id" "T-5"}
+              {:store? true :truncate? true})
+            (expect (= "T-5" (bus/live-turn-id sid)))
+            (let [real-write! @#'bus/write-event!]
+              (with-redefs [bus/write-event! (fn [sid event opts]
+                                               (when-not (= "turn.failed" (get event "type"))
+                                                 (real-write! sid event opts)))]
+                (bus/publish!
+                  sid
+                  {"schema" 1 "seq" 2 "type" "turn.failed" "session_id" sid "turn_id" "T-5"}
+                  {:store? true})))
+            (expect (not (str/includes? (slurp (#'bus/session-file sid)) "\"turn.failed\"")))
+            (expect (nil? (bus/live-turn-id sid)))))))
   (it "ignores AND deletes a marker whose producer process is gone"
       (with-temp-journal
         (fn [_capture _write!]

@@ -462,6 +462,18 @@
 
 (defonce ^:private writer (atom nil))
 
+(def ^:private terminal-event-types
+  "Turn terminals: the events that retract a session's liveness marker."
+  #{"turn.completed" "turn.failed" "turn.cancelled"})
+
+(defn retract-live!
+  "Retract `sid`'s liveness marker and every parked human-input mark from the
+   PRODUCER thread, independent of the journal. Idempotent; never throws."
+  [sid]
+  (clear-live! sid)
+  (clear-all-waiting! sid)
+  nil)
+
 (defn- write-event!
   "Write one already-shaped (canonical string-keyed) event to the shared\n   journal. Runs ONLY on the single FIFO writer thread — that, not a lock, is\n   what serializes writes (`session-file` hands back a FRESH File per call, so\n   `locking` it would take a brand-new monitor every time and guard nothing).\n   Never throws."
   [sid event {:keys [store? truncate?]}]
@@ -500,7 +512,7 @@
          (mark-live! sid (get event "turn_id"))
 
          ("turn.completed" "turn.failed" "turn.cancelled")
-         (do (clear-live! sid) (clear-all-waiting! sid))
+         (retract-live! sid)
 
          "view.open"
          (when (= "input" (get event "kind")) (mark-waiting! sid (get event "view")))
@@ -509,7 +521,11 @@
          (when (= "input" (get event "kind")) (clear-waiting! sid (get event "view_id")))
 
          nil)
-       (catch Throwable t (tel/log! :debug ["gateway-bus: publish failed" (ex-message t)]) nil))
+       (catch Throwable t
+         (tel/log! (if store? :warn :debug)
+                   ["gateway-bus: journal write failed" (str sid) (get event "type")
+                    (ex-message t)])
+         nil))
   nil)
 
 (defn- spawn-writer-thread!
@@ -595,8 +611,9 @@
                     durable-write-timeout-ms
                     TimeUnit/MILLISECONDS)
           (do (vreset! enqueued? true) (deref done durable-write-timeout-ms false))
-          (tel/log! :debug
-                    ["gateway-bus: dropped durable event; writer queue wedged" (get event "type")]))
+          (tel/log! :warn
+                    ["gateway-bus: dropped durable event; writer queue wedged" (str sid)
+                     (get event "type")]))
         ;; An interrupt ARRIVING mid-wait gives up only the acknowledgement: a line
         ;; the writer already owns still lands, and one not yet handed over gets a
         ;; last non-blocking offer instead of vanishing.
@@ -627,8 +644,15 @@
      (start!)
      (enqueue-write! sid event (assoc opts :store? store?))
      (catch Throwable t
-       (tel/log! :debug ["gateway-bus: publish enqueue failed" (ex-message t)])
+       (tel/log! :warn
+                 ["gateway-bus: publish enqueue failed" (str sid) (get event "type")
+                  (ex-message t)])
        nil))
+   ;; A terminal retracts the marker HERE, on the producer, not only from the
+   ;; writer thread once the line lands: a durable write that was dropped or
+   ;; failed (wedged queue, I/O error) used to leave the marker behind, and
+   ;; every session header then reported the ended turn as running forever.
+   (when (contains? terminal-event-types (str (get event "type"))) (retract-live! sid))
    nil))
 
 (defonce ^:private reaped-turns

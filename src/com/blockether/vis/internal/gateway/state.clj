@@ -4478,7 +4478,16 @@
           ;; up exactly the sessions the asking client had already watched — the
           ;; desktop app and the phone reading the same gateway and being told two
           ;; different fleets. `bus/live-turn-id` is the index every producer writes.
-          current-turn-id (or (:current-turn entry) (bus/live-turn-id sid))
+          ;; A marker naming a turn THIS registry already holds at a terminal is a
+          ;; stale announcement (the write that retracts it never landed): heal it
+          ;; instead of reporting the ended turn as running until the gateway dies.
+          live-turn-id (bus/live-turn-id sid)
+          current-turn-id (or (:current-turn entry)
+                              (when live-turn-id
+                                (if (contains? #{"completed" "failed" "cancelled" "suspended"}
+                                               (get-in entry [:turns live-turn-id :status]))
+                                  (do (bus/retract-live! sid) nil)
+                                  live-turn-id)))
           current-turn (get-in entry [:turns current-turn-id])
           last-turn (some->> (:turn-order entry)
                              peek

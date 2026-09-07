@@ -2446,6 +2446,53 @@
         (expect (not (contains? row "external_id")))
         (expect (not (contains? row "owner_id"))))))
 
+;; Regression, reported in this Vis session ("dalej wisi a jesteśmy przy 1h już"): the
+;; stall watchdog failed a turn, the registry recorded `turn.failed`, but the journal
+;; write carrying it was lost and the machine-wide liveness marker stayed. `soul`
+;; trusted the marker over its own terminal, so the session read `running` for an hour.
+(defdescribe soul-heals-a-stale-liveness-marker-test
+             (it "ignores AND retracts a marker naming a turn this registry already ended"
+                 (let [registry
+                       (atom {"stale" {:turns {"T-1" {:status "failed" :role "assistant"}}
+                                       :turn-order ["T-1"]
+                                       :current-turn nil}})
+
+                       retracted
+                       (atom [])
+
+                       row
+                       (with-redefs-fn {#'state/registry registry
+                                        #'lp/by-id (constantly
+                                                     {:id "stale" :channel :cli :title "Stalled"})
+                                        #'lp/db-info (constantly nil)
+                                        #'bus/live-turn-id (constantly "T-1")
+                                        #'bus/retract-live! (fn [sid]
+                                                              (swap! retracted conj (str sid)))
+                                        #'bus/session-waiting? (constantly false)
+                                        #'smodel/pending-pref (constantly [false nil])}
+                         (fn []
+                           (state/soul "stale")))]
+
+                   (expect (= "idle" (get row "status")))
+                   (expect (false? (get row "live")))
+                   (expect (nil? (get row "current_turn_id")))
+                   (expect (= ["stale"] @retracted))))
+             (it "still reports a sibling process's turn this registry never saw"
+                 (let [row (with-redefs-fn
+                             {#'state/registry (atom {})
+                              #'lp/by-id (constantly {:id "sib" :channel :cli :title "Elsewhere"})
+                              #'lp/db-info (constantly nil)
+                              #'bus/live-turn-id (constantly "T-9")
+                              #'bus/retract-live! (fn [_]
+                                                    (throw (ex-info "must not retract" {})))
+                              #'bus/session-waiting? (constantly false)
+                              #'smodel/pending-pref (constantly [false nil])}
+                             (fn []
+                               (state/soul "sib")))]
+                   (expect (= "running" (get row "status")))
+                   (expect (true? (get row "live")))
+                   (expect (= "T-9" (get row "current_turn_id"))))))
+
 ;; Regression, same report: a project header carried the GATEWAY's tally while the rows
 ;; under it were the client's own filtered list, so the header said 1034 over pages that
 ;; held 763 - the two numbers could only agree by accident.
