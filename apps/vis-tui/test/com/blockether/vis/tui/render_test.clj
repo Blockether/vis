@@ -5557,8 +5557,8 @@ h = 8"
                   "the chronology stands on the rail and never names itself")
           (expect (str/starts-with? (str (line-with text "Patched")) "├─●")
                   "a step's mark is JOINED to the rail by a tick, never floating beside it")
-          (expect (= 8 (long (.indexOf ^String (str (line-with text "Patched")) "Patched")))
-                  "the verb follows the shared icon and disclosure columns")
+          (expect (= 4 (long (.indexOf ^String (str (line-with text "Patched")) "Patched")))
+                  "the verb follows the mark by one space: nothing in this band opens")
           (expect (every? #(contains? #{\│ \├} (nth % 0 nil)) lines)
                   "the rail stands in the turn's own axis, the message column's first")
           (expect (not-any? #(str/includes? % "✓") lines)
@@ -5588,7 +5588,7 @@ h = 8"
         (expect (str/includes? patched-path "\u25be") "a path that opens a patch wears a chevron")
         (expect (str/includes? read-path "\u203a")
                 "a path that only names a file wears the quiet guillemet")
-        (expect (= 8 (long (.indexOf patched-path "▾")))
+        (expect (= 4 (long (.indexOf patched-path "▾")))
                 "paths hang one level in from the step's own mark")
         (expect (str/includes? added "+ (def added-line 1)")
                 "an added line carries its sign exactly once, in the marker column")
@@ -6430,37 +6430,115 @@ print(paths)"
 
 (defdescribe
   activity-content-render-test
-  (it "renders headings, Markdown, tables, code, progress and safe media fallback"
-      (let [blocks
-            [{:type "heading" :text "Verification"}
-             {:type "markdown" :text "**Prepared** the workspace"}
-             {:type "table" :columns ["Suite" "Result"] :rows [["unit" "passed"]]}
-             {:type "code" :language "python" :text "print(42)"}
-             {:type "diff" :text "+added\n-removed"}
-             {:type "progress" :label "Checking" :value 1 :total 2}
-             {:type "image" :label "Screenshot" :attachment_id "image-1"}]
+  ;; The gap a reader asked about: five columns of air between a step's mark and its
+  ;; verb, three of them fixed and two for a disclosure slot no row in the band used.
+  (it
+    "sets a step's words one space after its mark, and reserves the slot only for a band that opens"
+    (let [step
+          (fn [id op summary content]
+            (cond-> {:id id
+                     :sequence 1
+                     :operation op
+                     :summary summary
+                     :state "succeeded"
+                     :duration-ms 12
+                     :resources []
+                     :evidence []}
+              content
+              (assoc :content content)))
 
-            entries
-            (#'render/activity-content-entries
-             blocks
-             60
-             "s"
-             {"image-1" {:iteration-id "i" :index 0 :filename "screen.png"}}
-             true)
+          band
+          (fn [rows]
+            (render/invalidate-cache!)
+            (render/format-answer-with-thinking-data*
+              "Done."
+              [{:forms [{:code "run()"
+                         :stdout ""
+                         :success? true
+                         :duration-ms 12
+                         :activity {:state "succeeded"
+                                    :counts
+                                    {:running 0 :succeeded (count rows) :failed 0 :cancelled 0}
+                                    :omitted {:rows 0}
+                                    :rows rows}}]}]
+              80
+              {:show-iterations true}
+              nil
+              false
+              {:session-id (str "slot-" (count rows))
+               :detail-expansions {:vis.channel-tui/expand-all-details? true}}))
 
-            text
-            (str/join "\n" (map :line entries))]
+          band-text
+          (fn [rows]
+            (-> (band rows)
+                :text
+                strip-ansi
+                strip-sentinels))
 
-        (doseq [word ["Verification" "Prepared" "Suite" "passed" "print" "Checking" "Screenshot"]]
-          (expect (str/includes? text word)))
-        (expect (some #(= "i" (get-in % [:meta :artifact :iteration-id])) entries))
-        (expect (str/includes? (str (#'render/activity-content-entries
-                                     [{:type "progress" :label "Checking"}]
-                                     40
-                                     "s"
-                                     {}
-                                     false))
-                               "Stopped"))))
+          line-with
+          (fn [text needle]
+            (str (first (filter #(str/includes? % needle) (str/split-lines text)))))
+
+          plain
+          (band-text [(step "sh-1" "shell" "cmd: clojure -M:test" nil)
+                      (step "grep-1" "grep" "3 files" nil)])
+
+          rich-rows
+          [(step "ls-1" "ls" "apps" [{:type "markdown" :text "3 directories"}])
+           (step "grep-1" "grep" "3 files" nil)]
+
+          rich
+          (band-text rich-rows)
+
+          ;; Content is set in by the painter, so its column rides the row's meta.
+          content-col
+          (let [{:keys [lines line-meta]} (band rich-rows)]
+            (some (fn [[line meta]]
+                    (when (str/includes? (str line) "3 directories") (:activity-content-col meta)))
+                  (map vector lines line-meta)))]
+
+      (expect (str/starts-with? (line-with plain "Ran") "├─● Ran cmd")
+              "nothing in this band opens: the verb follows the mark by one space")
+      (expect (str/starts-with? (line-with rich "Listed") "├─● ▾ Listed")
+              "a step that opens wears its chevron right after the mark")
+      (expect (str/starts-with? (line-with rich "Searched") "├─●   Searched")
+              "its sibling keeps the slot, so the verbs of one band line up")
+      (expect (= (.indexOf ^String (line-with rich "Listed") "Listed") content-col)
+              "what a step opens starts in the column its words do")))
+  (it
+    "renders headings, Markdown, tables, code, progress and safe media fallback"
+    (let [blocks
+          [{:type "heading" :text "Verification"}
+           {:type "markdown" :text "**Prepared** the workspace"}
+           {:type "table" :columns ["Suite" "Result"] :rows [["unit" "passed"]]}
+           {:type "code" :language "python" :text "print(42)"}
+           {:type "diff" :text "+added\n-removed"}
+           {:type "progress" :label "Checking" :value 1 :total 2}
+           {:type "image" :label "Screenshot" :attachment_id "image-1"}]
+
+          entries
+          (#'render/activity-content-entries
+           blocks
+           60
+           4
+           "s"
+           {"image-1" {:iteration-id "i" :index 0 :filename "screen.png"}}
+           true)
+
+          text
+          (str/join "\n" (map :line entries))]
+
+      (doseq [word ["Verification" "Prepared" "Suite" "passed" "print" "Checking" "Screenshot"]]
+        (expect (str/includes? text word)))
+      (expect (some #(= "i" (get-in % [:meta :artifact :iteration-id])) entries))
+      (expect (str/includes? (str (#'render/activity-content-entries
+                                   [{:type "progress" :label "Checking"}]
+                                   40
+                                   4
+                                   "s"
+                                   {}
+                                   false))
+                             "Stopped"))))
   (it
     "resolves symbol media in tool-only byte-endpoint order"
     (let [entry

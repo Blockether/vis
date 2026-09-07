@@ -2155,11 +2155,16 @@
                       ;; column. An iteration's prose sits flush with the answer and the
                       ;; bubble's name, not padded like a user bubble: one left edge for
                       ;; everything Vis says, whether it lands before a call or after it.
+                      content-col (long (or (:activity-content-col meta) 0))
                       x (+ (long bx)
-                           (long (if (:activity-content? meta) 8 (if (or user? error?) h-pad 0))))
+                           (long (if (:activity-content? meta)
+                                   content-col
+                                   (if (or user? error?) h-pad 0))))
                       y (+ (long btop) (long i))
-                      iw (if (:activity-content? meta) (max 0 (- (long bubble-w) 8)) bubble-w)
-                      fbx (if (:activity-content? meta) (+ (long bx) 8) bx)
+                      iw (if (:activity-content? meta)
+                           (max 0 (- (long bubble-w) content-col))
+                           bubble-w)
+                      fbx (if (:activity-content? meta) (+ (long bx) content-col) bx)
                       meta (if (:copy-width meta)
                              (assoc meta
                                :click-width (max 0 (- (long iw) (long (:copy-width meta)))))
@@ -5472,11 +5477,11 @@
 
 (defn- activity-text-col
   "Column the words of a row at `depth` start in, counted from the paper's edge. The
-   margin, the rail, the tick, the mark and one gap fill the columns before them at
-   depth 0; every level below is two columns further in, because the group IS the
-   indent."
-  ^long [^long depth]
-  (+ (long (count activity-margin)) 8 (* 2 depth)))
+   margin, the rail, the tick, the mark and one space fill the columns before them at
+   depth 0, plus the disclosure slot's two when `slot?`; every level below is two
+   columns further in, because the group IS the indent."
+  ^long [^long depth slot?]
+  (+ (long (count activity-margin)) 4 (if slot? 2 0) (* 2 depth)))
 
 (defn- activity-lead
   "The margin, the rail, and the blanks that carry the eye to column `col`."
@@ -5586,9 +5591,10 @@
     nil))
 
 (defn- activity-content-entries
-  "Render symbol content through the existing Markdown/table/code painter.
+  "Render symbol content through the existing Markdown/table/code painter, set in
+   from the paper's edge to `col`, the column its step's words start in.
    Media references use the durable artifact opener, not arbitrary paths or URLs."
-  [blocks width session-id artifacts running?]
+  [blocks width col session-id artifacts running?]
   (vec
     (mapcat
       (fn [block]
@@ -5649,9 +5655,9 @@
                          "Attachment unavailable"))]])
 
               entries
-              (mapv #(assoc-in % [:meta :activity-content?] true)
+              (mapv #(update % :meta assoc :activity-content? true :activity-content-col col)
                     (layout/ast->entries ast
-                                         (max 1 (- (long width) 8))
+                                         (max 1 (- (long width) (long col)))
                                          {:mode :channel :session-id session-id}))]
 
           (if (and media? artifact)
@@ -5678,6 +5684,12 @@
    session-id]
   (let [rows
         (vec activity-rows)
+
+        ;; A band whose steps open reserves the disclosure slot on every row, so their
+        ;; words line up under one another; a band nothing opens in sets each step's
+        ;; words one space after its mark, the way the companion does.
+        slot?
+        (boolean (some #(seq (:content %)) (concat rows (mapcat :children rows))))
 
         expanded?
         (or activity-expanded? (constantly false))
@@ -5857,7 +5869,7 @@
                                                           result-format summary children]
                                                    :as row} depth]
                                                  (let [col
-                                                       (activity-text-col depth)
+                                                       (activity-text-col depth slot?)
 
                                                        state
                                                        (activity-row-state row)
@@ -5910,16 +5922,20 @@
                                                            (and (= id focused-id)
                                                                 (= :running state)))
 
+                                                       ;; The mark, one space, the words - with the band's disclosure slot
+                                                       ;; between them only when some step in the band has something to open.
                                                        prefix
                                                        (str (if (zero? (long depth))
                                                               (str activity-margin
                                                                    activity-tick
                                                                    (activity-row-glyph row)
-                                                                   "   ")
-                                                              (activity-lead (- col 2)))
-                                                            (if (seq (:content row))
-                                                              (str (if open? "▾" "▸") " ")
-                                                              "  ")
+                                                                   " ")
+                                                              (activity-lead (- col
+                                                                                (if slot? 2 0))))
+                                                            (when slot?
+                                                              (if (seq (:content row))
+                                                                (str (if open? "▾" "▸") " ")
+                                                                "  "))
                                                             lead-word
                                                             (when object (str " " object))
                                                             delta)
@@ -5995,6 +6011,7 @@
                                                      (into (activity-content-entries
                                                              content
                                                              width
+                                                             col
                                                              session-id
                                                              activity-artifacts
                                                              (= :running state)))
