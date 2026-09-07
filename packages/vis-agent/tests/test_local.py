@@ -14,10 +14,43 @@ def test_missing_executable_is_reported_without_a_live_process(tmp_path):
     engine.close()
 
 
-def test_real_local_engine(tmp_path):
+def test_real_local_engine(tmp_path, monkeypatch):
     command = os.environ.get("VIS_TEST_LOCAL_COMMAND")
     if not command:
         pytest.skip("set VIS_TEST_LOCAL_COMMAND to exercise the real Vis engine")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("JAVA_TOOL_OPTIONS", f"-Duser.home={home}")
+    monkeypatch.delenv("VIS_GATEWAY_URL", raising=False)
+    # A lifecycle test must not depend on the developer's login or provider config.
+    import json
+
+    config = tmp_path / ".vis"
+    config.mkdir()
+    (config / "config.yml").write_text(
+        json.dumps(
+            {
+                "default_provider": "sdk-lifecycle",
+                "default_model": "lifecycle-model",
+                "providers": [
+                    {
+                        "id": "sdk-lifecycle",
+                        "base_url": "http://127.0.0.1:1/v1",
+                        "compatibility": "openai",
+                        "models": [
+                            {
+                                "name": "lifecycle-model",
+                                "context": 32000,
+                                "output_limit": 4096,
+                                "is_tool_call": True,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
     with LocalEngine(
         executable=shlex.split(command), root=tmp_path, startup_timeout=180
     ) as engine:

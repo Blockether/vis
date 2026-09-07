@@ -113,14 +113,83 @@ Current verification (separate suites, not additive):
 - Rationale: provider configuration and callback results still expose unchecked dictionaries; refresh exceptions are incorrectly retried as arity mismatches.
 - Data: extension SDK, Python provider adapters, canonical provider/config vocabularies, real embedded callbacks and HTTP/stdio routing fixtures.
 - Acceptance criteria: immutable typed presets and callback results; correct callback signatures and exactly-once invocation; unchanged canonical wire data; Python-declared provider serves a real local model request; installed SDK, affected JVM tests, formatting/lint/reflection and documentation checks pass.
-- Unknowns: verification in progress; native toolchain availability remains a separate gate.
+- Unknowns: local JVM and SDK acceptance is complete; native verification still requires the pinned GraalVM CE 25.3.4.1.
+
+Implemented immutable ProviderPreset, ProviderCredential, ProviderStatus, ProviderModel
+and typed limits records, with explicit callback protocols and validation. Constructors
+remain pure; each callback is invoked once with its declared signature. Invalid return
+records and asynchronous callbacks are rejected without retrying user code.
+
+The regression suite first exposed a refresh callback being retried after its body threw.
+Real isolated HTTP/stdio then reproduced cold-start ordering, providerless configuration,
+auto-bound preset endpoint precedence, and discarded preset headers/Responses paths.
+Extensions now register before routing configuration is resolved; managed providers can
+bind without a saved provider entry; runtime credential endpoints/dialects are not
+mistaken for explicit configuration; transport defaults reach the router intact.
+No lifecycle, auth-flow ownership or canonical provider wire contract was replaced.
+
+Final verification (separate, overlapping suites):
+- Source SDK plus the project GitHub extension: 348 passed; three opt-in engine cases skipped.
+- Fresh installed wheel outside the checkout: 310 passed, including actual JVM HTTP and
+  stdio model requests through Python-declared providers, regular and managed binding,
+  credential/preset headers, opaque extra-body data, enriched models and Activity/View cancellation.
+- Eight affected Clojure suites: 699 passed. The test REPL explicitly registers foundation
+  and the built-in LM Studio preset and omits deployment environment only in that REPL.
+- Python formatting/lint: four files clean. Clojure formatting/lint/reflection: six files clean.
+- Direct and sdist-built wheels agree, match the current injected SDK and all 24 canonical
+  JSON resources; strict Twine checks pass. Rebuilt after detecting source/artifact drift.
+- Both edited documentation files: 36 Python examples and 45 local file links checked.
+- Real-model py-repl-compute E2E: 1/1 passed, required REPL used, zero tool errors and the
+  temporary source gateway cleaned up.
+- Native-image verification remains blocked by the missing pinned CE toolchain. No live
+  gateway restart, publication, commit or push was performed.
 
 Reproduced before production edits: the 94-case extension suite has one failure,
 where a throwing refresh callback runs more than once. The 56 existing SDK declaration
 and registration tests pass in the dependency-complete isolated environment.
 
+## 10. Reusable SDK verification and a pinned-toolchain release
+
+- Rationale: make the repeated SDK checks a repository-owned extension, close native acceptance with the exact CE pin, and publish only verified scoped changes.
+- Data: `.vis/extensions/sdk_checks.py`, its tests, `.graalvm-version`, `bin/require-graalvm`, installed/native suites and the product release workflows.
+- Acceptance criteria: `sdk.check` reports ordered typed gates, stops owned processes and cleans temporary environments, rejects source/artifact drift and distinguishes local-only from actual-engine verification; install the checksum-verified locked toolchain, test a release-only snapshot, mirror VIS_VERSION, commit/push/tag only after checks pass.
+- Unknowns: remote CI and release runners; PyPI requires the pending trusted publisher and protected `pypi` environment before SDK publication.
+
+The repository already pins GraalVM CE 25.3.4.1 across version, vendor, assets, SHA-256
+and SDKMAN. The four pin invariants pass. Installed that exact CE release using
+`bin/require-graalvm --install --native-image` into a workspace-local toolchain directory;
+checksum and reported vendor/version both match. No downgrade, Oracle substitute or live
+service restart is involved. Release target: 0.1.43; publication is still pending.
+
+Implemented `sdk.check` as an object namespace with immutable results, ordered Activity
+steps, bounded subprocess output, timeout cleanup and disposable build/install environments.
+The real host-boundary regression invokes its shell-backed first gate through the engine.
+
+Verification of the isolated native candidate (separate, overlapping suites):
+- All 11 SDK gates pass: source tests 326 passed/three opt-in skips; fresh installed-wheel
+  tests 329 passed, including actual native HTTP/stdio engines and the 19 extension tests.
+- Direct and sdist-built wheels match each other, the injected source and all 24 canonical
+  JSON files; strict Twine validation, 37 Python examples and 18 local links pass.
+- Native binary built successfully with the locked CE release; six native assertions,
+  27 pin/package/reachability checks, the real host SDK regression and py-repl-compute E2E pass.
+- Main CI exposed four existing JVM failures. Reproduced and fixed the long Activity docs
+  paragraph, launcher stderr contaminating the lazy-analyzer assertion, duplicated shared
+  predicates and retired-name fixtures. The focused JVM selection passes 143 cases; the
+  affected companion unit/Chromium stories pass all 23 cases. Clojure lint/reflection is clean.
+- The engine lifecycle fixture now owns provider configuration, HOME and JVM user.home;
+  installed native tests no longer depend on developer credentials or saved providers.
+
+Rebuild and verify the final committed snapshot before tagging. Native tag publication is
+currently disabled by the repository workflow; default product releases are JVM-only.
+The public PyPI project and repository `pypi` environment are not available, so SDK package
+publication is a separate setup blocker, not a successful step.
+
 ## Plan state
 
+Phases 7–9 are implemented. Phase 10 has passed local SDK/native acceptance and is awaiting
+final committed-snapshot verification, main CI and product publication. No live service is restarted.
+
+### Historical phase 7 state
 Phase 7 is implemented and locally verified. Extension authors use `import blockether.vis.extension as vis`; engine clients use `from blockether.vis.engine import GatewayClient, LocalEngine`. The root package is inert, with no legacy aliases. The SDK bundles the private contract reader and all 24 canonical JSON resources in one wheel and rebuildable sdist; canonical Clojure/JSON sources are unchanged. The host-owned injector executes the same extension API shipped in that wheel. Consumers, documentation, version mirroring and CI use the new layout. Unrelated working-tree changes remain untouched. No commit, push, publication, deployment or runtime release was performed.
 
 Earlier namespace-refactor verification (before phase 8; separate, overlapping suites):

@@ -38,25 +38,30 @@ class Greeting:
 
 def greet(name: str) -> Greeting:
     """Greet one person and return a typed result."""
-    vis.publish_activity(vis.ActivityPresentation(
-        "Greeting", "Preparing reply", (vis.ActivityProgress("Working"),)
-    ))
+    vis.publish_activity(
+        vis.ActivityPresentation(
+            "Greeting", "Preparing reply", (vis.ActivityProgress("Working"),)
+        )
+    )
     return Greeting(f"Hello, {name}!")
 
 
 def greeting_activity(phase, result, **_) -> vis.ActivityPresentation:
     return vis.ActivityPresentation(
-        "Greeting", phase,
+        "Greeting",
+        phase,
         (vis.ActivityText(result.text if phase == "success" else "Preparing reply"),),
     )
 
 
-vis.register(vis.Extension(
-    name="greeter",
-    description="Greeting tools.",
-    alias="greeter",
-    symbols=[vis.Symbol(greet, activity=vis.Activity(render=greeting_activity))],
-))
+vis.register(
+    vis.Extension(
+        name="greeter",
+        description="Greeting tools.",
+        alias="greeter",
+        symbols=[vis.Symbol(greet, activity=vis.Activity(render=greeting_activity))],
+    )
+)
 ```
 
 `Extension`, `Symbol`, `SlashCommand`, `OpHook`, `NetworkFilter` and `Provider`
@@ -92,22 +97,26 @@ def status() -> vis.ProviderStatus:
     )
 
 
-vis.register(vis.Extension(
-    name="provider-example",
-    description="An OpenAI-compatible provider.",
-    env=["EXAMPLE_API_KEY"],
-    providers=[vis.Provider(
-        id="example",
-        label="Example AI",
-        preset=vis.ProviderPreset(
-            base_url="https://gateway.example.com/v1",
-            api_style="openai",
-            default_models=["example-model"],
-        ),
-        get_token_fn=credential,
-        status_fn=status,
-    )],
-))
+vis.register(
+    vis.Extension(
+        name="provider-example",
+        description="An OpenAI-compatible provider.",
+        env=["EXAMPLE_API_KEY"],
+        providers=[
+            vis.Provider(
+                id="example",
+                label="Example AI",
+                preset=vis.ProviderPreset(
+                    base_url="https://gateway.example.com/v1",
+                    api_style="openai",
+                    default_models=["example-model"],
+                ),
+                get_token_fn=credential,
+                status_fn=status,
+            )
+        ],
+    )
+)
 ```
 
 Load this file as an extension, then add/select `example` in Vis. Credentials are
@@ -298,6 +307,36 @@ completion, cancellation and cleanup. Select it with `VIS_TEST_LOCAL_COMMAND`.
 No real-model credentials are required. Release verification and any remaining
 external gates are recorded in `PLAN.md`; unit tests do not prove a linked binary.
 
+## Repository SDK checks
+
+This checkout ships `.vis/extensions/sdk_checks.py` as the `sdk` extension. After
+`/reload`, call its namespaced tool from a Vis session:
+
+```python
+report = sdk.check(
+    root=".",
+    python="/path/to/verification-venv/bin/python",
+    engine_command="/path/to/staged/vis-agent",
+)
+print(report.is_pass, report.is_engine_checked)
+for step in report.steps:
+    print(step.name, step.exit_code, step.duration_ms)
+```
+
+The selected Python needs `pytest`, `build`, `ruff` and `twine`. Checks cover source
+lint/format/tests, direct versus sdist-rebuilt wheels, exact packaged source and
+canonical contracts, strict distribution metadata, documented examples/file links,
+and tests of a disposable wheel installation **outside the checkout**. The check
+publishes ordered Activity progress and returns frozen `CheckReport`/`CheckResult`
+records with bounded per-process output tails. It stops at the first failure and
+cleans up its own processes and temporary environments, including on interruption.
+
+Omit `engine_command` for local/package checks; then `is_engine_checked` is false
+and opt-in engine tests are skipped. An explicit command exercises real HTTP/stdio
+with an isolated engine and local model double—not your live gateway. A staged
+native wrapper tests its bundled Python runtime as well. This tool never builds
+native images, spends real-model tokens, commits, tags or publishes.
+
 ## Distribution and publishing
 
 The SDK builds a wheel from its sdist and is tested after installation outside
@@ -313,7 +352,7 @@ a wheel or adding this workflow does not publish the SDK to PyPI.
 
 ## Where the real documentation lives
 
-`vis.ask`, the field builders, `vis.extension`, hooks, providers and network
+`vis.ask`, the field builders, `vis.Extension`/`vis.register`, hooks, providers and network
 filters are documented where they are defined, in `blockether/vis/extension.py`, and in the
 Vis docs (`doc("extending")` inside a session). Canonical JSON documents live in
 `vis-contract`; this package implements their host and gateway contracts.
