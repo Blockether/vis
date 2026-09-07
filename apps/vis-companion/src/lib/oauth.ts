@@ -7,10 +7,30 @@
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import type { AuthVerdict, SignInFlow } from './types';
+import { type GatewayClient, GatewayOAuthError } from './gateway';
 import { hasNativeLoopback, nativeOAuth } from './oauth-native';
 const APP_CALLBACK = 'com.blockether.viscompanion://oauth/callback';
 export const clientCallbackMode = (): 'app' | 'loopback' => Capacitor.isNativePlatform() ? 'app' : 'loopback';
 export const openAuthUrl = (url: string): void => { window.open(url, '_blank', 'noopener,noreferrer'); };
+
+/** A paired HTTP route may be protected by Tailscale/VPN, but its IP/name cannot
+ * prove that. Confirm explicitly before retrying a LOCAL transport refusal only;
+ * never replay a start that reached the gateway or prompt after the caller left.
+ */
+export async function startGatewayAuth<T>(client: GatewayClient, start: () => Promise<T>,
+  isCurrent: () => boolean): Promise<T | null> {
+  try { return await start(); }
+  catch (error) {
+    if (!(error instanceof GatewayOAuthError) || error.reason !== 'vpn-required') throw error;
+    if (!isCurrent()) return null;
+    const confirmed = window.confirm(`Sign in over your VPN?\n\n${new URL(client.base).origin} uses HTTP. ` +
+      'Continue only if an active encrypted VPN, such as Tailscale, protects the entire connection to this gateway. ' +
+      'Vis cannot verify the VPN. Keep it connected until sign-in finishes. Otherwise, cancel and use HTTPS.');
+    if (!confirmed || !isCurrent()) return null;
+    client.confirmVpnForOAuth();
+    return start();
+  }
+}
 
 /** A browser on this device cannot reach loopback on a remote gateway. */
 export function clientAuthFlow<T extends SignInFlow>(flow: T, gatewayBase: string): T {

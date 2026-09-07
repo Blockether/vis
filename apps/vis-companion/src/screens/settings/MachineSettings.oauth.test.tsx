@@ -2,7 +2,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { McpServersPanel } from './MachineSettings';
-import type { GatewayClient } from '../../lib/gateway';
+import { GatewayClient, GatewayError, GatewayOAuthError } from '../../lib/gateway';
+import type { McpServer } from '../../lib/types';
 const native = vi.hoisted(() => ({ handler: (_: { url: string }) => {}, remove: vi.fn() }));
 vi.mock('@capacitor/core', async importOriginal => ({ ...await importOriginal<typeof import('@capacitor/core')>(),
   Capacitor: { isNativePlatform: () => true, isPluginAvailable: () => false, getPlatform: () => 'ios' } }));
@@ -18,7 +19,7 @@ function client() {
     mcpAuthStart: vi.fn().mockResolvedValue(flow), mcpAuthComplete: vi.fn().mockResolvedValue({ ...flow, status: 'ok' }),
     mcpAuthPoll: vi.fn().mockResolvedValue(flow), mcpAuthCancel: vi.fn().mockResolvedValue(undefined) };
 }
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 it('starts native MCP auth, returns directly, closes the pending UI and refreshes the server', async () => {
   vi.spyOn(window, 'open').mockReturnValue(null);
   const gateway = client(); render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
@@ -49,4 +50,67 @@ it('does not send an old callback to a different paired gateway', async () => {
   await act(async () => native.handler({ url: `${flow.redirect_uri}?state=test-state&code=test-code` }));
   expect(second.mcpAuthComplete).not.toHaveBeenCalled(); expect(first.mcpAuthComplete).not.toHaveBeenCalled();
   expect(first.mcpAuthCancel).toHaveBeenCalledWith('work', 'test-flow');
+});
+
+// Regression: an HTTP gateway reached through an encrypted VPN was refused before fetch,
+// and the UI replaced that reason with a generic connection error.
+function pairedHttpClient() {
+  const gateway = new GatewayClient({ url: 'http://10.0.0.5:7890', token: 'test-paired-token' });
+  const servers = client().cachedMcpServers() as McpServer[];
+  vi.spyOn(gateway, 'cachedMcpServers').mockReturnValue(servers);
+  vi.spyOn(gateway, 'mcpServers').mockResolvedValue(servers);
+  return gateway;
+}
+it('confirms a VPN-protected HTTP connection and completes native MCP sign-in on that gateway', async () => {
+  const opened = vi.spyOn(window, 'open').mockReturnValue(null);
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  const fetch = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
+    ...flow, status: url.endsWith('/complete') ? 'ok' : 'pending',
+  })));
+  vi.stubGlobal('fetch', fetch);
+  const gateway = pairedHttpClient();
+  render(<McpServersPanel client={gateway} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  await screen.findByText('Waiting for authorization…');
+  expect(confirm).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/active encrypted VPN.*Tailscale/s));
+  expect(confirm.mock.calls[0]![0]).toContain('http://10.0.0.5:7890');
+  expect(confirm.mock.calls[0]![0]).not.toContain('test-paired-token');
+  await waitFor(() => expect(opened).toHaveBeenCalledWith(flow.url, '_blank', 'noopener,noreferrer'));
+  await act(async () => native.handler({ url: `${flow.redirect_uri}?state=test-state&code=test-code` }));
+  await waitFor(() => expect(screen.queryByText('Waiting for authorization…')).toBeNull());
+  const completion = fetch.mock.calls.find(([url]) => url.endsWith('/complete'))!;
+  expect(completion[0]).toBe('http://10.0.0.5:7890/v1/mcp/servers/work/auth/complete');
+  expect(JSON.parse(completion[1].body)).toEqual({ flow_id: 'test-flow', input: `${flow.redirect_uri}?state=test-state&code=test-code` });
+  for (const [url, options] of fetch.mock.calls) {
+    expect(url).toMatch(/^http:\/\/10\.0\.0\.5:7890\/v1\/mcp\/servers\/work\/auth\//);
+    expect(options.headers.get('Authorization')).toBe('Bearer test-paired-token');
+    expect(options.redirect).toBe('error');
+    expect(options.cache).toBe('no-store');
+  }
+  expect(confirm).toHaveBeenCalledOnce();
+});
+it('does not send OAuth traffic or open the browser when VPN confirmation is declined', async () => {
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  const opened = vi.spyOn(window, 'open').mockReturnValue(null);
+  const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+  render(<McpServersPanel client={pairedHttpClient()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+  expect(fetch).not.toHaveBeenCalled();
+  expect(opened).not.toHaveBeenCalled();
+  expect(screen.queryByText('Waiting for authorization…')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled();
+});
+it.each([
+  [new GatewayOAuthError('pairing-required'), 'Pair this gateway before starting sign-in.'],
+  [new GatewayError(400, 'test-sensitive-callback-value'),
+    'Cannot start sign-in. Check the gateway and MCP server settings, then try again.'],
+])('shows safe start errors without treating remote text as VPN consent', async (error, message) => {
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  const gateway = client(); gateway.mcpAuthStart.mockRejectedValue(error);
+  render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+  await screen.findByText(message as string);
+  expect(screen.queryByText('test-sensitive-callback-value')).toBeNull();
+  expect(confirm).not.toHaveBeenCalled();
 });

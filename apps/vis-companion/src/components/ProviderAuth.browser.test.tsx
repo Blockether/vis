@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { GatewayClient } from '../lib/gateway';
+import { GatewayClient } from '../lib/gateway';
 import type { AuthFlow, RouterProvider } from '../lib/types';
 import { useProviderAuth } from './ProviderAuth';
 
@@ -10,7 +10,7 @@ vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => true, i
 vi.mock('@capacitor/app', () => ({ App: { addListener: vi.fn(async (_event, callback) => {
   native.handler = callback; return { remove: native.remove };
 }) } }));
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 const provider = { id: 'openai-codex' } as RouterProvider;
 const flow: AuthFlow = { flow_id: 'test-flow', provider_id: provider.id, kind: 'pkce',
@@ -29,6 +29,22 @@ function deferred<T>() {
   const promise = new Promise<T>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+it('uses the same explicit VPN confirmation for model-provider sign-in', async () => {
+  vi.spyOn(window, 'open').mockReturnValue(null);
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify(flow)));
+  vi.stubGlobal('fetch', fetch);
+  const client = new GatewayClient({ url: 'http://10.0.0.5:7890', token: 'test-paired-token' });
+  vi.spyOn(client, 'cachedRouter').mockReturnValue([]);
+  vi.spyOn(client, 'router').mockResolvedValue([]);
+  const { result } = renderHook(() => useProviderAuth(client));
+  await act(async () => result.current.signIn(provider));
+  expect(confirm).toHaveBeenCalledOnce();
+  expect(fetch.mock.calls[0]![0]).toBe('http://10.0.0.5:7890/v1/providers/openai-codex/auth/start');
+  expect(result.current.flow?.flow_id).toBe('test-flow');
+  expect(window.open).toHaveBeenCalledOnce();
+});
 
 describe('browser-flow lifecycle in the shared Companion UI', () => {
   it('polls a fresh PKCE flow, closes the sign-in form and refreshes the fleet automatically', async () => {

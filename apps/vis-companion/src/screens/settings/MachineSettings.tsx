@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { clientCallbackMode, watchAuth, type AuthWatch } from "../../lib/oauth";
+import { clientCallbackMode, startGatewayAuth, watchAuth, type AuthWatch } from "../../lib/oauth";
 import { McpAuth } from "../../components/McpAuth";
 
 import {
   GatewayClient,
   GatewayError,
+  GatewayOAuthError,
   INCOMPATIBLE_STATUS,
 } from "../../lib/gateway";
 import type {
@@ -522,15 +523,19 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
     setBusy(server.name);
     setError(null);
     try {
-      const flow = await client.mcpAuthStart(server.name, clientCallbackMode());
+      const flow = await startGatewayAuth(client,
+        () => client.mcpAuthStart(server.name, clientCallbackMode()),
+        () => authEpoch.current === epoch);
+      if (!flow) return;
       if (authEpoch.current !== epoch) {
         await client.mcpAuthCancel(flow.server, flow.flow_id).catch(() => {});
         return;
       }
       setAuthInput("");
       setAuth({ flow, client });
-    } catch {
-      if (authEpoch.current === epoch) setError("Cannot start sign-in. Check your gateway connection and try again.");
+    } catch (error) {
+      if (authEpoch.current === epoch) setError(error instanceof GatewayOAuthError ? error.message
+        : "Cannot start sign-in. Check the gateway and MCP server settings, then try again.");
     } finally {
       if (authEpoch.current === epoch) setBusy(null);
     }

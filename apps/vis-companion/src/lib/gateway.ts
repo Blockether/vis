@@ -99,6 +99,19 @@ export class GatewayError extends Error {
   }
 }
 
+/** Local, non-secret refusals. Remote error text must not trigger a VPN confirmation. */
+export class GatewayOAuthError extends GatewayError {
+  readonly reason: "vpn-required" | "pairing-required" | "invalid-address";
+  constructor(reason: GatewayOAuthError["reason"]) {
+    super(0, {
+      "vpn-required": "Sign-in needs HTTPS or a confirmed encrypted VPN connection.",
+      "pairing-required": "Pair this gateway before starting sign-in.",
+      "invalid-address": "Use an HTTP or HTTPS gateway address for sign-in.",
+    }[reason]);
+    this.reason = reason;
+  }
+}
+
 /** HTTP status a gateway refuses an unsupported client protocol with. */
 export const INCOMPATIBLE_STATUS = 426;
 
@@ -906,6 +919,7 @@ type AttachmentSource = { blob: Blob; url: string };
 export class GatewayClient {
   readonly base: string;
   private readonly token?: string;
+  private vpnOAuthUntil = 0;
   /** Last canonical queue hold read with this session's backlog. */
   private readonly queuePaused = new Map<string, QueuePausedInfo | null>();
   // (session, iteration, index) → the produced artifact's downloaded Blob and its
@@ -936,6 +950,14 @@ export class GatewayClient {
     this.base = normalizeBase(conn.url);
     this.token = conn.token;
     this.overview = this.cachedProjectsOverview();
+  }
+
+  /** Explicit human confirmation of an active encrypted VPN, not IP-range detection.
+   * Kept only on this immutable URL/token client, never saved or shared with another
+   * connection. It lasts at most one OAuth timeout (15 minutes).
+   */
+  confirmVpnForOAuth(): void {
+    this.vpnOAuthUntil = Date.now() + 900_000;
   }
 
   /** Cache key for one of this gateway's snapshot-able payloads. */
@@ -976,10 +998,13 @@ export class GatewayClient {
     if (oauth) {
       const destination = new URL(this.base);
       const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(destination.hostname);
-      if (destination.protocol !== "https:" && !(destination.protocol === "http:" && loopback)) {
-        throw new GatewayError(0, "OAuth requires HTTPS for a remote gateway.");
+      if (!["http:", "https:"].includes(destination.protocol)) {
+        throw new GatewayOAuthError("invalid-address");
       }
-      if (!loopback && !this.token) throw new GatewayError(0, "OAuth requires a paired gateway.");
+      if (!loopback && !this.token?.trim()) throw new GatewayOAuthError("pairing-required");
+      if (destination.protocol === "http:" && !loopback && Date.now() >= this.vpnOAuthUntil) {
+        throw new GatewayOAuthError("vpn-required");
+      }
     }
     const diagnostic = startRequestDiagnostic(this.base, method, path);
     let exchangeStatus = 0;
