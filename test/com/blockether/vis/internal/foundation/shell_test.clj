@@ -1135,6 +1135,40 @@
               (expect (false? (get w "timed_out")))
               ;; Confirming silence costs the drain window, never the budget.
               (expect (< (long (get w "duration_ms")) 1000)))))))
+  ;; Regression, gateway CPU audit: a JFR profile of a live gateway caught it
+  ;; forking `/bin/ps` EIGHT times a second — 388 of 395 process spawns in a 46 s
+  ;; window came from this one loop. Every poll asked [[bg-core]] for the tree's
+  ;; live cost, and the loop reads `out`/`next_offset`/`is_eof`/`status` and no
+  ;; number at all, so nineteen samples in twenty were taken and dropped unread.
+  ;; At ~14 ms of CPU per fork and ~27 polls a second, that was roughly a third
+  ;; of a core burned per waiting shell to produce one number.
+  (it "samples the tree cost ONCE per wait, not once per poll"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let [sid "shell-wait-usage-sampling"
+                  env {:session-id sid}
+                  usage-var #'shell/process-usage
+                  sample @usage-var
+                  calls (atom 0)]
+
+              (try (shell-bg* env "dev" "sleep 30")
+                   (let [waited (with-redefs-fn {usage-var (fn [pid]
+                                                             (swap! calls inc)
+                                                             (sample pid))}
+                                  (fn []
+                                    (wait* env "dev" 1)))]
+                     ;; A whole second of polling on a shell that prints nothing: dozens
+                     ;; of reads, ONE sample — the one that reaches the caller.
+                     (expect (= 1 @calls))
+                     ;; And it is a real sample, not a dropped field: the wait expired,
+                     ;; the child did not, so the three numbers say what it costs.
+                     (expect (= "running" (get waited "status")))
+                     (expect (true? (get waited "timed_out")))
+                     (expect (pos? (long (get waited "rss_bytes"))))
+                     (expect (number? (get waited "cpu_percent")))
+                     (expect (number? (get waited "cpu_ms"))))
+                   (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
   (it "tells the ticker WHAT it waits for — the command and the budget, not the op"
       (with-shell-on
         (fn []

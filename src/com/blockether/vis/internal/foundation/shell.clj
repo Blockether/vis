@@ -1363,8 +1363,11 @@
 
    The shell's own command line rides the SAME `command` key a run answers with,
    so a lifecycle stage says what the shell it acts on is running and the result
-   never echoes it under a second name."
-  [op id entry]
+   never echoes it under a second name.
+
+   `:sample-usage?` false drops the three cost numbers — the ONE caller that
+   wants that is the wait loop's polling read, which never looks at them."
+  [op id entry & [{:keys [sample-usage?] :or {sample-usage? true}}]]
   (let [exit
         (some-> (:exit entry)
                 deref)
@@ -1378,7 +1381,15 @@
         ;; Live cost of the tree, sampled HERE so every stage reports the same
         ;; three numbers the same way. Skipped once the child is gone: there is
         ;; nothing to sample, and a stale sample would be a lie.
-        (when (nil? exit) (process-usage (:pid (:proc entry))))
+        ;;
+        ;; And skipped when the caller declared it reads none. A sample forks
+        ;; `ps`, which measured ~14 ms of CPU per call here, so the wait loop's
+        ;; 2/10/50 ms cadence spent roughly a THIRD OF A CORE per waiting shell
+        ;; on samples nobody read: ~27 of them a second, of which exactly one —
+        ;; the last — reaches a caller. A JFR profile of a live gateway is what
+        ;; found it, with 388 of 395 process spawns in a 46 s window coming from
+        ;; this one loop.
+        (when (and sample-usage? (nil? exit)) (process-usage (:pid (:proc entry))))
         {"id" id
          "command" (:command entry)
          "cwd" (:dir entry)
@@ -1971,7 +1982,7 @@
    it waits, so a batch that ended inside its wait still has a log to read, and the
    file is what answers once the registry entry is gone."
   ([env id] (shell-logs-impl env id nil))
-  ([env id {:keys [offset limit lines]}]
+  ([env id {:keys [offset limit lines sample-usage?] :or {sample-usage? true}}]
    (let [session
          (:session-id env)
 
@@ -2001,7 +2012,9 @@
          ;; while running. `out` is the window this read returned, already joined
          ;; — the SAME key a foreground run puts its bytes under, so "what did it
          ;; print" is one field whether the call waited or came back for it later.
-         {:result (assoc (if entry (bg-core "logs" id entry) (retired-log-core env session id))
+         {:result (assoc (if entry
+                           (bg-core "logs" id entry {:sample-usage? sample-usage?})
+                           (retired-log-core env session id))
                     ;; Every shell is a PTY, so a tool writes for a SCREEN: CRLF line ends,
                     ;; progress redrawn with a bare CR, colour and keypad escapes it only
                     ;; sent because isatty() was true. The model reads TEXT, so this window
@@ -2087,7 +2100,19 @@
 
         finish
         (fn [res nxt]
-          (let [snap ((:snapshot acc))]
+          (let [snap
+                ((:snapshot acc))
+
+                ;; The polls read without sampling, so the tree's cost is taken
+                ;; HERE — once, on the result that is actually returned, with the
+                ;; same values a `logs` read answers with. A child that has
+                ;; already exited is not sampled, exactly as [[bg-core]] would
+                ;; not sample it: there is nothing left to measure.
+                res
+                (if (= "running" (get res "status"))
+                  (merge res (process-usage (get res "pid")))
+                  res)]
+
             (extension/success {:result (assoc res
                                           "stage" "wait"
                                           "offset" start
@@ -2123,7 +2148,16 @@
            false]
 
       (let [res
-            (:result (shell-logs-impl env id {:offset off :limit wait-chunk-limit}))
+            (:result (shell-logs-impl env
+                                      id
+                                      {:offset off
+                                       :limit wait-chunk-limit
+                                       ;; The loop below reads `out`, `next_offset`,
+                                       ;; `is_eof` and `status` and NOTHING else, so a
+                                       ;; per-iteration `ps` fork buys a number no one
+                                       ;; reads. `finish` takes the one sample that
+                                       ;; reaches a caller.
+                                       :sample-usage? false}))
 
             text
             (or (get res "out") "")
