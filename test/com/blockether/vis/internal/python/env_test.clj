@@ -53,87 +53,203 @@
 
 (defdescribe
   host-owned-python-globals-test
-  (it "provides the workspace root as a Path and refreshes it with the session"
-      (tpc/with-own [ctx {}]
-                    (doseq [directory ["/workspace/first" "/workspace/second"]]
-                      (ep/bind-ctx! ctx {"workspace" {"root" directory}})
-                      (let [result (ep/run-python-block
-                                     ctx
-                                     "print(isinstance(project_root_path, pathlib.Path), str(project_root_path / 'src'))")]
-                        (expect (nil? (:error result)))
-                        (expect (= (str "True " directory "/src\n") (:stdout result)))))))
-  (it "seeds standalone contexts before their first block"
-      (tpc/with-own [ctx {}]
-                    (let [result (ep/run-python-block ctx "print(str(root))\nprint(session)")]
-                      (expect (nil? (:error result)))
-                      (expect (= (str (System/getProperty "user.dir") "\n{}\n")
-                                 (:stdout result))))))
+  (it
+    "provides project_root_path as a Path and refreshes it with the session"
+    (tpc/with-own
+      [ctx {}]
+      (doseq [directory ["/workspace/first" "/workspace/second"]]
+        (ep/bind-ctx! ctx {"workspace" {"root" directory}})
+        (let
+          [result
+           (ep/run-python-block
+             ctx
+             "print(isinstance(project_root_path, pathlib.Path), str(project_root_path / 'src'))")]
+          (expect (nil? (:error result)))
+          (expect (= (str "True " directory "/src\n") (:stdout result)))))))
+  (it "seeds standalone contexts without a legacy root alias"
+      (tpc/with-own
+        [ctx {}]
+        (let [result (ep/run-python-block
+                       ctx
+                       "print(str(project_root_path))\nprint(session)\nprint('root' in globals())")]
+          (expect (nil? (:error result)))
+          (expect (= (str (System/getProperty "user.dir") "\n{}\nFalse\n") (:stdout result))))))
   (it "protects system bindings without preventing ordinary persistent variables"
       (tpc/with-own
         [ctx {}]
         (ep/bind-ctx! ctx {"workspace" {"root" "/workspace/first"}})
-        (let [shadow (ep/run-python-block ctx
-                                          (str "before = str(root)\n"
-                                               "root = root / 'temporary'\nsession = None\n"
-                                               "print(before, str(root), session)"))]
+        (let [shadow (ep/run-python-block
+                       ctx
+                       (str "before = str(project_root_path)\n"
+                            "project_root_path = project_root_path / 'temporary'\nsession = None\n"
+                            "root = 'ordinary variable'\n"
+                            "print(before, str(project_root_path), session)"))]
           (expect (nil? (:error shadow)))
           (expect (= "/workspace/first /workspace/first/temporary None\n" (:stdout shadow))))
-        (expect (= "/workspace/first /workspace/first /workspace/first\n"
+        (expect (= "/workspace/first /workspace/first ordinary variable\n"
+                   (:stdout (ep/run-python-block ctx
+                                                 "print(str(project_root_path), before, root)"))))
+        (expect (nil? (:error (ep/run-python-block ctx "del project_root_path, session"))))
+        (expect (= "/workspace/first /workspace/first\n"
                    (:stdout (ep/run-python-block
                               ctx
-                              "print(str(root), session['workspace']['root'], before)"))))
-        (expect (nil? (:error (ep/run-python-block ctx "del root, session"))))
-        (expect (= "/workspace/first /workspace/first\n"
-                   (:stdout
-                     (ep/run-python-block ctx "print(str(root), session['workspace']['root'])"))))))
-  (it "keeps roots session-local and visible to helpers after a context refresh"
+                              "print(str(project_root_path), session['workspace']['root'])"))))))
+  (it "keeps paths session-local and visible to helpers after a context refresh"
       (tpc/with-own
         [first-ctx {}]
         (tpc/with-own
           [second-ctx {}]
           (ep/bind-ctx! first-ctx {"workspace" {"root" "/workspace/first"}})
           (ep/bind-ctx! second-ctx {"workspace" {"root" "/workspace/second"}})
-          (expect (nil? (:error (ep/run-python-block
-                                  first-ctx
-                                  "def workspace_src():\n    return str(root / 'src')"))))
+          (expect (nil? (:error
+                          (ep/run-python-block
+                            first-ctx
+                            "def workspace_src():\n    return str(project_root_path / 'src')"))))
           (expect (= "/workspace/first/src\n"
                      (:stdout (ep/run-python-block first-ctx "print(workspace_src())"))))
           (ep/bind-ctx! first-ctx {"workspace" {"root" "/workspace/updated"}})
           (expect (= "/workspace/updated/src\n"
                      (:stdout (ep/run-python-block first-ctx "print(workspace_src())"))))
           (expect (= "/workspace/second\n"
-                     (:stdout (ep/run-python-block second-ctx "print(str(root))")))))))
-  (it "protects system names from helper restoration and hides them from live vars"
+                     (:stdout (ep/run-python-block second-ctx "print(str(project_root_path))")))))))
+  (it
+    "protects system names from helper restoration"
+    (tpc/with-own
+      [ctx {}]
+      (expect (= '#{session project_root_path} ep/SYSTEM_VAR_NAMES))
+      (doseq [sym ep/SYSTEM_VAR_NAMES]
+        (expect (ep/system-var-sym? sym))
+        (expect (tpc/ev ctx (str (pr-str (name sym)) " in __vis_protected_names__"))))
+      (expect (not (ep/system-var-sym? 'root)))
+      (expect (some? (:error (ep/run-python-block ctx "def project_root_path():\n    return 1"))))
+      (expect (= 0
+                 (tpc/ev ctx
+                         (str "__vis_restore_defs__("
+                              (ep/ctx->python-str "project_root_path = 1\nsession = None\n")
+                              ")"))))
+      (expect
+        (= "True True\n"
+           (:stdout
+             (ep/run-python-block
+               ctx
+               "print(isinstance(project_root_path, pathlib.Path), isinstance(session, dict))"))))))
+  (it
+    "binds precisely the advertised registry, protects it, and removes stale aliases"
+    (tpc/with-own
+      [ctx {}]
+      (ep/bind-ctx! ctx
+                    {"workspace" {"root" "/workspace/main"
+                                  "path_globals" {"project_root_path" "/workspace/main"
+                                                  "fff_path" "/workspace/fff"
+                                                  "spel_path" "/workspace/spel"}}})
+      (expect
+        (=
+          "True\n"
+          (:stdout
+            (ep/run-python-block
+              ctx
+              "print(all(isinstance(globals()[n], pathlib.Path) and str(globals()[n]) == p for n, p in session['workspace']['path_globals'].items()))"))))
+      (expect (nil? (:error (ep/run-python-block ctx
+                                                 "fff_path = None\ndel spel_path\nsaved = 42"))))
+      (expect (= "/workspace/fff /workspace/spel 42\n"
+                 (:stdout (ep/run-python-block ctx "print(fff_path, spel_path, saved)"))))
+      (expect (some? (:error (ep/run-python-block ctx "def fff_path():\n    return 1"))))
+      (expect (= 0 (tpc/ev ctx "__vis_restore_defs__('fff_path = 1')")))
+      (expect (nil? (:error (ep/run-python-block
+                              ctx
+                              "def fff_src():\n    return str(fff_path / 'src')"))))
+      (ep/bind-ctx! ctx
+                    {"workspace" {"root" "/workspace/main"
+                                  "path_globals" {"project_root_path" "/workspace/main"
+                                                  "fff_path" "/drafts/fff"
+                                                  "svar_path" "/workspace/svar"}}})
+      (expect
+        (=
+          "/drafts/fff/src /workspace/svar False False\n"
+          (:stdout
+            (ep/run-python-block
+              ctx
+              "print(fff_src(), svar_path, 'spel_path' in globals(), 'spel_path' in __vis_protected_names__)"))))
+      (ep/bind-ctx! ctx {"workspace" {"root" "/workspace/main"}})
+      (expect (= "False False\n"
+                 (:stdout (ep/run-python-block
+                            ctx
+                            "print('fff_path' in globals(), 'svar_path' in globals())"))))))
+  (it "rejects alias collisions before changing the previous context"
+      (doseq [bindings [{'taken_path (fn []
+                                       :tool)} {}]]
+        (tpc/with-own
+          [ctx bindings]
+          (ep/bind-ctx! ctx {"workspace" {"root" "/workspace/original"}})
+          (when (empty? bindings)
+            (expect (nil? (:error (ep/run-python-block ctx "taken_path = 42")))))
+          (expect (str/includes? (try (ep/bind-ctx! ctx
+                                                    {"workspace" {"root" "/workspace/rejected"
+                                                                  "path_globals"
+                                                                  {"taken_path"
+                                                                   "/workspace/other"}}})
+                                      "no error"
+                                      (catch Exception e (ex-message e)))
+                                 "Python name collision: taken_path"))
+          (expect (= "/workspace/original /workspace/original\n"
+                     (:stdout (ep/run-python-block
+                                ctx
+                                "print(project_root_path, session['workspace']['root'])")))))))
+  (it "rejects custom bindings that would replace a host-owned name"
+      (doseq [sym
+              '[session project_root_path project_root_path.method]
+
+              value
+              [42
+               (fn []
+                 :tool)]]
+
+        (expect (str/includes? (try (tpc/with-own [ctx {sym value}]
+                                                  (ep/run-python-block ctx "pass"))
+                                    "no error"
+                                    (catch Exception e (ex-message e)))
+                               "Python name collision:"))))
+  (it "rejects late bindings without damaging path globals"
       (tpc/with-own
         [ctx {}]
-        (doseq [sym ep/SYSTEM_VAR_NAMES]
-          (expect (ep/system-var-sym? sym))
-          (expect (tpc/ev ctx (str (pr-str (name sym)) " in __vis_protected_names__"))))
-        (expect (not (ep/system-var-sym? 'result)))
-        (expect (some? (:error (ep/run-python-block ctx "def root():\n    return 1"))))
-        (expect (= 0
-                   (tpc/ev ctx
-                           (str "__vis_restore_defs__("
-                                (ep/ctx->python-str "root = 1\nsession = None\n")
-                                ")"))))
-        (expect (= "True True\n"
-                   (:stdout
-                     (ep/run-python-block
-                       ctx
-                       "print(isinstance(root, pathlib.Path), isinstance(session, dict))")))))))
+        (ep/bind-ctx! ctx
+                      {"workspace" {"root" "/workspace/main"
+                                    "path_globals" {"fff_path" "/workspace/fff"}}})
+        (doseq [sym
+                '[session project_root_path fff_path fff_path.method]
 
-(defdescribe worker-system-globals-test
-             (it "carries the host workspace and its protected names into the session worker"
-                 (tpc/with-own
-                   [ctx {} (constantly [(System/getProperty "user.dir")])
-                    {:worker? true :jail-enabled? true}]
-                   (ep/bind-ctx! ctx {"workspace" {"root" (System/getProperty "user.dir")}})
-                   (expect (nil? (:error (ep/run-python-block ctx "root = None\nsession = None"))))
-                   (expect (= "True True\n"
-                              (:stdout (ep/run-python-block
-                                         ctx
-                                         (str "print(isinstance(root, pathlib.Path), "
-                                              "str(root) == session['workspace']['root'])"))))))))
+                mutate
+                [(fn [sym]
+                   (ep/set-python-binding! ctx
+                                           sym
+                                           (fn []
+                                             :tool)))
+                 (fn [sym]
+                   (ep/remove-python-binding! ctx sym))]]
+
+          (expect (str/includes? (try (mutate sym) "no error" (catch Exception e (ex-message e)))
+                                 "Python name collision:")))
+        (expect (= "/workspace/main /workspace/fff\n"
+                   (:stdout (ep/run-python-block ctx "print(project_root_path, fff_path)")))))))
+
+(defdescribe
+  worker-system-globals-test
+  (it "carries the advertised paths and their protection into the session worker"
+      (tpc/with-own
+        [ctx {} (constantly [(System/getProperty "user.dir")]) {:worker? true :jail-enabled? true}]
+        (ep/bind-ctx! ctx
+                      {"workspace" {"root" (System/getProperty "user.dir")
+                                    "path_globals" {"fixture_path" (System/getProperty
+                                                                     "user.dir")}}})
+        (expect (nil? (:error (ep/run-python-block
+                                ctx
+                                "project_root_path = None\nfixture_path = None\nsession = None"))))
+        (expect (= "True True True\n"
+                   (:stdout (ep/run-python-block
+                              ctx
+                              (str "print(isinstance(project_root_path, pathlib.Path), "
+                                   "str(project_root_path) == session['workspace']['root'], "
+                                   "fixture_path == project_root_path)"))))))))
 
 (defdescribe
   block-error-fidelity-test

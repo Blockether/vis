@@ -55,7 +55,8 @@
         (when (and db ws-id) (workspace/workspace-with-session db ws-id))]
 
     (workspace-ctx/render-block (assoc (or pair {:workspace (fallback-workspace env)})
-                                  :filesystem-roots (workspace/env-filesystem-roots env)))))
+                                  :filesystem-roots (workspace/env-filesystem-roots env)
+                                  :project-paths (get-in env [:security-policy :project-paths])))))
 
 (defn- combined-ctx
   "Foundation-core's single `:ext/ctx-fn` fn. Contributes the workspace

@@ -463,7 +463,7 @@
 
 (def SYSTEM_VAR_NAMES
   "Host-owned globals refreshed with the standing context and hidden from user live vars."
-  '#{session root})
+  '#{session project_root_path})
 
 (def ^:private protected-baseline-names
   "Python globals the agent may CALL but must not rebind. Rebinding output, tool, or
@@ -550,6 +550,19 @@
                 (py-json-literal (vec (sort (set (map str names)))))
                 "))"))))
 
+(defn- assert-unowned-bindings!
+  [session names]
+  (let [owned
+        (into (set (map name SYSTEM_VAR_NAMES))
+              (when session (read-json (py-run session "globals().get('__vis_path_names__', [])"))))
+
+        collisions
+        (sort (filter owned names))]
+
+    (when (seq collisions)
+      (throw (ex-info (str "Python name collision: " (str/join ", " collisions))
+                      {:names (vec collisions)})))))
+
 (defn set-python-binding!
   "Bind `sym` -> `val` in `session`'s globals.
 
@@ -569,6 +582,7 @@
         protected
         (map #(first (str/split % #"\." 2)) names)]
 
+    (assert-unowned-bindings! session protected)
     (add-protected-names! session protected)
     (if (fn? val)
       (python-host/install-tools! session
@@ -626,6 +640,7 @@
    every discovery metadata table."
   [session sym]
   (let [names [(sym->py-name sym)]]
+    (assert-unowned-bindings! session (map #(first (str/split % #"\." 2)) names))
     (exec! session
            (str "for __vis_n__ in " (py-json-literal (vec names))
                 ":\n" "    if '.' in __vis_n__:\n"
@@ -693,21 +708,42 @@
   [env sym val]
   (set-python-binding! (python-context env) sym val))
 
-(defn bind-ctx!
-  "Bind the standing context as `session` and its workspace directory as `root`.
+(def ^:private context-bindings-python
+  "def __vis_bind_ctx__(g, data, fallback):
+    workspace = data.get('workspace') or {}
+    paths = {name: __import__('pathlib').Path(path)
+             for name, path in (workspace.get('path_globals') or {}).items()}
+    paths['project_root_path'] = __import__('pathlib').Path(workspace.get('root') or fallback)
+    old = set(g.get('__vis_path_names__', ['project_root_path']))
+    names = set(paths)
+    protected = set(g.get('__vis_protected_names__') or [])
+    collisions = (names - old) & (set(g) | protected | set(dir(__import__('builtins'))))
+    if collisions:
+        raise ValueError('Python name collision: ' + ', '.join(sorted(collisions))
+                         + '; choose a different workspace.filesystem python_name')
+    for name in old - names:
+        g.pop(name, None)
+    g.update(paths)
+    g['session'] = data
+    g['__vis_path_names__'] = sorted(names)
+    g['__vis_protected_names__'] = sorted((protected - old) | names)
+")
 
-   `root` is a pathlib.Path, not a string or a process-wide builtin. Both names
-   are host-owned: block-local shadows cannot overwrite them for later blocks.
-   A standalone context without workspace metadata uses the host working directory."
+(defn bind-ctx!
+  "Refresh `session` and the prebound Path globals in workspace.path_globals.
+
+   `project_root_path` always points at the working workspace (or the host working
+   directory for a standalone context). Registered names share the prompt's exact
+   registry, disappear when removed, and cannot overwrite tools or user variables.
+   All are host-owned: block-local shadows cannot replace later blocks' bindings."
   [session data]
-  (exec! session
-         (str "globals()['session'] = "
-              (py-json-literal data)
-              "\n"
-              "globals()['root'] = __import__('pathlib').Path("
-              "session.get('workspace', {}).get('root') or "
-              (py-json-literal (System/getProperty "user.dir"))
-              ")")))
+  (py-exec! session
+            (str "__vis_bind_ctx__(globals(), "
+                 (py-json-literal data)
+                 ", "
+                 (py-json-literal (System/getProperty "user.dir"))
+                 ")"))
+  nil)
 
 (defn seed-cli-runtime!
   "Seed a standalone `vis-agent python` CLI session with script `argv` (bound to
@@ -1148,6 +1184,9 @@
    name and every seeded module is already BASELINE when the member snapshot is
    taken, and the model's live-vars view shows only what its own blocks made."
   [custom-bindings roots-fn network-opts stdin]
+  (assert-unowned-bindings! nil
+                            (map #(first (str/split (sym->py-name %) #"\." 2))
+                                 (keys custom-bindings)))
   (let [session (new-session-name)]
     ;; A gateway session configures its process boundary BEFORE any request can
     ;; start the worker. The worker then installs the audit-hook backstop before
@@ -1178,6 +1217,7 @@
     (exec! session "globals().setdefault('println', print)")
     (try (py-install-module! session "auto_imports") (catch Throwable _ nil))
     (install-protected-names! session custom-bindings)
+    (py-exec! session context-bindings-python)
     (bind-ctx! session {})
     ;; Tools first as ONE registration — the guest gets every name in one pass,
     ;; and the contracts below stamp the wrappers that pass leaves behind.

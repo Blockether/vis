@@ -911,11 +911,14 @@
 ;; them, so blocks retyped absolute paths, redefined the same helper in every block, and a
 ;; chore repeated across turns never became anything the project keeps.
 (defdescribe core-prompt-steers-python-shape-test
-             (it "uses the prebound workspace root instead of redefining it"
+             (it "uses the advertised prebound paths instead of defining or guessing aliases"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "Write a PROGRAM, not a transcript"))
-                   (expect (str/includes? text "prebound `root` (a `Path`)"))
-                   (expect (str/includes? text "do not redefine it"))
+                   (expect (str/includes? text "`project_root_path`"))
+                   (expect (str/includes? text "`session[\"workspace\"][\"path_globals\"]`"))
+                   (expect (str/includes? text "prebound `Path` objects"))
+                   (expect (str/includes? text "do not redefine them or guess aliases"))
+                   (expect (not (str/includes? text "prebound `root`")))
                    (expect (not (str/includes? text "root = Path(session")))
                    (expect (str/includes? text "`await gather(...)`"))))
              ;; Regression, user report ("can I write function definitions into the session

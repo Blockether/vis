@@ -1,9 +1,26 @@
+import json
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from e2e import run
 from e2e.run import cache_metric_failures, decode_usage_body, usage_percent
+
+
+class ScenarioFilesTest(unittest.TestCase):
+    def test_registers_fixture_directories_with_absolute_paths(self):
+        scenario = run.load_scenarios(["py-project-paths"])[0]
+        with tempfile.TemporaryDirectory() as work:
+            run.seed_files(scenario, work)
+            config = json.loads((Path(work) / "vis.yml").read_text())
+            self.assertEqual(
+                [{"id": "library", "path": str((Path(work) / "library").resolve())}],
+                config["workspace"]["filesystem"],
+            )
+            self.assertEqual(["library"], config["jail"]["filesystem"]["allow"])
+            self.assertIn("return 0", (Path(work) / "library/value.py").read_text())
 
 
 class CacheMetricValidationTest(unittest.TestCase):

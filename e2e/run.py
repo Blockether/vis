@@ -15,7 +15,8 @@ editing set beside the per-language ones (`clj-*`, `py-*`) that exercise a surfa
     e2e/scenarios/<id>/
       scenario.json   {lang, prompt, want, wantnot, want_answer?,
                        want_tools?, want_forms?, want_requested_route?,
-                       want_folded_prefix?, want_cache_read?, want_cache_metrics?}
+                       want_folded_prefix?, want_cache_read?, want_cache_metrics?,
+                       workspace_filesystem?}
       files/          real files seeded into a fresh git repo before the run
 
 `want`/`wantnot` are {path: [substring, ...]} checks on the resulting files;
@@ -24,7 +25,8 @@ scenarios); `want_tools` are extension tools that MUST have fired (e.g.
 repl_eval); `want_forms` are source substrings that MUST occur in a top-level
 sandbox form. The four boolean benchmark guards pin the requested route, the
 canonical oldest-prefix fold, real provider cache reads, and the persisted
-cache-metric arithmetic.
+cache-metric arithmetic. `workspace_filesystem` maps catalog ids to fixture-relative
+directories; seeding generates vis.yml with absolute paths and explicit admission.
 
 Each scenario runs in its own throwaway git repo through one source-owned gateway on an
 isolated temporary DB, so an already-running installed gateway cannot mask working-tree edits. Runs are parallel. Usage:
@@ -316,6 +318,18 @@ def seed_files(sc, work):
             dst = os.path.join(work, os.path.relpath(src, fdir))
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copyfile(src, dst)
+    if registrations := sc.get("workspace_filesystem"):
+        entries = [
+            {"id": name, "path": os.path.realpath(os.path.join(work, relative))}
+            for name, relative in registrations.items()
+        ]
+        config = {
+            "workspace": {"filesystem": entries},
+            "jail": {"filesystem": {"allow": list(registrations)}},
+        }
+        with open(os.path.join(work, "vis.yml"), "w") as fh:
+            json.dump(config, fh, indent=2)
+            fh.write("\n")
 
 
 def run_one(job):

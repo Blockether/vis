@@ -494,44 +494,43 @@
     (vec entries)
     (conj (vec entries) vis-home-entry)))
 
+(defn admitted-workspace-entries
+  "Applicable explicit catalog entries admitted by the configured jail, in order.
+   This is the shared admission decision for enforcement and project Path globals;
+   the implicit Vis state directory is not an explicit project registration."
+  ([config] (admitted-workspace-entries config (mount-env)))
+  ([config env]
+   (assert-config! config)
+   (let [entries
+         (applicable-entries (get-in config ["workspace" "filesystem"] []) env)
+
+         by-id
+         (into {} (map (juxt #(get % "id") identity)) entries)]
+
+     (if (true? (get-in config ["jail" "enabled"]))
+       (let [declared (into #{} (map #(get % "id")) (get-in config ["workspace" "filesystem"] []))]
+         (into []
+               (keep (fn [id]
+                       (or (get by-id id)
+                           (when-not (contains? declared id)
+                             (throw (ex-info
+                                      (str "jail.filesystem.allow references unknown workspace id: "
+                                           id)
+                                      {:type :vis/invalid-config :id id}))))))
+               (get-in config ["jail" "filesystem" "allow"] [])))
+       entries))))
+
 (defn process-jail-config
   "Derive process-jail policy from schema-validated configuration.
    A disabled jail admits the full applicable workspace catalog; an enabled jail
    admits only named roots. The session-state root is always included."
   ([config] (process-jail-config config (mount-env)))
   ([config env]
-   (assert-config! config)
    (let [jail
          (get config "jail" {})
 
-         entries
-         (applicable-entries (get-in config ["workspace" "filesystem"] []) env)
-
-         by-id
-         (reduce (fn [m e]
-                   (assoc m (get e "id") e))
-                 {}
-                 entries)
-
          allowed
-         ;; An enabled jail admits named roots; a disabled jail admits the catalog.
-         (if (true? (get jail "enabled"))
-           (let [declared
-                 (into #{} (map #(get % "id")) (get-in config ["workspace" "filesystem"] []))]
-             (into []
-                   (keep (fn [id]
-                           (or (get by-id id)
-                               (when-not (contains? declared id)
-                                 (throw
-                                   (ex-info
-                                     (str "jail.filesystem.allow references unknown workspace id: "
-                                          id)
-                                     {:type :vis/invalid-config :id id}))))))
-                   (get-in jail ["filesystem" "allow"] [])))
-           entries)
-
-         allowed
-         (with-vis-home allowed)
+         (with-vis-home (admitted-workspace-entries config env))
 
          descriptions
          (into {}

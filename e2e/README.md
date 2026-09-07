@@ -20,7 +20,7 @@ e2e/
   <id>/
     scenario.json   {lang, prompt, want, wantnot, want_answer?, want_tools?, want_forms?,
                        want_requested_route?, want_folded_prefix?, want_cache_read?,
-                       want_cache_metrics?}
+                       want_cache_metrics?, workspace_filesystem?}
     files/          real files seeded into a fresh git repo per run
 ```
 
@@ -38,6 +38,8 @@ e2e/
   canonical gateway client, and independently reconcile provider totals, both percentages,
   sample counts, and (with `want_folded_prefix`) the one estimated rebuild.
 
+- **workspace_filesystem** — `{id: fixture-relative directory}` registrations. Seeding
+  writes `vis.yml` with absolute paths and admits those ids; omit a fixture `vis.yml`.
 ## Run
 
 ```sh

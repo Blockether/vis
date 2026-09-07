@@ -73,6 +73,64 @@
 
 (defn- sha256 [value] (str "sha256:" (util/sha256-hex (pr-str (stable-value value)))))
 
+(defn- project-path-name
+  [entry resolved-path]
+  (or (get entry "python_name")
+      (let [path
+            (Paths/get resolved-path (make-array String 0))
+
+            stem
+            (or (some-> path
+                        .getFileName
+                        str
+                        not-empty)
+                (get entry "id"))
+
+            stem
+            (-> stem
+                (str/replace #"(.)([A-Z][a-z]+)" "$1_$2")
+                (str/replace #"([a-z0-9])([A-Z])" "$1_$2")
+                (str/replace #"[^A-Za-z0-9]+" "_")
+                (str/replace #"^_+|_+$" "")
+                str/lower-case)]
+
+        (when (str/blank? stem)
+          (throw (ex-info "Workspace project needs an explicit python_name"
+                          {:type :vis/invalid-config
+                           :problems
+                           [(str "workspace.filesystem entry "
+                                 (get entry "id")
+                                 ": set python_name to a snake_case name ending in _path")]})))
+        (str (when (re-find #"^[0-9]" stem) "project_") stem "_path"))))
+
+(defn- project-paths
+  "Snapshot registered project names without turning generic filesystem grants into projects."
+  [config base-dir home]
+  (reduce
+    (fn [bindings entry]
+      (if (and (false? (get entry "search")) (not (get entry "python_name")))
+        bindings
+        (let [path
+              (nearest-real-path (get entry "path") base-dir home)
+
+              alias
+              (project-path-name entry path)]
+
+          (when (or (= "project_root_path" alias)
+                    (and (contains? bindings alias) (not= path (get bindings alias))))
+            (throw
+              (ex-info
+                (str "Conflicting Python project path name: " alias)
+                {:type :vis/invalid-config
+                 :problems
+                 [(str
+                    "workspace.filesystem: "
+                    alias
+                    " is reserved or names more than one project; set a distinct python_name")]})))
+          (assoc bindings alias path))))
+    (sorted-map)
+    (config-validation/admitted-workspace-entries config)))
+
 (defn snapshot
   "Build the immutable canonical security policy from validated string-keyed
    configuration. Relative and home-relative paths become absolute; symlinks are
@@ -123,7 +181,8 @@
          {:jail-enabled (not= false (get-in config ["jail" "enabled"]))
           :network network
           :process-jail jail
-          :draft-policies draft-policies}
+          :draft-policies draft-policies
+          :project-paths (project-paths config base-dir home)}
 
          generation
          (sha256 policy)]

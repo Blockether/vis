@@ -7,6 +7,67 @@
   (:import [java.nio.file Files]))
 
 (defdescribe
+  project-path-registry-test
+  (it "names admitted project roots but not caches or non-admitted entries"
+      (let [entries
+            [{"id" "runtime" "path" "/projects/vis-python-runtime"}
+             {"id" "ui" "path" "/projects/MyUI"} {"id" "numeric" "path" "/projects/123-app"}
+             {"id" "engine" "path" "/projects/library" "python_name" "engine_path"}
+             {"id" "cache" "path" "/projects/cache" "search" false}
+             {"id" "hidden" "path" "/projects/hidden"}]
+
+            snapshot
+            (policy/snapshot {"workspace" {"filesystem" entries}
+                              "jail" {"enabled" true
+                                      "filesystem" {"allow" ["runtime" "ui" "numeric" "engine"
+                                                             "cache"]}}})]
+
+        (expect (= {"vis_python_runtime_path" "/projects/vis-python-runtime"
+                    "my_ui_path" "/projects/MyUI"
+                    "project_123_app_path" "/projects/123-app"
+                    "engine_path" "/projects/library"}
+                   (:project-paths snapshot)))))
+  (it "keeps the declared catalog when the jail is off and permits explicit cache aliases"
+      (let [snapshot
+            (policy/snapshot
+              {"workspace"
+               {"filesystem"
+                [{"id" "reference" "path" "/projects/reference" "access" "read-only"}
+                 {"id" "cache" "path" "/projects/cache" "search" false "python_name" "cache_path"}]}
+               "jail" {"enabled" false}})]
+        (expect (= {"reference_path" "/projects/reference" "cache_path" "/projects/cache"}
+                   (:project-paths snapshot)))))
+  (it "names normalized absolute and home registrations after resolving their directories"
+      (let [snapshot (policy/snapshot {"workspace" {"filesystem" [{"id" "here"
+                                                                   "path" "/projects/current/."}
+                                                                  {"id" "home" "path" "~"}]}}
+                                      {:base-dir "/projects/current" :home "/people/developer"})]
+        (expect (= {"current_path" "/projects/current" "developer_path" "/people/developer"}
+                   (:project-paths snapshot)))))
+  (it "refuses ambiguous or reserved names rather than silently overwriting one"
+      (doseq [entries
+              [[{"id" "first" "path" "/projects/first/api"}
+                {"id" "second" "path" "/projects/second/api"}]
+               [{"id" "reserved" "path" "/projects/library" "python_name" "project_root_path"}]]]
+        (let [data (try (policy/snapshot {"workspace" {"filesystem" entries}})
+                        nil
+                        (catch clojure.lang.ExceptionInfo error (ex-data error)))]
+          (expect (= :vis/invalid-config (:type data)))
+          (expect (seq (:problems data))))))
+  (it "includes registry changes in the immutable snapshot generation"
+      (let [config
+            {"workspace" {"filesystem" [{"id" "library" "path" "/projects/library"}]}}
+
+            before
+            (policy/snapshot config)
+
+            after
+            (policy/snapshot
+              (assoc-in config ["workspace" "filesystem" 0 "python_name"] "engine_path"))]
+
+        (expect (not= (:generation before) (:generation after))))))
+
+(defdescribe
   security-policy-snapshot-test
   (it
     "resolves configured paths once, hashes the policy, and renders HOME-relative access"

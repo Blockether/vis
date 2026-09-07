@@ -492,12 +492,28 @@ Filesystem roots are declared once, in the `workspace.filesystem` catalog:
 | `id` | the name the allow list and TUI use |
 | `path` | the directory itself |
 | `description` | optional; what the model is told the root is for |
+| `python_name` | optional Python path-global name, e.g. `runtime_path`; lower snake case ending in `_path` |
 | `access` | `read-write` or `read-only` |
 | `search` | whether search may index it |
 | `draft` | the root's policy if the engine isolates a session (below) |
 | `when`, `optional` | conditional mount — declare a root that may not exist |
 
 `jail.filesystem.allow` then lists the ids that enter the jail. It is **deny-by-omission**: a root the list does not name is not there.
+
+Admitted, searchable catalog entries also register prebound Python `Path` objects.
+The default name comes from the directory basename in snake case plus `_path`:
+`vis-python-runtime` becomes `vis_python_runtime_path`. A leading digit is prefixed
+with `project_`. Set `python_name: runtime_path` on an entry to choose its full name.
+Duplicate names for different directories are configuration errors;
+`project_root_path` is reserved for the current working workspace, which receives
+no second alias. A name already used by a tool or session variable is also refused,
+never silently overwritten.
+
+`search: false` entries (typically caches) receive no automatic name; an explicit
+`python_name` opts them in. The implicit `~/.vis` grant has none. A path global does
+not grant access or change read-only policy. Drafted entries point at their working
+copies; denied entries have no alias. The exact registry is advertised in
+`session["workspace"]["path_globals"]` and refreshed with the Python bindings.
 
 `draft` decides what an engine-isolated session sees:
 

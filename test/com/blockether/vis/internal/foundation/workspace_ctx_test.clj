@@ -19,6 +19,32 @@
     (io/delete-file f true)))
 
 (defdescribe
+  project-path-globals-test
+  (it "publishes the current project and remaps registered siblings into their working copies"
+      (let [block (wctx/render-block
+                    {:workspace {:root "/draft/main" :repo-root "/projects/main"}
+                     :filesystem-roots
+                     [{:trunk "/projects" :clone "/draft/broad"}
+                      {:trunk "/projects/library" :clone "/draft/library"}
+                      {:trunk "/projects/private" :clone "/projects/private" :denied? true}]
+                     :project-paths {"main_path" "/projects/main"
+                                     "library_path" "/projects/library"
+                                     "nested_path" "/projects/library/nested"
+                                     "private_path" "/projects/private"
+                                     "private_nested_path" "/projects/private/nested"
+                                     "reference_path" "/projects/reference"}})]
+        (expect (= {"project_root_path" "/draft/main"
+                    "library_path" "/draft/library"
+                    "nested_path" "/draft/library/nested"
+                    "reference_path" "/draft/broad/reference"}
+                   (get block "path_globals")))))
+  (it "exports only the primary root without a registered catalog"
+      (expect (= {"project_root_path" "/projects/main"}
+                 (get (wctx/render-block {:workspace {:root "/projects/main"
+                                                      :repo-root "/projects/main"}})
+                      "path_globals")))))
+
+(defdescribe
   render-block-test
   (it "reports live trunk as non-isolated and keeps isolation separate from VCS"
       (let [base (temp-dir "vis-wctx-id")]

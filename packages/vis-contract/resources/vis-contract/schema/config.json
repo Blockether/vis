@@ -406,6 +406,11 @@
           "type": "string",
           "pattern": "^(?:/|~(?:/|$))"
         },
+        "python_name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*_path$",
+          "description": "Explicit prebound Python Path name; defaults to the directory name in snake_case plus _path."
+        },
         "description": {
           "type": "string",
           "pattern": ".*\\S.*"

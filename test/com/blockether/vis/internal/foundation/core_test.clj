@@ -4,10 +4,64 @@
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
+            [com.blockether.vis.internal.context.renderer :as renderer]
+            [com.blockether.vis.internal.python.env :as python-env]
+            [com.blockether.vis.internal.sandbox.policy :as policy]
+            [com.blockether.vis.test-python-context :as tpc]
             [com.blockether.vis.internal.foundation.rewind :as rewind]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it]]))
+
+(defdescribe
+  project-path-prompt-runtime-contract-test
+  (it
+    "renders and binds one registry, including removals as append-only prompt deltas"
+    (tpc/with-own
+      [python {}]
+      (let [snapshot
+            (policy/snapshot {"workspace" {"filesystem"
+                                           [{"id" "library" "path" "/projects/library"}
+                                            {"id" "cache" "path" "/projects/cache" "search" false}]}
+                              "jail" {"enabled" false}})
+
+            env
+            {:workspace/root "/projects/main" :security-policy snapshot}
+
+            ctx
+            ((:ext/ctx-fn foundation/vis-extension) env)
+
+            standing
+            (renderer/ctx-static-map {:ctx ctx})
+
+            rendered
+            (renderer/render-ctx-static {:ctx ctx})
+
+            removed-ctx
+            ((:ext/ctx-fn foundation/vis-extension)
+              (assoc env :security-policy (policy/snapshot {})))
+
+            removed
+            (renderer/ctx-static-map {:ctx removed-ctx})
+
+            delta
+            (renderer/render-ctx-delta standing removed)]
+
+        (expect (= {"project_root_path" "/projects/main" "library_path" "/projects/library"}
+                   (get-in standing ["workspace" "path_globals"])))
+        (expect (str/includes? rendered "\"library_path\": \"/projects/library\""))
+        (expect (str/includes? delta
+                               "del session[\"workspace\"][\"path_globals\"][\"library_path\"]"))
+        (python-env/bind-ctx! python standing)
+        (expect (= "/projects/main /projects/library\n"
+                   (:stdout (python-env/run-python-block
+                              python
+                              "print(project_root_path, library_path)"))))
+        (python-env/bind-ctx! python removed)
+        (expect (= "False\n"
+                   (:stdout (python-env/run-python-block
+                              python
+                              "print('library_path' in globals())"))))))))
 
 (defdescribe
   vis-foundation-aggregator-test

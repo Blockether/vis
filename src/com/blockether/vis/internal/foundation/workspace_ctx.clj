@@ -26,6 +26,34 @@
    set never blows the CTX budget."
   50)
 
+(defn- project-path-globals
+  "Project registrations onto the session's permitted working copies, never denied trunks."
+  [root repo-root filesystem-roots project-paths]
+  (let [own
+        (set [root (canonical-path repo-root)])
+
+        mappings
+        (sort-by (comp count :trunk) > filesystem-roots)]
+
+    (reduce-kv (fn [bindings alias path]
+                 (let [source
+                       (.toPath (io/file path))
+
+                       mapping
+                       (some #(when (.startsWith source (.toPath (io/file (:trunk %)))) %)
+                             mappings)]
+
+                   (if (or (contains? own path) (:denied? mapping))
+                     bindings
+                     (let [target (if mapping
+                                    (str (.resolve (.toPath (io/file (:clone mapping)))
+                                                   (.relativize (.toPath (io/file (:trunk mapping)))
+                                                                source)))
+                                    path)]
+                       (if (= root target) bindings (assoc bindings alias target))))))
+               (sorted-map "project_root_path" root)
+               (or project-paths {}))))
+
 (defn render-block
   "Project a hydrated `{:workspace :session-state}` pair into the
    canonical `\"session_workspace\"` CTX map. STRING-KEYED — this block
@@ -37,11 +65,13 @@
      `\"filesystem_roots\"` (configured `workspace.filesystem` catalog entries,
      each with its `\"draft\"` isolation policy and whether this session sees an
      `\"isolated\"` private copy; the session's OWN trunk↔clone pair is folded
-     into `\"root\"`/`\"isolated\"` instead)
+     into \"root\"/\"isolated\" instead)
+   \"path_globals\" — the exact prebound Python Path name -> working-directory catalog;
+     cache-only grants and draft-denied roots are never implicitly exported.
    `\"changed\"` / `\"changed_paths\"` — since-fork edits
    session linkage — `\"session_state_id\"` `\"session_id\"` `\"session_title\"`
      `\"session_fork_of\"` (foreign namespaces stay folded)"
-  [{:keys [workspace session-state filesystem-roots]}]
+  [{:keys [workspace session-state filesystem-roots project-paths]}]
   (let [root
         (canonical-path (or (:root workspace) (workspace/cwd)))
 
@@ -59,6 +89,8 @@
           (try (workspace/changed-paths root fork-ms) (catch Throwable _ nil)))]
 
     (cond-> {"root" root
+             "path_globals"
+             (project-path-globals root (:repo-root workspace) filesystem-roots project-paths)
              "isolated" isolated?
              "vcs_kind" (some-> (git-core/vcs-kind root)
                                 name)}

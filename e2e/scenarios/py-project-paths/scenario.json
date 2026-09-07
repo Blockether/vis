@@ -1,0 +1,30 @@
+{
+  "lang": "python",
+  "workspace_filesystem": {"library": "library"},
+  "prompt": "Use the prebound project paths advertised in the session: in m.py add function c returning 3 after b; in library/value.py change answer() to return 42. Keep other functions unchanged. Use the prebound project paths directly, without assigning them or constructing new Path objects for registered roots. After editing, use Python assertions to verify both advertised path globals are pathlib.Path objects and match their session registry entries. Say PATH-GLOBALS-OK only after the assertions pass.",
+  "want": {
+    "m.py": [
+      "def a(",
+      "def b(",
+      "def c(",
+      "return 3"
+    ],
+    "library/value.py": [
+      "return 42"
+    ]
+  },
+  "wantnot": {
+    "library/value.py": [
+      "return 0"
+    ]
+  },
+  "want_forms": [
+    "project_root_path",
+    "library_path",
+    "path_globals",
+    "assert"
+  ],
+  "want_answer": [
+    "PATH-GLOBALS-OK"
+  ]
+}

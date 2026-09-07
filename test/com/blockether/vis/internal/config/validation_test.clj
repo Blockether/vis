@@ -4,6 +4,18 @@
             [com.blockether.vis.internal.config.validation :as config-validation]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defdescribe workspace-python-name-test
+             (it "accepts explicit snake_case Path names and rejects invalid Python identifiers"
+                 (doseq [[alias accepted?] [["engine_path" true] ["library_v2_path" true]
+                                            ["engine" false] ["1engine_path" false]
+                                            ["engine-path" false] ["__internal_path" false]
+                                            ["Engine_path" false] [false false]]]
+                   (expect (= accepted?
+                              (config-validation/valid?
+                                {"workspace" {"filesystem" [{"id" "library"
+                                                             "path" "/projects/library"
+                                                             "python_name" alias}]}}))))))
+
 (def full-config
   {"default_provider" "anthropic"
    "default_model" "claude"
