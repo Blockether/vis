@@ -15,7 +15,12 @@ Choose verification by the changed surface. Code changes need affected tests, fo
 not a full application build. Reproduce reported bugs before fixing them; reference the issue in
 regression-test comments when an issue exists. Use existing test infrastructure, not ad-hoc demos.
 
-Commit, push, publish, close issues or mutate external systems only when the user requests it.
+For simple, unambiguous bug-fix requests, the user expects the complete workflow: reproduce, fix,
+verify, then commit the scoped changes and push to `main` without another permission round, unless
+that request says otherwise. Treat such requests as authorization for that commit and push, not for
+unrelated changes, releases, deployments or service restarts. Never include unrelated working-tree
+changes; if verification or a safe push is blocked, report the blocker instead of bypassing checks.
+For other work, commit, push, publish, close issues or mutate external systems only when requested.
 Permission for local work is not permission to restart a live gateway or deploy. Confirm destructive
 actions and history rewrites; never bypass hooks. When committing, use the configured human identity,
 not `root`, and a conventional `type(scope): imperative summary` under 72 characters, with
