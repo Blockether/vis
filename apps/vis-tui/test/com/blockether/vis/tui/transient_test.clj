@@ -707,6 +707,37 @@
 ;; so the band read as a table jammed between two lines.
 (defdescribe
   transient-band-padding-test
+  (it "untitled chooser groups leave exactly one padding row before their commands"
+      ;; Regression: MCP add rendered an empty header below the top padding.
+      (let [items
+            [{:key "s" :type :action :id :stdio :label "stdio"}
+             {:key "h" :type :action :id :http :label "http"}]
+
+            spec
+            {:groups [{:items items}]}
+
+            grid
+            (transient-grid! spec 3 74 27)
+
+            rule
+            (first (keep-indexed #(when (str/includes? %2 "Commit") %1) grid))]
+
+        (expect (= [:blank :item :item :blank] (mapv :kind (tr/rows spec))))
+        (expect (= [(tr/rows spec)] (tr/panes spec 1)))
+        (expect (blank-band-row? (subs (nth grid (inc rule)) 3)))
+        (expect (str/includes? (nth grid (+ rule 2)) "stdio"))))
+  (it "untitled groups split without adding a heading or dropping commands"
+      (let [items
+            (mapv (fn [i]
+                    {:key (str i) :type :action :id i :label (str i)})
+                  (range 8))
+
+            panes
+            (tr/panes {:groups [{:items items}]} 2)]
+
+        (expect (= (mapv :id items)
+                   (mapv (comp :id :item) (filter #(= :item (:kind %)) (apply concat panes)))))
+        (expect (every? #(= :item (:kind (second %))) panes))))
   (it "every pane opens and closes with a blank row, so the body is not glued to the chrome"
       (doseq [pane (tr/panes leader-spec 3)]
         (expect (= :blank (:kind (first pane))))

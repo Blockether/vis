@@ -217,6 +217,15 @@
         (into block)
         (into blanks))))
 
+(defn- group-block
+  "PURE: one group's display rows — its optional header, then its items.
+   An explicit empty title reserves alignment space for continuation columns."
+  [{:keys [title items]}]
+  (into (if (nil? title) [] [{:kind :header :text title}])
+        (map (fn [it]
+               {:kind :item :item it}))
+        items))
+
 (defn rows
   "PURE: the popup's display rows, top to bottom — `{:kind :header :text}`,
    `{:kind :item :item}` and `{:kind :blank}` spacers between groups, wrapped in
@@ -226,14 +235,7 @@
    group header needs no blank margin of its own; groups after it still get one
    from the trailing blank of the group before."
   [spec]
-  (pad-block (vec (butlast (into []
-                                 (mapcat (fn [{:keys [title items]}]
-                                           (concat [{:kind :header :text title}]
-                                                   (map (fn [it]
-                                                          {:kind :item :item it})
-                                                        items)
-                                                   [{:kind :blank}])))
-                                 (:groups spec))))))
+  (pad-block (vec (mapcat identity (interpose [{:kind :blank}] (map group-block (:groups spec)))))))
 
 (def ^:private pane-gap
   "Columns between two side-by-side panes: pure BREATHING SPACE. Panes are told
@@ -254,14 +256,6 @@
    column below this is a stack of ellipses, so the band drops to fewer columns
    instead — that is what makes the grid RESOLUTION-AWARE rather than fixed."
   22)
-
-(defn- group-block
-  "PURE: one group's display rows — its header, then its items."
-  [{:keys [title items]}]
-  (into [{:kind :header :text title}]
-        (map (fn [it]
-               {:kind :item :item it}))
-        items))
 
 (def ^:private split-min-rows
   "Rows (heading included) a group must have before it is cut across two panes.
@@ -286,10 +280,11 @@
 
         (if (< (count b) (long split-min-rows))
           bs
-          (let [items (subvec b 1)
+          (let [heading? (not= :item (:kind (first b)))
+                items (subvec b (if heading? 1 0))
                 half (long (Math/ceil (/ (double (count items)) 2.0)))
-                head (into [(first b)] (subvec items 0 half))
-                tail (into [{:kind :blank}] (subvec items half))]
+                head (into (if heading? [(first b)] []) (subvec items 0 half))
+                tail (into (if heading? [{:kind :blank}] []) (subvec items half))]
 
             (recur (-> (subvec bs 0 i)
                        (conj head)
