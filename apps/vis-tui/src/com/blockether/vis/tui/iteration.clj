@@ -152,8 +152,8 @@
    model-facing and their internal shape legitimately differs by path
    (the live tracker stamps `:started-at-ms`; the resume path has no wall
    clock). The block-level fields (scope / code / status / duration / error)
-   ARE the regression surface."
-  [:position :scope :thinking :code :status :duration-ms :error])
+   and the prose the model wrote beside the code ARE the regression surface."
+  [:position :scope :thinking :assistant-prose :code :status :duration-ms :error])
 
 (defn parity-entry
   "Project an iteration entry (live or resume) down to the DISPLAY-relevant

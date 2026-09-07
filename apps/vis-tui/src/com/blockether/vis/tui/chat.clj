@@ -267,6 +267,15 @@
     (iteration/canonicalize {:position (when-let [p (get it "position")]
                                          (dec (long p)))
                              :thinking (visible-thinking (get it "thinking"))
+                             ;; The commentary the model wrote beside its code. The live
+                             ;; tracker keeps it from the `:assistant-prose` chunk; the row
+                             ;; persists the same text, so a settled or reopened bubble paints
+                             ;; the prose block the reader watched land between THINKING and
+                             ;; the code band instead of dropping it.
+                             :assistant-prose (some-> (get it "assistant_prose")
+                                                      str
+                                                      str/trim
+                                                      not-empty)
                              :provider-fallbacks (get it "llm_routing_trace")
                              :iteration-id (get it "id")
                              :attachments (vec (or (get it "attachments") []))
@@ -285,6 +294,62 @@
     (mapv (partial it->iteration-entry
                    {:produced-answer? produced-answer? :last-iteration-id last-iteration-id})
           rows)))
+
+(def ^:private trace-prose-keys
+  "Trace-entry keys the ITERATION bubble paints as answer Markdown: the live
+   provider stream (retained while the iteration has no forms) and the persisted
+   end-of-iteration commentary. Either can hold the very text a settled answer
+   block also carries."
+  [:content-stream :assistant-prose])
+
+(defn- settled-prose-markdown
+  "Trimmed Markdown of every PROSE block in a settled answer - exactly the
+   strings the answer band under the trace will paint."
+  [answer]
+  (into #{}
+        (keep (fn [block]
+                (when (and (map? block) (= "prose" (str (get block "type"))))
+                  (some-> (get block "markdown")
+                          str
+                          str/trim
+                          not-empty))))
+        (vec (or answer []))))
+
+(defn drop-answered-trace-prose
+  "`trace` with every entry's own copy of prose the SETTLED answer already
+   carries removed.
+
+   Regression, issue #145: a final iteration that returns no code form keeps its
+   live `:content-stream` (the renderer only drops that stream once forms land)
+   while the identical Markdown settles as the turn's answer block under a fresh
+   block id - so the same text sat twice in the model and painted twice, once
+   wrapped to the iteration width inside the bubble and once to the full width
+   as the answer. The persisted row carries the same duplicate when the model
+   narrates its answer and then passes the SAME text to `done(...)`: once as the
+   iteration's `assistant_prose`, once as the turn's content. Normalizing at this
+   ONE funnel - every settle path and the transcript restore alike - keeps the
+   renderer dumb and keeps `virtual`'s height estimate agreeing with what is
+   painted. The turn is over by now, so the answer band owns that prose; live
+   streaming never reaches here. The match is exact on the trimmed text, so
+   commentary that merely resembles the answer survives."
+  [trace answer]
+  (let [answered (settled-prose-markdown answer)]
+    (if (empty? answered)
+      trace
+      (mapv (fn [entry]
+              (if-not (map? entry)
+                entry
+                (reduce (fn [e k]
+                          (if (contains? answered
+                                         (some-> (get e k)
+                                                 str
+                                                 str/trim
+                                                 not-empty))
+                            (dissoc e k)
+                            e))
+                        entry
+                        trace-prose-keys)))
+            (vec trace)))))
 
 (defn user-message
   "Create a canonical user message."
@@ -740,6 +805,9 @@
                                       (some #(= "user-slash" (str (get % "tag"))) (get it "forms")))
                                     turn-iterations)
                   trace (if slash-turn? [] (iteration-rows->trace turn-iterations produced-answer?))
+                  ;; The answer band owns prose the settled answer repeats (issue #145);
+                  ;; the restore keeps one copy exactly like the live settle path.
+                  traces (drop-answered-trace-prose trace content-blocks)
                   assistant-message (cond-> (assistant-message content-blocks
                                                                (or (some-> (get q "created_at")
                                                                            long
@@ -750,8 +818,8 @@
                                       true
                                       (assoc :session-turn-id (get q "turn_id"))
 
-                                      (seq trace)
-                                      (assoc :traces trace)
+                                      (seq traces)
+                                      (assoc :traces traces)
 
                                       model
                                       (assoc :model model)

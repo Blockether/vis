@@ -701,6 +701,7 @@
               activity
               (:activity rec)]
 
+          (expect (some? activity))
           (expect (= (com.blockether.vis.contract.activity/from-wire activity-fixture) activity))))
     (it "a restored stdout envelope keeps its card identity"
         (let [rec
@@ -715,6 +716,72 @@
 
           (expect (= "grep" (:op card)))
           (expect (str/includes? (:body card) "a.clj:1: x"))))))
+
+;; Regression: the resume projection never read the row's `assistant_prose`, so the
+;; commentary the model wrote beside its code — painted live between THINKING and
+;; the code band — vanished the moment the turn settled (the terminal refresh swaps
+;; in the persisted rows) and after every restart. The answer band owns prose the
+;; settled answer repeats (issue #145, the `done(...)` carrier), so the restore path
+;; drops that copy exactly like the live settle path does.
+(defdescribe
+  restore-assistant-prose-test
+  (let [it->ie
+        @#'chat/it->iteration-entry
+
+        answer
+        "The change is in state.clj and the suite is green."
+
+        restored-trace
+        (fn [iterations content]
+          (with-redefs [db-info
+                        (fn []
+                          :db)
+
+                        vis/gateway-transcript
+                        compose-transcript
+
+                        db-list-session-turns
+                        (fn [_db _cid]
+                          [{:id :turn-1 :user-request "summarize the fix" :content content}])
+
+                        db-list-session-turn-iterations
+                        (fn [_db _turn-id]
+                          iterations)]
+
+            (-> ((var-get (resolve 'com.blockether.vis.tui.chat/rebuild-history)) "c1")
+                second
+                :traces)))]
+
+    (it "a restored iteration keeps the prose the model wrote beside its code"
+        (let [entry (it->ie {:produced-answer? false :last-iteration-id :other}
+                            {"id" "it-1"
+                             "position" 1
+                             "assistant_prose" "  Checking the failing test first.\n"
+                             "forms" [{"scope" "t1/i1" "src" "print(1)" "stdout" "1\n"}]})]
+          (expect (= "Checking the failing test first." (:assistant-prose entry)))))
+    (it "a blank persisted prose column restores as no prose at all"
+        (let [entry (it->ie {:produced-answer? false :last-iteration-id :other}
+                            {"id" "it-1" "position" 1 "assistant_prose" "   " "forms" []})]
+          (expect (nil? (:assistant-prose entry)))))
+    (it "drops the trace copy of prose the settled answer already carries"
+        (let [[entry :as trace] (restored-trace [{:id :iter-1
+                                                  :thinking "weighing it up"
+                                                  :assistant-prose answer
+                                                  :forms [{:scope "t1/i1" :src "done(\"...\")"}]}]
+                                                [{"id" "b2" "type" "prose" "markdown" answer}])]
+          (expect (= 1 (count trace)))
+          (expect (nil? (:assistant-prose entry)))))
+    (it "keeps commentary that only resembles the answer"
+        (let [commentary
+              "The change is in state.clj, and the suite is green."
+
+              [entry]
+              (restored-trace [{:id :iter-1
+                                :assistant-prose commentary
+                                :forms [{:scope "t1/i1" :src "done(\"...\")"}]}]
+                              [{"id" "b2" "type" "prose" "markdown" answer}])]
+
+          (expect (= commentary (:assistant-prose entry)))))))
 
 ;; Regression: a FAILED provider turn's styled card must survive the
 ;; `turn!`/`attach!` fold. Those fold the engine's provider-error IR onto
