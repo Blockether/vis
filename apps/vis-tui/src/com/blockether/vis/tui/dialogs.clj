@@ -3150,10 +3150,19 @@
 
 (defn- theme-picker!
   "Preview themes on single keys in Settings' own transient band. * applies;
-   Esc cancels. Long catalogs page with n/p without opening another window."
+   Esc cancels. Long catalogs page with n/p without opening another window.
+   preview! repaints the host; capture that fresh frame before the next band
+   restores exposed rows, never resurrecting cells from the previous theme."
   [screen g region choices current preview!]
-  (let [region
-        (assoc (host-band-region screen region) :grid? true)
+  (let [restore
+        (atom (:restore! (host-band-region screen region)))
+
+        region
+        (assoc region
+          :grid? true
+          :restore! (fn [from to]
+                      (when-let [f @restore]
+                        (f from to))))
 
         bindings
         "abcdefghijklmoqrstuvwxyz"
@@ -3217,7 +3226,9 @@
                 (= action ::apply-theme) selected
                 (= action ::next-theme-page) (recur (mod (inc (long page)) pages) selected)
                 (= action ::previous-theme-page) (recur (mod (dec (long page)) pages) selected)
-                :else (do (preview! action) (recur page action))))))))
+                :else (do (preview! action)
+                          (reset! restore (frame-restorer screen))
+                          (recur page action))))))))
 
 (defn- activate-theme-row!
   [screen g region values callbacks {:keys [choices key]}]
@@ -3537,477 +3548,497 @@
          check-w
          2]
 
-     (loop []
+     ;; A live change can repaint the chat behind this modal. Reuse the SAME
+     ;; settings paint without reading input or flushing a band-less frame.
+     ((fn paint-settings! [paint-only?]
+        (loop []
 
-       (let [all-rows
-             (settings-rows)
+          (let [all-rows
+                (settings-rows)
 
-             rows
-             (filter-settings-rows all-rows @query)
+                rows
+                (filter-settings-rows all-rows @query)
 
-             n
-             (count rows)
+                n
+                (count rows)
 
-             size
-             (modal-size! screen)
+                size
+                (modal-size! screen)
 
-             cols
-             (.getColumns size)
+                cols
+                (.getColumns size)
 
-             screen-rows
-             (.getRows size)
+                screen-rows
+                (.getRows size)
 
-             g
-             (frame/surface-graphics screen cols screen-rows)
+                g
+                (frame/surface-graphics screen cols screen-rows)
 
-             bounds
-             (draw-dialog-chrome! g
-                                  cols
-                                  screen-rows
-                                  "Settings"
-                                  (settings-content-width cols)
-                                  (settings-content-height screen-rows))
+                bounds
+                (draw-dialog-chrome! g
+                                     cols
+                                     screen-rows
+                                     "Settings"
+                                     (settings-content-width cols)
+                                     (settings-content-height screen-rows))
 
-             {:keys [left inner-w]}
-             bounds
+                {:keys [left inner-w]}
+                bounds
 
-             left
-             (long left)
+                left
+                (long left)
 
-             inner-w
-             (long inner-w)
+                inner-w
+                (long inner-w)
 
-             ;; Wide Settings is a TOC rail + divider + settings pane. Narrow
-             ;; Settings collapses to one pane; forcing the 14-column rail was
-             ;; what let content cross the dialog's right border.
-             {:keys [split? rail-w pane-left pane-width]}
-             (settings-pane-geometry left inner-w)
+                ;; Wide Settings is a TOC rail + divider + settings pane. Narrow
+                ;; Settings collapses to one pane; forcing the 14-column rail was
+                ;; what let content cross the dialog's right border.
+                {:keys [split? rail-w pane-left pane-width]}
+                (settings-pane-geometry left inner-w)
 
-             rail-w
-             (long rail-w)
+                rail-w
+                (long rail-w)
 
-             lleft
-             (long pane-left)
+                lleft
+                (long pane-left)
 
-             linner
-             (long pane-width)
+                linner
+                (long pane-width)
 
-             {:keys [content-top content-h hint-row]}
-             (dialog-layout bounds)
+                {:keys [content-top content-h hint-row]}
+                (dialog-layout bounds)
 
-             content-top
-             (long content-top)
+                content-top
+                (long content-top)
 
-             content-h
-             (long content-h)
+                content-h
+                (long content-h)
 
-             search-row
-             content-top
+                search-row
+                content-top
 
-             list-top
-             (+ content-top 2)
+                list-top
+                (+ content-top 2)
 
-             visible-h
-             (max 1 (- content-h 2))
+                visible-h
+                (max 1 (- content-h 2))
 
-             _
-             (swap! selected #(p/clamp % 0 (max 0 (dec n))))
+                _
+                (swap! selected #(p/clamp % 0 (max 0 (dec n))))
 
-             option-indent
-             (long (settings-option-indent))
+                option-indent
+                (long (settings-option-indent))
 
-             ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
-             ;; option row for the selection gutter (`>` glyph + 1
-             ;; col margin). The cursor itself is painted at
-             ;; `(inc lleft)` (the pane's inner edge) by the row
-             ;; loop; option body shifts right by the gutter.
-             option-x
-             (+ lleft 2 option-indent p/SELECTION_WIDTH)
+                ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
+                ;; option row for the selection gutter (`>` glyph + 1
+                ;; col margin). The cursor itself is painted at
+                ;; `(inc lleft)` (the pane's inner edge) by the row
+                ;; loop; option body shifts right by the gutter.
+                option-x
+                (+ lleft 2 option-indent p/SELECTION_WIDTH)
 
-             labels
-             (mapv #(settings-option-label % @values) rows)
+                labels
+                (mapv #(settings-option-label % @values) rows)
 
-             base-paint-w
-             linner
+                base-paint-w
+                linner
 
-             base-option-w
-             (max 1 (- base-paint-w 2 option-indent p/SELECTION_WIDTH))
+                base-option-w
+                (max 1 (- base-paint-w 2 option-indent p/SELECTION_WIDTH))
 
-             base-desc-w
-             (max 1 (- base-option-w check-w))
+                base-desc-w
+                (max 1 (- base-option-w check-w))
 
-             base-entries
-             (settings-render-entries rows base-desc-w)
+                base-entries
+                (settings-render-entries rows base-desc-w)
 
-             scrollable?
-             (> (count base-entries) visible-h)
+                scrollable?
+                (> (count base-entries) visible-h)
 
-             paint-w
-             (if scrollable? (max 1 (dec linner)) linner)
+                paint-w
+                (if scrollable? (max 1 (dec linner)) linner)
 
-             option-w
-             (max 1 (- paint-w 2 option-indent p/SELECTION_WIDTH))
+                option-w
+                (max 1 (- paint-w 2 option-indent p/SELECTION_WIDTH))
 
-             desc-x
-             (+ option-x check-w)
+                desc-x
+                (+ option-x check-w)
 
-             desc-w
-             (max 1 (- option-w check-w))
+                desc-w
+                (max 1 (- option-w check-w))
 
-             ;; Rows carrying an inline description (MCP / provider status) share
-             ;; ONE column, so those states line up as a table instead of ragging
-             ;; after names of different length.
-             inline-desc-x
-             (+ option-x
-                p/STATUS_WIDTH
-                2
-                (long (reduce max
-                              0
-                              (keep (fn [[row lbl]]
-                                      (when (:inline-description row) (count lbl)))
-                                    (map vector rows labels)))))
+                ;; Rows carrying an inline description (MCP / provider status) share
+                ;; ONE column, so those states line up as a table instead of ragging
+                ;; after names of different length.
+                inline-desc-x
+                (+ option-x
+                   p/STATUS_WIDTH
+                   2
+                   (long (reduce max
+                                 0
+                                 (keep (fn [[row lbl]]
+                                         (when (:inline-description row) (count lbl)))
+                                       (map vector rows labels)))))
 
-             entries
-             (settings-render-entries rows desc-w)
+                entries
+                (settings-render-entries rows desc-w)
 
-             visual-n
-             (count entries)
+                visual-n
+                (count entries)
 
-             sel-entry-idxs
-             (keep-indexed (fn [entry-idx {:keys [row-idx]}]
-                             (when (= row-idx @selected) entry-idx))
-                           entries)
+                sel-entry-idxs
+                (keep-indexed (fn [entry-idx {:keys [row-idx]}]
+                                (when (= row-idx @selected) entry-idx))
+                              entries)
 
-             ;; Option line of the selected row (first non-description entry).
-             selected-visual
-             (long (or (first (keep-indexed (fn [entry-idx {:keys [row-idx part]}]
-                                              (when (and (= row-idx @selected)
-                                                         (not= part :option-desc))
-                                                entry-idx))
-                                            entries))
-                       0))
+                ;; Option line of the selected row (first non-description entry).
+                selected-visual
+                (long (or (first (keep-indexed (fn [entry-idx {:keys [row-idx part]}]
+                                                 (when (and (= row-idx @selected)
+                                                            (not= part :option-desc))
+                                                   entry-idx))
+                                               entries))
+                          0))
 
-             ;; Last paint row owned by the selected option, INCLUDING its
-             ;; wrapped description rows. The scroll window must be able to
-             ;; reach this so the trailing desc lines (and, for the bottom-most
-             ;; option, the true content end) come into view — otherwise scroll
-             ;; caps short of `visual-n - visible-h` and the scrollbar thumb
-             ;; never reaches the bottom (selectable rows < paint rows).
-             selected-visual-end
-             (long (or (last sel-entry-idxs) selected-visual))
+                ;; Last paint row owned by the selected option, INCLUDING its
+                ;; wrapped description rows. The scroll window must be able to
+                ;; reach this so the trailing desc lines (and, for the bottom-most
+                ;; option, the true content end) come into view — otherwise scroll
+                ;; caps short of `visual-n - visible-h` and the scrollbar thumb
+                ;; never reaches the bottom (selectable rows < paint rows).
+                selected-visual-end
+                (long (or (last sel-entry-idxs) selected-visual))
 
-             ;; Visual index where the intro rows (section / subsection /
-             ;; info-line) that directly precede the selected option begin.
-             ;; The scroll window is selection-driven, so without this the
-             ;; first option pins itself to the top and its SECTION HEADER
-             ;; (a non-selectable row above it) is clipped forever — you can
-             ;; scroll to the first setting but never see its header.
-             header-start
-             (long (loop [i (dec selected-visual)]
-                     (if (and (>= i 0)
-                              (contains? #{:section :subsection :info-line}
-                                         (:part (nth entries i))))
-                       (recur (dec i))
-                       (inc i))))
+                ;; Visual index where the intro rows (section / subsection /
+                ;; info-line) that directly precede the selected option begin.
+                ;; The scroll window is selection-driven, so without this the
+                ;; first option pins itself to the top and its SECTION HEADER
+                ;; (a non-selectable row above it) is clipped forever — you can
+                ;; scroll to the first setting but never see its header.
+                header-start
+                (long (loop [i (dec selected-visual)]
+                        (if (and (>= i 0)
+                                 (contains? #{:section :subsection :info-line}
+                                            (:part (nth entries i))))
+                          (recur (dec i))
+                          (inc i))))
 
-             _
-             (let [start0
-                   (visible-window-start selected-visual @scroll visible-h visual-n)
+                _
+                (let [start0
+                      (visible-window-start selected-visual @scroll visible-h visual-n)
 
-                   ;; Back UP to reveal those intro headers whenever the
-                   ;; option (through its last desc line) still fits in the
-                   ;; viewport from `header-start`.
-                   start0
-                   (if (and (< header-start start0)
-                            (<= (- selected-visual-end header-start) (dec visible-h)))
-                     header-start
-                     start0)
+                      ;; Back UP to reveal those intro headers whenever the
+                      ;; option (through its last desc line) still fits in the
+                      ;; viewport from `header-start`.
+                      start0
+                      (if (and (< header-start start0)
+                               (<= (- selected-visual-end header-start) (dec visible-h)))
+                        header-start
+                        start0)
 
-                   ;; Pull the window down to reveal the selected row's last
-                   ;; desc line, but never so far that the option line itself
-                   ;; scrolls out of view (cap at `selected-visual`).
-                   start1
-                   (if (>= selected-visual-end (+ start0 visible-h))
-                     (min selected-visual (max 0 (- (inc selected-visual-end) visible-h)))
-                     start0)]
+                      ;; Pull the window down to reveal the selected row's last
+                      ;; desc line, but never so far that the option line itself
+                      ;; scrolls out of view (cap at `selected-visual`).
+                      start1
+                      (if (>= selected-visual-end (+ start0 visible-h))
+                        (min selected-visual (max 0 (- (inc selected-visual-end) visible-h)))
+                        start0)]
 
-               (reset! scroll start1))
+                  (reset! scroll start1))
 
-             ;; Frame 1 search bar: borderless full-width query field sitting
-             ;; above the split — identical to the command palette
-             ;; (`list-dialog!`) and the session switcher (`navigator-dialog!`),
-             ;; which draw no count on the query row. Returns the cursor pos.
-             search-cursor
-             (draw-text-input-field! g
-                                     left
-                                     search-row
-                                     inner-w
-                                     @query
-                                     (count @query)
-                                     "Search settings…")]
+                ;; Frame 1 search bar: borderless full-width query field sitting
+                ;; above the split — identical to the command palette
+                ;; (`list-dialog!`) and the session switcher (`navigator-dialog!`),
+                ;; which draw no count on the query row. Returns the cursor pos.
+                search-cursor
+                (draw-text-input-field! g
+                                        left
+                                        search-row
+                                        inner-w
+                                        @query
+                                        (count @query)
+                                        "Search settings…")]
 
-         ;; Full-width rule under the search bar — the same framed-input
-         ;; compartment the command palette (`list-dialog!`) and the session
-         ;; switcher (`navigator-dialog!`) draw under their query fields. On a
-         ;; split layout, `┬` joins the rail divider beginning below it.
-         (p/set-colors! g t/dialog-border t/dialog-bg)
-         (p/draw-separator! g left (+ left inner-w 1) (inc content-top))
-         (when split? (p/put-str! g lleft (inc content-top) "┬"))
-         (dotimes [i visible-h]
-           (let [entry-idx (+ (long @scroll) i)
-                 row-y (+ list-top i)]
+            ;; Full-width rule under the search bar — the same framed-input
+            ;; compartment the command palette (`list-dialog!`) and the session
+            ;; switcher (`navigator-dialog!`) draw under their query fields. On a
+            ;; split layout, `┬` joins the rail divider beginning below it.
+            (p/set-colors! g t/dialog-border t/dialog-bg)
+            (p/draw-separator! g left (+ left inner-w 1) (inc content-top))
+            (when split? (p/put-str! g lleft (inc content-top) "┬"))
+            (dotimes [i visible-h]
+              (let [entry-idx (+ (long @scroll) i)
+                    row-y (+ list-top i)]
 
-             (if (< entry-idx visual-n)
-               (let [{:keys [row-idx part text head?]} (nth entries entry-idx)
-                     {:keys [label tone description inline-description]} (nth rows row-idx)
-                     option-label (nth labels row-idx)
-                     selected? (= row-idx @selected)
-                     [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
+                (if (< entry-idx visual-n)
+                  (let [{:keys [row-idx part text head?]} (nth entries entry-idx)
+                        {:keys [label tone description inline-description]} (nth rows row-idx)
+                        option-label (nth labels row-idx)
+                        selected? (= row-idx @selected)
+                        [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
 
-                 (case part
-                   :section
-                   (do (p/set-colors! g t/dialog-border t/dialog-bg)
-                       (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                       (p/put-str! g (+ lleft 2) row-y (settings-section-text label paint-w))
-                       (p/set-fg! g t/dialog-hint-key)
-                       (p/styled g [p/BOLD] (p/put-str! g (+ lleft 5) row-y label)))
+                    (case part
+                      :section
+                      (do (p/set-colors! g t/dialog-border t/dialog-bg)
+                          (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                          (p/put-str! g (+ lleft 2) row-y (settings-section-text label paint-w))
+                          (p/set-fg! g t/dialog-hint-key)
+                          (p/styled g [p/BOLD] (p/put-str! g (+ lleft 5) row-y label)))
 
-                   :subsection
-                   (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                       (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                       (p/styled
-                         g
-                         [p/BOLD]
-                         (p/put-str! g (+ lleft 2) row-y (settings-subsection-text label paint-w))))
+                      :subsection
+                      (do (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                          (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                          (p/styled g
+                                    [p/BOLD]
+                                    (p/put-str! g
+                                                (+ lleft 2)
+                                                row-y
+                                                (settings-subsection-text label paint-w))))
 
-                   ;; Prose ABOUT the section (empty state, gateway error): a
-                   ;; bold head line plus its own wrapped body, both in the
-                   ;; description column so the block hangs off the section
-                   ;; instead of running along the pane edge as one sentence.
-                   :info-line
-                   (do (p/set-colors! g
-                                      (cond (and head? (= :bad tone)) t/status-bad
-                                            head? t/dialog-fg
-                                            :else t/dialog-hint)
-                                      t/dialog-bg)
-                       (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                       (if head?
-                         (p/styled g [p/BOLD] (p/put-str! g desc-x row-y (ellipsize text desc-w)))
-                         (p/put-str! g desc-x row-y (ellipsize text desc-w))))
+                      ;; Prose ABOUT the section (empty state, gateway error): a
+                      ;; bold head line plus its own wrapped body, both in the
+                      ;; description column so the block hangs off the section
+                      ;; instead of running along the pane edge as one sentence.
+                      :info-line
+                      (do
+                        (p/set-colors! g
+                                       (cond (and head? (= :bad tone)) t/status-bad
+                                             head? t/dialog-fg
+                                             :else t/dialog-hint)
+                                       t/dialog-bg)
+                        (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                        (if head?
+                          (p/styled g [p/BOLD] (p/put-str! g desc-x row-y (ellipsize text desc-w)))
+                          (p/put-str! g desc-x row-y (ellipsize text desc-w))))
 
-                   :option-desc
-                   (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                       (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                       (p/put-str! g desc-x row-y (ellipsize text desc-w)))
+                      :option-desc
+                      (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                          (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                          (p/put-str! g desc-x row-y (ellipsize text desc-w)))
 
-                   ;; Selection visual: leading `> ` cursor glyph and
-                   ;; BOLD label text. Descriptions wrap beneath the
-                   ;; option on dim rows, so long labels no longer force
-                   ;; descriptions into an ellipsis-only column.
-                   (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                       (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                       ;; Cursor glyph sits immediately LEFT of the row body, so
-                       ;; a selected row reads as one unit instead of an orphan
-                       ;; bullet parked against the pane divider.
-                       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                       (p/draw-selection-marker! g (- option-x p/SELECTION_WIDTH) row-y selected?)
-                       ;; Leading status glyph (●/○/◆/▸) via the shared component,
-                       ;; which returns the col to start the label at.
-                       (let [label-x (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
-                             lbl (ellipsize option-label (max 1 (- option-w p/STATUS_WIDTH)))]
+                      ;; Selection visual: leading `> ` cursor glyph and
+                      ;; BOLD label text. Descriptions wrap beneath the
+                      ;; option on dim rows, so long labels no longer force
+                      ;; descriptions into an ellipsis-only column.
+                      (do
+                        (p/set-colors! g t/dialog-fg t/dialog-bg)
+                        (p/fill-rect! g (inc lleft) row-y paint-w 1)
+                        ;; Cursor glyph sits immediately LEFT of the row body, so
+                        ;; a selected row reads as one unit instead of an orphan
+                        ;; bullet parked against the pane divider.
+                        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                        (p/draw-selection-marker! g (- option-x p/SELECTION_WIDTH) row-y selected?)
+                        ;; Leading status glyph (●/○/◆/▸) via the shared component,
+                        ;; which returns the col to start the label at.
+                        (let [label-x (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
+                              lbl (ellipsize option-label (max 1 (- option-w p/STATUS_WIDTH)))]
 
-                         (p/set-colors! g t/dialog-fg t/dialog-bg)
-                         (if selected?
-                           (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
-                           (p/put-str! g label-x row-y lbl))
-                         ;; A short STATE (an MCP server / provider status) rides
-                         ;; the option line in one shared column instead of
-                         ;; costing a whole wrapped row per entry.
-                         (when (and inline-description (seq (str description)))
-                           (let [dx (max (+ (long label-x) (long (count lbl)) 2)
-                                         (long inline-desc-x))
-                                 avail (- (+ lleft paint-w) dx)]
+                          (p/set-colors! g t/dialog-fg t/dialog-bg)
+                          (if selected?
+                            (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
+                            (p/put-str! g label-x row-y lbl))
+                          ;; A short STATE (an MCP server / provider status) rides
+                          ;; the option line in one shared column instead of
+                          ;; costing a whole wrapped row per entry.
+                          (when (and inline-description (seq (str description)))
+                            (let [dx (max (+ (long label-x) (long (count lbl)) 2)
+                                          (long inline-desc-x))
+                                  avail (- (+ lleft paint-w) dx)]
 
-                             (when (pos? avail)
-                               (p/set-colors! g t/dialog-hint t/dialog-bg)
-                               (p/put-str! g dx row-y (ellipsize (str description) avail)))))))))
-               (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                   (p/fill-rect! g (inc lleft) row-y paint-w 1)))))
-         ;; Wide-only Table-of-Contents rail. Painted AFTER the settings pane so
-         ;; its divider cannot be overwritten by a pane fill.
-         (when split?
-           (let [toc (settings-toc rows @selected)]
-             (p/set-colors! g t/dialog-border t/dialog-bg)
-             (doseq [ry (range list-top (+ content-top content-h))]
-               (p/put-str! g lleft ry "│"))
-             (dotimes [i (min (count toc) visible-h)]
-               (let [{lbl :label cnt :count active? :active?} (nth toc i)
-                     ry (+ list-top i)
-                     rail-x (inc left)
-                     cstr (str cnt)
-                     lbl-w (max 1 (- rail-w 2 (count cstr) 1))
-                     bg (if active? t/header-active-tab-bg t/dialog-bg)
-                     fg (if active? t/header-active-tab-fg t/dialog-fg)]
+                              (when (pos? avail)
+                                (p/set-colors! g t/dialog-hint t/dialog-bg)
+                                (p/put-str! g dx row-y (ellipsize (str description) avail)))))))))
+                  (do (p/set-colors! g t/dialog-fg t/dialog-bg)
+                      (p/fill-rect! g (inc lleft) row-y paint-w 1)))))
+            ;; Wide-only Table-of-Contents rail. Painted AFTER the settings pane so
+            ;; its divider cannot be overwritten by a pane fill.
+            (when split?
+              (let [toc (settings-toc rows @selected)]
+                (p/set-colors! g t/dialog-border t/dialog-bg)
+                (doseq [ry (range list-top (+ content-top content-h))]
+                  (p/put-str! g lleft ry "│"))
+                (dotimes [i (min (count toc) visible-h)]
+                  (let [{lbl :label cnt :count active? :active?} (nth toc i)
+                        ry (+ list-top i)
+                        rail-x (inc left)
+                        cstr (str cnt)
+                        lbl-w (max 1 (- rail-w 2 (count cstr) 1))
+                        bg (if active? t/header-active-tab-bg t/dialog-bg)
+                        fg (if active? t/header-active-tab-fg t/dialog-fg)]
 
-                 (p/set-colors! g fg bg)
-                 (p/fill-rect! g rail-x ry rail-w 1)
-                 (if active?
-                   (p/styled g [p/BOLD] (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
-                   (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
-                 (p/set-colors! g (if active? t/header-active-tab-fg t/dialog-hint) bg)
-                 (p/put-str! g (- (+ rail-x rail-w) (count cstr) 1) ry cstr)))))
-         (ScrollBar/draw g
-                         Direction/VERTICAL
-                         (TerminalPosition. (int (+ lleft linner)) (int list-top))
-                         (int visible-h)
-                         (int visual-n)
-                         (int visible-h)
-                         (when (some? @scroll) (Integer/valueOf (int @scroll)))
-                         t/dialog-border
-                         t/dialog-bg
-                         t/dialog-hint-key
-                         t/dialog-bg)
-         (draw-hint-bar! g
-                         left
-                         hint-row
-                         inner-w
-                         [["type" "search"] ["↑/↓" "move"] ["Enter" "change"]
-                          ["Esc" "clear/close"]])
-         (.setCursorPosition screen search-cursor)
-         (.refresh screen Screen$RefreshType/DELTA)
-         (if @inventories-pending
-           ;; The frame is ON the terminal now — only then pay for the gateway,
-           ;; and repaint into the dialog the user is already looking at.
-           ;; `focus-section` is re-parked because the rows the read added sit
-           ;; under its own section header.
-           (do (vreset! inventories-pending false)
-               (load-inventories!)
-               (reset! selected (settings-initial-index (settings-rows) (:focus-section callbacks)))
-               (recur))
-           (let [key
-                 (read-modal-key! screen)
+                    (p/set-colors! g fg bg)
+                    (p/fill-rect! g rail-x ry rail-w 1)
+                    (if active?
+                      (p/styled g [p/BOLD] (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
+                      (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
+                    (p/set-colors! g (if active? t/header-active-tab-fg t/dialog-hint) bg)
+                    (p/put-str! g (- (+ rail-x rail-w) (count cstr) 1) ry cstr)))))
+            (ScrollBar/draw g
+                            Direction/VERTICAL
+                            (TerminalPosition. (int (+ lleft linner)) (int list-top))
+                            (int visible-h)
+                            (int visual-n)
+                            (int visible-h)
+                            (when (some? @scroll) (Integer/valueOf (int @scroll)))
+                            t/dialog-border
+                            t/dialog-bg
+                            t/dialog-hint-key
+                            t/dialog-bg)
+            (draw-hint-bar! g
+                            left
+                            hint-row
+                            inner-w
+                            [["type" "search"] ["↑/↓" "move"] ["Enter" "change"]
+                             ["Esc" "clear/close"]])
+            (when-not paint-only?
+              (.setCursorPosition screen search-cursor)
+              (.refresh screen Screen$RefreshType/DELTA))
+            (when-not paint-only?
+              (if @inventories-pending
+                ;; The frame is ON the terminal now — only then pay for the gateway,
+                ;; and repaint into the dialog the user is already looking at.
+                ;; `focus-section` is re-parked because the rows the read added sit
+                ;; under its own section header.
+                (do (vreset! inventories-pending false)
+                    (load-inventories!)
+                    (reset! selected (settings-initial-index (settings-rows)
+                                                             (:focus-section callbacks)))
+                    (recur))
+                (let [key
+                      (read-modal-key! screen)
 
-                 selected-row
-                 (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))
+                      selected-row
+                      (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))
 
-                 activate-row!
-                 (fn [row]
-                   (activate-settings-row! screen
-                                           g
-                                           {:left left
-                                            :inner-w inner-w
-                                            :hint-row hint-row
-                                            :text-w (max 1 (- (long inner-w) 2))
-                                            :min-row list-top
-                                            ;; One snapshot per activation: a shorter band gives the
-                                            ;; rows a taller one covered back to the list itself.
-                                            :restore! (frame-restorer screen)}
-                                           values
-                                           callbacks
-                                           row))]
+                      activate-row!
+                      (fn [row]
+                        (activate-settings-row! screen
+                                                g
+                                                {:left left
+                                                 :inner-w inner-w
+                                                 :hint-row hint-row
+                                                 :text-w (max 1 (- (long inner-w) 2))
+                                                 :min-row list-top
+                                                 ;; One snapshot per activation: a shorter band gives the
+                                                 ;; rows a taller one covered back to the list itself.
+                                                 :restore! (frame-restorer screen)}
+                                                values
+                                                (assoc callbacks
+                                                  :on-change (fn [settings]
+                                                               (notify-settings-change! callbacks
+                                                                                        settings)
+                                                               (paint-settings! true)))
+                                                row))]
 
-             (when key
-               (cond
-                 (instance? MouseAction key)
-                 (if-let [step (ScrollBar/wheelStep ^KeyStroke key)]
-                   ;; Mouse wheel anywhere in the dialog — selection follows
-                   ;; the wheel direction so the cursor stays in the visible
-                   ;; window without having to chase it with arrow keys.
-                   (do (vreset! pointer-down-target nil)
-                       (swap! selected #(move-settings-selection rows % step))
-                       (recur))
-                   (let [was-dragging? (some? @scrollbar-drag-offset)
-                         ^ScrollBar$DragResult drag
-                         (ScrollBar/dragStep ^MouseAction key
-                                             Direction/VERTICAL
-                                             (TerminalPosition. (int (+ lleft linner))
-                                                                (int list-top))
-                                             (int visible-h)
-                                             (int visual-n)
-                                             (int visible-h)
-                                             (Integer/valueOf (int @scroll))
-                                             (when (some? @scrollbar-drag-offset)
-                                               (Integer/valueOf (int @scrollbar-drag-offset)))
-                                             1)
-                         action (.getActionType ^MouseAction key)
-                         pointer-target (settings-pointer-target key
-                                                                 rows
-                                                                 entries
-                                                                 @scroll
-                                                                 {:split? split?
-                                                                  :left left
-                                                                  :rail-w rail-w
-                                                                  :pane-left lleft
-                                                                  ;; `paint-w` excludes the scrollbar cell.
-                                                                  :pane-width paint-w
-                                                                  :list-top list-top
-                                                                  :visible-h visible-h
-                                                                  :selected @selected})
-                         scrollbar-interaction? (or was-dragging? (and drag (not (.release drag))))]
+                  (when key
+                    (cond
+                      (instance? MouseAction key)
+                      (if-let [step (ScrollBar/wheelStep ^KeyStroke key)]
+                        ;; Mouse wheel anywhere in the dialog — selection follows
+                        ;; the wheel direction so the cursor stays in the visible
+                        ;; window without having to chase it with arrow keys.
+                        (do (vreset! pointer-down-target nil)
+                            (swap! selected #(move-settings-selection rows % step))
+                            (recur))
+                        (let [was-dragging? (some? @scrollbar-drag-offset)
+                              ^ScrollBar$DragResult drag
+                              (ScrollBar/dragStep ^MouseAction key
+                                                  Direction/VERTICAL
+                                                  (TerminalPosition. (int (+ lleft linner))
+                                                                     (int list-top))
+                                                  (int visible-h)
+                                                  (int visual-n)
+                                                  (int visible-h)
+                                                  (Integer/valueOf (int @scroll))
+                                                  (when (some? @scrollbar-drag-offset)
+                                                    (Integer/valueOf (int @scrollbar-drag-offset)))
+                                                  1)
+                              action (.getActionType ^MouseAction key)
+                              pointer-target (settings-pointer-target key
+                                                                      rows
+                                                                      entries
+                                                                      @scroll
+                                                                      {:split? split?
+                                                                       :left left
+                                                                       :rail-w rail-w
+                                                                       :pane-left lleft
+                                                                       ;; `paint-w` excludes the scrollbar cell.
+                                                                       :pane-width paint-w
+                                                                       :list-top list-top
+                                                                       :visible-h visible-h
+                                                                       :selected @selected})
+                              scrollbar-interaction? (or was-dragging?
+                                                         (and drag (not (.release drag))))]
 
-                     ;; A release belongs to the scrollbar only when a drag was armed.
-                     (when (and drag (.release drag)) (vreset! scrollbar-drag-offset nil))
-                     (when-let [grip (and drag (.gripOffset drag))]
-                       (vreset! scrollbar-drag-offset (long grip)))
-                     (when-let [s (and drag (.scrollPosition drag))]
-                       (reset! scroll (long s))
-                       ;; The window is selection-driven, so the cursor rides along
-                       ;; with the drag instead of snapping back on the next paint.
-                       (when-let [row
-                                  (settings-selection-for-window rows entries (long s) visible-h)]
-                         (reset! selected row)))
-                     (cond scrollbar-interaction? (do (vreset! pointer-down-target nil) (recur))
-                           (= action MouseActionType/CLICK_DOWN)
-                           ;; Keep the painted frame stable between down/release. Moving
-                           ;; selection here could scroll the row away before release.
-                           (do (vreset! pointer-down-target pointer-target) (recur))
-                           (= action MouseActionType/CLICK_RELEASE)
-                           (let [pressed @pointer-down-target]
-                             (vreset! pointer-down-target nil)
-                             (when (and pressed (= pressed pointer-target))
-                               (let [row-idx (:row-idx pressed)]
-                                 (reset! selected row-idx)
-                                 ;; A TOC click navigates; a setting click performs the
-                                 ;; same operation as Enter on that logical row.
-                                 (when (= :setting (:kind pressed))
-                                   (activate-row! (nth rows row-idx)))))
-                             (recur))
-                           :else (do (when (= action MouseActionType/DRAG)
-                                       (vreset! pointer-down-target nil))
-                                     (recur)))))
-                 :else (condp = (key-type key)
-                         ;; Esc clears an active search first, then closes on the next press.
-                         KeyType/Escape (if (str/blank? @query)
-                                          @values
-                                          (do (reset! query "")
-                                              (reset! selected (first-selectable-index all-rows))
-                                              (reset! scroll 0)
+                          ;; A release belongs to the scrollbar only when a drag was armed.
+                          (when (and drag (.release drag)) (vreset! scrollbar-drag-offset nil))
+                          (when-let [grip (and drag (.gripOffset drag))]
+                            (vreset! scrollbar-drag-offset (long grip)))
+                          (when-let [s (and drag (.scrollPosition drag))]
+                            (reset! scroll (long s))
+                            ;; The window is selection-driven, so the cursor rides along
+                            ;; with the drag instead of snapping back on the next paint.
+                            (when-let [row (settings-selection-for-window rows
+                                                                          entries
+                                                                          (long s)
+                                                                          visible-h)]
+                              (reset! selected row)))
+                          (cond scrollbar-interaction? (do (vreset! pointer-down-target nil)
+                                                           (recur))
+                                (= action MouseActionType/CLICK_DOWN)
+                                ;; Keep the painted frame stable between down/release. Moving
+                                ;; selection here could scroll the row away before release.
+                                (do (vreset! pointer-down-target pointer-target) (recur))
+                                (= action MouseActionType/CLICK_RELEASE)
+                                (let [pressed @pointer-down-target]
+                                  (vreset! pointer-down-target nil)
+                                  (when (and pressed (= pressed pointer-target))
+                                    (let [row-idx (:row-idx pressed)]
+                                      (reset! selected row-idx)
+                                      ;; A TOC click navigates; a setting click performs the
+                                      ;; same operation as Enter on that logical row.
+                                      (when (= :setting (:kind pressed))
+                                        (activate-row! (nth rows row-idx)))))
+                                  (recur))
+                                :else (do (when (= action MouseActionType/DRAG)
+                                            (vreset! pointer-down-target nil))
+                                          (recur)))))
+                      :else
+                      (condp = (key-type key)
+                        ;; Esc clears an active search first, then closes on the next press.
+                        KeyType/Escape (if (str/blank? @query)
+                                         @values
+                                         (do (reset! query "")
+                                             (reset! selected (first-selectable-index all-rows))
+                                             (reset! scroll 0)
+                                             (recur)))
+                        KeyType/ArrowUp (do (swap! selected #(move-settings-selection rows % -1))
+                                            (recur))
+                        KeyType/ArrowDown (do (swap! selected #(move-settings-selection rows % 1))
+                                              (recur))
+                        ;; Backspace edits the live search query.
+                        KeyType/Backspace (do (when (seq @query)
+                                                (swap! query #(subs % 0 (dec (count %))))
+                                                (reset! selected (first-selectable-index
+                                                                   (filter-settings-rows all-rows
+                                                                                         @query)))
+                                                (reset! scroll 0))
+                                              (recur))
+                        ;; Any printable character types into the search query (VS Code feel);
+                        ;; Enter is the only key that toggles/activates the selected row.
+                        KeyType/Character (let [c (key-character key)]
+                                            (if (and c (>= (int c) 32))
+                                              (do (swap! query str c)
+                                                  (reset! selected (first-selectable-index
+                                                                     (filter-settings-rows all-rows
+                                                                                           @query)))
+                                                  (reset! scroll 0)
+                                                  (recur))
                                               (recur)))
-                         KeyType/ArrowUp (do (swap! selected #(move-settings-selection rows % -1))
-                                             (recur))
-                         KeyType/ArrowDown (do (swap! selected #(move-settings-selection rows % 1))
-                                               (recur))
-                         ;; Backspace edits the live search query.
-                         KeyType/Backspace (do (when (seq @query)
-                                                 (swap! query #(subs % 0 (dec (count %))))
-                                                 (reset! selected (first-selectable-index
-                                                                    (filter-settings-rows all-rows
-                                                                                          @query)))
-                                                 (reset! scroll 0))
-                                               (recur))
-                         ;; Any printable character types into the search query (VS Code feel);
-                         ;; Enter is the only key that toggles/activates the selected row.
-                         KeyType/Character
-                         (let [c (key-character key)]
-                           (if (and c (>= (int c) 32))
-                             (do (swap! query str c)
-                                 (reset! selected (first-selectable-index
-                                                    (filter-settings-rows all-rows @query)))
-                                 (reset! scroll 0)
-                                 (recur))
-                             (recur)))
-                         KeyType/Enter (do (when selected-row (activate-row! selected-row)) (recur))
-                         (recur)))))))))))
+                        KeyType/Enter (do (when selected-row (activate-row! selected-row)) (recur))
+                        (recur))))))))))
+       false))))
 
 ;;; ── Session picker ─────────────────────────────────────────────────────
 (defn- short-session-id

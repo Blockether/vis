@@ -841,6 +841,43 @@
         (expect (= [{:theme-id :vis-dark :label "Vis Dark"}
                     {:theme-id :vis-light :label "Vis Light"}]
                    (theme-picker-items [:vis-dark :vis-light])))))
+  (it
+    "theme preview repaints Settings after the chat callback replaces the frame"
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+          (term/virtual-screen)
+
+          read-key
+          #'dlg/read-modal-key!
+
+          original-read
+          @read-key
+
+          frames
+          (atom [])]
+
+      (try (doseq [k [(KeyStroke. KeyType/Enter) (term/keystroke \b) (term/keystroke \*)
+                      (term/keystroke :esc)]]
+             (.addInput terminal k))
+           (with-redefs-fn {#'dlg/load-inventories! (constantly nil)
+                            #'dlg/settings-rows (constantly [{:type :choice
+                                                              :key :theme-name
+                                                              :label "Theme setting"
+                                                              :choices [:vis-light :vis-dark]}])
+                            read-key (fn [s]
+                                       (swap! frames conj
+                                         (str/join "\n" (map :text (term/painted-rows terminal))))
+                                       (original-read s))}
+             #(dlg/settings-dialog! screen
+                                    {:theme-name :vis-light}
+                                    {:on-change
+                                     (fn [_]
+                                       (.clear screen)
+                                       (.putString (.newTextGraphics screen) 0 0 "Chat repaint"))}))
+           ;; The third input is read AFTER preview, while the band still owns input.
+           (expect (str/includes? (nth @frames 2) "Settings"))
+           (expect (str/includes? (nth @frames 2) "Theme setting: vis-dark"))
+           (expect (str/includes? (nth @frames 2) "Apply theme"))
+           (finally (.stopScreen screen)))))
   (it "theme choices share a grid row when wide and stack when narrow"
       (doseq [width [40 134]]
         (let [terminal (DefaultVirtualTerminal. (TerminalSize. (+ width 6) 25))
