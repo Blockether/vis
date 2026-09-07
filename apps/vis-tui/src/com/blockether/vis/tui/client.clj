@@ -144,32 +144,79 @@
 
 (defn- enc [x] (URLEncoder/encode (str x) StandardCharsets/UTF_8))
 
+(defn- connection-failure
+  [entry ^java.io.IOException cause]
+  (let [endpoint
+        (str (.getScheme (URI. ^String (base-url entry))) "://" (:host entry) ":" (:port entry))
+
+        causes
+        (take-while some? (iterate ex-cause cause))
+
+        reason
+        (cond (some #(or (instance? java.net.UnknownHostException %)
+                         (instance? java.nio.channels.UnresolvedAddressException %))
+                    causes)
+              "The gateway hostname could not be resolved."
+              (some #(or (instance? java.net.http.HttpTimeoutException %)
+                         (instance? java.net.SocketTimeoutException %))
+                    causes)
+              "The gateway request timed out."
+              (some #(instance? javax.net.ssl.SSLException %) causes)
+              "A secure connection could not be established. Check the gateway TLS certificate."
+              (some #(instance? java.net.ConnectException %) causes)
+              "The connection could not be established."
+              :else "Network I/O failed while contacting the gateway.")]
+
+    ;; Transport messages can echo URLs or credentials. Keep every frame and cause
+    ;; class in the redirected diagnostic log, but never their untrusted messages.
+    (binding [*out* *err*]
+      (println "Gateway transport failure at" endpoint "(exception messages omitted for privacy)")
+      (doseq [^Throwable t causes]
+        (println (.getName (class t)))
+        (doseq [frame (.getStackTrace t)]
+          (println "\tat" (str frame))))
+      (flush))
+    (ex-info
+      (str
+        "Could not connect to the Vis gateway at "
+        endpoint
+        ".\n"
+        reason
+        "\n"
+        "Check that the gateway is running (start a local gateway with `vis-agent gateway start`).\n"
+        "Check --gateway / VIS_GATEWAY_URL and the port; for a remote gateway, check network/VPN access.\n"
+        "Diagnostic log: " (paths/log-file))
+      {:type :gateway/connection-failed :vis/user-error true :endpoint endpoint}
+      cause)))
+
 (defn- gw-send!
   [{:keys [secret] :as entry} method path
    {:keys [body as timeout-ms headers raw-body?] :or {as :string timeout-ms 30000}}]
-  (http/request
-    (cond-> {:client @http-client
-             :method (keyword (str/lower-case method))
-             :uri (str (base-url entry) path)
-             :timeout timeout-ms
-             :throw false
-             :as as
-             :headers (cond-> (merge (protocol-headers)
-                                     headers
-                                     {"Accept"
-                                      (if (= as :stream) "text/event-stream" "application/json")})
-                        (seq (str secret))
-                        (assoc "Authorization"
-                          (str "Bearer " secret) "X-Vis-Gateway-Secret"
-                          (str secret))
+  (try (http/request
+         (cond-> {:client @http-client
+                  :method (keyword (str/lower-case method))
+                  :uri (str (base-url entry) path)
+                  :timeout timeout-ms
+                  :throw false
+                  :as as
+                  :headers (cond-> (merge (protocol-headers)
+                                          headers
+                                          {"Accept" (if (= as :stream)
+                                                      "text/event-stream"
+                                                      "application/json")})
+                             (seq (str secret))
+                             (assoc "Authorization"
+                               (str "Bearer " secret) "X-Vis-Gateway-Secret"
+                               (str secret))
 
-                        (= as :stream)
-                        (assoc "Accept-Encoding" "identity"))}
-      (some? body)
-      (assoc :body (if raw-body? body (wire/json-str body)))
+                             (= as :stream)
+                             (assoc "Accept-Encoding" "identity"))}
+           (some? body)
+           (assoc :body (if raw-body? body (wire/json-str body)))
 
-      (and (some? body) (not raw-body?))
-      (assoc-in [:headers "Content-Type"] "application/json"))))
+           (and (some? body) (not raw-body?))
+           (assoc-in [:headers "Content-Type"] "application/json")))
+       (catch java.io.IOException e (throw (connection-failure entry e)))))
 
 (defn- parse-json-body
   [body]
