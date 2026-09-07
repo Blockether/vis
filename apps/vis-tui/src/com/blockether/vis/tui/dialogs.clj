@@ -2857,14 +2857,10 @@
                       servers)
                 (when (seq (str error))
                   [{:type :info :tone :bad :label "MCP unavailable" :description (str error)}])
-                (when (and (empty? servers) (empty? (str error)))
-                  (if (= :loading status)
-                    [{:type :info
-                      :label "Loading MCP servers…"
-                      :description "Reading them from the gateway"}]
-                    [{:type :info
-                      :label "No MCP servers yet"
-                      :description "Add one below, or declare them under mcp: in vis.yml."}]))
+                (when (and (= :loading status) (empty? servers) (empty? (str error)))
+                  [{:type :info
+                    :label "Loading MCP servers…"
+                    :description "Reading them from the gateway"}])
                 [{:type :action
                   :id :mcp-add
                   :label "Add MCP server…"
