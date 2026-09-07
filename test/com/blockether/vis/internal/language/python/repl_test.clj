@@ -7,7 +7,6 @@
             [com.blockether.vis.internal.language.python.core :as core]
             [com.blockether.vis.internal.language.python.interpreter :as interp]
             [com.blockether.vis.internal.language.python.repl-manager :as repl]
-            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
@@ -77,37 +76,14 @@
                (expect (#{"python3" "python"} (first cmd))))
              (finally (cleanup root))))))
 
-;; ── `python.interpreter` / `python.runner` pinned in merged config ───────────
-(defdescribe
-  interpreter-pin-test
-  "A workspace whose only sanctioned invocation is undetectable (`vis-agent
-   python`, a wrapper script) pins it instead (Blockether/vis#98)."
-  (it "takes a vector as the argv prefix, verbatim"
-      (expect (= ["vis-agent" "python"]
-                 (interp/pinned-command "/proj"
-                                        {"python" {"interpreter" ["vis-agent" "python"]}}))))
-  (it "takes a bare string as ONE argument, never word-split"
-      (expect (= ["my python"]
-                 (interp/pinned-command "/proj" {"python" {"interpreter" "my python"}}))))
-  (it "resolves a path-like pin against the project dir"
-      (expect (= ["/proj/.venv/bin/python"]
-                 (interp/pinned-command "/proj" {"python" {"interpreter" [".venv/bin/python"]}}))))
-  (it "expands ~ in a pinned path"
-      (expect (= [(str (System/getProperty "user.home") "/bin/py")]
-                 (interp/pinned-command "/proj" {"python" {"interpreter" "~/bin/py"}}))))
-  (it "is nil without a pin, and for blank entries"
-      (expect (nil? (interp/pinned-command "/proj" {})))
-      (expect (nil? (interp/pinned-command "/proj" {"python" {"interpreter" ["" "  "]}}))))
-  (it "prefers the pin over detection"
-      (with-redefs [config/load-config-raw (constantly {"python" {"interpreter" ["vis-agent"
-                                                                                 "python"]}})]
-        (expect (= ["vis-agent" "python"]
-                   (interp/resolve-command (System/getProperty "java.io.tmpdir"))))))
-  (it "reads python.runner, ignoring anything that is not a backend"
-      (expect (= "project" (interp/pinned-runner {"python" {"runner" "Project"}})))
-      (expect (= "vispython" (interp/pinned-runner {"python" {"runner" "vispython"}})))
-      (expect (nil? (interp/pinned-runner {"python" {"runner" "pytest"}})))
-      (expect (nil? (interp/pinned-runner {})))))
+;; ── `python.runner` configured in merged config ─────────────────────────────
+(defdescribe runner-config-test
+             "The configured default test backend."
+             (it "reads python.runner, ignoring anything that is not a backend"
+                 (expect (= "project" (interp/pinned-runner {"python" {"runner" "Project"}})))
+                 (expect (= "vispython" (interp/pinned-runner {"python" {"runner" "vispython"}})))
+                 (expect (nil? (interp/pinned-runner {"python" {"runner" "pytest"}})))
+                 (expect (nil? (interp/pinned-runner {})))))
 
 ;; ── uv detection reads TOML TABLE HEADERS, not substrings ────────────────────
 ;; `[tool.uvicorn]` used to satisfy a `str/includes? "[tool.uv"` check, so a
@@ -247,7 +223,7 @@
   ;; but start still reported an unusable process as up and exposed its driver source.
   (it "fails startup when the child cannot complete the ping handshake"
       (let [dir (.getPath (tmp-dir))]
-        (try (let [result (with-redefs [interp/resolve-command
+        (try (let [result (with-redefs [interp/detect-command
                                         (constantly ["sh" "-c" "printf 'not-json\\n'; sleep 30"])]
                             (repl/start! dir {:session-id test-session-id}))]
                (expect (= "failed" (get result "status")))
@@ -263,7 +239,7 @@
   ;; `log_tail` / `exit`, so a failed start could not be read the same way twice.
   (it "reports a dead launch by the keys EVERY language uses"
       (let [dir (.getPath (tmp-dir))]
-        (try (let [result (with-redefs [interp/resolve-command
+        (try (let [result (with-redefs [interp/detect-command
                                         (constantly ["sh" "-c" "echo boom 1>&2; exit 3"])]
                             (repl/start! dir {:session-id test-session-id}))]
                (expect (= "failed" (get result "result")))

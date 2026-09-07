@@ -197,7 +197,7 @@ _main()
   (when-let [old (get @processes dir)]
     (try (.destroy ^Process (:process old)) (catch Throwable _ nil)))
   (let [cmd
-        (vec (concat (interp/resolve-command dir) ["-c" server-script]))
+        (vec (concat (interp/detect-command dir) ["-c" server-script]))
 
         p
         (vis/session-process-spawn! session-id cmd dir {:env (get opts "env")})

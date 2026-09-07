@@ -669,27 +669,21 @@ resolve against the working directory, `~` expands, and an entry that is not an
 existing directory is dropped. An explicit `PYTHONPATH` in the environment still
 precedes both.
 
-Vis otherwise picks the interpreter itself — uv, then Poetry, then a project
-`.venv`, then `python3`. When your workspace mandates a launcher Vis cannot
-detect (a wrapper script, a container shim, `vis-agent python`), pin it:
+Vis selects the project interpreter automatically for `repl_start` / `repl_eval`
+and the `project` test runner: uv, then Poetry, then a project `.venv` or `venv`,
+then `python3` (or `python` when `python3` is unavailable). uv and Poetry are
+used only for projects managed by them and when their commands are on `PATH`.
+
+A detected virtualenv interpreter is invoked by its absolute path, and by the
+venv's own executable — never canonicalized into the base installation, which
+would leave `pyvenv.cfg` unread and the venv's packages (`pytest` among them)
+missing.
 
 ```yaml
 # vis.yml
 python:
-  interpreter: [vis-agent, python]   # argv prefix, or a bare path
-  runner: project                    # default run_tests backend
+  runner: project  # default run_tests backend
 ```
-
-The pin is used by `repl_start` / `repl_eval` and by the `project` test runner, ahead
-of all detection. A list is the argv prefix verbatim; a bare string is **one**
-argument and is never word-split, so a path may contain spaces. A path-like
-entry resolves against the project directory, `~` expands, and a bare name is
-looked up on `PATH`.
-
-Without a pin, a detected project `.venv` interpreter is invoked by its absolute
-path, and by the venv's own executable — never canonicalized into the base
-installation, which would leave `pyvenv.cfg` unread and the venv's packages
-(`pytest` among them) missing.
 
 `runner` chooses the default `run_tests({"language": "python"})` backend: `vispython`, the
 embedded sandbox interpreter, or `project`, the interpreter's own pytest, where

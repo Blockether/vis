@@ -697,9 +697,6 @@
             "pattern": ".*\\S.*"
           }
         },
-        "interpreter": {
-          "$ref": "#/$defs/command"
-        },
         "runner": {
           "enum": [
             "vispython",

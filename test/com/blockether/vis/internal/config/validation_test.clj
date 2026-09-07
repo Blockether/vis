@@ -98,8 +98,7 @@
    "db_spec" {"backend" "sqlite" "path" "/tmp/vis.db"}
    "grep" {"include_gitignored_paths" ["repositories/"] "always_exclude" ["target/"]}
    "toggles" {"reasoning_level" "deep"}
-   "python"
-   {"source_paths" ["src" "lib/vendor"] "interpreter" [".venv/bin/python"] "runner" "project"}
+   "python" {"source_paths" ["src" "lib/vendor"] "runner" "project"}
    "tui_settings" {"theme_name" "dark" "contributors_disabled" ["voice"]}
    "mcp" {"servers" {"local" {"transport" "stdio"
                               "command" "npx"
@@ -122,6 +121,16 @@
    {"blind_providers" {"console-go" {"learned_at" "2026-01-05T09:12:00Z"}}
     "blind_models" {"small-coder" {"learned_at" "2026-01-05T09:12:00Z" "providers" ["console-go"]}}
     "working_eye" {"provider" "seeing" "model" "mimo-v2.5" "learned_at" "2026-01-05T09:14:00Z"}}})
+
+(defdescribe python-interpreter-config-test
+             (it "rejects removed interpreter overrides instead of silently accepting them"
+                 (doseq [interpreter ["python3" [".venv/bin/python"]]]
+                   (let [data (try (config-validation/assert-config! {"python" {"interpreter"
+                                                                                interpreter}}
+                                                                     "vis.yml")
+                                   nil
+                                   (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                     (expect (= :vis/invalid-config (:type data)))))))
 
 (defdescribe
   config-policy-test

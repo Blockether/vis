@@ -505,7 +505,7 @@
         (java.io.File/createTempFile "vis-pytest-" ".xml")
 
         cmd
-        (cond-> (-> (interpreter/resolve-command dir)
+        (cond-> (-> (interpreter/detect-command dir)
                     (conj "-m" "pytest")
                     (into paths))
           (seq names)
@@ -581,10 +581,9 @@
        deps are NOT visible. When that layout could not be READ, the result
        carries a `warning` instead of quietly claiming the project has none.
      - `{runner \"project\"}` shells the project interpreter's pytest
-       (the argv pinned as `python.interpreter`, else `uv`/`poetry`/`.venv`/
-       `python3` `-m pytest <paths>`) so installed test dependencies are
-       visible. Node ids go straight through as pytest's own
-       `file.py::test_name`, and a PATHLESS `::test_name` becomes `-k`.
+       (uv/Poetry/virtualenv/system autodetection, then `-m pytest <paths>`)
+       so installed test dependencies are visible. Node ids go straight through as
+       pytest's own `file.py::test_name`, and a PATHLESS `::test_name` becomes `-k`.
    BOTH backends name their faults: every failing/erroring test comes back in
    ONE `failures` list as `{ns test type message file line}`, `type` telling a
    thrown `\"error\"` from a false-assertion `\"fail\"` (the project backend
