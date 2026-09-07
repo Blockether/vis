@@ -2317,6 +2317,82 @@
           ;; limits ride embedded, string-keyed too
           (is (= "ok" (get-in p0 ["limits" "status"]))))))))
 
+(deftest router-handler-preserves-model-wire-capabilities
+  ;; Regression, Vis session 95c4a9b0-ba88-4e8d-86ef-252cb522bcf4: the gateway
+  ;; sent names only, so the TUI hid verbosity even for Codex gpt-6-astra.
+  (with-redefs [providers/picker-fleet
+                (constantly [{:id :openai-codex :models [{:name "gpt-6-astra"}]}
+                             {:id :github-copilot
+                              :models [{:name "gpt-6-astra"} {:name "claude-opus-5"}]}
+                             {:id :anthropic :models [{:name "claude-opus-5"}]}])
+
+                providers/default-selection
+                (constantly nil)
+
+                providers/fallback-selection
+                (constantly nil)
+
+                providers/provider-status
+                (constantly {})
+
+                providers/provider-limits-safe
+                (constantly {})]
+
+    (let [response
+          ((rv 'router-handler) {})
+
+          rows
+          (get (wire/parse-json (:body response)) "providers")
+
+          by-id
+          (into {} (map (juxt #(get % "id") identity)) rows)
+
+          codex
+          (get by-id "openai-codex")
+
+          copilot
+          (get by-id "github-copilot")
+
+          anthropic
+          (get by-id "anthropic")]
+
+      (is (= 200 (:status response)))
+      (is (= ["gpt-6-astra"] (get codex "models")))
+      (is (= [{"name" "gpt-6-astra"
+               "is_reasoning_effort_configurable" true
+               "verbosity_style" "openai-text"}]
+             (get codex "model_details")))
+      (is (= ["openai-text" nil] (mapv #(get % "verbosity_style") (get copilot "model_details"))))
+      (is (=
+            [{"name" "claude-opus-5" "is_reasoning_effort_configurable" true "verbosity_style" nil}]
+            (get anthropic "model_details"))))))
+
+(deftest router-model-details-honor-wire-overrides
+  (with-redefs [providers/provider-status
+                (constantly {})
+
+                providers/provider-limits-safe
+                (constantly {})]
+
+    (doseq [[provider expected]
+            [[{:id :custom
+               :base-url "https://gateway.example.com/v1"
+               :api-style :openai_responses
+               :models [{:name "gpt-6-astra"} {:name "gpt-5.6-sol" :api-style :openai}]}
+              ["openai-text" nil]]
+             [{:id :custom
+               :base-url "https://gateway.example.com/v1"
+               :responses-path "/responses"
+               :models [{:name "gpt-6-astra"}]} ["openai-text"]]
+             [{:id :openai :models [{:name "gpt-4o"}]} [nil]] [{:id :openai-codex :models []} []]]]
+      (let [row (wire/->wire ((rv 'router-provider-entry) provider nil nil))
+            details (get row "model_details")]
+
+        (is (= expected (mapv #(get % "verbosity_style") details)))
+        (is (= (get row "models") (mapv #(get % "name") details)))
+        (when (= :openai (:id provider))
+          (is (false? (get-in details [0 "is_reasoning_effort_configurable"]))))))))
+
 ;; Regression: the fleet was probed one provider at a time, so /v1/router cost
 ;; the SUM of every live auth/limits probe — about a minute on eight providers,
 ;; past the companion's 30s request bound, and its Providers screen never left
@@ -2325,7 +2401,9 @@
   (testing "GET /v1/router costs the SLOWEST provider probe, not their sum"
     (let [fleet
           (mapv (fn [i]
-                  {:id (keyword (str "p" i)) :models [{:name "m"}]})
+                  {:id (keyword (str "p" i))
+                   :base-url "https://gateway.example.com/v1"
+                   :models [{:name "m"}]})
                 (range 6))
 
           probe-ms

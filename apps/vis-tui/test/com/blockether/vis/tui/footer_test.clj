@@ -568,6 +568,34 @@
                                              0)
                              (mapv :text))]
               (expect (some #(= "≡ high" %) texts)))))))
+  (it "uses gateway model details to show Astra verbosity only on a supported session"
+      ;; Regression, Vis session 95c4a9b0-ba88-4e8d-86ef-252cb522bcf4: exercise
+      ;; the real client decoder and resolver rather than stubbing model capabilities.
+      (with-redefs [vis/router-cached (constantly
+                                        [{"id" "openai-codex"
+                                          "is_default" true
+                                          "default_model" "gpt-6-astra"
+                                          "models" ["gpt-6-astra"]
+                                          "model_details" [{"name" "gpt-6-astra"
+                                                            "is_reasoning_effort_configurable" true
+                                                            "verbosity_style" "openai-text"}]}
+                                         {"id" "github-copilot"
+                                          "models" ["gpt-6-astra" "claude-opus-5"]
+                                          "model_details" [{"name" "gpt-6-astra"
+                                                            "is_reasoning_effort_configurable" true
+                                                            "verbosity_style" "openai-text"}
+                                                           {"name" "claude-opus-5"
+                                                            "is_reasoning_effort_configurable" true
+                                                            "verbosity_style" nil}]}])]
+        (doseq [[provider model expected] [["openai-codex" "gpt-6-astra" ["≡ high"]]
+                                           ["github-copilot" "gpt-6-astra" ["≡ high"]]
+                                           ["github-copilot" "claude-opus-5" []]]]
+          (let [db {:messages []
+                    :settings {:verbosity "high"}
+                    :session-model-pref {:provider provider :model model}}
+                texts (mapv :text (#'footer/build-segments db 0))]
+
+            (expect (= expected (filterv #(str/starts-with? % "≡ ") texts)))))))
   (it "reads capability off the SESSION's model, not the global router default"
       ;; Regression: opening a GitHub Copilot session offered no way to change
       ;; reasoning, because the footer asked the router's DEFAULT model instead

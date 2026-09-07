@@ -17,6 +17,7 @@
    is doing via `start!`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.openapi :as openapi-contract]
             [com.blockether.vis.contract.toggle :as toggle-contract]
@@ -1470,12 +1471,30 @@
         (= id (:provider-id primary))
 
         is-fallback
-        (= id (:provider-id fallback))]
+        (= id (:provider-id fallback))
+
+        ;; Normalize metadata without resolving credentials or probing a provider.
+        ;; The TUI gates controls on these Svar facts, not on provider/model names.
+        models
+        (when (seq (:models provider))
+          (:models (svar-router/normalize-provider
+                     0
+                     {:id id
+                      :base-url (config/provider-base-url provider)
+                      :api-style (config/effective-api-style
+                                   {:declared (config/provider-api-style provider)
+                                    :responses-path (:responses-path provider)})
+                      :models (into [] (keep config/->svar-model) (:models provider))})))]
 
     {:id (name id)
      :label (config/display-label id)
      :base-url (or (config/provider-base-url provider) (:base-url provider))
      :models (into [] (keep :name) (:models provider))
+     :model-details (mapv (fn [model]
+                            {:name (:name model)
+                             :is-reasoning-effort-configurable (:reasoning-effort? model)
+                             :verbosity-style (:verbosity-style model)})
+                          models)
      :is-default is-default
      :default-model (when is-default (:model primary))
      :is-fallback is-fallback
