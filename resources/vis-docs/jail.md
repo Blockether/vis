@@ -1,9 +1,10 @@
-# Process jail & egress
+# Process jail and network policy
 
-The process jail confines code started for a session. It limits filesystem access,
-scrubs the child environment, and routes outbound connections through the gateway's
-policy. The boundary covers managed child processes; the in-process Python sandbox
-uses its own filesystem and socket guards.
+The process jail confines every process Vis starts for a session: it limits
+filesystem access, scrubs the child environment and routes outbound connections
+through the gateway's policy. This page is the reference for enabling it and for
+each rule it applies. The in-process Python sandbox has its own guards; see
+[Python sandbox](python-sandbox.md).
 
 ## Enable the boundary
 
@@ -189,7 +190,7 @@ opening a socket. Inside `python_execution`, `network_filter(...)` and
 `network_probe(...)` test session-local filters, but those local filters do not alter
 live egress.
 
-See [Extending Vis](extending.md) for the extension API.
+See [Extending Vis](extending.md#the-declaration) for `network_filters`.
 
 ## Platform enforcement
 
@@ -205,10 +206,9 @@ bubblewrap before the child command starts. On Linux, a filtered proxy policy cu
 uses a private network namespace with no route, so it fails closed rather than exposing
 direct egress.
 
-If an enabled jail cannot be enforced, Vis prints one warning and starts the child
-unconfined. This is not a security boundary. A missing or failed session policy is a
-different case: managed process launch is denied because Vis cannot determine which
-policy to apply.
+An enabled jail that this host cannot enforce refuses to start the child, and so
+does a missing session policy: Vis never falls back to an unconfined process when
+it cannot tell which policy applies.
 
 ## Executables and macOS services
 
@@ -253,6 +253,6 @@ cannot widen an existing environment until `/reload` invalidates it.
 
 ## See also
 
-- [Configuration](configuration.md): complete `workspace`, `jail`, `environment`, and toggle key reference.
+- [Configuration](configuration.md): the complete `workspace`, `jail`, `environment` and toggle keys.
 - [Python sandbox](python-sandbox.md): the in-process Python boundary.
-- [Gateway, pairing & remote access](gateway.md): the daemon that owns the egress proxy.
+- [Remote access and the Companion app](gateway.md): the daemon that owns the egress proxy.

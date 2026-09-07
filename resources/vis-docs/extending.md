@@ -1,1401 +1,394 @@
 # Extending Vis
 
-Vis is a small core plus **extensions**. Engine integrations such as providers,
-language packs and search ship that way. The standalone `vis-tui` application is
-a gateway client, not an extension. Your own extensions follow these recipes.
+An extension adds capabilities to Vis: tools the model can call, slash commands
+for you, guards over file operations, LLM providers and more. This page shows
+how to write a Python extension. Python extensions are single files you drop
+into a directory and reload in place, which makes them the right choice for
+project-specific tools. For engine-level integrations that ship inside the
+binary, see [Clojure extensions](clojure-extensions.md).
 
-There are two flavors, and this page is the whole story for both:
+## Your first extension
 
-| | **[Python extensions](#python-extensions)** (`.vis/extensions/*.py`) | **[Clojure extensions](#clojure-extensions)** (classpath) |
-| --- | --- | --- |
-| Ship | drop a file | build into the binary |
-| Reload | `/reload`, in place | rebuild + restart (native) |
-| Scope | per project or per user | every install of the distribution |
-| Can contribute | tools, prompts, slash commands, op hooks, network filters, session context, durable state, LLM providers | engine integrations such as providers, persistence backends, CLI commands and sandbox shims |
+1. Create `~/.vis/extensions/greeter.py`:
 
-Reach for Python for project-specific tools and guards — Vis can write those for
-itself mid-session. Graduate to Clojure when you need deeper surfaces or want to
-ship to others as part of a
-[distribution](distributions.md).
+   ```python
+   """Greeter — smallest possible tool extension."""
+   import blockether.vis.extension as vis
 
-Both flavors converge on the same contracts:
 
-1. **Declare the extension** — one spec per file/namespace.
-2. **Expose tools** — plain functions that surface as sandbox Python functions.
-3. **Publish one contract per tool** — its docstring (or `:description`), which is
-   what `apropos` searches and `doc(name)` returns; prompt fragments only for
-   dynamic routing or catalogs.
+   def greeter_hello(name):
+       """await greeter_hello(name) -> {"greeting"} — greet someone."""
+       return {"greeting": f"hello {name}"}
 
-Everything on this page, by what you are trying to do:
 
-| I want to… | Python | Clojure |
-| --- | --- | --- |
-| add a tool the model can call | [Tools](#tools), [Object-first tools](#object-first-tools) | [Tools: symbols](#tools-symbols) |
-| return typed results, not strings or dicts | [Object-first tools](#object-first-tools) | — |
-| add a `/command` for the user | [Slash commands](#slash-commands) | [Slash commands (Clojure)](#slash-commands-clojure) |
-| ask the human something mid-turn | [Asking the human](#asking-the-human) | [Asking the human (Clojure)](#asking-the-human-clojure) |
-| show live progress while work runs | [Showing the human live work](#showing-the-human-live-work) | — |
-| guard or block a file operation | [Op hooks](#op-hooks) | — |
-| register an LLM provider | [LLM providers](#llm-providers), [Managed providers](#managed-providers) | — |
-| keep data across restarts | [Durable state](#durable-state) | — |
-| publish a page for `doc(name)` | [Your page and your `apropos` row](#your-page-and-your-apropos-row) | [Shipping doc pages](#shipping-doc-pages) |
-| test what I wrote | [Testing your Python extension](#testing-your-python-extension) | [Testing and verification](#testing-and-verification) |
----
+   vis.register(vis.Extension(
+       name="greeter",
+       description="Greets people.",
+       alias="greeter",
+       symbols=[vis.Symbol(greeter_hello, tag="observation")],
+   ))
+   ```
 
-## Python extensions
+2. Start Vis, or run `/reload` in a running session.
+3. Ask the model to greet you. It calls `await greeter_hello("vis")` and reads
+   the docstring through `doc("greeter_hello")`.
 
-Single `.py` files you drop into a directory, loaded at startup and reloadable in
-place with `/reload` — no rebuild, identical behavior on the JVM and in the
-native binary.
+Extensions load from two directories:
 
-```text
-~/.vis/extensions/           global — loads in every project
-<project>/.vis/extensions/   project-local — loads for that project only
+| Directory | Scope |
+| --- | --- |
+| `~/.vis/extensions/` | every project |
+| `<project>/.vis/extensions/` | that project only |
+
+A project file with the same `name` as a global one replaces it. A file that
+fails to load is reported by `vis-agent doctor` and never stops Vis from
+starting.
+
+Treat a project's `.vis/extensions/` like its build scripts: the files run with
+your permissions when Vis starts in that checkout. Review them before opening
+an untrusted repository.
+
+## Developing outside Vis
+
+`blockether.vis.extension` is the same module the engine injects, published on
+PyPI as [`vis-agent`](https://pypi.org/project/vis-agent/). Install it to
+import, test and lint an extension in an ordinary Python process:
+
+```bash
+pip install vis-agent
 ```
 
-A project file registering the same extension **name** as a global one wins
-(same layering as configuration). A file that fails to load becomes a
-warning in `vis-agent doctor` — it never crashes Vis.
+Without an engine, the module binds a local host: `vis.state`, `vis.log` and
+`vis.shell` work against your machine, sandbox-only operations refuse by name,
+and `vis.ask` prompts in the terminal. Prime answers for tests with
+`vis.outside.answer_with({...})` or the `VIS_OUTSIDE_ANSWERS` JSON variable, or
+set `VIS_OUTSIDE_NONINTERACTIVE=1` to make every ask come back undeliverable.
 
-A Python extension can contribute:
+## The declaration
 
-- **tools** — functions the model calls in its sandbox (`todo_add("x")`)
-- **prompt fragments** — constant or recomputed every turn
-- **slash commands** — `/todos`, `/gh-repo …` for the user
-- **op hooks** — guards that can block file operations
-- **durable state** — a key/value store that survives restarts
-- **session context** — data folded into the model's `session` bag every turn
-- **LLM providers** — register an API-key provider the router can call
+`vis.register(vis.Extension(...))` is the only call that registers anything, and
+a file makes it once. `Extension`, `Symbol`, `SlashCommand`, `OpHook`,
+`NetworkFilter` and `Provider` are frozen declarations: constructing one
+validates it but performs no IO.
 
-Channels, persistence backends and sandbox shims stay Clojure-side. The separate
-`vis-tui` application consumes the public gateway protocol instead.
-
-### Hello, extension
-
-```python
-# ~/.vis/extensions/greeter.py
-"""Greeter — smallest possible tool extension."""
-import blockether.vis.extension as vis
-
-
-def greeter_hello(name):
-    """await greeter_hello(name) -> {"greeting"} — greet someone."""
-    return {"greeting": f"hello {name}"}
-
-
-vis.register(vis.Extension(
-    name="greeter",
-    description="Greets people.",
-    kind="integration",
-    alias="greeter",
-    symbols=[vis.Symbol(greeter_hello, tag="observation")],
-    prompt="greeter_ surface active: greeter_hello(name).",
-))
-```
-
-Start Vis (or `/reload`) and the model can call `await greeter_hello("vis")`.
-This repo ships its own project-local extensions under `.vis/extensions/` —
-`uplink.py` (object-first tools over one administered server) and `gh.py`
-(the GitHub surface).
-
-### Outside Vis — `pip install vis-agent`
-
-The `blockether.vis.extension` module is the same `blockether/vis/extension.py` file
-the engine injects and `packages/vis-agent` publishes to PyPI as `vis-agent`.
-An extension file is importable, testable and lintable in an ordinary Python
-process — `pip install vis-agent` once a release has uploaded it, or
-`pip install ./packages/vis-agent` from a checkout of this repository.
-
-With no engine on the other side the module binds `blockether.vis._outside` instead — a
-local host implementing every op in the canonical declaration bundled with the SDK: state,
-secrets, logging and `shell` run against the machine you are on, the jailed
-sandbox ops refuse by name rather than pretend to be a sandbox, and
-`vis.ask(...)` prompts at the terminal. Prime those answers with
-`vis.outside.answer_with({...})` or the `VIS_OUTSIDE_ANSWERS` JSON object, or
-set `VIS_OUTSIDE_NONINTERACTIVE=1` to have every ask come back undeliverable.
-`vis.shell` speaks the engine's own op vocabulary out here — `run` (the default),
-`background`, `logs`, `wait`, `send`, `stop`, read out of that declaration — so a
-file written against the sandbox drives a process the same way outside it.
-
-The host interface is `blockether.vis.extension.Host`, a `typing.Protocol`.
-The engine injects a host; `blockether.vis._outside` builds and checks a local one.
-Ordinary extensions use the module API without importing a separate contract package.
-Canonical JSON documents and schemas remain shared between Python, Clojure and UI consumers.
-
-`blockether.vis` itself is a lightweight package. Engine clients import
-`GatewayClient` and `LocalEngine` from `blockether.vis.engine`; importing them
-neither initializes an extension host nor starts an engine or gateway connection.
-
-### `vis.register(vis.Extension(...))`
-
-`Extension` is a frozen, slotted declaration, as are `Symbol`, `SlashCommand`,
-`OpHook`, `NetworkFilter` and `Provider`. Construction validates and snapshots data;
-it does not register an extension, resolve environment variables, or perform host IO.
-Only `vis.register(declaration)` crosses that boundary, exactly once per file.
-No extension base class, singleton, marker dictionaries or legacy builders are required.
-
-`Extension` keyword arguments (collection inputs accept lists or tuples):
-
-| Argument | Type | What it does |
+| Argument | Type | Purpose |
 | --- | --- | --- |
-| `name` | str, required | Unique extension name. Project file with the same name overrides a global one. |
-| `description` | str, required | One-liner for `vis-agent extension list` and the model's extensions snapshot. |
-| `kind` | str | Section label (`"integration"`, `"guard"`, …). Defaults to `"python"`. |
-| `version` | str | Plain metadata. |
-| `alias` | str | Short registry identity used in extension listings. Required with `symbols=`; it does not prefix the public Python API. |
-| `symbols` | list of `vis.Symbol(...)` | Model-facing tools. |
-| `prompt` | str or callable | Model-facing fragment. A callable receives the env dict every turn and returns a string or `None` (no fragment that turn). |
-| `activation` | callable | `(env) -> bool`, evaluated per turn; gates the whole extension. Default: always on. |
-| `slash_commands` | list of `vis.SlashCommand(...)` | User-facing commands. |
-| `op_hooks` | list of `vis.OpHook(...)` | Guards/observers over ops, and gates such as `fs_access`. |
-| `network_filters` | list of `vis.NetworkFilter(...)` | Request/response policy at the gateway's decrypted HTTP boundary. |
-| `providers` | list of `vis.Provider(...)` | LLM providers the router can select. |
-| `ctx` | callable | `(env) -> dict`, evaluated per turn; the returned dict is deep-merged into the model's `session` bag. See [Session context](#session-context). |
+| `name` | str, required | Unique extension name. |
+| `description` | str, required | One line for `vis-agent extension list` and the model's extension snapshot. |
+| `alias` | str | Registry identity; required with `symbols`. It does not prefix tool names. |
+| `symbols` | list of `vis.Symbol` | Tools the model can call. See [Tools](#tools). |
+| `prompt` | str or callable | Text added to the model's prompt. A callable receives the env dict every turn and returns a string or `None`. |
+| `activation` | callable | `(env) -> bool`, evaluated per turn. `False` hides the whole extension for that turn. |
+| `slash_commands` | list of `vis.SlashCommand` | Commands for the user. See [Slash commands](#slash-commands). |
+| `op_hooks` | list of `vis.OpHook` | Guards and observers over tool calls. See [Op hooks](#op-hooks). |
+| `network_filters` | list of `vis.NetworkFilter` | Request and response policy at the gateway proxy. See [Process jail and network policy](jail.md#project-network-filters). |
+| `providers` | list of `vis.Provider` | LLM providers. See [Provider extensions](provider-extensions.md). |
+| `ctx` | callable | `(env) -> dict`, merged into the model's `session` dict every turn. See [Session context](#session-context). |
 | `env` | list of str | Host environment variables this file may read. See [Environment](#environment). |
+| `kind`, `version` | str | Display metadata. |
 
-The **env dict** passed to `prompt`/`activation` callables is deliberately
-small: `{"cwd", "session_id", "channel"}` — unrelated to `env=` below.
+The env dict passed to `prompt`, `activation` and `ctx` contains only `cwd`,
+`session_id` and `channel`.
 
-### Filesystem
+Keep `prompt` short. The model finds tools with `apropos(pattern)` and reads
+their docstrings with `doc(name)`, so a prompt fragment that repeats a
+signature costs tokens without adding information. Use it for facts the
+docstrings cannot carry, such as a per-project catalog.
 
-An extension reads and writes its OWN files — a config directory, a cache, a
-checkout it maintains — through `vis.fs`, and those calls do the work in C,
-inside the runtime, past the confinement that exists for the model's sandbox:
-
-```python
-import blockether.vis.extension as vis
-
-vis.fs.mkdir("~/.cache/acme")                     # every parent too
-vis.fs.write("~/.cache/acme/state.json", payload)  # str or bytes
-data = vis.fs.read_text("~/.cache/acme/state.json")
-vis.fs.copy(src, dst)                              # mode travels with the bytes
-vis.fs.move(src, dst)                              # rename, or copy+remove across devices
-for name in vis.fs.list("~/.cache/acme"):
-    ...
-vis.fs.stat(path)      # {"kind", "size", "mtime"} or None
-vis.fs.remove(path)    # a directory only when it is empty
-```
-
-`vis.fs.read` answers **bytes**; `read_text` decodes. Ordinary `open()` still
-works and is still the right thing for paths inside the session's own roots —
-what `vis.fs` adds is everything OUTSIDE them, which a jailed session refuses to
-Python because the interpreter cannot tell whose Python it is.
-
-This is a capability the extension was GIVEN, in the same sense as `vis.shell`:
-it is not a widening of the session's policy, and the model's sandbox cannot
-borrow it. The runtime authorizes on the session it was ASKED to run, which no
-Python can forge — taking another session's globals out of `sys.modules` and
-`exec`ing into them, which defeats any check made on the calling frame, changes
-nothing here.
-
-### Environment
-
-An extension context gets **no blanket copy of the host environment**; that
-would hand every third-party file your AWS, GitHub and Gerrit credentials.
-Name what you need and the host injects those values — and only those — into
-this context's `os.environ` before the file's first line runs:
-
-```python
-import os
-import blockether.vis.extension as vis
-
-vis.register(vis.Extension(
-    name="acme",
-    description="Acme integration.",
-    env=["ACME_API_KEY"],
-))
-
-key = os.environ.get("ACME_API_KEY")   # resolved by the host, or absent
-```
-
-Each name resolves through the one funnel every Vis surface uses:
-**an `environment:` declaration → the workspace's `.env`, then `.env.local` →
-the environment that started Vis** (see
-[Configuration](configuration.md#environment)). A name nothing resolves is
-simply *absent* from `os.environ` — never an empty string, so
-`os.environ.get(name) or default` still works.
-
-The **project's own variables need no declaration**: every name written under
-`environment:` and every name assigned in the workspace's `.env`/`.env.local`
-is offered to the extension alongside what it declared, because those files
-belong to the project the extension is running in. `env=` is what a *third*
-party's variable needs.
-
-**`env=` does not widen the jail.** It is scoped to *this context's*
-`os.environ` and nothing else. A confined child — the model's `shell(...)`,
-`vis.jailed_shell(...)` (including one spawned by this very extension), a
-managed REPL or test process — is handed only the workspace's `.env`/`.env.local`
-plus the `environment:` declarations, so a name that ONLY an extension declared
-is absent there. That asymmetry is deliberate and runs the safe way: extension
-contexts are trusted and unconfined, so `env=["ACME_API_KEY"]` reads an ambient
-host variable even while `jail.environment: declared` withholds it from every
-confined child. To give a confined child a variable, declare it under
-`environment:` (or put it in `.env`) — see
-[the jail's environment scrubbing](jail.md#environment-scrubbing).
-
-### Session context
-
-The model sees a live `session` bag every turn — turn/iteration counters,
-workspace facts, per-language REPL state, and so on. A `ctx=` callable lets an
-extension **write its own slice** into that bag:
-
-```python
-def _ctx(env):
-    # STRING keys all the way down — the bag crosses into Python as the
-    # model's `session` dict, which rejects non-string keys.
-    return {"session_env": {"todo": {"open": len(vis.state.get("todos", []))}}}
-
-vis.register(vis.Extension(
-    name="todo",
-    description="Todo list.",
-    ctx=_ctx,
-))
-```
-
-- Runs **once per turn** during context render, so the slice is always current.
-- The return **must be a string-keyed dict** (Python dict keys already are).
-  Slices from every extension are deep-merged, so nest under a unique key to
-  avoid clobbering another extension — `"session_env"` is the common home for
-  live environment facts.
-- A non-dict return or a raised exception degrades to an empty contribution —
-  bad optional context never blocks a turn.
-- The `env` dict is the same small `{"cwd", "session_id", "channel"}` handed to
-  `prompt`/`activation`.
-
-### Tools
+## Tools
 
 ```python
 vis.Symbol(fn_or_object, name=None, tag="observation", is_hidden=False, activity=None)
-vis.method(fn=None, tag="observation", is_hidden=False, activity=None)
 ```
 
-- `tag` declares what the tool does: `"observation"` (reads state) or `"mutation"`
-  (changes state) — same contract as Clojure tools.
-- A function's sandbox name is exactly `name`, defaulting to `fn.__name__`. The
-  extension `alias` never prefixes it.
-- **The docstring is mandatory** — it is the whole contract. `apropos(pattern)`
-  filters the symbol name with a regular expression, while `doc(name)` returns the
-  docstring verbatim. Choose a descriptive symbol name and put preconditions,
-  side effects and result semantics in the docstring. The `apropos` row previews
-  its opening. Never retype the signature there — the page renders one from the
-  real Python signature, so a hand-written copy prints twice and goes stale. See
-  [Your page and your `apropos` row](#your-page-and-your-apropos-row).
-- Parameter names are read from the real signature and shown to the model — name
-  them the way the model should type them.
-- `is_hidden=True` hides the tool from the model-facing listing (still callable).
-- `activity=vis.Activity(presenter="tests", label="Run checks")` declares presentation,
-  not execution. The engine owns identity, state, timing, redaction and bounds; the
-  observation/mutation `tag` remains authoritative. Labels are static non-secret text.
-  Put Activity metadata on each `vis.method` when exporting an object namespace, not
-  on the namespace itself. Activity is a `block.activity` replacement projection,
-  never a View or a model-context block. The normative vocabulary and semantics are
-  in the [Activity contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/activity.json).
-
-  Add `render=callback` to compose a symbol's presentation. The synchronous callback
-  receives `phase`, `args`, `kwargs`, `result`, and `error` as keyword arguments;
-  phases are `start`, `success`, and `failure`. Return `vis.ActivityPresentation`, or
-  `None` to keep it. `headline` and the single-line `summary` stay visible when
-  collapsed; the chevron discloses only `content`. Optional `ActivitySection` values
-  group multiple results with their own headline, summary and content, separated by
-  one blank line. Sections cannot nest. `vis.publish_activity(presentation)` replaces
-  all slots atomically during execution. Empty content clears details, not the header.
-  Calls outside a tool return `False`; presentation errors never change tool results.
-
-  Supported blocks are `heading`, `text`, and `markdown` (`text`); `code` and
-  `diff` (`text`, optional `language`); `table` (`columns`, rectangular `rows`);
-  `progress` (`label`, optionally both `value` and `total`); and `image`, `video`,
-  `audio`, and `file` (`attachment_id`, `label`). Media references must identify
-  attachments produced by the tool, not external URLs. Companion uses its existing
-  media controls; TUI offers attachment opening rather than inline video playback.
-  A progress block without numbers is indeterminate only while the tool runs.
-  One replacement is bounded to 8 sections, 32 total blocks and 32 KiB. Headline and
-  summary are literal, single-line text of at most 512 UTF-8 bytes each. Never include secrets.
-
-  ```python
-  def checks_activity(phase, result, **_):
-      blocks = []
-      summary = "Running checks"
-      if phase == "start":
-          blocks.append(vis.ActivityProgress("Running checks"))
-      elif phase == "success":
-          summary = f"{result} checks passed"
-          blocks.append(vis.ActivityTable(["Suite", "Passed"], [["Unit", str(result)]]))
-      return vis.ActivityPresentation("Checks", summary, blocks)
-
-  def run_checks():
-      """Run the project's checks."""
-      # Publish additional stages here with vis.publish_activity(...).
-      return 12
-
-  vis.Symbol(run_checks, activity=vis.Activity(
-      presenter="tests", label="Run checks", render=checks_activity))
-  ```
-- Boolean keys keep **one spelling** across the boundary: a Python `is_<name>` key
-  is the Clojure `:is-<name>` keyword — the same mechanical `_` ↔ `-` mirror the
-  gateway wire uses (`wire-key` / `engine-key` in `contract/wire.clj`). A provider's
-  `is_authenticated` → `:is-authenticated`, `is_unlimited` → `:is-unlimited`,
-  `is_hidden` → `:is-hidden`. The only exceptions are the few keys svar's router
-  itself spells with a trailing `?` (`is_tool_call` → `:tool-call?`); those map
-  through one named table instead of by convention.
-
-An integration object can publish a recursive capability tree under one exact name:
-
-```python
-class Issues:
-    def find(self, query):
-        """Find one issue and return its typed status object."""
-        ...
-
-    @vis.method(tag="mutation")
-    def create(self, title):
-        """Create one issue."""
-        ...
-
-    def _credential(self):
-        ...
-
-
-class Uberworkspace:
-    def __init__(self):
-        self.issues = Issues()
-
-
-vis.register(vis.Extension(
-    name="uberworkspace",
-    description="Workspace integration.",
-    alias="uw",
-    symbols=[vis.Symbol(Uberworkspace(), name="uberworkspace")],
-))
-```
-
-This exposes exactly `uberworkspace.issues.find(...)` and
-`uberworkspace.issues.create(...)`; the extension `alias` does not alter that root.
-Public callable methods become tool leaves, while public attributes containing
-ordinary Python objects become namespace nodes recursively. Names beginning with
-`_` never cross the boundary. Public scalar, collection, module, class, or descriptor
-values are rejected with their full path instead of being silently serialized, and
-cycles or repeated object references are rejected with both conflicting paths.
-
-`vis.method(...)` overrides `tag` or `is_hidden` for one leaf and can declare its
-Activity presentation; otherwise the enclosing `vis.Symbol(...)` defaults apply.
-Every leaf keeps its signature and docstring under
-its full dotted name in `apropos`/`doc`, and runs through the same deferred worker and
-result envelope as a flat tool. Namespace values themselves have a concise readable
-representation in `python_execution` rather than exposing runtime class names or
-memory addresses ([Object-first tools](#object-first-tools) below is the full pattern).
-
-**A tool is a Python callable, never a provider tool.** `python_execution` is the
-only thing a model is handed a schema for; every symbol an extension registers is
-called like an ordinary Python function or namespaced method. There is no JSON
-Schema to write, no `description=`/`result=` pair to keep in sync with the
-docstring, and no per-symbol renderer: a printed result is carded from the value
-itself.
-
-**Envelope semantics — Python authors never construct envelopes:**
-
-- the **return value** (dict/list/str/number) *is* the success payload;
-- **raising is the failure path** — the exception message surfaces to the
-  model as a normal tool failure it can route around:
+- `tag` is `"observation"` for a tool that reads state or `"mutation"` for one
+  that changes it.
+- The sandbox name is `name`, defaulting to the function name.
+- The docstring is the contract. `doc(name)` returns it verbatim under a
+  signature rendered from the real Python signature, so do not repeat the
+  signature in the docstring. State preconditions, side effects and what the
+  result contains. The first line is what `apropos` previews.
+- Parameter names are shown to the model. Name them as the model should type them.
+- The return value is the result. Raise an exception to fail; its message
+  reaches the model as an ordinary tool failure it can react to.
+- `is_hidden=True` keeps a tool callable but out of the model-facing listing.
 
 ```python
 def todo_toggle(id):
-    """await todo_toggle(id) -> {"id", "done"} — flip one todo."""
-    for t in vis.state.get("todos", []):
+    """Flip one todo. Answers {"id", "done"}; raises when the id is unknown."""
+    todos = vis.state.get("todos", [])
+    for t in todos:
         if t["id"] == id:
-            ...
+            t["done"] = not t["done"]
+            vis.state["todos"] = todos
+            return {"id": id, "done": t["done"]}
     raise ValueError(f"no todo with id {id}; call todo_list() to see ids")
 ```
 
-### Object-first tools
+### Return typed objects
 
-A tool's return value crosses into the sandbox as a real Python value, so give
-it a real Python type. The pattern that holds up past a handful of operations
-is **object-first**: operations return ordinary, precisely typed domain
-objects, and rendering and serialization live at explicit boundaries.
+A result crosses into the sandbox as a real Python value, so return a real
+type. A flat dict of scalars is fine for a trivial result. As soon as a result
+has a field whose meaning is not obvious, a `None` that means something, or a
+second consumer, make it a frozen dataclass:
 
-- **Annotate every parameter and every return.** The annotations are part of
-  the contract the model reads next to the docstring.
-- **Return a concrete domain type** — never a formatted string, a JSON blob, a
-  shapeless `dict`, or `Any`. A consumer forced to parse your text back into
-  structure will parse it wrong, and a consumer of `dict`/`Any` cannot tell
-  what changed when the tool grows.
-- **Public result types are immutable**: `@dataclass(frozen=True)`.
-- **A type docstring says what the object *is*** — which real thing it
-  represents, its invariants, its non-obvious states — not a restatement of the
-  class name. Field-level meaning (units, when a field is `None`, sentinels,
-  ordering, ownership) belongs in that same docstring.
-- **A flat `dict` of scalars stays fine for a trivial result**
-  (`{"greeting": "hello vis"}`). The moment a result grows a second consumer,
-  a non-obvious field, or a `None` that means something, it becomes a
-  dataclass.
-- **Serialize at real boundaries only** — persistence, a wire — and say so
-  where it happens. A CLI may render the object once for a human; the sandbox
-  receives the object itself.
+- Annotate every parameter and return value; the model reads them next to the
+  docstring.
+- Never return a formatted string or JSON text that the caller must parse.
+- Put field meaning in the class docstring: units, when a field is `None`,
+  what a sentinel means.
+- Use snake_case dict keys; they pass through as written.
 
 ```python
+from dataclasses import dataclass
+
+
 @dataclass(frozen=True)
 class CommandResult:
-    """Outcome of one command executed on the remote server.
+    """Outcome of one command run on the remote server.
 
     `exit_code` is None exactly when the command was killed locally after
-    `timeout_s`; the remote side may still be running it. `stdout`/`stderr`
-    are decoded UTF-8 and capped at 256 KiB; `is_truncated` says the cap
-    cut something off. `duration_ms` measures the local wait for ssh, not
-    the command's own runtime.
+    `timeout_s`. `stdout` and `stderr` are decoded UTF-8 capped at 256 KiB;
+    `is_truncated` says the cap cut something.
     """
 
     command: str
     exit_code: int | None
     stdout: str
     stderr: str
-    duration_ms: int
     is_timed_out: bool
     is_truncated: bool
 ```
 
-The key boundary is the call, not the rendering:
+The Vis repository's own `.vis/extensions/uplink.py` is a complete example of
+this pattern.
+
+### Object namespaces
+
+Register an object instead of a function to publish a tree of tools under one
+name:
 
 ```python
-result = uplink.run("systemctl is-active visgw")  # CommandResult
+class Issues:
+    def find(self, query: str) -> Issue:
+        """Find one issue by query."""
+        ...
+
+    @vis.method(tag="mutation")
+    def create(self, title: str) -> Issue:
+        """Create one issue."""
+        ...
+
+
+class Tracker:
+    def __init__(self):
+        self.issues = Issues()
+
+
+vis.register(vis.Extension(
+    name="tracker",
+    description="Issue tracker.",
+    alias="tracker",
+    symbols=[vis.Symbol(Tracker(), name="tracker")],
+))
 ```
 
-A complete shipped extension — `run`, `service`, `health`, `info`, `put` and
-`get` against one administered server over one ssh door, every result a
-frozen dataclass, credentials through a keychain-backed `environment:`
-source — is this repo's own project-local `.vis/extensions/uplink.py`.
-annotations and docstrings can be validated mechanically later; the contract
-comes first.
+The model calls `tracker.issues.find(...)` and `tracker.issues.create(...)`.
+Public methods become tools, public attributes holding objects become nested
+namespaces, and names starting with `_` never cross. Public scalars, modules
+and classes are rejected with their path rather than serialized silently.
+`vis.method(...)` overrides `tag`, `is_hidden` or `activity` for one method.
 
-Dict keys pass through as written — use snake_case.
+### Activity presentation
 
-### Slash commands
+`activity=vis.Activity(presenter="tests", label="Run checks")` describes how a
+running tool is shown in the TUI and the Companion app. Add `render=callback`
+to compose the presentation: the callback receives `phase` (`start`, `success`
+or `failure`), `args`, `kwargs`, `result` and `error` and returns a
+`vis.ActivityPresentation(headline, summary, blocks)` or `None`. Blocks are
+`heading`, `text`, `markdown`, `code`, `diff`, `table`, `progress`, `image`,
+`video`, `audio` and `file`. `vis.publish_activity(presentation)` replaces the
+presentation while the tool runs. Presentation errors never change a tool's
+result. The normative vocabulary is the
+[Activity contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/activity.json).
+
+## Slash commands
 
 ```python
 vis.SlashCommand(name, run, doc=None, usage=None)
 ```
 
-`run(ctx)` receives `{"channel", "args", "raw", "session_id"}` and returns:
+`run(ctx)` receives `{"channel", "args", "raw", "session_id"}` and returns
+`vis.ok(title, body=None, data=None)`, `vis.err(title, body=None, data=None)`
+or a plain string, which counts as an ok title. `body` is Markdown.
 
-```python
-vis.ok(title, body=None, data=None)    # body: Markdown string
-vis.err(title, body=None, data=None)
-```
-
-(or a plain string, treated as an ok title).
-
-### Op hooks
+## Op hooks
 
 ```python
 vis.OpHook(ops, fn, phase="before")
 ```
 
-- `ops` — sandbox tool names to hook: `"patch"`,
-  `"shell"`, `"python_execution"`, … or a GATE op
-  (below), which is a different shape and may not share a hook with them.
-- `phase="before"` — `fn(call)` receives `{"op", "args"}` **before** the op
-  runs. Return `vis.block(reason)` to refuse it (the model sees the reason
-  as a tool failure) or `None` to allow. A hook error fails open.
-- `phase="after"` — `fn(call)` receives `{"op", "args", "result"}` after the
-  op; observe-only (the return value is ignored).
+`ops` names sandbox tools such as `"patch"`, `"shell"` or `"python_execution"`.
+With `phase="before"`, `fn(call)` receives `{"op", "args"}` and returns
+`vis.block(reason)` to refuse the call or `None` to allow it; the model sees the
+reason as a tool failure. With `phase="after"`, `fn` receives `{"op", "args",
+"result"}` and its return value is ignored. An error inside a tool hook allows
+the call.
 
-**Gate ops.** `"fs_access"` is not a tool: it is asked for every path the
-host file tools touch — `cat`, `grep`, `patch`, `ls` — so a guard cannot be
-routed around by picking another tool. It does not reach the Python
-interpreter: a block's own `open(p, "w")` is bounded by the sandbox roots, not
-by a hook. `fn(access)` receives `{"operation": "file-read" | "file-write",
-"path": <absolute path>}`, returns `vis.block(reason)` to refuse or `None` to
-allow, and `phase` says nothing (the operation has not run yet, so declaring
-one is refused at the call site). A gate fails **closed**: an error inside the
-hook refuses the operation, because a boundary that opens when its guard breaks
-is not a boundary.
+`"fs_access"` is a gate, not a tool. It is asked for every path the host file
+tools touch (`cat`, `grep`, `patch`, `ls`), so a guard cannot be bypassed by
+choosing another tool. `fn(access)` receives `{"operation": "file-read" |
+"file-write", "path": <absolute path>}`. A gate takes no `phase`, and an error
+inside it refuses the operation. It does not apply to `open()` inside the
+sandbox, which is bounded by the sandbox roots instead.
 
-`vis.strings_of(value)` collects every string leaf of a nested structure —
-handy for scanning op args for paths.
+`vis.strings_of(value)` collects every string leaf of a nested structure, which
+is handy for scanning arguments for paths.
 
-### Durable state
+## Durable state
 
-`vis.state` is a dict-like store persisted to the database (the same
-`vis.db` sessions live in, under the `extension_aggregate` table) — no files
-on disk. It survives `/reload` and process restarts, and is owned by the
-extension **name** (a project-local override of a global extension shares its
-state; two different extensions never do).
+`vis.state` is a dict-like store persisted in the Vis database. It survives
+`/reload` and restarts and is keyed by extension `name`, so a project override
+shares state with the global extension it replaces and two different extensions
+never share.
 
 ```python
-vis.state["repo"] = "acme/widgets"      # write-through
-vis.state.get("repo")                   # read, None when missing
-vis.state.get("count", 0)               # read with default
-"repo" in vis.state                     # membership
-del vis.state["repo"]                   # delete — KeyError when there is none
-vis.state.pop("repo", None)             # read it and drop it in one go
-vis.state.setdefault("count", 0)        # write only when missing
+vis.state["repo"] = "acme/widgets"
+vis.state.get("count", 0)
+"repo" in vis.state
+del vis.state["repo"]
 vis.state.update({"repo": "acme/widgets", "count": 0})
-sorted(vis.state)                       # every key this extension owns
-len(vis.state), dict(vis.state)         # …because it is a MutableMapping
-vis.state.clear()                       # drop them all
 ```
 
-It is a `collections.abc.MutableMapping`, so `pop`, `setdefault`, `update`,
-`clear`, `keys`, `items`, `values`, `len`, iteration and comparison to a dict
-all mean what they mean on a dict. Values must be plain data (dicts, lists,
-strings, numbers, booleans); a key written as `None` is absent, because no host
-can tell a stored null from a key nobody ever wrote.
+It is a `collections.abc.MutableMapping`, so `pop`, `setdefault`, `clear`,
+`keys`, `items`, `len` and iteration behave as on a dict. Values must be plain
+data: dicts, lists, strings, numbers and booleans. Writing `None` removes the
+key.
 
-### Logging and notifications
+## Logging and notifications
 
 ```python
-vis.log("info", "loaded 3 rules")       # levels: trace debug info warn error
-vis.notify("Rules reloaded", "success") # user-facing toast: info success warn error
+vis.log("info", "loaded 3 rules")        # trace, debug, info, warn, error
+vis.notify("Rules reloaded", "success")  # info, success, warn, error
 ```
 
-`vis.log` writes to the owning process's file under `~/.vis/logs/` (normally the
-`gateway-<UTC-start>-pid<PID>.log` stream); `vis.notify` shows in whatever channel
-is active (TUI banner, web toast, …).
+`vis.log` writes to the gateway log under `~/.vis/logs/`. `vis.notify` shows a
+toast in the active channel.
 
-### Asking the human
+## Asking the human and showing live work
 
-`vis.ask` pauses the extension and asks the person a typed question, then
-blocks until they answer. The request is published to whatever channel is
-active, so the same call works in the TUI, the web UI, or the companion app.
+`vis.ask(title, fields)` pauses the extension and shows a typed form in the TUI
+or the Companion app. `vis.live(title, nodes)` opens a view that the extension
+updates while a job runs. Both are documented on their own pages:
+[Asking the human](human-input.md) and [Live views](live-views.md).
 
-A question belongs to a **session**: it is asked inside a turn somebody is
-watching, and the session is what the answer travels back on. `vis.ask` takes
-the session of the call that is running — a tool, a slash command, a hook — and
-refuses on the spot when there is none, rather than parking on a dialog nobody
-can see. Provider lifecycle callbacks (`detect_fn`, `status_fn`) run outside any
-session, so they must never ask; keep them non-interactive and quick, and read
-credentials from the environment instead.
+## Environment
 
-```python
-answer = vis.ask("Deploy", [
-    {"name": "env", "label": "Target", "description": "Where this deploy lands.",
-     "type": "select", "options": ["staging", "prod"], "is_required": True},
-    {"name": "notes", "type": "multiline", "label": "Release notes"},
-    {"name": "token", "type": "password", "label": "Deploy token"},
-], description="Pick a target", timeout_ms=120000)
-
-if answer:                       # falsey when cancelled or timed out
-    deploy(answer["env"], answer.reveal("token"))
-else:
-    vis.log("info", "deploy skipped: " + answer.reason)
-```
-
-Every key is a **snake_case string** — `is_required`, `max_length`, `timeout_ms`.
-A camelCase or kebab-case key (`isRequired`, `is-required`) is **refused** with an
-error naming the right spelling; it is never accepted and quietly ignored, so a
-mandatory field can never turn optional behind your back. (Clojure callers write
-the same names as kebab keywords: `:is-required`.)
-
-Three names, three jobs: `name` keys the answer in `answer.values`, `label` is
-what the dialog shows above the input, and `description` is the italic line under
-that label. `id` is the same identity as `name` and may be written instead of it;
-every other key has exactly one spelling, and an unknown one is refused by name.
-
-Field `type` is one of `plaintext`, `password`, `multiline`, `select`,
-`multiselect`, `checkbox`, `range`, `otp`. A field may also carry
-`placeholder`, `default`, `is_required`, `min_length`, `max_length`, `validate`,
-and — for the two `select` types — `options` (strings, or `{"value": ..., "label": ...}` maps).
-
-Two node types are not fields at all, because nothing answers them: a `group`
-LAYS OUT the nodes under it (`fields`, `direction`) and a `heading` or
-`paragraph` is pure DECORATION carrying `text` alone. Both are described below.
-
-### Toggles: exclusive `select`, inclusive `multiselect` and `checkbox`
-
-There are two kinds of toggle, and every surface says which one it is drawing
-before the person touches it:
-
-| Field | Rule | Answer | TUI | Companion app |
-| --- | --- | --- | --- | --- |
-| `select` | **exclusive** — exactly one option | the chosen `value` | `●` / `○` dots, `Space` **picks** | radio group |
-| `multiselect` | **inclusive** — any number of options | list of values, in the order the request declared them | `[✓]` / `[ ]` boxes, `Space` **toggles** | pressed toggles |
-| `checkbox` | **inclusive**, one lone switch | `true` / `false` | `[✓]` / `[ ]` box on the label row | pressed toggle |
-
-An exclusive option has no off state: `Space` moves the single choice onto the row
-under the cursor and never clears it. The TUI starts a `select` on its `default`, or
-on the first option when the spec names none, so an exclusive field is never left
-unanswered by accident. An inclusive option is independent: `Space` adds or drops
-exactly that value, and an empty list is a legal answer unless the field says
-`is_required`.
-
-```python
-answer = vis.ask("Release", [
-    {"name": "channel", "type": "select", "label": "Channel",
-     "options": ["testflight", "appstore"], "default": "testflight"},
-    {"name": "stores", "type": "multiselect", "label": "Also ship to",
-     "options": ["ios", "android", "web"], "default": ["ios"], "is_required": True},
-    {"name": "notes", "type": "checkbox", "label": "Attach release notes"},
-])
-# answer.values == {"channel": "appstore", "stores": ["ios", "web"], "notes": True}
-```
-
-An `options` entry is either a plain string, where the value IS the label, or a
-`{"value": ..., "label": ...}` map when the answer key and the shown text differ.
-An option nobody declared is refused, not dropped: a `multiselect` answers
-`unknown option zz` and a `select` answers `must be one of a, b`, and the dialog
-turns red on that one field. Shape follows the kind of toggle, and only the inclusive
-side is forgiving about it: one bare value counts as a list of one, while a list
-handed to an exclusive `select` is not one of its options and answers nothing.
-
-A `range` is a bounded number: `min` (default 0), `max` (default 100) and `step`
-(default 1). It answers with a number, not a string — a `long` when all three
-bounds are whole, otherwise a `double` — and the engine clamps nothing: a value
-outside `[min, max]` is refused like any other bad answer. The TUI draws it as a
-slider you nudge with `←`/`→` (`Home`/`End` for the bounds); the app draws a real
-slider.
-
-An `otp` is a one-time code, entered as one box per digit. `min_length` and
-`max_length` say how many (default 6, at most 12; give only `max_length` for a
-fixed length). Only digits get in — typing a letter does nothing, and pasting
-`123 456` fills the boxes instead of dropping six characters into one. A code is
-a credential, so — like a `password` — it answers with a `vis-secret:` handle,
-and the terminal fills its boxes with `•` rather than the digits.
-
-### Laying fields out: `group`
-
-A `group` answers nothing — it is a layout node, one flexbox line. It carries
-`fields` (its children) and `direction`: `column` stacks them (the default, and
-what a form has always done) and `row` lays them side by side. A child may be a
-group again, so the two directions compose into any arrangement:
-
-```python
-vis.ask("Where should the pool connect?", [
-    {"type": "group", "label": "Server", "direction": "row", "fields": [
-        {"name": "host", "label": "Host", "is_required": True},
-        {"name": "port", "label": "Port",
-         "validate": lambda port: None if port.isdigit() else "digits only"},
-    ]},
-    {"type": "group", "direction": "column", "fields": [
-        {"type": "group", "direction": "row", "fields": [
-            {"name": "size", "label": "Pool size"},
-            {"name": "idle", "label": "Idle (s)"},
-        ]},
-        {"name": "tls", "label": "Require TLS", "type": "checkbox"},
-    ]},
-])
-```
-
-A group needs no `name` (it derives one from its children) and shows a heading
-only when you give it a `label`; `description` works as everywhere else. Layout
-keys and value keys never mix, in either direction: `default`, `placeholder`,
-`options`, `is_required` and `validate` are **refused** on a group that could
-never use them, and `fields` or `direction` on an answerable field is refused
-too — a mistyped layout is an error, never a form that quietly loses half its
-fields.
-
-Grouping is layout and nothing else. `answer.values` stays **flat** — the leaves
-key the answer, whatever the arrangement — errors come back keyed by the leaf,
-`is_required` and every validator run exactly as before, and a two-argument
-validator is handed that same flat map, so a field can compare itself with a
-field in any other group. Names stay unique across the whole tree, so two groups
-cannot both hold a `host`.
-
-The group crosses the wire as a tree — `{"type": "group", "direction": "row",
-"fields": [...]}` — so both surfaces read one layout instead of inventing their
-own. The TUI splits the band's width across a `row`: each column keeps its own
-label, required `*`, error line and cursor, `←`/`→` still move inside a
-field and `↑`/`↓` between them in reading order. The app renders a
-`fieldset`/`legend` with the same row or column flex, wrapping on a phone instead
-of overflowing.
-
-### Pure decoration: `heading` and `paragraph`
-
-A form is not only questions. A `heading` opens a section of a long form and a
-`paragraph` explains one. Both carry `text` and nothing else — no `name`, no
-`label`, no `default`, no `validate` — because nothing answers ink:
-
-```python
-vis.ask("Deploy", [
-    {"type": "heading", "text": "Target"},
-    {"type": "paragraph", "text": "Staging pages nobody. Production pages the on-call."},
-    {"name": "env", "type": "select", "label": "Env", "options": ["stg", "prod"]},
-    {"type": "heading", "text": "Credentials"},
-    {"name": "key", "type": "password", "label": "Deploy key", "is_required": True},
-])
-```
-
-A decoration has no identity, so it is never keyed, never focused and never in
-`answer.values`: `Tab` and `↑`/`↓` step straight over it, and two paragraphs
-saying the same words are two decorations rather than a name collision. Give one
-a `name`, a `default` or a `validate` and the request is **refused** — that spec
-meant to ask something. A decoration sits anywhere a field does, including inside
-a `group`, so a `row` of two paragraphs is a two-column note.
-
-The TUI paints a `heading` bold in the dialog's own ink and a `paragraph` in
-dimmed italics, both straight on the dialog paper: the pale input surface belongs
-to things you can type into, and decoration is not one of them. The app renders
-the same two as an `h3` and a `p`.
-
-### Builders instead of dicts
-
-A field is a dict, and a dict is easy to misspell. The `blockether.vis` module ships one
-builder per node type: the type is the function you call, and the node is checked
-the moment it is built, so a bad `default` or an unknown key raises at the line
-that wrote it instead of in front of the human.
-
-```python
-form = vis.column(
-    vis.heading("Target"),
-    vis.paragraph("Staging pages nobody."),
-    vis.row(
-        vis.select(
-            "env",
-            [vis.option("staging", "Staging"), vis.option("prod")],
-            is_required=True,
-        ),
-        vis.slider("canary", label="Canary %", min=0, max=100, step=5, default=10),
-    ),
-    vis.checkbox("ack", label="I read the runbook", is_required=True),
-    vis.password("token", label="Deploy token", is_required=True),
-)
-
-answer = vis.ask("Deploy", [form], submit_label="Ship it")
-```
-
-The full set: `plaintext`, `password`, `multiline`, `select`, `multiselect`,
-`checkbox`, `slider`, `otp`, `option`, `row`, `column`, `heading`, `paragraph`.
-The range field is spelled `slider` so it never shadows the `range` builtin;
-everything else is the wire type. Keyword arguments are the field keys you
-already know (`label=`, `description=`, `default=`, `is_required=`, `min=`,
-`validate=` ...) and are passed through untouched, so there is no second
-vocabulary beside the one above.
-
-Buttons are not nodes: a dialog has exactly the two a dialog has, and you name
-them with `submit_label=` and `cancel_label=` (or drop the second one with
-`is_cancellable=False`).
-
-### Validating a field
-
-`validate` is a **function** — or a list of functions — that you write. There is
-no rule language: a validator takes the coerced answer and returns `None` (or
-`True`) to accept it, or the error message as a **string** to refuse it.
-
-```python
-def a_slug(text):
-    if not re.fullmatch(r"[a-z][a-z0-9-]*", text):
-        return "lowercase, digits and dashes"
-    if len(text) > 32:
-        return "at most 32 characters"
-
-
-def is_free(name):
-    return None if name not in TAKEN else "already taken"
-
-
-answer = vis.ask("Sign up", [
-    vis.plaintext("email", label="Email",
-                  validate=lambda text: None if "@" in text else "must be an email"),
-    vis.plaintext("slug", label="Project", validate=[a_slug, is_free]),
-    vis.password("pass", label="Password",
-                 validate=lambda text: "at least 12 characters" if len(text) < 12 else None),
-    vis.password("again", label="Repeat it",
-                 validate=lambda text, values:
-                     None if text == values["pass"] else "the two do not match"),
-])
-
-if answer:
-    print(answer["slug"])          # already validated, already coerced
-```
-
-A list runs **in order** and the first message wins, which is how a cheap shape
-check comes before the expensive lookup behind it.
-
-A validator takes **one** argument (the value) or **two** (the value and every
-answer in the form — flat, whatever the layout); that second argument is how one
-field compares itself with another, across groups included. Any other shape is
-refused by `vis.ask` when the request is built, never in front of the human who
-is finally typing:
-
-```python
-vis.ask("Sign up", [vis.plaintext("email", validate=lambda: None)])
-# raises: a validate function takes the value, or the value and every value -
-#         this one takes neither
-
-vis.ask("Sign up", [vis.plaintext("email", validate=r"[a-z]+")])
-# raises: validate is a function, or a list of functions, taking the value
-#         (and optionally every value) and answering None or a message string
-
-vis.ask("Sign up", [vis.plaintext("email", validate=a_slug)])
-# opens the dialog
-```
-
-`False`
-refuses with `is not valid`, anything else is refused with its own text, and a
-validator that raises refuses with `could not be validated: <the exception>` — a
-broken check never swallows an answer silently. A validator never fires on a
-blank answer: emptiness is `is_required`'s job.
-
-The functions stay where you wrote them. They run **in the engine**, calling back
-into your own extension, and they never cross the wire: `validate` is stripped
-from the field before any surface sees it, so a validator cannot be read,
-replayed or re-run by a client. (Clojure callers pass ordinary fns and get the
-same contract.)
-
-**Validation happens once, on confirmation.** Nothing is checked while you type:
-a pristine form says nothing, and pressing Enter — or *Submit* — always sends.
-The engine then runs `is_required` and every validator over the whole answer and
-either accepts it or answers with one message per broken field; only then does
-the dialog redden those fields and put the cursor on the first one. The next
-**touch** of a field — a keystroke, a backspace, a tick, a nudge — clears *that*
-field's error and only that one, and nothing is re-checked until you confirm
-again. The TUI and the app behave identically, because both are rendering the
-same engine decision.
-
-The DIALOG itself takes the same optional `description`: prose under the title
-that says what the whole ask is about, before the operator reads a single field.
-It wraps onto as many lines as it needs, so a sentence is safe there. The other
-request options are `submit_label`, `cancel_label`, `is_cancellable`, and
-`timeout_ms`.
-
-**A dialog either has a deadline or it has none.** `timeout_ms` is the wait an
-extension is willing to bill: 5 minutes when the spec says nothing, any number of
-milliseconds it names, or `0` to wait **indefinitely**, until the human answers
-or cancels, however long that takes. Nothing is capped and nothing is guessed: an
-extension that must not proceed without a human says `0` and parks, and one that
-can carry on alone names its wait and gets a falsey `Answer` whose `reason` is
-`timeout` the moment it runs out. Either way the dialog leaves every surface at
-the same instant the extension resumes, so a form nobody can answer is never left
-on screen.
-
-`is_required` is enforced, not decorated: every dialog marks the field with a red
-`*` next to its label, and a blank one is refused on confirmation — by
-the engine, so an answer that arrives straight over HTTP is judged by exactly the
-same rule as one typed into a dialog. A required `checkbox` has to be ticked —
-`false` is not an answer to it.
-
-`vis.ask` never raises for a refusal: cancelling or timing out returns a falsey
-`Answer` whose `reason` says which (`cancelled`, `timeout`, or whatever reason
-the host cancelled with). `answer.values` always carries every field, defaults
-included. A run with no surface mounted to show the dialog answers
-`undeliverable` immediately — and logs an error naming the request — instead of
-parking your extension until the timeout.
-
-**Secrets never round-trip as plaintext.** A `password` and an `otp` field both
-answer with an
-opaque `vis-secret:` handle; `answer.reveal("token")` (or `vis.reveal(handle)`)
-resolves it inside the process, and `vis.forget(handle)` drops it. Handles are
-what the transcript, logs, and the model see — so pass the handle around and
-reveal it only at the moment of use.
-
-### Showing the human live work
-
-`vis.ask` parks an extension until a human answers. A **live view** is the
-opposite half: work that reports itself while it runs, on a surface nobody has
-to answer. `vis.live(...)` mounts the view and returns at once — the handle it
-answers is what the extension pushes into for as long as the job lasts, and the
-human watches it in the terminal, in the companion app, or both.
-
-```python
-import json
-
-import blockether.vis.extension as vis
-
-TONES = {"": "running", "success": "ok", "skipped": "idle"}  # anything else is an error
-
-
-def poll(run_id):
-    # Every GitHub call is the `gh` CLI through the shell verb: no hand-built HTTPS, no token.
-    done = vis.shell(
-        {"op": "background", "id": "gh", "command": f"gh run view {run_id} --json jobs,status,url"}
-    ).wait(60)
-    return json.loads(done["out"])
-
-
-def watch_run(run_id):
-    run = poll(run_id)
-    with vis.live(
-        f"CI · run {run_id}",
-        [
-            vis.status("run", "Watching", tone="running"),
-            vis.progress("progress", done=0, total=len(run["jobs"])),
-            vis.table(
-                "jobs",
-                columns=[vis.table_column("job", "Job"), vis.table_column("state", "Status")],
-            ),
-            vis.link("links", links=[{"id": "run", "label": "This run", "target": run["url"]}]),
-        ],
-        description=f"{len(run['jobs'])} jobs",
-    ) as view:
-        said = {}
-        while run["status"] != "completed":
-            if view.is_interrupted:               # the human stopped watching
-                return view.close(summary="stopped while the run was still going")
-            for job in run["jobs"]:
-                state = job["conclusion"] or job["status"]
-                # A row is addressed by the job's own id, so a job that changes state keeps its
-                # slot — and only what MOVED since the last poll crosses the wire.
-                if said.get(job["databaseId"]) != state:
-                    said[job["databaseId"]] = state
-                    view["jobs"].upsert(
-                        str(job["databaseId"]),
-                        [job["name"], state.replace("_", " ")],
-                        tone=TONES.get(job["conclusion"], "error"),
-                    )
-            view["progress"].set(done=sum(1 for j in run["jobs"] if j["status"] == "completed"))
-            view.sleep(5)                     # wakes at once when a person taps a row
-            run = poll(run_id)
-        view["run"].set(run["conclusion"], tone=TONES.get(run["conclusion"], "error"))
-        return view.close(summary=f"the run {run['conclusion']}")
-```
-
-The Vis repository ships the whole version of this as `.vis/extensions/gh.py` — seven nodes,
-selectable job rows, plus the selected job's steps and logs. It reaches the model as ONE object,
-`gh`, whose `login`, `runs` and `watch` answer frozen dataclasses rather than a JSON string:
-`watch` takes either an Actions run or `pr=` for aggregate pull-request checks through the same
-mapping, and hands back a `WatchOutcome` carrying the run, every job with its steps, and one
-bounded log tail per failed job. Tests live beside it, with a Clojure test replaying captured
-ops through the engine.
-
-**A view declares its nodes once and addresses them by id ever after** — which
-is why the id is the first argument of every builder, exactly as a field name is
-in `vis.ask`. `view["phase"]` hands back the typed handle for that node, and the
-handle only has the verbs its type can honour:
-
-| Builder | Shows | Verbs on `view[id]` |
-| --- | --- | --- |
-| `vis.status(id, text, tone=…, detail=…)` | one line: what is happening right now | `.set(text, tone=, detail=, label=)` |
-| `vis.progress(id, total=…)` | a bar | `.set(value=, done=, total=)` |
-| `vis.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label=, tone=)`, `.remove(*ids)`, `.clear()` |
-| `vis.steps(id, steps=[…])` | a checklist | `.set(step_id, tone=, label=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
-| `vis.output(id, label=…)` | streamed lines | `.write(*lines)`, `.clear()` |
-| `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=, branch=)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
-| `vis.link(id, links=[…])` | pointers a human can open | `.add(link_id, label, target, target_kind=, tone=)` |
-
-`vis.output` builds a `log` node; the builder is named `output` so it never
-shadows `vis.log`, the engine log line — the same reason `vis.slider` builds a
-`range` field. Rows and columns of a declared table are `vis.table_row(...)` and
-`vis.table_column(...)`, and a table's `order` says how it paints — `insertion`
-(the default), `newest-first`, or `{'by': 'duration', 'dir': 'desc'}`. Rows that
-share a non-blank `branch="Release apps"` paint beneath one collapsible parent;
-the first cell may retain the full `Release apps / iOS` identity, while surfaces
-show only `iOS` below that parent. A table declared with `is_selectable=True`
-paints every leaf row as a control; `selected_ids=[…]` is its initial selection.
-
-Related node changes can be published atomically with `with view.batch(): …`; nested
-batches, structural add/drop operations, and ordinary node updates then cross as one
-materialized patch rather than transient partial pictures.
-
-A surface click and `view["jobs"].select(*row_ids)` write the same shared patch, so
-the extension reads the current selection from `view.state()` before it replaces the
-selected detail.
-
-**Nap with `view.sleep(seconds)`, never `time.sleep`.** A provider's cadence is not the
-human's: `time.sleep(3)` holds the loop for three whole seconds after a click, so the
-steps and log a person just asked for arrive a tick late even though the extension
-already had them. `view.sleep(3)` waits out that same tick in short slices, reads the
-view every slice, and answers `True` the moment a surface changed it (or the view
-ended) — apply the new selection there and go back to napping out the rest of the tick,
-and a tap costs no provider call at all. The shipped GH watcher samples inside the
-live-frame batching window so its derived details join the tap instead of painting a
-partial transition.
-
-**Writing an item twice updates it in place.** Every keyed verb is an upsert:
-`.upsert("web-1", …)` is both "new row" and "that row changed", because a scan
-loop does not know which it is and the id is the address either way. The item
-keeps the position it first took, so a table does not reshuffle under the eye of
-whoever is reading it. Log lines are the exception that proves it: they have no
-id, so they concatenate, and the node is unbounded — `window_lines` is only how
-much of the tail a surface holds hot, never how much the view's record keeps.
-`.clear()` on a log is a PHOTOGRAPH: window and record both start over, so a pane
-you rewrite in place (a details panel following a selection) never leaves copies
-of itself behind for "load earlier lines" to page through.
-
-When a view has exactly ONE node of a type, the verb is on the view itself:
-`view.status(...)`, `view.progress(...)`, `view.stat(...)`, `view.step(...)`,
-`view.write(...)`, `view.row(...)`, `view.link(...)`. With two logs open, the
-shortcut refuses and names both ids rather than guessing. A view can also grow:
-`view.add(vis.table("failures", columns=[...]), after="tail")` mounts a node a
-run only discovers it needs, and `view.drop("failures")` takes it away.
-
-**Where nodes stand is the form's own layout vocabulary, and a live view speaks it: `vis.row(...)` and `vis.column(...)`** — the same builders a question arranges its fields with, with one difference: a view's group carries an id, because every node in a view is addressable.
-
-A row stands its children side by side wherever there is room: the terminal splits the band into columns, a wide phone splits the row, a narrow one stacks, and the document lists them in order, because a row is an ARRANGEMENT and not content. Layout is declared once and no op moves it — a layout that jumps under the eye of whoever is reading it is worse than no layout at all.
-
-That is how a paragraph stands to the right of the table it explains: `vis.row("reading", vis.table("hosts", ...), vis.status("why", "..."))`. A group is part of the tree it arranges: `view.add(vis.stat("counts"), after="hosts")` lands inside the row that holds `hosts`, and `view.drop("reading")` takes the nodes it arranged with it.
-
-**Every human-facing string takes inline markdown** — `` `code` ``, `**bold**`,
-`_italic_`, a link. Both surfaces paint it: the terminal styles the runs in place,
-the phone renders them, and the document the model reads keeps the marks it was
-given. A status node's text wraps and justifies to its column, which is what a
-paragraph is for. Log lines are the exception that proves the rule: they are
-machine output and stay verbatim, byte for byte. There is no markdown NODE and
-there will not be one — the view's document is two-way (every node type has one
-markdown form, a fence IS a log, a pipe table IS a table), so a free-markdown node
-could not be read back as the type it was declared.
-
-**The human can always stop watching, and the extension finds out why.** A view asks nothing, so nothing can refuse the stop: `Escape` in the terminal arms it and opens one line for a comment — `Escape` or `Enter` sends the stop, `Backspace` on an empty line goes back to watching — and the Interrupt button on the phone opens the same line.
-
-`view.is_interrupted` is true once the view ended without the extension closing it, `view.is_from_human` says a PERSON ended it, and `view.note` carries the words they left (`None` when they left none). The flag asks the engine at most once per batching window, so a tight loop may poll it every iteration and still cost one host call per tick. Pushing into a view that has already ended raises `vis.Interrupted` (carrying the same note), so a loop that ignores the flag still stops instead of reporting into a surface nobody is watching.
-
-**A live view has no deadline — and neither does the block that shows it.** The
-engine's eval wall is a backstop for guest code that has gone SILENT; work
-painting a picture a person is watching is the opposite of silent, so for as long
-as a view is open the wall is lifted and nothing bills that run a deadline at
-all. Which makes the ending yours to declare, on something you can actually SEE:
-the run reports itself over, the process exits, the command stops answering. When
-there is no such signal, do not invent a duration — a guessed cap is the wall
-again one layer down, and it quits precisely where nobody was watching. Leave the
-view up and let the human press Interrupt: `view.is_interrupted` is the stop, and
-the person watching is the one who knows.
-
-**Pushes are batched, not throttled away.** The first op after a quiet stretch
-crosses immediately; whatever else arrives within `flush_ms` (100 ms by default,
-`vis.live(..., flush_ms=…)` per view) rides the next push. Ops that fold into
-one another are folded first, so a loop that reports every iteration costs one
-host call per window rather than one per iteration. Every read (`view.state()`,
-`view.is_interrupted`) and `view.close(...)` flush first, so nothing you wrote is
-ever behind what you read.
-
-`view.close(reason=…, summary=…, error=…, artifact_id=…, selection_snapshots=…,
-model_result=…)` ends the view. By default it answers **the verdict, as data**:
-`is_completed`, the `reason` it ended, `is_from_human` with the `note` when a
-person stopped it, the finished picture (`view`, plus `elided` counts for
-anything a budget cut), and the `summary` the extension chose.
-
-Pass a non-blank `model_result` string when the model needs a smaller semantic
-answer than the human-facing picture. That exact string is the only close result
-returned to the extension—and therefore the only value `print(result)` sends to
-the model. The complete verdict and picture still close the live surfaces and
-remain in the durable artifact; they are not also fed to the model. A human stop
-that races the extension wins before this close and returns its structured
-interruption verdict, including the person's note, so optimization cannot hide
-that intervention. Closing twice answers the first result, so a `finally` cannot
-overwrite it. Used as a context manager, the view closes itself; an exception
-inside closes it `failed` with the error rather than leaving a spinner forever.
-
-A finished artifact has no extension process left to answer a selectable-table
-click. When archived rows must remain inspectable, `selection_snapshots` seals the
-finite alternatives into the artifact: each item is `{"node_id": "jobs",
-"selected_ids": ["job-id"], "view": view_picture}`. The host accepts at most 500
-snapshots and 1 MiB of serialized snapshot data. They are artifact-only — not
-broadcast while live and not included in the model verdict — so extensions
-should produce them only from the final provider state. The surface then switches
-pictures locally when a finished row is selected.
-
-Outside Vis — `python -c`, a unit test, CI — a live view still works: the
-transcript goes to stderr, the state is materialized truthfully (the same
-upserts, the same bounds), and a view that has ended answers its verdict instead
-of vanishing. An extension is written once and behaves the same in both places.
-
-### LLM providers
-
-`vis.Provider` is a declaration, not a provider instance or a base class. It joins
-`Extension.providers`; only `vis.register(...)` registers it. Presets and callback
-results are immutable, typed records, and the SDK converts them to the engine's
-existing wire format. Raw preset/result dictionaries are not accepted.
-
-```python
-import os
-import blockether.vis.extension as vis
-
-
-def credential() -> vis.ProviderCredential | None:
-    token = os.environ.get("EXAMPLE_API_KEY")
-    return vis.ProviderCredential(token) if token else None
-
-
-def status() -> vis.ProviderStatus:
-    return vis.ProviderStatus(
-        is_authenticated=bool(os.environ.get("EXAMPLE_API_KEY")),
-        source="env-var",
-    )
-
-vis.register(vis.Extension(
-    name="provider-example",
-    description="An OpenAI-compatible provider.",
-    env=["EXAMPLE_API_KEY"],
-    providers=[vis.Provider(
-        id="example",
-        label="Example AI",
-        preset=vis.ProviderPreset(
-            base_url="https://gateway.example.com/v1",
-            api_style="openai",
-            default_models=["example-model"],
-        ),
-        get_token_fn=credential,
-        status_fn=status,
-    )],
-))
-```
-
-Add `example` through *Add Provider* or the `providers` configuration, then select
-`example-model`. Its preset supplies the endpoint, dialect and default model names;
-the callback supplies the credential. The ordinary Python SDK does not itself run
-model routing: load the extension in a Vis engine. `vis-agent providers
-status/limits/auth <id>` uses the same registered provider.
-
-| Callback \| Signature / result |
-| --- \| --- |
-| `get_token_fn`, `detect_fn` \| `() -> ProviderCredential \| None`; passive reads, never start login |
-| `refresh_token_fn` \| `(rejected: str \| None) -> ProviderCredential \| None`; a zero-argument callback is also supported |
-| `status_fn` \| `() -> ProviderStatus \| None`; connection state, not quota |
-| `limits_fn` \| `() -> ProviderLimits \| None`; the canonical usage report |
-| `auth_fn` \| `(printer) -> str \| bool \| None`; explicitly initiate login, print instructions through `printer(line)` |
-| `auth_prompt_fn` \| `() -> Sequence[str] \| str \| None`; static login guidance |
-| `logout_fn` \| `() -> None`; discard the provider-owned credential |
-| `enrich_models_fn` \| `(provider, router_opts) -> Sequence[ProviderModel] \| None` |
-| `on_selected_fn` \| `(event) -> None`; notification after selection |
-
-All slots are optional and **synchronous**. Invalid callback signatures and async
-functions fail during declaration, not silently during routing. A callback body is
-invoked once: refresh arity is inspected before invocation, and an exception is
-never retried with different arguments. A returned awaitable or wrong record type
-is rejected. Authentication errors propagate to the auth caller; passive callback
-errors are logged and yield no result, so one broken extension does not break the
-whole provider registry.
-
-`ProviderCredential(token, ...)` can also carry `api_url`, `api_style`,
-`responses_path`, `llm_headers` and `source`. A missing credential is `None`, not a
-record with an empty token. Token and header fields are excluded from the record's
-`repr`; do not log credentials or include them in status metadata.
-
-The checked `api_style` vocabulary is shared with configuration: `anthropic`,
-`openai`, `openai-responses`, `gemini` and the documented aliases. Precedence stays
-**config > credential > preset**. A credential can therefore supply an endpoint
-created during authentication; an explicit user override still wins. A
-`responses_path` without a declared dialect selects the Responses API. Header
-maps are replaced as whole fields at those precedence levels, not deep-merged.
-
-`ProviderPreset` exposes `base_url`, `api_style`, `default_models`,
-`responses_path`, `llm_headers`, `extra_body` and `is_hidden`. Additional router
-settings belong in its JSON-only `extra` mapping. `ProviderModel` exposes `name`,
-`context`, `is_tool_call`, `is_image_input` and JSON-only `extra` metadata.
-`ProviderStatus.extra` holds display-only status metadata. Extra keys cannot
-replace declared fields. Nested header/body payload keys remain unchanged; the
-adapter does not reinterpret the provider's API request body.
-
-Usage data uses the existing canonical provider limits contract:
-
-```python
-def limits() -> vis.ProviderLimits:
-    return vis.ProviderLimits(limits=[
-        vis.ProviderLimit(
-            "daily-tokens", "Daily tokens",
-            scope="account", kind="tokens",
-            precision="exact", source="provider-api",
-            used=25.49, limit=100,
-            window=vis.ProviderLimitWindow("calendar", unit="day", size=1),
-        ),
-    ])
-```
-
-`ProviderLimit` also accepts `remaining`, `is_unlimited`, `subject` and `note`.
-`ProviderLimits` accepts `rpm`, `tpm`, a report `note` and a `ProviderError`;
-the host fills `provider_id` and `fetched_at_ms` when omitted. Closed enums,
-boolean fields and finite measurements are validated before crossing into the
-engine. Use `vis-agent providers limits <id>` to inspect the resulting report.
-
-**Callbacks may run without a session.** Startup, provider status and limits polling
-are process-level operations. `vis.shell` and `vis.jailed_shell` work there;
-`vis.ask` and `vis.jailed_shell_session` require a live session. `auth_fn` receives
-its own instruction printer. Keep `get_token_fn` passive: return the credential
-already available, or `None`; login belongs in `auth_fn`.
-
-Enrichment and selection inputs remain JSON mappings owned by the router and
-configuration, rather than a second SDK model of those domains. Their nested
-native field names are preserved. Return typed `ProviderModel` values from
-enrichment; `None` keeps the router's defaults. Selection is a side-effect hook,
-and its return is ignored.
-
-### Managed providers
-
-Some providers own their complete lifecycle: they bind automatically, define their
-network and models, and keep credentials outside `state.yml`. `is_managed=True`
-(`:provider/is-managed true` in Clojure) declares that **ownership and automatic
-binding**. It does not decide how the provider authenticates.
+An extension does not receive a copy of the host environment. Name the
+variables you need and the host injects them into `os.environ` before the file
+runs:
 
 ```python
 vis.register(vis.Extension(
-    name="provider-corp",
-    description="The gateway this machine is already entitled to.",
-    providers=[
-        vis.Provider(
-            id="corp-gateway",
-            label="Corp Gateway",
-            is_managed=True,
-            preset=vis.ProviderPreset(base_url="https://gateway.example.com/v1",
-                    api_style="openai",
-                    default_models=["corp-large", "corp-small"]),
-            get_token_fn=_issued_token,
-            auth_fn=_browser_oauth,  # optional: provider-owned first-use auth
-        ),
-    ],
+    name="acme",
+    description="Acme integration.",
+    env=["ACME_API_KEY"],
 ))
+
+key = os.environ.get("ACME_API_KEY")   # absent when nothing resolves it
 ```
 
-What the flag changes — and what it does not:
+Each name resolves through the project's `environment:` block, then `.env` and
+`.env.local`, then the environment that started Vis (see
+[Configuration](configuration.md#environment)). Names defined by the project
+itself need no declaration. `env=` affects only the extension's own
+`os.environ`; it never widens what a jailed child process receives. To pass a
+variable to a confined child, declare it under `environment:`.
 
-| seam | ordinary provider | managed, no `auth_fn` | managed with `auth_fn` |
-| --- | --- | --- | --- |
-| ownership | user config | extension/runtime | extension/runtime |
-| auth kind | `api-key` / `oauth` | `managed` | `oauth` |
-| *Add Provider* | listed | never listed | never listed |
-| fleet | appears after configuration | binds when the extension loads | binds when the extension loads |
-| authentication | configured flow | runtime-issued credential; `auth-managed` | provider-owned interactive flow |
+## Session context
 
-Two slots make it routable: `get_token_fn` and a `preset` with `default_models`.
-With no `auth_fn`, `get_token_fn` reads the credential the runtime already supplies.
-With `auth_fn`, an actual request first calls `get_token_fn`; if no usable token exists,
-Vis runs one provider-owned authentication flow, calls `get_token_fn` again, and resumes
-the request. Concurrent requests share that one flow. A cancelled or failed flow ends
-with an authentication error rather than looping.
+A `ctx` callable writes a slice into the `session` dict the model sees every
+turn:
 
-For an extension author, the implementation recipe is:
+```python
+def _ctx(env):
+    return {"session_env": {"todo": {"open": len(vis.state.get("todos", []))}}}
 
-1. Set `is_managed=True`; do not add or ask the user to add a `state.yml` provider entry.
-2. Supply a `preset` with `default_models` and the endpoint defaults the extension owns.
-3. Make `get_token_fn()` a passive credential read. Return `ProviderCredential(token)` (plus any
-   runtime `api_url`, `llm_headers`, `responses_path` or `api_style`), or
-   `{"token": None}` while signed out. Never launch OAuth from this callback.
-4. When sign-in is required, supply `auth_fn(printer)`. It must complete the interactive
-   flow, persist the credential where `get_token_fn()` can read it, and return `"ok"` or
-   `"already-authenticated"` on success. Use `printer(...)` for instructions the user
-   should see.
-5. Keep `status_fn()` and `limits_fn()` passive too. Put token renewal in
-   `refresh_token_fn()` when the provider supports it.
+vis.register(vis.Extension(name="todo", description="Todo list.", ctx=_ctx))
+```
 
-If an existing managed extension starts login from `get_token_fn`, `status_fn`, or a
-picker hook, move that side effect into `auth_fn`. Check explicit login with
-`vis-agent providers auth <id>`, then make a real model request while signed out to
-verify first-use login and request resumption.
+Return a string-keyed dict nested under a key unique to your extension. Slices
+from every extension are deep-merged. A non-dict return or an exception
+contributes nothing and never blocks a turn.
 
-Fleet reads, status probes, startup, and opening a model picker never run `auth_fn`.
-The flow starts only from an authentication action or a request that will use the
-provider. No managed provider creates a provider entry in `state.yml`.
+## Filesystem and processes
 
-### Execution model and trust
+Extension code runs in a trusted context, separate from the model's sandbox:
 
-Extension files run in **trusted Python sessions** — one per file, separate
-from the model's sandbox:
-
-|  | Model sandbox | Extension context |
+| | Model sandbox | Extension context |
 | --- | --- | --- |
-| Who writes the code | the model | **you** |
-| Filesystem | confined to workspace roots | **real, unrestricted** |
-| Network / subprocess | gateway policy / restricted | **real, unrestricted** — output captured, not on your terminal |
-| Environment variables | resolved project + declared values | declared (`env=`) + the project's own `environment:` / `.env`; never a blanket copy of the host's |
-| Lifetime | per session | process (rebuilt on `/reload`) |
+| Author | the model | you |
+| Filesystem | workspace roots only | your user's permissions |
+| Network and processes | gateway policy; no direct spawn | unrestricted |
+| Environment | project values | declared `env` plus project values |
+| Lifetime | one session | the process, rebuilt on `/reload` |
 
-This is an intentional trust decision, not a missing sandbox feature. Extension
-contexts allow full IO, process creation, threads and sockets because they are
-user-installed plugins; their environment stays the declared one
-([Environment](#environment)). They still cannot reach into the JVM: the only
-host surface is the
-the extension context. See [Process jail and gateway egress](jail.md).
+`subprocess`, `os.system` and `vis.shell({...})` run unconfined. Output the
+extension does not read itself is captured into the extension's log rather
+than written to the terminal, and a child that reads `isatty()` sees a pipe.
+Pipes are drained into an 8 MiB backlog per stream, so `Popen(stdout=PIPE)`
+followed by `wait()` never deadlocks.
 
-**Output is captured, never inherited.** Unrestricted means the process runs with
-your permissions, not that it owns Vis' terminal. Any stream the extension does
-not read itself — a child's stdout/stderr, the context's own `print()` and
-tracebacks — is piped, drained and logged under the extension's file name, so it
-lands in the diagnostic log instead of on whatever terminal happens to own the
-running Vis. Five consequences worth knowing before you write one:
+To confine a child, use a jailed shell:
 
-- A child that asks `isatty()` about an uncaptured stream now sees a pipe:
-  progress bars render plain and a genuinely interactive child cannot work.
-- Read the bytes yourself when you need them (`capture_output=True`,
-  `stdout=subprocess.PIPE`, `check_output`) — you get every byte, in order, as
-  it arrives.
-- A file or descriptor redirect (`stdout=open(...)`, `stderr=open(...)`,
-  `stdout=os.open(...)`, `stdin=open(...)`) reaches the file you named, and the
-  file is complete once the call returns — the interpreter does that itself, so
-  nothing of Vis' stands between your redirect and the file. A sink with no
-  descriptor (a `BytesIO`) raises `io.UnsupportedOperation`, as anywhere else.
-  `stdout=sys.stdout` goes to the extension's log rather than to descriptor 1,
-  which belongs to the JVM and not to your extension.
-- A stream you asked for but never read does **not** deadlock the child, unlike
-  CPython: Vis keeps reading the pipe into a backlog of up to 8 MiB per stream,
-  so `Popen(stdout=PIPE)` followed by `wait()` still completes. Beyond that the
-  child is throttled until you read — never dropped — so a child that streams
-  without end still needs you to read it or close the stream.
-- `Popen.pid` is the child's real OS pid, so `ps`, `lsof`, a pidfile or your own
-  supervisor all find it, and `poll()`, `wait()`, `terminate()` and
-  `os.kill(p.pid, sig)` work on it. A pid held past `wait()` names a dead process
-  rather than another child.
-
-Ordinary process paths stay trusted and unrestricted: `subprocess`, `os.system`,
-`os.popen`, and `vis.shell({...})` ignore the process jail even when a session has
-one enabled. Use a jailed shell only when you want confinement:
-
-| API | Policy source | Session required? |
+| Call | Policy | Needs a session |
 | --- | --- | --- |
-| `vis.shell({...})` | None; trusted and unrestricted | No |
-| `vis.jailed_shell({...})` | Latest merged config on disk, read and validated at **each process spawn** | No |
-| `vis.jailed_shell_session({...})` | Invoking session's immutable security snapshot | Yes |
+| `vis.shell({...})` | none | no |
+| `vis.jailed_shell({...})` | merged configuration on disk, read at each spawn | no |
+| `vis.jailed_shell_session({...})` | the invoking session's policy snapshot | yes |
 
-`vis.jailed_shell` reads the normal merged global, state, project `vis.yml`, and
-project `.vis/config.yml` sources without requiring `/reload`. Invalid current
-config fails closed: that spawn is refused rather than falling back to an older
-policy. A background process keeps the policy captured when it started; config
-changes apply when a new process is spawned, not retroactively.
+`vis.fs` reads and writes files outside the session roots on behalf of the
+extension: `mkdir`, `write`, `read` (bytes), `read_text`, `copy`, `move`,
+`list`, `stat` and `remove`. Ordinary `open()` remains the right call for
+paths inside the session's roots.
 
-Treat `.py` files in a project's `.vis/extensions/` like you treat its
-`deps.edn`: they execute with your user's permissions when Vis starts in
-that checkout — review before running Vis in untrusted repositories.
+Calls into one extension file are serialized. Keep `prompt`, `activation` and
+`ctx` fast; tools may take their time.
 
-Calls into an extension are **serialized** (one at a time per file). Keep
-per-turn callables (`prompt`, `activation`) fast; tools may take their time.
+## Reloading
 
-### Reloading
+`/reload` closes every Python extension context and loads the current files.
+State in `vis.state` survives; new tools and commands are available to live
+sessions immediately. Nothing else picks up an edit: a running Vis serves the
+files it loaded until you reload.
 
-- `/reload` — tears down every Python extension (contexts closed) and loads
-  the current files fresh. State survives (it lives in the database).
-- Changes propagate to LIVE sessions immediately: new/changed slash
-  commands dispatch right away and reloaded tools rebind into the sandbox
-  — no restart, no new session.
-- A process start and `/reload` are the ONLY things that pick an edit up: a
-  running Vis keeps serving the files its own start (or the last `/reload`)
-  loaded, so editing a `.py` — or anything else editing one — changes nothing
-  until you reload. Unchanged files are fingerprint-checked, so reloading
-  untouched extensions is a no-op.
-- The whole extension is frozen, not just its entry file. At load, the import
-  root (a package directory, or the extensions directory for a single-file
-  extension) is copied into a private temp tree and THAT copy is what
-  `sys.path` sees, and the reload check hashes every `.py` under it. A lazy
-  `import helper` inside a tool therefore runs the bytes the load admitted:
-  editing a sidecar module after the load changes nothing until `/reload`
-  either. A symlinked module or package inside the root is followed and frozen
-  with it, so a package you develop elsewhere and link into
-  `~/.vis/extensions` behaves like any other file — including waiting for
-  `/reload`. Files an extension writes next to itself land in the frozen copy —
-  durable state belongs in `vis.state`.
-- `vis-agent doctor` lists every loaded file and every load failure with its
-  Python error.
+At load, the extension's directory is copied to a private location and that
+copy is what runs, so editing a helper module after the load also waits for
+`/reload`. Files an extension writes next to itself land in that copy; keep
+durable data in `vis.state`.
 
-### Multiple files and packages
+## Packages and tests
 
-A single `.py` file is the simplest extension. For anything larger, drop a
-**package directory** whose `extension.py` is the entry point:
+For anything larger than one file, use a directory with an `extension.py`
+entry point:
 
 ```text
 ~/.vis/extensions/
   my_ext/
-    extension.py      # the entry — calls vis.register(vis.Extension(...))
+    extension.py      # calls vis.register(...)
     mypkg/
       __init__.py
       core.py
-    test_core.py      # tests (see below)
+    test_core.py
 ```
 
-- The frozen copy of the directory is prepended to `sys.path` before
-  `extension.py` runs, so `import mypkg` / `from mypkg.core import add` just
-  work — no manual `sys.path.insert(...)`.
-- Only `extension.py` is an entry point; the package's other modules are
-  imported by it, never scanned as separate extensions.
-- A plain top-level `.py` file gets the same sugar for a sibling module or
-  package placed next to it.
+The directory is on `sys.path` before `extension.py` runs, so `from mypkg.core
+import add` works without path manipulation. Only `extension.py` is an entry
+point.
 
-So an ordinary Python project becomes a Vis extension by adding one
-`extension.py` on top that imports it.
-
-
-### Testing your Python extension
-
-Ship real Python tests next to the code and run them with Vis's built-in
-`pytest`-compatible runner — no pip, no wheels, pure stdlib.
-
-- Test files are `test_*.py` or `*_test.py`, at any depth under an extension
-  directory. They are **never loaded as extensions** (excluded from the scan).
-- Each test file runs in its own trusted Python session and imports the
-  extension's package through the same `sys.path` sugar the entry file gets.
+Test files (`test_*.py` or `*_test.py`) are never loaded as extensions. Run
+them with `/test` in a session or `vis-agent extension test` in CI; both use
+real pytest, installed on first use, and exit non-zero on failure.
 
 ```python
 # ~/.vis/extensions/my_ext/test_core.py
@@ -1405,569 +398,13 @@ def test_add():
     assert add(2, 3) == 5
 ```
 
-Run them in a session with `/test` for an inline pass/fail report.
-
-The `vis` library also carries one generic live-view test host. It keeps fixtures
-out of the active session, records only what the extension emitted, and lets a test
-simulate surface actions against the same materialized state:
-
-```python
-import blockether.vis.extension as vis
-
-recorder = vis.testing.LiveRecorder(vis._host)
-monkeypatch.setattr(vis, "_host", recorder)
-
-run_extension()
-recorder.select("jobs", ["macos"])       # a human action, not extension output
-assert recorder.node("jobs")["selected_ids"] == ["macos"]
-assert recorder.patched()                # ops the extension itself emitted
-result = recorder.close(reason="interrupted")
-```
-
-Use `recorder.ops()` for stable envelope goldens and
-`vis.testing.assert_tree(actual, expected)` for an exact nested diff. Provider
-fixtures, polling and provider-specific assertions stay in that extension's test;
-open/patch/state/select/close materialization belongs to this shared library harness.
-
-The report is **per test**: each `test_*` shows ✓/✗ with the failing
-assertion's detail, grouped by file, under a one-line summary
-(`✓ N file(s): P passed, F failed, …`). Counts are derived from the actual
-per-test outcomes — never a separate tally, never scraped from output. `vis-agent extension
-test` exits non-zero when anything fails (it signals failure to the CLI, it
-does not kill the process), so it drops straight into CI.
-
-The runner uses REAL pytest: the sandbox is a real CPython, so a missing `pytest`
-is installed with `pip` on first use and your tests run against upstream — plugins,
-assertion rewriting and all. Selection flags (`-k`, `-x`, `--maxfail`) are pytest's
-own.
-
-### Batteries in the model's sandbox
-
-The model's sandbox is a real, embedded CPython with `pip`. `import numpy` is
-numpy, `import requests` is requests, and a top-level import of a package that is
-not installed yet is fetched from PyPI once — automatically, wheels only, and only
-while the session's network is on. Packages land in `~/.vis/python/packages`, so a
-second session pays nothing for the same import.
-
-What Vis publishes ITSELF is small on purpose — the doors that reach the HOST and
-could not come from an index:
-
-- `ls` — the workspace file lister, answering the host's own index.
-- Globals, no import needed — `attach`, `list_attachments`, `get_attachment`, `read_attachment`, and `show_attachment`.
-  - `attach(...)` hands back the descriptor of what it just stored, and `list_attachments()` / `get_attachment(...)` answer the same shape: id, filename, version, media type, kind, size, audience, and the `turn_id` it belongs to — a tool artifact adds `iteration_id` / `tool_call_id`. `read_attachment(...)` returns the raw bytes and nothing else.
-  - What the RUNNING block attached is addressable inside that block: pass the returned descriptor — or its filename — straight to `show_attachment`, `read_attachment` or `get_attachment`, where it carries `is_pending` until the iteration is stored.
-  - **Same document, same name.** A revision goes back under the filename it already had and is stored as that artifact's next **version**, never `report_v2.png` beside `report.png`; a fresh name is a different document, and `list_attachments(name)` walks the thread.
-
-  **Name vs id — one addressing rule.** The filename is the artifact, an id is
-  one exact stored version of it. Every read call takes either as its first
-  argument: a filename resolves to the latest cut unless you pass a `version`
-  (negative counts back from the latest), an id resolves to that one cut.
-
-Ruff and every other package available from an index follow normal CPython packaging instead: run `vis-agent python -m pip install ruff`, then `vis-agent python -m ruff check .`. The latter invokes Ruff's real `__main__`; Vis supplies no module or fallback when the distribution is absent.
-
-`subprocess`, `os.system` and `os.popen` never spawn in the agent sandbox: they raise and name the sandbox's `shell(...)` call, which is the one door to a process. (Trusted extension code, outside the sandbox, keeps the real `subprocess`.) The filesystem is confined to the session's roots by an audit hook inside the interpreter — not by anything Python can rebind.
-
-`doc("ls")` is that door's contract, harvested from its own Python
-docstrings. The authoring contract for a door lives in
-[Sandbox shims and autoloads](#sandbox-shims-and-autoloads) below — a
-Clojure-extension capability, since a door needs host callables.
-
----
-
-## Clojure extensions
-
-Libraries on the classpath that register tools, providers, channels, language
-packs, sandbox shims and slash commands. They compile into the binary and reach
-every surface Vis has.
-
-### How extensions load
-
-A distribution ships exactly one closed resource:
-
-```text
-resources/META-INF/vis/manifest.edn
-```
-
-```clojure
-{:initialization
- [com.blockether.vis.internal.foundation.core/register!
-  {:register com.acme.ext.weather.core/register!
-   :apropos  "META-INF/vis/apropos/weather.edn"}
-  {:register    com.acme.ext.onnx.core/register!
-   :is-optional true
-   :because     "the native runtime ships per platform and may be absent"}]}
-```
-
-At startup Vis reads that one file, resolves each `:register` symbol and calls it
-exactly once in vector order. There is no classpath scan: adding a jar does nothing
-until its entry is named in the manifest. Keep `register!` cheap — it registers
-values and lazy handlers; it does not start services or load a heavy implementation.
-
-An entry is a **bare symbol** when it has nothing else to say. A **map** adds what
-that pack owns: `:apropos` names the one static EDN resource carrying its documents,
-so a resource is never declared far from the code that registers it and deleting a
-pack takes its documents with it.
-
-A required initializer that fails **throws** — a distribution that cannot build
-itself is a build defect, not a fact about this machine. `:is-optional true` says
-the opposite, that this pack may be missing from THIS machine, so its failure is
-logged, reported in `initialize!`'s `:failed` and stepped over; it must carry
-`:because`, because a weakness nobody explained cannot be told from a forgotten line.
-
-The same manifest is the native-image root. The build derives initializer
-namespaces from the symbols and includes the closed first-party source set, so no
-second native namespace list can drift from runtime initialization.
-
-Getting on the classpath:
-
-- **JVM / source runs** — add the extension to `deps.edn`, then add an entry naming
-  its `register!` symbol, and the resource it owns, to the distribution manifest.
-- **Native binary** — add it to the custom distribution and rebuild with
-  `vis-agent update --rebuild` (see [Runtime distributions](distributions.md)).
-
-### Anatomy
-
-```text
-my-extension/
-├── deps.edn
-├── src/com/acme/ext/weather/core.clj
-└── resources/
-    ├── META-INF/vis/apropos/weather.edn                   ; static search/docs records
-    ├── META-INF/native-image/com.acme/weather/            ; only for reflective libs
-    │   └── reachability-metadata.json
-    └── vis-docs/weather.md                                ; optional full page
-```
-
-The distribution owns `META-INF/vis/manifest.edn`; an extension never ships a
-second one.
-
-```clojure
-;; deps.edn
-{:paths ["src" "resources"]
- :deps  {com.blockether/vis {:local/root "../vis"}}}   ; or a released coordinate
-```
-
-### The surface you may require
-
-`com.blockether.vis.core` is the public Clojure entry point. Extension declarations that cross a
-process or language boundary use the validated JSON documents published by
-`com.blockether/vis-contract`; engine internals are not an extension API.
-
-### The extension declaration
-
-`vis/extension` validates the map and fills defaults; `vis/register-extension!` puts it in the registry.
-
-| Key | What it is |
-| --- | --- |
-| `:ext/name` | Unique name string, e.g. `"weather"`. |
-| `:ext/description` | One-liner shown in `vis-agent extension list` and to the model in its extensions snapshot. |
-| `:ext/version` `:ext/author` `:ext/owner` `:ext/license` | Plain metadata strings. |
-| `:ext/kind` | Categorical bucket used as a section label: `"foundation"`, `"language"`, `"channel"`, `"provider"`, … |
-| `:ext/activation-fn` | `(fn [env] -> boolean)`, called **once per turn**. Falsy hides every symbol and the prompt fragment for that turn. Defaults to always-on. |
-| `:ext/engine` | `{:ext.engine/alias 'weather :ext.engine/symbols [...]}` — the sandbox surface (below). |
-| `:ext/prompt-fn` | `(fn [env] -> string)` — optional dynamic routing/capability text; never a copy of what `doc(name)` answers. |
-| `:ext/ctx-fn` | `(fn [env] -> map)` — structured per-turn context contributed into the model's `session` dict. |
-| `:ext/sandbox-shims` | Vec of Python **shim** specs — host-backed modules published into the model's Python sandbox (below). |
-| `:ext/slash-commands` | Vec of slash-command specs (below). |
-| `:ext/doctor-fn` | `(fn [env] -> [checks])` — health checks for `vis-agent doctor`. |
-| `:ext/settings` `:ext/env` | Declared settings / environment variables, resolved exactly as a Python extension's `env=` is ([Environment](#environment)). |
-
-Channels, providers, and workspace backends register through their own keys (`:ext/channels`, `:ext/providers`, `:ext/workspace-backends`) — read a first-party extension of the matching kind as the reference implementation.
-
-The remaining accepted keys are **declarative registrations**: the host applies them when the extension registers and undoes them when it unregisters, so nothing needs a global atom or an imperative `register-*!` call.
-
-| key | registers |
-|---|---|
-| `:ext/cli` | CLI commands — auto-placed under the `vis-agent extension` parent unless the entry names its own `:cmd/parent`. |
-| `:ext/language-tools` | a language's format / lint / test / REPL handlers. |
-| `:ext/hooks`, `:ext/op-hooks` | code at named lifecycle phases. An op-hook on a GATE op such as `:fs/access` guards paths instead — it is asked, not wrapped. |
-| `:ext/network-filters` | egress predicates. |
-| `:ext/attachment-storage` | an attachment backend. |
-| `:ext/channel-contributions` | channel UI slots. |
-| `:ext/theme` | theme overrides. |
-| `:ext/source-nses` | the namespaces the extension is built from. |
-
-The authoritative, complete list is the `::extension` spec in `com.blockether.vis.internal.extension.core`.
-
-### Tools: symbols
-
-A tool is a Clojure `defn` wrapped with `vis/symbol` and listed under `:ext.engine/symbols`:
-
-```clojure
-(defn- lookup-fn
-  "await weather_lookup(city)
-Returns {\"city\", \"summary\"} — current conditions for a city."
-  [city]
-  (extension/success {:result {:city city :summary "sunny, 21°C"}}))
-
-(def lookup-symbol
-  (vis/symbol #'lookup-fn {:symbol 'lookup :tag :observation}))
-```
-
-The rules:
-
-- **Pass the var** (`#'lookup-fn`), never a bare fn: its docstring and arglists become `doc("weather_lookup")`.
-- **Naming.** The Python name is `<alias>_<symbol>` in snake_case: alias `'weather` + symbol `'lookup` → `weather_lookup`. Kebab-case folds to snake_case, and a trailing `?`/`!` is stripped (`refresh!` → `refresh`).
-- **`:tag` is required**: `:observation` for pure reads, `:mutation` for anything that writes.
-- **Arguments** arrive as plain values; a Python dict of options becomes a Clojure map with keyword keys (`weather_lookup("Oslo", {"units": "metric"})` → `[city {:units "metric"}]`). Use multiple arities for optional args.
-- **Return an envelope.** `extension/success {:result value}` on success; on failure either throw (`ex-info` is converted for you) or return `extension/failure {:result nil :error {:message "…" :hint "…"}}`. The model sees only the `:result` payload — map keys convert kebab→snake automatically — and failures surface as normal Python exceptions.
-- Envelope constructors live in `com.blockether.vis.internal.extension.core` (`success` / `failure`); the spec/registration API is `com.blockether.vis.core` (aliased `vis`).
-
-Useful `vis/symbol` opts beyond `:symbol` and `:tag`: `:before-fn` (e.g. inject the turn's `env` as the first argument), `:hidden?` (bind but don't advertise), `:description` — one compact paragraph that REPLACES the docstring in `doc(name)` when the docstring is a developer note rather than the model's contract — and `:params`, the options-dict vocabulary (below).
-
-### One tool, and it is `python_execution`
-
-`python_execution` is the ONLY tool a provider is ever handed a schema for. Every
-symbol an extension registers is a bare Python name inside that sandbox, so there
-is nothing to advertise, no JSON Schema to keep portable across providers, and no
-per-symbol renderer.
-
-What follows from that:
-
-| Owner | Contains | Must not contain |
-| --- | --- | --- |
-| Function docstring (or `:description`) | Compact routing, preconditions, side effects, result semantics, and the exact arguments | Anything the signature already says twice |
-| `:result` | The raw-result contract, appended by `doc(name)` as `Raw result: …` | Workflow prose already in the description |
-| `:params` | One entry per key of the options dict: `{:name "paths" :required? true :note "…"}`, rendered as the page's `Keys: paths (REQUIRED) · …` line | Positional arguments — the call line already names those |
-| `:call` | The keyword→positional shape when the model's call differs from the implementation's arglists (`{:pos ["repository"] :opt-pos ["opts"] :rest :always}`) | A shape that contradicts a real arity |
-| `:ext/prompt-fn` | Dynamic availability, routing, or catalogs only | Signatures, example calls, or anything `doc(name)` already answers |
-
-The call line and the `Keys:` line are STRUCTURE — `doc(name)` renders both from the entry, never from your text; [Your page and your `apropos` row](#your-page-and-your-apropos-row) shows what that renders to, and what a hand-written signature costs.
-
-A model finds a symbol with `apropos(pattern)`, a regular-expression filter over
-symbol names, and reads its contract with `doc(name)`. The prompt therefore does
-not need to carry either one, which is the whole reason a fragment must not
-restate them.
-
-### Your page and your `apropos` row
-
-Those two renderings ARE the contract, and both are built from the entry — so
-writing a tool is writing them. `doc("grep")` answers:
-
-```text
-# grep  ·  callable                                       <- the sandbox name
-
-grep(options, **kwargs)                                   <- STRUCTURE: `:call`, else the real arglists
-Keys: query · paths · include · exclude · is_regex …      <- STRUCTURE: `:params`
-
-FIND WHERE something is — the codebase-wide search …      <- `:description` (or the docstring)
-
-Raw result: Text, not a map: line 1 summarizes …          <- `:result`
-```
-
-A search never answers a whole body. It applies one regular expression to SYMBOL
-names and returns a vector in manifest/resource order:
-
-```python
-apropos(r"^(patch|token-optimization)$")
-# [AproposItem(type='tool', name='patch',
-#              body='Apply EVERY anchored edit for one file in a single atomic write — prose, c…'),
-#  AproposItem(type='doc', name='token-optimization', body='…')]
-```
-
-A shim lends hundreds of names, and every one is its own item under the dotted
-address Python attaches it to:
-
-```python
-apropos(r"^pandas\.read_csv$")
-# [AproposItem(type='function', name='pandas.read_csv',
-#              body='Read a CSV file into a DataFrame. Ignores dtype and parse_dates …')]
-```
-
-`type` is what the symbol IS (`function` · `class` · `module` · `tool` · `doc` ·
-`skill`), `name` is the exact handle to read next, and `body` is the first 100
-characters of its text — never the whole document. `doc()` accepts either the item
-or its name: `doc(item)` and `doc("pandas.read_csv")` are equivalent. An empty
-pattern lists all public symbols. An invalid regular expression is an error.
-Search never tokenizes, scores, sorts, corrects spelling, or inspects document
-bodies.
-
-Six rules keep each record useful:
-
-1. **Choose a stable, searchable name.** Regex search sees only `name`, so use the
-   exact public handle and a dotted address for a module member.
-2. **Never write the call into the prose.** `doc(name)` prints it from `:call` or
-   the real arglists, and prints the `Keys:` line from `:params`. A hand-typed call
-   appears twice and can drift.
-3. **Declare every option key in `:params`, once.** `:name` is the WIRE key spelled
-   exactly as the model types it; `:required?` appears only when the tool refuses
-   without it; `:note` is at most six words.
-4. **`:result` states the shape, never the workflow.** Name the exact keys Python
-   receives. This is the caller's contract, not an invitation to probe the value.
-5. **Open with a useful one-line preview.** The first line becomes `body`; keep it
-   concrete and short enough to scan.
-6. **Keep it a page.** Everything needed while calling belongs here rather than in
-   the prompt, and unrelated background does not.
-
-A symbol with neither `:description` nor a docstring has no page. After adding it,
-read both renderings the way the model meets them:
-
-```python
-apropos(r"^weather_lookup$")
-print(doc("weather_lookup"))
-```
-
-### Sandbox shims and autoloads
-
-The agent writes **Python** in a real, embedded CPython with `pip`, so a package
-from an index needs nothing from you. A **shim** is for what an index cannot
-carry: a *host-backed* Python API whose familiar façade delegates its real work
-across the boundary to Clojure/JVM callables you supply. This is exactly how the
-prebound `ls(...)` works: its Python façade delegates the workspace's
-ignore-aware listing to the host. It ships as the built-in shim extension
-`foundation.shim-ls`, installed through the SAME generic path any extension uses.
-
-List one or more shim specs under `:ext/sandbox-shims`:
-
-```clojure
-{:shim/name        "ls"
- ;; RUNTIME NAMES, never inferred from :shim/name: exact top-level modules a
- ;; caller may import and exact names callable with no import. The build harvests
- ;; their Python docstrings into a manifest-listed apropos resource.
- :shim/imports     []
- :shim/globals     ["ls"]
- ;; Extra doctrine no single public name owns. Prose about a name belongs on that
- ;; module, function, or class in the shim's Python source.
- :shim/docs        "Host-backed, ignore-aware workspace directory listing."
- ;; Host callables the shim's Python delegates to — a `{py-name -> fn}` map (or a
- ;; 0-arg fn returning one). Each is wired onto the sandbox globals as a Python
- ;; callable (args marshalled Python->Clojure, result back) BEFORE the `.py` source
- ;; evals. Return errors as DATA in the envelope your Python façade unwraps, so a
- ;; failure crosses the boundary as a catchable Python exception.
- :shim/bindings    (fn [] {"__vis_list_directories__" list-directories})
- ;; CLASSPATH RESOURCE path of the shim's Python source — a real `.py` file, never
- ;; a Clojure string. It is eval'd into the sandbox: publish your module into
- ;; `sys.modules` (so imports find it) and/or staple public names onto `builtins`
- ;; (autoload — a call with no import). Built-in shims live in
- ;; `resources/vis-shims/`; ship yours on your own classpath and, for a native
- ;; image, embed it with `-H:IncludeResources=<your-prefix>/.*`.
- :shim/source      "vis-shims/ls.py"}
-```
-
-The distribution's build harvests every contributed module's Python `__doc__` and
-its public members into a flat apropos EDN resource. The root manifest names that
-resource explicitly, so `apropos(r"^pandas\.read_csv$")` and
-`doc("pandas.read_csv")` work without importing the module first. `:shim/docs`,
-when declared, is appended to its module document. A shim with `:shim/globals`
-must name each call in its Python docstring (`ls(paths, depth=1, is_hidden=False)`);
-contract tests reject undocumented names.
-
-Installed BEFORE the sandbox's baseline snapshot, so your `__vis_*` bridge names
-and published module are hidden from the model's live-vars view. Install is
-best-effort: a shim that throws is logged and skipped — it never breaks the
-sandbox. Shims are a Clojure-extension capability (they need host callables);
-drop-in Python extensions contribute tools/prompts/slash/hooks instead.
-
-`:shim/source` is the ONLY way to supply the Python: there is no inline-string
-form. The file is read once through `extension/shim-src`, which THROWS when the
-resource is missing — a shim whose `.py` never reached the classpath fails
-loudly instead of publishing an empty module. Each shim's source is eval'd
-LAZILY, on the first `import <name>` (or first touch of an autoloaded global),
-so a session that never imports it pays nothing. Because the source is a real
-file, it is lintable, diffable, testable with ordinary `pytest`, and
-free of Clojure escaping hazards.
-
-### The prompt fragment
-
-`:ext/prompt-fn` rides in a labeled `;; -- EXTENSION <alias> --` block only while the extension is active. Use it only for facts unavailable from a symbol's own documentation—for example, a dynamic capability matrix or a catalog that changes per turn.
-
-```text
-Weather service configured for this workspace; live lookups are available.
-```
-
-A fixed extension usually needs no prompt fragment. Do not repeat signatures, fields, defaults, or return contracts here — that is exactly the text `doc(name)` already carries, and a copy here costs MORE than the pull it duplicates.
-
-### Activation
-
-`:ext/activation-fn` gates the whole extension per turn. Use it to hide tools that can't work in the current workspace — a Node-only extension activates only when the workspace root holds a `package.json`:
-
-```clojure
-(defn- activation-fn [env]
-  (boolean (some-> (:workspace/root env) (io/file "package.json") .isFile)))
-```
-
-An inactive extension costs zero prompt tokens.
-
-### Slash commands (Clojure)
-
-User-facing `/commands` (TUI and companion) are data too:
-
-```clojure
-:ext/slash-commands
-[{:slash/name   "weather"
-  :slash/doc    "Show current weather."
-  :slash/usage  "/weather <city>"
-  :slash/run-fn (fn [ctx]
-                  {:slash/status :ok
-                   :slash/title  "Sunny in Oslo"
-                   :slash/data   {:city "Oslo"}})}]
-```
-
-Return `{:slash/status :ok | :error, :slash/title "…"}` plus optional `:slash/data`.
-
-### Asking the human (Clojure)
-
-`com.blockether.vis.core/request-human-input!` takes the same request map the
-Python side sends, and `com.blockether.vis.view` builds it with the same
-names - the only namespace besides `core` an extension imports:
-
-```clojure
-(require '[com.blockether.vis.core :as vis]
-         '[com.blockether.vis.view :as hi])
-
-(vis/request-human-input!
-  (hi/form {:title "Deploy" :submit-label "Ship it"}
-           (hi/heading "Target")
-           (hi/paragraph "Staging pages nobody.")
-           (hi/row (hi/select "env" ["staging" "prod"] {:label "Environment"
-                                                        :is-required true})
-                   (hi/slider "canary" {:label "Canary %" :min 0 :max 100 :step 5}))
-           (hi/checkbox "ack" {:label "I read the runbook" :is-required true})
-           (hi/password "token" {:label "Deploy token" :is-required true})))
-```
-
-Every builder returns the plain map you could have typed by hand, and validates
-it on the way out: `(hi/select "env" [])` throws at that line. `hi/form` does the
-same for the assembled request.
-
-### Validating a field (Clojure)
-
-`:validate` is a **function**, or a vector of them, the same contract Python
-has. One argument is the coerced value; two are the value and the whole
-`field name -> value` map of the answer (string keys, flat, whatever the
-layout). Answer `nil`/`true` to accept, a string to refuse with that message.
-The vector runs in order and the first message wins.
-
-```clojure
-(defn- a-slug [text]
-  (when-not (re-matches #"[a-z][a-z0-9-]*" text)
-    "lowercase, digits and dashes"))
-
-(defn- is-free [text]
-  (when (contains? @taken text) "already taken"))
-
-(vis/request-human-input!
-  (hi/form {:title "Sign up"}
-           (hi/plaintext "slug" {:label "Project" :validate [a-slug is-free]})
-           (hi/password "pass" {:label "Password"
-                                :validate #(when (< (count %) 12) "at least 12 characters")})
-           (hi/password "again" {:label "Repeat it"
-                                 :validate (fn [text values]
-                                             (when-not (= text (get values "pass"))
-                                               "the two do not match"))})))
-```
-
-The function is judged where you wrote it, long before a human sees the form:
-
-```clojure
-(hi/plaintext "slug" {:validate "[a-z]+"})
-;; throws Invalid human-input field slug: :validate takes a FUNCTION, not "[a-z]+" ...
-
-(hi/checkbox "ack" {:validate (fn [] nil)})
-;; throws Invalid human-input field ack: :validate function takes the value, or
-;;        the value and every value ... this one takes neither
-```
-
-The functions stay in your process. The engine runs them when the form is
-CONFIRMED, hands the surfaces one message per broken field, and `:validate` is
-stripped from the field before any surface sees it.
-
-### Shipping doc pages
-
-A documentation page is a Markdown resource plus one record in an apropos EDN
-file named by the root manifest:
-
-```clojure
-;; resources/META-INF/vis/apropos/weather.edn
-[{:name "weather"
-  :kind "doc"
-  :resource "vis-docs/weather.md"}]
-```
-
-There is no resource scan. Name `"META-INF/vis/apropos/weather.edn"` as the
-`:apropos` of your own entry in the distribution manifest, and `doc("weather")`
-reads the page. The docs SITE needs one more line, in `resources/vis-docs/site.edn`
-— the only place that titles a page, groups it under a section and orders it, and
-the reason a record carries none of that. A page the site never navigates to is
-refused when the site renders: a page no reader can reach does not exist.
-
-### Complete minimal example
-
-`src/com/acme/ext/weather/core.clj`:
-
-```clojure
-(ns com.acme.ext.weather.core
-  "Weather lookups under the `weather_` alias."
-  (:require
-   [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.extension.core :as extension]))
-
-(defn- lookup-fn
-  "Implementation for a current-conditions lookup."
-  [city]
-  (extension/success {:result {:city (str city) :summary "sunny, 21°C"}}))
-
-(def ^:private symbols
-  [(vis/symbol
-     #'lookup-fn
-     {:symbol 'lookup
-      :name "weather_lookup"
-      :tag :observation
-      :description "Read live weather when current conditions are required. ONE city."
-      :result "Object with string `city` and string `summary`."
-      :call {:pos ["city"]}})])
-
-(def vis-extension
-  (vis/extension
-   {:ext/name        "weather"
-    :ext/description "Current-conditions weather lookups for the model."
-    :ext/version     "0.1.0"
-    :ext/kind        "integration"
-    :ext/engine      {:ext.engine/alias 'weather
-                      :ext.engine/symbols symbols}}))
-
-(defn register!
-  []
-  (vis/register-extension! vis-extension))
-```
-
-Add an entry for `com.acme.ext.weather.core/register!` to the custom distribution
-manifest's `:initialization` vector. Name your static page and symbol records as
-that entry's `:apropos` resource, rebuild the distribution, and the model can call
-`weather_lookup("Oslo")`.
-
-### Native image rules
-
-The native binary compiles extensions ahead of time, which brings a few hard constraints (see [JVM & native-image](jvm-native-image.md) for the background):
-
-- **No `defrecord` / `deftype` / `gen-class`** in sandbox-facing code — the build refuses them (`validate-no-banned-defs!`). Plain maps and functions only.
-- **Reachability metadata travels inside your jar**: `resources/META-INF/native-image/<group>/<artifact>/reachability-metadata.json` — the unified format only, never the legacy `reflect-config.json` family. Only add entries for reflection/resources **your extension uniquely pulls in**; never duplicate a library's own config.
-- **Generate it with the tracing agent**, not by hand: run your code paths under `java -agentlib:native-image-agent=config-merge-dir=<your-artifact-dir> …`, then strip Clojure-internal noise.
-- Resources your extension reads at runtime via `io/resource` (templates, assets) need a resource glob in that metadata — the agent only captures what the trace actually touched.
-
-### Testing and verification
-
-Vis uses [lazytest](https://github.com/NoahTheDuke/lazytest); test tool functions directly against the envelope contract:
-
-```clojure
-(ns com.acme.ext.weather.core-test
-  (:require
-   [com.blockether.vis.internal.extension.core :as extension]
-   [lazytest.core :refer [defdescribe expect it]]))
-
-(defdescribe lookup-test
-  (it "returns a canonical success envelope"
-    (let [result (@#'com.acme.ext.weather.core/lookup-fn "Oslo")]
-      (expect (extension/envelope-success? result))
-      (expect (= "Oslo" (:city (:result result)))))))
-```
-
-Before shipping, run `format_code`, `clojure -M:lint` (add `extensions build.clj` for a wider sweep), and the relevant tests.
+`vis.testing.LiveRecorder` records what a live view emitted and simulates
+surface actions without a session; see [Live views](live-views.md#testing-a-view).
 
 ## See also
 
-- [Skills](skills.md) — instructions, when the answer is not code.
-- [Configuration](configuration.md) — the keys an extension's providers, toggles and env end up in.
-- [Runtime distributions](distributions.md) — shipping a Clojure extension to other people.
-- [Python sandbox](python-sandbox.md) — the runtime your Python tools execute in.
-- [Content-block protocol](content-blocks.md) — the blocks a tool's output becomes.
+- [Asking the human](human-input.md) — forms, field types, layout and validation.
+- [Live views](live-views.md) — progress a person can watch while a tool runs.
+- [Provider extensions](provider-extensions.md) — registering an LLM provider.
+- [Clojure extensions](clojure-extensions.md) — engine integrations that ship in the binary.
+- [Process jail and network policy](jail.md) — what a confined child may reach.

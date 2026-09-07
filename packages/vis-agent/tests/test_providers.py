@@ -299,21 +299,50 @@ def test_non_record_callback_contracts():
     assert selected == [{"source": "test"}]
 
 
-def test_documented_provider_example_executes_with_the_installed_sdk(monkeypatch):
-    import re
-    from pathlib import Path
+def test_provider_example_executes_with_the_installed_sdk(monkeypatch):
+    example = """
+import os
+import blockether.vis.extension as vis
 
-    text = (
-        (Path(__file__).parents[1] / "README.md")
-        .read_text()
-        .split("## Providers", 1)[1]
+
+def credential() -> vis.ProviderCredential | None:
+    token = os.environ.get("EXAMPLE_API_KEY")
+    return vis.ProviderCredential(token) if token else None
+
+
+def status() -> vis.ProviderStatus:
+    return vis.ProviderStatus(
+        is_authenticated=bool(os.environ.get("EXAMPLE_API_KEY")),
+        source="env-var",
     )
-    example = re.search(r"```python\n(.*?)\n```", text, re.DOTALL).group(1)
+
+
+vis.register(
+    vis.Extension(
+        name="provider-example",
+        description="An OpenAI-compatible provider.",
+        env=["EXAMPLE_API_KEY"],
+        providers=[
+            vis.Provider(
+                id="example",
+                label="Example AI",
+                preset=vis.ProviderPreset(
+                    base_url="https://gateway.example.com/v1",
+                    api_style="openai",
+                    default_models=["example-model"],
+                ),
+                get_token_fn=credential,
+                status_fn=status,
+            )
+        ],
+    )
+)
+"""
     monkeypatch.setattr(vis, "_registration", {"spec": None})
     monkeypatch.setenv("EXAMPLE_API_KEY", "fixture-doc-credential")
     monkeypatch.setattr(vis._host, "declare_env", lambda _: "{}")
     namespace = {}
-    exec(compile(example, "README.md:providers", "exec"), namespace)
+    exec(compile(example, "provider_example", "exec"), namespace)
     provider = vis._registration["spec"]["providers"][0]
     assert provider["preset"]["default_models"] == ["example-model"]
     assert provider["get_token_fn"]()["token"] == "fixture-doc-credential"

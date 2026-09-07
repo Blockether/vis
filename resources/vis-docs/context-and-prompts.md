@@ -1,173 +1,89 @@
-# Context files & prompts
+# Project instructions
 
-Vis reads plain markdown files to learn your rules: **context files**
-(`AGENTS.md` / `CLAUDE.md`) for project conventions, **system prompt files**
-(`SYSTEM.md` / `APPEND_SYSTEM.md`) to change the core prompt itself, and
-**prompt templates** (`.vis/prompts/*.md`) for reusable slash-invokable
-prompts. All of them auto-refresh: Vis stat-checks the files each turn and
-re-reads only when something changed — no restart, no manual reload.
+Vis reads plain Markdown files from your project and home directory. Changes are
+picked up on the next turn without restarting.
 
-## Context files: AGENTS.md / CLAUDE.md
+| File | Purpose |
+|---|---|
+| `AGENTS.md` or `CLAUDE.md` | Rules for working in a project |
+| `.vis/SYSTEM.md`, `.vis/APPEND_SYSTEM.md` | Replace or extend the system prompt |
+| `.vis/prompts/*.md` | Reusable prompts invoked with `/name` |
 
-Vis stacks guidance from three layers into every turn's
-`PROJECT-INSTRUCTIONS` system block, outermost first:
+## Project rules: AGENTS.md
 
-1. **User-global** — `~/.vis/AGENTS.md` (or `~/.vis/CLAUDE.md`): your personal
-   house rules, applied in every project.
-2. **Ancestor directories** — `AGENTS.md` / `CLAUDE.md` in every parent
-   directory of the workspace root, walking down from the filesystem root. In
-   a monorepo this means the repo-root `AGENTS.md` *and* the subproject's
-   `AGENTS.md` both apply.
-3. **Workspace root** — `AGENTS.md` / `CLAUDE.md` in the directory you opened.
+Put instructions for your codebase in `AGENTS.md` at the project root: how to
+run tests, coding conventions, what not to touch. Vis includes the file in every
+turn.
 
-Per directory the precedence is strict: `AGENTS.md` wins, `CLAUDE.md` is only
-read when `AGENTS.md` is absent there. Across layers nothing is dropped —
-nearer files render **later**, so on conflict the more specific rules override
-the outer ones (and the CORE engine contract always wins over both).
+Several files can apply at once, from broadest to narrowest:
 
-Files are inlined **verbatim, untruncated**; each one is labeled with its
-origin and path so the model knows which layer a rule came from. Provider
-prompt caching amortizes the cost across the session.
+1. `~/.vis/AGENTS.md` — your personal rules, in every project.
+2. `AGENTS.md` in each parent directory of the project, so a monorepo root and a
+   subproject both apply.
+3. `AGENTS.md` in the project root.
+
+Nearer files come later and override broader ones on conflict. `CLAUDE.md` is
+read only where no `AGENTS.md` exists.
 
 ## System prompt files: SYSTEM.md / APPEND_SYSTEM.md
 
-To change the core system prompt itself (not project rules), drop markdown
-files under a `.vis/` directory:
+To change the system prompt itself, add files under `.vis/` in the project or
+under `~/.vis/`:
 
 | File | Effect |
 |---|---|
-| `<project>/.vis/SYSTEM.md` | **Replaces** the core system prompt (project) |
-| `~/.vis/SYSTEM.md` | **Replaces** the core system prompt (global) |
-| `~/.vis/APPEND_SYSTEM.md` | **Appends** to the system prompt (global) |
-| `<project>/.vis/APPEND_SYSTEM.md` | **Appends** to the system prompt (project, rendered last) |
+| `SYSTEM.md` | Replaces the built-in system prompt |
+| `APPEND_SYSTEM.md` | Adds text after the system prompt |
 
-Replacement precedence: project `SYSTEM.md` > global `SYSTEM.md` > the
-config `system_prompt: {is_replace: true}` form > the built-in core prompt.
-Append files always apply, global first, project last — the nearest text sits
-closest to the conversation. The `system_prompt` string form (see
-[Configuration](configuration.md)) still works and is appended before the
-`APPEND_SYSTEM.md` files.
+A project file overrides a user file. Append files are applied user first,
+project last.
 
-Replacing the core prompt is a sharp tool — Vis's prompt teaches the whole
-tool surface (file tools, `python_execution`, the anchored editors). Prefer
-`APPEND_SYSTEM.md` or `AGENTS.md` unless you know you want a full rewrite.
+The built-in prompt teaches Vis how its tools work. Prefer `APPEND_SYSTEM.md` or
+`AGENTS.md`; replace the prompt only when you mean to.
 
-## Prompt templates: `.vis/prompts/*.md`
+## Prompt templates: /name
 
-A prompt template is a markdown file that expands into a user message when you
-type `/<name> [arguments]` in any channel (TUI, CLI):
-
-1. `<project>/.vis/prompts/*.md` — project templates (win name collisions)
-2. `~/.vis/prompts/*.md` — user-global templates
-
-The template name is the filename stem, overridable with frontmatter; a
-`description` documents it:
+A Markdown file in `.vis/prompts/` becomes a slash command named after the file.
+Project templates override those in `~/.vis/prompts/`.
 
 ```markdown
 ---
-description: Review a PR branch against main
+description: Review the current branch against main
 ---
 
 Review the current branch against main. Focus on: $ARGUMENTS
 
-- Correctness first, style second.
-- End with a verdict: approve / request changes.
+End with a verdict: approve or request changes.
 ```
 
-Typing `/review error handling` expands the file and runs it as a normal LLM
-turn. Argument handling:
+Typing `/review error handling` sends the file as a message with `$ARGUMENTS`
+replaced by `error handling`. If the template has no `$ARGUMENTS`, the text is
+appended at the end.
 
-- Every `$ARGUMENTS` occurrence is substituted with the raw argument string
-  (empty when none given).
-- A body without `$ARGUMENTS` gets non-blank arguments appended as a trailing
-  paragraph.
+Slash commands registered by extensions take precedence over templates.
 
-Registered slash commands (from extensions) always win over templates — a
-template only fires for a `/name` no extension claimed.
+## Skills: /skill:name
 
-## Skill invocations: `/skill:<name>`
+Every [skill](skills.md) is available as `/skill:<name> [task]`. Skills are
+hidden from the initial `/` list but appear when you search by name.
 
-Every discovered [skill](skills.md) is also exposed as a dynamic template
-named `skill:<name>`, so you can name a skill explicitly instead of waiting
-for the model to pick it. Skills stay out of the initial `/` list, while palette
-search indexes the unprefixed skill name: searching for `setup-pre-commit`
-returns the canonical prefixed command.
+## Shell shortcuts: ! and !&
+
+A message starting with `!` runs a shell command directly, without sending
+anything to the model:
 
 ```text
-/skill:setup-pre-commit          # name the skill, follow its instructions
-/skill:setup-pre-commit for husky  # name it with a task appended
+!git status        # run and wait for the output
+!&npm run dev      # start in the background and return immediately
 ```
 
-The expansion is a POINTER, not a copy — one sentence in that user message:
+Use `!&` for servers, watchers and long test runs. The output is stored in the
+transcript, so later turns can refer to it.
 
-```text
-Use the skill "setup-pre-commit" for this task: read it with doc("setup-pre-commit")
-unless its SKILL.md is already in this conversation, then follow it as written.
-
-Task: for husky
-```
-
-Fetching is the model's decision, because only the model can see whether that
-text is still in front of it; `doc(name)` prints the whole `SKILL.md` every
-time, with no session effect. Nothing is recorded between two
-`/skill:<name>`s — they
-expand identically. Two facts the body itself does not carry are added when
-they apply: the owning project of a nested skill (the turn is re-rooted there)
-and the absolute paths of its bundled resources.
-
-## Shell shortcuts: `!` and `!&`
-
-A line that starts with `!` is a shell escape — the command runs directly,
-**without an LLM round-trip**, so it's instant and costs no tokens. It's the
-shell analogue of `/slash`, and works the same way in the **TUI** and the
-**companion** app:
-
-```text
-!git status            # run and print its output (blocks)
-!&npm run dev          # spawn and return immediately, under a resource id
-```
-
-- `!<cmd>` runs the command and blocks until it exits, printing its output. Use
-  it for short bounded commands.
-- `!&<cmd>` spawns under an auto-generated resource id (`background-<hex>`) and
-  returns right away. Prefer it for commands that may take a while: builds, test
-  suites, servers, watchers, and interactive processes.
-- Both reach the same place the model does. There is no shell TOOL: a process is
-  started only from `python_execution`, where every shell run is a background run
-  and the result is a HANDLE:
-  `sh = await shell("npm run dev", id="dev")`, then
-  `sh.wait(30)` (the only wait there is), `sh.logs(-50)` for the last 50 lines
-  (`offset=0` for the head, a byte cursor; `lines=10` a ten-line window,
-  `sh.logs(next_offset, 10)` the next ten and `lines=-10` the ten above an
-  offset), `sh.type("y")`,
-  `sh.stop()`. Every answer already carries that shell's status — running or exited,
-  since when, its `log_path`, and the live `cpu_ms`/`cpu_percent`/`rss_bytes` of its
-  process tree — so nothing has to ask again.
-- There is no `wait` knob on the request — a request cannot select a mode. Every
-  shell keeps its log by id for the session, so a finished run is
-  still readable a turn later.
-- A bare `!` (or `!&`) with no command is ordinary prose and runs as a normal
-  LLM turn.
-
-While you're typing a shell shortcut, the composer flags it visually so a
-shell command never looks like an ordinary message — with **no layout shift**.
-The TUI tints just the leading `!`/`!&` marker in the shell tool color; the
-companion composer tints its frame and shows a small `shell` / `shell &` pill in the
-corner. The cue only lights up once a real command follows the marker (a bare
-`!`/`!&` stays neutral), mirroring the run/no-run rule above.
-
-The command output renders as the turn's answer bubble and is persisted in the
-transcript. Crucially, the result **lands in context exactly like a
-model-issued `shell` call** — so a later turn can reason over
-what the command printed, just as if the model had run it itself.
-
-Both shortcuts require the **shell layer** to be enabled — the user-owned
-`shell` toggle (settings dialog → *Shell commands*). When it's off, the
-shortcut refuses cleanly with a note on how to
-turn it on, and nothing runs.
+Shell shortcuts need the **Shell commands** toggle enabled in settings.
 
 ## See also
 
-- [Skills](skills.md) — instructions loaded on demand, and how `/skill:<name>` expands.
-- [Configuration → System prompt](configuration.md#system-prompt) — the config keys these files override.
-- [Extending Vis → Slash commands](extending.md#slash-commands) — adding a command of your own.
+- [Skills](skills.md) — instructions loaded on demand.
+- [Configuration → System prompt](configuration.md#system-prompt) — the equivalent config keys.
+- [Extending Vis → Slash commands](extending.md#slash-commands) — commands provided by extensions.

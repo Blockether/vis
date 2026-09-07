@@ -1,8 +1,10 @@
 # Content-block protocol
 
-Vis has one answer model: a role-labelled message containing an ordered array of
-typed content blocks. The same JSON-ready shape is used by persistence, gateway
-responses, SSE replay, and channels.
+Every message in Vis is a role-labelled envelope containing an ordered array of
+typed content blocks, and the same JSON shape is used by persistence, gateway
+responses, SSE replay and channels. This page is the reference for that shape.
+You need it when writing a gateway client or a renderer; using Vis does not
+require it.
 
 Markdown is not an alternate answer. It is a field inside a `prose` block.
 Renderer-specific trees are temporary implementation details and are never sent,
@@ -210,9 +212,9 @@ Renderers switch on `block.type` and preserve block order and message role:
 Derived output cannot be written back as canonical content. There is no second
 answer field to synchronize and no renderer tree fallback.
 
-## Contract tests
+## Guarantees
 
-The implementation must prove that:
+The engine's contract tests hold that:
 
 1. Clojure constructors and specs reject non-string nested map keys and
    non-JSON values.
@@ -226,5 +228,5 @@ The implementation must prove that:
 ## See also
 
 - [Exporting sessions](exporting-sessions.md) — the same blocks rendered to Markdown, HTML or a screencast.
-- [Gateway, pairing & remote access](gateway.md) — the SSE stream these blocks travel on.
-- [Extending Vis](extending.md) — producing blocks from an extension.
+- [Remote access and the Companion app](gateway.md) — the SSE stream these blocks travel on.
+- [Live views](live-views.md) — an extension's live work, sealed into a transcript.

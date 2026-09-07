@@ -1,676 +1,220 @@
-# Gateway, pairing & remote access
+# Remote access and the Companion app
 
-The TUI, Companion and gateway clients talk to one long-lived **gateway daemon**:
-an HTTP + SSE runtime that owns
-the sessions, turns, and the live event bus. You rarely start it by hand; a
-channel spawns it for you. This page explains its lifecycle, why
-`vis-agent gateway start` stays in the foreground, the token model (and the
-`HTTP 401` you hit on `--host 0.0.0.0`), and how to pair a phone over LAN or
-Tailscale.
+The terminal UI, the Companion app and the CLI all talk to one **gateway**: a
+local HTTP service that owns sessions, turns and the live event stream. Many
+clients can attach to the same gateway and see the same sessions.
 
-## Python SDK: remote or gateway-free
+## Starting the gateway
 
-The `vis-agent` Python distribution exposes `blockether.vis.engine.GatewayClient`
-for an explicitly supplied gateway URL and token. It manages its client lease,
-not the server process. Session events, typed View/Activity projections and
-operator actions use the same canonical contracts as the TUI and Companion.
-
-`blockether.vis.engine.LocalEngine` is the gateway-free alternative: it starts a
-compatible Vis executable with `sdk-stdio` and owns that subprocess. It reuses the
-same engine and SDK objects, but opens no HTTP listener and performs no gateway
-discovery. This is **not** a JVM embedded in the Python process, and importing the
-extension module alone does not start an agent.
-
-The [Python SDK reference](https://github.com/Blockether/vis/blob/main/packages/vis-agent/README.md)
-owns installation, API examples, transport differences and distribution gates.
-The [gateway contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/gateway.json)
-owns route, protocol and lease vocabulary; View and Activity have their own
-schemas in the same contract package.
-## The gateway starts itself (in the background)
-
-When you run a client such as:
+You normally do not start it. `vis-tui` or `vis-agent` finds the gateway for the
+current database (`~/.vis/vis.mdb`) and starts one in the background when none
+is running. That gateway stops itself once the last client disconnects and no
+turn is still producing output.
 
 ```bash
-vis-tui
+vis-agent gateway status          # pid, url, database, clients, auth mode
+vis-agent gateway stop            # stop it; escalates to SIGTERM/SIGKILL if needed
+vis-agent gateway stop --if-idle  # stop only when nobody is using it
 ```
 
-the client looks up the gateway registered for the current database
-(`~/.vis/vis.mdb` by default). If none is alive it **spawns one, fully
-detached** — on unix under `nohup … &`, reparented to init, with its
-stdout/stderr captured to a per-database boot log under
-`~/.vis/gateway/`. That daemon is *client-managed*: it self-reaps once the
-last client disconnects. So the normal flow is just "start the TUI" — the
-background gateway is automatic, and a herd of clients all attach to the
-same one.
-
-You do **not** need to run `vis-agent gateway start` yourself for local use.
-
-### Why `vis-agent gateway start` does not go to the background
-
-`vis-agent gateway start` is deliberately a **foreground** daemon: it prints its
-connection line and parks until you stop it with `Ctrl-C` / `SIGTERM`. It is
-meant for running the gateway as a supervised, user-owned process (a
-`systemd`/`launchd` unit, a container entrypoint, a `tmux` pane) — not for a
-throwaway shell. A foreground `vis-agent gateway start` is **not** refcounted, so
-it will not self-reap when clients come and go.
-
-To run it detached yourself, background it explicitly:
+`vis-agent gateway start` runs in the **foreground** and does not stop on its
+own. Use it for a supervised process — a systemd or launchd unit, a container,
+a tmux pane — or background it yourself:
 
 ```bash
-# quick-and-dirty
 nohup vis-agent gateway start --host 0.0.0.0 --require-token > ~/.vis/gateway.out 2>&1 &
-
-# or let a client auto-spawn the managed background daemon for you
-vis-tui
 ```
 
-Inspect and control the daemon:
+`vis-agent update` stops an idle managed gateway so the next client starts the
+new build; `--keep-gateway` opts out.
 
-```bash
-vis-agent gateway status          # pid, url, db, client count, auth mode
-vis-agent gateway stop            # ask it to exit; if it stopped answering, escalate
-                                  # to the pid its own registry names (SIGTERM, then
-                                  # SIGKILL) instead of handing you an `lsof` line
-vis-agent gateway stop --if-idle  # stop it only when stopping is free (see below)
-```
+## Connecting the Companion app
 
-### When a managed daemon lets go
-
-A managed daemon stops itself once nothing holds it: no client lease, no SSE
-stream, and no turn still producing events. A turn that has produced nothing for
-a minute while no client is left is a **ghost** — its worker died, or was killed
-mid-launch, or is parked on human input nobody will ever answer — and it no
-longer keeps the daemon alive. Zero clients plus a turn that IS still emitting
-events does: that is "I closed the TUI, finish in the background".
-
-`vis-agent gateway stop --if-idle` applies that same rule from outside. It
-releases an unused managed daemon, prints why it did not when someone is using
-one, is silent when none is running, never touches a user-owned daemon, and
-always exits 0. `vis-agent update` runs it after installing a new runtime: every
-live daemon is then older than what is on disk, and the next client spawns the
-new build. `vis-agent update --keep-gateway` opts out.
-
-
-## Clients
-
-A gateway serves clients; it hosts no user interface of its own. `vis-tui` is the
-terminal application and Vis Companion is the phone and web app, and both are
-ordinary HTTP/SSE clients of the routes below — one gateway, many clients, all
-looking at the same sessions. `vis-agent` itself is a client too for everything
-except `gateway start`.
-## The token model — and the `HTTP 401`
-
-Auth is gated on the **bind host**:
-
-| Bind                                   | Bearer token | Why                                             |
-| -------------------------------------- | ------------ | ----------------------------------------------- |
-| `127.0.0.1` (default)                  | **off**      | a single-user localhost daemon; the token dance is pure friction |
-| any non-loopback (`0.0.0.0`, LAN, Tailscale) | **required** | the port is reachable by other hosts            |
-| `127.0.0.1 --require-token`            | required     | force the token on loopback too                 |
-
-The token is a secret minted on first run into `~/.vis/gateway.token`
-(mode `600`); override with `--token-file PATH`. A client on the **same
-machine** reads that secret from the gateway's on-disk registry
-automatically, so a local TUI authenticates transparently even against a
-`--host 0.0.0.0` daemon. Remote clients (a phone, another machine) must be
-handed the token — that is what pairing does.
-
-If you ever see:
-
-```text
-vis-agent: fatal error - gateway HTTP 401
-{:error {:type "unauthorized", :message "missing or invalid bearer token"}}
-```
-
-it means the client reached a token-gated gateway without a valid token.
-The usual causes: connecting from a different machine without pairing, or a
-stale/rotated `gateway.token`. Fixes: run the client on the same host as the
-gateway, re-pair the remote client, or restart the gateway on loopback
-(`vis-agent gateway start`).
-
-## Driving a gateway on another machine (`--gateway`)
-
-Every gateway call of an invocation — the TUI's whole session included — goes to
-whichever gateway two **root flags** name, in front of the command itself:
-
-```bash
-vis-agent --gateway 10.0.0.5 --gateway-token "$TOKEN" tui
-vis-agent --gateway 10.0.0.5:7899 --gateway-token "$TOKEN" providers status
-vis-agent --gateway https://gateway.example.com/vis --gateway-token "$TOKEN" gateway status
-```
-
-`--gateway` takes `HOST`, `HOST:PORT` or a full `http(s)://HOST[:PORT][/prefix]`:
-a bare value is plain HTTP on port `7890`, and an `https://` URL with no port is
-`443`. `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` say the same thing for a whole
-shell.
-
-The token is the one that gateway printed when it started (`~/.vis/gateway.token`
-on **its** machine, or its `--token-file`). Drop `--gateway-token` when the target
-needs none — a loopback daemon you reached through an SSH tunnel:
-
-```bash
-ssh -N -L 7890:127.0.0.1:7890 you@10.0.0.5 &
-vis-agent --gateway 127.0.0.1 tui
-```
-
-What a remote target changes:
-
-- **vis never starts, restarts or stops a gateway it does not own.** Nothing is
-  auto-spawned for you, `vis-agent gateway stop` refuses (stop it on the machine
-  that runs it), and the `/ui` self-heal force-restart is never attempted.
-- **`gateway status` and `gateway pair` answer from the target itself** — status is
-  that daemon's own admin map, and the pairing QR carries its host and port, plus
-  the token only when you passed `--gateway-token` (that is the only token vis
-  knows about a machine it does not own). A target reached through an SSH tunnel
-  is `127.0.0.1` here, so `gateway pair` refuses it as loopback — pair from the
-  machine that runs it.
-- **The client claims no pid.** Lease reaping judges pids on the gateway's own
-  machine, so a remote client sends none and is never reaped as "dead".
-- Your local registry is never consulted and `--db` means nothing next to
-  `--gateway`. The whole `sessions` family is the exception: `list`, `show`,
-  `fork`, `delete` and `export` read THIS machine's database directly instead
-  of asking a gateway, so they keep reporting local sessions whatever
-  `--gateway` says. A remote gateway's sessions are browsed from its TUI.
-- An unreachable host, or a value that names no host, is an error — never a
-  silent fall back to your own daemon, which would run the work on the wrong
-  machine.
-
-Reachable means the gateway was started on a non-loopback bind
-(`--host 0.0.0.0`), which per the table above **requires** a token.
-
-One process drives one gateway: the TUI has no gateway switcher yet, so a second
-gateway means a second `vis-agent --gateway …`.
-
-## Getting the companion app (public testing)
-
-The companion ships as one app for web, iOS and Android. Both mobile stores
-are in **public testing** — the links are open to anyone, with no tester list
-and no invite:
+The Companion is one app for web, iOS and Android. Both stores are in open
+testing:
 
 | Platform | Link |
 |---|---|
 | iOS / iPadOS (TestFlight) | <https://testflight.apple.com/join/4anYT4Wk> |
 | Android (Play open testing) | <https://play.google.com/apps/testing/com.blockether.viscompanion> |
 
-On iOS you install Apple's free **TestFlight** app first, then open the link;
-on Android the link is an opt-in page that switches your Play account over to
-the testing build of `com.blockether.viscompanion`. Both builds carry the same
-version number as the CLI (the repo-root `VIS_VERSION`), and the app refuses to
-talk to a gateway whose protocol version does not match — see
-[Protocol version and compatibility](#protocol-version-and-compatibility).
+The app has no account; it is a client for your gateway. Feedback goes to
+`karol@blockether.com` or the TestFlight feedback button.
 
-Beta feedback goes to `karol@blockether.com`, or the **Send Beta Feedback**
-button inside TestFlight. There is no account to create: the app is a client
-for **your** gateway, so until you pair one it shows only the pairing screen.
+### Pair a phone
 
-## Pairing a phone (mobile companion)
-
-Start the gateway on a reachable host and print a pairing QR:
+The gateway a client starts for you listens on `127.0.0.1`, which a phone
+cannot reach. Start one on all interfaces with a token and print a pairing QR:
 
 ```bash
 vis-agent gateway start --host 0.0.0.0 --require-token --pair
 ```
 
-`--pair` prints a terminal QR encoding a tiny URL payload:
+In the app, open **Machines → Add a machine** and scan the QR, or paste the
+`vis://gateway?url=…&token=…` line printed under it. Both fill in the address
+and token.
 
-```text
-vis://gateway?url=http%3A%2F%2F<host>%3A7890&token=<bearer-token>
-```
-
-In the companion app, open **Machines → Add a machine** and tap **Scan QR** on a
-phone, or paste the link into the one field and tap **Pair** anywhere. The
-QR also lists the reachable hosts it picked, in preference order:
-**Tailscale addresses first** (they keep working off-LAN), then LAN
-(`10.x` / `192.168.x` / `172.16–31.x`), then the concrete bind host.
-
-### Connecting from the companion app
-
-Open the companion (web, iOS, or Android). Its first screen is **Machines**,
-and **Add a machine** under it reads differently by device. On a phone it is a
-decision: **Scan the QR code**, or **I have a pairing link** with ONE field. At a
-desk — where the app is on the machine that printed the code — it is three
-numbered steps: the command to run, the line to copy, and that same field:
-
-- **The pairing link** — the fastest path, and the only one that also carries the
-  token. On a phone tap **Scan QR** and point the camera at the QR from
-  `vis-agent gateway pair` (or `vis-agent gateway start … --pair`); anywhere
-  else paste the `vis://gateway?url=…&token=…` line the terminal printed under
-  the QR and tap **Pair**. Both fill in the URL and bearer token together, so
-  there is nothing else to type.
-- **A machine address** — for a gateway whose address you already know. Type
-  it into the same field (LAN, Tailscale, or a Cloudflare tunnel address, with
-  or without `http://`); a **Bearer token** field appears beneath it, optional
-  only for a loopback (`127.0.0.1`) gateway. Tap **Pair**.
-
-Each saved gateway then carries a live status dot, re-probed every six seconds:
-green `●` online (with the round-trip in milliseconds), red `●` offline, amber
-`●` unauthorized — reachable, but the token is missing or wrong. Tap a row to
-open its **Settings**; tap the active row to reconnect.
-
-### Pairing a gateway that is already running
-
-The TUI (and other channels) auto-spawn a **loopback** gateway on first launch,
-so there is usually one running already — but bound to `127.0.0.1`, which a
-phone can never reach. To pair a running daemon **without a start flag**, use:
+For a gateway that is already running, print the QR without restarting:
 
 ```bash
 vis-agent gateway pair
 ```
 
-It reads the gateway registered for the current DB (or the `--gateway` target) and
-prints the same QR that
-`--pair` prints at boot — no restart needed. Two guardrails:
+If the running gateway is bound to `127.0.0.1`, this tells you to restart it
+with the command above.
 
-- **No gateway running** → it tells you to start one:
-  `vis-agent gateway start --host 0.0.0.0 --require-token --pair`.
-- **Running but loopback-bound** (the auto-spawned TUI daemon) → it refuses,
-  because `127.0.0.1` is phone-local, and prints the exact restart to run:
-  `vis-agent gateway stop` then `vis-agent gateway start --host 0.0.0.0 --require-token --pair`.
+You can also type an address directly (LAN, Tailscale or a tunnel) and paste
+the token from `~/.vis/gateway.token` on the gateway's machine. Each saved
+machine shows a status dot: green online, red offline, amber wrong or missing
+token.
 
-So: if you only ever ran `vis-tui`, the daemon behind it is loopback
-and cannot be paired as-is — stop it and restart the gateway reachable (above).
-Once it is bound to `0.0.0.0` (or a Tailscale host), `vis-agent gateway pair` prints
-the QR on demand any time.
+### Access from anywhere with Tailscale
 
-## Tailscale (access from anywhere)
+`0.0.0.0` exposes the gateway on your local network only. Put both devices on a
+[Tailscale](https://tailscale.com) tailnet and start the gateway as above. The
+QR prefers the machine's `100.x` Tailscale address, so the pairing keeps working
+away from the LAN. To listen on Tailscale only, use `--host 100.x.y.z`.
 
-`0.0.0.0` only exposes the gateway on the local network. To reach it from
-your phone off-LAN, put both devices on a [Tailscale](https://tailscale.com)
-tailnet and bind/advertise the machine's Tailscale IP (the `100.64.0.0/10`
-range):
+Keep `--require-token` on for any non-local exposure.
+
+## Using a remote gateway from the CLI
+
+Two root flags send a whole invocation, including the terminal UI, to another
+gateway:
 
 ```bash
-# with tailscale up on this machine
-vis-agent gateway start --host 0.0.0.0 --require-token --pair
+vis-agent --gateway 10.0.0.5 --gateway-token "$TOKEN" tui
+vis-agent --gateway https://gateway.example.com/vis --gateway-token "$TOKEN" gateway status
 ```
 
-The pairing QR **automatically prefers the `100.x` Tailscale address** when a
-tailnet interface is present, so the scanned URL keeps working when you leave
-the LAN. (Binding `0.0.0.0` still listens on all interfaces including
-Tailscale; the QR just advertises the durable `100.x` host.) For a locked-down
-setup you can instead bind the Tailscale IP directly with
-`--host 100.x.y.z`.
+`--gateway` takes `HOST`, `HOST:PORT` or a full URL; a bare host means HTTP on
+port `7890`. `VIS_GATEWAY_URL` and `VIS_GATEWAY_TOKEN` set the same for a shell.
+Through an SSH tunnel no token is needed:
 
-Because a non-loopback bind always requires the token, keep
-`--require-token` on for any remote/Tailscale exposure — the bearer token is
-the only thing standing between the tailnet and your sessions.
+```bash
+ssh -N -L 7890:127.0.0.1:7890 you@10.0.0.5 &
+vis-agent --gateway 127.0.0.1 tui
+```
 
-## The HTTP API, as OpenAPI
+With `--gateway`, Vis never starts, restarts or stops that gateway, and an
+unreachable target is an error rather than a fallback to a local one. The
+`sessions` commands (`list`, `show`, `fork`, `delete`, `export`) always read the
+local database.
 
-Every built-in route is described at:
+## Tokens and HTTP 401
+
+| Bind | Token |
+|---|---|
+| `127.0.0.1` (default) | off |
+| any other host (`0.0.0.0`, LAN, Tailscale) | required |
+| `127.0.0.1 --require-token` | required |
+
+The token is created on first run in `~/.vis/gateway.token` (mode `600`);
+`--token-file PATH` overrides it. Clients on the same machine pick it up
+automatically. Remote clients receive it by pairing.
+
+```text
+vis-agent: fatal error - gateway HTTP 401
+```
+
+means the client reached a token-protected gateway without a valid token:
+pair the remote client again, run on the gateway's machine, or restart the
+gateway on loopback.
+
+## Push notifications
+
+The gateway sends one alert per finished turn to every registered device, with
+the session title and ids only; the transcript never leaves the gateway. In the
+app, open the gateway's **Settings → Notifications**, enable *Notify this
+device* and use *Send a test*.
+
+The store-distributed app needs no configuration: pushes go through a relay run
+by the app's publisher, which never sees the alert content and stores nothing.
+`VIS_PUSH_RELAY_URL` or `~/.vis/relay.edn` points one machine at a different
+relay.
+
+Direct APNs or FCM credentials only work for a Companion you build and sign
+yourself; Apple and Google bind push credentials to the app build. In that
+case give the gateway your key, in the macOS keychain or through environment
+variables:
+
+```bash
+# iOS
+security add-generic-password -U -s vis-apns -a key -w "$(cat AuthKey_ABCD123456.p8)"
+security add-generic-password -U -s vis-apns -a key_id -w ABCD123456
+security add-generic-password -U -s vis-apns -a team_id -w YOURTEAMID
+security add-generic-password -U -s vis-apns -a topic -w com.example.yourapp
+security add-generic-password -U -s vis-apns -a environment -w production
+# or: VIS_APNS_KEY_PATH, VIS_APNS_KEY_ID, VIS_APNS_TEAM_ID, VIS_APNS_TOPIC, VIS_APNS_ENV
+
+# Android
+security add-generic-password -U -s vis-fcm -a service_account -w "$(cat sa.json)"
+security add-generic-password -U -s vis-fcm -a project_id -w your-firebase-project
+# or: VIS_FCM_SERVICE_ACCOUNT_PATH
+```
+
+A `.p8` in `~/.vis/apns/` with `apns.edn` beside it, or a service-account JSON
+in `~/.vis/fcm/`, is picked up as well. `GET /v1/capabilities` reports push
+readiness under `features.push`.
+
+The web Companion uses browser Web Push with a key pair the gateway generates
+under `~/.vis/web-push/`; `VIS_WEB_PUSH_SUBJECT` sets the contact.
+
+Treat the APNs key, the FCM service account, the gateway token and
+`~/.vis/devices.edn` as secrets. Bundle ids, team ids, project ids and
+`google-services.json` are not.
+
+## HTTP API
+
+Every built-in route is described as OpenAPI 3.1, without a token:
 
 ```bash
 curl -sS http://127.0.0.1:7890/openapi.json -o vis-gateway.json
 ```
 
-That document is **OpenAPI 3.1** — which is JSON Schema 2020-12, so any generator reads it
-directly. It is public (no token, no protocol header: you generate a client *before* you have
-either), carries an `ETag`, and is rendered from the validated
-`packages/vis-contract/resources/vis-contract/gateway.json`. A route cannot exist without appearing
-there. The document states paths, methods, parameters, media types, audiences and shared errors.
-
-Routes contributed by an extension are deliberately absent: they belong to that extension's own
-contract, and including them would make the document depend on what happened to be loaded.
-
-## Protocol version and compatibility
-
-The gateway, the TUI, and the companion app update on different clocks: a phone
-keeps a cached build for weeks while `brew upgrade` moves the daemon, or a
-long-lived gateway serves a client shipped months later. So both halves publish
-two numbers next to their release version — the wire `protocol` they speak, and
-the oldest counterpart they still serve.
-
-The gateway advertises its contract on every open endpoint (`GET /healthz`,
-`GET /v1/capabilities`, `GET /v1/admin/status`):
-
-```json
-{"protocol": {"protocol": 1, "min_client": 1, "min_gateway": 1, "version": "…"}}
-```
-
-Every client stamps the mirror image on each request:
-
-| Header | Meaning |
-| --- | --- |
-| `X-Vis-Protocol` | wire protocol the client speaks |
-| `X-Vis-Min-Gateway-Protocol` | oldest gateway it can drive |
-| `X-Vis-Client` / `X-Vis-Client-Version` | who is calling, and its release |
-
-A client below `min_client` gets **HTTP 426 Upgrade Required** with a plain
-explanation instead of a payload it would misread; `/healthz`, `/readyz`,
-`/v1/capabilities`, `/openapi.json`, and `/docs` stay open so the refusal can explain itself. A
-gateway older than the client's floor is caught client-side from the same
-advertised block. Both directions render the SAME verdict — the TUI prints it as
-a panel, the companion replaces its UI with a version-mismatch screen naming
-which half is stale and how to update it. A peer that advertises nothing is
-grandfathered in, never refused.
-
-Bump protocol numbers in `packages/vis-contract/resources/vis-contract/gateway.json` only for a
-breaking wire change, and raise the minimum client protocol only when the old shape cannot be served.
-
-## Push notifications (iOS / Android)
-
-The gateway pushes exactly **one alert per finished turn** — `turn.completed` or
-`turn.failed` — to every device registered with it, so you can leave the app and
-still learn when the model is done. Nothing else is pushed, and the alert carries
-only the session title plus `session_id`, `turn_id`, `status` and the sending
-gateway's own `gateway_id` (the opaque id `/healthz` reports, so a phone paired
-with several machines opens the tapped session on the machine that raised it);
-the transcript never leaves the gateway. iOS devices are delivered through
-**APNs**, Android devices through **FCM**; each half is configured independently
-and either can be left off.
-
-### Who a gateway can actually push to
-
-Read this before configuring anything: APNs and FCM bind the credential to the
-**app build**, not to the gateway.
-
-- An APNs key signs only for topics owned by the Apple team that issued it. A key
-  from any other team, signing for someone else's bundle id, is refused with HTTP
-  403 `InvalidProviderToken` (or `TopicDisallowed`) — every time, permanently.
-- An FCM service account may only send to tokens minted from its **own** Firebase
-  project's `google-services.json`. Anything else is 403 `SENDER_ID_MISMATCH`.
-
-So the credentials below configure push for a companion **you build and sign
-yourself**, under your own Apple team and Firebase project, with your own bundle
-id and package name. They cannot make a companion distributed through the App
-Store or Play Store — which carries its publisher's topic and sender id — accept
-a push from your gateway. That is an Apple/Google constraint, not a vis setting:
-no key, topic, or environment value works around it.
-
-| You run | Push to that app |
-| --- | --- |
-| your gateway + your own rebuilt companion | ✅ configure it below |
-| your gateway + a store-distributed companion | only from a gateway holding **that publisher's** credentials |
-| your gateway + a store-distributed companion, using your own key | ❌ permanent 403 — nothing to configure |
-
-Native push needs no credentials at all. A gateway holding none reports `features.push`
-as **available** and delivers through the native relay described next; the credentials
-below only matter for a companion you build and sign yourself, when you would
-rather push directly than through anybody's relay. Browser push is separate:
-
-### Browser Web Push (gateway-local)
-
-The web companion does not use the native relay or a build-time URL. Each gateway
-generates its own VAPID P-256 key pair once under `~/.vis/web-push/`, advertises
-only its public key through `GET /v1/devices`, and sends encrypted Web Push
-requests directly to the browser's push service. The companion registers its
-service worker automatically and keeps one push subscription per gateway, so a
-user can run a private web app against any number of their own gateways without
-a shared publisher endpoint. `VIS_WEB_PUSH_SUBJECT` may set the VAPID contact
-(`mailto:` or `https://`); otherwise the gateway uses a local default.
-
-The browser's subscription is registered as `platform: "web"` on that gateway.
-The gateway owns the VAPID key, encryption, delivery and stale-subscription
-cleanup; no Cloudflare Worker or static relay URL is involved. Sessions and
-streaming are unaffected either way.
-
-
-### Relayed push (a gateway with no Apple or Google key)
-
-The way around the wall above is to hand the gateway a **capability** instead of a
-credential. The signing key stays on a relay the app's publisher runs; the device
-asks that relay for an opaque **grant** and gives the grant to the gateway.
-
-```text
-app     -> POST   /v1/grants        {device_token}   => a grant
-app     -> hands the grant to this gateway on "notify this device"
-gateway -> POST   /v1/push          Bearer <grant>   => the relay signs and sends
-(nothing is stored: the grant carries its own sealed expiry)
-```
-
-Nothing to configure, on either side. This gateway names the publisher's relay by
-default (`relay/DEFAULT-URL`), so `features.push` is available on a machine that
-was never configured — and which relay can sign for a companion build is a
-property of the **build**, so the app knows the address too: it mints its grant
-there and posts `{grant, relay_url}` to `/v1/devices` in one request. When the
-two differ the device wins, because only the relay that sealed a grant can open
-it.
-
-An operator can replace that default on one machine; it is then used for every
-device that named no relay of its own:
-
-```bash
-export VIS_PUSH_RELAY_URL=https://push.example.com
-echo '{:url "https://push.example.com"}' > ~/.vis/relay.edn
-```
-
-Registering by hand carries the address in the same body:
-
-```bash
-curl -sS -X POST "$GATEWAY/v1/devices" \
-  -H "x-vis-protocol: 2" -H "authorization: Bearer $VIS_TOKEN" \
-  -H 'content-type: application/json' \
-  -d '{"grant":"…","relay_url":"https://push.example.com","platform":"ios","label":"iPhone"}'
-```
-
-What that changes, and why it is worth an extra hop:
-
-- this gateway holds **no `.p8` and no service-account JSON** — nothing whose leak
-  can only be repaired by breaking push for every other gateway;
-- this gateway **never learns the raw device token**, so a gateway you do not trust
-  cannot fingerprint the device it notifies;
-- **a grant expires by itself** — its expiry is sealed inside it, so an abandoned
-  gateway goes mute on its own and the relay never keeps a list of anybody;
-- the relay learns *when* a push happened, never *what* — the alert body can be
-  encrypted app-side, so the promise above still holds.
-
-A relay answering `404` (the grant is forged, expired, or was sealed under a key the
-relay has since rotated away) or `410` (the provider says the device is gone) makes
-the gateway forget the device on the spot. Direct credentials and a
-relay can coexist: a device registered with a `token` uses the credentials below,
-a device registered with a `grant` uses the relay. `GET /v1/devices` reports which
-under `push.relay`.
-
-The relay itself is in this repo — `apps/vis-companion-relay`, a Cloudflare Worker
-that stores **nothing**: no database, no queue, no cron. A grant is an AES-256-GCM
-sealed capability carrying its own device token and expiry, and the abuse counters
-live in Cloudflare's rate limiting bindings, so there is no table to dump, exhaust,
-or migrate. Its README covers deploying, the limits and the failure verdicts.
-
-**Run your own.** The address is a build constant on both sides — the companion's `PUBLISHER_RELAY_URL` and the gateway's `relay/DEFAULT-URL`, which a test keeps equal. A self-hoster changes them in their own build, next to the bundle id and `google-services.json` they already had to change.
-
-1. Deploy that Worker to your own Cloudflare account, with your own `RELAY_SEAL_KEY` and your own APNs key or Firebase service account.
-2. Point your build at it: every phone running your build then mints there, on every machine, with nothing of yours touching anyone else's infrastructure.
-3. `VIS_PUSH_RELAY_URL` overrides one machine when you want it to.
-
-The one thing configuration cannot move is the wall at the top of this section: a relay signs for the app whose keys it holds, so your own relay serves *your own* companion build — a store-distributed companion can only be woken by the relay its publisher runs.
-
-Two failures are worth telling apart. An address that is not `https` is not a relay:
-the gateway reports `push.relay.is_insecure`, refuses to hand it a grant
-(`insecure-relay-url`) before opening a socket, and the companion names the address
-rather than blaming absent credentials — loopback is the only exception, for
-`wrangler dev`. A relay that merely stumbles (no answer, `502`, `503`, `504`) is
-asked exactly once more; every other verdict is final.
-
-### Gateway side, iOS (APNs credentials)
-
-Push is **off until the gateway holds an APNs key**. On macOS the key can live in
-the login keychain, so nothing sensitive touches the filesystem:
-
-```bash
-security add-generic-password -U -s vis-apns -a key      -w "$(cat AuthKey_ABCD123456.p8)"
-security add-generic-password -U -s vis-apns -a key_id   -w ABCD123456
-security add-generic-password -U -s vis-apns -a team_id  -w YOURTEAMID
-security add-generic-password -U -s vis-apns -a topic    -w com.example.yourapp
-security add-generic-password -U -s vis-apns -a environment -w production
-```
-
-The key is read per signature rather than cached, so locking the keychain stops
-delivery immediately. Otherwise give the gateway one of:
-
-```bash
-export VIS_APNS_KEY_PATH=~/.vis/apns/AuthKey_ABCD123456.p8
-export VIS_APNS_KEY_ID=ABCD123456
-export VIS_APNS_TEAM_ID=YOURTEAMID                  # your Apple team id
-export VIS_APNS_TOPIC=com.example.yourapp           # your own build's bundle id
-export VIS_APNS_ENV=production                      # or sandbox for Xcode builds
-```
-
-or drop the `.p8` into `~/.vis/apns/` (the key id is read from its filename) and
-put the rest in `~/.vis/apns/apns.edn`:
-
-```clojure
-{:team-id "YOURTEAMID" :topic "com.example.yourapp" :environment "production"}
-```
-
-Create the key once at *Apple Developer -> Certificates, Identifiers & Profiles
--> Keys*, with the **Apple Push Notifications service (APNs)** capability
-enabled. A team-scoped key signs for every app of that team (Apple allows two
-per environment); a topic-specific key is restricted to the bundle ids you
-select. Neither kind expires — the only remedy for a leaked key is revoking it,
-which breaks push for every gateway that was using it.
-
-`GET /v1/capabilities` reports readiness as `features.push`, naming what is
-missing when it is not ready.
-
-### Gateway side, Android (FCM credentials)
-
-Android uses **FCM HTTP v1**, which authenticates with a Firebase *service
-account* JSON (Firebase console -> *Project settings -> Service accounts ->
-Generate new private key*). Same trust model as the APNs key:
-
-```bash
-security add-generic-password -U -s vis-fcm -a service_account -w "$(cat sa.json)"
-security add-generic-password -U -s vis-fcm -a project_id      -w your-firebase-project
-```
-
-or, without a keychain:
-
-```bash
-export VIS_FCM_SERVICE_ACCOUNT_PATH=~/.vis/fcm/service-account.json
-```
-
-A `*.json` service account dropped into `~/.vis/fcm/` is picked up as well. The
-gateway signs an RS256 assertion, exchanges it for an OAuth access token (cached
-for 50 minutes) and posts to `projects/<id>/messages:send`; tokens FCM reports as
-`UNREGISTERED`/`INVALID_ARGUMENT` are evicted like their APNs counterparts.
-
-The app half is `google-services.json` from the same Firebase project, for an
-Android app whose package name equals the Capacitor `appId`. Because `android/`
-is regenerable and gitignored, it is stamped in at build time by
-`npm run prepare:android` (also run by `npm run android` / `build:android`) from
-the keychain (`vis-fcm/google_services`), `~/.vis/fcm/google-services.json`, or
-`--file`. Without it the app still builds and simply never gets a token.
-
-Registrations from a platform the gateway cannot serve are stored and listed but
-never sent — the device reports `unsupported-platform` rather than having its
-token thrown at the wrong provider.
-
-### Secret, or shippable?
-
-Running gateways for other people means distributing none of the first group.
-
-| File or value | Verdict |
-| --- | --- |
-| APNs key `~/.vis/apns/AuthKey_*.p8` | **secret** — a private signing key; whoever holds it can push to every app it is scoped to, until it is revoked |
-| FCM service account `~/.vis/fcm/*.json` | **secret** — a Google private key, same rule |
-| gateway token (`--token-file`, `~/.vis/gateway.token`) | **secret** — full API access to that gateway |
-| device tokens (`~/.vis/devices.edn`) | **private** — never echoed in full; `GET /v1/devices` masks them |
-| `google-services.json` | **shippable** — client config that already sits inside every APK; it holds no private key |
-| bundle id / package name, APNs topic, Apple team id, Firebase project id | **public** — identifiers, not credentials |
-| APNs key id (`ABCD123456`) | **public** — it is just the `.p8` filename |
-
-There is no way to hand out the first group safely, and no per-holder
-revocation: one leak revokes the key for everyone. If devices must be woken by
-gateways you do not control, the signing key stays on a service you run and
-those gateways call it — it is never copied onto them.
-
-### Device registry
-
-| Route | What it does |
-| --- | --- |
-| `GET /v1/devices` | registered devices (tokens **masked**) + this gateway's push readiness |
-| `POST /v1/devices` | idempotently register `{token, platform, environment, client, client_version, label}` |
-| `DELETE /v1/devices/:token` | stop pushing to one device |
-| `POST /v1/devices/actions/test` | one test alert to every device, with the provider's per-device verdict |
-
-Tokens live in `~/.vis/devices.edn`, are never echoed back in full, and a device
-Apple reports as `Unregistered`/`BadDeviceToken` is evicted automatically. A
-token registered under the wrong APNs environment is retried once against the
-other one and then re-labelled — the single most common misconfiguration fixes
-itself.
-
-### App side
-
-Companion -> gateway **Settings -> Notifications**: *Notify this device* asks the
-OS for permission, registers the device token with that gateway, and *Send a test*
-proves the whole chain. Tapping an alert reopens the session it came from.
-
-The iOS capability itself (`aps-environment` entitlement + AppDelegate token
-forwarding) is stamped into the regenerable `ios/` project by
-`npm run release:ios:store -- --prepare`, so it survives a `cap add ios`. Android needs
-no entitlement — only `google-services.json`, stamped by `npm run prepare:android`.
-
-
-## Voice transcription: two SSE streams, one name
-
-A recording is POSTed once and then WATCHED. The gateway never holds the upload
-socket open for the length of a transcription, and nothing polls for a percentage.
-
-| Route | Answer |
-| --- | --- |
-| `POST /v1/sessions/:sid/voice` | `202` with the JOB (`id`, `phase`, `percent`), not a transcript |
-| `GET /v1/sessions/:sid/voice/jobs/:job-id` | that job's current state, one shot |
-| `GET /v1/sessions/:sid/voice/jobs/:job-id/events` | SSE: the job's state now, then one frame per change |
-| `DELETE /v1/sessions/:sid/voice/jobs/:job-id` | release the job once its transcript has been read |
-
-Phases are `uploading`, `queued`, `preparing`, `transcribing`, `done`, `failed`.
-`percent` is monotonic *within* a phase and resets when the phase changes, so
-"sending" and "transcribing" are two different sentences to a human and a first-run
-model download reports its own `preparing` percentage instead of looking stuck.
-
-### The job stream is NOT the session event log
-
-The gateway speaks SSE on two unrelated resources, so a client keys off the
-frame's `event:` name and never off the shape of the JSON inside it:
-
-| | `GET /v1/events?sids=<sid>` | `GET .../voice/jobs/:job-id/events` |
-| --- | --- | --- |
-| `event:` | the engine event type (`turn.delta`, ...) | always `voice.job` |
-| `id:` | the event `seq`; resumable with `Last-Event-ID` | none, a job has no log to replay |
-| Lifetime | open for the session | ends on the job's terminal frame |
-| `data:` | one engine event | that one job's whole state |
-
-`GET /v1/capabilities` advertises the contract so none of it has to be guessed:
-`features.voice.is_async`, `features.voice.progress` (`"sse"`),
-`features.voice.progress_event` (`"voice.job"`), the `phases` vocabulary, every
-registered engine in `engines[]`, and the `selected` engine id. That name has one
-source, `com.blockether.vis.contract.gateway/voice-job-event`; the companion mirrors it as `VOICE_JOB_EVENT`
-(`apps/vis-companion/src/lib/gateway.ts`) and a cross-channel test fails if the two
-spellings ever drift.
-
-## Shared slash commands
-
-`GET /v1/slashes` returns the channel-safe command palette used by web clients.
-The daemon derives it from the same extension slash registry and prompt templates
-as the TUI, then adds client-native navigation commands such as `/new-session`
-and `/sessions`. Sending an engine command as a normal turn still uses the
-canonical slash dispatcher and does not call an LLM.
-
-
-## Resource limits and metrics
-
-The gateway bounds expensive CPython work process-wide and evicts idle session
-environments under heap or resident-memory pressure. Defaults favor stable
-memory use; override them before starting the gateway when a larger host needs
-more concurrency:
+Routes added by extensions are not included.
+
+Gateway and clients each publish the protocol version they speak and the oldest
+counterpart they serve. The gateway advertises it on `GET /healthz`,
+`GET /v1/capabilities` and `GET /v1/admin/status`; a client sends
+`X-Vis-Protocol`, `X-Vis-Min-Gateway-Protocol`, `X-Vis-Client` and
+`X-Vis-Client-Version`. A client that is too old gets `HTTP 426`, and a client
+facing a gateway that is too old shows a version-mismatch screen. The health,
+capabilities, OpenAPI and docs routes stay open so the message can be read.
+
+Other routes worth knowing:
+
+- `GET /v1/events?sids=<sid>` — the session event stream (SSE), resumable with
+  `Last-Event-ID`.
+- `POST /v1/sessions/:sid/voice` — upload a recording; answers `202` with a
+  job, whose progress streams from `…/voice/jobs/:job-id/events` as
+  `voice.job` frames.
+- `GET /v1/slashes` — the slash commands available to web clients.
+- `GET`/`POST`/`DELETE /v1/devices` — registered push devices, tokens masked.
+- `GET /metrics` — Prometheus metrics (or JSON with `Accept: application/json`).
+
+## Python SDK
+
+`blockether.vis.engine.GatewayClient` talks to a gateway you name by URL and
+token. `LocalEngine` runs a Vis executable as a subprocess with no gateway at
+all. See the [Python SDK](https://pypi.org/project/vis-agent/).
+
+## Resource limits
+
+Set before starting the gateway:
 
 | Variable | Default | Purpose |
 | --- | ---: | --- |
-| `VIS_GATEWAY_MAX_CONCURRENT_TURNS` | `50` | Simultaneously executing turns across all sessions |
-| `VIS_GATEWAY_EVENT_RING_MAX` | `2000` | In-memory SSE replay events retained per session |
-| `VIS_ENV_CACHE_MAX` | `8` | Resident idle session environments |
-| `VIS_ENV_MAX_TURNS_PER_CTX` | `25` | Turns before a long-lived Python session is recycled |
-| `VIS_ENV_RSS_BUDGET_MB` | `3072` | Whole-process RSS threshold, including native/CPython memory |
+| `VIS_GATEWAY_MAX_CONCURRENT_TURNS` | `50` | Turns executing at once across all sessions |
+| `VIS_GATEWAY_EVENT_RING_MAX` | `2000` | Events kept per session for SSE replay |
+| `VIS_ENV_CACHE_MAX` | `8` | Idle session environments kept resident |
+| `VIS_ENV_MAX_TURNS_PER_CTX` | `25` | Turns before a Python session is recycled |
+| `VIS_ENV_RSS_BUDGET_MB` | `3072` | Process memory threshold for eviction |
 
-Values `<= 0` disable an eviction threshold; non-positive concurrency and event
-ring values fall back to their defaults. `GET /metrics` exposes active/waiting
-turns, queue depth, replay retention, environment-cache size, JVM heap/GC/thread
-gauges, process RSS, and memory-pressure state in Prometheus format (or JSON
-when requested with `Accept: application/json`).
+A value `<= 0` disables an eviction threshold.
 
 ## See also
 
-- [Process jail & egress](jail.md) — the egress proxy and the policy it enforces.
-- [Configuration](configuration.md) — every `gateway` key, and the token model in config form.
-- [Runtime distributions](distributions.md) — which runtime the daemon you are talking to is.
+- [Process jail and network policy](jail.md) — the egress proxy the gateway runs.
+- [Configuration](configuration.md) — MCP servers and other gateway-managed settings.
+- [Runtime distributions](distributions.md) — updating the gateway's runtime.

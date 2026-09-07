@@ -1,171 +1,77 @@
-# Token optimization
+# How Vis manages context
 
-Vis follows one rule: **do not pay tokens for data that can stay addressable.** Files, large tool results, and history remain in the runtime until needed. The model receives only the smallest useful slice.
+Every token the model reads costs money and attention, and a long session can
+fill a context window with files, tool output and history that no longer
+matter. Vis is designed around one rule: data stays addressable in the runtime,
+and the model receives only the slice it needs. This page explains the
+mechanisms behind that rule so you can predict what a session costs and why it
+behaves the way it does.
 
-## Discover before guessing
+## One tool, many functions
 
-The runtime answers exactly two questions. `apropos(pattern)` applies a regular
-expression to every public SYMBOL name, and `doc(target)` retrieves one whole
-record:
+The model has a single tool, `python_execution`. Every capability (searching,
+reading, editing, running tests, shells) is a Python function inside it, and
+only what a block prints returns to the model. That has three consequences:
 
-```python
-apropos(r"^patch$")             # exact public handle
-apropos(r"^numpy\..*")         # every NumPy member
-apropos(r"(read_csv|to_markdown)") # alternatives are ordinary regex
-apropos()                        # every public symbol, in corpus order
-doc("patch")                     # one function's whole contract
-doc(apropos(r"^pandas\.read_csv$")[0])  # an item is a doc target
-doc("gateway")                  # a documentation page by slug
-doc("release-checklist")         # a skill, whole
-doc()                            # curated starting verbs
-```
+- A batch of fifty operations costs one tool call, not fifty.
+- Intermediate results live in Python variables and never enter the context.
+- The model writes small programs, reusing helpers it defined earlier. `defs()`
+  lists them, and they survive turns and even a gateway restart.
 
-Search is deliberately literal. It uses Clojure `re-find` over `name` only,
-preserves manifest/resource order, and never tokenizes, scores, sorts, corrects
-spelling, or reads document bodies. A blank pattern lists everything; an invalid
-regular expression is an error.
+The `session` dict the model sees is rebuilt before every block from the
+engine's snapshot: turn counters, workspace roots, utilization figures and the
+slices extensions contribute.
 
-Each hit is `AproposItem(type, name, body)`: `type` says what the symbol is
-(`function` · `class` · `module` · `tool` · `doc` · `skill`), `name` is the exact
-handle `doc()` reads, and `body` is the first 100 characters of its text. The
-whole document remains behind `doc(name)`. Static records come only from the EDN
-resource each entry names in `META-INF/vis/manifest.edn`; session skills
-and live MCP contracts are explicit runtime additions. Helpers you define are
-listed by `defs()`, not `apropos()`.
+## Discovery instead of catalogs
 
-Use these verbs before inventing a name or call shape.
+The prompt does not carry every signature. The model finds capabilities with
+`apropos(pattern)`, a regular-expression filter over public symbol names, and
+reads one whole contract with `doc(name)`. Documentation pages and skills are
+reachable the same way (`doc("gateway")`, `doc("release-checklist")`). Search
+never reads document bodies or scores results; it is a literal filter in
+manifest order.
 
-## Read the region before bytes
+## Addresses, not copies
 
-`grep({"query": [needles], "paths": [scopes], "context": 4})` locates unknown code and answers one ANCHORED text block, so the search that FINDS a line also ADDRESSES it:
+`grep` and `cat` return anchored text: each line is `line:hash│ text`. Those
+anchors are the coordinates `patch` edits by, so the search that finds a line
+also addresses it, and the read that shows a region is the read the edit
+spends. A `patch` call carries every edit for one file in one atomic write,
+re-parses the file afterwards and refuses a syntax-breaking batch whole.
 
-```text
-src/com/blockether/vis/internal/foundation/editing/core.clj  (2)
-  4395:573│ (defn- patch-edit-rows
-  ⋮
-  4735:981│ (defn- patch-tool
-```
+Because the edit names an address rather than restating text, the model never
+pays to quote back what it replaces. `Path.read_text()` remains available for
+files that are only consumed.
 
-Every hit is already a `patch` argument. Terms are ORed over every scope; `context: N` adds N anchored lines on each side, so keep it whenever nearby code may answer and omit it only for pure location/count sweeps. `include`/`exclude` bound which files the content sweep reads, `is_regex: True` runs the query as a real regex, and `query: ""` lists files. A wide sweep answers ONE page and line 1 says so, but the page CONTINUES ITSELF: `next(g)` is the next one (`StopIteration` when this page already is the whole answer, so `next(g, None)` is the sentinel form), `g.pages()` walks them bounded, and `g.all()` is the lot as one text.
+## Folding settled work
 
-For a known region, `cat(path, start, end)` returns that window as `line:hash│ text` — one anchored line per source line, so the read that shows you the region also ADDRESSES it. A negative endpoint counts from the end (`cat(path, -50)` is the tail 50 lines, `cat(path, -50, -30)` the window between them). `Path(path).read_text()` is for a file you only consume, never for one you are about to edit.
+`fold_session(key, gist)` removes settled steps from future model calls without
+deleting anything from the database. A key names turns or iterations:
+`"t2"` a whole turn, `"t2/i4-i5"` a range, `"-t3/i9"` everything through a
+step, and several keys separated by commas make one fold. The live iteration is
+the only thing that cannot be folded.
 
-## Edit by address, never by restating text
+The gist is what survives on the wire, so a good one is a checkpoint rather
+than a transcript: conclusions, open questions, exact paths and symbols, the
+state of edits and tests. Folded content remains readable through
+`read_session()` when the `introspection` toggle is on; with it off, the gist
+is all that remains.
 
-One editor, one coordinate: `patch` spends an anchor `cat` or `grep` already produced, instead of quoting back the text it replaces. It re-parses the file after the write, so a syntax-breaking batch is refused whole and the file is left untouched.
+The model watches `session["utilization"]`: `last_request_tokens` against
+`auto_compress_above` (200k by default) is the operating pressure, and a
+`hint` appears for a few turns once the ceiling is crossed. `saturation` and
+`headroom_tokens` are measured against the model's hard input limit instead.
 
-```python
-print(patch(path, [{"from": "4439:a80", "replace": '     :result "One row per edit."'}]))
-patched src/…/editing/core.clj  1 edit  5182 → 5182 lines  parse: clean
-  1  4439..4439  → 1 line  4439:b16
-```
+## What this buys
 
-`patch(path, edits)` carries EVERY edit for that file in ONE atomic write. A range is canonical — `[{"from": a, "to": b, "replace": text}]` — while `to` defaults to `from` only for a one-line edit and `replace: ""` deletes. Every endpoint must match its exact current `line:hash`; `patch` never relocates a write by searching for the hash elsewhere. The answer returns one fresh output range per edit, abbreviated to one anchor for one line, so a follow-up needs no second `cat`. Edits may be listed in any order because they all resolve against one read; two edits over the same line are refused. Only a new file or a genuine wholesale replacement is a `python_execution` write (`Path.write_text`) — the same filesystem gate applies.
-
-## Keep intermediate data in Python
-
-Every capability is a Python function, so one operation and a batch of fifty cost the same one call: raw results stay in Python vars and only explicit `print()` output reaches context. Run independent calls concurrently with `await gather(...)`; keep dependent chains sequential.
-
-Printing is the whole cost model, and it cuts both ways. An unprinted value costs no context — and it is also gone once the block ends, because nothing stores a result the next block could re-read. Print the slice the answer needs, then keep working from the variable while the block is still running.
-
-```python
-todos, fixmes = await gather(
-    grep({"query": "TODO", "paths": paths, "context": 2}),
-    grep({"query": "FIXME", "paths": paths, "context": 2}),
-)
-# grep answers TEXT; line 1 is its summary
-print(todos.splitlines()[0], fixmes.splitlines()[0])
-```
-
-This turns many reads plus a reduction into one visible result instead of one transcript entry per intermediate value.
-
-## Write a program, not a transcript
-
-The sandbox keeps state between blocks, so treat it as one program the session is building rather than a run of disposable snippets.
-
-Derive workspace paths from `project_root_path`, a prebound `pathlib.Path` supplied by the host for `session["workspace"]["root"]`. Additional projects advertise their exact names in `session["workspace"]["filesystem_roots"]`: an entry with `python_name` binds a prebound `Path` to that entry's `cwd`, such as `fff_path` or `vis_python_runtime_path`. Entries without `python_name` have no path global. Do not redefine these names or guess an alias. The entries and their `Path` bindings refresh together before every block, including draft paths and removed projects:
-
-```python
-src, tests = project_root_path / "src", project_root_path / "test"
-```
-
-A tool takes that `Path` itself: every path argument crosses the sandbox boundary as its filesystem string, so `cat(src / "core.clj")` is the same call as `cat` on the path text.
-
-Write a small helper the first time a shape repeats, then CALL it from every later block — a function defined in an earlier block is still bound, and redefining it is a paste the context pays for twice:
-
-```python
-def hits(needles, *paths, ctx=4):
-    """Anchored `line:hash│ text` rows only, across every page."""
-    text = grep({"query": needles, "paths": list(paths), "context": ctx}).all()
-    return [l for l in text.splitlines() if "│ " in l]
-```
-
-A definition lives as long as the **session**, and now longer than the **process**: a helper written in turn 2 is still callable in turn 9, and a gateway restart re-creates it in the fresh sandbox from a snapshot the host writes after every block (module aliases, scalar constants and the definitions themselves — never a previous block's side effects). `defs()` is the whole inventory; `defs(name)` hands the source back so a helper is refined instead of re-typed:
-
-```python
-print(defs())            # 2 definitions in this sandbox
-                         #   deploy_ok(env)                <prog:1>  2 lines
-                         #   hits(needles, *paths, ctx=4)  <prog:1>  3 lines  Anchored `line:hash│ text`
-                         #                                                    rows only, across every page.
-                         # defs("name") returns one's source. 1 has no docstring — one line of it would be
-                         # the gist above, the whole of it a doc(name) page the next turn can read.
-print(defs("hits"))      # its source — edit THAT, never re-paste from memory
-```
-
-A helper's **docstring is its document** — the only page you write while the session runs. Its first line is the gist `defs()` prints beside the name, and the whole of it is what `doc("hits")` answers. Sandbox helpers are absent from `apropos`; `defs()` is their catalogue, and the docstring is what the NEXT turn reads before it re-types the helper from memory.
-
-`project_root_path`, the registered project names, and `session` are host-owned: assigning or deleting one only shadows it inside that block, never replaces it for later blocks. The `session` dictionary is rebuilt from the engine snapshot before every block, so `session["helpers"] = …` also disappears — a silent loss, not an error. Keep state in ordinary names — and give a helper its OWN name: a top-level `def cat(...)` or `class grep:` named after a bound tool is refused where it is written, because that definition could only ever shadow the tool inside its own block and would never be persisted or restored.
-
-When the same helper survives across turns — a deploy check, a fixture loader, a project-specific guard — it has outgrown the sandbox. Propose a **Python extension**: one file in `.vis/extensions/*.py` registers a named tool for every future session in that project, and `doc("extending")` is the whole recipe — including the durable `state` an extension owns by NAME, which is the only storage that survives `/reload` and a restart. Propose it; write it when the user asks.
-
-## Fold settled steps
-
-`fold_session(key, gist)` removes **settled wire steps** from future model calls; it does not delete database history. Settled means every completed prior turn AND the current turn's already-finished iterations. At the start of a new turn, understand the new request first, then fold earlier work that no longer needs raw detail:
-
-```python
-fold_session("t2/i4-i5", "HTTP timeout fixed in src/blockether/vis/net/http.clj:52; regression test passes")
-```
-
-The only step the runtime refuses to fold is the **live iteration you are emitting right now** (and any future step) — it is not settled yet. Every completed iteration is foldable, including finished iterations of the current turn: trim the current turn up to the last settled iteration with `"-tN/iK"`. A blocked attempt names only the live scope, so drop it and keep the settled ones. Keep active reproduction output, reads, edits, failures, and verification live until they settle.
-
-A useful gist is the **minimum sufficient checkpoint, not a transcript**. Keep conclusions, unresolved unknowns, the exact `path:line` or symbol, one decisive evidence coordinate per decision, verification, intended edit/test state, and dirty files. Drop raw output, repeated rationale, and whole files or test bodies. After the receipt, continue from the gist instead of rereading settled exploration merely to summarize or fold it again. A targeted reread of the exact edit region when its locator is stale is not an exploration loop. Omit the gist entirely when the folded steps contain no reusable information.
-
-The key is a **string**: `"t2/i5"` one step, `"t2"` a whole turn, `"t2/i1-i56"` (or `"t2/i1..i56"`) a range, `"-t2/i56"` everything through it, `"t2/i5-"` everything since it — comma-separate several, disjoint ranges included (`"t1/i61-i98, t3/i111-i135, t4"` is ONE fold), and a list of key strings works too. A token that is not a step key, or a key matching no settled step, is refused by name rather than folding nothing. A broader newer fold supersedes every fully covered narrower breadcrumb; equal scopes keep the newer gist. Partial overlaps remain separate.
-
-### Folding changes rendering, not storage
-
-A folded step is not re-readable inline, and there is no destructive `unfold` command:
-
-- Current conversation: `s = await read_session()`, select `s["transcript"]["turns"]` by numeric `position`, then filter `['iterations'][...]['blocks']` for the raw code/results.
-- Another conversation: `await list_sessions(search="…")` — the same ranked search the TUI and the companion app run — to find its id, then `await read_session(id)` and filter the same path. `get_session(id)` answers ONE descriptor row when the id is all you need.
-
-This recovers evidence without restoring it to the model wire. Filter in `python_execution`; never dump a full transcript back into context.
-
-`read_session`, `get_session` and `list_sessions` are bound only while the `introspection` toggle is ON (default OFF — enable it in `vis.yml` under `toggles:` or from the settings dialog). Compact token/tool/provider diagnostics live at `read_session()["usage"]`. With introspection OFF a folded step is not recoverable at all — the gist is what survives, so write one that carries the finding.
-
-### The budget stays visible
-
-The fold breadcrumb shows the reclaimed scope and a token estimate. Its `~N% of budget` measures that reclaim against the **operating ceiling** — `auto_compress_above` (the 200k soft compaction guardrail), or the live handled context (`last_request_tokens`) once a bigger task has grown past it — not the hard per-call max, so a working fold never reads as noise. `session["utilization"]["now"]` reports total saved context and the scopes still represented on the wire.
-
-That operating ceiling is the number to act on. `saturation` and `headroom_tokens` are priced against `model_input_limit`, the HARD per-call ceiling: on a 1M-window model, 150k of handled context reads as `saturation 15%` with 850k headroom while `over-budget-hint` is already saying `FOLD SOON`. The live pressure is `last_request_tokens` against `auto_compress_above`.
-
-When handled context climbs above the ceiling, `session["utilization"]["hint"]` adds one throttled nudge to fold settled turns. It fires for at most three turns from the crossing, then goes quiet; dropping back under the ceiling re-arms a fresh window for the next crossing.
-
-## The net effect
-
-The efficient path is:
-
-1. Discover capabilities with `apropos`, then read the one contract with `doc`.
-2. Locate relevant files and symbols with `grep` — it answers one anchored TEXT block, never a map, so a hit is already a `patch` argument.
-3. Read only the region you are about to change with `cat(path, start, end)`.
-4. Edit by ADDRESS with `patch`, every edit for one file in ONE call; fall back to a `python_execution` write only for a new file or a wholesale replacement.
-5. Keep batch intermediates in `python_execution`.
-6. Fold completed prior-turn noise while preserving durable evidence.
-
-Vis spends context on decisions and proof, not repeated catalogs, whole files, intermediate results, or dead history.
+A typical edit costs: one `grep` for the location, one `cat` of the region,
+one `patch`, one test run. No whole files, no repeated catalogs, no
+intermediate values in the transcript. When a helper recurs across turns it
+becomes an extension, so a step that took five calls takes one; see
+[Extending Vis](extending.md).
 
 ## See also
 
-- [Python sandbox](python-sandbox.md) — the runtime the model's one tool executes in.
-- [Extending Vis](extending.md) — adding your own tools, so a step costs one call instead of five.
+- [Python sandbox](python-sandbox.md) — the interpreter the model's programs run in.
+- [Extending Vis](extending.md) — turning a recurring helper into a tool.
 - [Skills](skills.md) — instructions pulled on demand instead of pushed into every request.

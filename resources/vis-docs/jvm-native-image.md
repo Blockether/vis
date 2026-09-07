@@ -1,52 +1,74 @@
-# JVM & native-image
+# Building the native binary
 
-Vis's core is Clojure on the JVM. `clojure -T:build native` compiles that core into a fast GraalVM native runtime, but the native executable is never the public distribution by itself: releases always place it beside the `vis-agent` Bash wrapper as `vis-agent-native`, and `vis-agent update --rebuild` is how you build one locally from an installed source runtime.
+The Vis engine is Clojure on the JVM. `clojure -T:build native` compiles it
+with GraalVM into `vis-agent-native`, which releases ship beside the
+`vis-agent` wrapper. This page covers what a contributor needs to build that
+binary: the GraalVM pin, how configuration reaches the image, and building
+behind a TLS-intercepting proxy. Installing a released binary needs none of
+this; see [Runtime distributions](distributions.md).
 
-## Config travels inside the image
+## Prerequisites
 
-Each jar on the classpath carries its own `META-INF/native-image/<group>/<artifact>/` directory, auto-discovered at build time. Vis's own args + reachability metadata live there; library jars (CPython, sqlite, jetty, …) contribute their own. No giant command line.
+- GraalVM Community Edition at the exact version in `.graalvm-version`.
+  `bin/require-graalvm` installs and selects it; `eval "$(bin/require-graalvm
+  --export)"` exports `JAVA_HOME`. Oracle GraalVM is rejected because it would
+  relicense the shipped binary, and a different version fails the JDK gate
+  before `native-image` starts.
+- A source runtime. `vis-agent update --rebuild` runs the same build from an
+  installed source checkout.
 
-- **Unified `reachability-metadata.json`** — reflection, resources, and FFM downcalls in one file (the legacy `reflect-config.json` split is gone).
-- **`InitClojureClasses`** — graal-build-time initializes every Clojure-generated class at build time, so there are no per-namespace `--initialize-at-build-time` flags, and runtime-reflection entries for `*__init` / `$fn__NNNN` classes are pure noise (a filter strips them after agent regeneration).
-- **Don't duplicate a library's config** — each library ships its own args; Vis adds only app-level reflection and its own flags.
-- **The Python interpreter travels *beside* the binary** — the embedded CPython is a cdylib plus a vendored interpreter tree, staged by `clojure -T:build native` (`stage-python-sidecar!`) into `target/vis-agent-python/` instead of being embedded as image resources.
-  - **Why** — the tree is tens of megabytes; embedding it would push the builder's live set past what a 16 GB CI runner survives, and none of it is read through `io/resource` anyway — CPython opens its own files.
-  - **In a release bundle** — the directory ships as `vis-agent-python/`, `bin/stage-release-bundle` refuses a bundle without it, and `bin/vis-agent` exports `VIS_PYTHON_NATIVE_PATH` pointing at the cdylib inside it (the interpreter home is the `python/` tree beside that file).
-  - **On the JVM** — the same tree ships inside `com.blockether/vis-python-runtime-native-<platform>` and is resolved from the classpath, so a source checkout needs no extra step.
+## How configuration reaches the image
 
-## FFM, not JNI
+Each jar carries its own `META-INF/native-image/<group>/<artifact>/`
+directory, discovered automatically at build time, so there is no long command
+line and no duplicated library configuration:
 
-Native libraries are reached through the JDK Foreign Function & Memory API. The tree-sitter language pack, for example, loads its native parser via FFM downcalls — which native-image supports with `-H:+ForeignAPISupport` and `-H:+SharedArenaSupport`, both shipped in the pack's own config so they apply automatically.
+- Reflection, resources and FFM downcalls live in one
+  `reachability-metadata.json` per jar.
+- Clojure-generated classes are initialized at build time, so no
+  per-namespace `--initialize-at-build-time` flags are needed.
+- The manifest's initialization vector is the native root set; `build.clj`
+  derives entry points from it.
+- Native libraries such as the tree-sitter language pack are reached through
+  the Foreign Function and Memory API, enabled by the pack's own
+  `-H:+ForeignAPISupport` and `-H:+SharedArenaSupport`.
 
-## Reachability metadata is generated, then cleaned
+The Python interpreter is not embedded. The build stages it into
+`target/vis-agent-python/` beside the binary, because the tree is tens of
+megabytes and CPython opens its own files. A release bundle ships that
+directory, and `bin/vis-agent` points `VIS_PYTHON_NATIVE_PATH` at it.
 
-Metadata is captured by the tracing agent (`-agentlib:native-image-agent`) and merged. Because merging accumulates, a deterministic filter removes the agent's Clojure-internal noise so the committed config stays lean and reviewable. See the contributor guide for the exact commands.
+## Regenerating reachability metadata
+
+Run the code paths under the tracing agent
+(`-agentlib:native-image-agent=config-merge-dir=…`), then run the repository's
+filter to strip Clojure-internal entries so the committed file stays
+reviewable. `native_reachability_test` pins the engine's metadata. A green JVM
+suite is not proof the binary runs: `clojure -M:test-native` exercises the
+built image.
 
 ## Building behind a corporate TLS proxy
 
-A freshly installed GraalVM trusts the public roots and nothing else, so on a network that intercepts TLS the build fails with `SunCertPathBuilderException: unable to find valid certification path to requested target` — dependency resolution, `native-image`, or the JDK download itself — even though the system JDK works, because its `cacerts` was patched by the corporate installer.
-
-Point vis at the extra root instead of patching the JDK (a patched `cacerts` is silently lost on the next reinstall):
+A fresh GraalVM trusts only public roots, so a network that intercepts TLS
+fails with `SunCertPathBuilderException: unable to find valid certification
+path to requested target`. Point the build at the extra root instead of
+patching the JDK:
 
 ```bash
-export VIS_CA_CERT=/etc/ssl/certs/corporate-ca.pem   # PEM bundle
-eval "$(bin/require-graalvm --export)"               # JAVA_HOME + JAVA_TOOL_OPTIONS
+export VIS_CA_CERT=/etc/ssl/certs/corporate-ca.pem
+eval "$(bin/require-graalvm --export)"
 clojure -T:build native
 ```
 
-`bin/require-graalvm` is the single owner of that policy:
-
-- `curl` gets `--cacert`, so the pinned JDK downloads.
-- The PEM is imported into a **copy** of that JDK's `cacerts`, cached under `${XDG_CACHE_HOME:-~/.cache}/vis`, so the public roots keep working and the JDK is never modified. Run `bin/require-graalvm --truststore` to print the path.
-- `--export` adds `-Djavax.net.ssl.trustStore*` to `JAVA_TOOL_OPTIONS` (which every forked JVM reads, unlike `JDK_JAVA_OPTIONS`) plus `CURL_CA_BUNDLE`/`SSL_CERT_FILE`.
-- `build.clj` forwards the same store to the JDK re-exec and to the `native-image` builder, so one setting covers the whole build.
-
-Already have a keystore? Use it verbatim with `VIS_TRUSTSTORE=/path/store.p12`, plus `VIS_TRUSTSTORE_PASSWORD` and `VIS_TRUSTSTORE_TYPE` (defaults: `changeit`, `PKCS12`).
-
-The distribution is not selectable: vis builds on GraalVM **Community Edition** at the exact version in `.graalvm-version`. Oracle GraalVM would relicense the shipped binary under GFTC, and a different version is rejected by the repository's own JDK gate before `native-image` starts.
+`bin/require-graalvm` imports the PEM into a copy of the JDK's `cacerts` under
+`${XDG_CACHE_HOME:-~/.cache}/vis`, passes it to `curl`, and exports it through
+`JAVA_TOOL_OPTIONS` so every forked JVM and the `native-image` builder use it.
+`bin/require-graalvm --truststore` prints the path. To use an existing
+keystore, set `VIS_TRUSTSTORE=/path/store.p12` with `VIS_TRUSTSTORE_PASSWORD`
+and `VIS_TRUSTSTORE_TYPE` (defaults `changeit` and `PKCS12`).
 
 ## See also
 
-- [Runtime distributions](distributions.md) — which of the two runtimes you are actually running.
-- [Configuration](configuration.md) — the config the image carries and the config it reads.
-- [Extending Vis → Native image rules](extending.md#native-image-rules) — what a Clojure extension must avoid to stay AOT-safe.
+- [Runtime distributions](distributions.md) — choosing and updating an installed runtime.
+- [Clojure extensions](clojure-extensions.md#native-image-rules) — what an extension must avoid to stay AOT-safe.
+- [Python sandbox](python-sandbox.md) — the interpreter staged beside the binary.

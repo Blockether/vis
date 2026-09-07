@@ -1,67 +1,88 @@
 # Python sandbox
 
-The agent's actions are **code**, and that code runs in an embedded Python interpreter — a real CPython, linked into the Vis process through the JDK Foreign Function & Memory API. This is the substrate that makes "context as an environment" real: the model emits a program, the sandbox executes it, and only the journal comes back.
+The model's actions are Python code, and that code runs in a CPython interpreter
+embedded in the Vis process. This page describes what that interpreter can
+reach, how packages get in, and how it differs from your project's own Python.
 
-## In-process, not a subprocess
+## In-process interpreter
 
-The interpreter is a cdylib (`libvispython`) plus a vendored CPython tree, started once per process and driven by downcalls; a session is a module namespace inside it, not a second interpreter. Tools are exposed to the sandbox as ordinary async functions — `grep`, `cat`, `patch`, `shell`, `run_tests` — while `apropos` and `doc` synchronously inspect the live surface. `grep` and `cat` answer anchored TEXT that `patch` spends directly; the rest answer structured values the model can compose, filter, and summarize in vars, then print only the useful slice.
+The interpreter is a shared library (`libvispython`) with a vendored CPython
+tree, started once per process and reached through the JDK Foreign Function
+and Memory API. A session is a module namespace inside it, not a second
+interpreter. Tools such as `grep`, `cat`, `patch`, `shell` and `run_tests`
+are ordinary async functions in that namespace; `apropos` and `doc` inspect the
+live surface synchronously.
 
-## Sandboxed by design
+## What the sandbox may do
 
-The interpreter is **confined by the host, deny-by-default**: an audit hook inside CPython refuses the operation itself, so the policy is not a wrapper anyone can import around.
+An audit hook inside CPython enforces the policy, so it cannot be bypassed by
+importing around a wrapper:
 
-| capability | default |
-|---|---|
-| Filesystem IO | confined to the workspace roots — every other path is refused |
-| Spawning a process (`subprocess`, `os.system`, `os.popen`) | refused; the host's `shell` is the only door, and it owns the jail |
-| `ctypes`, loading a foreign library | refused |
-| HTTP clients | routed through the gateway egress policy and the programmable network filters |
-| Raw sockets | a socket-level host guard is the floor |
-| Threads | capped per process; exhaustion is a loud `RuntimeError`, never a hang |
-| Wall-clock time | every eval is bounded by a timeout |
+| Capability | Default |
+| --- | --- |
+| Filesystem IO | confined to the workspace roots |
+| Spawning a process (`subprocess`, `os.system`, `os.popen`) | refused; `shell(...)` is the only door, and it owns the jail |
+| `ctypes` and foreign libraries | refused |
+| HTTP clients | routed through the gateway policy and network filters |
+| Raw sockets | guarded at the socket level |
+| Threads | capped per process; exhaustion raises `RuntimeError` |
+| Wall-clock time | every block has a timeout, lifted while a live view is open |
 
-The audit hook is process-wide, so a capability the guest must not have is never present in the sandbox process — including for Python that an extension installed. What the host exposes from Clojure is a **named door with its own check**, not a hole in the policy. See [Process jail and gateway egress](jail.md) for the complete boundary.
+Host capabilities exposed from Clojure are named doors with their own checks.
+See [Process jail and network policy](jail.md) for the complete boundary.
 
-## Packages: the real wheel, fetched by the host
+## Packages
 
-The sandbox is not hermetic any more. A first `import numpy` that nothing on `sys.path` can answer reaches a finder that goes LAST on `sys.meta_path` and asks the HOST to install the distribution — because the guest may neither spawn a process nor route its own egress. That door has its own policy: a plain distribution name only, only when the session has network at all, and only ever a WHEEL (`--only-binary=:all:`, since an sdist would run its own `setup.py` outside every boundary). A refusal is the ordinary `ModuleNotFoundError`.
+The sandbox has `pip`. A top-level import that nothing on `sys.path` answers
+asks the host to install the distribution: by plain name, wheels only, and only
+while the session has network access. A refusal is an ordinary
+`ModuleNotFoundError`. Installed distributions land in
+`~/.vis/python/packages`, shared by every session and read-only to the
+sandbox.
 
-Installed distributions land in `~/.vis/python/packages`, shared by every session, and the confinement makes that directory readable, never writable, for the guest.
+Outside a session, `vis-agent python -m pip install <package>` installs into
+the same location, and `vis-agent python -m <module>` runs it.
 
-## Two Python surfaces, on purpose
+Attachments are reachable without an import: `attach(...)` stores a file and
+returns its descriptor; `list_attachments()`, `get_attachment(...)`,
+`read_attachment(...)` and `show_attachment(...)` read it back by filename or
+id. A file stored again under the same name becomes the next version of that
+attachment.
 
-Vis runs Python in **two different places**, and they deliberately do not see the same modules:
+## Sandbox versus project Python
 
-- **The sandbox surface — `python_execution`.** The in-process interpreter described above: the standard library, whatever the host has installed into `~/.vis/python/packages`, and **none of the host project's own environment**. This is the action layer for composing tools, filtering output, and pure-logic compute.
+Vis runs Python in two places that deliberately do not share modules:
 
-- **The project surface — `repl_start({"language": "python"})` + `repl_eval({"language": "python", "code": …})`.** Starting the REPL spawns a real project interpreter subprocess selected from `uv` / Poetry / `.venv` / `python3`. On macOS that managed process inherits the same filesystem jail and gateway-proxied network policy as shell children; dependency caches (`~/.cache/uv`, a project `.venv`, …) enter through the shared `workspace.filesystem` catalog, so cache access is explicit. It sees the project's installed dependencies and site-packages. `repl_connect` is different: it attaches to a user-owned process that already exists, so Vis cannot retroactively jail it.
+| Code | Where it runs |
+| --- | --- |
+| stdlib-only compute, tool glue, filtering results | `python_execution` (the sandbox) |
+| anything that imports your project's dependencies | a project interpreter: `repl_start({"language": "python"})`, then `repl_eval({"language": "python", "code": ...})` |
 
-The practical rule is one question — does this code import your project's dependencies?
+The project interpreter is a real subprocess selected from `uv`, Poetry, a
+`.venv` or `python3`. It inherits the same jail and network policy as shell
+children; dependency caches enter through the `workspace.filesystem` catalog.
+`repl_connect` attaches to a process you started yourself, which Vis cannot
+jail.
 
-| what you are doing | where it runs |
-|---|---|
-| stdlib-only compute, tool glue, filtering a result | `python_execution` |
-| anything that needs your installed packages | `repl_start({"language": "python"})`, then `repl_eval({"language": "python", "code": …})` |
-
-`run_tests({"language": "python"})` follows the same divide: it defaults to the sandbox runner (the embedded interpreter's own pytest) and switches to the project interpreter's pytest with `{"runner": "project"}`. A sandbox run that trips over a missing project module says so, and points at the project runner.
-
-## Why Python for the action layer
-
-Python is the lingua franca models write most fluently, so the action layer meets the model where it is strongest. The *core* is Clojure (and the languages it edits are whatever tree-sitter supports) — but the glue the model writes each turn is Python.
+`run_tests({"language": "python"})` defaults to the sandbox runner and switches
+to the project interpreter's pytest with `{"runner": "project"}`. A sandbox run
+that fails on a missing project module says so and points at the project
+runner.
 
 ## Where the interpreter lives
 
-| runtime | where the interpreter lives |
-|---|---|
-| JVM | inside `com.blockether/vis-python-runtime-native-<platform>` on the classpath |
-| Native binary | a `vis-agent-python/` directory **beside the executable**, staged by the build |
-| Release bundle | the same `vis-agent-python/`, unpacked together with the wrapper and the runtime |
+| Runtime | Location |
+| --- | --- |
+| JVM | `com.blockether/vis-python-runtime-native-<platform>` on the classpath |
+| Native binary and release bundle | `vis-agent-python/` beside the executable |
 
-`VIS_PYTHON_NATIVE_PATH` points a run at a different copy of the cdylib, and `VIS_PYTHON_HOME` at a different interpreter tree; neither is needed in a normal install. See [JVM & native-image](jvm-native-image.md).
+`VIS_PYTHON_NATIVE_PATH` points a run at another copy of the library and
+`VIS_PYTHON_HOME` at another interpreter tree. Neither is needed in a normal
+install.
 
 ## See also
 
-- [Token optimization](token-optimization.md) — what the sandbox buys, measured in context.
-- [Process jail & egress](jail.md) — the filesystem and network policy the sandbox runs under.
-- [Configuration → Python import roots](configuration.md#python-import-roots) — making your own modules importable in the sandbox.
-- [Extending Vis](extending.md) — adding your own doors from Clojure.
+- [How Vis manages context](token-optimization.md) — why the action layer is a program.
+- [Process jail and network policy](jail.md) — the policy the sandbox runs under.
+- [Configuration](configuration.md#python-import-roots) — making your own modules importable.
+- [Clojure extensions](clojure-extensions.md#sandbox-shims) — publishing a host-backed module into the sandbox.

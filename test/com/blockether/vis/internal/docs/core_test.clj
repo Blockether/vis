@@ -2,9 +2,9 @@
   "Docs renderer: cross-page markdown links must resolve in BOTH output
    modes (live `/docs/<slug>`, static `<slug>.html`), and the live
    handler tolerates literal `<slug>.md` deep links with a redirect.
-   Plus the CONTENT invariants: `extending.md` is where an extension author learns
-   what `doc(name)` renders, what an `apropos` row previews, and how a live view is
-   driven from Python."
+   Plus the CONTENT invariants: `clojure-extensions.md` is where an extension author
+   learns what `doc(name)` renders and what an `apropos` row previews, and
+   `live-views.md` is where a live view is driven from Python."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.docs.core :as docs]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -40,6 +40,33 @@
             (expect (not (re-find #"href=\"[^\"/:][^\":]*\.md[\"#]" html))
                     (str "dangling .md link in live page " (:slug page))))))))
 
+(defdescribe getting-started-page-test
+             (it "uses ordinary documentation links and one install command in both outputs"
+                 (let [{:keys [pages] :as site}
+                       (docs/collect)
+
+                       home
+                       (first (filter #(= "index" (:slug %)) pages))]
+
+                   (doseq [mode
+                           [:static :live]
+
+                           :let [html
+                                 (docs/page-html site home mode)]]
+
+                     (expect (= 1 (count (re-seq #"curl</span>|curl -fsSL" html))))
+                     (expect (str/includes? html "href=\"#install\""))
+                     (expect (re-find #"class=\"brand\"[^>]*>Vis</a>" html))
+                     (expect (not (str/includes? html "role=\"tablist\"")))
+                     (expect (not (str/includes? html "hero-install")))
+                     (expect (not (str/includes? html "data-copy-active")))
+                     (expect (str/includes? html "id=\"first-session\"")))))
+             (it "puts setup and daily use before implementation details"
+                 (let [slugs (mapv :slug (:pages (docs/collect)))]
+                   (expect (= ["index" "configuration"] (subvec slugs 0 2)))
+                   (expect (< (.indexOf slugs "queue-and-cancel")
+                              (.indexOf slugs "python-sandbox"))))))
+
 (defdescribe handle-md-redirect-test
              (it "GET /docs/<slug>.md permanent-redirects to /docs/<slug>"
                  (let [resp (docs/handle {:uri "/docs/skills.md" :headers {}})]
@@ -50,54 +77,57 @@
 
 (defdescribe
   collect-memoization-test
-  "Every docs request and every corpus rebuild re-read and re-rendered all 16
-   pages, so serving `/docs` and asking `apropos` a question both paid ~8 ms of
+  "Every docs request and every corpus rebuild re-read and re-rendered every
+   page, so serving `/docs` and asking `apropos` a question both paid ~8 ms of
    markdown rendering that nothing had invalidated."
   (it "renders the site once and answers the same value"
       (expect (identical? (docs/collect) (docs/collect)))))
 
-(defn- extending-md [] (:md (first (filter #(= "extending" (:slug %)) (:pages (docs/collect))))))
+(defn- page-md
+  "The markdown of the page at `slug`."
+  [slug]
+  (:md (first (filter #(= slug (:slug %)) (:pages (docs/collect))))))
 
  ;; A tool page is rendered from the entry contract and previewed as a three-field
- ;; apropos row. `extending.md` is the author-facing contract for both renderings,
- ;; so this test names the page that must change with either.
+ ;; apropos row. `clojure-extensions.md` is the author-facing contract for both
+ ;; renderings, so this test names the page that must change with either.
 (defdescribe
-  extending-page-teaches-its-renderings-test
+  clojure-extensions-page-teaches-its-renderings-test
   (it "names every entry key `doc(name)` renders, and both structural lines"
-      (let [md (extending-md)]
+      (let [md (page-md "clojure-extensions")]
         (expect (string? md))
         (doseq [needle [":description" ":params" ":result" ":call" "Keys:" "(REQUIRED)"
                         "Raw result:"]]
-          (expect (str/includes? md needle) (str "extending.md never mentions " needle)))))
+          (expect (str/includes? md needle) (str "clojure-extensions.md never mentions " needle)))))
   (it "shows an `apropos` item with all three fields"
-      (let [md (extending-md)]
+      (let [md (page-md "clojure-extensions")]
         (doseq [needle ["AproposItem(" "type=" "name=" "body="]]
           (expect (str/includes? md needle)
-                  (str "extending.md never shows " needle " in an apropos item")))))
+                  (str "clojure-extensions.md never shows " needle " in an apropos item")))))
   (it "names the shim keys that drive discovery and the page they answer with"
-      (let [md (extending-md)]
+      (let [md (page-md "clojure-extensions")]
         (doseq [needle [":shim/imports" ":shim/globals" ":shim/source" ":shim/docs"]]
-          (expect (str/includes? md needle) (str "extending.md never mentions " needle))))))
+          (expect (str/includes? md needle) (str "clojure-extensions.md never mentions " needle))))))
 
 ;; A live view is the one primitive an author cannot infer from the field builders:
 ;; its verbs differ per node type, and `vis.output` deliberately does not match the
 ;; `log` node it builds (`vis.log` is the engine log line). When that Python surface
 ;; is renamed, this test names the page that has to be renamed with it.
 (defdescribe
-  extending-page-teaches-the-live-view-test
+  live-views-page-teaches-the-live-view-test
   (it "names the opener, the log builder that could not be called `log`, and what a loop reads"
-      (let [md (extending-md)]
+      (let [md (page-md "live-views")]
         (doseq [needle ["vis.live(" "vis.output(" "upsert(" "is_interrupted" "vis.Interrupted"
                         "flush_ms" "view.is_from_human" "view.note"]]
-          (expect (str/includes? md needle) (str "extending.md never mentions " needle)))))
+          (expect (str/includes? md needle) (str "live-views.md never mentions " needle)))))
   ;; Layout is the half an author cannot infer: without these two paragraphs a run writes a
   ;; second node where one paragraph BESIDE the table was meant, and marks up a string the
   ;; page never promised to paint.
   (it "teaches where a node stands and what a human-facing string may carry"
-      (let [md (extending-md)]
+      (let [md (page-md "live-views")]
         (doseq [needle ["vis.row(" "vis.column(" "inline markdown" "wraps and justifies"
                         "stay verbatim" "`Escape` or `Enter` sends the stop"]]
-          (expect (str/includes? md needle) (str "extending.md never mentions " needle))))))
+          (expect (str/includes? md needle) (str "live-views.md never mentions " needle))))))
 
 ;;; ── The page contract ───────────────────────────────────────────────────────
 ;; Every rule below is one the RENDERER already assumes (see the `docs` ns

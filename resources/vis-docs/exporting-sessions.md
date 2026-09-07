@@ -1,65 +1,35 @@
 # Exporting sessions
 
-Every conversation Vis runs is stored in its session database, and any stored
-session can be exported for sharing or archiving. One command covers both
-formats:
+Every session is stored locally and can be exported as Markdown or HTML.
 
 ```bash
+vis-agent sessions list
 vis-agent sessions export <SESSION-ID> [--md | --html PATH]
 ```
 
-`<SESSION-ID>` is the full UUID or any unambiguous prefix (the short 8-char id
-Vis prints in `vis-agent sessions list` works). Pick **exactly one** format — passing
-more than one is an error.
+`<SESSION-ID>` is the full id or any unambiguous prefix from `sessions list`.
 
-## Formats
+## Markdown
 
-| Flag | Output | Where it goes |
-|---|---|---|
-| `--md` (default) | Markdown transcript | stdout |
-| `--html PATH` | Styled, self-contained HTML | file at `PATH` |
-
-### Markdown — `--md`
-
-The default. Prints the whole transcript — user turns, thinking, answers,
-tool calls — as Markdown to stdout, so you can pipe or redirect it:
+The default. Prints the whole transcript to stdout, including tool calls:
 
 ```bash
 vis-agent sessions export 3a7b2c1d > session.md
-vis-agent sessions export 3a7b2c1d --md | pbcopy
 ```
 
-### HTML — `--html`
+## HTML
 
-Writes a styled, standalone HTML rendering of the session to the given path.
-The renderer is built in — the same `transcript-html` render the `/export`
-slash and the gateway use — so no extra extension is needed.
+Writes a self-contained, styled page to the given path. Missing directories are
+created, and `.html` is added if the path has no extension:
 
 ```bash
 vis-agent sessions export 3a7b2c1d --html report.html
 ```
 
-## Nice-to-knows
-
-- **The extension is auto-appended.** If you forget it, Vis adds the right one
-  for you — `--html report` writes `report.html` (case-insensitive, so
-  `report.HTML` is left alone).
-- **Output paths are home-abbreviated.** The "Exported …" line shows `~/…`
-  instead of your full `/Users/you/…` home path.
-- **Parent directories are created** as needed for `--html`.
-
-## Examples
-
-```bash
-# Markdown to stdout (default)
-vis-agent sessions export 3a7b2c1d --md
-
-# Styled HTML report
-vis-agent sessions export 3a7b2c1d --html out.html
-```
+Exports are not redacted. Read one before sharing it; see
+[Reporting a bug](reporting-bugs.md).
 
 ## See also
 
-- [Content-block protocol](content-blocks.md) — the block contract every export renders from.
-- [Reporting bugs safely](reporting-bugs.md) — sanitizing an export before you share it.
-- [Gateway, pairing & remote access](gateway.md) — exporting a session that lives on another machine.
+- [Reporting a bug](reporting-bugs.md) — trimming an export before you share it.
+- [Remote access and the Companion app](gateway.md) — sessions that live on another machine.

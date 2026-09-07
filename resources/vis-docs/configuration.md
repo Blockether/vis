@@ -1,108 +1,47 @@
 # Configuration
 
-Vis reads config from four YAML sources, deep-merged in order — later sources win, nested maps merge, scalars and vectors replace:
+Most settings are managed from the terminal UI or the Companion app. Edit YAML
+when you want settings shared across projects or checked into a repository.
 
-1. `~/.vis/config.yml` (or `config.yaml` / `vis.yml` / `vis.yaml`) — **global base**, hand-written, optional.
-2. `~/.vis/state.yml` — **machine store**, written by Vis itself (provider setup, OAuth tokens, TUI-added providers). Kept separate from the hand-written base so the read-modify-write cycle never clobbers your file; wins over the base per key.
-3. `<project>/vis.yml` (or `vis.yaml`) — **project root**, visible. The natural home for team-shared, committed settings.
-4. `<project>/.vis/config.yml` (or `.vis/config.yaml`) — **project overlay**, hidden. The nested overlay wins over the root file: personal beats committed.
+## Quick setup
 
-"Project" means the directory you launched `vis-agent` from. Everything else Vis owns lives next to the global config: the session database at `~/.vis/vis.mdb` and diagnostic logs under `~/.vis/logs/`. Long-lived processes are immediately identifiable as `tui-<UTC-start>-pid<PID>.log` and `gateway-<UTC-start>-pid<PID>.log`; embedded Python logs through the gateway stream. Active files stay as plain `.log` files for following, while rotated parts are gzip-compressed and stale generations are removed automatically.
+Open the provider picker in the terminal and choose **Add Provider**, or use
+**Settings → Providers → Add provider** in the Companion app. Sign in, then pick
+a model.
 
-## Gateway-managed MCP servers
+For API keys, local models and custom endpoints, see
+[Providers and models](#providers-and-models). For project instructions, see
+[Project instructions](context-and-prompts.md).
 
-The gateway API — and the Companion on top of it — writes MCP servers to the machine store (`~/.vis/state.yml`) and nowhere else. Servers you declare by hand in any other source are still listed, connected, and usable, but they come back with `is_managed: false`: a client never rewrites them. The project tiers win on merge, so a write from there would either be silently shadowed or fork a stale duplicate of your own spec into the machine store. Toggling, saving, or deleting one answers `409`; edit the file that declares it.
+## Configuration files
 
-Saving a managed server keeps its stored `env` and `headers` when the request omits those keys — the inventory a client reads never carries secret values, so a round-trip through a UI cannot wipe them. Sending the key explicitly, including as an empty map, still replaces it.
+Files are read in this order. Later files override earlier ones; nested maps
+merge, scalars and lists are replaced.
 
-The gateway also owns the *connections*, not just the config. Every enabled server is connected once, daemon-wide, and shared by every session; the daemon re-checks that pool on its own clock (and on every turn and `/reload`), reaps a crashed `stdio` child or a dropped HTTP session, and reconnects it. So a session never connects or disconnects anything — there is no such tool, and none is needed: a server you save, enable, or start is simply there, in the TUI and in the Companion alike. Stopping one is an explicit admin action (Kill, or `enabled: false`), and it applies everywhere, because everyone is using the same connection.
+| File | Purpose |
+| --- | --- |
+| `~/.vis/config.yml` | Your global settings |
+| `~/.vis/state.yml` | Settings and credentials written by Vis; manage them from the UI |
+| `<project>/vis.yml` | Settings shared with the project |
+| `<project>/.vis/config.yml` | Local project overrides, usually gitignored |
 
-## Killing a server, and signing one in
+`config.yaml`, `vis.yml` and `vis.yaml` are accepted in the `.vis` directories;
+the project root accepts `vis.yml` or `vis.yaml`. The project is the directory
+where you start `vis-agent`.
 
-Two things are **runtime**, not config, so they work on hand-written servers too:
-
-- **Kill / Start.** Killing a server closes its connection — and, for a `stdio` server, its child process — and keeps it closed: the gateway reconciles connections continuously, and a killed server is skipped instead of reconnected. Nothing is written to disk, so a kill does not survive a gateway restart and never edits your YAML. `Start` releases it. Disabling, by contrast, persists `enabled: false`.
-- **Browser sign-in.** An HTTP MCP server that answers `401` needs OAuth. The gateway runs the whole flow — discovery, dynamic client registration, PKCE — and holds the tokens; a client only receives an authorization URL to open and hands back the code. Start a flow, open the URL, and either let the loopback redirect complete it by itself or paste the redirect URL (or the bare `code`) back. Poll until it reports `authorized`; `is_authorized` on the inventory row says whether tokens are already stored. Signing out forgets them.
-
-Because the flow lives on the gateway, a Companion on your phone and a TUI attached to a remote gateway authorize a server exactly the same way, and neither one ever holds a token or a PKCE verifier. In the TUI it is the `MCP Servers` command in the palette.
-
-### CLI: `vis-agent gateway mcp`
-
-Every MCP admin action above is also a CLI verb, talking to the gateway already running for `--db` (or the default DB) over the same HTTP surface as the Companion and the TUI: `list`, `add`, `test`, `remove`, `enable`, `disable`, `kill`, `start`, and the OAuth legs `auth-start` / `auth-complete` / `auth-poll` / `auth-cancel` / `auth-logout`. Run `vis-agent gateway mcp --help` for the full flag reference.
-
-Step-by-step for a remote OAuth server (e.g. Linear's `https://mcp.linear.app/mcp`):
-
-```bash
-# 1. A gateway must already be running (vis-agent gateway start, or the one
-#    Vis starts for you). Then save the server -- a URL alone infers
-#    Streamable HTTP:
-vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp
-
-# 2. Begin the headless OAuth 2.1 flow (RFC 9728/8414 discovery, dynamic
-#    client registration, PKCE). This prints an authorize URL and a flow_id:
-vis-agent gateway mcp auth-start linear
-
-# 3. Open the printed URL in a browser and approve access. The provider
-#    redirects to a loopback URL (http://127.0.0.1:PORT/mcp-callback?code=...).
-#    Copy that FULL URL (or just the bare code) and finish the flow:
-vis-agent gateway mcp auth-complete linear --flow-id <FLOW_ID> --input "<PASTED_URL_OR_CODE>"
-
-# 4. Confirm it is authorized and connected:
-vis-agent gateway mcp list
-```
-
-Read-only access is a URL, not a flag: point `--url` at Linear's `/mcp/readonly` endpoint instead. A static API key/bearer token (Linear's non-interactive alternative) skips `auth-start` entirely: pass it as a header instead --
-
-```bash
-vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp --headers "Authorization=Bearer <TOKEN>"
-```
-
-`vis-agent gateway mcp test` connects a candidate spec (same flags as `add`) without saving it, so a bad URL/command is caught before it is persisted. `kill`/`start` are the runtime pause/resume described above; `disable`/`enable` persist the on/off switch; `auth-logout` forgets stored tokens; `remove` deletes the server and stops it.
-
-
-## Keys are snake_case strings
-
-Config is YAML only, validated exactly as parsed:
-
-1. **Configuration keys stay strings.** Canonical keys use snake_case. No recursive
-   keywordization or kebab normalization occurs, so `system_prompt` is valid and
-   `system-prompt` is rejected as an unknown key. Boolean flags use an `is_` prefix
-   and never a `?` suffix, e.g. `is_replace`, `is_respect_retry_after`, `is_tool_call`.
-2. **User-owned keys stay verbatim.** Environment variables, MCP server names and
-   `env`/`headers`, HTTP headers, request-body fields, pricing/model ids, and toggle ids
-   retain their exact spelling and case.
-
-## Executable configuration contract
-
-`packages/vis-contract/resources/vis-contract/config.json` is the canonical configuration
-document, and `schema/config.json` defines the complete original string-keyed YAML shape.
-Skjema validates that shape before any internal adaptation. The schema closes structural maps while
-allowing user-defined keys for environment variables, headers, toggle ids, MCP server names, pricing
-and request bodies. Invalid values report source-aware paths with credentials redacted.
-
-## Invalid config: what you see
-
-A bad config is a *user error*, not a crash. Vis prints a panel that names every
-offending field by its full path — no stack trace, no log file to open — and exits
-with status 2:
+Keys are `snake_case` strings; boolean keys start with `is_`. Unknown keys are
+rejected, and an invalid file prints every offending path and exits with status
+2 instead of starting:
 
 ```text
-  Invalid Vis configuration in /project/.vis/config.yml:
+Invalid Vis configuration in /project/.vis/config.yml:
 
-  - providers[0].models[0].contxt: unknown key (config is closed) — did you mean "providers[0].models[0].context"?
   - grep.include-gitignored-paths: unknown key (config is closed) — did you mean "grep.include_gitignored_paths"?
-  - jail.filesystem.allow_reed: unknown key (config is closed)
   - mcp.servers.docs.transport: value rejected by the transport contract
-
-  Fix the entries above and run vis-agent again.
 ```
 
-The most common cause is kebab-case: `grep.include-gitignored-paths` must be
-`grep.include_gitignored_paths`. Kebab-case names such as
-`:include-gitignored-paths` appear in the CHANGELOG and in engine internals — they
-are the *internal keyword* mirrors of the YAML keys, never the YAML spelling.
-Model names (`providers[].models[].name`) are free-form strings and are never
-validated against a known-model list; a wrong one fails at the provider API, not here.
+Model names are free-form and are not validated; a wrong one fails at the
+provider.
 
 A small config:
 
@@ -116,131 +55,21 @@ environment:
   ANTHROPIC_API_KEY: {env: ANTHROPIC_API_KEY}
 ```
 
-## Environment
-
-**The workspace's `.env` and `.env.local` are loaded by default** — the whole
-file, with nothing declared, because the project file is part of the project.
-Every variable in it reaches Vis' own children: `shell(...)` (confined or not),
-managed REPLs, test runners, and Python extensions.
-
-Within the dotenv files the usual rules apply — a later assignment wins, `.env`
-beats `.env.local`, an explicit blank masks a lower one, and `NAME=value`,
-`export NAME=value`, quotes, comments, CRLF and a UTF-8 BOM are all understood.
-
-`environment:` is for **what a dotenv file cannot say**, and every entry either
-names the source of its value or writes that value down explicitly. A secret
-never appears in the file: a keychain item and a helper command hold no value
-there at all, and this block is project-scoped, so a machine-store write never
-copies it into `~/.vis/state.yml`.
-
-```yaml
-environment:
-  # 1. another process variable, passed through or renamed
-  OPENAI_API_KEY: {env: WORK_OPENAI_KEY}
-
-  # 2. a dotenv name under a different name (a plain `.env` entry needs nothing)
-  STRIPE_KEY: {dotenv: STRIPE_TEST_KEY}
-
-  # 3. the OS credential store (macOS Keychain; `secret-tool` elsewhere)
-  EXA_API_KEY:
-    keychain: vis-exa
-    account: alice          # optional, qualifies the keychain item
-
-  # 4. a helper command; its trimmed stdout IS the value
-  GITHUB_TOKEN:
-    command: [gh, auth, token]
-
-  # 5. a non-secret value, written down on purpose — never a bare scalar
-  VIS_MANAGED: {literal: "true"}
-```
-
-Exactly one source per entry, and **that declaration is the only source for the
-name** — a declared name never falls back to `.env` or to the ambient
-environment. A blank value is no value, whatever produced it: an explicit `FOO=`
-means "not this one".
-
-`literal:` is the one entry that carries its value, and the wrapper is required
-so it can never be a slip: `VIS_MANAGED: "true"` (a bare scalar) is rejected, and
-so is a literal under a credential-looking name (`*_KEY`, `*_TOKEN`, `*_SECRET`,
-`*_PASSWORD`) — that value has a source, so name it. Literals are for process
-markers a child reads to know Vis started it:
-
-```clojure
-(when-not (= "true" (System/getenv "VIS_MANAGED"))
-  (start-portal))
-```
-
-A literal reaches managed REPLs, test runners, shell children and extensions
-exactly like every other resolved entry.
-
-So the resolution order for any variable is: **`environment:` declaration →
-workspace `.env`, then `.env.local` → the environment that started Vis.** It is
-the same order everywhere: a Clojure extension, a Python extension, the TUI's
-settings row, and every child process.
-
-A `command:`/`keychain:` value is fetched by running the argv directly — never
-through a shell — cached briefly and single-flighted, so a keychain prompt or a
-vault helper is not forked once per turn. Its stdout is never logged, never
-persisted and never placed in an error message.
-
-**The jail does not change any of this** — it decides what comes *besides* the
-project. With `jail.enabled: true` the operator's ambient environment is dropped
-(see `jail.md`) and only the project's variables plus a non-secret basics
-allowlist remain, so `{env: NAME}` is how an ambient variable is re-admitted to a
-confined child. `LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV` and friends are refused
-from either source — they are consumed before the jail exists.
-
-`jail.environment: inherit` is the all-or-nothing alternative to re-admitting
-names one by one: the confined child keeps the operator's whole environment,
-secrets included, while every other confinement stays on. The default is
-`declared`.
-
-### One call's own environment
-
-`environment:` says what **every** child of Vis gets. A verb that *spawns* one
-also carries what **this** child gets on top, as an argument of the call:
-
-```python
-sh = await shell("npm test", {"env": {"NODE_ENV": "test"}})
-r  = await repl_start({"language": "python",
-                       "env": {"DJANGO_SETTINGS_MODULE": "app.settings.test",
-                               "STRIPE_KEY": {"keychain": "vis-stripe"}}})
-```
-
-It is a **delta, not a replacement**: the workspace's `.env` and its
-`environment:` declarations still reach that child, this map wins where a name
-collides, and `null` unsets one name for this child only.
-
-A value is either a **literal** — string, number or boolean — or the same
-`{env|dotenv|keychain|command|literal}` source map `environment:` takes. That split
-matters because, unlike a config file, this map is an *argument*: a literal is
-written into the session journal and stays in the transcript for good. Literals
-are for switches (`NODE_ENV`, `RUST_LOG`, `PYTHONHASHSEED`); a secret names its
-source, and only the child ever sees the value.
-
-Every refusal names the key: a name that is not an environment variable name, a
-pre-exec hijack name (`LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV`…), a map that names
-no source, and a source that produced nothing. A standing declaration that
-resolves to nothing is simply unset — one *call* asking for that variable is an
-error, because the call said it needed it.
-
-For a REPL the env is part of that REPL's **identity**. `repl_status` reports
-it by name and digest, never by value, and a `repl_start` for a REPL that is
-already running with a different env is refused by the keys that differ: there is
-no restart verb, so `repl_stop` it and start it again.
-
 ## Providers and models
 
-The `providers` vector holds your configured AI providers; **the first entry is the active one**. You normally manage this through the TUI (provider picker / "Add Provider") or the companion app (**Settings → Providers → Add provider**), which know the presets — OpenAI, Anthropic (API and coding plan), OpenAI Codex, GitHub Copilot, Z.AI, plus local Ollama and LM Studio — and handle OAuth where needed. The on-disk shape, if you do edit it:
+The UI knows the presets — OpenAI, Anthropic (API and coding plan), OpenAI
+Codex, GitHub Copilot, Z.AI, and local Ollama and LM Studio — and handles
+sign-in. Anything that speaks an OpenAI- or Anthropic-style API works,
+including local models. The on-disk shape:
 
 ```yaml
 providers:
   - id: anthropic
-    api_key: sk-…
+    api_key: ${ANTHROPIC_API_KEY}
     models:
       - name: claude-sonnet-4-5-20250929
   - id: my-gateway
-    compatibility: openai            # the wire dialect this endpoint speaks
+    compatibility: openai            # wire dialect of the endpoint
     base_url: https://llm.internal/v1
     api_key: ${LLM_TOKEN}
     models:
@@ -249,220 +78,198 @@ providers:
         output_limit: 32768      # max output tokens
         is_tool_call: true
   - id: my-responses-gateway
-    compatibility: openai-responses  # this one serves the Responses API, not chat completions
+    compatibility: openai-responses
     base_url: https://gateway.example.com/v1
     api_key: ${GATEWAY_TOKEN}
-    responses_path: /responses       # only when the endpoint serves it off another path
-    is_stateless: true               # load-balanced replicas: never replay server-minted item ids
+    responses_path: /responses       # only when served off another path
+    is_stateless: true               # load-balanced replicas
     models:
       - name: gpt-5.6
 ```
 
-Per-model keys Vis honors: `context` (input window — the override for servers that can't report one), `output_limit` (max output tokens), `is_tool_call`, and `api_style` (a wire override when one provider routes different models through different APIs). Both limits are forwarded to the router, which uses them for pre-flight context checks and output capping, so filling them in makes routing decisions accurate instead of conservative.
+Provider keys: `compatibility`, `base_url`, `api_key`, `api_key_command`,
+`responses_path`, `api_style`, `llm_headers`, `extra_body`, `is_stateless`,
+`is_image_input`. Providers with managed sign-in (Copilot, coding plans) need
+no `api_key`.
 
-Per-provider keys: `compatibility`, `base_url`, `api_key`, `api_key_command`, `responses_path`, `api_style`, `llm_headers`, `extra_body`, `is_stateless`, `is_image_input`. Providers with managed auth (Copilot, coding plans) resolve tokens through their extension at runtime — no `api_key` needed in the file.
+Model keys: `context`, `output_limit`, `is_tool_call`, `api_style`. Filling in
+the limits makes context checks and output capping accurate.
 
-### The wire dialect
+Models are offered in the order you list them; models discovered from the
+provider are appended after them.
 
-**`compatibility` is the wire dialect the endpoint speaks**, and it is all a custom or self-hosted endpoint normally needs. `api_style` is the same value under the router's own name and wins if both are set. One vocabulary serves both keys:
+### Wire dialect
 
-| dialect | what Vis posts | also accepted |
+`compatibility` names the API the endpoint speaks. `api_style` is the same
+setting under the router's name and wins when both are set; use it per model
+only when one endpoint routes models through different APIs.
+
+| Dialect | Request | Aliases |
 | --- | --- | --- |
-| `anthropic` | Anthropic Messages, `{base_url}/messages` | `claude`, `anthropic-messages`, `messages` |
-| `openai` | OpenAI chat completions, `{base_url}/chat/completions` | `openai-chat`, `openai-compatible`, `openai-compatible-chat`, `chat`, `chat-completions` |
-| `openai-responses` | OpenAI Responses, `{base_url}` + `responses_path` | `responses`, `openai-compatible-responses` |
+| `anthropic` | `{base_url}/messages` | `claude`, `anthropic-messages`, `messages` |
+| `openai` | `{base_url}/chat/completions` | `openai-chat`, `openai-compatible`, `chat`, `chat-completions` |
+| `openai-responses` | `{base_url}` + `responses_path` | `responses`, `openai-compatible-responses` |
 | `gemini` | Gemini `generateContent` | `google`, `google-gemini` |
 
-Spelling is forgiving — case, `_` versus `-`, and surrounding spaces all normalize, so `openai_responses`, `OpenAI-Responses` and `openai-responses` are one value. Anything **outside** the vocabulary is refused when the config loads, naming the accepted values: a dialect Vis does not recognise is never quietly treated as chat completions.
+Case, `_` and `-` are normalised. An unknown value is rejected when the config
+loads. A `responses_path` with no dialect implies `openai-responses`.
 
-That refusal matters more than it looks. A gateway (LiteLLM, or Azure behind one) often serves **both** wires, so declaring `openai` for an endpoint you use as Responses is accepted by the endpoint and wrong: Vis posts `/chat/completions`, the gateway maps `messages[].tool_call_id` onto `input[N].call_id` upstream, and a tool-call id minted on the Responses wire is rejected there — the turn dies on a 400 that nothing in your config points at. Declare the wire you actually use.
+Declare the API you actually use. A gateway that serves both chat completions
+and Responses accepts either, but tool-call ids from one are rejected by the
+other and the turn fails with a 400.
 
-The dialect is a property of the **endpoint**, so it belongs on the provider; use a per-model `api_style` only when one endpoint deliberately routes models through different APIs (one gateway serving both Anthropic-wire and OpenAI-wire models).
+### Default and fallback
 
-**A `responses_path` with no dialect named anywhere is read as `openai-responses`** — nothing else ever posts to that path. A provider whose credential an extension issues (a managed company gateway) may also name the dialect at runtime, beside the URL it mints; an `api_style` or `compatibility` you write here still wins over it.
+Picking a model in the UI writes two keys:
 
-**Model order is your order.** Models are offered in exactly the order you wrote them under a provider in `vis.yml`; anything discovered from the provider's live catalog is appended after them, sorted. With nothing else set, the first provider is the active one and its first model is the default.
+```yaml
+default_provider: zai-coding-plan
+default_model: glm-5.2        # or one line: zai-coding-plan/glm-5.2
+```
 
-Vis is model-agnostic: anything that speaks an OpenAI- or Anthropic-style chat API works, including fully local models.
+- There is one default pair for the whole config, not one per provider.
+- `default_model` is looked up in that provider's catalog; an unknown name
+  falls back to the provider's first model.
+- Without a default, the first provider and its first model are used.
 
-**A model may name its provider: `provider/model`.** Anywhere the CLI takes `--model`, a slash-qualified name is accepted and is the one-shot equivalent of passing `--provider` and `--model` together:
+A second pair names where Vis goes when the default provider is rate-limited
+or failing:
+
+```yaml
+fallback_provider: anthropic-coding-plan   # must differ from default_provider
+fallback_model: claude-sonnet-5
+```
+
+The fallback provider is tried right after the default; other providers follow
+in configured order. Logging out of a provider clears its pair.
+
+Both pairs are per user. They are ignored with a warning in a committed
+`<project>/vis.yml`; put them in `~/.vis/config.yml`, `~/.vis/state.yml` or the
+gitignored `<project>/.vis/config.yml`.
+
+On the command line, `--model provider/model` selects both for one run without
+saving anything. The provider does not have to be configured if it has a
+built-in preset with managed sign-in:
 
 ```bash
-vis-agent --model zai-coding-plan/glm-5.2 "task"      # same as --provider zai-coding-plan --model glm-5.2
-vis-agent --model glm-5.2 "task"                      # bare name: selects on the ACTIVE provider
+vis-agent --model zai-coding-plan/glm-5.2 "task"
+vis-agent --model glm-5.2 "task"          # on the active provider
 ```
-
-The named provider is promoted to the router root for that run only, and it does not have to exist in `vis.yml` yet — an unconfigured one is synthesized from its built-in preset, so a provider that already has managed auth (a coding plan, Copilot) is usable without touching config. Nothing is persisted. A provider Vis cannot resolve is reported as a user error naming it, before the first request.
-
-Registering a provider Vis does not ship with is
-[Extending Vis → LLM providers](extending.md#llm-providers); one whose credential
-the runtime issues, so nobody is ever asked for a key, is
-[Managed providers](extending.md#managed-providers).
-### The default selection is ONE pair
-
-Picking a model in the TUI provider manager, the gateway, or the companion app writes exactly two top-level keys:
-
-```yaml
-default_provider: zai-coding-plan   # provider id
-default_model: glm-5.2              # model name WITHIN that provider
-```
-
-There is one default in the whole config — one provider and one model — not one default per provider. Consequences worth knowing:
-
-- `default_model` is resolved **inside `default_provider`'s catalog**. A name that provider does not offer is not an error: Vis falls back to that provider's **first** model — the named provider still wins.
-- `default_model` also accepts the `provider/model` form, exactly like `--model`, and then its provider part wins over `default_provider`:
-
-  ```yaml
-  default_model: zai-coding-plan/glm-5.2   # one line, both halves of the pair
-  ```
-- Vis does **not** remember a model per provider. Change `default_provider` alone and you get that provider's first model until you set `default_model` too.
-- Choosing a default never reorders `providers:` — order stays yours (above), the pair is just a pointer into it.
-- **The pair is per user, never per repository.** Which provider you are entitled to and which model you pay for is your own decision, so the committed `<project>/vis.yml` may not carry it: that tier is loaded with `default_provider`, `default_model`, `fallback_provider` and `fallback_model` **dropped**, and one warning naming the file. Their homes are:
-  - `~/.vis/config.yml` — hand-written.
-  - `~/.vis/state.yml` — what the TUI, gateway and companion write when you pick a model.
-  - `<project>/.vis/config.yml` — the gitignored overlay, when a pin really is per-checkout.
-
-  `--model provider/model` (above) still overrides both for one run without persisting anything.
-
-### The fallback selection is a SECOND pair
-
-Two more top-level keys name where Vis goes when the default provider cannot serve the turn — rate-limited, circuit-open, erroring:
-
-```yaml
-fallback_provider: anthropic-coding-plan   # must be a DIFFERENT provider than default_provider
-fallback_model: claude-sonnet-5            # accepts the same `provider/model` form
-```
-
-Same shape and the same resolution rules as the default pair: the model is looked up inside that provider's catalog, a name it does not offer degrades to that provider's first model, and a slash-qualified `fallback_model` carries its own provider.
-
-- **It must be a different provider.** A fallback on the default's own provider is not a fallback at all: the TUI and the companion app both disable the action on the current default's card, the daemon answers `400`, and a config file that tags it anyway is ignored when the router is built.
-- The tagged provider is seated **immediately behind the default** in router priority, so it is the first provider Vis moves to; every other provider keeps its configured order behind the two.
-- The tag lives and dies with its provider: logging that provider out clears the pair, and clearing the fallback from any client drops both keys.
-- Per user, exactly like the default pair: a committed `<project>/vis.yml` cannot tag a fallback — both keys are dropped from that tier with a warning.
-- Unrelated key, easy to confuse: `router.rate_limit.is_fallback_provider` (below) is the *boolean* deciding whether a rate-limit budget exhaustion may move on at all — it does not name a provider.
-
-### Model capabilities: chat and vision
-
-Capabilities are per **model**, not per provider, and come from the router's pinned model registry (svar) — the same source as context windows and pricing. Every model has `chat`; `vision` is the one Vis actually gates on.
-
-Vis produces images on its own: matplotlib figures captured from the Python sandbox and anything `attach`ed with an `image/*` media type are stored as durable session attachments (downsized first, so they stay legible without flooding the context). On later iterations and later turns they are replayed to the model as a canonical `image_url` data-URI block, emitted as its own message right after that iteration's `<results>`; the router translates it to Anthropic `image`, OpenAI `image_url`, or Gemini inline data, whichever the active provider speaks.
-
-That replay is gated on the target model advertising `vision`:
-
-- a vision model (`claude-opus-5`, `gpt-5.6-sol`, `gemini-3-pro-preview`, `glm-4.6v`) sees the figures it generated;
-- a text-only model (`glm-4.7`, `glm-5.2`, Copilot models without vision) is silently sent the results text and no image block — a broken payload is never fabricated for it;
-- non-image attachments (csv, json, wav) are never turned into image blocks; the filter is the stored media type, not the file name.
-
-Model names are matched with version/date suffixes tolerated, so `claude-opus-5-20991231` still resolves to a vision model. A name the registry does not know at all resolves to `chat` only — conservative on purpose, but it means a brand-new model reached through a custom `base_url` gets no image replay until its name is known to the router.
 
 ### Environment references
 
-Any string value may reference an environment variable as `${NAME}`. Vis resolves it while loading config, so a key never has to sit in the file:
+Any string value may use `${NAME}`; bare `$NAME` is not recognised. Map keys
+are left alone.
 
-```yaml
-providers:
-  - id: anthropic
-    api_key: ${ANTHROPIC_API_KEY}
-    base_url: https://${LLM_HOST}/v1
-```
+An unset variable does not fail the load. The provider is reported as unusable
+in the provider manager and by `vis-agent doctor`, and is skipped by the
+router. Selecting it explicitly is the one place that errors. When Vis re-saves
+config, a whole-value reference is written back as `${NAME}`, never as the
+resolved secret.
 
-`${NAME}` is the only spelling — bare `$NAME` is deliberately not recognised, because it cannot be told apart from a value that legitimately starts with `$`. References work in any string, nested anywhere; map keys are left alone.
+### Images
 
-An **unset** variable is not a load failure. Vis is a long-lived gateway whose config is re-read live and on `/reload`, so one unused provider's missing key must never kill a session running happily on a healthy provider. The reference is left verbatim instead, and that provider is reported unusable in three places:
+Images produced in a session — matplotlib figures and `image/*` attachments —
+are replayed to the model only when its name is known to support vision. A
+text-only or unknown model gets the text results and no image block.
 
-- the **provider manager** shows `NEEDS ENV · ANTHROPIC_API_KEY` instead of an authenticated verdict;
-- **`vis-agent doctor`** warns `can't use anthropic: ANTHROPIC_API_KEY is not set` and names the export to run;
-- one warning is logged at load time, once per set of missing variables.
+### GitHub Copilot
 
-The provider is also dropped from the router fleet, so it can never be picked implicitly. Reaching for it **explicitly** — selecting it in the provider picker — is the one place that hard-errors, with the same message. Failure lands at the point of intent, never globally.
+Copilot bills per premium request, decided by the `X-Initiator` header. Vis
+sends the first call of each turn as `user` and every tool-call continuation
+as `agent`, so a long turn is one premium request. Calls Vis makes for itself
+(titling, extension helpers) are always `agent`. Setting `X-Initiator` in
+`llm_headers` overrides this. Claude models on Copilot are capped at balanced
+reasoning, and trivial messages are sent without a reasoning parameter.
 
-A value resolved from a whole-value `${NAME}` is written back as `${NAME}` whenever Vis re-saves config, so a theme flip or a toggle change cannot bake the plaintext secret into `~/.vis/state.yml`.
+### Evaluation runs
 
-### Provider-native evaluation effort
+`--reasoning-effort high|max` sends the provider's exact effort value instead of
+Vis's adaptive levels. The run exits `2` if the provider, model or value is not
+accepted, or if any iteration switched provider or model; the JSON output
+carries an `eval` object with the evidence.
 
-Use `--reasoning-effort high|max` when a controlled evaluation must send the
-provider's exact effort value instead of Vis's adaptive, provider-agnostic
-reasoning levels:
-
-```bash
-vis-agent --provider zai-coding-plan --model glm-5.2 \
-  --reasoning-effort high --json "task"
-```
-
-Vis validates the selected provider and model before the first request. An
-unsupported model or value returns the accepted values and exits `2`. A
-completed run also exits `2` if any iteration changed provider or model;
-same-model retries remain valid. Execution failures exit `1`, and a valid run
-exits `0`.
-
-Structured output contains an `eval` object with `valid?`, `invalid-reasons`,
-and per-iteration reasoning evidence: requested/effective effort, actual
-provider and model, the emitted wire fragment, and fallback status. The same
-object appears in the final `--full-trace-json-stream` result frame. It is
-run evidence only and is not added to the session database schema.
-
-### GitHub Copilot premium requests
-
-Copilot bills per *premium request*, and the price of a call is decided by one
-header: `X-Initiator: user` is a full premium request, `agent` is the reduced
-agentic rate, and a **missing** header is billed as `user`. The same task can
-therefore cost a multiple of itself depending on which calls claim to be human.
-
-Vis marks exactly one call per turn as human. The first iteration of your
-request goes out as `X-Initiator: user`; every autonomous continuation inside
-that turn — each tool-call round trip — goes out as `agent`. A fifty-iteration
-turn is one premium request plus forty-nine agentic ones, not fifty premium
-ones.
-
-Everything Vis starts for itself is `agent` outright: LLM session titling, and
-the one-shot model calls extensions make (`ask-code!`, `llm-text!`). You never
-pay a premium request for a call you did not send.
-
-This applies to every Copilot tier (`github-copilot`, `-individual`,
-`-business`, `-enterprise`) and needs no configuration. A per-provider
-`llm_headers` entry still wins if you set one — which also means writing
-`X-Initiator: user` there bills every iteration at the premium rate.
-
-One more Copilot-specific guard, for the same reason: Claude models on Copilot
-never receive `:deep` reasoning implicitly (it is capped to `:balanced`, since
-deep reasoning can burn several premium interactions on one prompt), and a
-casual message — `hi`, `thanks` — is sent with no reasoning parameter at all.
+To add a provider Vis does not ship with, see
+[Provider extensions](provider-extensions.md).
 
 ## System prompt
 
-Append project house rules to the core prompt, or replace it outright:
+Add to the built-in prompt, or replace it:
 
-File-based overrides — a project's `SYSTEM.md` or `APPEND_SYSTEM.md` — are
-[Context files & prompts](context-and-prompts.md#system-prompt-files-system-md-append-system-md).
 ```yaml
-# addendum (string form)
 system_prompt: Prefer restructuredText docstrings. Never touch generated/.
 ```
 
 ```yaml
-# full replacement
 system_prompt:
   text: You are …
   is_replace: true
 ```
 
-Markdown files work too — `.vis/SYSTEM.md` replaces the core prompt,
-`.vis/APPEND_SYSTEM.md` appends to it, in both the project and `~/.vis`. A
-project `SYSTEM.md` beats a global one, and both beat the config `is_replace`
-form. See [Context files & prompts](context-and-prompts.md).
+`.vis/SYSTEM.md` and `.vis/APPEND_SYSTEM.md` in the project or `~/.vis` do the
+same from files and take precedence over these keys. Repository conventions
+belong in `AGENTS.md`, not here. See
+[Project instructions](context-and-prompts.md#system-prompt-files-system-md-append-system-md).
 
-Independently of this, Vis stacks **`AGENTS.md`** (or `CLAUDE.md` as fallback) context files into every turn as project-owned instructions: `~/.vis/AGENTS.md` (user-global), each ancestor directory of the workspace root, then the workspace root itself — those files, not config, are the right place for repo conventions. See [Context files & prompts](context-and-prompts.md).
+## Environment
+
+The project's `.env` and `.env.local` are loaded automatically and reach every
+process Vis starts: shells, REPLs, test runners and extensions. `.env` wins over
+`.env.local`; `NAME=value`, `export NAME=value`, quotes and comments are
+understood.
+
+`environment:` declares variables a dotenv file cannot, and never holds a
+secret value itself:
+
+```yaml
+environment:
+  OPENAI_API_KEY: {env: WORK_OPENAI_KEY}       # another process variable
+  STRIPE_KEY: {dotenv: STRIPE_TEST_KEY}        # a dotenv entry under a new name
+  EXA_API_KEY:
+    keychain: vis-exa                          # macOS Keychain or secret-tool
+    account: alice                             # optional
+  GITHUB_TOKEN:
+    command: [gh, auth, token]                 # trimmed stdout is the value
+  VIS_MANAGED: {literal: "true"}               # non-secret marker
+```
+
+Exactly one source per entry. A declared name never falls back to `.env` or the
+ambient environment, and a blank value means unset. `literal` requires the
+wrapper and is refused for credential-looking names (`*_KEY`, `*_TOKEN`,
+`*_SECRET`, `*_PASSWORD`). Command and keychain values are fetched without a
+shell, cached briefly and never logged.
+
+Resolution order everywhere: `environment:` → `.env`, `.env.local` → the
+environment Vis was started from.
+
+With the jail enabled, the ambient environment is dropped and `{env: NAME}`
+re-admits a variable. `jail.environment: inherit` keeps the whole ambient
+environment instead. `LD_*`, `DYLD_*`, `PERL*` and `BASH_ENV` are always
+refused.
+
+A single shell or REPL can add to this from the call itself. The map is a
+delta; a literal value is recorded in the transcript, so secrets should name a
+source:
+
+```python
+sh = await shell("npm test", {"env": {"NODE_ENV": "test"}})
+r = await repl_start({"language": "python",
+                      "env": {"STRIPE_KEY": {"keychain": "vis-stripe"}}})
+```
+
+A REPL's environment is part of its identity: starting one that is already
+running with a different `env` is refused. Stop it and start it again.
 
 ## Router
 
-The `router` block tunes the request pipeline — retry pacing, network timeouts, spend limits:
+Retry pacing, network timeouts and spend limits. Omit the block for defaults.
 
 ```yaml
 router:
   rate_limit:
     same_provider_delays_ms: [2000, 3000, 6000]
     is_respect_retry_after: true
-    is_fallback_provider: true
+    is_fallback_provider: true    # may a rate-limited turn move to another provider
   network:
     timeout_ms: 300000
     idle_timeout_ms: 45000
@@ -471,86 +278,31 @@ router:
     max_cost: 5.0
 ```
 
-Omit it and built-in defaults apply. Unknown keys are rejected by the configuration spec.
+## Jail, filesystem and network
 
-## Jail, filesystem, and network
+The jail is off by default. Enable it whenever the model runs untrusted code;
+without it, shells and language processes run with your full permissions. With
+`jail.enabled: true`, commands run under Seatbelt (macOS) or bubblewrap (Linux)
+and through the gateway's egress proxy. Unsupported hosts fail loudly.
 
-The process jail is **off by default** and opt-in via `jail.enabled: true`.
-**Strongly recommended** whenever the model runs untrusted code: without it,
-managed shells and language processes run with the gateway user's full host
-permissions. With it enabled, shell commands and managed language processes run
-under the OS jail (Seatbelt on macOS, bubblewrap on Linux) and use the gateway
-egress proxy. Shell access has a separate `toggles.shell` switch. Unsupported hosts
-currently have no OS boundary and a requested `jail.enabled: true` fails loud.
+Directories are declared once in `workspace.filesystem`, then admitted by id in
+`jail.filesystem.allow`. A root the list does not name is not visible.
 
-This section is the KEY reference for the *keys*. The policy itself — what each root admits, the egress proxy, the programmable network filters, and the verification runs — is [Process jail & egress](jail.md).
-
-Filesystem roots are declared once, in the `workspace.filesystem` catalog:
-
-| key | meaning |
+| Key | Meaning |
 |---|---|
-| `id` | the name the allow list and TUI use |
-| `path` | the directory itself |
-| `description` | optional; what the model is told the root is for |
-| `python_name` | optional Python path-global name, e.g. `runtime_path`; lower snake case ending in `_path` |
+| `id` | Name used by the allow list and the UI |
+| `path` | Absolute or `~`-relative directory |
+| `description` | Optional; what the model is told the root is for |
+| `python_name` | Optional Python variable for the path, e.g. `runtime_path` |
 | `access` | `read-write` or `read-only` |
-| `search` | whether search may index it |
-| `draft` | the root's policy if the engine isolates a session (below) |
-| `when`, `optional` | conditional mount — declare a root that may not exist |
+| `search` | Whether search indexes it |
+| `draft` | `shared`, `copy-only`, `copy-and-apply` or `not-allowed` in an isolated session |
+| `when`, `optional` | Mount only on some hosts or when the path exists |
 
-`jail.filesystem.allow` then lists the ids that enter the jail. It is **deny-by-omission**: a root the list does not name is not there.
-
-Admitted, searchable catalog entries also register prebound Python `Path` objects.
-The default name comes from the directory basename in snake case plus `_path`:
-`vis-python-runtime` becomes `vis_python_runtime_path`. A leading digit is prefixed
-with `project_`. Set `python_name: runtime_path` on an entry to choose its full name.
-Duplicate names for different directories are configuration errors;
-`project_root_path` is reserved for the current working workspace, which receives
-no second alias. A name already used by a tool or session variable is also refused,
-never silently overwritten.
-
-`search: false` entries (typically caches) receive no automatic name; an explicit
-`python_name` opts them in. The implicit `~/.vis` grant has none. A path global does
-not grant access or change read-only policy. In
-`session["workspace"]["filesystem_roots"]`, each registered entry's `python_name`
-binds a `Path` pointing at its `cwd` — the current working copy, including drafts.
-Entries without an alias omit `python_name`; denied entries retain `is_denied: true`
-and have no alias. The primary workspace is only `session["workspace"]["root"]`,
-bound as `project_root_path`, not repeated among the additional roots. These entries
-and their Python bindings refresh together; no separate path registry is published.
-
-`draft` decides what an engine-isolated session sees:
-
-- `shared` (default) — writes through to the real root.
-- `copy-only` — forks a private copy that never lands back.
-- `copy-and-apply` — lands that private copy only when the engine applies the workspace.
-- `not-allowed` — withholds the root from the isolated session, on read and on write.
-
-Isolation policy is independent of the jail and applies with `jail.enabled: false` too.
-
-Vis's own session folder `~/.vis` is granted implicitly (read/write, `search: false`) whatever the catalog and the allow list say; declare it to override that.
-
-A declared read-write root that holds a `.git` also appears in the TUI's `C-x g` status buffer, next to the project and the repositories nested inside it, so one buffer stages, commits and pushes across every repository the session works on.
-
-- It is labelled by its catalog `id`.
-- A `read-only` root is left out.
-- A drafted session sees the private copy of an isolated root instead of the real one.
-- Every repository is listed ONCE — a root declared under another spelling of a directory already shown (a symlink, a trailing slash, the project itself, a repository nested inside it, or the trunk a drafted session already shows as its private copy) earns no second header.
-- Two repositories that would wear the same name are told apart by as much of their path as it takes (`work/vis` beside `src/vis`), because that header is what every verb acts on.
-
-Nothing caps how many repositories a buffer shows: a mega-repo that vendors forty
-clones under `repositories/` opens as forty headers, each clean one folded to its
-single summary line. The only bound is on DISCOVERY — the walk that finds nested
-repositories stops after 512 of them, 200k visited files or two seconds — and
-when it does stop early the title reads `Git — N roots · scan truncated`, so a
-short list is never mistaken for the whole fleet.
-
-`when` and `optional` let ONE catalog serve several machines: `when.os` mounts a
-root only on `macos`, `linux`, `wsl` or `windows`, `when.exists` only when that
-path is present, and `optional: true` only when the root's own path is. A root
-that does not apply is dropped before the jail is built and its id may stay in
-`jail.filesystem.allow`; an admitted root whose path is missing is reported by
-`vis-agent doctor` and the startup hint instead of failing silently.
+Admitted, searchable roots get a Python `Path` variable named after the
+directory (`vis-python-runtime` → `vis_python_runtime_path`); `python_name`
+chooses the name. `project_root_path` is the current project. `~/.vis` is
+always granted.
 
 ```yaml
 # vis.yml
@@ -558,33 +310,27 @@ workspace:
   filesystem:
     - id: sibling
       path: ~/sibling-repository
-      draft: copy-and-apply      # copied if the engine isolates this session
+      draft: copy-and-apply
     - id: reference
       path: ~/shared-reference
       access: read-only
     - id: m2
       path: ~/.m2
       description: Maven/Clojure dependency cache
-      search: false            # granted but kept out of the default search sweep
+      search: false
     - id: cuda
       path: /usr/local/cuda
       when:
-        exists: /usr/local/cuda  # skipped on hosts that do not have it
+        exists: /usr/local/cuda
     - id: scratch
       path: ~/scratch
-      optional: true             # mounted only when it exists
+      optional: true
 jail:
   enabled: true
-  # What of the OPERATOR's ambient environment a confined child keeps:
-  # `declared` (default, nothing) or `inherit` (all of it, secrets included).
-  # The project's own `.env` + `environment:` reach the child either way.
-  environment: declared
+  environment: declared          # or inherit
   filesystem:
     allow: [sibling, reference, m2, cuda, scratch]
-  # The OS credential store (macOS Keychain, Linux Secret Service) is closed to a
-  # confined child by default; `gh`/`git` credential helpers need this.
-  keychain: true
-  # Egress policy is one facet of the jail; jail.enabled is the single gate.
+  keychain: true                 # let gh/git credential helpers reach the OS keychain
   network:
     allowed_domains:
       - github.com
@@ -592,184 +338,109 @@ jail:
     denied_domains:
       - example.invalid
     allow_private: false
-    # Ports on which a confined shell child accepts connections from the host
-    # (and, on macOS, from other machines); see jail.md for the platform split.
-    inbound_ports:
+    inbound_ports:               # ports a confined server may listen on
       - 5273
 ```
 
-[Process jail and gateway egress](jail.md) is the single authoritative
-reference for this boundary: the `workspace.filesystem` catalog and
-`jail.filesystem.allow` admission model, the network model (HTTPS method/path
-policy, MITM behavior, SSRF denial, programmable filters), `jail.network.inbound_ports`,
-`jail.keychain` (the OS credential store), snapshot inheritance and
-`/reload`, and the read-only `session["access"]` view.
-Every filesystem path must be absolute or home-relative (`~`); a bare-relative
-path is rejected when the config is read.
+`when.os` accepts `macos`, `linux`, `wsl` or `windows`. A missing admitted path
+is reported by `vis-agent doctor`.
 
-One exception is called out there and worth repeating: **`repl_connect` is not
-jailed.** It attaches to an already-running, user-owned external process that
-Vis did not spawn, so Seatbelt cannot be applied retroactively; stopping the
-resource only detaches. Everything Vis *starts* — shells, `subprocess`, managed
-REPLs, test runners — is confined.
+`repl_connect` attaches to a process you started yourself and is not jailed.
+Everything Vis starts is.
 
-### macOS native-image startup failures
+[Process jail and network policy](jail.md) explains the policy in full, including
+network rules and how to diagnose a refusal. If a native tool such as `bb` or
+`clj-kondo` fails with `CSunMiscSignal.open() failed` after an upgrade, restart
+Vis: the jail profile is inherited by running processes.
 
-`CSunMiscSignal.open() failed` with `errno: 1` is not a domain-allowlist error.
-GraalVM Native Image tools such as `bb` and `clj-kondo` create a named
-POSIX semaphore while installing signal handlers, before their command runs.
-The macOS profile permits that single IPC class with `ipc-posix-sem`; network
-permissions remain unchanged.
-
-Seatbelt policy is inherited and cannot be replaced inside an already confined
-process. After upgrading from a Vis build without this permission, restart the
-Vis client/gateway before retrying the command. An actual egress-policy
-failure instead reports the rejected host (for example, `host not permitted`);
-add that hostname to `jail.network.allowed_domains` when appropriate.
-
-### Embedded interpreter directories
-
-The embedded CPython writes only inside `~/.vis/python`, and nothing else on the
-machine:
-
-| directory | what it holds | override |
-|---|---|---|
-| `~/.vis/python/packages` | the wheels the host installed for the sandbox | `VIS_PYTHON_PACKAGES` |
-| `~/.vis/python/pycache` | the bytecode the interpreter compiles | `VIS_PYTHON_PYCACHE_PREFIX` |
-
-The interpreter tree itself travels with the distribution and is never written
-to; `VIS_PYTHON_HOME` points a run at a different tree and
-`VIS_PYTHON_NATIVE_PATH` at a different library. Each is read **once per
-process**, so a change needs a restart of the client and the gateway daemon —
-`/reload` is not enough.
+The embedded Python writes only to `~/.vis/python/packages` (override
+`VIS_PYTHON_PACKAGES`) and `~/.vis/python/pycache` (`VIS_PYTHON_PYCACHE_PREFIX`).
+`VIS_PYTHON_HOME` and `VIS_PYTHON_NATIVE_PATH` point at a different runtime;
+all four are read at startup.
 
 ## Python import roots
 
-`vis-agent python` puts a project's own packages on `sys.path` before running, so
-`vis-agent python -m pytest tests/` imports a `src/` layout the same way an explicit
-`PYTHONPATH=src` invocation would.
-
-The sandbox those roots serve is the [Python sandbox](python-sandbox.md).
-The roots are read from the project's packaging metadata with Python's own
-parsers — `tomllib` for `pyproject.toml`, `configparser` for `setup.cfg`,
-`pytest.ini` and `tox.ini` — never by pattern-matching the file text. Inference
-is strictly declarative: nothing is guessed from directory names, a project
-without such metadata gets nothing, and a malformed file yields nothing instead
-of a partial scrape. Recognized declarations:
-
-```toml
-[tool.setuptools.packages.find]      where       = ["src"]
-[tool.setuptools]                    package-dir = {"" = "src"}
-[tool.pdm.build]                     package-dir = "src"
-[tool.poetry]                        packages    = [{include = "pkg", from = "src"}]
-[tool.hatch.build.targets.wheel]     packages    = ["src/pkg"]   # parent wins
-[tool.pytest.ini_options]            pythonpath  = ["src"]
-```
-
-plus `package_dir` under `setup.cfg`'s `[options]` and pytest's `pythonpath`
-under `setup.cfg` `[tool:pytest]`, `pytest.ini` `[pytest]` and `tox.ini`
-`[pytest]`.
-
-A read that *fails* — a broken interpreter, a transient I/O error — is not the
-same as a project that declares nothing. It is retried once and then reported as
-a `warning` on the `run_tests` result, so the run continues with no inferred
-roots instead of failing outright or degrading silently.
-
-When that is wrong, absent, or simply not how you lay a project out, say it
-outright:
+`vis-agent python` puts the project's packages on `sys.path`, so
+`vis-agent python -m pytest tests/` imports a `src/` layout without
+`PYTHONPATH`. Roots are read from `pyproject.toml` (setuptools, pdm, poetry,
+hatch, pytest `pythonpath`), `setup.cfg`, `pytest.ini` and `tox.ini`. A project
+without such metadata gets nothing. To declare roots yourself:
 
 ```yaml
 # vis.yml
 python:
   source_paths: [src, lib/vendor, ~/shared/py]
+  runner: project     # default run_tests backend: project | vispython
 ```
 
-Configured paths come **first**, ahead of anything inferred. Relative entries
-resolve against the working directory, `~` expands, and an entry that is not an
-existing directory is dropped. An explicit `PYTHONPATH` in the environment still
-precedes both.
+Configured paths come first, then inferred ones; `PYTHONPATH` precedes both.
+`runner: project` runs the project's own pytest with its installed
+dependencies; `vispython` runs in the embedded sandbox.
+An explicit `runner` argument on the call
+(`run_tests({"language": "python", "runner": "project"})`) overrides this
+default for one run.
 
-Vis selects the project interpreter automatically for `repl_start` / `repl_eval`
-and the `project` test runner: uv, then Poetry, then a project `.venv` or `venv`,
-then `python3` (or `python` when `python3` is unavailable). uv and Poetry are
-used only for projects managed by them and when their commands are on `PATH`.
+The project interpreter is chosen automatically: uv, then Poetry, then `.venv`
+or `venv`, then `python3`.
 
-A detected virtualenv interpreter is invoked by its absolute path, and by the
-venv's own executable — never canonicalized into the base installation, which
-would leave `pyvenv.cfg` unread and the venv's packages (`pytest` among them)
-missing.
+## MCP servers
 
-```yaml
-# vis.yml
-python:
-  runner: project  # default run_tests backend
+Servers you add from the UI, the API or `vis-agent gateway mcp` are written to
+`~/.vis/state.yml`. Servers declared by hand elsewhere are used too, but the UI
+cannot edit them; change the file that declares them.
+
+The gateway keeps one connection per enabled server, shared by every session,
+and reconnects a crashed one. **Kill** closes the connection until **Start** or
+a gateway restart; `enabled: false` persists.
+
+An HTTP server that answers `401` needs OAuth, which the gateway runs for you.
+From the terminal, use the **MCP Servers** command; from the CLI:
+
+```bash
+vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp
+vis-agent gateway mcp auth-start linear
+# open the printed URL, approve, then paste the redirect URL or code:
+vis-agent gateway mcp auth-complete linear --flow-id <FLOW_ID> --input "<URL_OR_CODE>"
+vis-agent gateway mcp list
 ```
 
-`runner` chooses the default `run_tests({"language": "python"})` backend: `vispython`, the
-embedded sandbox interpreter, or `project`, the interpreter's own pytest, where
-installed dependencies are visible. An explicit `runner` argument on the call
-still wins — the same spelling the result's `runner` key reports.
+A static token skips sign-in:
 
-## Extension environment
-
-Extensions may declare the environment variables they read so Vis can report whether they are available. Their values never come from `vis.yml` itself — the file only says where to fetch them. Resolution is the one order described under [`environment:`](#environment): a declaration first, then the workspace's `.env` / `.env.local`, then the environment that started Vis. An extension receives the names it declared plus the project's own — everything in `environment:` and in `.env` — and nothing else of the host environment. Dotenv files support `NAME=value` and `export NAME=value`, quoted values, comments, CRLF, and a UTF-8 BOM:
-
-```ini
-ANTHROPIC_API_KEY=…
+```bash
+vis-agent gateway mcp add linear --url https://mcp.linear.app/mcp \
+  --headers "Authorization=Bearer <TOKEN>"
 ```
 
-For shell use, export the variable from your shell startup file (such as `.bashrc`) before starting Vis. Vis does not execute shell startup files itself.
+Other verbs: `test` (connect without saving), `remove`, `enable`, `disable`,
+`kill`, `start`, `auth-poll`, `auth-cancel`, `auth-logout`. Saving a server
+without `env` or `headers` keeps the stored values.
 
 ## Feature toggles
 
-Built-in extensions can expose a toggle under `toggles:` — boolean, or an enum with a fixed set of choices. Toggle values merge with the rest of the config and take effect after `/reload` (or the next environment build):
-
 ```yaml
 toggles:
-  # Default: true. Set false to remove the sandbox's `shell(...)` call.
-  shell: false
-  # Default: false. Set true to let the agent read its own session database and
-  # gateway event journals (session introspection).
-  introspection: true
+  shell: false          # default true; removes shell(...) from the sandbox
+  introspection: true   # default false; lets the agent read its own session data
 ```
 
-After editing `vis.yml`, run `/reload` in the session. With `shell: false`, Vis does not bind `shell` into the Python sandbox, so it cannot launch commands or managed language processes. `jail.enabled` is independent: it confines commands when shell access is enabled.
+Run `/reload` after editing.
 
 ## Session titling
 
-Vis names a session from its first request. The name is written locally and
-instantly — the request's first sentence — before anything is sent to a
-provider, and it is what the session keeps unless a short LLM call later
-improves it. That upgrade is cosmetic, so it never competes with your own turn:
-it runs *after* the foreground request has finished, and it never waits out a
-rate limit (no `Retry-After` sleep, no retry, no provider failover — a refused
-title just leaves the local one in place until a later turn tries again). The
-`titling:` block controls all of it:
+A session is named from its first message immediately, then improved by one
+short model call after the turn finishes.
 
 ```yaml
 titling:
-  # llm (default) | first_sentence | first_words | disabled
-  mode: llm
-  # optional: pin the title call instead of walking the provider fleet
-  provider: zai-coding-plan
+  mode: llm             # llm | first_sentence | first_words | disabled
+  provider: zai-coding-plan   # optional: pin the title call
   model: glm-4.7
 ```
 
-- `mode: llm` — local title first, then one LLM upgrade after the turn;
-  generated once and never regenerated.
-- `mode: first_sentence` / `first_words` — purely local titles. No provider call,
-  no quota, no 429 on a trivial first message. `first_sentence` is also the
-  shape of the local title used by `llm` mode.
-- `mode: disabled` — no auto-title at all.
-- `provider` / `model` — pin the title call to one cheap endpoint. Without them
-  Vis walks its own cheap-first provider order.
-
-A broken or missing `titling:` block never costs the session its name: config
-errors here fall back to the defaults.
-
 ## Database
 
-Sessions, turns, and durable agent state live in SQLite. Resolution order: explicit `--db` flag → `VIS_DB_PATH` env var → `db_spec` in config → the default `~/.vis/vis.mdb`. Use `--db :memory` for a throwaway session.
+Sessions are stored in SQLite. Resolution order: `--db` flag, `VIS_DB_PATH`,
+`db_spec`, then `~/.vis/vis.mdb`. `--db :memory` gives a throwaway session.
 
 ```yaml
 db_spec:
@@ -779,76 +450,24 @@ db_spec:
 
 ## Grep
 
-The `grep` block tunes what `grep` may see. `.gitignore` is ALWAYS
-honored — there is no per-call opt-out — so this config block is the only
-way to change what search sees. `include_gitignored_paths` re-includes
-chosen gitignored subtrees: the walker descends them, bypassing every
-nested `.gitignore` layer inside them, while the rest of
-the workspace keeps honoring `.gitignore`. This is the fix for
-intentionally-gitignored vendored or cloned repos (`repositories/**`): a
-`.gitignore` `!` negation cannot re-include them (git never descends into
-an excluded directory, so a negation on a child is dead code), but a
-tool-side overlay can.
-
-```yaml
-# vis.yml
-grep:
-  include_gitignored_paths:
-    - repositories/
-  # pruned even inside re-included subtrees; setting it REPLACES the default list:
-  always_exclude:
-    - .git/
-    - node_modules/
-    - target/
-    - build/
-    - dist/
-    - __pycache__/
-    - .venv/
-    - .gradle/
-    - vendor/
-    - .next/
-    - out/
-```
+Search always honours `.gitignore`. To search a gitignored subtree such as
+vendored repositories, re-include it here:
 
 ```yaml
 # vis.yml
 grep:
   include_gitignored_paths: [repositories/]
-  always_exclude: [.git/, node_modules/, target/]
+  always_exclude: [.git/, node_modules/, target/]   # replaces the default list
 ```
 
-Semantics:
-
-- Both lists speak **`.gitignore` pattern syntax** (`dir/`, `**`, `?`, char
-  classes) — not a second glob dialect. `repositories/` and
-  `repositories/**` both re-include the whole subtree.
-- A path is searched when it is **not** gitignored, **or** it falls under
-  an `include_gitignored_paths` pattern — unless `always_exclude` matches
-  it. Formally: `excluded?(f) = always-exclude?(f) OR (gitignored?(f) AND
-  NOT included?(f))`.
-- A pattern also opens the directories **above** it: `repositories/**`
-  makes the walker descend into `repositories/` itself even though
-  `.gitignore` excludes it.
-- `always_exclude` defaults to the denylist in the example above. Setting
-  the key replaces the defaults (vectors replace on merge, like everywhere
-  else in config). It guards the re-included subtrees; outside them
-  `.gitignore` already governs.
-- There is no per-call gitignore flag: edit `vis.yml` and `/reload` to
-  change what search sees.
-- Hidden files stay governed by `is_hidden`: re-including `repositories/`
-  never surfaces the repos' `.git` internals (doubly guarded — `.git/` is
-  also in the default `always_exclude`).
-- The overlay is applied **natively by the fff index** (its ignore walker
-  *and* its live file watcher), not by a second pass in vis — so a
-  re-included subtree is indexed once, stays incrementally up to date, and
-  costs nothing per search. The same mechanism registers `.rgignore`, the
-  one ignore filename ripgrep's `ignore` crate does not pick up on its own
-  (`.gitignore`, `.ignore`, `.git/info/exclude` and the global gitignore
-  are native).
+Both lists use `.gitignore` pattern syntax. `always_exclude` defaults to
+`.git/`, `node_modules/`, `target/`, `build/`, `dist/`, `__pycache__/`,
+`.venv/`, `.gradle/`, `vendor/`, `.next/` and `out/`; setting the key replaces
+that list. Run `/reload` after editing.
 
 ## See also
 
-- [Process jail & egress](jail.md) — the long form of the `jail` block, with verification.
-- [Context files & prompts](context-and-prompts.md) — AGENTS.md, SYSTEM.md and prompt templates, which are files rather than keys.
-- [Extending Vis](extending.md) — adding providers, tools and toggles that this config then names.
-- [Gateway, pairing & remote access](gateway.md) — the gateway keys and the token model behind them.
+- [Process jail and network policy](jail.md) — the `jail` block in full.
+- [Project instructions](context-and-prompts.md) — AGENTS.md, SYSTEM.md and prompt templates.
+- [Extending Vis](extending.md) — providers, tools and toggles this config names.
+- [Remote access and the Companion app](gateway.md) — gateway keys and tokens.

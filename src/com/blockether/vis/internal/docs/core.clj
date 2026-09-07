@@ -12,7 +12,7 @@
      * The `:title` in `vis-docs/site.edn` IS the page's `# H1`, spelled
        identically, on the FIRST line of the file: the sidebar, the browser tab
        and the page itself must never disagree about a page's name. `index.md` is
-       the ONE exception — the landing page's title is the themed hero, so it
+       the ONE exception — its title is rendered from the site navigation, so it
        carries no `#` at all.
      * Under the H1 comes a LEAD paragraph, before the first `##`: what this page
        covers, so a reader who stops there still knows what they found.
@@ -40,9 +40,8 @@
      * `handle` serves the same pages live (HTMX nav), mountable on the gateway
        via its `:gateway.slot/http-routes` slot.
 
-   Markdown → HTML uses commonmark-java (already a dependency); the theme is an
-   enterprise-grade docs layout (sticky header, sidebar, on-this-page rail) in
-   the VIS palette (cobalt on white, Hanken Grotesk + JetBrains Mono)."
+   Markdown → HTML uses commonmark-java. Static and live pages share a
+   responsive layout with navigation, article content and a table of contents."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -128,8 +127,7 @@
  ;; explicit documentation records
 
 (def ^:private site-resource
-  "The docs site's own navigation and hero copy. NOT a document: nothing here is
-   searchable, and nothing the corpus carries decides how this site reads."
+  "The docs site navigation and metadata. Not a searchable document."
   "vis-docs/site.edn")
 
 (defn- site-file
@@ -291,47 +289,6 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 /* content */
 .main{padding:3.4rem clamp(1.2rem,4vw,3.5rem) 5rem;min-width:0}
 .content{max-width:var(--measure)}
-.eyebrow{font-size:.74rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
-  color:var(--amber);margin-bottom:.7rem}
-/* hero (landing) */
-.hero{padding:2.6rem 0 1.8rem;margin-bottom:1.8rem;text-align:center;display:flex;flex-direction:column;align-items:center}
-.hero-logo{display:block;width:auto;height:clamp(7rem,18vw,10rem);margin:0 0 1.6rem}
-.hero-title{font-family:var(--display);font-size:clamp(1.75rem,3.4vw,2.4rem);line-height:1.12;
-  letter-spacing:-.02em;font-weight:700;margin:0 0 1.5rem;max-width:22ch;color:var(--fg);
-  text-wrap:balance}
-.hero-sub{font-size:1.18rem;line-height:1.55;color:var(--dim);max-width:40rem;margin:0 0 1.7rem}
-.hero-cta{display:flex;flex-direction:column;align-items:center;gap:0;width:100%}
-.hero-install{width:100%;max-width:46rem;display:flex;flex-direction:column;
-  background:var(--code-bg);border:1px solid var(--line);border-radius:0;
-  box-shadow:var(--shadow);overflow:hidden;transition:border-color .2s var(--ease-out),box-shadow .2s var(--ease-out)}
-.hero-install:hover,.hero-install:focus-within{border-color:rgba(37,99,235,.4);box-shadow:0 1px 2px rgba(30,30,30,.05),0 0 0 3px rgba(37,99,235,.08)}
-.hero-install-head{display:flex;align-items:center;gap:.15rem;
-  padding:.45rem .5rem .45rem .25rem;border-bottom:1px solid var(--line)}
-.hero-install-spacer{flex:1}
-.install-tab{margin:0;padding:.6rem 1rem;border:0;background:transparent;cursor:pointer;
-  font-family:var(--sans);font-size:.82rem;font-weight:600;letter-spacing:.005em;color:var(--faint);
-  border-radius:0;border-bottom:2px solid transparent;margin-bottom:-1px;
-  transition:color .15s var(--ease-out),background .15s var(--ease-out)}
-.install-tab:hover{color:var(--link);background:rgba(37,99,235,.06)}
-.install-tab[aria-selected='true']{color:var(--primary-press);border-bottom-color:var(--primary)}
-.install-cmd{display:block;min-width:0;font-family:var(--mono);font-size:clamp(.82rem,2.2vw,.98rem);
-  color:var(--code-fg);padding:1.15rem 1.35rem;overflow-x:auto;white-space:pre;text-align:left;
-  scrollbar-width:thin}
-.install-cmd[hidden]{display:none}
-.copy-btn{flex:0 0 auto;align-self:center;margin:.1rem 0;padding:.4rem .85rem;
-  font-family:var(--sans);font-size:.7rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
-  color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:0;cursor:pointer;
-  transition:color .18s var(--ease-out),background .18s var(--ease-out),border-color .18s var(--ease-out),transform .1s var(--ease-out)}
-.copy-btn:hover{color:var(--link);border-color:rgba(37,99,235,.4);background:rgba(37,99,235,.06)}
-.copy-btn:active{transform:scale(.96)}
-.copy-btn.copied{color:var(--success);border-color:rgba(40,160,60,.4);background:rgba(40,160,60,.1)}
-.btn{display:inline-flex;align-items:baseline;gap:.3rem;padding:0;border-radius:0;background:none;
-  border:0;box-shadow:none;font-size:1.02rem;font-weight:600;letter-spacing:-.01em;transition:color .12s}
-.btn:hover{text-decoration:underline;text-underline-offset:3px}
-.btn-primary{color:var(--link)}
-.btn-primary:hover{color:var(--link-hover)}
-.btn-ghost{color:var(--dim);font-weight:500}
-.btn-ghost:hover{color:var(--link)}
 .content h1{font-family:var(--display);font-size:2.6rem;line-height:1.1;letter-spacing:-.02em;
   margin:0 0 1.1rem;font-weight:700;text-wrap:balance;color:var(--fg)}
 .content h2{font-family:var(--display);font-size:1.45rem;letter-spacing:-.015em;font-weight:600;
@@ -340,7 +297,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 .content h2 .anchor,.content h3 .anchor{color:inherit}
 .content h2 .anchor:hover::after,.content h3 .anchor:hover::after{content:' #';color:var(--faint);font-weight:400}
 .content p,.content li{color:var(--fg-soft)}
-.content p{text-align:justify;hyphens:auto;-webkit-hyphens:auto;hanging-punctuation:first}
+.content p{text-align:left}
 .content strong{color:var(--fg);font-weight:650}
 .content blockquote{margin:1.6rem 0;padding:.9rem 1.3rem;background:var(--bg-soft);
   border:1px solid var(--line);border-radius:var(--r-sm);
@@ -537,7 +494,9 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       (esc (:title site))
       "\" aria-label=\""
       (esc (:title site))
-      "\"></a>"
+      "\">"
+      (esc (:title site))
+      "</a>"
       "<span class=\"spacer\"></span>"
       (when-let [r (:repo site)]
         (str
@@ -556,26 +515,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       (nav-html site-data slug mode)
       "</aside>"
       "<main class=\"main\"><article class=\"content\">"
-      (when home?
-        (str
-          "<section class=\"hero\">"
-          "<img class=\"hero-logo\" src=\""
-          (asset mode "logo.png")
-          "\" alt=\""
-          (esc (:title site))
-          " logo\">"
-          "<h1 class=\"hero-title\">"
-          (esc (or (:headline site) (:title site)))
-          "</h1>"
-          "<div class=\"hero-cta\">"
-          "<div class=\"hero-install\" role=\"tablist\" aria-label=\"Install command\">"
-          "<div class=\"hero-install-head\">"
-          "<button type=\"button\" class=\"install-tab\" role=\"tab\" data-tab=\"unix\" aria-selected=\"true\" aria-controls=\"cmd-unix\">macOS &amp; Linux</button>"
-          "<span class=\"hero-install-spacer\"></span>"
-          "<button type=\"button\" class=\"copy-btn\" data-copy-active aria-label=\"Copy install command\">Copy</button>"
-          "</div>"
-          "<code id=\"cmd-unix\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"unix\" aria-label=\"macOS and Linux install command\"><span class=\"token function\">curl</span> -fsSL <span class=\"token string\">https://github.com/Blockether/vis/releases/download/installer/install-vis-agent</span> <span class=\"token punctuation\">|</span> <span class=\"token function\">bash</span></code>"
-          "</div>" "</div></section>"))
+      (when home? (str "<h1>" (esc title) "</h1>"))
       (rewrite-md-links html mode)
       "<div class=\"foot\">"
       "<a class=\"bk\" href=\"https://blockether.com\" title=\"Blockether\">"
@@ -586,39 +526,9 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       (when-let [r (:repo site)]
         (str "<a href=\"" (esc r) "\">Edit on GitHub ↗</a>"))
       "</div>"
-      "</article></main>" (or (toc-html toc) "<div></div>")
-      "</div>" "<script>"
-      "(function(){"
-      ;; copy (with execCommand fallback for non-secure http://LAN contexts)
-      "function flash(btn){var t=btn.getAttribute('data-label')||btn.textContent;"
-      "btn.setAttribute('data-label',t);btn.textContent='\\u2713 Copied';btn.classList.add('copied');"
-      "setTimeout(function(){btn.textContent=btn.getAttribute('data-label');btn.classList.remove('copied')},1300)}"
-      "function copyText(text,btn){" "if(navigator.clipboard&&navigator.clipboard.writeText){"
-      "navigator.clipboard.writeText(text).then(function(){flash(btn)},function(){fallback(text,btn)})}"
-      "else{fallback(text,btn)}}"
-      "function fallback(text,btn){"
-      "var ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';"
-      "ta.style.opacity='0';document.body.appendChild(ta);ta.select();"
-      "try{document.execCommand('copy');flash(btn)}catch(e){}document.body.removeChild(ta)}"
-      ;; active tab id lives on the install container
-      "var install=document.querySelector('.hero-install');"
-      "function activeId(){return install?(install.getAttribute('data-active')||'unix'):'unix'}"
-      ;; copy buttons: [data-copy] targets a fixed id; [data-copy-active] targets the active tab
-      "document.addEventListener('click',function(e){"
-      "var b=e.target.closest('[data-copy-active],[data-copy]');if(!b)return;"
-      "var id=b.hasAttribute('data-copy-active')?activeId():b.getAttribute('data-copy');"
-      "var src=document.getElementById(id);"
-      "if(src)copyText(src.textContent.replace(/^\\s+|\\s+$/g,''),b)});"
-      ;; install tabs: switch the visible command + active state
-      "document.addEventListener('click',function(e){"
-      "var tab=e.target.closest('.install-tab');if(!tab)return;"
-      "var which=tab.getAttribute('data-tab');"
-      "install.setAttribute('data-active','cmd-'+which);"
-      "install.querySelectorAll('.install-tab').forEach(function(t){"
-      "var on=t.getAttribute('data-tab')===which;t.setAttribute('aria-selected',on?'true':'false')});"
-      "install.querySelectorAll('.install-cmd').forEach(function(p){"
-      "p.hidden=p.getAttribute('data-tabpanel')!==which})})" "})();"
-      "</script>" "</body></html>")))
+      "</article></main>"
+      (or (toc-html toc) "<div></div>")
+      "</div></body></html>")))
 
 ;; static site
 

@@ -103,14 +103,48 @@ def test_required_declaration_fields_are_constructor_arguments(kwargs):
     assert vis._registration["spec"] is None
 
 
-def test_documented_extension_example_runs_with_the_installed_sdk(monkeypatch):
-    import re
+def test_extension_activity_example_runs_with_the_installed_sdk(monkeypatch):
     import sys
     import types
-    from pathlib import Path
 
-    readme = (Path(__file__).parents[1] / "README.md").read_text()
-    example = re.search(r"```python\n(.*?)\n```", readme, re.DOTALL).group(1)
+    example = """
+from dataclasses import dataclass
+
+import blockether.vis.extension as vis
+
+
+@dataclass(frozen=True, slots=True)
+class Greeting:
+    text: str
+
+
+def greet(name: str) -> Greeting:
+    \"\"\"Greet one person and return a typed result.\"\"\"
+    vis.publish_activity(
+        vis.ActivityPresentation(
+            "Greeting", "Preparing reply", (vis.ActivityProgress("Working"),)
+        )
+    )
+    return Greeting(f"Hello, {name}!")
+
+
+def greeting_activity(phase, result, **_) -> vis.ActivityPresentation:
+    return vis.ActivityPresentation(
+        "Greeting",
+        phase,
+        (vis.ActivityText(result.text if phase == "success" else "Preparing reply"),),
+    )
+
+
+vis.register(
+    vis.Extension(
+        name="greeter",
+        description="Greeting tools.",
+        alias="greeter",
+        symbols=[vis.Symbol(greet, activity=vis.Activity(render=greeting_activity))],
+    )
+)
+"""
     module = types.ModuleType("sdk_readme_example")
     monkeypatch.setitem(sys.modules, module.__name__, module)
     updates = []
@@ -118,7 +152,7 @@ def test_documented_extension_example_runs_with_the_installed_sdk(monkeypatch):
     monkeypatch.setattr(
         vis._host, "activity", lambda value: updates.append(value) or True
     )
-    exec(compile(example, "README.md", "exec"), module.__dict__)
+    exec(compile(example, "extension_activity_example", "exec"), module.__dict__)
     assert updates == []
     tool = vis._registration["spec"]["symbols"][0]
     result = tool["fn"]("Ada")
@@ -130,3 +164,15 @@ def test_documented_extension_example_runs_with_the_installed_sdk(monkeypatch):
         "success",
     ]
     assert updates[-1]["content"] == [{"type": "text", "text": result.text}]
+
+
+def test_documented_extension_example_runs_with_the_installed_sdk(monkeypatch):
+    import re
+    from pathlib import Path
+
+    readme = (Path(__file__).parents[1] / "README.md").read_text()
+    example = re.search(r"```python\n(.*?)\n```", readme, re.DOTALL).group(1)
+    monkeypatch.setattr(vis._host, "declare_env", lambda _: "{}")
+    exec(compile(example, "README.md", "exec"), {})
+    tool = vis._registration["spec"]["symbols"][0]
+    assert tool["fn"]("Ada") == "Hello, Ada!"
