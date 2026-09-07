@@ -20,9 +20,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from blockether.vis._contracts import GATEWAY, validate
 from blockether.vis.activity import ActivityProjection
 from blockether.vis.views import InputView, LiveView, ViewEvent
-from blockether.vis_contract import GATEWAY, validate
 
 JSONValue: TypeAlias = (
     str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]

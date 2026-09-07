@@ -52,6 +52,90 @@
                    (expect (= "[]\n" (:stdout result))))))
 
 (defdescribe
+  host-owned-python-globals-test
+  (it "provides the workspace root as a Path and refreshes it with the session"
+      (tpc/with-own [ctx {}]
+                    (doseq [directory ["/workspace/first" "/workspace/second"]]
+                      (ep/bind-ctx! ctx {"workspace" {"root" directory}})
+                      (let [result (ep/run-python-block
+                                     ctx
+                                     "print(isinstance(project_root_path, pathlib.Path), str(project_root_path / 'src'))")]
+                        (expect (nil? (:error result)))
+                        (expect (= (str "True " directory "/src\n") (:stdout result)))))))
+  (it "seeds standalone contexts before their first block"
+      (tpc/with-own [ctx {}]
+                    (let [result (ep/run-python-block ctx "print(str(root))\nprint(session)")]
+                      (expect (nil? (:error result)))
+                      (expect (= (str (System/getProperty "user.dir") "\n{}\n")
+                                 (:stdout result))))))
+  (it "protects system bindings without preventing ordinary persistent variables"
+      (tpc/with-own
+        [ctx {}]
+        (ep/bind-ctx! ctx {"workspace" {"root" "/workspace/first"}})
+        (let [shadow (ep/run-python-block ctx
+                                          (str "before = str(root)\n"
+                                               "root = root / 'temporary'\nsession = None\n"
+                                               "print(before, str(root), session)"))]
+          (expect (nil? (:error shadow)))
+          (expect (= "/workspace/first /workspace/first/temporary None\n" (:stdout shadow))))
+        (expect (= "/workspace/first /workspace/first /workspace/first\n"
+                   (:stdout (ep/run-python-block
+                              ctx
+                              "print(str(root), session['workspace']['root'], before)"))))
+        (expect (nil? (:error (ep/run-python-block ctx "del root, session"))))
+        (expect (= "/workspace/first /workspace/first\n"
+                   (:stdout
+                     (ep/run-python-block ctx "print(str(root), session['workspace']['root'])"))))))
+  (it "keeps roots session-local and visible to helpers after a context refresh"
+      (tpc/with-own
+        [first-ctx {}]
+        (tpc/with-own
+          [second-ctx {}]
+          (ep/bind-ctx! first-ctx {"workspace" {"root" "/workspace/first"}})
+          (ep/bind-ctx! second-ctx {"workspace" {"root" "/workspace/second"}})
+          (expect (nil? (:error (ep/run-python-block
+                                  first-ctx
+                                  "def workspace_src():\n    return str(root / 'src')"))))
+          (expect (= "/workspace/first/src\n"
+                     (:stdout (ep/run-python-block first-ctx "print(workspace_src())"))))
+          (ep/bind-ctx! first-ctx {"workspace" {"root" "/workspace/updated"}})
+          (expect (= "/workspace/updated/src\n"
+                     (:stdout (ep/run-python-block first-ctx "print(workspace_src())"))))
+          (expect (= "/workspace/second\n"
+                     (:stdout (ep/run-python-block second-ctx "print(str(root))")))))))
+  (it "protects system names from helper restoration and hides them from live vars"
+      (tpc/with-own
+        [ctx {}]
+        (doseq [sym ep/SYSTEM_VAR_NAMES]
+          (expect (ep/system-var-sym? sym))
+          (expect (tpc/ev ctx (str (pr-str (name sym)) " in __vis_protected_names__"))))
+        (expect (not (ep/system-var-sym? 'result)))
+        (expect (some? (:error (ep/run-python-block ctx "def root():\n    return 1"))))
+        (expect (= 0
+                   (tpc/ev ctx
+                           (str "__vis_restore_defs__("
+                                (ep/ctx->python-str "root = 1\nsession = None\n")
+                                ")"))))
+        (expect (= "True True\n"
+                   (:stdout
+                     (ep/run-python-block
+                       ctx
+                       "print(isinstance(root, pathlib.Path), isinstance(session, dict))")))))))
+
+(defdescribe worker-system-globals-test
+             (it "carries the host workspace and its protected names into the session worker"
+                 (tpc/with-own
+                   [ctx {} (constantly [(System/getProperty "user.dir")])
+                    {:worker? true :jail-enabled? true}]
+                   (ep/bind-ctx! ctx {"workspace" {"root" (System/getProperty "user.dir")}})
+                   (expect (nil? (:error (ep/run-python-block ctx "root = None\nsession = None"))))
+                   (expect (= "True True\n"
+                              (:stdout (ep/run-python-block
+                                         ctx
+                                         (str "print(isinstance(root, pathlib.Path), "
+                                              "str(root) == session['workspace']['root'])"))))))))
+
+(defdescribe
   block-error-fidelity-test
   "The model must ALWAYS see its own Python error. The caret/position walk
    (`__vis_error_pos__`) reads the raised exception's traceback frames, and a

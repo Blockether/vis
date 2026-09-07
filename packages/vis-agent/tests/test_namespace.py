@@ -1,4 +1,4 @@
-"""The two distributions share only a PEP 420 parent, not global import names."""
+"""Public SDK domains share a lightweight PEP 420 parent without legacy aliases."""
 
 import importlib
 import sys
@@ -7,7 +7,7 @@ from dataclasses import fields, is_dataclass
 from importlib.resources import files
 
 import pytest
-from blockether.vis.client import Event, ProtocolError, Response, Session, Turn
+from blockether.vis.engine import Event, ProtocolError, Response, Session, Turn
 
 
 def test_namespace_coexists_with_unrelated_modules(monkeypatch):
@@ -17,14 +17,58 @@ def test_namespace_coexists_with_unrelated_modules(monkeypatch):
     monkeypatch.setitem(sys.modules, "blockether.unrelated", sibling)
     parent = importlib.import_module("blockether")
     sdk = importlib.import_module("blockether.vis")
-    contract = importlib.import_module("blockether.vis_contract")
+    contract = importlib.import_module("blockether.vis._contracts")
     assert parent.__spec__.origin is None
     assert sdk.__name__ == "blockether.vis"
     assert contract.GATEWAY["routes"]
     assert files(sdk).joinpath("py.typed").is_file()
-    assert files(contract).joinpath("py.typed").is_file()
+    assert contract._DATA.joinpath("schema/gateway.json").is_file()
     assert sys.modules["vis"] is unrelated
     assert sys.modules["blockether.unrelated"] is sibling
+
+
+def test_engine_import_does_not_initialize_extension_host(tmp_path):
+    import os
+    import subprocess
+
+    code = """
+import sys
+import blockether.vis
+assert 'blockether.vis.extension' not in sys.modules
+assert 'blockether.vis._outside' not in sys.modules
+from blockether.vis.engine import GatewayClient, LocalEngine
+assert GatewayClient.__name__ == 'GatewayClient'
+assert LocalEngine.__name__ == 'LocalEngine'
+assert 'blockether.vis.extension' not in sys.modules
+assert 'blockether.vis._outside' not in sys.modules
+assert not hasattr(blockether.vis, '_host')
+assert not hasattr(blockether.vis, 'state')
+import blockether.vis.extension as vis
+assert vis._registration['spec'] is None
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_extension_is_the_api_module_not_a_facade():
+    extension = importlib.import_module("blockether.vis.extension")
+    assert isinstance(extension, types.ModuleType)
+    assert extension.Extension.__module__ == extension.__name__
+    assert extension.register.__module__ == extension.__name__
+
+
+@pytest.mark.parametrize(
+    "name", ["blockether.vis.client", "blockether.vis.local", "blockether.vis_contract"]
+)
+def test_retired_import_paths_are_not_installed(name):
+    assert importlib.util.find_spec(name) is None
 
 
 def test_sdk_records_are_frozen_slotted_dataclasses():

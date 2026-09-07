@@ -205,11 +205,12 @@
           (expect (= 1 (count (:rows projection))))
           (expect (= "ls" (:operation row)))
           (expect (= "succeeded" (:state row)))
-          (expect (= ["progress" "heading"]
-                     (mapv #(get-in % [:content 0 "type"])
+          (expect (= ["Listing directories" "Listed resources/vis-shims"]
+                     (mapv #(get-in % [:presentation "headline"])
                            (filter #(= :content (:phase %)) @events))))
-          (expect (= "table" (get-in row [:content 2 "type"])))
-          (expect (some #(= "ls.py" (first %)) (get-in row [:content 2 "rows"]))))))
+          (expect (string/includes? (get-in row [:presentation "summary"]) "files"))
+          (expect (= "table" (get-in row [:presentation "content" 0 "type"])))
+          (expect (some #(= "ls.py" (first %)) (get-in row [:presentation "content" 0 "rows"]))))))
   (it "bounds batch content and reports omitted entries without losing nested paths"
       (let [entry
             {"name" "same.txt" "path" "root/nested/same.txt" "type" "file" "size" 42}
@@ -218,23 +219,24 @@
             {"path" "root" "entries" (vec (repeat 40 entry))}
 
             content
-            (#'shim-ls/listing-content (repeat 5 directory))
+            (#'shim-ls/listing-presentation (repeat 5 directory))
 
             tables
-            (filter #(= "table" (get % "type")) content)
+            (mapcat #(get % "content") (get content "sections"))
 
             hostile
             (apply str (repeat 2000 (char 1)))
 
             bounded
-            (#'shim-ls/listing-content
+            (#'shim-ls/listing-presentation
              (repeat 5 {"path" hostile "entries" (repeat 40 (assoc entry "path" hostile))}))]
 
-        (expect (= 13 (count content)))
+        (expect (= "Listed 5 directories" (get content "headline")))
+        (expect (= 4 (count (get content "sections"))))
         (expect (= [12 12 12 12] (mapv #(count (get % "rows")) tables)))
-        (expect (= "nested/same.txt" (get-in content [2 "rows" 0 0])))
-        (expect (string/includes? (get-in content [1 "text"]) "12 of 40"))
-        (expect (string/includes? (get (last content) "text") "1 more directories"))
+        (expect (= "nested/same.txt" (get-in content ["sections" 0 "content" 0 "rows" 0 0])))
+        (expect (string/includes? (get-in content ["sections" 0 "summary"]) "12 of 40"))
+        (expect (string/includes? (get content "summary") "showing 4 of 5 directories"))
         (expect (< (alength (.getBytes ^String (json/write-json-str bounded) "UTF-8")) 32768))))
   (it "keeps failure truthful and catchable when Activity is enabled"
       (let [ctx

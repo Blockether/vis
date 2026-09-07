@@ -6,17 +6,13 @@ from pathlib import Path
 
 if not os.environ.get("VIS_TEST_INSTALLED"):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-    sys.path.insert(
-        0,
-        str(Path(__file__).resolve().parents[2] / "vis-contract" / "python" / "src"),
-    )
 
 # Remove only our SDK modules, never an unrelated package named `vis`.
-sys.modules.pop("blockether.vis", None)
+sys.modules.pop("blockether.vis.extension", None)
 sys.modules.pop("blockether.vis._outside", None)
 
+import blockether.vis.extension as vis  # noqa: E402
 import pytest  # noqa: E402  (the path above is what makes `vis` importable)
-from blockether import vis  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

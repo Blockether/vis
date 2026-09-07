@@ -75,7 +75,7 @@ Channels, persistence backends and sandbox shims stay Clojure-side. The separate
 ```python
 # ~/.vis/extensions/greeter.py
 """Greeter — smallest possible tool extension."""
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def greeter_hello(name):
@@ -83,14 +83,14 @@ def greeter_hello(name):
     return {"greeting": f"hello {name}"}
 
 
-vis.extension(
+vis.register(vis.Extension(
     name="greeter",
     description="Greets people.",
     kind="integration",
     alias="greeter",
-    symbols=[vis.symbol(greeter_hello, tag="observation")],
+    symbols=[vis.Symbol(greeter_hello, tag="observation")],
     prompt="greeter_ surface active: greeter_hello(name).",
-)
+))
 ```
 
 Start Vis (or `/reload`) and the model can call `await greeter_hello("vis")`.
@@ -100,14 +100,14 @@ This repo ships its own project-local extensions under `.vis/extensions/` —
 
 ### Outside Vis — `pip install vis-agent`
 
-The `blockether.vis` module is a real package: the same `blockether/vis/__init__.py` the engine injects
-into the sandbox is what `packages/vis-agent` publishes to PyPI as `vis-agent`,
-so an extension file is importable, testable and lintable in an ordinary Python
+The `blockether.vis.extension` module is the same `blockether/vis/extension.py` file
+the engine injects and `packages/vis-agent` publishes to PyPI as `vis-agent`.
+An extension file is importable, testable and lintable in an ordinary Python
 process — `pip install vis-agent` once a release has uploaded it, or
 `pip install ./packages/vis-agent` from a checkout of this repository.
 
 With no engine on the other side the module binds `blockether.vis._outside` instead — a
-local host implementing every op in the declaration `vis-contract` ships: state,
+local host implementing every op in the canonical declaration bundled with the SDK: state,
 secrets, logging and `shell` run against the machine you are on, the jailed
 sandbox ops refuse by name rather than pretend to be a sandbox, and
 `vis.ask(...)` prompts at the terminal. Prime those answers with
@@ -117,15 +117,24 @@ set `VIS_OUTSIDE_NONINTERACTIVE=1` to have every ask come back undeliverable.
 `background`, `logs`, `wait`, `send`, `stop`, read out of that declaration — so a
 file written against the sandbox drives a process the same way outside it.
 
-Neither host is special: `vis` calls every op the contract declares on whatever object sits in
-its `_host`, and `vis_contract.Host` is that interface — a `typing.Protocol`, with
-`vis_contract.check_host(obj)` refusing an object that misses an op and naming the
-ones it missed. A third runtime that wants to run extension files implements it and
-seeds it; the engine seeds one, `blockether.vis._outside` builds one, and the file cannot tell.
+The host interface is `blockether.vis.extension.Host`, a `typing.Protocol`.
+The engine injects a host; `blockether.vis._outside` builds and checks a local one.
+Ordinary extensions use the module API without importing a separate contract package.
+Canonical JSON documents and schemas remain shared between Python, Clojure and UI consumers.
 
-### `vis.extension(...)`
+`blockether.vis` itself is a lightweight package. Engine clients import
+`GatewayClient` and `LocalEngine` from `blockether.vis.engine`; importing them
+neither initializes an extension host nor starts an engine or gateway connection.
 
-Exactly one call per file. Keyword arguments:
+### `vis.register(vis.Extension(...))`
+
+`Extension` is a frozen, slotted declaration, as are `Symbol`, `SlashCommand`,
+`OpHook`, `NetworkFilter` and `Provider`. Construction validates and snapshots data;
+it does not register an extension, resolve environment variables, or perform host IO.
+Only `vis.register(declaration)` crosses that boundary, exactly once per file.
+No extension base class, singleton, marker dictionaries or legacy builders are required.
+
+`Extension` keyword arguments (collection inputs accept lists or tuples):
 
 | Argument | Type | What it does |
 | --- | --- | --- |
@@ -134,13 +143,13 @@ Exactly one call per file. Keyword arguments:
 | `kind` | str | Section label (`"integration"`, `"guard"`, …). Defaults to `"python"`. |
 | `version` | str | Plain metadata. |
 | `alias` | str | Short registry identity used in extension listings. Required with `symbols=`; it does not prefix the public Python API. |
-| `symbols` | list of `vis.symbol(...)` | Model-facing tools. |
+| `symbols` | list of `vis.Symbol(...)` | Model-facing tools. |
 | `prompt` | str or callable | Model-facing fragment. A callable receives the env dict every turn and returns a string or `None` (no fragment that turn). |
 | `activation` | callable | `(env) -> bool`, evaluated per turn; gates the whole extension. Default: always on. |
-| `slash_commands` | list of `vis.slash(...)` | User-facing commands. |
-| `op_hooks` | list of `vis.op_hook(...)` | Guards/observers over ops, and gates such as `fs_access`. |
-| `network_filters` | list of `vis.network_filter(...)` | Request/response policy at the gateway's decrypted HTTP boundary. |
-| `providers` | list of `vis.provider(...)` | LLM providers the router can select. |
+| `slash_commands` | list of `vis.SlashCommand(...)` | User-facing commands. |
+| `op_hooks` | list of `vis.OpHook(...)` | Guards/observers over ops, and gates such as `fs_access`. |
+| `network_filters` | list of `vis.NetworkFilter(...)` | Request/response policy at the gateway's decrypted HTTP boundary. |
+| `providers` | list of `vis.Provider(...)` | LLM providers the router can select. |
 | `ctx` | callable | `(env) -> dict`, evaluated per turn; the returned dict is deep-merged into the model's `session` bag. See [Session context](#session-context). |
 | `env` | list of str | Host environment variables this file may read. See [Environment](#environment). |
 
@@ -154,7 +163,7 @@ checkout it maintains — through `vis.fs`, and those calls do the work in C,
 inside the runtime, past the confinement that exists for the model's sandbox:
 
 ```python
-from blockether import vis
+import blockether.vis.extension as vis
 
 vis.fs.mkdir("~/.cache/acme")                     # every parent too
 vis.fs.write("~/.cache/acme/state.json", payload)  # str or bytes
@@ -187,13 +196,14 @@ Name what you need and the host injects those values — and only those — into
 this context's `os.environ` before the file's first line runs:
 
 ```python
-import os, vis
+import os
+import blockether.vis.extension as vis
 
-vis.extension(
+vis.register(vis.Extension(
     name="acme",
     description="Acme integration.",
     env=["ACME_API_KEY"],
-)
+))
 
 key = os.environ.get("ACME_API_KEY")   # resolved by the host, or absent
 ```
@@ -235,11 +245,11 @@ def _ctx(env):
     # model's `session` dict, which rejects non-string keys.
     return {"session_env": {"todo": {"open": len(vis.state.get("todos", []))}}}
 
-vis.extension(
+vis.register(vis.Extension(
     name="todo",
     description="Todo list.",
     ctx=_ctx,
-)
+))
 ```
 
 - Runs **once per turn** during context render, so the slice is always current.
@@ -255,7 +265,7 @@ vis.extension(
 ### Tools
 
 ```python
-vis.symbol(fn_or_object, name=None, tag="observation", is_hidden=False, activity=None)
+vis.Symbol(fn_or_object, name=None, tag="observation", is_hidden=False, activity=None)
 vis.method(fn=None, tag="observation", is_hidden=False, activity=None)
 ```
 
@@ -280,13 +290,15 @@ vis.method(fn=None, tag="observation", is_hidden=False, activity=None)
   on the namespace itself. Activity is a `block.activity` replacement projection,
   never a View or a model-context block. The normative vocabulary and semantics are
   in the [Activity contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/activity.json).
-  Add `render=callback` to compose a symbol's own content. The synchronous callback
+  Add `render=callback` to compose a symbol's presentation. The synchronous callback
   receives `phase`, `args`, `kwargs`, `result`, and `error` as keyword arguments;
-  phases are `start`, `success`, and `failure`. Return a list of blocks, or `None`
-  to retain the current content. Presentation errors do not replace tool results.
-  Inside the symbol, `vis.publish_activity(*blocks)` publishes intermediate stages.
-  Every update replaces the complete content; retain earlier stages explicitly.
-  An empty update clears it. Calls outside an active tool return `False`.
+  phases are `start`, `success`, and `failure`. Return `vis.ActivityPresentation`, or
+  `None` to keep it. `headline` and the single-line `summary` stay visible when
+  collapsed; the chevron discloses only `content`. Optional `ActivitySection` values
+  group multiple results with their own headline, summary and content, separated by
+  one blank line. Sections cannot nest. `vis.publish_activity(presentation)` replaces
+  all slots atomically during execution. Empty content clears details, not the header.
+  Calls outside a tool return `False`; presentation errors never change tool results.
 
   Supported blocks are `heading`, `text`, and `markdown` (`text`); `code` and
   `diff` (`text`, optional `language`); `table` (`columns`, rectangular `rows`);
@@ -295,24 +307,26 @@ vis.method(fn=None, tag="observation", is_hidden=False, activity=None)
   attachments produced by the tool, not external URLs. Companion uses its existing
   media controls; TUI offers attachment opening rather than inline video playback.
   A progress block without numbers is indeterminate only while the tool runs.
-  Content is bounded to 32 blocks and 32 KiB per update. Never include secrets.
+  One replacement is bounded to 8 sections, 32 total blocks and 32 KiB. Headline and
+  summary are literal, single-line text of at most 512 UTF-8 bytes each. Never include secrets.
 
   ```python
   def checks_activity(phase, result, **_):
-      blocks = [{"type": "heading", "text": "Checks"}]
+      blocks = []
+      summary = "Running checks"
       if phase == "start":
-          blocks.append({"type": "progress", "label": "Running checks"})
+          blocks.append(vis.ActivityProgress("Running checks"))
       elif phase == "success":
-          blocks.append({"type": "table", "columns": ["Suite", "Passed"],
-                         "rows": [["Unit", str(result)]]})
-      return blocks
+          summary = f"{result} checks passed"
+          blocks.append(vis.ActivityTable(["Suite", "Passed"], [["Unit", str(result)]]))
+      return vis.ActivityPresentation("Checks", summary, blocks)
 
   def run_checks():
       """Run the project's checks."""
       # Publish additional stages here with vis.publish_activity(...).
       return 12
 
-  vis.symbol(run_checks, activity=vis.Activity(
+  vis.Symbol(run_checks, activity=vis.Activity(
       presenter="tests", label="Run checks", render=checks_activity))
   ```
 - Boolean keys keep **one spelling** across the boundary: a Python `is_<name>` key
@@ -345,12 +359,12 @@ class Uberworkspace:
         self.issues = Issues()
 
 
-vis.extension(
+vis.register(vis.Extension(
     name="uberworkspace",
     description="Workspace integration.",
     alias="uw",
-    symbols=[vis.symbol(Uberworkspace(), name="uberworkspace")],
-)
+    symbols=[vis.Symbol(Uberworkspace(), name="uberworkspace")],
+))
 ```
 
 This exposes exactly `uberworkspace.issues.find(...)` and
@@ -362,7 +376,7 @@ values are rejected with their full path instead of being silently serialized, a
 cycles or repeated object references are rejected with both conflicting paths.
 
 `vis.method(...)` overrides `tag` or `is_hidden` for one leaf and can declare its
-Activity presentation; otherwise the enclosing `vis.symbol(...)` defaults apply.
+Activity presentation; otherwise the enclosing `vis.Symbol(...)` defaults apply.
 Every leaf keeps its signature and docstring under
 its full dotted name in `apropos`/`doc`, and runs through the same deferred worker and
 result envelope as a flat tool. Namespace values themselves have a concise readable
@@ -456,7 +470,7 @@ Dict keys pass through as written — use snake_case.
 ### Slash commands
 
 ```python
-vis.slash(name, run, doc=None, usage=None)
+vis.SlashCommand(name, run, doc=None, usage=None)
 ```
 
 `run(ctx)` receives `{"channel", "args", "raw", "session_id"}` and returns:
@@ -471,7 +485,7 @@ vis.err(title, body=None, data=None)
 ### Op hooks
 
 ```python
-vis.op_hook(ops, fn, phase="before")
+vis.OpHook(ops, fn, phase="before")
 ```
 
 - `ops` — sandbox tool names to hook: `"patch"`,
@@ -872,7 +886,7 @@ human watches it in the terminal, in the companion app, or both.
 ```python
 import json
 
-from blockether import vis
+import blockether.vis.extension as vis
 
 TONES = {"": "running", "success": "ok", "skipped": "idle"}  # anything else is an error
 
@@ -1063,121 +1077,123 @@ of vanishing. An extension is written once and behaves the same in both places.
 
 ### LLM providers
 
-`vis.provider(...)` registers a first-class provider the model can actually
-route to — the same descriptor a Clojure provider extension builds, minus the
-Clojure. Hand it an `id`, a `label`, a `preset` (base URL / API style / default
-models), and any of the credential callables:
+`vis.Provider` is a declaration, not a provider instance or a base class. It joins
+`Extension.providers`; only `vis.register(...)` registers it. Presets and callback
+results are immutable, typed records, and the SDK converts them to the engine's
+existing wire format. Raw preset/result dictionaries are not accepted.
 
 ```python
-import os, vis
+import os
+import blockether.vis.extension as vis
 
-def _token():
-    # `env=["ACME_API_KEY"]` below is what puts this in os.environ.
-    key = os.environ.get("ACME_API_KEY")
-    if not key:
-        raise ValueError("set ACME_API_KEY")
-    return {"token": key, "api_url": "https://api.acme.ai/v1"}
 
-def _status():
-    ok = bool(os.environ.get("ACME_API_KEY"))
-    return {"is_authenticated": ok, "source": "env-var", "provider_id": "acme"}
+def credential() -> vis.ProviderCredential | None:
+    token = os.environ.get("EXAMPLE_API_KEY")
+    return vis.ProviderCredential(token) if token else None
 
-vis.extension(
-    name="provider-acme",
-    description="Acme AI (OpenAI-compatible) provider.",
-    env=["ACME_API_KEY"],
-    providers=[
-        vis.provider(
-            id="acme",
-            label="Acme AI",
-            preset={"base_url": "https://api.acme.ai/v1",
-                    "api_style": "openai",           # anthropic | openai | openai-responses | gemini
-                    "default_models": ["acme-large", "acme-small"]},
-            get_token_fn=_token,
-            status_fn=_status,
+
+def status() -> vis.ProviderStatus:
+    return vis.ProviderStatus(
+        is_authenticated=bool(os.environ.get("EXAMPLE_API_KEY")),
+        source="env-var",
+    )
+
+vis.register(vis.Extension(
+    name="provider-example",
+    description="An OpenAI-compatible provider.",
+    env=["EXAMPLE_API_KEY"],
+    providers=[vis.Provider(
+        id="example",
+        label="Example AI",
+        preset=vis.ProviderPreset(
+            base_url="https://gateway.example.com/v1",
+            api_style="openai",
+            default_models=["example-model"],
         ),
-    ],
-)
+        get_token_fn=credential,
+        status_fn=status,
+    )],
+))
 ```
 
-The `preset` flows into the router the same way a built-in provider's does, so adding `acme` to `~/.vis/config.yml`'s `providers` — or picking it in the TUI's *Add Provider* picker, which lists any labelled provider — makes the model call it. `vis-agent providers auth/status/limits <id>` work against it like any other provider.
+Add `example` through *Add Provider* or the `providers` configuration, then select
+`example-model`. Its preset supplies the endpoint, dialect and default model names;
+the callback supplies the credential. The ordinary Python SDK does not itself run
+model routing: load the extension in a Vis engine. `vis-agent providers
+status/limits/auth <id>` uses the same registered provider.
 
-Three spelling rules govern the rest:
+| Callback \| Signature / result |
+| --- \| --- |
+| `get_token_fn`, `detect_fn` \| `() -> ProviderCredential \| None`; passive reads, never start login |
+| `refresh_token_fn` \| `(rejected: str \| None) -> ProviderCredential \| None`; a zero-argument callback is also supported |
+| `status_fn` \| `() -> ProviderStatus \| None`; connection state, not quota |
+| `limits_fn` \| `() -> ProviderLimits \| None`; the canonical usage report |
+| `auth_fn` \| `(printer) -> str \| bool \| None`; explicitly initiate login, print instructions through `printer(line)` |
+| `auth_prompt_fn` \| `() -> Sequence[str] \| str \| None`; static login guidance |
+| `logout_fn` \| `() -> None`; discard the provider-owned credential |
+| `enrich_models_fn` \| `(provider, router_opts) -> Sequence[ProviderModel] \| None` |
+| `on_selected_fn` \| `(event) -> None`; notification after selection |
 
-- **Every callable slot is optional, and carries the `_fn` suffix** — `get_token_fn`, `detect_fn`, `status_fn`, `logout_fn`, `limits_fn`, `refresh_token_fn`, `auth_fn`, `auth_prompt_fn`, `enrich_models_fn`, `on_selected_fn`. A static-key provider usually needs only `get_token_fn` plus a `preset`.
-- **Dict keys may be snake_case or kebab** — `api_url` ≡ `:api-url`.
-- **A boolean predicate written `is_<name>` maps to the `:<name>?` the host reads** — a `status_fn` result returns `is_authenticated` (Python cannot spell the trailing `?`), which the runtime consumes as `:is-authenticated`.
+All slots are optional and **synchronous**. Invalid callback signatures and async
+functions fail during declaration, not silently during routing. A callback body is
+invoked once: refresh arity is inspected before invocation, and an exception is
+never retried with different arguments. A returned awaitable or wrong record type
+is rejected. Authentication errors propagate to the auth caller; passive callback
+errors are logged and yield no result, so one broken extension does not break the
+whole provider registry.
 
-**`api_style` in a preset is the endpoint's wire dialect, and it is checked.** It
-takes the same vocabulary as a provider's `compatibility:` in `vis.yml` —
-`anthropic`, `openai`, `openai-responses`, `gemini`, with the aliases and the
-`_`/`-`/case forgiveness described under
-[Providers and models](configuration.md#providers-and-models) — and resolves to
-the dialect the router dispatches on. A value naming **no** dialect is a load
-failure for that extension (`vis-agent extensions` shows it), never a keyword
-passed through: an unrecognised dialect used to mean chat completions silently,
-which posts a Responses endpoint's history to `/chat/completions`. Say
-`"openai-responses"` whenever the endpoint serves the Responses API, even when
-the same gateway also answers `/chat/completions`.
+`ProviderCredential(token, ...)` can also carry `api_url`, `api_style`,
+`responses_path`, `llm_headers` and `source`. A missing credential is `None`, not a
+record with an empty token. Token and header fields are excluded from the record's
+`repr`; do not log credentials or include them in status metadata.
 
-**The credential may name the wire too.** `get_token_fn` answers
-`{"token": ..., "api_url": ..., "llm_headers": ..., "responses_path": ...,
-"api_style": ...}` — everything but `token` optional. `api_style` takes the same
-checked vocabulary as the preset, and exists because a managed provider's
-endpoint only comes into being when the credential is issued: the extension that
-mints `api_url` is the only thing that knows which wire that URL speaks.
-Precedence is **config > credential > preset**, so an `api_style:` /
-`compatibility:` a user wrote in `vis.yml` still wins. A `responses_path` with no
-dialect named anywhere is read as `openai-responses` on its own — nothing else
-ever posts to that path.
+The checked `api_style` vocabulary is shared with configuration: `anthropic`,
+`openai`, `openai-responses`, `gemini` and the documented aliases. Precedence stays
+**config > credential > preset**. A credential can therefore supply an endpoint
+created during authentication; an explicit user override still wins. A
+`responses_path` without a declared dialect selects the Responses API. Header
+maps are replaced as whole fields at those precedence levels, not deep-merged.
 
-A provider whose credential the RUNTIME issues — a company gateway, a device
-policy — declares itself with `is_managed=True` and is never asked for a key at
-all: see [Managed providers](#managed-providers) below.
+`ProviderPreset` exposes `base_url`, `api_style`, `default_models`,
+`responses_path`, `llm_headers`, `extra_body` and `is_hidden`. Additional router
+settings belong in its JSON-only `extra` mapping. `ProviderModel` exposes `name`,
+`context`, `is_tool_call`, `is_image_input` and JSON-only `extra` metadata.
+`ProviderStatus.extra` holds display-only status metadata. Extra keys cannot
+replace declared fields. Nested header/body payload keys remain unchanged; the
+adapter does not reinterpret the provider's API request body.
 
-Where a slot's output lands differs:
+Usage data uses the existing canonical provider limits contract:
 
-- **`status_fn` answers *am I connected*.** The host reads `is_authenticated` (plus an optional `error`) for the provider dot and for routing; any extra key you return is shown in the status dialog only.
-- **`limits_fn` answers *how much is left*.** It is the ONLY slot that feeds the TUI footer's usage line.
+```python
+def limits() -> vis.ProviderLimits:
+    return vis.ProviderLimits(limits=[
+        vis.ProviderLimit(
+            "daily-tokens", "Daily tokens",
+            scope="account", kind="tokens",
+            precision="exact", source="provider-api",
+            used=25.49, limit=100,
+            window=vis.ProviderLimitWindow("calendar", unit="day", size=1),
+        ),
+    ])
+```
 
-`limits_fn` returns `{"provider_id": ..., "status": "ok", "dynamic": {"limits": [row, ...]}}`, and every row carries:
+`ProviderLimit` also accepts `remaining`, `is_unlimited`, `subject` and `note`.
+`ProviderLimits` accepts `rpm`, `tpm`, a report `note` and a `ProviderError`;
+the host fills `provider_id` and `fetched_at_ms` when omitted. Closed enums,
+boolean fields and finite measurements are validated before crossing into the
+engine. Use `vis-agent providers limits <id>` to inspect the resulting report.
 
-| key | required | values |
-|---|---|---|
-| `id`, `label` | yes | your own row id, and the name shown for it |
-| `scope` | yes | `account` · `plan` · `workspace` · `model` |
-| `kind` | yes | `requests` · `tokens` · `usd` · `credits` · `sessions` · `rate` |
-| `precision` | yes | `exact` · `estimate` · `derived` · `unknown` |
-| `source` | yes | `provider-api` · `derived` · `static` · `local` |
-| `is_unlimited` | yes | boolean |
-| `used`, `limit`, `remaining`, `subject`, `note` | no | the numbers, and free text beside them |
-| `window` | no | `{"kind": ..., "unit": ..., "size": N, "resets_at_ms": ...}`, where `kind` is `calendar`, `rolling` or `lifetime` |
+**Callbacks may run without a session.** Startup, provider status and limits polling
+are process-level operations. `vis.shell` and `vis.jailed_shell` work there;
+`vis.ask` and `vis.jailed_shell_session` require a live session. `auth_fn` receives
+its own instruction printer. Keep `get_token_fn` passive: return the credential
+already available, or `None`; login belongs in `auth_fn`.
 
-`is_authenticated` and `is_unlimited` are the two keys kept **verbatim** — every other `is_<name>` still becomes `:<name>?`. One missing required key invalidates the whole report and the footer renders `limits: error`, so check yours with `vis-agent providers limits <id>`.
-
-**Provider callbacks run at process level, not inside a session.** `detect_fn`, `status_fn` and `limits_fn` are called while Vis starts, while the provider picker and *Settings → Providers* paint, and from the footer's own polling thread — moments when no turn is being handled at all.
-
-- **Available with or without a session** — `subprocess`, `os.system`, `vis.shell`, `vis.jailed_shell`. These are what a credential helper must use here.
-- **Require a live turn** — `vis.jailed_shell_session` and `vis.ask`, which refuse with *available only while handling a session*.
-
-Write these slots so they can answer with no session: cache a minted credential on disk rather than shelling out to mint one at render time. When a callback *is* invoked from a caller that has a session, the host keeps that session around it.
-
-For an interactive login, give `auth_fn=` a `def login(printer): ...` — the runtime
-hands it a `printer(line)` callback to emit instructions, and its return signals
-the outcome (`"ok"` / `"already-authenticated"` = silent success; anything else
-surfaces the printed lines so the user knows what to do next). `auth_prompt_fn=`
-is a `() -> [line, ...]` for the static guidance shown in the API-key dialog.
-
-Two more optional hooks mirror their Clojure counterparts. `enrich_models_fn=` is a
-`def enrich(provider, router_opts): ...` called once at router-build to resolve
-each model's real context window — return `[{"name": ..., "context": N,
-"is_tool_call": True}, ...]` (the host reads `context` and the `is_tool_call`
-predicate as `:tool-call?`), as LM Studio's
-built-in provider does. `on_selected_fn=` is a `def on_selected(event): ...`
-side-effect hook fired after this provider becomes the active one and config is
-persisted; the `event` carries `previous_provider` / `provider` / `config` /
-`source`. Both fail soft — a throw is logged and never blocks router build or
-selection.
+Enrichment and selection inputs remain JSON mappings owned by the router and
+configuration, rather than a second SDK model of those domains. Their nested
+native field names are preserved. Return typed `ProviderModel` values from
+enrichment; `None` keeps the router's defaults. Selection is a side-effect hook,
+and its return is ignored.
 
 ### Managed providers
 
@@ -1187,22 +1203,22 @@ network and models, and keep credentials outside `state.yml`. `is_managed=True`
 binding**. It does not decide how the provider authenticates.
 
 ```python
-vis.extension(
+vis.register(vis.Extension(
     name="provider-corp",
     description="The gateway this machine is already entitled to.",
     providers=[
-        vis.provider(
+        vis.Provider(
             id="corp-gateway",
             label="Corp Gateway",
             is_managed=True,
-            preset={"base_url": "https://gateway.example.com/v1",
-                    "api_style": "openai",
-                    "default_models": ["corp-large", "corp-small"]},
+            preset=vis.ProviderPreset(base_url="https://gateway.example.com/v1",
+                    api_style="openai",
+                    default_models=["corp-large", "corp-small"]),
             get_token_fn=_issued_token,
             auth_fn=_browser_oauth,  # optional: provider-owned first-use auth
         ),
     ],
-)
+))
 ```
 
 What the flag changes — and what it does not:
@@ -1226,7 +1242,7 @@ For an extension author, the implementation recipe is:
 
 1. Set `is_managed=True`; do not add or ask the user to add a `state.yml` provider entry.
 2. Supply a `preset` with `default_models` and the endpoint defaults the extension owns.
-3. Make `get_token_fn()` a passive credential read. Return `{"token": "..."}` (plus any
+3. Make `get_token_fn()` a passive credential read. Return `ProviderCredential(token)` (plus any
    runtime `api_url`, `llm_headers`, `responses_path` or `api_style`), or
    `{"token": None}` while signed out. Never launch OAuth from this callback.
 4. When sign-in is required, supply `auth_fn(printer)`. It must complete the interactive
@@ -1351,7 +1367,7 @@ A single `.py` file is the simplest extension. For anything larger, drop a
 ```text
 ~/.vis/extensions/
   my_ext/
-    extension.py      # the entry — calls vis.extension(...)
+    extension.py      # the entry — calls vis.register(vis.Extension(...))
     mypkg/
       __init__.py
       core.py
@@ -1395,7 +1411,7 @@ out of the active session, records only what the extension emitted, and lets a t
 simulate surface actions against the same materialized state:
 
 ```python
-from blockether import vis
+import blockether.vis.extension as vis
 
 recorder = vis.testing.LiveRecorder(vis._host)
 monkeypatch.setattr(vis, "_host", recorder)

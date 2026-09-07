@@ -3,8 +3,8 @@
 import runpy
 from dataclasses import FrozenInstanceError
 
+import blockether.vis.extension as vis
 import pytest
-from blockether import vis
 
 
 @pytest.fixture(autouse=True)
@@ -19,7 +19,7 @@ def test_importable_extension_exposes_typed_tools(tmp_path):
         "\n".join(
             [
                 "from dataclasses import dataclass",
-                "from blockether import vis",
+                "import blockether.vis.extension as vis",
                 "@dataclass(frozen=True)",
                 "class Greeting:",
                 '    """A greeting for one person."""',
@@ -28,8 +28,8 @@ def test_importable_extension_exposes_typed_tools(tmp_path):
                 '    """Greet one person, optionally in uppercase."""',
                 '    text = "Hello " + name',
                 "    return Greeting(text.upper() if loud else text)",
-                'vis.extension(name="greeter", description="Greeting tools.",',
-                '              alias="greet", symbols=[vis.symbol(greet)])',
+                'vis.register(vis.Extension(name="greeter", description="Greeting tools.",',
+                '              alias="greet", symbols=[vis.Symbol(greet)]))',
             ]
         ),
         encoding="utf-8",
@@ -48,7 +48,9 @@ def test_importable_extension_exposes_typed_tools(tmp_path):
     with pytest.raises(FrozenInstanceError):
         result.text = "changed"
     with pytest.raises(ValueError, match="once per file"):
-        vis.extension(name="second", description="A duplicate declaration.")
+        vis.register(
+            vis.Extension(name="second", description="A duplicate declaration.")
+        )
 
 
 def test_object_tools_keep_method_metadata_and_raise_normally():
@@ -63,7 +65,7 @@ def test_object_tools_keep_method_metadata_and_raise_normally():
         def _private(self):
             raise AssertionError("private method must not be exposed")
 
-    namespace = vis.symbol(Tools(), name="tools")
+    namespace = vis.Symbol(Tools(), name="tools")._spec()
     assert namespace["marker"] == "namespace"
     assert len(namespace["methods"]) == 1
     method = namespace["methods"][0]
@@ -78,8 +80,8 @@ def test_object_tools_keep_method_metadata_and_raise_normally():
 @pytest.mark.parametrize(
     "kwargs, message",
     [
-        ({"description": "Tools."}, "requires name"),
-        ({"name": "tools"}, "requires description"),
+        ({"name": "", "description": "Tools."}, "requires name"),
+        ({"name": "tools", "description": ""}, "requires description"),
         (
             {"name": "tools", "description": "Tools.", "symbols": [object()]},
             "requires alias",
@@ -90,5 +92,41 @@ def test_object_tools_keep_method_metadata_and_raise_normally():
 )
 def test_invalid_declarations_fail_before_registration(kwargs, message):
     with pytest.raises(ValueError, match=message):
-        vis.extension(**kwargs)
+        vis.register(vis.Extension(**kwargs))
     assert vis._registration["spec"] is None
+
+
+@pytest.mark.parametrize("kwargs", [{"name": "tools"}, {"description": "Tools"}])
+def test_required_declaration_fields_are_constructor_arguments(kwargs):
+    with pytest.raises(TypeError, match="required keyword-only argument"):
+        vis.Extension(**kwargs)
+    assert vis._registration["spec"] is None
+
+
+def test_documented_extension_example_runs_with_the_installed_sdk(monkeypatch):
+    import re
+    import sys
+    import types
+    from pathlib import Path
+
+    readme = (Path(__file__).parents[1] / "README.md").read_text()
+    example = re.search(r"```python\n(.*?)\n```", readme, re.DOTALL).group(1)
+    module = types.ModuleType("sdk_readme_example")
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    updates = []
+    monkeypatch.setattr(vis._host, "declare_env", lambda _: "{}")
+    monkeypatch.setattr(
+        vis._host, "activity", lambda value: updates.append(value) or True
+    )
+    exec(compile(example, "README.md", "exec"), module.__dict__)
+    assert updates == []
+    tool = vis._registration["spec"]["symbols"][0]
+    result = tool["fn"]("Ada")
+    assert isinstance(result, module.Greeting)
+    assert result.text == "Hello, Ada!"
+    assert [update["summary"] for update in updates] == [
+        "start",
+        "Preparing reply",
+        "success",
+    ]
+    assert updates[-1]["content"] == [{"type": "text", "text": result.text}]

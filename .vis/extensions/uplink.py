@@ -40,7 +40,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 
-from blockether import vis
+import blockether.vis.extension as vis
 
 _CONNECT_TIMEOUT_S = 15
 _MAX_CAPTURE_BYTES = 256 * 1024
@@ -530,23 +530,25 @@ def _slash_host(ctx: dict) -> dict:
     return vis.ok(f"remote server set: {target} port {port}")
 
 
-vis.extension(
-    name="uplink",
-    description=(
-        "One administered server over SSH: run, service, health, info, put, get."
-    ),
-    version="0.1.0",
-    kind="integration",
-    alias="uplink",
-    symbols=[vis.symbol(uplink, name="uplink", tag="observation")],
-    prompt=PROMPT,
-    slash_commands=[
-        vis.slash(
-            "uplink-host",
-            _slash_host,
-            doc="Set or show the administered server.",
-            usage="/uplink-host user@host [port]",
-        )
-    ],
-    env=["UPLINK_HOST", "UPLINK_PORT", "UPLINK_PASSWORD"],
+vis.register(
+    vis.Extension(
+        name="uplink",
+        description=(
+            "One administered server over SSH: run, service, health, info, put, get."
+        ),
+        version="0.1.0",
+        kind="integration",
+        alias="uplink",
+        symbols=[vis.Symbol(uplink, name="uplink", tag="observation")],
+        prompt=PROMPT,
+        slash_commands=[
+            vis.SlashCommand(
+                "uplink-host",
+                _slash_host,
+                doc="Set or show the administered server.",
+                usage="/uplink-host user@host [port]",
+            )
+        ],
+        env=["UPLINK_HOST", "UPLINK_PORT", "UPLINK_PASSWORD"],
+    )
 )

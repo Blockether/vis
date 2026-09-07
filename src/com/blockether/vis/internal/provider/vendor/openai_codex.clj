@@ -1,14 +1,10 @@
 (ns com.blockether.vis.internal.provider.vendor.openai-codex
   "OpenAI Codex (ChatGPT OAuth) provider.
 
-   This mirrors Codex CLI / ChatGPT OAuth:
-   1. Generate PKCE verifier + S256 challenge.
-   2. Open auth.openai.com with Codex's public client id.
-   3. Let the browser redirect to the registered localhost callback,
-      then paste the final redirect URL/code back into Vis.
-   4. Exchange the code for ChatGPT access/refresh tokens.
-   5. Refresh the access token before expiry and expose it to Vis as
-      the provider token.
+   Headless clients use Codex's official device authorization flow, so the
+   browser can be on a phone or desktop while the gateway stays behind NAT.
+   The interactive CLI also retains the registered loopback PKCE flow.
+   Neither path rewrites a provider-registered redirect URI.
 
    Tokens are persisted at `~/.vis/openai-codex-auth.json`. The access
    token is a JWT; Codex requests require the embedded ChatGPT account
@@ -207,13 +203,13 @@
      :account-id account-id*}))
 
 (defn- exchange-authorization-code!
-  [code verifier]
+  [code verifier redirect-uri]
   (let [{:keys [status body json]} (post-form TOKEN_URL
                                               {:grant_type "authorization_code"
                                                :client_id CLIENT_ID
                                                :code code
                                                :code_verifier verifier
-                                               :redirect_uri REDIRECT_URI})]
+                                               :redirect_uri redirect-uri})]
     (when-not (<= 200 status 299)
       (throw (ex-info (str "OpenAI Codex token exchange failed: HTTP " status)
                       {:status status :body body})))
@@ -443,46 +439,104 @@
            (when (and (:state parsed) (not= state (:state parsed)))
              (throw (ex-info "State mismatch" {:expected state :actual (:state parsed)})))
            (when (str/blank? code) (throw (ex-info "Missing authorization code" {})))
-           (let [credentials (save-auth-file! (exchange-authorization-code! code verifier))]
+           (let [credentials (save-auth-file!
+                               (exchange-authorization-code! code verifier REDIRECT_URI))]
              (print! (str "  ✓ Authenticated! OpenAI Codex is ready (account "
                           (:account-id credentials)
                           ")."))
              :ok)))))))
 
+(defn- post-device
+  [path params]
+  (let [response (http/post (str "https://auth.openai.com/api/accounts/deviceauth/" path)
+                            {:headers {"Accept" "application/json"
+                                       "Content-Type" "application/json"}
+                             :body (json/write-json-str params)
+                             :timeout 30000
+                             :throw false})]
+    {:status (:status response)
+     :json (try (json/read-json (:body response) :key-fn keyword) (catch Exception _ nil))}))
+
 (defn auth-start
-  "Headless leg 1 of OpenAI Codex OAuth — the wire-drivable twin of `login!`.
-   Mints a fresh PKCE flow and returns the authorization URL plus the OPAQUE
-   `:flow` the daemon hands back to `auth-complete`.
+  "Start the official Codex device flow for TUI, desktop and mobile clients.
+   The polling capability stays in :flow on the gateway. Only the one-time
+   user code, verification page and expiry may cross the wire.
+   Protocol: openai/codex codex-rs/login/src/device_code_auth.rs."
+  []
+  (let [{:keys [status json]}
+        (post-device "usercode" {:client_id CLIENT_ID})
 
-   `:flow` carries the PKCE verifier and CSRF state: daemon-side secrets that
-   must NEVER be emitted onto the wire."
-  ([] (auth-start "vis"))
-  ([originator]
-   (let [{:keys [url] :as flow} (create-authorization-flow originator)]
-     {:kind :pkce
-      :url url
-      :instructions ["Sign in to OpenAI in the browser."
-                     "Copy the FULL redirect URL from the address bar."
-                     "Paste it back here to finish."]
-      :flow flow})))
+        {:keys [device_auth_id interval]}
+        json
 
-(defn auth-complete
-  "Headless leg 2: verify CSRF state, exchange the pasted redirect URL (or bare
-   `code#state`) for credentials, and PERSIST them in the daemon's auth file."
-  [{:keys [verifier state]} input]
-  (when (str/blank? (or input ""))
-    (throw (ex-info "Missing authorization input" {:type :vis/openai-codex-missing-input})))
-  (let [parsed
-        (parse-authorization-input input)
+        user-code
+        (or (:user_code json) (:usercode json))
 
-        code
-        (:code parsed)]
+        interval-ms
+        (* 1000 (max 1 (min 60 (long (or (parse-long (str interval)) 5)))))]
 
-    (when (and (:state parsed) (not= state (:state parsed)))
-      (throw (ex-info "State mismatch" {:expected state :actual (:state parsed)})))
-    (when (str/blank? code) (throw (ex-info "Missing authorization code" {})))
-    (save-auth-file! (exchange-authorization-code! code verifier))
-    {:status :ok}))
+    (when-not (<= 200 (long status) 299)
+      (throw (ex-info (str
+                        "Codex device authorization is unavailable (HTTP "
+                        status
+                        "). Check that device code authorization is enabled in ChatGPT settings.")
+                      {:type :vis/openai-codex-device-unavailable :status status})))
+    (when-not (and (string? device_auth_id)
+                   (not (str/blank? device_auth_id))
+                   (string? user-code)
+                   (not (str/blank? user-code)))
+      (throw (ex-info "Codex returned an incomplete device authorization response."
+                      {:type :vis/openai-codex-device-response})))
+    {:kind :device
+     :url "https://auth.openai.com/codex/device"
+     :verification-uri "https://auth.openai.com/codex/device"
+     :user-code user-code
+     :interval-ms interval-ms
+     :expires-in-ms 900000
+     :instructions ["Sign in to ChatGPT and enter this one-time code."
+                    "Only approve a code for a sign-in you started in Vis."
+                    "Return to Vis after approval; sign-in finishes automatically."]
+     :flow {:device-auth-id device_auth_id
+            :user-code user-code
+            :interval-ms interval-ms
+            :expires-at (+ (util/now-ms) 900000)}}))
+
+(defn- assert-device-active!
+  [expires-at]
+  (when (.isInterrupted (Thread/currentThread)) (throw (InterruptedException.)))
+  (when (>= (util/now-ms) (long expires-at))
+    (throw (ex-info "Codex device authorization timed out. Start sign-in again."
+                    {:type :vis/openai-codex-device-expired}))))
+
+(defn auth-await
+  "Poll Codex's device grant, then exchange and persist only on the gateway.
+   403/404 mean pending in this protocol (not RFC 8628 JSON errors). Cancellation
+   interrupts the worker; the absolute deadline also survives delayed startup."
+  [{:keys [device-auth-id user-code interval-ms expires-at]}]
+  (loop []
+
+    (assert-device-active! expires-at)
+    (let [{:keys [status json]} (post-device "token"
+                                             {:device_auth_id device-auth-id :user_code user-code})]
+      (cond (<= 200 (long status) 299)
+            (let [{:keys [authorization_code code_verifier]} json]
+              (when-not (every? #(and (string? %) (not (str/blank? %)))
+                                [authorization_code code_verifier])
+                (throw (ex-info "Codex returned an incomplete device grant."
+                                {:type :vis/openai-codex-device-response})))
+              (assert-device-active! expires-at)
+              (let [credentials (exchange-authorization-code!
+                                  authorization_code
+                                  code_verifier
+                                  "https://auth.openai.com/deviceauth/callback")]
+                (assert-device-active! expires-at)
+                (save-auth-file! credentials)
+                {:status :ok}))
+            (contains? #{403 404} status)
+            (do (Thread/sleep (max 1 (min (long interval-ms) (- (long expires-at) (util/now-ms)))))
+                (recur))
+            :else (throw (ex-info (str "Codex device authorization failed (HTTP " status ").")
+                                  {:type :vis/openai-codex-device-failed :status status}))))))
 
 ;; Public CLI helpers
 
@@ -894,7 +948,7 @@
                         :provider/detect-fn #'detect-credentials
                         :provider/auth-fn #'login!
                         :provider/auth-start-fn #'auth-start
-                        :provider/auth-complete-fn #'auth-complete
+                        :provider/auth-await-fn #'auth-await
                         :provider/get-token-fn #'get-openai-codex-token!
                         :provider/refresh-token-fn #'force-refresh-token!
                         :provider/limits-fn #'limits}]})))

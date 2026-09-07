@@ -16,6 +16,41 @@
            (java.nio.file.attribute PosixFilePermissions)))
 
 (defdescribe
+  providerless-runtime-config-test
+  (it "preserves validated settings when runtime providers do not need saved entries"
+      (let [raw {"providers" [] "default_provider" "sdk-fixture" "default_model" "sdk-test"}]
+        (with-redefs [config/load-config-raw (constantly raw)]
+          (expect (nil? (config/load-config)))
+          (expect (= {:providers [] :default-provider "sdk-fixture" :default-model "sdk-test"}
+                     (select-keys (config/load-config false)
+                                  [:providers :default-provider :default-model])))))))
+
+(defdescribe provider-preset-transport-test
+  (it "uses preset transport defaults after credentials and explicit configuration"
+    (let [preset {"X-Preset" "kept"}
+          credential {"X-Credential" "kept"}
+          explicit {"X-Configured" "kept"}]
+      (doseq [[literal-key token-headers configured-headers expected expected-path]
+              [["literal" nil nil preset "/preset-response"]
+               [nil nil nil preset "/preset-response"]
+               [nil credential nil credential "/credential-response"]
+               [nil credential explicit explicit "/configured-response"]]]
+        (with-redefs [registry/provider-by-id
+                      (constantly {:provider/preset {:llm-headers preset
+                                                      :responses-path "/preset-response"}
+                                   :provider/get-token-fn
+                                   (fn [] {:token "fixture" :llm-headers token-headers
+                                           :responses-path (when token-headers "/credential-response")})})]
+          (expect (= {:llm-headers expected :responses-path expected-path}
+                     (select-keys
+                       (config/->svar-provider
+                         (cond-> {:id :fixture :models [{:name "fixture-model"}]}
+                           literal-key (assoc :api-key literal-key)
+                           configured-headers (assoc :llm-headers configured-headers
+                                                     :responses-path "/configured-response")))
+                       [:llm-headers :responses-path]))))))))
+
+(defdescribe
   router-opts-test
   "`router-opts` extracts the `:router` block from a Vis config map and
    trims it to the keys `svar/make-router`'s opts arity understands.

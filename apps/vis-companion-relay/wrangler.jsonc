@@ -1,10 +1,9 @@
 {
-  // Push relay for the vis companion. It stores NOTHING: no D1, no KV, no
-  // Durable Object, no cron, no table to dump. A grant carries its own
-  // contents sealed under RELAY_SEAL_KEY (see src/seal.ts), and the abuse
-  // counters live in Cloudflare's own rate limiting bindings, at the edge.
+  // Push relay only. No OAuth callbacks, database, Durable Objects or queues.
+  // Grants carry their contents sealed under RELAY_SEAL_KEY (src/seal.ts).
+  // Abuse counters live in Cloudflare's rate limiting bindings at the edge.
   //
-  // Deploying is therefore three secrets and one command:
+  // Deploying is three secrets and one command:
   //
   //   wrangler secret put RELAY_SEAL_KEY        # openssl rand -base64 32
   //   wrangler secret put APNS_KEY_P8           # the .p8 PEM, whole file

@@ -1,38 +1,13 @@
-"""The canonical Vis contract documents and extension host protocol."""
+"""Private reader and validator for the canonical, language-neutral Vis documents."""
 
 import json
-from collections.abc import Callable, Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
-__all__ = [
-    "ACTIVITY",
-    "CONFIG",
-    "CONTENT",
-    "CONTRACT",
-    "GATEWAY",
-    "LIVE",
-    "OPS",
-    "PROVIDER",
-    "SHELL",
-    "SURFACE",
-    "TEST_RUNNER",
-    "TOGGLE",
-    "VERSION",
-    "VIEW",
-    "Host",
-    "check_host",
-    "op",
-    "refusal",
-    "schema",
-    "validate",
-]
-
-
-_DATA = Path(__file__).with_name("data")
+_DATA = Path(__file__).with_name("_data")
 if not _DATA.is_dir():
-    _DATA = Path(__file__).resolve().parents[4] / "resources" / "vis-contract"
+    _DATA = Path(__file__).resolve().parents[4] / "vis-contract/resources/vis-contract"
 
 
 def _load_document(name):
@@ -165,75 +140,3 @@ def op(name):
 def refusal(name):
     """The refusal message for an op unavailable outside Vis, if any."""
     return OPS.get(name, {}).get("refusal")
-
-
-@runtime_checkable
-class Host(Protocol):
-    """Operations every injected or outside `vis` host must implement."""
-
-    def state_get(self, key: str) -> Any:
-        """Read one value out of the extension's durable state."""
-
-    def state_put(self, key: str, value: Any) -> Any:
-        """Write one JSON value into the extension's durable state."""
-
-    def state_del(self, key: str) -> Any:
-        """Drop one key from the extension's durable state."""
-
-    def state_keys(self) -> Any:
-        """List every key the extension's durable state holds."""
-
-    def log(self, level: str, message: str) -> Any:
-        """Emit one engine log line at a level."""
-
-    def notify(self, text: str, level: str) -> Any:
-        """Show one notification on the user's channel."""
-
-    def shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Run one shell op — the grammar is [[SHELL]] — and answer the result shape."""
-
-    def jailed_shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Run one shell op inside the workspace jail."""
-
-    def jailed_shell_session(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Run one shell op inside a persistent jailed session."""
-
-    def request_input(
-        self,
-        request_json: str,
-        validator_arities_json: str,
-        run_validator: Callable[[str, str], str],
-    ) -> str:
-        """Ask the human, and block until the answer settles or is cancelled."""
-
-    def live(self, envelope_json: str) -> str:
-        """Open, patch, read or close one live view — the grammar is [[LIVE]]."""
-
-    def activity(self, blocks: list[dict]) -> bool:
-        """Replace the running symbol's bounded presentation content."""
-
-    def reveal_secret(self, handle: str) -> Any:
-        """Resolve a `vis-secret:` handle to its plaintext."""
-
-    def forget_secret(self, handle: str) -> Any:
-        """Drop the plaintext a secret handle stands for."""
-
-    def declare_env(self, declarations_json: str) -> str:
-        """Resolve the environment variables the extension declared."""
-
-
-def check_host(host):
-    """Refuse a host that does not answer every op the contract declares.
-
-    Answers the host, so a constructor can `return check_host(built)` — the point is
-    that an incomplete host fails where it is BUILT, naming the ops it is missing,
-    instead of halfway through somebody's extension.
-    """
-    missing = [name for name in OPS if not callable(getattr(host, name, None))]
-    if missing:
-        raise TypeError(
-            "vis contract v{} declares host ops this host does not answer: {}".format(
-                VERSION, ", ".join(missing)
-            )
-        )
-    return host

@@ -1942,13 +1942,14 @@
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- mcp-auth-start-handler
-  "Begin a headless OAuth flow for an HTTP MCP server. The response carries the
-   URL the CLIENT shows its user — the gateway never assumes a browser of its own."
+  "Begin headless MCP OAuth. Optional callback_mode selects loopback or direct app
+   return; the client cannot supply an arbitrary redirect URI."
   [request]
   (try (json-response
          ((requiring-resolve
             'com.blockether.vis.internal.foundation.mcp.core/start-gateway-server-auth!)
-           (get-in request [:path-params :name])))
+           (get-in request [:path-params :name])
+           {:callback-mode (get (body-json request) "callback_mode")}))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))
        (catch Throwable e (error-response 400 :mcp/oauth-failed (ex-message e)))))
 

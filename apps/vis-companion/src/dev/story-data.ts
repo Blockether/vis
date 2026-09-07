@@ -33,6 +33,7 @@ import type {
   ContentBlock,
   FileSuggestion,
   GatewayConn,
+  McpAuthFlow,
   QueuedTurn,
   QueuePausedInfo,
   RouterProvider,
@@ -71,6 +72,25 @@ function projection(wire: unknown): ActivityProjection {
 
 /** A form still working: the fixture the app's own parser test reads. */
 export const ACTIVITY_RUNNING = projection(activityWire);
+
+/** Retained steps overflow the preview while the last invocation is still running. */
+export const ACTIVITY_LONG_RUNNING = projection({
+  state: 'running',
+  counts: { running: 1, succeeded: 6, failed: 0, cancelled: 0 },
+  rows: Array.from({ length: 7 }, (_, index) => ({
+    id: `live-${index}`,
+    sequence: index,
+    operation: 'grep',
+    presenter: 'observation',
+    signal: 'observation',
+    summary: `search-${index}`,
+    state: index === 6 ? 'running' : 'succeeded',
+    result_summary: `result-${index}`,
+    resources: [],
+    evidence: [],
+  })),
+  omitted: { rows: 0, by_classification: {} },
+});
 
 /** The same form, settled — what the panel looks like when nothing is moving. */
 export const ACTIVITY_SETTLED = projection({
@@ -789,8 +809,53 @@ export function storyProviderAuth(
     addProvider: nothing,
     removeProvider: nothing,
   } as unknown as ProviderAuth;
-}
+ }
 
+/** Synthetic fresh browser flow: no account, authorization code or live gateway. */
+export const STORY_BROWSER_AUTH: ProviderAuth = {
+  ...storyProviderAuth([{ ...STORY_PROVIDERS[0], id: 'anthropic-coding-plan',
+    status: { is_authenticated: false, auth_state: 'unverified' } }]),
+  flow: {
+    flow_id: 'story-browser-return',
+    provider_id: 'anthropic-coding-plan',
+    kind: 'pkce',
+    callback_mode: 'loopback',
+    url: 'https://gateway.example.com/authorize',
+    redirect_uri: 'http://localhost:53692/callback',
+    instructions: ['Approve sign-in in the browser, then return to Vis.'],
+  },
+};
+
+/** The registered Codex device shape; the real gateway owns the polling capability. */
+export const STORY_DEVICE_AUTH: ProviderAuth = {
+  ...storyProviderAuth([{ ...STORY_PROVIDERS[1], id: 'openai-codex', label: 'OpenAI Codex',
+    is_fallback: false, fallback_model: null, models: ['gpt-5.6-terra'],
+    status: { is_authenticated: false, auth_state: 'unverified' } }]),
+  flow: {
+    flow_id: 'story-device-return', provider_id: 'openai-codex', kind: 'device',
+    url: 'https://auth.openai.com/codex/device', user_code: 'ABCD-EFGH', interval_ms: 5000,
+    instructions: ['Sign in to ChatGPT and enter this one-time code.',
+      'Only approve a code for a sign-in you started in Vis.',
+      'Return to Vis after approval; sign-in finishes automatically.'],
+  },
+};
+/** Direct native MCP callback fixture; no real authorization server or code. */
+export const STORY_MCP_AUTH: McpAuthFlow = {
+  server: 'Company tools', flow_id: 'story-mcp-return', kind: 'pkce', status: 'pending',
+  callback_mode: 'app', redirect_uri: 'com.blockether.viscompanion://oauth/callback',
+  url: 'https://gateway.example.com/authorize?state=story-state',
+ };
+
+/** An adapter that registers Vis' app callback, not a claim about Claude's fixed redirect. */
+export const STORY_APP_AUTH: ProviderAuth = {
+  ...storyProviderAuth([{ ...STORY_PROVIDERS[0], id: 'example-oauth', label: 'Company model',
+    status: { is_authenticated: false, auth_state: 'unverified' } }]),
+  flow: {
+    ...STORY_MCP_AUTH, provider_id: 'example-oauth',
+    url: 'https://gateway.example.com/authorize?state=story-state&redirect_uri=com.blockether.viscompanion%3A%2F%2Foauth%2Fcallback',
+    instructions: ['Approve sign-in in the browser. The callback opens Vis and sign-in finishes automatically.'],
+  },
+};
 /**
  * A DOCUMENT AS BYTES, NOT AS A FETCH. The app hands the frame an object URL for
  * an attachment; a `data:` URL carries the same markup with nothing to download,
@@ -1204,8 +1269,7 @@ export const ACTIVITY_RICH: ActivityProjection = {
   ...ACTIVITY_RUNNING,
   rows: [{ ...ACTIVITY_RUNNING.rows[0], operation: 'run_checks', presenter: 'tests',
     summary: 'Run checks', duration_ms: undefined, result_summary: undefined,
-    state: 'running', content: [
-    { type: 'heading', text: 'Verification' },
+    state: 'running', presentation: { headline: 'Verification', summary: '297 checks passed', content: [
     { type: 'markdown', text: '**Prepared** the workspace.\n\n- Source loaded\n- Checks selected' },
     { type: 'table', columns: ['Suite', 'Passed', 'Failed'], rows: [['Unit', '285', '0'], ['Integration', '12', '0']] },
     { type: 'diff', text: '-old presentation\n+symbol content' },
@@ -1213,7 +1277,7 @@ export const ACTIVITY_RICH: ActivityProjection = {
     { type: 'progress', label: 'Waiting for video' },
     { type: 'image', attachment_id: 'screenshot', label: 'Browser screenshot' },
     { type: 'video', attachment_id: 'recording', label: 'Browser recording' },
-  ] }],
+   ] } }],
 };
 
 /** First migrated symbol: the listing owns its heading, totals and entries. */
@@ -1225,17 +1289,31 @@ export const STORY_LISTING: TranscriptIteration[] = [{
       omitted: {rows: 0, by_classification: {}}, rows: [{
         id: 'ls-1', sequence: 1, operation: 'ls', presenter: 'observation', signal: 'observation',
         state: 'succeeded', summary: '', resources: [], evidence: [], duration_ms: 42,
-        content: [
-          {type: 'heading', text: 'apps/vis-companion/src'},
-          {type: 'text', text: '3 directories · 2 files'},
+        presentation: {
+          headline: 'Listed apps/vis-companion/src', summary: '3 directories · 2 files', content: [
           {type: 'table', columns: ['Name', 'Kind', 'Bytes'], rows: [
             ['components/', 'Directory', '—'], ['dev/', 'Directory', '—'],
             ['lib/', 'Directory', '—'], ['main.tsx', 'File', '2048'], ['styles.css', 'File', '8192']
           ]}
-        ]
+        ] }
       }]}
   }]
 }];
+/** The exact single-directory contract plus explicit batch sections. */
+export const ACTIVITY_LISTING = STORY_LISTING[0].forms![0].activity!;
+export const ACTIVITY_LISTING_BATCH: ActivityProjection = {
+  ...ACTIVITY_LISTING,
+  rows: [{ ...ACTIVITY_LISTING.rows[0], id: 'listing-batch', presentation: {
+    headline: 'Listed 2 directories', summary: '7 entries', content: [],
+    sections: [
+      { headline: 'apps/vis-companion/src', summary: '3 directories · 2 files', content: ACTIVITY_LISTING.rows[0].presentation!.content },
+      { headline: 'apps/vis-companion/test', summary: '0 directories · 2 files', content: [
+        { type: 'table', columns: ['Name', 'Kind', 'Bytes'], rows: [['activity.test.ts', 'File', '4096'], ['listing.test.ts', 'File', '2048']] },
+      ] },
+    ],
+  } }],
+};
+
 /**
  * THE AXIS WITH SOMETHING ON IT — the same turn, drawn over a real chronology.
  *

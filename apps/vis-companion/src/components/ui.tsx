@@ -412,7 +412,8 @@ export function LoadMore({
 }) {
   const ink = tone === 'error' ? 'text-err-ink' : 'text-dialog-hint';
   const line = tone === 'error' ? 'bg-err-edge' : 'bg-dialog-edge';
-  const shape = `mt-1.5 flex min-h-6 w-full min-w-0 items-center gap-2 font-mono text-meta ${ink} ${className}`;
+  const target = onClick ? 'min-h-11 mouse:min-h-7' : 'min-h-6';
+  const shape = `mt-1.5 flex ${target} w-full min-w-0 items-center gap-2 font-mono text-meta ${ink} ${className}`;
   const inside = (
     <>
       <span aria-hidden="true" className={`h-px min-w-3 flex-1 ${line}`} />

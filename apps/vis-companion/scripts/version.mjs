@@ -24,11 +24,8 @@ export const repoRoot = join(appDir, '..', '..');
 export const visVersionFile = join(repoRoot, 'VIS_VERSION');
 const packageFile = join(appDir, 'package.json');
 const packageLockFile = join(appDir, 'package-lock.json');
-// Both Python distributions share `VIS_VERSION`; `vis-agent` pins `vis-contract`.
-const pyprojectFiles = [
-  join(repoRoot, 'packages', 'vis-contract', 'pyproject.toml'),
-  join(repoRoot, 'packages', 'vis-agent', 'pyproject.toml'),
-];
+// The Python SDK shares VIS_VERSION; contracts are bundled, not a second wheel.
+const pyprojectFile = join(repoRoot, 'packages', 'vis-agent', 'pyproject.toml');
 
 /** The product version, straight from the repo-root VIS_VERSION file. */
 export function visVersion() {
@@ -74,25 +71,19 @@ export function syncPackageVersion({ quiet = false } = {}) {
 }
 
 /**
- * Mirror VIS_VERSION into the Python distributions published to PyPI — the
- * `vis-contract` declaration, the `vis-agent` API, and the `==` pin between them.
- * They are MIRRORS exactly like the npm metadata above — `python_package_test`
- * fails the build when one drifts from VIS_VERSION, so never hand-edit them.
+ * Mirror VIS_VERSION into the Python SDK published to PyPI.
+ * Like the npm metadata above, it is a mirror; python_package_test rejects drift.
  */
 export function syncPythonVersion({ quiet = false } = {}) {
   const version = visVersion();
-  for (const file of pyprojectFiles) {
-    const text = readFileSync(file, 'utf8');
-    let next = text.replace(/^(version = )"[^"]*"/m, `$1"${version}"`);
-    if (!next.includes(`\nversion = "${version}"\n`)) {
-      throw new Error(`could not rewrite "version" in ${file}`);
-    }
-    next = next.replace(/"vis-contract==[^"]*"/g, `"vis-contract==${version}"`);
-    if (next !== text) {
-      writeFileSync(file, next);
-      const dist = (next.match(/^name = "([^"]+)"/m) ?? [, file])[1];
-      if (!quiet) console.log(`✓ ${dist} (PyPI) version mirrors ${version} (from VIS_VERSION)`);
-    }
+  const text = readFileSync(pyprojectFile, 'utf8');
+  const next = text.replace(/^(version = )"[^"]*"/m, `$1"${version}"`);
+  if (!next.includes(`\nversion = "${version}"\n`)) {
+    throw new Error(`could not rewrite "version" in ${pyprojectFile}`);
+  }
+  if (next !== text) {
+    writeFileSync(pyprojectFile, next);
+    if (!quiet) console.log(`✓ vis-agent (PyPI) version mirrors ${version} (from VIS_VERSION)`);
   }
   return version;
 }

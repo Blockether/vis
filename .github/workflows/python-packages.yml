@@ -1,4 +1,4 @@
-name: Python SDK packages
+name: Python SDK
 
 on:
   workflow_call:
@@ -35,7 +35,6 @@ jobs:
           python -m ruff format --check packages
       - name: Build wheels from sdists
         run: |
-          python -m build packages/vis-contract --outdir dist
           python -m build packages/vis-agent --outdir dist
           python -m twine check --strict dist/*
       - name: Verify versions and installed distributions outside the checkout
@@ -48,14 +47,16 @@ jobs:
           import importlib.metadata as metadata
           import os
           from pathlib import Path
-          from blockether import vis, vis_contract
+          import blockether.vis.extension as vis
+          from blockether.vis.engine import GatewayClient, LocalEngine
+          from blockether.vis import _contracts
           version = (Path(os.environ['GITHUB_WORKSPACE']) / 'VIS_VERSION').read_text().strip()
-          assert metadata.version('vis-agent') == metadata.version('vis-contract') == version
+          assert metadata.version('vis-agent') == version
           assert not os.environ.get('EXPECTED_VERSION') or os.environ['EXPECTED_VERSION'] == version
           assert not str(Path(vis.__file__).resolve()).startswith(os.environ['GITHUB_WORKSPACE'])
-          assert vis_contract.VERSION
+          assert _contracts.VERSION
           PY
-          VIS_TEST_INSTALLED=1 python -m pytest "$GITHUB_WORKSPACE/packages/vis-agent/tests" "$GITHUB_WORKSPACE/packages/vis-contract/python/tests" -q
+          VIS_TEST_INSTALLED=1 python -m pytest "$GITHUB_WORKSPACE/packages/vis-agent/tests" -q
       - uses: actions/upload-artifact@v6
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
         with:

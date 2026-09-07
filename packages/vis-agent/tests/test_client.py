@@ -7,14 +7,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from blockether.vis.client import (
+from blockether.vis._contracts import GATEWAY
+from blockether.vis.engine import (
     GatewayClient,
     GatewayError,
     ProtocolError,
     TransportError,
     VisTimeout,
 )
-from blockether.vis_contract import GATEWAY
 
 
 @contextmanager
@@ -421,7 +421,7 @@ def test_malformed_collection_responses_are_protocol_errors(operation, payload):
 
 
 def test_malformed_turn_status_does_not_spin_until_timeout():
-    from blockether.vis.client import Turn
+    from blockether.vis.engine import Turn
 
     with endpoint(lambda *_: (200, {})) as (url, calls):
         turn = Turn(GatewayClient(url).session("s"), "t")

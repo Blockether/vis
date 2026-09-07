@@ -9,7 +9,7 @@
    namespace owns only the Lanterna interaction layer.
 
    ALL provider OAuth is driven ENTIRELY through the gateway —
-   Anthropic + Codex over browser/PKCE, GitHub Copilot over device code —
+   Anthropic over browser/PKCE, Codex and GitHub Copilot over device code —
    via `/v1/providers/:id/auth/{start,complete,poll,cancel}`, and every question
    those flows ask (the device code, the pasted redirect URL, the API-key field)
    is a BAND in the caller's own frame. Teardown is ONE verb — `DELETE
@@ -22,9 +22,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
-            [com.blockether.vis.tui.input :as input]
-            [com.blockether.vis.tui.primitives :as p]
-            [com.blockether.vis.tui.external-opener :as opener])
+            [com.blockether.vis.tui.oauth :as oauth]
+            [com.blockether.vis.tui.primitives :as p])
   (:import [com.googlecode.lanterna.screen TerminalScreen]))
 
 (set! *unchecked-math* :warn-on-boxed)
@@ -87,218 +86,65 @@
   (try (boolean (get (vis/gateway-provider-status provider-id) "is_authenticated"))
        (catch Exception _ false)))
 
-(def ^:private device-wait-timeout-ms (* 6 60 1000))
-
-(def ^:private device-auth-cancelled ::device-auth-cancelled)
-
-(defn- cancel-device-poll!
-  [result]
-  (when (instance? java.util.concurrent.Future result)
-    (.cancel ^java.util.concurrent.Future result true)))
-
-(defn- wait-for-device-auth!
-  "HOLD the caller's band while the daemon polls for the device verdict. Esc gives
-   up, and so does the wall clock; either way the poll is cancelled and the caller
-   reads it as a cancel."
-  [q label result]
-  (let [started-at-ms
-        (System/currentTimeMillis)
-
-        deadline-ms
-        (+ started-at-ms (long device-wait-timeout-ms))
-
-        finished?
-        ((:wait! q)
-          (str label " — waiting for authorization")
-          (fn []
-            (str "Finish the login in the browser · "
-                 (quot (- (System/currentTimeMillis) started-at-ms) 1000)
-                 "s"))
-          (fn []
-            (or (realized? result) (>= (System/currentTimeMillis) deadline-ms))))]
-
-    (if (and finished? (realized? result))
-      @result
-      (do (cancel-device-poll! result)
-          (when finished?
-            ((:note! q) label "Timed out waiting for authorization — start the sign-in again."))
-          device-auth-cancelled))))
-
-(defn device-auth-transient-spec
-  "PURE: the band a DEVICE-code sign-in paints. The two things the user must SEE —
-   the code to type and the URL to type it into — are the group headings over the
-   ONE key each, and `w` then holds the band while the daemon polls. `status` is
-   what the last keystroke left behind (`Copied the code.`), so the band reports
-   itself instead of stacking a toast over the code the user is still reading."
-  [verification-uri user-code status]
-  {:groups
-   [{:title (str "Code  " user-code)
-     :items [{:key "c" :type :action :id :copy :label "Copy the code"}]}
-    {:title (str verification-uri)
-     :items [{:key "o" :type :action :id :open :label "Open the URL in a browser"}]}
-    (cond-> {:items
-             [{:key "w" :type :action :id :wait :label "Wait — I authorized in the browser"}]}
-      (not (str/blank? (str status)))
-      (assoc :title (str status)))]})
-
-(defn- device-auth-band!
-  "Show the device code IN THE CALLER'S BAND and let the terminal act on it.
-   Returns true when the user says they authorized, nil on Esc."
-  [q label verification-uri user-code]
-  (loop [status nil]
-    (case (:action ((:transient! q)
-                     (assoc (device-auth-transient-spec verification-uri user-code status)
-                       :title label)))
-      :copy
-      (do (input/clipboard-copy! user-code) (recur "Copied the device code to the clipboard."))
-
-      :open
-      (do (opener/open! verification-uri) (recur "Opened the browser."))
-
-      :wait
-      true
-
-      nil)))
-
-(defn- gateway-device-login!
-  "Run one DEVICE-code OAuth flow for `provider-id` THROUGH THE GATEWAY, entirely
-   inside the CALLER'S band.
-
-   `POST auth/start` mints the flow daemon-side and returns only what the user
-   must SEE (verification URI + user code); the device code, the token exchange
-   and the credential file all stay in the daemon. This leg shows the code and
-   asks `auth/poll` for the verdict — exactly what the phone app does, so a TUI
-   attached to a REMOTE gateway signs in on the right machine.
-
-   Returns true on success, nil on cancel or failure (the band already said so)."
-  ([q provider-id label] (gateway-device-login! q provider-id label false))
-  ([q provider-id label force?]
-   (if (and (not force?) (gateway-authenticated? provider-id))
-     true
-     (try
-       (let [flow
-             (vis/gateway-provider-auth-start! provider-id)
-
-             flow-id
-             (get flow "flow_id")
-
-             uri
-             (or (get flow "verification_uri") (get flow "url"))
-
-             user-code
-             (get flow "user_code")
-
-             interval-ms
-             (max 1000 (long (or (get flow "interval_ms") 5000)))]
-
-         (cond (not (and flow-id uri user-code))
-               (do ((:note! q) label "No device code came back from vis.") nil)
-               (not (device-auth-band! q label uri user-code))
-               (do (vis/gateway-provider-auth-cancel! provider-id flow-id) nil)
-               :else (let [poll
-                           (vis/worker-future
-                             "vis-tui-device-auth-poll"
-                             #(loop [] (let [verdict (vis/gateway-provider-auth-poll! provider-id
-                                                                                      flow-id)]
-                                         (if (= "pending" (get verdict "status"))
-                                           (do (Thread/sleep interval-ms) (recur))
-                                           verdict))))
-
-                           verdict
-                           (wait-for-device-auth! q label poll)]
-
-                       (cond (= device-auth-cancelled verdict)
-                             (do (vis/gateway-provider-auth-cancel! provider-id flow-id) nil)
-                             ;; Success is silent: an "Authenticated!" toast over the
-                             ;; band that just closed is the noise the user vetoed.
-                             (= "ok" (get verdict "status")) true
-                             :else (do ((:note! q)
-                                         label
-                                         (str "Auth failed: "
-                                              (or (get verdict "message") "authorization failed")))
-                                       nil)))))
-       (catch Exception e
-         ((:note! q)
-           label
-           (str "Auth failed: " (ex-message e)
-                " — fallback: vis-agent providers auth " (name provider-id)))
-         nil)))))
-
-(defn- gateway-pkce-login!
-  "Run one browser (PKCE) OAuth flow for `provider-id` THROUGH THE GATEWAY, in the
-   CALLER'S band.
-
-   `POST auth/start` mints the flow daemon-side and returns only the
-   authorization URL plus an opaque flow id — the PKCE verifier never reaches
-   this process. The user finishes in a browser, pastes the final redirect URL
-   back, and `POST auth/complete` exchanges and persists the credentials in the
-   daemon. So a TUI attached to a REMOTE gateway signs in exactly like the phone
-   app does, and no channel needs the provider extension on its own classpath.
-
-   Returns true on success, nil on cancel or failure (the band already said so)."
+(defn- gateway-oauth-login!
+  "Open browser/device sign-in through the paired gateway. Device flows only poll;
+   browser flows receive locally even when that gateway runs on another machine."
   [q provider-id label]
   (try (let [flow
              (vis/gateway-provider-auth-start! provider-id)
 
              flow-id
-             (get flow "flow_id")
+             (get flow "flow_id")]
 
-             url
-             (get flow "url")]
-
-         (if-not (and flow-id url)
+         (if-not (and flow-id (or (get flow "url") (get flow "verification_uri")))
            (do ((:note! q) label "No authorization URL came back from vis.") nil)
-           (do (opener/open! url)
-               (let [pasted
-                     ((:read! q) (str label " — paste the final browser URL:") {:placeholder url})
+           (let [verdict (oauth/login! q
+                                       label
+                                       flow
+                                       #(vis/gateway-provider-auth-complete! provider-id flow-id %)
+                                       #(vis/gateway-provider-auth-poll! provider-id flow-id)
+                                       #(vis/gateway-provider-auth-cancel! provider-id flow-id))]
+             (cond (= "ok" (get verdict "status")) true
+                   (nil? verdict) nil
+                   :else (do ((:note! q) label (or (get verdict "message") "Authorization failed."))
+                             nil)))))
+       (catch Exception e ((:note! q) label (str "Auth failed: " (ex-message e))) nil)))
 
-                     input
-                     (some-> pasted
-                             str/trim)]
-
-                 (if (str/blank? input)
-                   (do (vis/gateway-provider-auth-cancel! provider-id flow-id) nil)
-                   (do (vis/gateway-provider-auth-complete! provider-id flow-id input)
-                       ;; Success is silent: parity with the copilot flow.
-                       true))))))
-       (catch Exception e
-         ((:note! q)
-           label
-           (str "Auth failed: " (ex-message e)
-                " — fallback: vis-agent providers auth " (name provider-id)))
-         nil)))
+(defn- gateway-device-login!
+  ([q provider-id label] (gateway-device-login! q provider-id label false))
+  ([q provider-id label force?]
+   (if (and (not force?) (gateway-authenticated? provider-id))
+     true
+     (gateway-oauth-login! q provider-id label))))
 
 (defn- codex-oauth-ready!
-  "Run OpenAI Codex browser OAuth from the TUI when needed.
-
-   The GATEWAY owns the flow end to end (see `gateway-pkce-login!`); the TUI
-   only opens the browser and collects the pasted redirect URL. With `force?`,
-   start a fresh OAuth flow even when credentials already exist."
+  "Run the official Codex device authorization from any TUI, including remote
+   gateways. With `force?`, start a fresh flow instead of reusing credentials."
   ([q] (codex-oauth-ready! q false))
   ([q force?]
    (if (and (not force?) (gateway-authenticated? :openai-codex))
      true
      (when ((:confirm! q)
              "Start the ChatGPT/Codex browser sign-in?"
-             {:cost "Vis opens a browser; the final redirect URL is pasted back here."
+             {:cost "Enter the one-time code in your browser. Vis waits for approval."
               :yes-label "Yes, open the browser"
               :no-label "Not now"})
-       (boolean (gateway-pkce-login! q :openai-codex "OpenAI Codex"))))))
+       (boolean (gateway-oauth-login! q :openai-codex "OpenAI Codex"))))))
 
 (defn- anthropic-oauth-ready!
   "Run Anthropic Claude subscription browser OAuth from the TUI when needed.
 
-   Gateway-driven, exactly like Codex — see `gateway-pkce-login!`."
+   The gateway owns PKCE and tokens; the TUI receives and forwards its callback."
   ([q] (anthropic-oauth-ready! q false))
   ([q force?]
    (if (and (not force?) (gateway-authenticated? :anthropic-coding-plan))
      true
      (when ((:confirm! q)
              "Start the Anthropic Claude subscription sign-in?"
-             {:cost "Vis opens a browser; the final redirect URL is pasted back here."
+             {:cost "Vis opens a browser and waits for authorization."
               :yes-label "Yes, open the browser"
               :no-label "Not now"})
-       (boolean (gateway-pkce-login! q :anthropic-coding-plan "Anthropic"))))))
+       (boolean (gateway-oauth-login! q :anthropic-coding-plan "Anthropic"))))))
 
 ;;; ── Reuse dialog infrastructure from dialogs.clj ───────────────────────────
 ;; dlg/dlg/draw-dialog-chrome!, dlg/dlg/dialog-layout, dlg/dlg/draw-hint-bar!,
@@ -708,8 +554,8 @@
 
 (defn authenticate-provider!
   "The ONE auth entry point for every channel action (a provider's transient,
-   add-provider). EVERY kind goes through the gateway: device for GitHub Copilot,
-   PKCE for Codex/Anthropic, `api-key` for everything else — and every question
+   add-provider). EVERY kind goes through the gateway: device for Copilot/Codex,
+   PKCE for Anthropic, `api-key` for everything else — and every question
    each of them asks is a BAND in the caller's own frame, never a window over the
    list it was fired from. No provider credential is ever exchanged or written in
    the TUI process."

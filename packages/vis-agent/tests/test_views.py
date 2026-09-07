@@ -4,13 +4,14 @@ import copy
 import json
 from dataclasses import FrozenInstanceError, fields
 
+import blockether.vis.extension as vis
 import pytest
-from blockether import vis, vis_contract
-from blockether.vis.client import Event, ProtocolError
+from blockether.vis import _contracts
+from blockether.vis.engine import Event, ProtocolError
 
 
 def fixtures():
-    return json.loads((vis_contract._DATA / "fixtures/view.json").read_text())
+    return json.loads((_contracts._DATA / "fixtures/view.json").read_text())
 
 
 def test_view_records_are_canonical_immutable_and_roundtrip():
@@ -114,9 +115,9 @@ def test_view_actions_are_closed_and_recorder_emits_a_real_result():
         {"action": "interrupt", "note": "Stop"},
     ]
     for action in valid:
-        assert vis_contract.validate("view", "operator_action", action) is action
+        assert _contracts.validate("view", "operator_action", action) is action
         with pytest.raises(ValueError):
-            vis_contract.validate("view", "operator_action", {**action, "legacy": True})
+            _contracts.validate("view", "operator_action", {**action, "legacy": True})
     for action in (
         {"action": "submit"},
         {"action": "select", "node_id": "table", "item_ids": None},
@@ -124,7 +125,7 @@ def test_view_actions_are_closed_and_recorder_emits_a_real_result():
         {"action": "dismiss"},
     ):
         with pytest.raises(ValueError):
-            vis_contract.validate("view", "operator_action", action)
+            _contracts.validate("view", "operator_action", action)
     recorder = vis.testing.LiveRecorder(vis._host)
     recorder.host_live(
         json.dumps(

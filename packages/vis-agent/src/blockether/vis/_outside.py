@@ -19,7 +19,27 @@ import time
 import uuid
 from pathlib import Path
 
-from blockether import vis_contract
+from blockether.vis import _contracts
+
+
+def check_host(host):
+    """Refuse a host that does not answer every op the contract declares.
+
+    Answers the host, so a constructor can `return check_host(built)` — the point is
+    that an incomplete host fails where it is BUILT, naming the ops it is missing,
+    instead of halfway through somebody's extension.
+    """
+    missing = [
+        name for name in _contracts.OPS if not callable(getattr(host, name, None))
+    ]
+    if missing:
+        raise TypeError(
+            "vis contract v{} declares host ops this host does not answer: {}".format(
+                _contracts.VERSION, ", ".join(missing)
+            )
+        )
+    return host
+
 
 __all__ = ["Refused", "answer_with", "contract", "host", "state_home"]
 
@@ -27,12 +47,12 @@ __all__ = ["Refused", "answer_with", "contract", "host", "state_home"]
 # -- The contract -------------------------------------------------------------
 
 
-# The DECLARATION is its own package (`pip install vis-contract`), so this host and
+# The canonical declaration is bundled with the SDK, so this host and
 # the engine that seeds the real one read one document. Nothing is transcribed
 # here: every op name, every refusal and the whole shell grammar come from it.
-contract = vis_contract.CONTRACT
-_OPS = vis_contract.OPS
-_VIEW = vis_contract.VIEW
+contract = _contracts.CONTRACT
+_OPS = _contracts.OPS
+_VIEW = _contracts.VIEW
 
 
 class Refused(RuntimeError):
@@ -336,7 +356,7 @@ def _shell_vocabulary():
 def shell(opts):
     """Start a process, or drive one this host already started.
 
-    The op vocabulary is the CONTRACT's, not this file's: `vis_contract.SHELL`
+    The op vocabulary is the CONTRACT's, not this file's: `_contracts.SHELL`
     names which ops spawn and which drive a handle, so an extension written
     against the engine's `{"op": "run", …}` means the same thing out here.
     """
@@ -1047,7 +1067,7 @@ class _OutsideHost:
     """The host `vis` binds when there is no engine in the room.
 
     One attribute per contract op, because that is the shape the engine injects
-    too: an extension holds a `vis_contract.Host` either way, and anyone writing a
+    too: an extension holds a `blockether.vis.extension.Host` either way, and anyone writing a
     third host has an interface to implement rather than a dict shape to guess.
     """
 
@@ -1073,7 +1093,7 @@ def _build_host():
             built[name] = _refusal(name)
         elif name in _IMPLEMENTATIONS:
             built[name] = _IMPLEMENTATIONS[name]
-    return vis_contract.check_host(_OutsideHost(built))
+    return check_host(_OutsideHost(built))
 
 
 host = _build_host()

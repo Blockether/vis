@@ -321,6 +321,11 @@
           (:default-models provider-md)
           (assoc :default-models (:default-models provider-md))
 
+          (:responses-path provider-md)
+          (assoc :responses-path (:responses-path provider-md))
+
+          (:llm-headers provider-md)
+          (assoc :llm-headers (:llm-headers provider-md))
           (:extra-body provider-md)
           (assoc :extra-body (:extra-body provider-md))
 
@@ -661,13 +666,19 @@
         explicit-headers
         (:llm-headers provider)
 
+        static-headers
+        (or explicit-headers (:llm-headers template))
+
         explicit-responses
         (:responses-path provider)
+
+        static-responses
+        (or explicit-responses (:responses-path template))
 
         static-api-style
         (effective-api-style {:declared declared-api-style
                               :template (:api-style template)
-                              :responses-path explicit-responses})
+                              :responses-path static-responses})
 
         ;; `is_stateless: true` — this endpoint cannot resolve item ids minted by
         ;; another backend (LiteLLM/Azure multi-resource), so svar must not replay
@@ -706,10 +717,10 @@
             (provider-token-base-url pid explicit-url api-url)
 
             merged-headers
-            (or explicit-headers llm-headers)
+            (or explicit-headers llm-headers (:llm-headers template))
 
             merged-response
-            (or explicit-responses responses-path)
+            (or explicit-responses responses-path (:responses-path template))
 
             resolved-api-style
             (effective-api-style {:declared declared-api-style
@@ -754,8 +765,8 @@
         static-api-style
         (assoc :api-style static-api-style)
 
-        explicit-responses
-        (assoc :responses-path explicit-responses)
+        static-responses
+        (assoc :responses-path static-responses)
 
         (some? explicit-stateless)
         (assoc :stateless-items? (boolean explicit-stateless))
@@ -763,8 +774,8 @@
         (some? explicit-image-input)
         (assoc :image-input? (boolean explicit-image-input))
 
-        explicit-headers
-        (assoc :llm-headers explicit-headers)
+        static-headers
+        (assoc :llm-headers static-headers)
 
         merged-extra-body
         (assoc :extra-body merged-extra-body)
@@ -788,7 +799,7 @@
 (def svar-wire->runtime
   "svar owns these ?-suffixed keyword contracts (`:tool-call?`, `:check-context?`,
    `:respect-retry-after?`, `:fallback-provider?`); every wire surface that feeds
-   svar — vis.yml and a `vis.provider(...)` extension alike — spells them `is_*`,
+   svar — vis.yml and a `vis.Provider(...)` extension alike — spells them `is_*`,
    because a wire key carries no `?`. They are the ONE place the mechanical
    `wire/engine-key` mirror does not apply, so they map through this table
    EXPLICITLY, at whatever seam decodes them. A foreign contract earns a named
@@ -1379,14 +1390,17 @@
    read-modify-write into `~/.vis/state.yml`, so resolving there would write the
    plaintext secret straight back to disk. `save-config!` runs
    `restore-env-refs` as the matching guard for values that still reach a write
-   through this keywordized view."
-  []
-  (some-> (load-config-raw)
-          ((fn [raw]
-             (when (seq (get raw "providers")) raw)))
-          resolve-env-config
-          runtime-config
-          apply-config-metadata))
+   through this keywordized view. Pass false for `require-providers?` when the
+   caller resolves runtime-only providers separately; preserve its settings even
+   without a persisted provider fleet."
+  ([] (load-config true))
+  ([require-providers?]
+   (some-> (load-config-raw)
+           ((fn [raw]
+              (when (or (not require-providers?) (seq (get raw "providers"))) raw)))
+           resolve-env-config
+           runtime-config
+           apply-config-metadata)))
 
 (defn- active-provider-entry
   [config]

@@ -911,10 +911,12 @@
 ;; them, so blocks retyped absolute paths, redefined the same helper in every block, and a
 ;; chore repeated across turns never became anything the project keeps.
 (defdescribe core-prompt-steers-python-shape-test
-             (it "binds roots off `session` and derives every path from them"
+             (it "uses the prebound workspace root instead of redefining it"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "Write a PROGRAM, not a transcript"))
-                   (expect (str/includes? text "Path(session[\"workspace\"][\"root\"])"))
+                   (expect (str/includes? text "prebound `root` (a `Path`)"))
+                   (expect (str/includes? text "do not redefine it"))
+                   (expect (not (str/includes? text "root = Path(session")))
                    (expect (str/includes? text "`await gather(...)`"))))
              ;; Regression, user report ("can I write function definitions into the session
              ;; object and refine them over time?"): §2 said "definitions persist between

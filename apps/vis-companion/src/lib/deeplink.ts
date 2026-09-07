@@ -10,7 +10,9 @@ export async function onPairingLink(
   try {
     const seen = new Set<string>();
     const once = (url: string) => {
-      if (!url || seen.has(url)) return;
+      // OAuth returns have a short-lived, flow-bound listener. Never retain their
+      // authorization codes in the pairing/share dedupe set or route them elsewhere.
+      if (!url || /^com\.blockether\.viscompanion:/i.test(url) || seen.has(url)) return;
       seen.add(url);
       handler(url);
     };

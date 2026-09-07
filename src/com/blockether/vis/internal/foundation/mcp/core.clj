@@ -744,17 +744,19 @@
 
 (defn start-gateway-server-auth!
   "Begin a headless OAuth 2.1 flow for HTTP server `name`. Returns
-   `{flow_id, server, kind, url, redirect_uri, expires_at_ms, status}` —
-   string-keyed, like every MCP surface. The caller shows `url` and the user
-   authorizes in their own browser."
-  [name]
-  (let [name
-        (server-name name)
+   `{flow_id, server, kind, url, redirect_uri, callback_mode, expires_at_ms, status}`.
+   `callback-mode` is loopback (default) or app (direct native return); never a relay."
+  ([name] (start-gateway-server-auth! name {}))
+  ([name {:keys [callback-mode]}]
+   (let [name
+         (server-name name)
 
-        spec
-        (oauth-server-spec name)]
+         spec
+         (oauth-server-spec name)]
 
-    (mcp-oauth/start-authorization! name (:url spec) {:auth-hint (:auth spec)})))
+     (mcp-oauth/start-authorization! name
+                                     (:url spec)
+                                     {:auth-hint (:auth spec) :callback-mode callback-mode}))))
 
 (defn- settle-auth!
   "A flow that landed leaves the server connected with a STALE 401'd session (or

@@ -9,12 +9,9 @@
         `.well-known/openid-configuration` for endpoints + capabilities;
      4. dynamic-client-register (RFC 7591) if the AS supports it, or use
         the caller-supplied `client_id`;
-     5. run PKCE S256 authorization-code with a loopback redirect
-        (`http://127.0.0.1:<ephemeral>/mcp-callback`) — HEADLESS: `start-authorization!`
-        binds the one-shot listener and RETURNS the URL for whoever is
-        authorizing (often on a different device than the daemon), and
-        `finish-authorization!` lands the code either from that listener or from
-        a redirect URL pasted back. Nothing blocks waiting for a human;
+     5. prepare an allowed callback and register it, then hand the adapter to
+        `provider.flow`, the SAME lifecycle used by model-provider authentication.
+        The initiating client opens the browser and returns directly to its gateway;
      6. exchange code → access + refresh tokens; persist to
         `~/.vis/mcp-tokens/<server>.edn`;
      7. on later expiry / 401, refresh the token single-flight through
@@ -29,11 +26,10 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
+            [com.blockether.vis.internal.provider.flow :as auth-flow]
             [com.blockether.vis.internal.provider.oauth :as oauth]
-            [com.blockether.vis.internal.util :as util]
-            [taoensso.telemere :as tel])
-  (:import (com.sun.net.httpserver HttpHandler HttpServer)
-           (java.net InetSocketAddress URI URLDecoder URLEncoder)
+            [com.blockether.vis.internal.util :as util])
+  (:import (java.net URI URLDecoder URLEncoder)
            (java.security SecureRandom)
            (java.util Base64)))
 
@@ -177,61 +173,6 @@
                                                  "token_endpoint_auth_method" "none"
                                                  "scope" "openid profile offline_access"})]
       (when (and (< (long status) 400) (map? body) (get body "client_id")) body))))
-
-;; Loopback callback (PKCE authorization-code)
-
-(defn- start-loopback!
-  "Bind a one-shot loopback callback listener on 127.0.0.1. Returns
-   `{:server :port :redirect-uri :result}`; `result` is a promise delivered with
-   the parsed callback query the moment a browser ON THIS HOST reaches it.
-
-   Kept apart from the token exchange because authorization must never block a
-   request path: the listener goes up, the URL goes out, and the person
-   authorizing may be on a phone somewhere else."
-  [server-name]
-  (let [srv
-        (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)
-
-        port
-        (.getPort (.getAddress srv))
-
-        result
-        (promise)]
-
-    (.createContext
-      srv
-      "/mcp-callback"
-      (reify
-        HttpHandler
-          (handle [_ ex]
-            (let [q
-                  (query-parse (.getRawQuery (.getRequestURI ex)))
-
-                  html
-                  (str "<!doctype html><meta charset=utf-8>"
-                       "<title>MCP auth</title><body style=\""
-                       "font-family:sans-serif;padding:2em\">"
-                       (if (get q "code")
-                         (str "<h2>Authorized " server-name
-                              "</h2>" "<p>You can close this tab and return to vis.</p>")
-                         (str "<h2>Auth failed</h2><pre>" (pr-str q) "</pre>"))
-                       "</body>")
-
-                  bs
-                  (util/utf8 html)]
-
-              (.set (.getResponseHeaders ex) "Content-Type" "text/html; charset=utf-8")
-              (.sendResponseHeaders ex 200 (alength bs))
-              (with-open [os (.getResponseBody ex)]
-                (.write os bs))
-              (.close ex)
-              (deliver result q)))))
-    (.setExecutor srv nil)
-    (.start srv)
-    {:server srv
-     :port port
-     :redirect-uri (str "http://127.0.0.1:" port "/mcp-callback")
-     :result result}))
 
 ;; Token store — one EDN file per server under ~/.vis/mcp-tokens/
 
@@ -423,6 +364,7 @@
 (defn forget!
   "Drop persisted tokens for `server-name` after sign-out or a revoked refresh grant."
   [server-name]
+  (auth-flow/cancel-owner! [:mcp server-name])
   (let [f (token-file server-name)]
     (when (.exists f) (.delete f))))
 
@@ -470,57 +412,22 @@
      "expires_at_ms" (:expires-at-ms creds)
      "scope" (:scope creds)}))
 
-;; Headless flows — authorizing from a client that is NOT this daemon's terminal
-;;
-;; This is the ONLY authorization path. The Companion app and the TUI are
-;; clients, possibly on another device entirely, and the daemon may have no
-;; browser at all, so the flow is taken apart: START returns the URL to show, the
-;; user authorizes in THEIR browser, and the flow lands either by itself (the
-;; browser did reach the loopback listener on this host) or by POSTing back the
-;; redirect URL they were dumped on. Nothing on a request path waits for a human.
-
-(def ^:private flow-ttl-ms
-  "How long an unfinished headless flow stays resumable. Long enough to unlock a
-   phone, log in, and approve; short enough that an abandoned flow's loopback
-   listener does not sit on a port forever."
-  600000)
-
-(defonce ^:private flows (atom {})) ; {flow-id flow}
-
-(defn- new-flow-id [] (b64url (rand-bytes 12)))
-
-(defn- stop-loopback!
-  [{:keys [^HttpServer loopback]}]
-  (when loopback (try (.stop loopback 0) (catch Throwable _ nil)))
-  nil)
-
-(defn- drop-flow!
-  [flow-id]
-  (when-let [flow (get @flows flow-id)]
-    (swap! flows dissoc flow-id)
-    (stop-loopback! flow))
-  nil)
-
-(defn- sweep!
-  "Drop expired flows and release their listeners. Runs on every public op, so a
-   gateway nobody is authorizing against keeps no timers and no open ports."
-  []
-  (doseq [[id {:keys [expires-at-ms]}] @flows]
-    (when (< (long expires-at-ms) (util/now-ms)) (drop-flow! id)))
-  nil)
-
-(defn- flow-view
-  "The ONLY fields that may cross the wire, string-keyed like every MCP surface.
-   The PKCE verifier, the state nonce and the discovery context stay in this
-   process."
-  [{:keys [id server url redirect-uri expires-at-ms state]}]
-  (merge {"flow_id" id
-          "server" server
-          "kind" "pkce"
-          "url" url
-          "redirect_uri" redirect-uri
-          "expires_at_ms" expires-at-ms}
-         @state))
+(defn- mcp-view!
+  [{:keys [ok? flow message error]}]
+  (when-not ok?
+    (throw (ex-info message
+                    {:type
+                     (if (= :unknown-flow error) :mcp/oauth-flow-not-found :mcp/oauth-error)})))
+  (cond-> {"flow_id" (:flow-id flow)
+           "server" (:subject flow)
+           "kind" (:kind flow)
+           "url" (:url flow)
+           "redirect_uri" (:redirect-uri flow)
+           "callback_mode" (:callback-mode flow)
+           "expires_at_ms" (:expires-at flow)
+           "status" (:status flow)}
+    (:message flow)
+    (assoc "error" (:message flow))))
 
 (defn- code-of
   "The authorization code inside `input`: a bare code, or the whole redirect URL
@@ -541,86 +448,55 @@
         (when-not (or (str/blank? s) (str/includes? s "?")) s)
         (throw (ex-info "No authorization code in the pasted value" {:type :mcp/oauth-error})))))
 
-(defn- finish-flow!
-  "Spend `code` for `flow` and record the verdict on the flow itself, so a client
-   that started the flow on one device can read the outcome from another."
-  [{:keys [ctx client-id redirect-uri state] :as flow} code]
-  (try (exchange-code! ctx client-id code redirect-uri)
-       (reset! state {"status" "ok"})
-       (catch Throwable t
-         (reset! state {"status" "error" "error" (or (ex-message t) (str t))})
-         (throw t))
-       (finally (stop-loopback! flow)))
-  (flow-view flow))
-
 (defn start-authorization!
-  "Begin a HEADLESS OAuth flow for `server-name` at `server-url` and return its
-   public view `{flow_id, server, kind, url, redirect_uri, expires_at_ms,
-   status}` — string-keyed, like every MCP surface.
+  "Discover/register the MCP protocol adapter; the shared engine owns its lifecycle.
+   App returns go directly through the paired client, never through a relay."
+  [server-name server-url {:keys [www-auth auth-hint callback-mode]}]
+  (when-not (contains? #{nil "loopback" "app"} callback-mode)
+    (throw (ex-info "Unsupported OAuth callback mode" {:type :mcp/oauth-error})))
+  (mcp-view!
+    (auth-flow/start!
+      [:mcp server-name]
+      {:start (fn []
+                (let [ctx
+                      (auth-context server-name server-url www-auth auth-hint)
 
-   The caller shows `url`; the user authorizes in their own browser. NO browser
-   is opened here — the user may be nowhere near this machine. The flow completes
-   by itself when that browser can reach the loopback listener on this host (the
-   local TUI case), otherwise the client posts the redirect URL back through
-   `complete-authorization!`."
-  [server-name server-url {:keys [www-auth auth-hint]}]
-  (sweep!)
-  (let [ctx
-        (auth-context server-name server-url www-auth auth-hint)
+                      transport
+                      (auth-flow/callback-transport! callback-mode
+                                                     (if (= "app" callback-mode)
+                                                       auth-flow/app-callback-uri
+                                                       "http://127.0.0.1:0/mcp-callback")
+                                                     (:state ctx)
+                                                     600000)]
 
-        {:keys [^HttpServer server redirect-uri result]}
-        (start-loopback! server-name)
-
-        {:keys [url client-id]}
-        (try (authorize-url ctx auth-hint redirect-uri)
-             (catch Throwable t (try (.stop server 0) (catch Throwable _ nil)) (throw t)))
-
-        flow
-        {:id (new-flow-id)
-         :server server-name
-         :ctx ctx
-         :client-id client-id
-         :url url
-         :redirect-uri redirect-uri
-         :loopback server
-         :expires-at-ms (+ (util/now-ms) (long flow-ttl-ms))
-         :state (atom {"status" "pending"})}]
-
-    (swap! flows assoc (:id flow) flow)
-    (future (let [q (deref result flow-ttl-ms ::timeout)]
-              (when (map? q)
-                (try (finish-flow! flow (code-of (str "?" (form-encode q))))
-                     (catch Throwable _ nil)))))
-    (tel/log!
-      {:level :info :id ::headless-authorize :data {:server server-name :flow_id (:id flow)}}
-      (str "MCP OAuth: headless flow started for `" server-name "`"))
-    (flow-view flow)))
+                  (try (let [{:keys [url client-id]}
+                             (authorize-url ctx auth-hint (:redirect-uri transport))]
+                         (merge transport
+                                {:kind :pkce
+                                 :url url
+                                 :expires-in-ms 600000
+                                 :flow (assoc ctx
+                                         :client-id client-id
+                                         :redirect-uri (:redirect-uri transport))}))
+                       (catch Throwable t
+                         (when-let [stop! (get-in transport [:callback :stop!])]
+                           (stop!))
+                         (throw t)))))
+       :complete (fn [ctx input]
+                   (exchange-code! ctx (:client-id ctx) (code-of input) (:redirect-uri ctx)))})))
 
 (defn complete-authorization!
-  "Finish flow `flow-id` with what the user pasted back: the redirect URL their
-   browser landed on, or a bare authorization code."
+  "Validate and complete via the shared engine; app flows require the full callback."
   [flow-id input]
-  (sweep!)
-  (let [flow (get @flows flow-id)]
-    (when-not flow
-      (throw (ex-info "Unknown or expired MCP auth flow"
-                      {:type :mcp/oauth-flow-not-found :flow-id flow-id})))
-    (finish-flow! flow (code-of input))))
+  (mcp-view! (auth-flow/complete! :mcp flow-id input)))
 
 (defn poll-authorization!
-  "Read a flow's verdict without blocking: `pending`, `ok`, or `error`. This is how
-   a client learns that the loopback listener already finished the flow for it."
+  "Read the common retained browser/app verdict."
   [flow-id]
-  (sweep!)
-  (let [flow (get @flows flow-id)]
-    (when-not flow
-      (throw (ex-info "Unknown or expired MCP auth flow"
-                      {:type :mcp/oauth-flow-not-found :flow-id flow-id})))
-    (flow-view flow)))
+  (mcp-view! (auth-flow/poll! :mcp flow-id)))
 
 (defn cancel-authorization!
-  "Forget an abandoned flow and release its loopback listener now."
+  "Forget an MCP attempt and release its callback worker."
   [flow-id]
-  (sweep!)
-  (drop-flow! flow-id)
+  (auth-flow/cancel! :mcp flow-id)
   {"flow_id" flow-id "is_cancelled" true})

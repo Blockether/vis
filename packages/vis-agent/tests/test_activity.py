@@ -3,9 +3,10 @@
 import json
 from dataclasses import FrozenInstanceError
 
+import blockether.vis.extension as vis
 import pytest
-from blockether import vis, vis_contract
-from blockether.vis.client import Event, ProtocolError
+from blockether.vis import _contracts
+from blockether.vis.engine import Event, ProtocolError
 
 
 def test_symbol_declares_activity_without_changing_execution():
@@ -14,7 +15,7 @@ def test_symbol_declares_activity_without_changing_execution():
         return 7
 
     activity = vis.Activity(presenter="tests", label="checking components")
-    spec = vis.symbol(check, activity=activity)
+    spec = vis.Symbol(check, activity=activity)._spec()
     assert spec["activity"] == {"presenter": "tests", "label": "checking components"}
     assert spec["fn"]() == 7
     with pytest.raises(FrozenInstanceError):
@@ -22,7 +23,7 @@ def test_symbol_declares_activity_without_changing_execution():
     with pytest.raises(ValueError):
         vis.Activity(presenter="custom-html")
     with pytest.raises(TypeError):
-        vis.symbol(check, activity={"presenter": "tests"})
+        vis.Symbol(check, activity={"presenter": "tests"})
 
 
 def test_method_activity_is_explicit_and_does_not_inherit_a_fake_state():
@@ -32,18 +33,18 @@ def test_method_activity_is_explicit_and_does_not_inherit_a_fake_state():
             """Check one component."""
             return True
 
-    assert vis.symbol(Checks(), name="checks")["methods"][0]["activity"] == {
+    assert vis.Symbol(Checks(), name="checks")._spec()["methods"][0]["activity"] == {
         "presenter": "tests"
     }
     with pytest.raises(TypeError):
         vis.Activity(state="succeeded")
-    assert set(vis._ACTIVITY_PRESENTERS) == set(vis_contract.ACTIVITY["presenters"])
+    assert set(vis._ACTIVITY_PRESENTERS) == set(_contracts.ACTIVITY["presenters"])
 
 
 def test_activity_event_uses_the_shared_fixture_and_named_records():
     from blockether.vis.activity import ActivityProjection
 
-    fixture = json.loads((vis_contract._DATA / "fixtures/activity.json").read_text())
+    fixture = json.loads((_contracts._DATA / "fixtures/activity.json").read_text())
     projection = ActivityProjection.from_wire(fixture)
     assert projection.to_wire() == fixture
     frame = Event.from_wire(
@@ -83,7 +84,7 @@ def test_activity_event_uses_the_shared_fixture_and_named_records():
 
 @pytest.mark.parametrize(
     "sample",
-    json.loads((vis_contract._DATA / "fixtures/activity-cases.json").read_text()),
+    json.loads((_contracts._DATA / "fixtures/activity-cases.json").read_text()),
     ids=lambda sample: sample["name"],
 )
 def test_shared_activity_admission(sample):
@@ -106,34 +107,37 @@ def test_custom_activity_callbacks_preserve_results_and_errors(monkeypatch):
     )
 
     def render(phase, result, **_):
-        return [
-            {"type": "heading", "text": phase},
-            {"type": "text", "text": str(result)},
-        ]
+        return vis.ActivityPresentation(
+            phase, str(result), (vis.ActivityText("Detail"),)
+        )
 
     def check(value):
         """Check one value."""
-        vis.publish_activity({"type": "progress", "label": "Working"})
+        vis.publish_activity(
+            vis.ActivityPresentation(
+                "Working", "In progress", (vis.ActivityProgress("Working"),)
+            )
+        )
         if value < 0:
             raise ValueError("negative")
         return value + 1
 
-    tool = vis.symbol(check, activity=vis.Activity(render=render))
+    tool = vis.Symbol(check, activity=vis.Activity(render=render))._spec()
     assert tool["fn"](2) == 3
-    assert [b[0].get("text", "Working") for b in updates] == [
+    assert [b["headline"] for b in updates] == [
         "start",
         "Working",
         "success",
     ]
     with pytest.raises(ValueError, match="negative"):
         tool["fn"](-1)
-    assert updates[-1][0]["text"] == "failure"
+    assert updates[-1]["headline"] == "failure"
     assert "render" not in tool["activity"]
 
     def broken(**_):
         raise RuntimeError("presentation error")
 
-    assert vis.symbol(check, activity=vis.Activity(render=broken))["fn"](2) == 3
+    assert vis.Symbol(check, activity=vis.Activity(render=broken))._spec()["fn"](2) == 3
 
 
 def test_custom_activity_async_and_wire_roundtrip(monkeypatch):
@@ -150,18 +154,18 @@ def test_custom_activity_async_and_wire_roundtrip(monkeypatch):
         """Check asynchronously."""
         return 9
 
-    tool = vis.symbol(
+    tool = vis.Symbol(
         check,
         activity=vis.Activity(
-            render=lambda phase, **_: [{"type": "text", "text": phase}]
+            render=lambda phase, **_: vis.ActivityPresentation(phase, "One result")
         ),
-    )
+    )._spec()
     assert asyncio.run(tool["fn"]()) == 9
-    assert [b[0]["text"] for b in updates] == ["start", "success"]
-    fixture = json.loads((vis_contract._DATA / "fixtures/activity.json").read_text())
-    fixture["rows"][0]["content"] = updates[-1]
+    assert [b["headline"] for b in updates] == ["start", "success"]
+    fixture = json.loads((_contracts._DATA / "fixtures/activity.json").read_text())
+    fixture["rows"][0]["presentation"] = updates[-1]
     projection = ActivityProjection.from_wire(fixture)
     assert projection.to_wire() == fixture
     with pytest.raises(TypeError):
-        projection.rows[0].content[0]["text"] = "changed"
-    assert fixture["rows"][0]["content"][0]["text"] == "success"
+        projection.rows[0].presentation["headline"] = "changed"
+    assert fixture["rows"][0]["presentation"]["headline"] == "success"

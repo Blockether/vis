@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { clientCallbackMode, watchAuth, type AuthWatch } from "../../lib/oauth";
+import { McpAuth } from "../../components/McpAuth";
 
 import {
   GatewayClient,
@@ -319,7 +321,7 @@ export function MachineSettings({
   );
 }
 
-function McpServersPanel({ client }: { client: GatewayClient }) {
+export function McpServersPanel({ client }: { client: GatewayClient }) {
   // The rows this machine gave last time are the first frame; `load` below
   // revalidates them underneath. Opening on `null` flashed an empty band and
   // then moved every panel under it down (see `cachedMcpServers`).
@@ -340,7 +342,10 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [test, setTest] = useState<McpTestResult | null>(null);
-  const [authFlow, setAuthFlow] = useState<McpAuthFlow | null>(null);
+  const [auth, setAuth] = useState<{ flow: McpAuthFlow; client: GatewayClient } | null>(null);
+  const authFlow = auth?.client === client ? auth.flow : null;
+  const authEpoch = useRef(0);
+  const stopAuth = useRef<AuthWatch | null>(null);
   const [authInput, setAuthInput] = useState("");
   // The server being edited, or null while adding. Editing keys the save by the
   // ORIGINAL name: `POST /v1/mcp/servers` replaces by name, so a renamed field
@@ -360,32 +365,26 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
     void load();
   }, [load]);
 
-  // A browser that can reach the gateway's loopback listener finishes the flow
-  // by itself, and the pasted-URL leg is then never used. Poll so the UI notices.
+  useEffect(() => () => { authEpoch.current += 1; }, [client]);
+
   useEffect(() => {
-    if (!authFlow) return;
-    const timer = window.setInterval(() => {
-      void (async () => {
-        try {
-          const verdict = await client.mcpAuthPoll(
-            authFlow.server,
-            authFlow.flow_id,
-          );
-          if (verdict.status === "ok") {
-            setAuthFlow(null);
-            setAuthInput("");
-            await load();
-          } else if (verdict.status === "error") {
-            setAuthFlow(null);
-            setError(verdict.error ?? "Authorization failed.");
-          }
-        } catch {
-          // Expired or already swept; the Finish button reports it in context.
-        }
-      })();
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [authFlow, client, load]);
+    if (!auth || auth.client !== client) return;
+    const { client: paired, flow } = auth;
+    const verdictOf = (value: McpAuthFlow) => ({ status: value.status, message: value.error });
+    const watcher = watchAuth({ ...flow, expires_at: flow.expires_at_ms }, {
+      complete: input => paired.mcpAuthComplete(flow.server, flow.flow_id, input).then(verdictOf),
+      poll: () => paired.mcpAuthPoll(flow.server, flow.flow_id).then(verdictOf),
+      cancel: () => paired.mcpAuthCancel(flow.server, flow.flow_id),
+    }, verdict => {
+      authEpoch.current += 1;
+      setAuth(null); setBusy(null);
+      setAuthInput("");
+      if (verdict.status === "ok") void load();
+      else setError(verdict.message ?? "Authorization failed. Start sign-in again.");
+    });
+    stopAuth.current = watcher;
+    return () => { watcher.stop(); if (stopAuth.current === watcher) stopAuth.current = null; };
+  }, [auth, client, load]);
 
   // Editing loads the sanitized row back into the form. `env` and `headers` come
   // back BLANK on purpose: the gateway never sends secret values, and a save that
@@ -514,57 +513,48 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
     }
   }
 
-  // OAuth is headless: the gateway mints the flow and keeps the PKCE verifier and
-  // the token. This device only opens the URL and hands back where the browser
-  // landed — which is the only thing a phone away from that gateway can do.
+  // Bind every flow to the paired client that initiated it, never the currently
+  // selected machine after a switch. A late start is cancelled without opening a URL.
   async function authorize(server: McpServer) {
+    const epoch = ++authEpoch.current;
+    stopAuth.current?.stop();
+    setAuth(null);
     setBusy(server.name);
+    setError(null);
     try {
-      const flow = await client.mcpAuthStart(server.name);
-      setError(null);
+      const flow = await client.mcpAuthStart(server.name, clientCallbackMode());
+      if (authEpoch.current !== epoch) {
+        await client.mcpAuthCancel(flow.server, flow.flow_id).catch(() => {});
+        return;
+      }
       setAuthInput("");
-      setAuthFlow(flow);
-      window.open(flow.url, "_blank", "noopener,noreferrer");
-    } catch (e) {
-      setError((e as Error).message);
+      setAuth({ flow, client });
+    } catch {
+      if (authEpoch.current === epoch) setError("Cannot start sign-in. Check your gateway connection and try again.");
     } finally {
-      setBusy(null);
+      if (authEpoch.current === epoch) setBusy(null);
     }
   }
 
   async function finishAuth() {
     if (!authFlow) return;
+    const epoch = authEpoch.current;
     setBusy(authFlow.server);
     try {
-      const verdict = await client.mcpAuthComplete(
-        authFlow.server,
-        authFlow.flow_id,
-        authInput.trim(),
-      );
-      if (verdict.status === "error") {
-        setError(verdict.error ?? "Authorization failed.");
-        return;
-      }
-      setAuthFlow(null);
-      setAuthInput("");
-      await load();
-    } catch (e) {
-      setError((e as Error).message);
+      await stopAuth.current?.complete(authInput.trim());
+    } catch {
+      if (authEpoch.current === epoch) setError("Cannot finish sign-in. Check the callback and try again.");
     } finally {
-      setBusy(null);
+      if (authEpoch.current === epoch) setBusy(null);
     }
   }
 
-  async function cancelAuth() {
-    const flow = authFlow;
-    setAuthFlow(null);
+  function cancelAuth() {
+    authEpoch.current += 1;
+    stopAuth.current?.stop();
+    setAuth(null);
     setAuthInput("");
-    if (!flow) return;
-    try {
-      await client.mcpAuthCancel(flow.server, flow.flow_id);
-    } catch {
-      // Already swept on the gateway — nothing left to release.
-    }
+    setBusy(null);
   }
 
   async function signOut(server: McpServer) {
@@ -698,44 +688,8 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
               )}
             </div>
             {authFlow?.server === server.name && (
-              <div className="col-span-2 mt-2 space-y-2 border-t border-dialog-edge pt-2">
-                <p className="font-mono text-meta text-dialog-hint">
-                  Approve the sign-in in the browser tab we opened. If it stayed
-                  shut, use this link — then paste the URL the browser lands on.
-                  Nothing secret ever reaches this device.
-                </p>
-                <a
-                  className="block truncate font-mono text-meta text-accent underline"
-                  href={authFlow.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {authFlow.url}
-                </a>
-                <Input
-                  value={authInput}
-                  onChange={(event) => setAuthInput(event.target.value)}
-                  placeholder="http://127.0.0.1:…/callback?code=…"
-                  inputMode="url"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                />
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Button
-                    variant="secondary"
-                    disabled={busy !== null}
-                    onClick={() => void cancelAuth()}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    disabled={busy !== null || !authInput.trim()}
-                    onClick={() => void finishAuth()}
-                  >
-                    Finish sign-in
-                  </Button>
-                </div>
-              </div>
+              <McpAuth flow={authFlow} input={authInput} busy={busy !== null}
+                onInput={setAuthInput} onFinish={() => void finishAuth()} onCancel={cancelAuth} />
             )}
           </div>
         ))}

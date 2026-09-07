@@ -326,6 +326,152 @@
         (expect (= (activity/replay events) (activity/replay events))))))
 
 (defdescribe
+  live-activity-budget-test
+  ;; A live shell group and its running step vanished behind an inert "more steps"
+  ;; count when duplicate result evidence filled the receipt byte budget.
+  (it
+    "keeps every result and custom view when only duplicate evidence exceeds the budget"
+    (let [ctx
+          (event/context)
+
+          pairs
+          (mapv (fn [n]
+                  (event-pair ctx
+                              :grep
+                              :succeeded
+                              {:text (apply str (repeat 2000 "x"))}
+                              {:phrase (str "search " n)}))
+                (range 20))
+
+          content
+          {"headline" "Search results" "summary" "20 matches" "content" []}
+
+          state
+          (update (activity/replay (mapcat identity pairs))
+                  :rows
+                  #(mapv (fn [row]
+                           (assoc row :presentation content))
+                         %))
+
+          projection
+          (activity/presentation state)]
+
+      (expect (> (activity/byte-size state) activity/max-receipt-bytes))
+      (expect (= 20 (count (:rows projection))))
+      (expect (zero? (get-in projection [:omitted :rows])))
+      (expect (= (mapv :result-summary (:rows state)) (mapv :result-summary (:rows projection))))
+      (expect (every? #(= content (:presentation %)) (:rows projection)))
+      (expect (not-any? :is-truncated (:rows projection)))
+      (expect (<= (activity/byte-size projection) activity/max-receipt-bytes))
+      (expect (contract/valid-projection? projection))))
+  (it
+    "keeps a large shell group and the current invocation available during live replacement"
+    (let [ctx
+          (event/context)
+
+          pairs
+          (mapv (fn [n]
+                  (event-pair ctx
+                              (if (zero? n) :shell :_shell_logs)
+                              :succeeded
+                              {"id" "build-live" "out" (apply str (repeat 2000 "x"))}
+                              {:presenter :shell
+                               :classification :mutation
+                               :args (if (zero? n) ["npm test"] ["build-live"])}))
+                (range 24))
+
+          running
+          (first (event-pair ctx
+                             :shell
+                             :succeeded
+                             nil
+                             {:presenter :shell :classification :mutation :args ["npm run lint"]}))
+
+          state
+          (activity/replay (concat (mapcat identity pairs) [running]))
+
+          projection
+          (activity/presentation state)
+
+          [group current]
+          (:rows projection)]
+
+      (expect (> (activity/byte-size state) activity/max-receipt-bytes))
+      (expect (= 24 (count (:children group))))
+      (expect (= (:invocation-id running) (:id current)))
+      (expect (= "running" (:state current)))
+      (expect (= (mapv :result-summary (butlast (:rows state)))
+                 (mapv :result-summary (:children group))))
+      (expect (zero? (get-in projection [:omitted :rows])))
+      (expect (<= (activity/byte-size projection) activity/max-receipt-bytes))
+      (expect (contract/valid-projection? projection)))))
+
+(defdescribe
+  activity-pressure-fallback-test
+  (it "counts every invocation when a shell group exceeds even the skeleton budget"
+      (let [ctx
+            (event/context)
+
+            pairs
+            (mapv (fn [n]
+                    (event-pair ctx
+                                (if (zero? n) :shell :_shell_logs)
+                                :succeeded
+                                {"id" "large-build"}
+                                {:presenter :shell
+                                 :classification :mutation
+                                 :args (if (zero? n) ["npm test"] ["large-build"])}))
+                  (range 12))
+
+            running
+            (first (event-pair ctx :grep :succeeded nil))
+
+            state
+            (activity/replay (concat (mapcat identity pairs) [running]))
+
+            projection
+            (with-redefs [activity/max-receipt-bytes 1500]
+              (activity/presentation state))]
+
+        (expect (= [(:invocation-id running)] (mapv :id (:rows projection))))
+        (expect (= {:rows 12 :by-classification {:mutation 12}} (:omitted projection)))
+        (expect (= {:running 1 :succeeded 12 :failed 0 :cancelled 0} (:counts projection)))
+        (expect (<= (activity/byte-size projection) 1500))
+        (expect (contract/valid-projection? projection))))
+  (it "marks lost detail without hiding the steps and protects current content"
+      (let [ctx
+            (event/context)
+
+            blocks
+            (vec (repeat 4 {"type" "text" "text" (apply str (repeat 6000 "x"))}))
+
+            pairs
+            (mapv (fn [_]
+                    (event-pair ctx :grep :succeeded nil))
+                  (range 4))
+
+            state
+            (update (activity/replay (concat (mapcat identity (butlast pairs))
+                                             [(first (last pairs))]))
+                    :rows
+                    #(mapv (fn [row]
+                             (assoc row
+                               :presentation
+                               {"headline" "Search results" "summary" "Matches" "content" blocks}))
+                           %))
+
+            projection
+            (activity/presentation state)]
+
+        (expect (= 4 (count (:rows projection))))
+        (expect (zero? (get-in projection [:omitted :rows])))
+        (expect (some :is-truncated (:rows projection)))
+        (expect (= blocks (get-in (last (:rows projection)) [:presentation "content"])))
+        (expect (every? #(= "Matches" (get-in % [:presentation "summary"])) (:rows projection)))
+        (expect (<= (activity/byte-size projection) activity/max-receipt-bytes))
+        (expect (contract/valid-projection? projection)))))
+
+(defdescribe
   rich-content-test
   (it
     "replaces invocation content without changing lifecycle or counts"
@@ -347,7 +493,10 @@
            {"type" "progress" "label" "Checking" "value" 1 "total" 2}]
 
           update
-          (event/content-event ctx invocation details blocks)
+          (event/content-event ctx
+                               invocation
+                               details
+                               {"headline" "Checks" "summary" "1 of 2" "content" blocks})
 
           collector
           (event/collector)
@@ -367,7 +516,7 @@
 
       (expect (= :running (:state state)))
       (expect (= 1 (get-in state [:counts :running])))
-      (expect (= blocks (get-in projection [:rows 0 :content])))
+      (expect (= blocks (get-in projection [:rows 0 :presentation "content"])))
       (expect (contract/valid-projection? projection))
       (expect
         (try (event/accept! collector update) false (catch clojure.lang.ExceptionInfo _ true)))
@@ -382,6 +531,45 @@
         (expect (try (event/content-event (event/context)
                                           (event/invocation (event/context) nil)
                                           {:operation :report :presenter :generic}
-                                          blocks)
+                                          {"headline" "Checks" "summary" "" "content" blocks})
                      false
                      (catch clojure.lang.ExceptionInfo _ true))))))
+
+(defdescribe
+  structured-presentation-test
+  (it
+    "replaces headline, summary, content and sections atomically, never lifecycle"
+    (let [ctx
+          (event/context)
+
+          invocation
+          (event/invocation ctx nil)
+
+          details
+          {:operation :ls :presenter :observation}
+
+          view
+          {"headline" "Listed 2 directories"
+           "summary" "3 directories · 2 files"
+           "content" []
+           "sections" [{"headline" "src"
+                        "summary" "3 directories · 0 files"
+                        "content" [{"type" "text" "text" "Source tree"}]}
+                       {"headline" "test" "summary" "0 directories · 2 files" "content" []}]}
+
+          start
+          (event/start-event ctx invocation details)
+
+          update
+          (event/content-event ctx invocation details view)
+
+          state
+          (activity/replay [start update])
+
+          projection
+          (activity/presentation state)]
+
+      (expect (= "running" (:state projection)))
+      (expect (= view (get-in projection [:rows 0 :presentation])))
+      (expect (contract/valid-projection? projection))
+      (expect (= {:running 1 :succeeded 0 :failed 0 :cancelled 0} (:counts projection))))))

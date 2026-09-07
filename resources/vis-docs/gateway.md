@@ -10,12 +10,12 @@ Tailscale.
 
 ## Python SDK: remote or gateway-free
 
-The `vis-agent` Python distribution exposes `blockether.vis.client.GatewayClient`
+The `vis-agent` Python distribution exposes `blockether.vis.engine.GatewayClient`
 for an explicitly supplied gateway URL and token. It manages its client lease,
 not the server process. Session events, typed View/Activity projections and
 operator actions use the same canonical contracts as the TUI and Companion.
 
-`blockether.vis.local.LocalEngine` is the gateway-free alternative: it starts a
+`blockether.vis.engine.LocalEngine` is the gateway-free alternative: it starts a
 compatible Vis executable with `sdk-stdio` and owns that subprocess. It reuses the
 same engine and SDK objects, but opens no HTTP listener and performs no gateway
 discovery. This is **not** a JVM embedded in the Python process, and importing the

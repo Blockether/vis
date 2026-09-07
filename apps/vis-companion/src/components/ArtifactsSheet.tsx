@@ -139,7 +139,9 @@ function useArtifactSource(
   artifact: SessionArtifact,
   enabled: boolean,
 ) {
-  const [source, setSource] = useState<{ url: string; blob: Blob } | null>(null);
+  const [source, setSource] = useState<{ url: string; blob: Blob } | null>(
+    null,
+  );
   const [failed, setFailed] = useState(false);
   const { iterationId, index } = artifact;
   useEffect(() => {
@@ -237,12 +239,19 @@ function inlineText(line: string): string {
  * hairline are the file's plumbing and are dropped — a tile has three lines to make
  * two notes distinguishable, and none of them is `---`.
  */
-export function previewBlocks(text: string, limit = PREVIEW_LINES): PreviewLine[] {
+export function previewBlocks(
+  text: string,
+  limit = PREVIEW_LINES,
+): PreviewLine[] {
   const out: PreviewLine[] = [];
   const lines = text.split("\n");
   let front = lines[0]?.trim() === "---";
   let fenced = false;
-  for (let at = front ? 1 : 0; at < lines.length && out.length < limit; at += 1) {
+  for (
+    let at = front ? 1 : 0;
+    at < lines.length && out.length < limit;
+    at += 1
+  ) {
     const line = lines[at].trim();
     if (front) {
       if (line === "---" || line === "...") front = false;
@@ -463,7 +472,10 @@ function Thumb({
   if (artifact.kind === "doc") {
     if (table && head) {
       const rows = parseCsv(head).slice(0, 5);
-      const columns = Math.min(4, Math.max(0, ...rows.map((row) => row.length)));
+      const columns = Math.min(
+        4,
+        Math.max(0, ...rows.map((row) => row.length)),
+      );
       if (rows.length && columns) {
         return (
           <span
@@ -669,12 +681,13 @@ function FilterStrip({
   onPick: (label: string) => void;
 }) {
   return (
-    <div
-      role="group"
-      aria-label="Filter artifacts by kind"
-      className="flex min-h-9 shrink-0 items-stretch border-b border-dialog-edge bg-panel px-3 mouse:min-h-8 sm:px-4"
-    >
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1.5">
+    <div className="flex min-h-9 shrink-0 items-stretch border-b border-dialog-edge bg-panel px-3 mouse:min-h-8 sm:px-4">
+      <div
+        role="group"
+        aria-label="Filter artifacts by kind"
+        tabIndex={0}
+        className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1.5"
+      >
         {ARTIFACT_FILTERS.map((filter) => {
           const count = list.filter((entry) =>
             filter.kinds.includes(entry.kind),
@@ -768,7 +781,14 @@ function DetailOverlay({
         isStacked
         title={name}
         subtitle={shareStatus || subtitle}
-        actions={shareAction || actions ? <>{actions}{shareAction}</> : undefined}
+        actions={
+          shareAction || actions ? (
+            <>
+              {actions}
+              {shareAction}
+            </>
+          ) : undefined
+        }
         closeLabel={`Close ${name}`}
         onClose={onClose}
       />
@@ -804,7 +824,10 @@ function TableDetail({
       .then((csv) => {
         if (!alive) return;
         const grid = parseCsv(csv);
-        const cols = grid.reduce((widest, row) => Math.max(widest, row.length), 0);
+        const cols = grid.reduce(
+          (widest, row) => Math.max(widest, row.length),
+          0,
+        );
         const rows = Math.max(0, grid.length - 1);
         setBody(
           [
@@ -828,7 +851,11 @@ function TableDetail({
   if (body === null)
     return <p className="p-4 font-mono text-meta text-dialog-hint">Loading…</p>;
   if (!body)
-    return <p className="p-4 font-mono text-meta text-dialog-hint">This table could not be read.</p>;
+    return (
+      <p className="p-4 font-mono text-meta text-dialog-hint">
+        This table could not be read.
+      </p>
+    );
   return <DataTable body={body} compact fill />;
 }
 
@@ -897,7 +924,8 @@ function ArtifactDetail({
     return (
       <DetailOverlay name={artifact.name} share={share} onClose={onClose}>
         <p className="font-mono text-meta text-dialog-hint">
-          {artifact.media} · {artifact.sizeLabel || "size unknown"} · ready to share
+          {artifact.media} · {artifact.sizeLabel || "size unknown"} · ready to
+          share
         </p>
       </DetailOverlay>
     );
@@ -913,7 +941,12 @@ function ArtifactDetail({
             transcription={artifact.transcription}
             transcriptionStatus={artifact.transcriptionStatus}
           >
-            <audio src={url} controls preload="metadata" className="h-11 w-full" />
+            <audio
+              src={url}
+              controls
+              preload="metadata"
+              className="h-11 w-full"
+            />
           </MediaRecording>
         </div>
       </DetailOverlay>
@@ -1070,7 +1103,9 @@ function ArtifactVersions({
                 <Meta artifact={version} />
               </span>
               {position === 0 && (
-                <span className="font-mono text-chip text-accent-ink">latest</span>
+                <span className="font-mono text-chip text-accent-ink">
+                  latest
+                </span>
               )}
             </ListRow>
           </li>
@@ -1176,7 +1211,8 @@ export function ArtifactsSheet({
   const page = pageBySize(shown, (entry) => entry.size, pages, SHEET_PAGE);
 
   useEffect(() => {
-    const request = initialArtifact?.attachmentId ?? initialArtifact?.key ?? null;
+    const request =
+      initialArtifact?.attachmentId ?? initialArtifact?.key ?? null;
     if (!initialArtifact || request === openedRequest.current) return;
     openedRequest.current = request;
     setOpened(initialArtifact);

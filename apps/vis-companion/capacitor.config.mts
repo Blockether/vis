@@ -19,6 +19,8 @@ const config: CapacitorConfig = {
   appId: 'com.blockether.viscompanion',
   appName: 'Vis',
   webDir: 'dist',
+  // Native bridge diagnostics otherwise print appUrlOpen payloads (OAuth codes).
+  loggingBehavior: 'none',
   // Matches --bg of the default light palette; WKWebView paints this behind
   // unrendered tiles during fast scroll instead of flashing white.
   backgroundColor: '#faf3eb',

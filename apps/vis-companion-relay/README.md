@@ -28,9 +28,7 @@ vg1.<base64url( iv(12) || AES-GCM({device token, platform, environment, expiry})
 
 That one decision is most of the security story:
 
-- **Nothing is at rest to steal.** The old design kept a row per grant — every
-  user's push token, in one file, forever. Deleting the table deleted the
-  breach. A dump of this service's storage is a dump of nothing.
+- **No push-token database is at rest.** Sealed push grants eliminate that table.
 - **A grant cannot be forged or retargeted.** GCM authenticates every byte, and
   `additionalData` pins the format version; you cannot edit the device token,
   the platform, or the expiry inside one.
@@ -38,11 +36,18 @@ That one decision is most of the security story:
   an encoding.
 - **A grant expires by itself** (`GRANT_TTL_DAYS`, default 90) because the
   expiry travels *inside* it. No calendar, no sweeper, no list of anybody.
-- **Nothing accumulates**, so signing up a million times exhausts no storage
-  quota and there is no table an attacker can make expensive.
+- **Push grants do not accumulate**, so issuing them consumes no record storage.
 
 What that costs: revoking one grant needed the row. Revocation is now expiry —
 and, for *everything, now*, rotating `RELAY_SEAL_KEY`.
+
+## No OAuth callbacks
+
+This service delivers notifications only. MCP and model-provider sign-in must not
+send authorization codes, state, PKCE verifiers or provider tokens through it.
+Callbacks return to the initiating client and go directly to its paired gateway;
+device authorization talks directly to the provider. There is no shared HTTPS
+callback or browser fallback here. OAuth paths are ordinary unknown routes (404).
 
 ## Routes
 

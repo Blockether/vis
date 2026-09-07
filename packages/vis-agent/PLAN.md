@@ -4,7 +4,7 @@ Ship one API with two transports, without duplicating the agent.
 
 ## Context
 
-`src/blockether/vis/__init__.py` is both the distributable extension SDK and the engine-executed
+`src/blockether/vis/extension.py` is both the distributable extension SDK and the engine-executed
 module. `_outside.py` implements extension operations outside Vis; it is not a local agent.
 The gateway wire contract lives in `../vis-contract/resources/vis-contract/gateway.json`.
 The Python session client and initial managed stdio engine now exist. Root `PLAN.md`
@@ -43,8 +43,8 @@ starting a hidden HTTP gateway for a mode advertised as gateway-free, or implici
   slotted dataclasses must survive both extension and transport boundaries.
 - Data: the canonical SDK, PEP 420 package layouts, runtime extension bootstrap,
   client envelope models, consumer fixtures and installed artifacts.
-- Acceptance criteria: `blockether.vis` and `blockether.vis_contract`, no legacy module
-  alias or parent `__init__.py`; named validated records, nested slotted extension
+- Acceptance criteria: a collision-free PEP 420 parent (public domains finalized in phase 7),
+  no legacy alias or parent `__init__.py`; named validated records, nested slotted extension
   results, preserved sibling packages, source and installed-wheel verification.
 - Unknowns: complete endpoint projection models and the remaining integration gates.
 
@@ -67,11 +67,77 @@ starting a hidden HTTP gateway for a mode advertised as gateway-free, or implici
   installed-package CI and gated publishing configuration, without changing external ownership.
 - Unknowns: remote platform-matrix results and externally configured PyPI trusted publishers.
 
+## 7. Separate SDK domains and absorb the Python contract distribution
+
+- Rationale: engine imports must not initialize extension hosts; shared contracts do not need a second Python product.
+- Data: `extension.py`, `engine/`, private contract reader, canonical JSON resources, host bootstrap, consumers and distribution CI.
+- Acceptance criteria: lightweight `blockether.vis`; `blockether.vis.extension` and `blockether.vis.engine`; no retired imports; one wheel and rebuildable sdist; preserved host isolation, validation and cross-language fixtures; affected tests, lint and formatting pass.
+- Unknowns: none for namespace ownership or archive resources; fresh native and remote release gates remain below.
+
+## 8. Typed extension declarations and Activity content
+
+- Rationale: public SDK values should expose typed fields, not marker dictionaries; construction must not bind a host or register anything.
+- Data: `extension.py`, its wire adapter and bootstrap, extension consumers, canonical Activity schemas, `loop.clj` publication and actual HTTP/stdio integration.
+- Acceptance criteria: frozen/slotted Extension, Symbol, Provider, SlashCommand, OpHook and NetworkFilter; explicit register; typed bounded Activity blocks with automatic host lifecycle; no old builders; source, installed and real-engine tests, formatting/lint and documented SDK examples.
+- Unknowns: native verification needs the pinned GraalVM CE 25.3.4.1; canonical wire shapes, callable/object namespaces and host-owned lifecycle are covered locally.
+
+Implemented and verified on the JVM. Declarations are immutable values until explicit
+registration; all consumers use the new classes, and the documented example executes
+against the installed SDK. Typed Activity presentations follow the current canonical
+contract; unrelated Activity/UI/provider work is preserved.
+
+Real HTTP/stdio tests exposed a lost trailing Activity update while a tool waited for
+input. The existing serial dispatcher now schedules one bounded trailing flush, retains
+coalescing, and discards delayed work on settlement. The regression failed before the
+fix; the loop suite and both real transports pass afterward.
+
+Current verification (separate suites, not additive):
+- Source SDK and project GitHub extension: 300 passed, three opt-in engine tests skipped.
+- Installed wheel outside the checkout: 262 passed, including actual JVM HTTP/stdio,
+  intermediate and terminal Activity, typed results, Views and cancellation.
+- Affected Clojure suites: 732 passed. Foundation is registered and deployment environment
+  is removed from the test REPL configuration only; earlier baseline caveats remain below.
+- Python formatting/lint: 27 files clean. Clojure formatting/lint/reflection: nine files clean.
+- Direct wheel and wheel rebuilt from sdist agree; all 24 canonical JSON files and the
+  injected extension API match the wheel. Strict Twine checks pass.
+- Documentation: 35 Python examples, 52 local file links, three workflow YAML documents
+  and three embedded Python scripts checked; the README example also executes as a test.
+- Real-model py-repl-compute E2E: 1/1 passed after the Activity fix; required REPL used,
+  zero tool errors, temporary source gateway cleaned up.
+- Native verification is blocked: bin/require-graalvm --native-image reports the required
+  GraalVM CE 25.3.4.1 is absent; the active toolchain is CE 25.1.3. No pin substitution,
+  native-image success claim, publication, gateway restart, commit or push was made.
+
+## 9. Typed providers and an end-to-end routing boundary
+
+- Rationale: provider configuration and callback results still expose unchecked dictionaries; refresh exceptions are incorrectly retried as arity mismatches.
+- Data: extension SDK, Python provider adapters, canonical provider/config vocabularies, real embedded callbacks and HTTP/stdio routing fixtures.
+- Acceptance criteria: immutable typed presets and callback results; correct callback signatures and exactly-once invocation; unchanged canonical wire data; Python-declared provider serves a real local model request; installed SDK, affected JVM tests, formatting/lint/reflection and documentation checks pass.
+- Unknowns: verification in progress; native toolchain availability remains a separate gate.
+
+Reproduced before production edits: the 94-case extension suite has one failure,
+where a throwing refresh callback runs more than once. The 56 existing SDK declaration
+and registration tests pass in the dependency-complete isolated environment.
+
 ## Plan state
 
-The SDK and both transports are implemented. Public imports are `blockether.vis` and
-`blockether.vis_contract`, sharing a PEP 420 parent without compatibility aliases. The engine
-executes the extension SDK file shipped in the wheel. The host no longer installs the retired
+Phase 7 is implemented and locally verified. Extension authors use `import blockether.vis.extension as vis`; engine clients use `from blockether.vis.engine import GatewayClient, LocalEngine`. The root package is inert, with no legacy aliases. The SDK bundles the private contract reader and all 24 canonical JSON resources in one wheel and rebuildable sdist; canonical Clojure/JSON sources are unchanged. The host-owned injector executes the same extension API shipped in that wheel. Consumers, documentation, version mirroring and CI use the new layout. Unrelated working-tree changes remain untouched. No commit, push, publication, deployment or runtime release was performed.
+
+Earlier namespace-refactor verification (before phase 8; separate, overlapping suites):
+- Source SDK plus the project GitHub extension: 243 passed, three opt-in engine cases skipped.
+- Installed wheel outside the checkout: 205 passed, including actual JVM HTTP/stdio engines with a deterministic model double.
+- Affected Clojure contracts, extension isolation, native resources and shell/language consumers: 287 passed with foundation registered and deployment environment removed from the test REPL configuration only. A plain clean-JVM consumer run has 36 missing-shell-registration failures; the same 157-case selection reproduces all 36 on the clean baseline. The user-environment-dependent extension case also failed before this refactor.
+- Python formatting/lint: 26 files, clean. Clojure formatting/lint/reflection: eight files, clean. Version-sync syntax and execution pass without changing VIS_VERSION.
+- Direct wheel and wheel rebuilt from sdist build successfully; wheel/sdist pass strict Twine checks. Bundled resources match all 24 canonical files byte-for-byte, with no retired modules or second Python dependency.
+- Documentation: 34 Python examples and 52 local file links checked; three workflow YAML documents and three embedded Python scripts parse.
+- Real-model `py-repl-compute` E2E: 1/1 passed on gpt-6-astra, required REPL used, zero tool errors, isolated source gateway cleaned up.
+- No fresh native binary was built for this namespace refactor. The earlier native verification below does not establish that the current binary runs.
+
+### Earlier SDK implementation (before phase 7)
+
+The earlier implementation established both transports under a shared PEP 420 parent.
+Its import layout is superseded by phase 7. The engine still executes the extension SDK
+file shipped in the wheel. The host no longer installs the retired
 `find`/`find_files` search aliases or their discovery metadata. Endpoint data without a canonical
 schema stays explicitly JSON-typed instead of inventing a parallel model contract.
 
@@ -87,7 +153,7 @@ Runtime v0.5.0 is published at tag `v0.5.0`, commit
 are uploaded: four platform archives and the JVM jar. Its suite passed 157 tests / 746 assertions.
 Vis pins that immutable commit; integration uses the downloaded release, not a local override.
 
-Latest verification (separate suites, not additive):
+Historical verification (separate suites, not additive):
 - Final wheels built from sdists, with all four artifacts passing strict twine checks.
   Installed outside the checkout with isolated Python: 191 passed, three opt-in cases skipped.
 - Installed SDK + actual JVM HTTP/stdio and process/error tests: 19 passed. The full flow loads
@@ -101,7 +167,7 @@ Latest verification (separate suites, not additive):
 - Affected Clojure lint/reflection and Python lint/format checks passed. Documentation checks
   parsed 36 Python examples and resolved 24 repository source links.
 
-Fresh native verification passed: GraalVM CE 25.3.4.1 built the current image with a 12 GiB
+Historical native verification passed: GraalVM CE 25.3.4.1 built that image with a 12 GiB
 heap (10.20 GiB peak RSS), then fetched and staged runtime v0.5.0. The installed SDK passed
 19 tests against the staged native wrapper over both HTTP and stdio, including input-close
 privacy and the SSE/polling difference for settled live pictures. Five selected `test-native`

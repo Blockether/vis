@@ -105,9 +105,9 @@
   nil)
 
 (defn publish-activity!
-  "Replace the running symbol's content; returns false outside an observed invocation."
-  [blocks]
-  (if *activity-content-sink* (do (*activity-content-sink* blocks) true) false))
+  "Replace headline, summary, content and sections; false outside an observed invocation."
+  [presentation]
+  (if *activity-content-sink* (do (*activity-content-sink* presentation) true) false))
 
 (defn- record-tool-event!
   [event]
@@ -1517,7 +1517,7 @@
 
 (def gate-ops
   "Gate ops, keyed by op keyword and valued by the spelling a hook author writes
-   (`vis.op_hook([\"fs_access\"], guard)` in Python, `{:op :fs/access}` in Clojure).
+   (`vis.OpHook([\"fs_access\"], guard)` in Python, `{:op :fs/access}` in Clojure).
 
    `:fs/access` is asked with `{:operation :path}` for every path the host file
    tools touch — `cat`, `grep`, `patch`, `ls` (`foundation/editing/core`). It does

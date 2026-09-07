@@ -2733,15 +2733,17 @@
           (atom [])]
 
       (with-redefs-fn
-        {(rv 'body-json) (constantly {"flow_id" "f-1" "input" "https://cb.example.test/?code=abc"})
+        {(rv 'body-json) (constantly {"flow_id" "f-1"
+                                      "input" "https://cb.example.test/?code=abc"
+                                      "callback_mode" "app"})
          #'mcp-core/kill-gateway-server! (fn [name]
                                            (swap! calls conj [:kill name])
                                            {"name" name "is_killed" true})
          #'mcp-core/start-gateway-server! (fn [name]
                                             (swap! calls conj [:start name])
                                             {"name" name "is_killed" false})
-         #'mcp-core/start-gateway-server-auth! (fn [name]
-                                                 (swap! calls conj [:auth-start name])
+         #'mcp-core/start-gateway-server-auth! (fn [name opts]
+                                                 (swap! calls conj [:auth-start name opts])
                                                  flow)
          #'mcp-core/complete-gateway-server-auth! (fn [flow-id input]
                                                     (swap! calls conj
@@ -2770,7 +2772,7 @@
             (is (= 200 (:status ((rv 'mcp-auth-poll-handler) params))))
             (is (= 200 (:status ((rv 'mcp-auth-cancel-handler) params))))
             (is (= 200 (:status ((rv 'mcp-auth-logout-handler) params))))
-            (is (= [[:kill "remote"] [:start "remote"] [:auth-start "remote"]
+            (is (= [[:kill "remote"] [:start "remote"] [:auth-start "remote" {:callback-mode "app"}]
                     [:auth-complete "f-1" "https://cb.example.test/?code=abc"] [:auth-poll "f-1"]]
                    @calls))))))))
 

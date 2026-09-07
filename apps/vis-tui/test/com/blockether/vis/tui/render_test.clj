@@ -5223,7 +5223,7 @@ h = 8"
             strip-ansi
             strip-sentinels)]
       ;; Omitted operations remain counted on the chronology, not a redundant summary.
-      (expect (str/includes? receipt "2 more steps"))
+      (expect (str/includes? receipt "2 steps omitted · Activity limit"))
       (expect (str/includes? receipt "Patched"))
       (expect (str/includes? receipt "Searched"))
       (expect (str/includes? receipt "Ran tests"))
@@ -6172,6 +6172,113 @@ h = 8"
           (expect (> (long bad-r) (long bad-g)) "the failed mark leans red")))))
 
 (defdescribe
+  live-activity-more-test
+  (let [rows
+        (mapv (fn [n]
+                {:id (str "live-" n)
+                 :sequence n
+                 :operation "grep"
+                 :summary (str "search-" n)
+                 :presenter "generic"
+                 :signal "observation"
+                 :state (if (= n 6) "running" "succeeded")
+                 :result-summary (str "result-" n)
+                 :resources []
+                 :evidence []})
+              (range 7))
+
+        activity
+        {:state "running"
+         :counts {:running 1 :succeeded 6 :failed 0 :cancelled 0}
+         :rows rows
+         :omitted {:rows 0 :by-classification {}}}
+
+        paint
+        (fn [value expansions]
+          (render/progress->lines-data
+            {:iterations [{:iteration 1 :forms [{:code "search()" :activity value}]}]}
+            100
+            {:show-thinking true :show-iterations true}
+            {:session-id "live-more" :now-ms 1000 :turn-start-ms 0 :detail-expansions expansions}))
+
+        row-ids
+        (fn [payload]
+          (mapv :item-id (filter #(= :activity-row (:kind %)) (:line-meta payload))))]
+
+    (it
+      "registers a real show-more hit in live progress and keeps it through replacements"
+      (let [closed
+            (paint activity {})
+
+            more
+            (first (filter #(and (= :activity-more (:kind %)) (:node-id %)) (:line-meta closed)))
+
+            expansions
+            {["live-more" (:node-id more)] true}
+
+            opened
+            (paint activity expansions)
+
+            replacement
+            (paint (assoc-in activity [:rows 6 :state] "succeeded") expansions)]
+
+        (expect (= 5 (count (row-ids closed))))
+        (expect (some? (:node-id more)))
+        (expect (str/includes? (:label more) "show 2 more steps"))
+        (expect (:collapsed? more))
+        (expect (= 7 (count (row-ids opened))))
+        (expect (= (row-ids opened) (row-ids replacement)))
+        (expect (some #(and (= (:node-id more) (:node-id %)) (false? (:collapsed? %)))
+                      (:line-meta opened)))
+        (.reset interactions/hit-map)
+        (.beginFrame interactions/hit-map)
+        (cap/capture! {:cols 108
+                       :rows 50
+                       :paint! (fn [{:keys [screen]}]
+                                 (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                                   (render/draw-chat-bubble! (.newTextGraphics s)
+                                                             {:role :assistant
+                                                              :prewrapped-lines (:lines closed)
+                                                              :line-meta (:line-meta closed)}
+                                                             2 2
+                                                             104 {:viewport-h 46})
+                                   (.refresh s)))})
+        (.commitFrame interactions/hit-map)
+        (expect (some #(and (= :toggle-details (:kind %)) (= (:node-id more) (:node-id %)))
+                      (.current interactions/hit-map)))))
+    (it "distinguishes permanently omitted steps even when none were retained"
+        (let [payload
+              (paint (assoc activity
+                       :rows []
+                       :omitted {:rows 6})
+                     {})
+
+              omission
+              (first (filter #(= :activity-more (:kind %)) (:line-meta payload)))]
+
+          (expect (str/includes? (str (:label omission)) "6 steps omitted"))
+          (expect (nil? (:node-id omission)))))
+    (it "discloses when a retained step has lost its details to the budget"
+        (let [partial
+              (assoc activity
+                :rows [(assoc (first rows)
+                         :is-truncated true
+                         :result-summary nil)])
+
+              closed
+              (paint partial {})
+
+              row
+              (first (filter #(= :activity-row (:kind %)) (:line-meta closed)))
+
+              opened
+              (paint partial {["live-more" (:node-id row)] true})]
+
+          (expect (:collapsed? row))
+          (expect (not (str/includes? (str/join "\n" (:lines closed)) "Details truncated")))
+          (expect (str/includes? (str/join "\n" (:lines opened)) "Details truncated"))))))
+
+(defdescribe
   compact-execution-group-test
   (it "groups adjacent Python source into one line before its activity receipt"
       (let [entry
@@ -6293,7 +6400,9 @@ h = 8"
                            {:id id
                             :operation "ls"
                             :state "succeeded"
-                            :content [{:type "text" :text (str "content-" id)}]})
+                            :presentation {:headline (str "Listed " id)
+                                           :summary "2 files"
+                                           :content [{:type "text" :text (str "content-" id)}]}})
                          ["one" "two"])
               entries
               (#'render/activity-detail-entries
@@ -6321,10 +6430,11 @@ h = 8"
                    :presenter "observation"
                    :state "succeeded"
                    :duration-ms 42
-                   :content
-                   [{"type" "heading" "text" "apps/vis-companion/src"}
-                    {:type "text" :text "3 directories · 2 files"}
-                    {:type "table" :columns ["Name" "Kind"] :rows [["components/" "Directory"]]}]}]}
+                   :presentation {"headline" "Listed apps/vis-companion/src"
+                                  "summary" "3 directories · 2 files"
+                                  "content" [{:type "table"
+                                              :columns ["Name" "Kind"]
+                                              :rows [["components/" "Directory"]]}]}}]}
 
           data
           (render/format-answer-with-thinking-data* ""
@@ -6640,7 +6750,10 @@ print(paths)"
                      :resources []
                      :evidence []}
               content
-              (assoc :content content)))
+              (assoc :presentation
+                {:headline (#'render/activity-step-lead {:operation op :state "succeeded"})
+                 :summary ""
+                 :content content})))
 
           band
           (fn [rows]
@@ -6745,16 +6858,19 @@ print(paths)"
               {:source "tool" :attachment_id "clip" :filename "clip.mp4" :media_type "video/mp4"}]
              :forms [{:code "record()"
                       :success? true
-                      :activity
-                      {:state "succeeded"
-                       :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
-                       :rows [{:id "row"
-                               :sequence 1
-                               :state "succeeded"
-                               :operation "record"
-                               :summary "Record"
-                               :content [{:type "video" :attachment_id "clip" :label "Recording"}]}]
-                       :omitted {:rows 0 :by-classification {}}}}]})
+                      :activity {:state "succeeded"
+                                 :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+                                 :rows [{:id "row"
+                                         :sequence 1
+                                         :state "succeeded"
+                                         :operation "record"
+                                         :summary "Record"
+                                         :presentation {:headline "Record"
+                                                        :summary "Recording ready"
+                                                        :content [{:type "video"
+                                                                   :attachment_id "clip"
+                                                                   :label "Recording"}]}}]
+                                 :omitted {:rows 0 :by-classification {}}}}]})
 
           entries
           (format-iteration-entry-entries entry
@@ -6770,3 +6886,85 @@ print(paths)"
           (keep #(get-in % [:meta :artifact]) entries)]
 
       (expect (some #(and (= "clip.mp4" (:filename %)) (= 0 (:index %))) artifacts)))))
+
+(defdescribe
+  activity-presentation-disclosure-test
+  (it "keeps root and section summaries visible while disclosing only content"
+      (let [presentation
+            {"headline" "Listed 2 directories"
+             "summary" "3 entries"
+             "content" []
+             "sections" [{"headline" "src"
+                          "summary" "2 files"
+                          "content" [{"type" "text" "text" "Source details"}]}
+                         {"headline" "test" "summary" "1 file" "content" []}]}
+
+            row
+            {:id "listing" :state "succeeded" :operation "ls" :presentation presentation}]
+
+        (doseq [open? [false true]]
+          (let [entries
+                (#'render/activity-detail-entries
+                 {:node-id "sections" :activity-rows [row] :activity-expanded? (constantly open?)}
+                 90
+                 "sections")
+                lines (mapv :line entries)
+                text (str/join "\n" lines)
+                second-section (first (keep-indexed (fn [idx line]
+                                                      (when (str/ends-with? line "test") idx))
+                                                    lines))]
+
+            (expect (str/includes? text "Listed 2 directories · 3 entries"))
+            (expect (some #(str/ends-with? % "src") lines))
+            (expect (some #(str/ends-with? % "2 files") lines))
+            (expect (some #(str/ends-with? % "1 file") lines))
+            (expect (some? second-section))
+            (expect (= open? (str/includes? text "Source details")))
+            (expect (= (first lines) (get lines (dec second-section))))))))
+  (it "does not offer an inert chevron for a summary-only presentation"
+      (let [entry (second (#'render/activity-detail-entries
+                           {:node-id "summary"
+                            :activity-rows [{:id "listing"
+                                             :state "succeeded"
+                                             :operation "ls"
+                                             :presentation {:headline "Listed src"
+                                                            :summary "Empty directory"
+                                                            :content []}}]
+                            :activity-expanded? (constantly false)}
+                           90
+                           "summary"))]
+        (expect (str/includes? (:line entry) "Listed src · Empty directory"))
+        (expect (nil? (get-in entry [:meta :node-id]))))))
+
+(defdescribe
+  activity-presentation-width-test
+  (it "reserves visible summary text beside long headlines, even in a narrow pane"
+      (doseq [width
+              [40 60 90]
+
+              state
+              ["succeeded" "failed"]]
+
+        (let [caption
+              (if (= state "failed") "Denied" "2 files")
+
+              row
+              (cond-> {:id "long"
+                       :state state
+                       :operation "ls"
+                       :duration-ms 42
+                       :presentation {:headline (str "Listed " (apply str (repeat 120 "x")))
+                                      :summary "2 files"
+                                      :content []}}
+                (= state "failed")
+                (assoc :error-summary caption))
+
+              entry
+              (second
+                (#'render/activity-detail-entries
+                 {:node-id "width" :activity-rows [row] :activity-expanded? (constantly false)}
+                 width
+                 "width"))]
+
+          (expect (str/includes? (:line entry) caption))
+          (expect (str/includes? (:line entry) "42ms"))))))

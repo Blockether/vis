@@ -5520,17 +5520,18 @@
                       (some-> (not-empty (str/trim (str result-summary)))
                               (activity-inline-text result-format)))))))
 
+(defn- activity-field [m k] (get m k (get m (name k))))
+
 (defn- activity-row-openable?
-  "True when a step's chevron has something to open: its content, its outcome, the paths
-   it touched, a patch, an error, or the changes it groups. A chevron that opens onto
-   nothing is a promise the row cannot keep, so the slot stays blank for those."
-  [{:keys [summary children resources evidence content] :as row}]
-  (let [state (activity-row-state row)]
-    (boolean (or (seq content)
-                 (seq children)
-                 (seq evidence)
-                 (and (empty? children) (some #(not= (str (:id %)) (str summary)) resources))
-                 (and (or (empty? content) (= :failed state)) (activity-row-detail row state))))))
+  "Disclosure opens content, never the visible headline or summary."
+  [{:keys [summary children resources evidence presentation] :as row}]
+  (boolean (or (:is-truncated row)
+               (seq (activity-field presentation :content))
+               (some #(seq (activity-field % :content)) (activity-field presentation :sections))
+               (seq children)
+               (some #(contains? #{"diff" "error"} (activity-evidence-kind %)) evidence)
+               (and (empty? children) (some #(not= (str (:id %)) (str summary)) resources))
+               (and (nil? presentation) (activity-row-detail row (activity-row-state row))))))
 
 (defn- activity-file-rows
   "THE LIST A STEP LEFT: every path it touched, each holding the diff that names it.
@@ -5690,6 +5691,8 @@
             entries)))
       blocks)))
 
+(def ^:private activity-steps-shown 4)
+
 (defn- activity-detail-entries
   "Compact timeline rows for one expanded Activity receipt, drawn the way the web
    draws it: one line down the left, a tick to every mark, and THREE levels hanging
@@ -5702,7 +5705,8 @@
 
    `activity-expanded?` answers for ONE fold key and the default it starts from: a row id
    opens that step's evidence and its paths, `<row-id>#<path>` opens one file's patch, and
-   `<row-id>#` opens the paths the `+N more files` count folds away. One key per fold,
+   `<row-id>#` opens the paths and `#steps` opens the retained chronology past its preview.
+   Running, failed and cancelled steps remain visible outside that preview. One key per fold,
    because a step that changed eleven files behind a single chevron made the reader find
    a file by reading a header out of the diff. Steps start shut unless they are running
    or failed; every `#` key starts shut."
@@ -5721,6 +5725,23 @@
         (let [answer (or activity-expanded? (constantly false))]
           (fn [item-key default-open?]
             (boolean (answer item-key default-open?))))
+
+        show-all?
+        (expanded? "#steps" false)
+
+        preview
+        (into []
+              (keep-indexed (fn [index row]
+                              (when (or (< (long index) activity-steps-shown)
+                                        (not= :succeeded (activity-row-state row)))
+                                row)))
+              rows)
+
+        hidden
+        (- (count rows) (count preview))
+
+        shown
+        (if show-all? rows preview)
 
         width
         (max 1 (long max-w))
@@ -5901,31 +5922,49 @@
                                                        (filterv #(not= (str (:id %)) (str summary))
                                                          (:resources row))
 
-                                                       lead-word
-                                                       (activity-step-lead row)
+                                                       presentation
+                                                       (:presentation row)
 
-                                                       ;; A step's own `4 files` over four visible paths counts a list the eye is
-                                                       ;; already on, so the count gives way to the paths themselves.
-                                                       heading
-                                                       (let [block (first (:content row))]
-                                                         (when (= "heading"
-                                                                  (or (:type block)
-                                                                      (get block "type")))
-                                                           block))
+                                                       headline
+                                                       (or (activity-field presentation :headline)
+                                                           (activity-step-lead row))
 
                                                        content
-                                                       (if heading
-                                                         (rest (:content row))
-                                                         (:content row))
+                                                       (activity-field presentation :content)
+
+                                                       sections
+                                                       (activity-field presentation :sections)
+
+                                                       caption
+                                                       (when presentation
+                                                         (some-> (or (:error-summary row)
+                                                                     (activity-field presentation
+                                                                                     :summary))
+                                                                 (str/replace #"\s+" " ")
+                                                                 str/trim
+                                                                 not-empty))
+
+                                                       lead-word
+                                                       (if caption
+                                                         (let [available
+                                                               (max 1
+                                                                    (- (long width)
+                                                                       (long col)
+                                                                       (count (activity-row-tail
+                                                                                row))
+                                                                       2))]
+                                                           (ellipsize-cols
+                                                             headline
+                                                             (max 1 (quot (* available 3) 5))))
+                                                         headline)
 
                                                        object
-                                                       (or (:text heading)
-                                                           (get heading "text")
-                                                           (when-not (activity-counts-visible-files?
-                                                                       summary
-                                                                       (min (count resources)
-                                                                            activity-files-shown))
-                                                             (activity-step-object row)))
+                                                       (when-not presentation
+                                                         (when-not (activity-counts-visible-files?
+                                                                     summary
+                                                                     (min (count resources)
+                                                                          activity-files-shown))
+                                                           (activity-step-object row)))
 
                                                        delta
                                                        (let [{:keys [additions deletions]}
@@ -5938,11 +5977,8 @@
                                                        ;; hangs its children under it, sharing that mark's left edge: nested rows
                                                        ;; carry no mark of their own, because the indent already says whose they are.
                                                        ;;
-                                                       ;; EVERY STEP STARTS SHUT. What it did is one line; what it left is behind the
-                                                       ;; chevron, so a turn of thirty calls reads as thirty lines and not as thirty
-                                                       ;; receipts. Only a step still running, or one that failed, opens on its
-                                                       ;; own: the first because its progress is the point, the second because
-                                                       ;; the reason is. A press on either still shuts it.
+                                                       ;; The header stays visible; only content follows the disclosure.
+                                                       ;; Live and failed content starts open until the reader chooses.
                                                        openable?
                                                        (activity-row-openable? row)
 
@@ -5969,6 +6005,7 @@
                                                                 "  "))
                                                             lead-word
                                                             (when object (str " " object))
+                                                            (when caption (str " · " caption))
                                                             delta)
 
                                                        line
@@ -6052,7 +6089,7 @@
                                                                    nested)))]
 
                                                    (cond-> [head]
-                                                     (and open? (seq (:content row)))
+                                                     (and open? (seq content))
                                                      (into (activity-content-entries
                                                              content
                                                              width
@@ -6063,9 +6100,46 @@
 
                                                      (and detail
                                                           open?
-                                                          (or (empty? (:content row))
+                                                          (or (nil? presentation)
                                                               (= :failed state)))
                                                      (conj detail-row)
+
+                                                     (seq sections)
+                                                     (into
+                                                       (mapcat
+                                                         (fn [section]
+                                                           (let [headline
+                                                                 (activity-field section :headline)
+
+                                                                 summary
+                                                                 (activity-field section :summary)
+
+                                                                 line-entry
+                                                                 (fn [text]
+                                                                   {:line (str activity-marker
+                                                                               (ellipsize-cols
+                                                                                 (str (activity-lead
+                                                                                        col)
+                                                                                      text)
+                                                                                 width))
+                                                                    :meta (merge meta-base
+                                                                                 {:kind
+                                                                                  :activity-evidence
+                                                                                  :item-id id})})]
+
+                                                             (concat [blank (line-entry headline)]
+                                                                     (when (not-empty summary)
+                                                                       [(line-entry summary)])
+                                                                     (when open?
+                                                                       (activity-content-entries
+                                                                         (activity-field section
+                                                                                         :content)
+                                                                         width
+                                                                         col
+                                                                         session-id
+                                                                         activity-artifacts
+                                                                         (= :running state))))))
+                                                         sections))
 
                                                      (and open? (or (seq touched) (seq diffs)))
                                                      (into (change-entries id touched diffs col))
@@ -6073,18 +6147,45 @@
                                                      (and open? error)
                                                      (into (error-entries id error col))
 
+                                                     (and open? (:is-truncated row))
+                                                     (conj {:line (str activity-marker
+                                                                       (ellipsize-cols
+                                                                         (str (activity-lead col)
+                                                                              "Details truncated")
+                                                                         width))
+                                                            :meta (merge meta-base
+                                                                         {:kind :activity-evidence
+                                                                          :item-id id})})
+
                                                      ;; Three levels - step, change, paths - is the whole depth either surface draws.
                                                      (and open? (seq nested) (zero? (long depth)))
                                                      (into (nested-entries))))))
 
-        ;; The axis can say `+6 more` but never what the six WERE: the engine's own bound
-        ;; dropped them, and a chronology that shows four of ten calls must say so.
-        omitted-entry
-        (when (pos? (long (or activity-omitted 0)))
-          (let [label (more-rule (more-count (long activity-omitted) "step")
-                                 (max 1 (- width (long (count activity-margin)) 2)))]
+        more-entry
+        (when (pos? hidden)
+          (let [label (more-rule
+                        (if show-all? "show fewer steps" (str "show " (more-count hidden "step")))
+                        (max 1 (- width (long (count activity-margin)) 2)))]
             {:line (str activity-marker
                         (ellipsize-cols (str activity-margin activity-tick label) width))
+             :meta (merge meta-base
+                          {:kind :activity-more
+                           :item-id "#steps"
+                           :mark ""
+                           :label label
+                           :node-id (str node-id ":#steps")
+                           :collapsed? (not show-all?)
+                           :mark-col (+ (long (count activity-margin)) 2)})}))
+
+        ;; A hard transport limit is not a disclosure: those bytes are unavailable.
+        omitted-entry
+        (when (pos? (long (or activity-omitted 0)))
+          (let [label (str activity-omitted
+                           " step"
+                           (when (not= 1 activity-omitted) "s")
+                           " omitted · Activity limit")]
+            {:line (str activity-marker
+                        (ellipsize-cols (str activity-margin activity-rail " " label) width))
              :meta (merge meta-base
                           {:kind :activity-more
                            :item-id "omitted"
@@ -6093,7 +6194,8 @@
                            :mark-col (+ (long (count activity-margin)) 2)})}))]
 
     (vec (concat [blank]
-                 (mapcat identity (interpose [blank] (map row-entry rows)))
+                 (mapcat identity (interpose [blank] (map row-entry shown)))
+                 (when more-entry [more-entry])
                  (when omitted-entry [omitted-entry])
                  [blank]))))
 
@@ -6476,7 +6578,9 @@
                 ;; own envelope — live revision and settled record alike — so nothing has
                 ;; to be placed here from a separate live record.
                 activity-node-id
-                (when (and session-id (seq (:rows activity)))
+                (when (and session-id
+                           (or (seq (:rows activity))
+                               (pos? (long (get-in activity [:omitted :rows] 0)))))
                   (detail-node-id {:session-turn-id session-turn-id
                                    :iteration-number iteration-number
                                    :block-number block-number

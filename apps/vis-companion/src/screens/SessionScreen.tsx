@@ -740,6 +740,8 @@ export function SessionScreen({
     [client, sid],
   );
   const [queuePaused, setQueuePaused] = useState<QueuePausedInfo | null>(null);
+  // In-flight snapshots must not undo a newer live pause or resume.
+  const queuePausedRevisionRef = useRef(0);
   const [showJump, setShowJump] = useState(false);
   // The transcript row that TOOK OVER from the running-turn bubble this visit. It mounts
   // holding pixels the reader is already looking at, so it mounts WHOLE — see
@@ -1720,6 +1722,7 @@ export function SessionScreen({
     // costs one small request and no re-render, instead of refetching, reparsing
     // and re-rendering the whole history every time you walk back into it.
     const backlogReadAt = Date.now();
+    const queuePausedRevision = queuePausedRevisionRef.current;
     void (async () => {
       // A COLD open holds no cached rows, so the meta row cannot save the
       // transcript read — it can only delay it by a whole round trip on a link
@@ -1731,9 +1734,12 @@ export function SessionScreen({
       let row: Session | null = null;
       try {
         row = await client.session(sid, controller.signal, true);
+        if (controller.signal.aborted) return;
         setSession(row);
         acceptQueueBacklog(client.cachedQueuedTurns(sid) ?? [], backlogReadAt);
-        setQueuePaused(client.cachedQueuePaused(sid));
+        if (queuePausedRevisionRef.current === queuePausedRevision) {
+          setQueuePaused(client.cachedQueuePaused(sid));
+        }
       } catch {
         /* Unreachable gateway: fall through, the transcript read reports it. */
       }
@@ -1832,10 +1838,13 @@ export function SessionScreen({
       // guess.
       try {
         const backlogReadAt = Date.now();
+        const queuePausedRevision = queuePausedRevisionRef.current;
         const backlog = await client.queuedTurns(sid);
         if (cancelled) return;
         acceptQueueBacklog(backlog.turns, backlogReadAt);
-        setQueuePaused(backlog.paused);
+        if (queuePausedRevisionRef.current === queuePausedRevision) {
+          setQueuePaused(backlog.paused);
+        }
       } catch {
         /* Keep the last known backlog; the next tick retries. */
       }
@@ -2589,12 +2598,14 @@ export function SessionScreen({
             );
             break;
           case "queue.paused":
+            queuePausedRevisionRef.current += 1;
             setQueuePaused({
               reason: eventString(event, "reason") || "turn_failed",
               held: Number(event.held ?? 0),
             });
             break;
           case "queue.resumed":
+            queuePausedRevisionRef.current += 1;
             setQueuePaused(null);
             break;
           // Someone ELSE repointed this session — the TUI picker, another

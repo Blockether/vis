@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from blockether.vis_contract import validate
+from blockether.vis._contracts import validate
 
 from ._wire import freeze, to_wire
 

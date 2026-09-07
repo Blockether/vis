@@ -23,7 +23,7 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.mcp-model :as mcp-model]
-            [com.blockether.vis.tui.external-opener :as opener])
+            [com.blockether.vis.tui.oauth :as oauth])
   (:import [com.googlecode.lanterna.screen TerminalScreen]))
 
 (set! *unchecked-math* :warn-on-boxed)
@@ -296,54 +296,31 @@
          (catch Exception e ((:note! q) title (str "MCP: " (ex-message e))) nil))))
 
 (defn- authorize!
-  "Run one browser OAuth flow for an HTTP MCP server THROUGH THE GATEWAY, in the
-   band the verb was fired from.
-
-   `auth/start` mints the flow daemon-side and hands back only the authorization
-   URL and an opaque flow id — the PKCE verifier never reaches this process. When
-   the gateway runs on this machine its loopback listener finishes the flow by
-   itself, so an empty paste is answered by a poll; otherwise the user pastes the
-   final redirect URL back and the daemon exchanges it."
+  "Browser sign-in shared with providers, including client-side loopback return
+   when the paired gateway is remote. Credentials never leave the gateway."
   [q server]
   (let [flow
         (vis/gateway-mcp-auth-start! server)
 
         flow-id
-        (get flow "flow_id")
+        (get flow "flow_id")]
 
-        url
-        (get flow "url")]
-
-    (if-not (and flow-id url)
+    (if-not (and flow-id (get flow "url"))
       ((:note! q) title "No authorization URL came back from vis.")
-      (do
-        (opener/open! url)
-        (let [pasted
-              ((:read! q)
-                (str "Signing in to `" server "` — paste the final browser URL, or Enter to check:")
-                {:placeholder url})
-
-              input
-              (some-> pasted
-                      str/trim)
-
-              verdict
-              (if (str/blank? input)
-                (vis/gateway-mcp-auth-poll! server flow-id)
-                (vis/gateway-mcp-auth-complete! server flow-id input))
-
-              status
-              (get verdict "status")]
-
-          (cond
-            ;; Success is silent: parity with the provider bands.
-            (= "ok" status) (do (vis/gateway-mcp-start-server! server) nil)
-            (= "pending" status)
-            (do (vis/gateway-mcp-auth-cancel! server flow-id)
-                ((:note! q) title "Sign-in was not finished — the flow was cancelled."))
-            :else ((:note! q)
-                    title
-                    (str "Auth failed: " (or (get verdict "error") "authorization failed")))))))))
+      (let [verdict (oauth/login! q
+                                  server
+                                  flow
+                                  #(vis/gateway-mcp-auth-complete! server flow-id %)
+                                  #(vis/gateway-mcp-auth-poll! server flow-id)
+                                  #(vis/gateway-mcp-auth-cancel! server flow-id))]
+        (cond (= "ok" (get verdict "status")) (do (vis/gateway-mcp-start-server! server) nil)
+              (nil? verdict) nil
+              :else ((:note! q)
+                      title
+                      (str "Auth failed: "
+                           (or (get verdict "error")
+                               (get verdict "message")
+                               "authorization failed"))))))))
 
 (defn run-action!
   "Execute one palette verb against one server IN THE CALLER'S BAND. Every gateway

@@ -14,12 +14,11 @@ import json
 import pathlib
 from dataclasses import FrozenInstanceError
 
+import blockether.vis.extension as vis
 import gh
 import pytest
-from blockether import vis
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
-
 # The view the goldens were captured under: the run's own workflow, title and event.
 TITLE = "CI · run 32146686161"
 DESCRIPTION = "docs(release): record the TestFlight build testers now have · push"

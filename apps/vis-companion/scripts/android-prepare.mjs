@@ -996,5 +996,18 @@ shareManifest = shareManifest.replace(
   if (at < 0) die('AndroidManifest.xml has no </activity> to attach the share filters to');
   shareManifest = shareManifest.slice(0, at) + shareFilters + '        ' + shareManifest.slice(at);
 }
+// Private-use OAuth callback: OS -> this activity -> Capacitor App -> paired gateway.
+// A separate filter prevents schemes/hosts being combined with unrelated share links.
+const oauthFilter = `            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.blockether.viscompanion" android:host="oauth" android:path="/callback" />
+            </intent-filter>
+`;
+shareManifest = shareManifest.replace(
+  /[ \t]*<intent-filter>(?:(?!<\/intent-filter>)[\s\S])*?android:scheme="com\.blockether\.viscompanion"[\s\S]*?<\/intent-filter>\n/g, '',
+);
+shareManifest = shareManifest.replace('</activity>', oauthFilter + '        </activity>');
 if (shareManifest !== shareManifestBefore) writeFileSync(manifestPath, shareManifest);
 console.log('\u2713 share target   MainActivity SEND/PROCESS_TEXT \u2192 vis://share + AndroidManifest filters');

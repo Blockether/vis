@@ -36,8 +36,9 @@ const buttonClasses = (html: string) =>
 /** The classes of the button whose tag carries `mark` — attribute order is React's. */
 const classesOf = (html: string, mark: string) => {
   const tag =
-    (html.match(/<button[^>]*>/g) ?? []).find((entry) => entry.includes(mark)) ??
-    "";
+    (html.match(/<button[^>]*>/g) ?? []).find((entry) =>
+      entry.includes(mark),
+    ) ?? "";
   return /class="([^"]*)"/.exec(tag)?.[1] ?? "";
 };
 
@@ -46,7 +47,9 @@ const client = {
   attachmentUrl: async () => "blob:none",
   attachmentBlob: async (_sid: string, iterationId: string) =>
     iterationId === "i6"
-      ? new Blob(["name;email\nNatalia;natalia@example.com\n"], { type: "text/csv" })
+      ? new Blob(["name;email\nNatalia;natalia@example.com\n"], {
+          type: "text/csv",
+        })
       : new Blob(["# Note\n\nA read that works.\n"], { type: "text/markdown" }),
   retainAttachment: () => () => {},
 } as unknown as GatewayClient;
@@ -162,10 +165,11 @@ const readable = () =>
 const readableTable = () =>
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
-      new Response("name;email\nNatalia;natalia@example.com\n", {
-        headers: { "content-type": "text/csv" },
-      }),
+    vi.fn(
+      async () =>
+        new Response("name;email\nNatalia;natalia@example.com\n", {
+          headers: { "content-type": "text/csv" },
+        }),
     ),
   );
 
@@ -212,7 +216,11 @@ describe("the artifacts chip", () => {
     }
     // A 32px face on touch, 24px under a pointer, and Apple's 44px target arriving as
     // invisible slop — never as a taller painted box to fall back out of.
-    for (const slop of ["after:absolute", "after:-top-1.5", "after:-bottom-1.5"]) {
+    for (const slop of [
+      "after:absolute",
+      "after:-top-1.5",
+      "after:-bottom-1.5",
+    ]) {
       expect(buttonClasses(html)).toContain(slop);
     }
     expect(buttonClasses(html).join(" ")).not.toMatch(/min-h-|sm:h-/);
@@ -246,14 +254,23 @@ describe("the artifacts sheet", () => {
   it("previews a CSV artifact in its tile", async () => {
     readableTable();
     const view = render(
-      <ArtifactsSheet client={client} sid="s1" artifacts={[table]} onClose={() => {}} />,
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[table]}
+        onClose={() => {}}
+      />,
     );
 
-    await waitFor(() => expect(view.baseElement.textContent).toContain("Natalia"));
+    await waitFor(() =>
+      expect(view.baseElement.textContent).toContain("Natalia"),
+    );
     expect(view.baseElement.textContent).toContain("name");
     expect(view.baseElement.textContent).toContain("email");
     expect(view.baseElement.textContent).toContain("natalia@example.com");
-    expect(screen.queryByRole("grid", { name: "jobs.csv" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("grid", { name: "jobs.csv" }),
+    ).not.toBeInTheDocument();
     view.unmount();
     vi.unstubAllGlobals();
   });
@@ -264,12 +281,19 @@ describe("the artifacts sheet", () => {
     readableTable();
     const user = userEvent.setup();
     const view = render(
-      <ArtifactsSheet client={client} sid="s1" artifacts={[table]} onClose={() => {}} />,
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[table]}
+        onClose={() => {}}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: /Open jobs\.csv/ }));
     await waitFor(() =>
-      expect(screen.getByRole("grid", { name: "jobs.csv" })).toBeInTheDocument(),
+      expect(
+        screen.getByRole("grid", { name: "jobs.csv" }),
+      ).toBeInTheDocument(),
     );
     expect(view.baseElement.textContent).toContain("natalia@example.com");
     view.unmount();
@@ -306,7 +330,11 @@ describe("the artifacts sheet", () => {
   // artifacts"): every document wore the same five grey bars, so two notes produced by
   // one session were told apart only by the filename under them.
   it("reads the head of a written note, blank lines dropped", () => {
-    expect(previewLines("# Plan\n\n\nOne\nTwo\n")).toEqual(["# Plan", "One", "Two"]);
+    expect(previewLines("# Plan\n\n\nOne\nTwo\n")).toEqual([
+      "# Plan",
+      "One",
+      "Two",
+    ]);
     // Seven lines is the whole box: a log does not get to scroll a thumbnail, and an
     // eighth line only ever arrived to be eaten by the fade.
     expect(previewLines("a\nb\nc\nd\ne\nf\ng\nh\ni\nj")).toHaveLength(7);
@@ -370,13 +398,16 @@ describe("the artifacts sheet", () => {
         onClose={() => {}}
       />,
     );
-    const mask = "[mask-image:linear-gradient(to_bottom,black_80%,transparent)]";
+    const mask =
+      "[mask-image:linear-gradient(to_bottom,black_80%,transparent)]";
     await waitFor(() => expect(view.baseElement.innerHTML).toContain(mask));
     const masked = [
       ...view.baseElement.querySelectorAll(`.${CSS.escape(mask)}`),
     ];
     expect(masked).toHaveLength(1);
-    expect(view.baseElement.querySelector('[aria-hidden="true"].text-chip')).not.toBeNull();
+    expect(
+      view.baseElement.querySelector('[aria-hidden="true"].text-chip'),
+    ).not.toBeNull();
     view.unmount();
     vi.unstubAllGlobals();
   });
@@ -421,7 +452,9 @@ describe("the artifacts sheet", () => {
     await waitFor(() =>
       expect(view.baseElement.textContent).toContain("A read that works."),
     );
-    const peek = view.baseElement.querySelector('[aria-hidden="true"].text-chip');
+    const peek = view.baseElement.querySelector(
+      '[aria-hidden="true"].text-chip',
+    );
     const rows = [...(peek?.children ?? [])].map((row) => row.className);
     expect(rows.length).toBeGreaterThan(1);
     expect(rows.slice(1).join(" ")).not.toContain("pr-9");
@@ -466,6 +499,23 @@ describe("the artifacts sheet", () => {
     expect(groupAt).toBeLessThan(gridAt);
   });
 
+  it("keeps empty artifact filters reachable by keyboard", () => {
+    render(
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[]}
+        onClose={() => {}}
+      />,
+    );
+    const filters = screen.getByRole("group", {
+      name: "Filter artifacts by kind",
+    });
+    expect(filters).toHaveAttribute("tabindex", "0");
+    filters.focus();
+    expect(filters).toHaveFocus();
+  });
+
   // Regression: a `.md` note was classified as an unreadable file, so the tile
   // was a <div> with a `≡` plate and tapping it did nothing at all.
   it("opens a written note and says what format it is", () => {
@@ -482,14 +532,21 @@ describe("the artifacts sheet", () => {
   it("opens a recorded file and gives it its format", async () => {
     const user = userEvent.setup();
     render(
-      <ArtifactsSheet client={client} sid="s1" artifacts={[recorded]} onClose={() => {}} />,
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[recorded]}
+        onClose={() => {}}
+      />,
     );
 
     const tile = screen.getByRole("button", { name: /Open build\.log/ });
     expect(tile).toHaveTextContent("LOG");
     await user.click(tile);
     // jsdom has no platform share sheet, so the same action honestly falls back to Save.
-    expect(await screen.findByRole("button", { name: "Save" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Save" }),
+    ).toBeInTheDocument();
   });
 
   // A settled live view is the one recorded file the app can PAINT, so its tile is

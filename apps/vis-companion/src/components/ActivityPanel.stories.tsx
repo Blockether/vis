@@ -1,6 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, userEvent, within } from "storybook/test";
 import {
   ACTIVITY_CHRONOLOGY,
+  ACTIVITY_LONG_RUNNING,
+  ACTIVITY_LISTING,
+  ACTIVITY_LISTING_BATCH,
   ACTIVITY_RICH,
   ACTIVITY_FAILED,
   ACTIVITY_RUNNING,
@@ -39,6 +43,24 @@ export const Running: Story = {
   args: { activity: ACTIVITY_RUNNING },
 };
 
+/** Pointer and keyboard can open retained evidence without waiting for settlement. */
+export const LiveDisclosure: Story = {
+  args: { activity: ACTIVITY_LONG_RUNNING },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const more = canvas.getByRole("button", { name: "Show 2 more steps" });
+    await userEvent.click(more);
+    const step = canvas.getByRole("button", { name: /Searched search-4/ });
+    step.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect(step).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Show fewer steps" }),
+    );
+    await expect(canvas.queryByText("result-4")).not.toBeInTheDocument();
+  },
+};
+
 /** Settled and read: three calls, a diff among them, nothing moving. */
 export const Settled: Story = {
   args: { activity: ACTIVITY_SETTLED },
@@ -65,3 +87,30 @@ export const TreeChanges: Story = {
 };
 
 export const SymbolContent: Story = { args: { activity: ACTIVITY_RICH } };
+
+export const Listing: Story = {
+  args: { activity: ACTIVITY_LISTING },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const step = canvas.getByRole("button", { name: /Listed apps/ });
+    await expect(canvas.getByText("3 directories · 2 files")).toBeVisible();
+    await expect(canvas.queryByRole("table")).not.toBeInTheDocument();
+    step.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect(canvas.getByRole("table")).toBeVisible();
+    await userEvent.click(step);
+    await expect(canvas.getByText("3 directories · 2 files")).toBeVisible();
+    await expect(canvas.queryByRole("table")).not.toBeInTheDocument();
+  },
+};
+
+export const ListingBatch: Story = {
+  args: { activity: ACTIVITY_LISTING_BATCH },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("0 directories · 2 files")).toBeVisible();
+    const step = canvas.getByRole("button", { name: /Listed 2 directories/ });
+    await userEvent.click(step);
+    await expect(canvas.getAllByRole("table")).toHaveLength(2);
+  },
+};

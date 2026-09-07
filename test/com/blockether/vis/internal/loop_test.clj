@@ -4,6 +4,7 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
+            [com.blockether.svar.internal.llm :as svar-llm]
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.content :as content]
@@ -12,6 +13,7 @@
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.python.worker :as python-worker]
             [com.blockether.vis.internal.context.prompt :as prompt]
@@ -32,6 +34,61 @@
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
             [lazytest.core :refer [defdescribe describe it expect throws?]]))
+
+(defdescribe
+  python-providers-before-router-test
+  (it "loads Python providers before resolving the first router, without reloading a warm router"
+      (let [order
+            (atom [])
+
+            router
+            {:providers [{:id :fixture}]}]
+
+        (with-redefs-fn {#'lp/router-atom (atom nil)
+                         #'python-extensions/ensure-python-extensions-loaded! (fn []
+                                                                                (swap! order conj
+                                                                                  :extensions))
+                         #'config/load-config (fn [_]
+                                                (swap! order conj :config)
+                                                {:fixture true})
+                         #'lp/build-router (fn [_]
+                                             (swap! order conj :build)
+                                             router)
+                         #'lp/honor-config-roots! (fn [r _]
+                                                    (swap! order conj :roots)
+                                                    r)}
+          (fn []
+            (expect (= router (lp/get-router)))
+            (expect (= router (lp/get-router)))
+            (expect (= [:extensions :config :build :roots] @order)))))))
+
+(defdescribe
+  auto-bound-provider-precedence-test
+  (it "does not promote preset transport fields to explicit config for auto-bound providers"
+      (let [preset-row
+            {:id :fixture
+             :base-url "http://127.0.0.1:1/v1"
+             :api-style :openai
+             :models [{:name "fixture-model"}]}
+
+            explicit-row
+            (assoc preset-row :base-url "http://127.0.0.1:2/v1")
+
+            seen
+            (atom nil)]
+
+        (with-redefs [providers/authenticated-preset-providers
+                      (constantly [preset-row])
+
+                      config/->svar-provider
+                      (fn [p]
+                        (reset! seen p)
+                        p)]
+
+          (#'lp/runtime-router-providers {:providers []})
+          (expect (= (dissoc preset-row :base-url :api-style) @seen))
+          (#'lp/runtime-router-providers {:providers [explicit-row]})
+          (expect (= explicit-row @seen))))))
 
 (defn- helper-router
   [provider-id network]
@@ -81,6 +138,204 @@
 (def ^:private ask-code-block-observation (deref #'lp/ask-code-block-observation))
 
 (def ^:private log-stage-level (deref #'lp/log-stage-level))
+
+(defn- context-token-observations
+  "Capture request-count diagnostics at the real dispatch boundary, without network IO."
+  [{:keys [input-tokens counter error served-model] :or {counter (constantly 1000)}}]
+  (let [environment
+        (lp/create-environment {:providers [{:id :lmstudio}]} {:db :memory})
+
+        messages
+        [{:role "user" :content "private-user-text"}
+         {:role "assistant"
+          :content [{:type "thinking"
+                     :thinking "private-reasoning"
+                     :thinking-signature "opaque-signed-reasoning"}]}]
+
+        caught
+        (atom nil)
+
+        counted
+        (atom [])
+
+        svar-log-data
+        (atom nil)]
+
+    (try
+      (let [{:keys [signals]}
+            (tel/with-signals
+              (with-redefs [svar-router/count-messages (fn ^long [model request]
+                                                         (swap! counted conj [model request])
+                                                         (long (counter model request)))
+                            svar/ask-code!
+                            (fn [_ _]
+                              (reset! svar-log-data (#'svar-llm/log-data
+                                                     {:request-id "upstream-request"}))
+                              (if error
+                                (throw error)
+                                {:stop-reason :end
+                                 :content "done"
+                                 :routed/model (or served-model "gpt-4o")
+                                 :routed/provider-id :lmstudio
+                                 :api-usage (when (some? input-tokens)
+                                              {:input-tokens input-tokens :output-tokens 1})}))]
+
+                (try (lp/run-iteration environment
+                                       messages
+                                       {:iteration 2
+                                        :resolved-model {:provider :lmstudio :name "gpt-4o"}
+                                        :request-context {:request-id "request-3"
+                                                          :context-recovery-attempt 1
+                                                          :prompt-base :resumed
+                                                          :base-message-count 2
+                                                          :trailer-iteration-count 0}})
+                     (catch Exception e (reset! caught e)))))]
+        {:observations (filterv #(= ::lp/context-token-counts (:id %)) signals)
+         :error @caught
+         :counted @counted
+         :svar-log-data @svar-log-data
+         :messages messages
+         :session-id (:session-id environment)})
+      (finally (lp/dispose-environment! environment)))))
+
+(defdescribe
+  context-token-logging-test
+  (it
+    "compares the same request in both directions and correlates the served route"
+    (doseq [[input delta ratio] [[400 600 2.5] [2500 -1500 0.4]]]
+      (let [{:keys [observations error counted messages session-id svar-log-data]}
+            (context-token-observations {:input-tokens input :served-model "gpt-4.1"})
+            {:keys [level data]} (first observations)]
+
+        (expect (nil? error))
+        (expect (= 1 (count observations)))
+        (expect (= :info level))
+        (expect (= :succeeded (:outcome data)))
+        (expect (= session-id (:session-id data)))
+        (expect (= "request-3" (:request-id data)))
+        (expect (= (:request-id data) (:query-id svar-log-data)))
+        (expect (= (:iteration data) (:iteration svar-log-data)))
+        (expect (= "upstream-request" (:request-id svar-log-data)))
+        (expect (= 3 (:iteration data)))
+        (expect (= 1 (:context-recovery-attempt data)))
+        (expect (= :resumed (:prompt-base data)))
+        (expect (= 0 (:trailer-iteration-count data)))
+        (expect (= :lmstudio (:provider data)))
+        (expect (= "gpt-4.1" (:model data)))
+        (expect (= "gpt-4.1" (:local-estimate-model data)))
+        (expect (some #{["gpt-4.1" messages]} counted))
+        (expect (= :svar-message-estimate (:local-count-source data)))
+        (expect (= 1000 (:local-input-tokens data)))
+        (expect (= :provider-usage (:provider-count-source data)))
+        (expect (= input (:provider-input-tokens data)))
+        (expect (= delta (:local-minus-provider-tokens data)))
+        (expect (= ratio (:local-to-provider-ratio data)))
+        (expect (= 1 (:thinking-block-count data)))
+        (expect (= (count "opaque-signed-reasoning") (:thinking-signature-chars data)))
+        (expect (not-any? #(str/includes? (pr-str data) %)
+                          ["private-user-text" "private-reasoning" "opaque-signed-reasoning"])))))
+  (it "keeps missing and zero provider counts distinct, without manufacturing a ratio"
+      (doseq [input [nil 0]]
+        (let [{:keys [observations error]} (context-token-observations {:input-tokens input})
+              data (:data (first observations))]
+
+          (expect (nil? error))
+          (expect (= 1 (count observations)))
+          (expect (= input (:provider-input-tokens data)))
+          (expect (= (if (some? input) :provider-usage :unavailable) (:provider-count-source data)))
+          (expect (nil? (:local-to-provider-ratio data))))))
+  (it "does not let a diagnostic tokenizer failure fail a successful request or expose its message"
+      (let [{:keys [observations error]}
+            (context-token-observations {:input-tokens 400
+                                         :counter (fn [& _]
+                                                    (throw (ex-info "private-tokenizer-data" {})))})
+
+            data
+            (:data (first observations))]
+
+        (expect (nil? error))
+        (expect (= 1 (count observations)))
+        (expect (= 400 (:provider-input-tokens data)))
+        (expect (nil? (:local-input-tokens data)))
+        (expect (= :unavailable (:local-count-source data)))
+        (expect (nil? (:local-to-provider-ratio data)))
+        (expect (not (str/includes? (pr-str data) "private-tokenizer-data"))))))
+
+(defdescribe
+  context-overflow-logging-test
+  (it "never relabels a preflight or unattributed rejection as provider usage"
+      ;; Session 33cfa509: local preflight counts were logged as provider-tokens.
+      (doseq [[type source expected] [[:svar.core/context-overflow nil :preflight]
+                                      [:svar.tokens/context-overflow :preflight :preflight]
+                                      [:svar.tokens/context-overflow :provider :provider]
+                                      [:svar.tokens/context-overflow nil :unknown]]]
+        (let [rejection (ex-info "private-provider-message"
+                                 {:type type
+                                  :source source
+                                  :input-tokens 276317
+                                  :max-input-tokens 272000
+                                  :body "private-provider-body"})
+              {:keys [observations error]} (context-token-observations {:error rejection})
+              {:keys [level data]} (first observations)]
+
+          (expect (identical? rejection error))
+          (expect (= 1 (count observations)))
+          (expect (= :warn level))
+          (expect (= :context-overflow (:outcome data)))
+          (expect (= expected (:rejection-source data)))
+          (expect (= (if (= :provider expected) :provider-error :unspecified)
+                     (:reported-count-source data)))
+          (expect (= 276317 (:reported-input-tokens data)))
+          (expect (= 272000 (:reported-input-limit data)))
+          (expect (= 1000 (:local-input-tokens data)))
+          (expect (= :unavailable (:provider-count-source data)))
+          (expect (nil? (:provider-input-tokens data)))
+          (expect (nil? (:local-to-provider-ratio data)))
+          (expect (not-any? #(str/includes? (pr-str data) %)
+                            ["private-provider-message" "private-provider-body" "private-user-text"
+                             "private-reasoning" "opaque-signed-reasoning"])))))
+  (it
+    "correlates the terminal no-fold decision with the exact failed dispatch"
+    (let [environment
+          (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+          tid
+          (persistance/db-store-session-turn! (:db-info environment)
+                                              {:parent-session-id (:session-id environment)
+                                               :user-request "measure"})
+
+          calls
+          (atom 0)]
+
+      (try (let [{:keys [signals]}
+                 (tel/with-signals
+                   (with-redefs [svar/ask-code! (fn [_ _]
+                                                  (swap! calls inc)
+                                                  (throw (ex-info "Context overflow"
+                                                                  {:type :svar.core/context-overflow
+                                                                   :input-tokens 276317
+                                                                   :max-input-tokens 272000})))]
+                     (lp/iteration-loop environment "measure" {:session-turn-id tid})))
+
+                 failed
+                 (:data (first (filter #(= ::lp/context-token-counts (:id %)) signals)))
+
+                 terminal
+                 (:data (first (filter #(= ::lp/context-overflow-terminal (:id %)) signals)))
+
+                 correlation
+                 [:request-id :session-id :session-turn-id :iteration :prompt-base
+                  :base-message-count :trailer-iteration-count]]
+
+             (expect (= 1 @calls))
+             (expect (some? (:request-id failed)))
+             (expect (= (select-keys failed correlation) (select-keys terminal correlation)))
+             (expect (= 0 (:trailer-iteration-count terminal)))
+             (expect (= :canonical (:prompt-base terminal)))
+             (expect (= :preflight (:rejection-source terminal)))
+             (expect (= 1 (:recovery-attempts terminal)))
+             (expect (false? (:output-started? terminal))))
+           (finally (lp/dispose-environment! environment))))))
 
 (defdescribe
   request-health-persistence-test
@@ -2147,6 +2402,51 @@
                                                                                         "grep")))
                (expect (not (str/includes? (:stdout result) "[running]")))
                (expect (empty? (hi/open-live-ids))))))))))
+
+(defdescribe
+  activity-coalesced-content-test
+  (it "flushes the final throttled presentation while the tool is still waiting"
+      ;; The installed SDK's HTTP/stdio flow exposed a lost trailing update: a
+      ;; start frame consumed the window and no timer published the pending content.
+      (let [visible
+            (promise)
+
+            details
+            {:operation "sdk_wait" :presenter "generic" :classification :observation}
+
+            snapshot!
+            (fn [snapshot]
+              (when (= "Waiting" (get-in snapshot [:rows 0 :presentation "summary"]))
+                (deliver visible true)))]
+
+        (tpc/with-own
+          [pc {}]
+          (with-redefs [env/run-python-block
+                        (fn [_ _ _]
+                          (let [ctx (activity-event/context)
+                                invocation (activity-event/invocation ctx nil)
+                                started (util/now-ms)]
+
+                            (extension/*tool-event-sink*
+                              (activity-event/start-event ctx invocation details))
+                            (extension/*tool-event-sink*
+                              (activity-event/content-event
+                                ctx
+                                invocation
+                                details
+                                {"headline" "SDK" "summary" "Waiting" "content" []}))
+                            (let [observed (deref visible 2000 false)]
+                              (extension/*tool-event-sink* (activity-event/terminal-event
+                                                             ctx
+                                                             invocation
+                                                             (assoc details
+                                                               :started-at-ms started
+                                                               :outcome :succeeded
+                                                               :result {})))
+                              {:stdout (str observed)})))]
+            (let [result (#'lp/run-python-code pc "pass" :env {:activity/on-snapshot snapshot!})]
+              (expect (= "true" (:stdout result)))
+              (expect (nil? (:error result)))))))))
 
 (defdescribe activity-dispatch-order-test
              ;; Regression, issue td-74427c: concurrent callbacks could reduce S2 before
@@ -6818,7 +7118,7 @@
               (estimator-undercount 1437952 963503)
 
               budget
-              (overflow-fold-budget {:provider-tokens 1437952 :provider-limit 1000000 :margin 0.9}
+              (overflow-fold-budget {:reported-tokens 1437952 :reported-limit 1000000 :margin 0.9}
                                     963503)]
 
           (expect (< 1.49 (double factor) 1.5))
@@ -6834,7 +7134,7 @@
           (expect (< (* (double budget) (double factor)) 1000000.0))
           ;; Blind path: no provider numbers to measure, so bisect our own estimate only.
           (expect (= 5000 (overflow-fold-budget {:cut 0.5} 10000)))
-          (expect (= 5000 (overflow-fold-budget {:provider-limit 999 :cut 0.5} 10000)))
+          (expect (= 5000 (overflow-fold-budget {:reported-limit 999 :cut 0.5} 10000)))
           (expect (nil? (overflow-fold-budget {} 10000)))))
     (it
       "escalates: each rescue folds strictly more, then goes terminal"
@@ -6886,8 +7186,11 @@
         ;; Every rescue reports the undercount it measured, and its projection priced
         ;; through that measurement stays under the limit the provider refused.
         (expect (every? #(some? (:estimator-undercount %)) (butlast rescues)))
+        (expect (every? #(= :preflight (:rejection-source %)) (butlast rescues)))
+        (expect (every? #(= :svar-message-estimate (:projection-count-source %)) (butlast rescues)))
+        (expect (not-any? #(contains? % :provider-tokens) (butlast rescues)))
         (expect (every? #(< (* (double (:after-tokens %)) (double (:estimator-undercount %)))
-                            (double (:provider-limit %)))
+                            (double (:reported-input-limit %)))
                         (butlast rescues)))
         (expect (not-any? #(contains? (:scopes %) "t1/i12") (butlast rescues)))))
     (it "preserves existing semantic fold gists"

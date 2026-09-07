@@ -1209,9 +1209,8 @@ describe("Activity follows the combined Python source", () => {
 
     // The dropped rows still count where the count is the margin's own: the
     // axis's tail names the number of omitted steps without inventing their details.
-    // exactly what this line is for.
     expect(rendered).not.toContain("FAILED");
-    expect(rendered).toContain("6 more steps");
+    expect(rendered).toContain("6 steps omitted · Activity limit");
     expect(rendered).not.toContain("finished 6/");
   });
 

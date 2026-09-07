@@ -976,36 +976,40 @@
               "text": "18 matches"
             }
           ],
-          "content": [
-            {
-              "type": "heading",
-              "text": "Checks"
-            },
-            {
-              "type": "table",
-              "columns": [
-                "Suite",
-                "Passed"
-              ],
-              "rows": [
-                [
-                  "Unit",
-                  "12"
+          "presentation": {
+            "headline": "Checks",
+            "summary": "1 of 2 checks",
+            "content": [
+              {
+                "type": "heading",
+                "text": "Checks"
+              },
+              {
+                "type": "table",
+                "columns": [
+                  "Suite",
+                  "Passed"
+                ],
+                "rows": [
+                  [
+                    "Unit",
+                    "12"
+                  ]
                 ]
-              ]
-            },
-            {
-              "type": "progress",
-              "label": "Checking",
-              "value": 1,
-              "total": 2
-            },
-            {
-              "type": "video",
-              "attachment_id": "recording",
-              "label": "Recording"
-            }
-          ]
+              },
+              {
+                "type": "progress",
+                "label": "Checking",
+                "value": 1,
+                "total": 2
+              },
+              {
+                "type": "video",
+                "attachment_id": "recording",
+                "label": "Recording"
+              }
+            ]
+          }
         },
         {
           "id": "call-2",
@@ -1063,13 +1067,17 @@
               "text": "18 matches"
             }
           ],
-          "content": [
-            {
-              "type": "progress",
-              "label": "Checking",
-              "value": 1
-            }
-          ]
+          "presentation": {
+            "headline": "Checks",
+            "summary": "1 of 2 checks",
+            "content": [
+              {
+                "type": "progress",
+                "label": "Checking",
+                "value": 1
+              }
+            ]
+          }
         },
         {
           "id": "call-2",
@@ -1127,12 +1135,16 @@
               "text": "18 matches"
             }
           ],
-          "content": [
-            {
-              "type": "html",
-              "text": "<b>unsafe</b>"
-            }
-          ]
+          "presentation": {
+            "headline": "Checks",
+            "summary": "1 of 2 checks",
+            "content": [
+              {
+                "type": "html",
+                "text": "<b>unsafe</b>"
+              }
+            ]
+          }
         },
         {
           "id": "call-2",
@@ -1190,14 +1202,784 @@
               "text": "18 matches"
             }
           ],
-          "content": [
+          "presentation": {
+            "headline": "Checks",
+            "summary": "1 of 2 checks",
+            "content": [
+              {
+                "type": "image",
+                "attachment_id": "image",
+                "label": "Image",
+                "url": "https://gateway.example.com/image"
+              }
+            ]
+          }
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
             {
-              "type": "image",
-              "attachment_id": "image",
-              "label": "Image",
-              "url": "https://gateway.example.com/image"
+              "kind": "arguments",
+              "text": "suite"
             }
           ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "explicit-sections",
+    "valid": true,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "presentation": {
+            "headline": "Listed 2 directories",
+            "summary": "3 entries",
+            "content": [],
+            "sections": [
+              {
+                "headline": "src",
+                "summary": "2 files",
+                "content": [
+                  {
+                    "type": "table",
+                    "columns": [
+                      "Name"
+                    ],
+                    "rows": [
+                      [
+                        "main.py"
+                      ]
+                    ]
+                  }
+                ]
+              },
+              {
+                "headline": "test",
+                "summary": "1 file",
+                "content": []
+              }
+            ]
+          }
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "summary-only",
+    "valid": true,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "presentation": {
+            "headline": "Listed src",
+            "summary": "2 files",
+            "content": []
+          }
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "summary-rejects-newline",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "presentation": {
+            "headline": "Listed 2 directories",
+            "summary": "two\nlines",
+            "content": [],
+            "sections": [
+              {
+                "headline": "src",
+                "summary": "2 files",
+                "content": [
+                  {
+                    "type": "table",
+                    "columns": [
+                      "Name"
+                    ],
+                    "rows": [
+                      [
+                        "main.py"
+                      ]
+                    ]
+                  }
+                ]
+              },
+              {
+                "headline": "test",
+                "summary": "1 file",
+                "content": []
+              }
+            ]
+          }
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "presentation-rejects-lifecycle",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "presentation": {
+            "headline": "Listed 2 directories",
+            "summary": "3 entries",
+            "content": [],
+            "sections": [
+              {
+                "headline": "src",
+                "summary": "2 files",
+                "content": [
+                  {
+                    "type": "table",
+                    "columns": [
+                      "Name"
+                    ],
+                    "rows": [
+                      [
+                        "main.py"
+                      ]
+                    ]
+                  }
+                ]
+              },
+              {
+                "headline": "test",
+                "summary": "1 file",
+                "content": []
+              }
+            ],
+            "state": "succeeded"
+          }
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "sections-reject-null",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "presentation": {
+            "headline": "Listed 2 directories",
+            "summary": "3 entries",
+            "content": [],
+            "sections": null
+          }
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "sections-reject-nesting",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "presentation": {
+            "headline": "Listed 2 directories",
+            "summary": "3 entries",
+            "content": [],
+            "sections": [
+              {
+                "headline": "Listed 2 directories",
+                "summary": "3 entries",
+                "content": [],
+                "sections": [
+                  {
+                    "headline": "src",
+                    "summary": "2 files",
+                    "content": [
+                      {
+                        "type": "table",
+                        "columns": [
+                          "Name"
+                        ],
+                        "rows": [
+                          [
+                            "main.py"
+                          ]
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "headline": "test",
+                    "summary": "1 file",
+                    "content": []
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "headline-utf8-byte-bound",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "presentation": {
+            "headline": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+            "summary": "3 entries",
+            "content": [],
+            "sections": [
+              {
+                "headline": "src",
+                "summary": "2 files",
+                "content": [
+                  {
+                    "type": "table",
+                    "columns": [
+                      "Name"
+                    ],
+                    "rows": [
+                      [
+                        "main.py"
+                      ]
+                    ]
+                  }
+                ]
+              },
+              {
+                "headline": "test",
+                "summary": "1 file",
+                "content": []
+              }
+            ]
+          }
+        },
+        {
+          "id": "call-2",
+          "sequence": 2,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "suite",
+          "result_summary": "24 passed",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "suite"
+            }
+          ]
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    }
+  },
+  {
+    "name": "sections-share-block-bound",
+    "valid": false,
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "observation",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "18 matches",
+          "duration_ms": 41,
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "[{query: needle}]"
+            },
+            {
+              "kind": "result",
+              "text": "18 matches"
+            }
+          ],
+          "presentation": {
+            "headline": "Listed 2 directories",
+            "summary": "3 entries",
+            "content": [
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              },
+              {
+                "type": "text",
+                "text": "root"
+              }
+            ],
+            "sections": [
+              {
+                "headline": "src",
+                "summary": "2 files",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  },
+                  {
+                    "type": "text",
+                    "text": "child"
+                  }
+                ]
+              }
+            ]
+          }
         },
         {
           "id": "call-2",

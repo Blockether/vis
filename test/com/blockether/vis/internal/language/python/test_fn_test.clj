@@ -229,7 +229,7 @@
       (let [root (tmp-dir)]
         (try (.mkdirs (io/file root "tests"))
              (spit (io/file root "tests" "test_live.py")
-                   (str "import faulthandler\nfrom blockether import vis\n\n"
+                   (str "import faulthandler\nimport blockether.vis.extension as vis\n\n"
                         "def test_live_is_not_session_work():\n"
                         "    assert not faulthandler.is_enabled()\n"
                         "    with vis.live('Test view', [vis.status('state', 'Running')]):\n"

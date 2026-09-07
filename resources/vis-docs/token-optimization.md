@@ -83,10 +83,9 @@ This turns many reads plus a reduction into one visible result instead of one tr
 
 The sandbox keeps state between blocks, so treat it as one program the session is building rather than a run of disposable snippets.
 
-Bind the roots once and derive every path from them. The workspace root is already in `session`, so no block ever has to retype an absolute path:
+Derive workspace paths from `root`, a prebound `pathlib.Path` supplied by the host. It tracks `session["workspace"]["root"]` before every block; do not redefine it or retype an absolute path. Bind other project roots once under their own names:
 
 ```python
-root = Path(session["workspace"]["root"])
 src, tests = root / "src", root / "test"
 ```
 
@@ -115,7 +114,7 @@ print(defs("hits"))      # its source — edit THAT, never re-paste from memory
 
 A helper's **docstring is its document** — the only page you write while the session runs. Its first line is the gist `defs()` prints beside the name, and the whole of it is what `doc("hits")` answers. Sandbox helpers are absent from `apropos`; `defs()` is their catalogue, and the docstring is what the NEXT turn reads before it re-types the helper from memory.
 
-What does **not** persist is anything written into `session`. That map is host-owned and rebuilt from the engine snapshot before every block, so `session["helpers"] = …` succeeds and is gone by the next one — a silent loss, not an error. Keep state in ordinary names — and give a helper its OWN name: a top-level `def cat(...)` or `class grep:` named after a bound tool is refused where it is written, because that definition could only ever shadow the tool inside its own block and would never be persisted or restored.
+`root` and `session` are host-owned names: assigning or deleting either only shadows it inside that block, never replaces it for later blocks. The `session` dictionary is rebuilt from the engine snapshot before every block, so `session["helpers"] = …` also disappears — a silent loss, not an error. Keep state in ordinary names — and give a helper its OWN name: a top-level `def cat(...)` or `class grep:` named after a bound tool is refused where it is written, because that definition could only ever shadow the tool inside its own block and would never be persisted or restored.
 
 When the same helper survives across turns — a deploy check, a fixture loader, a project-specific guard — it has outgrown the sandbox. Propose a **Python extension**: one file in `.vis/extensions/*.py` registers a named tool for every future session in that project, and `doc("extending")` is the whole recipe — including the durable `state` an extension owns by NAME, which is the only storage that survives `/reload` and a restart. Propose it; write it when the user asks.
 

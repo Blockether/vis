@@ -250,11 +250,10 @@ export interface McpServersResponse {
 }
 
 /**
- * One headless MCP OAuth flow. The daemon keeps the PKCE verifier, the state
- * nonce, and the token; only these fields ever travel, so this device can drive
- * a sign-in for a gateway running somewhere else entirely.
+ * One headless MCP OAuth flow. PKCE and tokens stay on the gateway; the app
+ * receives only the browser state/code and posts the return directly to that gateway.
  */
-export interface McpAuthFlow {
+export interface McpAuthFlow extends Omit<SignInFlow, "expires_at"> {
   flow_id: string;
   server: string;
   kind: "pkce";
@@ -402,20 +401,25 @@ export interface ModelPref {
 /**
  * A live auth flow the daemon is holding open. `kind` decides the UX:
  * `device` shows `user_code` + `verification_uri` and finishes by polling;
- * `pkce` opens `url` and needs the final redirect URL pasted back;
+ * `pkce` opens `url` and polls for browser completion (manual URL fallback);
  * `api-key` shows `instructions` and needs the key typed in.
- * The PKCE verifier, device code, and API key never live on this device.
+ * PKCE, device polling capabilities and provider tokens stay on the gateway; a typed API key is sent there directly.
  */
-export interface AuthFlow {
+export interface SignInFlow {
   flow_id: string;
-  provider_id: string;
   kind: "pkce" | "device" | "api-key";
   url?: string;
+  redirect_uri?: string;
+  callback_mode?: "loopback" | "manual" | "app";
   user_code?: string;
   verification_uri?: string;
   interval_ms?: number;
   expires_at?: number;
   instructions?: string[];
+}
+
+export interface AuthFlow extends SignInFlow {
+  provider_id: string;
 }
 
 export interface AuthVerdict {

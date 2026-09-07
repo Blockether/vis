@@ -18,13 +18,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
-from blockether.vis.client import Event, GatewayClient, GatewayError, ProtocolError
-from blockether.vis.local import LocalEngine
+from blockether.vis.engine import (
+    Event,
+    GatewayClient,
+    GatewayError,
+    LocalEngine,
+    ProtocolError,
+)
 
-EXTENSION = """from blockether import vis
+EXTENSION = """import blockether.vis.extension as vis
+def sdk_activity(phase, **_):
+    return vis.ActivityPresentation("SDK flow", phase, (vis.ActivityText("SDK stage: " + phase),))
 
 def sdk_flow(mode):
     "Run a deterministic tool, live View, form and state update."
+    vis.publish_activity(vis.ActivityPresentation("SDK flow", "Awaiting answer", (vis.ActivityProgress("Waiting"),)))
     with vis.live("SDK flow", [vis.status("now", "Waiting", tone="running")], flush_ms=0) as view:
         answer = vis.ask("SDK " + mode, [vis.plaintext("name", label="Name", is_required=True)], timeout_ms=60000)
         if not answer:
@@ -33,9 +41,38 @@ def sdk_flow(mode):
         vis.state["name"] = answer["name"]
         return {"name": vis.state["name"]}
 
-vis.extension(name="sdk-fixture", description="SDK integration fixture", alias="sdk",
-    symbols=[vis.symbol(sdk_flow, activity=vis.Activity(presenter="observation", label="SDK flow"))])
+vis.register(vis.Extension(name="sdk-fixture", description="SDK integration fixture", alias="sdk",
+    symbols=[vis.Symbol(sdk_flow, activity=vis.Activity(presenter="observation", label="SDK flow", render=sdk_activity))]))
 """
+
+
+PROVIDER_EXTENSION = """import blockether.vis.extension as vis
+
+def credential():
+    return vis.ProviderCredential("fixture-provider", api_url=__MODEL_URL__,
+        llm_headers=__CREDENTIAL_HEADERS__)
+
+def enrich(provider, router_opts):
+    return [vis.ProviderModel(m["name"], context=200000, is_tool_call=True)
+            for m in provider["models"]]
+
+vis.register(vis.Extension(name="sdk-provider", description="Typed provider integration",
+    providers=[vis.Provider("sdk-fixture", "SDK fixture", is_managed=__MANAGED__,
+        preset=vis.ProviderPreset(base_url="http://127.0.0.1:1/v1", api_style="openai",
+            default_models=["sdk-test"], llm_headers={"X-SDK-Preset": "kept"},
+            extra_body={"sdk_marker": {"keep_this_key": "preserved"}}),
+        get_token_fn=credential, status_fn=lambda: vis.ProviderStatus(True),
+        enrich_models_fn=enrich)]))
+"""
+
+
+def activity_rows(projection):
+    """Include SDK child invocations inside a Python-execution row."""
+    pending = list(projection.rows) if projection else []
+    while pending:
+        row = pending.pop()
+        yield row
+        pending.extend(row.children or ())
 
 
 @contextmanager
@@ -51,6 +88,8 @@ def model_endpoint():
             if not body.get("tools"):
                 delta, finish = {"content": "SDK fixture"}, "stop"
             else:
+                body["_test_headers"] = dict(self.headers)
+                body["_test_path"] = self.path
                 requests.append(body)
                 position = len(requests)
                 if position % 2:
@@ -210,25 +249,19 @@ def test_real_agent_tool_view_activity_and_cancellation(
 
     monkeypatch.setattr(Event, "from_wire", checked_event)
     with model_endpoint() as (model_url, requests):
+        managed = transport == "http"
+        (extensions / "provider.py").write_text(
+            PROVIDER_EXTENSION.replace("__MODEL_URL__", repr(model_url))
+            .replace("__MANAGED__", repr(managed))
+            .replace(
+                "__CREDENTIAL_HEADERS__",
+                repr(None if managed else {"X-SDK-Credential": "kept"}),
+            )
+        )
         (config / "config.yml").write_text(
             json.dumps(
                 {
-                    "providers": [
-                        {
-                            "id": "sdk-fixture",
-                            "api_style": "openai",
-                            "base_url": model_url,
-                            "api_key": "fixture",
-                            "is_stateless": True,
-                            "models": [
-                                {
-                                    "name": "sdk-test",
-                                    "context": 200000,
-                                    "is_tool_call": True,
-                                }
-                            ],
-                        }
-                    ],
+                    "providers": [] if managed else [{"id": "sdk-fixture"}],
                     "default_provider": "sdk-fixture",
                     "default_model": "sdk-test",
                 }
@@ -245,9 +278,16 @@ def test_real_agent_tool_view_activity_and_cancellation(
             for mode in ("complete", "cancel"):
                 turn = session.send(mode)
                 seen = []
+                pending_input = None
+                progress_seen = False
                 with session.events(cursor=turn.cursor, reconnects=0) as events:
                     for event in events:
                         seen.append(event)
+                        progress_seen |= any(
+                            row.presentation
+                            and row.presentation["summary"] == "Awaiting answer"
+                            for row in activity_rows(event.activity)
+                        )
                         if event.type == "iteration.error":
                             pytest.fail(
                                 f"fixture engine error: {str(event.data)[:1200]}"
@@ -263,12 +303,17 @@ def test_real_agent_tool_view_activity_and_cancellation(
                                     v.id == event.view.view_id
                                     for v in session.input_views()
                                 )
-                                if mode == "complete":
-                                    assert session.answer(
-                                        event.view.view_id, {"name": "Ada"}
-                                    )["is_accepted"]
-                                else:
-                                    turn.cancel()
+                                pending_input = event.view.view_id
+                        # Activity frames coalesce. Keep the form pending until the
+                        # intermediate presentation has crossed the transport.
+                        if pending_input is not None and progress_seen:
+                            if mode == "complete":
+                                assert session.answer(pending_input, {"name": "Ada"})[
+                                    "is_accepted"
+                                ]
+                            else:
+                                turn.cancel()
+                            pending_input = None
                         if event.type in {
                             "turn.completed",
                             "turn.failed",
@@ -298,7 +343,19 @@ def test_real_agent_tool_view_activity_and_cancellation(
                 # polling reads the durable receipt, which retains that picture.
                 assert set(closed_views["input"].to_wire()) == {"reason"}
                 assert (closed_views["live"].view is None) == (transport == "http")
-                assert any(e.activity is not None for e in seen)
+                rows = [row for event in seen for row in activity_rows(event.activity)]
+                assert any(
+                    row.presentation
+                    and row.presentation["headline"] == "SDK flow"
+                    and row.presentation["summary"] == "Awaiting answer"
+                    for row in rows
+                ), [(row.operation, row.state, row.presentation) for row in rows]
+                assert any(
+                    row.presentation
+                    and row.presentation["content"]
+                    and row.presentation["content"][0]["type"] == "progress"
+                    for row in rows
+                )
                 result = turn.wait(timeout=30)
                 assert result["status"] == (
                     "completed" if mode == "complete" else "cancelled"
@@ -308,7 +365,25 @@ def test_real_agent_tool_view_activity_and_cancellation(
                 if mode == "complete":
                     assert any(e.type == "view.patch" for e in seen)
                     assert any(e.activity and e.activity.counts.succeeded for e in seen)
+                    assert any(
+                        row.presentation
+                        and row.presentation["summary"] == "success"
+                        and row.presentation["content"][0]["text"]
+                        == "SDK stage: success"
+                        for row in rows
+                    )
             assert len(requests) == 3
+            for request in requests:
+                assert request["_test_path"] == "/v1/chat/completions"
+                headers = {
+                    key.lower(): value
+                    for key, value in request["_test_headers"].items()
+                }
+                assert headers["authorization"] == "Bearer fixture-provider"
+                # Header maps follow whole-field precedence, not a deep merge.
+                header = "x-sdk-preset" if managed else "x-sdk-credential"
+                assert headers[header] == "kept"
+                assert request["sdk_marker"] == {"keep_this_key": "preserved"}
             assert session.transcript().content
             assert len(session.turns()) == 2
             session.delete()

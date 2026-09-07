@@ -20,7 +20,9 @@ from email.message import Message
 from pathlib import Path
 from urllib.parse import urlencode
 
-from blockether.vis.client import (
+from blockether.vis._contracts import GATEWAY
+
+from ._client import (
     Events,
     GatewayClient,
     JobEvents,
@@ -31,7 +33,6 @@ from blockether.vis.client import (
     _duration,
     _gateway_error,
 )
-from blockether.vis_contract import GATEWAY
 
 
 class _Reply(io.BytesIO):

@@ -12,7 +12,10 @@ import {
 } from "./ActivityPanel";
 import activityPanelSource from "./ActivityPanel.tsx?raw";
 import activityFixture from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json";
-import { ACTIVITY_TREE_CHANGES } from "../dev/story-data";
+import {
+  ACTIVITY_LONG_RUNNING,
+  ACTIVITY_TREE_CHANGES,
+} from "../dev/story-data";
 import * as storyData from "../dev/story-data";
 import { WorkspaceRootsContext } from "../lib/workspace-roots";
 import {
@@ -65,47 +68,137 @@ describe("one form's Activity on the phone", () => {
     const rows = document.querySelectorAll("[data-activity-row]");
     expect(rows.length).toBeGreaterThan(1);
     for (const row of rows) {
-      expect(row.classList.contains("mb-[var(--text-ui--line-height)]")).toBe(true);
+      expect(row.classList.contains("mb-[var(--text-ui--line-height)]")).toBe(
+        true,
+      );
       expect(row.classList.contains("last:mb-0")).toBe(true);
     }
   });
-  it("keeps the leading content heading beside the action, once", () => {
+  it("keeps the headline and one-line summary visible; the chevron opens only content", () => {
     const projection = activityProjection();
     paintActivity({
       activity: {
         ...projection,
-        rows: [{
-          ...projection.rows[0],
-          operation: "ls",
-          summary: "",
-          resources: [],
-          evidence: [],
-          children: [],
-          content: [
-            { type: "heading", text: "apps/vis-companion/src" },
-            { type: "text", text: "3 directories · 2 files" },
-          ],
-        }],
+        rows: [
+          {
+            ...projection.rows[0],
+            operation: "ls",
+            summary: "",
+            resources: [],
+            evidence: [],
+            children: [],
+            presentation: {
+              headline: "Listed apps/vis-companion/src",
+              summary: "3 directories · 2 files",
+              content: [{ type: "text", text: "Listing details" }],
+            },
+          },
+        ],
       },
     });
-    expect(screen.getByRole("heading", {
-      name: "Listed apps/vis-companion/src",
-    })).toBeTruthy();
-    expect(screen.getAllByText("apps/vis-companion/src")).toHaveLength(1);
-    const toggle = screen.getByRole("button", { name: "Listed apps/vis-companion/src" });
-    // A settled step starts shut: its line says what it did, the press says the rest.
+    const toggle = screen.getByRole("button", {
+      name: /Listed apps\/vis-companion\/src/,
+    });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText("3 directories · 2 files")).toBeNull();
-    const row = toggle.closest("[data-activity-row]")!;
-    expect(toggle.closest("h4")!.parentElement!.classList.contains("items-center")).toBe(true);
-    const node = row.querySelector("span.absolute")!;
-    expect(node.classList.contains("top-4")).toBe(true);
-    expect(node.classList.contains("mouse:top-3")).toBe(true);
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText("3 directories · 2 files")).toBeTruthy();
+    expect(screen.queryByText("Listing details")).toBeNull();
     fireEvent.click(toggle);
-    expect(screen.queryByText("3 directories · 2 files")).toBeNull();
+    expect(screen.getByText("Listing details")).toBeTruthy();
+    expect(screen.getAllByText("3 directories · 2 files")).toHaveLength(1);
+    fireEvent.click(toggle);
+    expect(screen.getByText("3 directories · 2 files")).toBeTruthy();
+    expect(screen.queryByText("Listing details")).toBeNull();
+  });
+  it("keeps batch headers and summaries visible, spaces sections, and replaces them without resetting disclosure", () => {
+    const activity = storyData.ACTIVITY_LISTING_BATCH;
+    const { rerender } = render(<ActivityPanel activity={activity} />);
+    const toggle = screen.getByRole("button", { name: /Listed 2 directories/ });
+    expect(screen.getByText("3 directories · 2 files")).toBeTruthy();
+    expect(screen.getByText("0 directories · 2 files")).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
+    for (const section of document.querySelectorAll(
+      "[data-activity-section]",
+    )) {
+      expect(
+        section.classList.contains("mt-[var(--text-ui--line-height)]"),
+      ).toBe(true);
+    }
+    fireEvent.click(toggle);
+    expect(screen.getAllByRole("table")).toHaveLength(2);
+    expect(
+      screen.getAllByRole("group", { name: "Activity table" }),
+    ).toHaveLength(2);
+    const row = activity.rows[0];
+    rerender(
+      <ActivityPanel
+        activity={{
+          ...activity,
+          rows: [
+            {
+              ...row,
+              presentation: {
+                ...row.presentation!,
+                summary: "8 entries",
+              },
+            },
+          ],
+        }}
+      />,
+    );
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("8 entries")).toBeTruthy();
+    expect(screen.getAllByRole("table")).toHaveLength(2);
+    fireEvent.click(toggle);
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getByText("0 directories · 2 files")).toBeTruthy();
+  });
+  it("does not put a chevron on a summary-only presentation or infer content headings", () => {
+    const base = activityProjection();
+    paintActivity({
+      activity: {
+        ...base,
+        rows: [
+          {
+            ...base.rows[0],
+            resources: [],
+            evidence: [],
+            presentation: {
+              headline: "Listed src",
+              summary: "2 files",
+              content: [],
+            },
+          },
+        ],
+      },
+    });
+    expect(screen.getByText("2 files")).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+  it("keeps the engine failure visible when custom content is collapsed", () => {
+    const base = activityProjection();
+    paintActivity({
+      activity: {
+        ...base,
+        rows: [
+          {
+            ...base.rows[0],
+            state: "failed",
+            resources: [],
+            evidence: [],
+            error_summary: "Permission denied",
+            presentation: {
+              headline: "List src",
+              summary: "Preparing listing",
+              content: [{ type: "text", text: "Listing details" }],
+            },
+          },
+        ],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /List src/ }));
+    expect(screen.getByText("Permission denied")).toBeTruthy();
+    expect(screen.queryByText("Preparing listing")).toBeNull();
+    expect(screen.queryByText("Listing details")).toBeNull();
   });
   it("draws the chronology without being asked, in engine sequence", () => {
     paintActivity();
@@ -394,7 +487,8 @@ describe("a run reads as one thread", () => {
           {
             ...first,
             resources: [{ type: "file", id: "src/components/ui.tsx" }],
-            result_summary: "src/components/ui.tsx:12: matched\nsrc/components/ui.tsx:40: matched",
+            result_summary:
+              "src/components/ui.tsx:12: matched\nsrc/components/ui.tsx:40: matched",
           },
           ...rest,
         ],
@@ -403,12 +497,16 @@ describe("a run reads as one thread", () => {
 
     const step = screen.getByRole("button", { name: /Searched/ });
     expect(step.getAttribute("aria-expanded")).toBe("false");
-    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeNull();
+    expect(
+      document.querySelector('[data-path="src/components/ui.tsx"]'),
+    ).toBeNull();
     expect(screen.queryByText(/ui\.tsx:40: matched/)).toBeNull();
 
     fireEvent.click(step);
     expect(step.getAttribute("aria-expanded")).toBe("true");
-    expect(document.querySelector('[data-path="src/components/ui.tsx"]')).toBeTruthy();
+    expect(
+      document.querySelector('[data-path="src/components/ui.tsx"]'),
+    ).toBeTruthy();
     expect(screen.getByText(/ui\.tsx:40: matched/)).toBeTruthy();
   });
 
@@ -630,6 +728,54 @@ describe("the axis says a thing once", () => {
 // A chronology inside a live region is re-read from the top on every render, and a
 // running step whose time column stands empty reads as a number that went missing.
 describe("what the axis does while the work is still moving", () => {
+  it("opens retained steps while live and keeps them open across replacements", () => {
+    const activity = ACTIVITY_LONG_RUNNING;
+    const rows = activity.rows;
+    const { rerender } = render(<ActivityPanel activity={activity} />);
+    expect(document.querySelector('[data-activity-row="live-4"]')).toBeNull();
+    expect(document.querySelector('[data-activity-row="live-6"]')).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Show 2 more steps" }));
+    const step = screen.getByRole("button", { name: "Searched search-4" });
+    fireEvent.click(step);
+    expect(screen.getByText("result-4")).toBeTruthy();
+    rerender(
+      <ActivityPanel
+        activity={{
+          ...activity,
+          rows: rows.map((row) =>
+            row.id === "live-6" ? { ...row, state: "succeeded" } : row,
+          ),
+        }}
+      />,
+    );
+    expect(screen.getByText("result-4")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Show fewer steps" }));
+    expect(document.querySelector('[data-activity-row="live-4"]')).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Show 3 more steps" }),
+    ).toBeTruthy();
+  });
+
+  it("never hides failed or cancelled steps behind the retained-step fold", () => {
+    const base = activityProjection();
+    const rows = Array.from({ length: 6 }, (_, index) => ({
+      ...base.rows[0],
+      id: `step-${index}`,
+      sequence: index,
+      summary: `search-${index}`,
+      operation: "grep",
+      state: (index === 4
+        ? "failed"
+        : index === 5
+          ? "cancelled"
+          : "succeeded") as "failed" | "cancelled" | "succeeded",
+    }));
+    render(<ActivityPanel activity={{ ...base, rows }} />);
+    expect(document.querySelector('[data-activity-row="step-4"]')).toBeTruthy();
+    expect(document.querySelector('[data-activity-row="step-5"]')).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /more steps/i })).toBeNull();
+  });
+
   it("says the clock is still counting instead of leaving the column empty", () => {
     const projection = activityProjection();
     const [first] = projection.rows;
@@ -651,21 +797,35 @@ describe("what the axis does while the work is still moving", () => {
     ).toBe("off");
   });
 
-  // Regression, user report ("every show-more is the same rule with the words in
-  // it"): the dropped tail ended on a node of its own and a bare `+6 more`.
-  it("ends on the one rule when the engine dropped the tail", () => {
+  it("discloses when a retained step has lost detail to the Activity limit", () => {
+    const base = activityProjection();
+    const row = {
+      ...base.rows[0],
+      state: "succeeded" as const,
+      result_summary: undefined,
+      evidence: [],
+      resources: [],
+      presentation: { headline: "Searched", summary: "2 matches", content: [] },
+      is_truncated: true,
+    };
+    render(<ActivityPanel activity={{ ...base, rows: [row] }} />);
+    expect(screen.queryByText("Details truncated")).toBeNull();
+    fireEvent.click(
+      document.querySelector(`[data-activity-row="${row.id}"] button`)!,
+    );
+    expect(screen.getByText("Details truncated")).toBeTruthy();
+  });
+
+  it("labels discarded steps as unavailable, not as a show-more control", () => {
     paintActivity({
       activity: {
         ...activityProjection(),
         omitted: { rows: 6, by_classification: { observation: 6 } },
       },
     });
-
-    const tail = screen.getByText("6 more steps");
-
-    expect(tail.closest("li")?.querySelectorAll(".bg-dialog-edge").length).toBe(
-      2,
-    );
+    const tail = screen.getByText("6 steps omitted · Activity limit");
+    expect(tail.closest("button")).toBeNull();
+    expect(screen.queryByRole("button", { name: /6 more steps/i })).toBeNull();
   });
 });
 
@@ -858,19 +1018,22 @@ it("renders symbol content and replaces progress without changing lifecycle", ()
     {
       ...activity.rows[0],
       state: "running",
-      content: [
-        { type: "heading", text: "Verification" },
-        { type: "markdown", text: "**Prepared** workspace" },
-        {
-          type: "table",
-          columns: ["Suite", "Result"],
-          rows: [["unit", "passed"]],
-        },
-        { type: "code", language: "python", text: "print(42)" },
-        { type: "diff", text: "+added\n-removed" },
-        { type: "progress", label: "Checking", value: 1, total: 2 },
-        { type: "image", attachment_id: "screen", label: "Screenshot" },
-      ],
+      presentation: {
+        headline: "Verification",
+        summary: "1 of 2 checks",
+        content: [
+          { type: "markdown", text: "**Prepared** workspace" },
+          {
+            type: "table",
+            columns: ["Suite", "Result"],
+            rows: [["unit", "passed"]],
+          },
+          { type: "code", language: "python", text: "print(42)" },
+          { type: "diff", text: "+added\n-removed" },
+          { type: "progress", label: "Checking", value: 1, total: 2 },
+          { type: "image", attachment_id: "screen", label: "Screenshot" },
+        ],
+      },
     },
   ];
   const { rerender } = render(<ActivityPanel activity={activity} />);
@@ -886,7 +1049,11 @@ it("renders symbol content and replaces progress without changing lifecycle", ()
     rows: [
       {
         ...activity.rows[0],
-        content: [{ type: "text" as const, text: "Finished stage" }],
+        presentation: {
+          headline: "Verification",
+          summary: "2 of 2 checks",
+          content: [{ type: "text" as const, text: "Finished stage" }],
+        },
       },
     ],
   };

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Exact VIS_VERSION to publish; both PyPI trusted publishers must exist
+        description: Exact VIS_VERSION to publish; the vis-agent PyPI trusted publisher must exist
         required: true
         type: string
 
@@ -28,5 +28,5 @@ jobs:
         with:
           name: python-sdk-distributions
           path: dist
-      - name: Publish the verified pair (never overwrite existing versions)
+      - name: Publish the verified SDK (never overwrite existing versions)
         uses: pypa/gh-action-pypi-publish@release/v1

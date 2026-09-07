@@ -50,7 +50,9 @@
   (it "creates Claude subscription authorization flow with PKCE"
       (let [flow (anthropic/create-authorization-flow)]
         (expect (string? (:verifier flow)))
-        (expect (= (:verifier flow) (:state flow)))
+        ;; The browser-visible CSRF nonce must not reveal the PKCE verifier.
+        (expect (not= (:verifier flow) (:state flow)))
+        (expect (not (str/includes? (:url flow) (:verifier flow))))
         (expect (str/starts-with? (:url flow) "https://claude.ai/oauth/authorize?"))
         (expect (str/includes? (:url flow) "code_challenge="))
         (expect (str/includes? (:url flow)

@@ -1,5 +1,8 @@
 (ns com.blockether.vis.internal.provider.vendor.openai-codex-test
-  (:require [charred.api :as json]
+  (:require [babashka.http-client :as http]
+            [charred.api :as json]
+            [clojure.string]
+            [com.blockether.vis.internal.util]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.provider.vendor.openai-codex :as codex]
             [com.blockether.vis.internal.config.core :as config]
@@ -65,21 +68,21 @@
                                 :type))))))))
   (it "accepts a pasted redirect URL and persists exchanged credentials"
       (let [saved (atom nil)]
-        (with-redefs-fn {#'codex/detect-credentials (constantly nil)
-                         #'codex/create-authorization-flow
-                         (fn [_]
-                           {:verifier "verifier" :state "state" :url "https://auth.openai.com/x"})
-                         #'codex/open-browser! (constantly true)
-                         #'codex/exchange-authorization-code! (fn [code verifier]
-                                                                (expect (= "abc" code))
-                                                                (expect (= "verifier" verifier))
-                                                                {:access-token "tok"
-                                                                 :refresh-token "ref"
-                                                                 :account-id "acct_123"
-                                                                 :expires-at-ms 42})
-                         #'codex/save-auth-file! (fn [creds]
-                                                   (reset! saved creds)
-                                                   creds)}
+        (with-redefs-fn
+          {#'codex/detect-credentials (constantly nil)
+           #'codex/create-authorization-flow
+           (fn [_]
+             {:verifier "verifier" :state "state" :url "https://auth.openai.com/x"})
+           #'codex/open-browser! (constantly true)
+           #'codex/exchange-authorization-code!
+           (fn [code verifier redirect-uri]
+             (expect (= "http://localhost:1455/auth/callback" redirect-uri))
+             (expect (= "abc" code))
+             (expect (= "verifier" verifier))
+             {:access-token "tok" :refresh-token "ref" :account-id "acct_123" :expires-at-ms 42})
+           #'codex/save-auth-file! (fn [creds]
+                                     (reset! saved creds)
+                                     creds)}
           (fn []
             (expect (= :ok
                        (codex/login!
@@ -91,21 +94,21 @@
             (expect (= "acct_123" (:account-id @saved)))))))
   (it "starts a fresh OAuth flow when force is true and credentials already exist"
       (let [saved (atom nil)]
-        (with-redefs-fn {#'codex/detect-credentials (constantly {:account-id "acct_old"})
-                         #'codex/create-authorization-flow
-                         (fn [_]
-                           {:verifier "verifier" :state "state" :url "https://auth.openai.com/x"})
-                         #'codex/open-browser! (constantly true)
-                         #'codex/exchange-authorization-code! (fn [code verifier]
-                                                                (expect (= "abc" code))
-                                                                (expect (= "verifier" verifier))
-                                                                {:access-token "tok"
-                                                                 :refresh-token "ref"
-                                                                 :account-id "acct_new"
-                                                                 :expires-at-ms 42})
-                         #'codex/save-auth-file! (fn [creds]
-                                                   (reset! saved creds)
-                                                   creds)}
+        (with-redefs-fn
+          {#'codex/detect-credentials (constantly {:account-id "acct_old"})
+           #'codex/create-authorization-flow
+           (fn [_]
+             {:verifier "verifier" :state "state" :url "https://auth.openai.com/x"})
+           #'codex/open-browser! (constantly true)
+           #'codex/exchange-authorization-code!
+           (fn [code verifier redirect-uri]
+             (expect (= "http://localhost:1455/auth/callback" redirect-uri))
+             (expect (= "abc" code))
+             (expect (= "verifier" verifier))
+             {:access-token "tok" :refresh-token "ref" :account-id "acct_new" :expires-at-ms 42})
+           #'codex/save-auth-file! (fn [creds]
+                                     (reset! saved creds)
+                                     creds)}
           (fn []
             (expect (= :ok
                        (codex/login!
@@ -373,3 +376,145 @@
         (expect (= [] (:limits report)))
         (expect (= "OpenAI Codex usage endpoint did not return a matching quota bucket."
                    (:note report))))))
+
+(defdescribe
+  device-authorization-test
+  (it "starts the official device flow without exposing its polling capability"
+      (let [requests (atom [])]
+        (with-redefs [http/post (fn [url opts]
+                                  (swap! requests conj [url (json/read-json (:body opts))])
+                                  {:status 200
+                                   :body (json/write-json-str {:device_auth_id "test-device-secret"
+                                                               :user_code "ABCD-EFGH"
+                                                               :interval "5"})})]
+          (let [started (codex/auth-start)]
+            (expect (= :device (:kind started)))
+            (expect (= "https://auth.openai.com/codex/device" (:url started)))
+            (expect (= "ABCD-EFGH" (:user-code started)))
+            (expect (= 5000 (:interval-ms started)))
+            (expect (= 900000 (:expires-in-ms started)))
+            (expect (= "test-device-secret" (get-in started [:flow :device-auth-id])))
+            (expect (not (clojure.string/includes? (pr-str (dissoc started :flow))
+                                                   "test-device-secret")))
+            (expect (= [["https://auth.openai.com/api/accounts/deviceauth/usercode"
+                         {"client_id" "app_EMoamEEZ73f0CkXaXp7hrann"}]]
+                       @requests))))))
+  (it
+    "polls pending responses, uses the registered device redirect and saves only once"
+    (let [polls
+          (atom 0)
+
+          exchanged
+          (atom [])
+
+          saved
+          (atom [])
+
+          access
+          (jwt {(keyword "https://api.openai.com/auth") {:chatgpt_account_id "acct_test"}})]
+
+      (with-redefs-fn {#'http/post
+                       (fn [url opts]
+                         (expect (= "https://auth.openai.com/api/accounts/deviceauth/token" url))
+                         (expect (= {"device_auth_id" "test-device" "user_code" "ABCD-EFGH"}
+                                    (json/read-json (:body opts))))
+                         (case (swap! polls inc)
+                           1
+                           {:status 403 :body "{}"}
+
+                           2
+                           {:status 404 :body "{}"}
+
+                           {:status 200
+                            :body (json/write-json-str {:authorization_code "test-code"
+                                                        :code_verifier "test-verifier"})}))
+                       #'codex/post-form (fn [url params]
+                                           (swap! exchanged conj [url params])
+                                           {:status 200
+                                            :json {:access_token access
+                                                   :refresh_token "test-refresh"
+                                                   :expires_in 3600}})
+                       #'codex/save-auth-file! (fn [credentials]
+                                                 (swap! saved conj credentials))}
+        (fn []
+          (expect (= {:status :ok}
+                     (codex/auth-await {:device-auth-id "test-device"
+                                        :user-code "ABCD-EFGH"
+                                        :interval-ms 1
+                                        :expires-at (+ (System/currentTimeMillis) 5000)})))
+          (expect (= 3 @polls))
+          (expect (= [["https://auth.openai.com/oauth/token"
+                       {:grant_type "authorization_code"
+                        :client_id "app_EMoamEEZ73f0CkXaXp7hrann"
+                        :code "test-code"
+                        :code_verifier "test-verifier"
+                        :redirect_uri "https://auth.openai.com/deviceauth/callback"}]]
+                     @exchanged))
+          (expect (= 1 (count @saved)))
+          (expect (= "acct_test" (:account-id (first @saved))))))))
+  (it "does not poll an expired flow or persist denied/malformed grants"
+      (let [polls
+            (atom 0)
+
+            saves
+            (atom 0)]
+
+        (with-redefs-fn {#'http/post (fn [& _]
+                                       (swap! polls inc)
+                                       {:status 400 :body "{}"})
+                         #'codex/save-auth-file! (fn [_]
+                                                   (swap! saves inc))}
+          (fn []
+            (expect (= :vis/openai-codex-device-expired
+                       (try (codex/auth-await {:expires-at 0})
+                            nil
+                            (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+            (expect (zero? @polls))
+            (expect (= :vis/openai-codex-device-failed
+                       (try (codex/auth-await {:device-auth-id "test-device"
+                                               :user-code "test-code"
+                                               :interval-ms 1
+                                               :expires-at (+ (System/currentTimeMillis) 5000)})
+                            nil
+                            (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+            (expect (zero? @saves))))))
+  (it "reports disabled device authorization without falling back to an unreachable callback"
+      (with-redefs [http/post (fn [& _]
+                                {:status 404 :body "{}"})]
+        (expect (= :vis/openai-codex-device-unavailable
+                   (try (codex/auth-start)
+                        nil
+                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+
+(defdescribe device-authorization-deadline-test
+             (it "does not persist a grant that arrives or finishes exchanging after expiry"
+                 (doseq [delayed-leg [:poll :exchange]]
+                   (let [now (atom 1000)
+                         exchanges (atom 0)
+                         saves (atom 0)]
+
+                     (with-redefs-fn {#'com.blockether.vis.internal.util/now-ms (fn ^long []
+                                                                                  (long @now))
+                                      #'http/post (fn [& _]
+                                                    (when (= :poll delayed-leg) (reset! now 2000))
+                                                    {:status 200
+                                                     :body (json/write-json-str
+                                                             {:authorization_code "test-code"
+                                                              :code_verifier "test-verifier"})})
+                                      #'codex/exchange-authorization-code!
+                                      (fn [& _]
+                                        (swap! exchanges inc)
+                                        (when (= :exchange delayed-leg) (reset! now 2000))
+                                        {:access-token "test-access"})
+                                      #'codex/save-auth-file! (fn [_]
+                                                                (swap! saves inc))}
+                       (fn []
+                         (expect (= :vis/openai-codex-device-expired
+                                    (try (codex/auth-await {:device-auth-id "test-device"
+                                                            :user-code "ABCD-EFGH"
+                                                            :interval-ms 1
+                                                            :expires-at 2000})
+                                         nil
+                                         (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                         (expect (= (if (= :poll delayed-leg) 0 1) @exchanges))
+                         (expect (zero? @saves))))))))

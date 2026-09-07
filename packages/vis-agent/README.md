@@ -1,13 +1,14 @@
 # vis-agent
 
-The Python half of [Vis](https://github.com/Blockether/vis): the module a Vis
-extension imports, packaged so it also runs where Vis is not.
+The Python SDK for [Vis](https://github.com/Blockether/vis): author extensions
+and control local or remote engines.
 
-Public imports are `blockether.vis`, `blockether.vis.client`,
-`blockether.vis.local`, `blockether.vis.views`, `blockether.vis.activity` and
-`blockether.vis_contract`. The two distributions share an implicit PEP 420
-`blockether` namespace; neither owns `blockether/__init__.py`.
-They do not install or alias the unrelated top-level `vis` package.
+One distribution, `vis-agent`, exposes two entry points: `blockether.vis.extension`
+for extension authors and `blockether.vis.engine` for engine clients. Models live
+in `blockether.vis.views` and `blockether.vis.activity`. The lightweight
+`blockether.vis` root initializes no host and starts no process or connection.
+`blockether` is an implicit PEP 420 namespace; the SDK does not own its `__init__.py`.
+The SDK does not install or alias the unrelated top-level `vis` package.
 
 SDK records, including `Response`, `Event`, `Session`, `Turn`, View and Activity
 projections, are frozen, slotted dataclasses. Event envelope fields (`type`,
@@ -17,7 +18,7 @@ collections. `Event.data` holds the remaining dynamic payload and remains mutabl
 frozen records do not promise deep immutability for arbitrary endpoint data.
 Extension tools can return frozen/slotted dataclasses; the runtime serializes
 their declared fields, including nested records, without requiring `__dict__`.
-Both packages ship PEP 561 `py.typed` metadata for their inline annotations.
+The SDK ships PEP 561 `py.typed` metadata for its inline annotations.
 The remaining endpoint dictionaries are not yet a fully typed model API.
 
 ```bash
@@ -25,50 +26,110 @@ pip install vis-agent
 ```
 
 ```python
-from blockether import vis
+from dataclasses import dataclass
+
+import blockether.vis.extension as vis
 
 
-def deploy(env):
-    """Ship the current build to one environment."""
-    spec = [
-        vis.heading("Target"),
-        vis.select("env", ["staging", "prod"], label="Where", default=env),
-        vis.password("token", label="Deploy token", is_required=True),
-    ]
-    answer = vis.ask("Deploy", spec)
-    if not answer:
-        return vis.err("cancelled", answer.reason)
-    run = vis.shell({"command": "./deploy.sh " + answer["env"]}).wait(600)
-    vis.state["last_env"] = answer["env"]
-    return vis.ok("deployed " + answer["env"], run["out"])
+@dataclass(frozen=True, slots=True)
+class Greeting:
+    text: str
 
 
-vis.extension(
-    name="deployer",
-    description="Ship a build from the session that decided to ship it.",
-    alias="dep",
-    symbols=[
-        vis.symbol(
-            deploy,
-            tag="mutation",
-            activity=vis.Activity(presenter="shell", label="Deploy"),
-        )
-    ],
-)
+def greet(name: str) -> Greeting:
+    """Greet one person and return a typed result."""
+    vis.publish_activity(vis.ActivityPresentation(
+        "Greeting", "Preparing reply", (vis.ActivityProgress("Working"),)
+    ))
+    return Greeting(f"Hello, {name}!")
+
+
+def greeting_activity(phase, result, **_) -> vis.ActivityPresentation:
+    return vis.ActivityPresentation(
+        "Greeting", phase,
+        (vis.ActivityText(result.text if phase == "success" else "Preparing reply"),),
+    )
+
+
+vis.register(vis.Extension(
+    name="greeter",
+    description="Greeting tools.",
+    alias="greeter",
+    symbols=[vis.Symbol(greet, activity=vis.Activity(render=greeting_activity))],
+))
 ```
+
+`Extension`, `Symbol`, `SlashCommand`, `OpHook`, `NetworkFilter` and `Provider`
+are frozen, slotted declarations. Constructing them performs no host IO. Only
+`vis.register(extension)` registers the file and resolves its declared environment;
+call it once. Collections are snapshotted, and marker dictionaries are not accepted.
+`vis` is the imported module, not a singleton or an extension base class.
+
+| API | Purpose |
+| --- | --- |
+| `log(level, message)` | Diagnostics, not model context. |
+| `notify(text)` | One-way notification to the human. |
+| `ask(title, fields)` | Wait for a typed human-input result. |
+| `Activity` / `publish_activity(presentation)` | This tool invocation's progress and presentation; the engine owns timing and outcome. |
+## Providers
+
+Provider presets and callback results use typed records too:
+
+```python
+import os
+import blockether.vis.extension as vis
+
+
+def credential() -> vis.ProviderCredential | None:
+    token = os.environ.get("EXAMPLE_API_KEY")
+    return vis.ProviderCredential(token) if token else None
+
+
+def status() -> vis.ProviderStatus:
+    return vis.ProviderStatus(
+        is_authenticated=bool(os.environ.get("EXAMPLE_API_KEY")),
+        source="env-var",
+    )
+
+
+vis.register(vis.Extension(
+    name="provider-example",
+    description="An OpenAI-compatible provider.",
+    env=["EXAMPLE_API_KEY"],
+    providers=[vis.Provider(
+        id="example",
+        label="Example AI",
+        preset=vis.ProviderPreset(
+            base_url="https://gateway.example.com/v1",
+            api_style="openai",
+            default_models=["example-model"],
+        ),
+        get_token_fn=credential,
+        status_fn=status,
+    )],
+))
+```
+
+Load this file as an extension, then add/select `example` in Vis. Credentials are
+read passively; return `None` when absent. Set `is_managed=True` only when the
+extension owns automatic binding/configuration; it does not disable authentication.
+Refresh, login/logout, limits and model enrichment use the same provider boundary.
+See [provider callbacks and limits](../../resources/vis-docs/extending.md#llm-providers)
+for their signatures and typed results. No constructor invokes a callback.
 
 ## One file, two hosts
 
 Host operations are declared in
 [`python-host.json`](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/python-host.json)
-and installed with the other canonical documents in `vis-contract`.
+and bundled with the other canonical documents in the SDK. Contract reading and
+validation are private implementation details, not a separate Python package.
 
 Inside a Vis session the engine seeds those ops and they reach the live agent:
 state is the extension's durable state, `vis.ask` opens a dialog on whichever
 surface the human is using, `vis.shell` runs in the agent's sandbox.
 
-Installed in an ordinary Python environment there is no agent, so `vis._outside`
-serves the same ops the contract says each behaves out here:
+Installed in an ordinary Python environment there is no agent, so
+`blockether.vis._outside` supplies the host operations:
 
 | op | outside |
 | --- | --- |
@@ -82,7 +143,7 @@ CI, and the code that ships is the code that was tested.
 ## Answering without a human
 
 ```python
-from blockether import vis
+import blockether.vis.extension as vis
 
 vis.outside.answer_with({"env": "staging", "token": "hunter2"})
 answer = vis.ask("Deploy", [vis.select("env", ["staging", "prod"])])
@@ -124,7 +185,7 @@ View and apply its patches if your application needs a materialized display.
 
 **Activity** is engine-observed execution evidence, not an interactive View and not
 model context. An extension can set `vis.Activity(presenter=..., label=...)` on a
-symbol or `vis.method`; it cannot forge progress, identity, timing or outcomes.
+symbol or `vis.method`; it cannot forge lifecycle identity, timing or outcomes.
 The tool's observation/mutation tag still determines its effect classification.
 Omitting Activity metadata preserves the engine's default presentation.
 
@@ -157,7 +218,7 @@ is no compatibility renderer or alternate import alias.
 
 ```python
 import os
-from blockether.vis.client import GatewayClient
+from blockether.vis.engine import GatewayClient
 
 with GatewayClient(
     "https://gateway.example.com", token=os.environ["VIS_TOKEN"]
@@ -207,7 +268,7 @@ separate wait deadline. TLS verification stays enabled and redirects are refused
 ## Owned local engine
 
 ```python
-from blockether.vis.local import LocalEngine
+from blockether.vis.engine import LocalEngine
 
 with LocalEngine(executable="/path/to/vis-agent", root="/path/to/project") as engine:
     session = engine.create_session(title="Local Python API")
@@ -239,21 +300,21 @@ external gates are recorded in `PLAN.md`; unit tests do not prove a linked binar
 
 ## Distribution and publishing
 
-Both packages build a wheel from their sdist and are tested after installation
-outside the checkout. CI covers CPython 3.11–3.14 and PyPy 3.11 on Linux/macOS;
+The SDK builds a wheel from its sdist and is tested after installation outside
+the checkout. CI covers CPython 3.11–3.14 and PyPy 3.11 on Linux/macOS;
 the engine's embedded interpreter is independently owned by `vis-python-runtime`.
 The pinned runtime v0.5.0 is published on GitHub with Linux/macOS x64/arm64 assets.
 It is not a second Python SDK or a PyPI alias.
 
 `.github/workflows/python-publish.yml` is an explicit, version-checked publishing
 gate, dependent on distribution and real-engine tests. Publishing requires the
-protected `pypi` environment and trusted publishers for **both** projects. Building
-a wheel or adding this workflow does not publish either package to PyPI.
+protected `pypi` environment and a trusted publisher for `vis-agent`. Building
+a wheel or adding this workflow does not publish the SDK to PyPI.
 
 ## Where the real documentation lives
 
 `vis.ask`, the field builders, `vis.extension`, hooks, providers and network
-filters are documented where they are defined, in `blockether/vis/__init__.py`, and in the
+filters are documented where they are defined, in `blockether/vis/extension.py`, and in the
 Vis docs (`doc("extending")` inside a session). Canonical JSON documents live in
 `vis-contract`; this package implements their host and gateway contracts.
 

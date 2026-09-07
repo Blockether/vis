@@ -113,6 +113,9 @@
         challenge
         (base64url (sha256 verifier))
 
+        state
+        (base64url (random-bytes 32))
+
         query
         (query-string {:code "true"
                        :client_id client-id
@@ -121,9 +124,9 @@
                        :scope scopes
                        :code_challenge challenge
                        :code_challenge_method "S256"
-                       :state verifier})]
+                       :state state})]
 
-    {:verifier verifier :state verifier :url (str authorize-url "?" query)}))
+    {:verifier verifier :state state :url (str authorize-url "?" query)}))
 
 (defn- read-json-body
   [text]
@@ -556,9 +559,9 @@
   (let [{:keys [url] :as flow} (create-authorization-flow)]
     {:kind :pkce
      :url url
-     :instructions ["Sign in to Anthropic in the browser."
-                    "Copy the FULL redirect URL from the address bar."
-                    "Paste it back here to finish."]
+     :redirect-uri redirect-uri
+     :instructions ["Sign in to Anthropic in the browser, then return to Vis."
+                    "If automatic return is unavailable, paste the final browser URL."]
      :flow flow}))
 
 (defn auth-complete

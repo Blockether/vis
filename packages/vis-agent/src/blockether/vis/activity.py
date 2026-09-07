@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from blockether.vis_contract import ACTIVITY, validate
+from blockether.vis._contracts import ACTIVITY, validate
 
 from ._wire import freeze, to_wire
 
@@ -57,7 +57,7 @@ class ActivityRow:
     result_format: str | None = None
     is_truncated: bool | None = None
     children: tuple[ActivityRow, ...] | None = None
-    content: tuple[Mapping[str, Any], ...] | None = None
+    presentation: Mapping[str, Any] | None = None
 
     @classmethod
     def _from_validated(cls, value):
@@ -127,16 +127,30 @@ class ActivityProjection:
 
         def visit(rows):
             for row in rows:
-                content = row.get("content", [])
+                presentation = row.get("presentation")
+                sections = (
+                    [presentation, *presentation.get("sections", [])]
+                    if presentation is not None
+                    else []
+                )
+                content = [
+                    block for section in sections for block in section["content"]
+                ]
                 if (
-                    len(
+                    len(content) > 32
+                    or len(
                         json.dumps(
-                            content, ensure_ascii=False, separators=(",", ":")
+                            presentation, ensure_ascii=False, separators=(",", ":")
                         ).encode()
                     )
                     > 32768
+                    or any(
+                        len(section[key].encode("utf-8")) > 512
+                        for section in sections
+                        for key in ("headline", "summary")
+                    )
                 ):
-                    raise ValueError("activity content exceeds byte bound")
+                    raise ValueError("activity presentation exceeds bound")
                 for block in content:
                     if block["type"] == "progress" and "value" in block:
                         if not (0 <= block["value"] <= block["total"]):

@@ -50,6 +50,11 @@
                   :version :http1.1
                   :request {:headers {"accept" "*/*"}}})))
 
+(defonce ^:private oauth-http-client
+  ;; OAuth never follows a gateway redirect: even a one-use code stays on the
+  ;; paired origin. Keep the shared client for unrelated transports such as SSE.
+  (delay (http/client {:follow-redirects :never :connect-timeout 2000 :version :http1.1})))
+
 (defonce ^:private cached-entry (atom nil))
 
 (defonce ^:private ensure-locks
@@ -200,35 +205,52 @@
    compression disabled so the SSE body stays byte-live."
   [{:keys [secret remote?] :as entry} method path
    {:keys [body as timeout-ms headers raw-body?] :or {as :string timeout-ms 30000}}]
-  (http/request
-    (cond-> {:client @http-client
-             :method (keyword (str/lower-case method))
-             :uri (str (base-url entry) path)
-             :timeout timeout-ms
-             :throw false
-             :as as
-             :headers (cond-> (merge (protocol/client-headers client-label)
-                                     headers
-                                     {"Accept"
-                                      (if (= as :stream) "text/event-stream" "application/json")})
-                        (not remote?)
-                        (assoc "X-Vis-Client-Pid" (str (discovery/current-pid)))
+  (let [oauth?
+        (boolean (re-matches
+                   #"/v1/(?:providers|mcp/servers)/[^/]+/auth/(?:start|complete|poll|cancel)"
+                   path))
 
-                        (some? @client-id)
-                        (assoc "X-Vis-Client-Id" (str @client-id))
+        uri
+        (URI. ^String (base-url entry))
 
-                        (seq (str secret))
-                        (assoc "Authorization"
-                          (str "Bearer " secret) "X-Vis-Gateway-Secret"
-                          (str secret))
+        loopback?
+        (contains? #{"127.0.0.1" "localhost" "::1" "[::1]"} (.getHost uri))]
 
-                        (= as :stream)
-                        (assoc "Accept-Encoding" "identity"))}
-      (some? body)
-      (assoc :body (if raw-body? body (wire/json-str body)))
+    (when (and oauth? (not loopback?) (or (not= "https" (.getScheme uri)) (str/blank? secret)))
+      (throw (ex-info "OAuth requires a paired HTTPS gateway or a loopback tunnel."
+                      {:type :gateway/insecure-oauth :vis/user-error true})))
+    (http/request
+      (cond-> {:client (if oauth? @oauth-http-client @http-client)
+               :method (keyword (str/lower-case method))
+               :uri (str (base-url entry) path)
+               :timeout timeout-ms
+               :throw false
+               :as as
+               :headers (cond-> (merge (protocol/client-headers client-label)
+                                       headers
+                                       {"Accept"
+                                        (if (= as :stream) "text/event-stream" "application/json")})
+                          (not remote?)
+                          (assoc "X-Vis-Client-Pid" (str (discovery/current-pid)))
 
-      (and (some? body) (not raw-body?))
-      (assoc-in [:headers "Content-Type"] "application/json"))))
+                          (some? @client-id)
+                          (assoc "X-Vis-Client-Id" (str @client-id))
+
+                          (seq (str secret))
+                          (assoc "Authorization"
+                            (str "Bearer " secret) "X-Vis-Gateway-Secret"
+                            (str secret))
+
+                          (= as :stream)
+                          (assoc "Accept-Encoding" "identity"))}
+        (some? body)
+        (assoc :body (if raw-body? body (wire/json-str body)))
+
+        oauth?
+        (assoc-in [:headers "Cache-Control"] "no-store")
+
+        (and (some? body) (not raw-body?))
+        (assoc-in [:headers "Content-Type"] "application/json")))))
 
 (defn- parse-json-body [^String body] (or (wire/parse-json body) {}))
 

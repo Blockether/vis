@@ -279,6 +279,7 @@ const plistEntries = [
 \t\t\t<key>CFBundleURLSchemes</key>
 \t\t\t<array>
 \t\t\t\t<string>vis</string>
+\t\t\t\t<string>com.blockether.viscompanion</string>
 \t\t\t</array>
 \t\t</dict>
 \t</array>`,

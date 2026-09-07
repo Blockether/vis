@@ -5,11 +5,14 @@
    force-restarts a stale daemon that is genuinely idle, treats a transport blip as
    \"leave it alone\", and never confuses either with a real 404."
   (:require [babashka.http-client :as http]
+            [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.discovery :as discovery])
-  (:import [java.io ByteArrayInputStream]
+  (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
+           [java.io ByteArrayInputStream]
+           [java.net InetSocketAddress]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files]))
 
@@ -62,6 +65,70 @@
         {:body payload :raw-body? true :headers {"Content-Type" "audio/wav"}})
       (is (identical? payload (:body @sent)))
       (is (= "audio/wav" (get-in @sent [:headers "Content-Type"]))))))
+
+(deftest oauth-requires-paired-tls-away-from-loopback
+  (let [sent (atom [])]
+    (with-redefs-fn {(rv 'ensure-client!) (constantly "test-client")
+                     #'http/request (fn [opts]
+                                      (swap! sent conj opts)
+                                      {:status 200 :body "{}"})}
+      (fn []
+        (doseq [url ["http://10.0.0.5:7890" "https://gateway.example.com"]
+                path ["/v1/providers/test/auth/complete" "/v1/mcp/servers/test/auth/start"]]
+
+          (with-redefs-fn {(rv 'ensure-gateway!) (constantly ((rv 'remote-entry)
+                                                               url
+                                                               (when (str/starts-with? url "http:")
+                                                                 "test-pair")))}
+            (fn []
+              (is (= :gateway/insecure-oauth
+                     (:type (ex-data (try
+                                       (client/request! :post path {:body {:flow_id "test-flow"}})
+                                       (catch clojure.lang.ExceptionInfo e e)))))))))
+        (is (empty? @sent))
+        (doseq [url ["http://127.0.0.1:7890" "https://gateway.example.com"]]
+          (with-redefs-fn {(rv 'ensure-gateway!) (constantly ((rv 'remote-entry) url "test-pair"))}
+            (fn []
+              (is (= 200 (:status (client/request! :post "/v1/providers/test/auth/poll")))))))))))
+
+(deftest oauth-does-not-forward-callbacks-through-http-redirects
+  (let [requests
+        (atom [])
+
+        server
+        (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+
+    (.createContext server
+                    "/"
+                    (reify
+                      HttpHandler
+                        (handle [_ exchange]
+                          (let [^HttpExchange exchange
+                                exchange
+
+                                path
+                                (.getPath (.getRequestURI exchange))]
+
+                            (try (swap! requests conj path)
+                                 (with-open [input (.getRequestBody exchange)]
+                                   (slurp input))
+                                 (if (= "/forwarded" path)
+                                   (.sendResponseHeaders exchange 200 -1)
+                                   (do (.set (.getResponseHeaders exchange) "Location" "/forwarded")
+                                       (.sendResponseHeaders exchange 307 -1)))
+                                 (finally (.close exchange)))))))
+    (.start server)
+    (try (with-redefs-fn {(rv 'ensure-client!) (constantly "test-client")
+                          (rv 'ensure-gateway!)
+                          (constantly {:host "127.0.0.1" :port (.getPort (.getAddress server))})}
+           (fn []
+             (is (= 307
+                    (:status (client/request! :post
+                                              "/v1/mcp/servers/test/auth/complete"
+                                              {:body {:flow_id "test-flow"
+                                                      :input "test-callback"}}))))
+             (is (= ["/v1/mcp/servers/test/auth/complete"] @requests))))
+         (finally (.stop server 0)))))
 
 (defn- sse-body
   "Make a byte-live gateway SSE stream for one terminal voice job."

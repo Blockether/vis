@@ -5,7 +5,7 @@
 ;; first, then third-party coordinates alphabetically, then aliases alphabetically.
 {;; "packages/vis-agent/src" is a RESOURCE root, not Clojure source: it holds the
  ;; distributable `vis` Python module (the one PyPI ships as `vis-agent`), which the
- ;; engine slurps off the classpath as `blockether/vis/__init__.py` and execs into every
+ ;; engine slurps off the classpath as `blockether/vis/extension.py` and execs into every
  ;; extension context. One file, both distributions.
  :paths ["src" "resources" "packages/vis-agent/src"]
  ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a

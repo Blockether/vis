@@ -350,8 +350,8 @@
             "$ref": "#/$defs/row1"
           }
         },
-        "content": {
-          "$ref": "#/$defs/content"
+        "presentation": {
+          "$ref": "#/$defs/presentation"
         }
       },
       "required": [
@@ -437,8 +437,8 @@
             "$ref": "#/$defs/row2"
           }
         },
-        "content": {
-          "$ref": "#/$defs/content"
+        "presentation": {
+          "$ref": "#/$defs/presentation"
         }
       },
       "required": [
@@ -517,8 +517,8 @@
         "is_truncated": {
           "const": true
         },
-        "content": {
-          "$ref": "#/$defs/content"
+        "presentation": {
+          "$ref": "#/$defs/presentation"
         }
       },
       "required": [
@@ -873,6 +873,63 @@
           }
         ]
       }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "headline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u2028\\u2029]+$"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u2028\\u2029]*$"
+        },
+        "content": {
+          "$ref": "#/$defs/content"
+        }
+      },
+      "required": [
+        "headline",
+        "summary",
+        "content"
+      ]
+    },
+    "presentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "headline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u2028\\u2029]+$"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f\\u2028\\u2029]*$"
+        },
+        "content": {
+          "$ref": "#/$defs/content"
+        },
+        "sections": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/section"
+          }
+        }
+      },
+      "required": [
+        "headline",
+        "summary",
+        "content"
+      ]
     }
   }
 }

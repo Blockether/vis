@@ -461,6 +461,10 @@
    sandbox-escape footguns on top of the interpreter's own confinement."
   #{"exec" "eval" "compile" "__import__"})
 
+(def SYSTEM_VAR_NAMES
+  "Host-owned globals refreshed with the standing context and hidden from user live vars."
+  '#{session root})
+
 (def ^:private protected-baseline-names
   "Python globals the agent may CALL but must not rebind. Rebinding output, tool, or
    parser-helper names would shadow the persistent session substrate."
@@ -522,6 +526,7 @@
 (defn- protected-names-for-bindings
   [custom-bindings]
   (set (concat protected-baseline-names
+               (map name SYSTEM_VAR_NAMES)
                (map (fn [[sym _]]
                       (first (str/split (sym->py-name sym) #"\." 2)))
                     (or custom-bindings {})))))
@@ -689,10 +694,20 @@
   (set-python-binding! (python-context env) sym val))
 
 (defn bind-ctx!
-  "Bind the standing context as the guest dict `session` — the same projection
-   the renderer prints, so the live dict and the wire's structural deltas agree."
+  "Bind the standing context as `session` and its workspace directory as `root`.
+
+   `root` is a pathlib.Path, not a string or a process-wide builtin. Both names
+   are host-owned: block-local shadows cannot overwrite them for later blocks.
+   A standalone context without workspace metadata uses the host working directory."
   [session data]
-  (exec! session (str "globals()['session'] = " (py-json-literal data))))
+  (exec! session
+         (str "globals()['session'] = "
+              (py-json-literal data)
+              "\n"
+              "globals()['root'] = __import__('pathlib').Path("
+              "session.get('workspace', {}).get('root') or "
+              (py-json-literal (System/getProperty "user.dir"))
+              ")")))
 
 (defn seed-cli-runtime!
   "Seed a standalone `vis-agent python` CLI session with script `argv` (bound to
@@ -1163,6 +1178,7 @@
     (exec! session "globals().setdefault('println', print)")
     (try (py-install-module! session "auto_imports") (catch Throwable _ nil))
     (install-protected-names! session custom-bindings)
+    (bind-ctx! session {})
     ;; Tools first as ONE registration — the guest gets every name in one pass,
     ;; and the contracts below stamp the wrappers that pass leaves behind.
     (let [tools (into {}
@@ -1753,8 +1769,6 @@
 
                                    attachments
                                    (assoc :attachments attachments))))))))
-
-(def SYSTEM_VAR_NAMES "Sandbox-owned symbols hidden from user live-var listings." '#{session})
 
 (defn system-var-sym? [sym] (contains? SYSTEM_VAR_NAMES sym))
 

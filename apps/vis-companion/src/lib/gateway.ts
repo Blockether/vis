@@ -972,6 +972,15 @@ export class GatewayClient {
     etag: string | null;
     headers: Headers;
   }> {
+    const oauth = /^\/v1\/(?:providers\/[^/]+|mcp\/servers\/[^/]+)\/auth\/(?:start|complete|poll|cancel)$/.test(path);
+    if (oauth) {
+      const destination = new URL(this.base);
+      const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(destination.hostname);
+      if (destination.protocol !== "https:" && !(destination.protocol === "http:" && loopback)) {
+        throw new GatewayError(0, "OAuth requires HTTPS for a remote gateway.");
+      }
+      if (!loopback && !this.token) throw new GatewayError(0, "OAuth requires a paired gateway.");
+    }
     const diagnostic = startRequestDiagnostic(this.base, method, path);
     let exchangeStatus = 0;
     let exchangeFailure: { cause: unknown } | undefined;
@@ -1006,6 +1015,7 @@ export class GatewayClient {
                   ? (body as Blob)
                   : JSON.stringify(body),
             signal: attemptSignal,
+            ...(oauth ? { redirect: "error" as const, cache: "no-store" as const } : {}),
           }),
           attemptSignal,
         );
@@ -2042,14 +2052,13 @@ export class GatewayClient {
     );
   }
 
-  // MCP OAuth, headless: the gateway mints the flow and keeps every secret. This
-  // device only shows `url` and hands back whatever the browser landed on. When
-  // that browser can reach the gateway's loopback listener the flow finishes by
-  // itself and `mcpAuthPoll` reports it.
-  async mcpAuthStart(name: string): Promise<McpAuthFlow> {
+  // Tokens and PKCE stay here on the paired gateway. Native apps request their
+  // registered private-use callback; web/TUI clients use loopback. No relay option.
+  async mcpAuthStart(name: string, callbackMode: "loopback" | "app" = "loopback"): Promise<McpAuthFlow> {
     return this.request<McpAuthFlow>(
       "POST",
       `/v1/mcp/servers/${encodeURIComponent(name)}/auth/start`,
+      { callback_mode: callbackMode },
     );
   }
 
@@ -2409,7 +2418,7 @@ export class GatewayClient {
     return pref;
   }
 
-  /** Begin OAuth. `kind: 'device'` finishes by polling; `'pkce'` needs a paste-back. */
+  /** Begin OAuth. Device and reachable browser callbacks finish through polling. */
   startProviderAuth(providerId: string): Promise<AuthFlow> {
     return this.request<AuthFlow>(
       "POST",

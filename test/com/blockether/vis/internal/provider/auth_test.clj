@@ -1,9 +1,12 @@
 (ns com.blockether.vis.internal.provider.auth-test
   "The daemon-side OAuth broker. These tests pin the two properties the wire
    depends on: a flow's SECRET (PKCE verifier, device code) can never reach a
-   client, and a flow id cannot be replayed once it settles."
-  (:require [clojure.string :as str]
+   client, and a completed flow cannot exchange or persist credentials twice."
+  (:require [babashka.http-client :as http]
+            [clojure.string :as str]
             [com.blockether.vis.internal.provider.auth :as pauth]
+            [com.blockether.vis.internal.provider.callback]
+            [com.blockether.vis.internal.provider.flow :as auth-flow]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.extension.registry :as registry]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -86,7 +89,8 @@
 
           (expect (= false (:ok? result)))
           (expect (= :auth-failed (:error result)))
-          (expect (= "upstream said no" (:message result)))))))
+          (expect (= "Authorization failed. Check the input or start sign-in again."
+                     (:message result)))))))
 
 (defdescribe
   provider-auth-device-test
@@ -115,8 +119,9 @@
             (expect (= "pending" (:status (pauth/poll-auth! (:flow-id flow)))))
             (deliver gate :go)
             (expect (eventually #(= "ok" (:status (pauth/poll-auth! (:flow-id flow))))))
-            ;; Settled flows are consumed, so a stale poller gets a clean 404.
-            (expect (= :unknown-flow (:error (pauth/poll-auth! (:flow-id flow)))))))))
+            ;; A lost HTTP response must not lose the only terminal verdict.
+            (expect (= "ok" (:status (pauth/poll-auth! (:flow-id flow)))))
+            (pauth/cancel-auth! (:flow-id flow))))))
   (it "reports a failed device authorization as an error verdict"
       (let [descriptor {:provider/auth-start-fn (fn []
                                                   {:kind :device :user-code "X" :flow {}})
@@ -234,7 +239,7 @@
           ;; No url, no user code, and nothing for the client to exchange.
           (expect (nil? (:url flow)))
           (expect (= ["Create a key at example.com" "  Endpoint: x"] (:instructions flow)))
-          (expect (= {:ok? false :error :missing-input :message "api_key is required"}
+          (expect (= {:ok? false :error :missing-input :message "Authorization input is required."}
                      (pauth/complete-auth! (:flow-id flow) "   ")))
           (let [done (pauth/complete-auth! (:flow-id flow) "  sk-secret  ")]
             (expect (= true (:ok? done)))
@@ -264,7 +269,7 @@
 
         (with-redefs [registry/provider-by-id (constantly descriptor)]
           (let [{:keys [flow]} (pauth/start-auth! :fake-device)
-                await-future (get-in @(var-get #'pauth/flows) [(:flow-id flow) :await-future])]
+                await-future @(get-in @(var-get #'auth-flow/flows) [(:flow-id flow) :worker])]
 
             (expect (eventually #(pos? @polls)))
             (pauth/cancel-auth! (:flow-id flow))
@@ -295,7 +300,7 @@
                               (= :unknown-flow (:error (pauth/poll-auth! id))))
                             (butlast ids)))
             (expect (= true (:ok? (pauth/poll-auth! (last ids)))))
-            (let [await-future (get-in @(var-get #'pauth/flows) [(last ids) :await-future])]
+            (let [await-future @(get-in @(var-get #'auth-flow/flows) [(last ids) :worker])]
               (pauth/cancel-auth! (last ids))
               (expect (eventually #(future-done? await-future)))
               (let [frozen @polls]
@@ -401,7 +406,8 @@
         (with-redefs [registry/provider-by-id (constantly descriptor)]
           (let [fid (:flow-id (:flow (pauth/start-auth! :fake-pkce)))]
             (expect (= :auth-failed (:error (pauth/complete-auth! fid "bad"))))
-            (expect (= "invalid_grant" (:message (pauth/complete-auth! fid "bad"))))
+            (expect (= "Authorization failed. Check the input or start sign-in again."
+                       (:message (pauth/complete-auth! fid "bad"))))
             (expect (= true (:ok? (pauth/complete-auth! fid "good"))))
             (expect (= :unknown-flow (:error (pauth/complete-auth! fid "good"))))))))
   (it "forgets a provider's in-flight flow when it is logged out"
@@ -487,3 +493,99 @@
             (expect (= "pkce" (:kind flow)))
             (expect (= "https://auth.example/start" (:url flow)))
             (pauth/cancel-auth! (:flow-id flow)))))))
+
+(defdescribe
+  provider-auth-browser-return-test
+  (it
+    "finishes a fresh browser flow automatically and lets the client poll its verdict"
+    (let [port
+          (with-open [socket (java.net.ServerSocket. 0)]
+            (.getLocalPort socket))
+
+          redirect
+          (str "http://127.0.0.1:" port "/callback")
+
+          exchanges
+          (atom [])
+
+          descriptor
+          {:provider/auth-start-fn (fn []
+                                     {:kind :pkce
+                                      :url "https://gateway.example.com/authorize"
+                                      :redirect-uri redirect
+                                      :flow {:state "test-state" :verifier "test-verifier"}})
+           :provider/auth-complete-fn (fn [flow input]
+                                        (swap! exchanges conj [flow input]))}]
+
+      (with-redefs [registry/provider-by-id
+                    (constantly descriptor)
+
+                    providers/rebuild-shared-router!
+                    (constantly nil)]
+
+        (let [flow
+              (:flow (pauth/start-auth! :browser-return))
+
+              input
+              (str redirect "?code=test-code&state=test-state")]
+
+          (try (expect (= redirect (:redirect-uri flow)))
+               (expect (= "loopback" (:callback-mode flow)))
+               (expect (= 200
+                          (try (:status (http/get input {:throw false :timeout 1000}))
+                               (catch Exception _ 0))))
+               (expect (eventually #(= 1 (count @exchanges))))
+               (expect (= "ok" (:status (pauth/poll-auth! (:flow-id flow)))))
+               (expect (= [[{:state "test-state" :verifier "test-verifier"} input]] @exchanges))
+               (finally (pauth/cancel-auth! (:flow-id flow)))))))))
+
+(defdescribe
+  provider-auth-forwarded-callback-test
+  (it "validates a client's callback URL before handing it to the provider"
+      (let [redirect
+            "http://127.0.0.1:53692/callback"
+
+            exchanges
+            (atom [])
+
+            descriptor
+            {:provider/auth-start-fn (fn []
+                                       {:kind :pkce
+                                        :url "https://gateway.example.com/authorize"
+                                        :redirect-uri redirect
+                                        :flow {:state "test-state" :verifier "test-verifier"}})
+             :provider/auth-complete-fn (fn [_ input]
+                                          (swap! exchanges conj input))}]
+
+        (with-redefs-fn {#'registry/provider-by-id (constantly descriptor)
+                         #'com.blockether.vis.internal.provider.callback/listen! (constantly nil)
+                         #'providers/rebuild-shared-router! (constantly nil)}
+          (fn []
+            (let [fid (get-in (pauth/start-auth! :forwarded-return) [:flow :flow-id])]
+              (try (doseq [input [(str redirect "?code=test-code")
+                                  (str redirect "?code=test-code&state=other-flow")
+                                  "http://127.0.0.1:53692/other?code=test-code&state=test-state"]]
+                     (expect (= :invalid-input (:error (pauth/complete-auth! fid input)))))
+                   (expect (empty? @exchanges))
+                   (expect (= "pending" (:status (pauth/poll-auth! fid))))
+                   (let [valid (str redirect "?code=test-code&state=test-state")]
+                     (expect (= "ok" (:status (pauth/complete-auth! fid valid))))
+                     (expect (= [valid] @exchanges)))
+                   (finally (pauth/cancel-auth! fid)))))))))
+
+(defdescribe shared-auth-verdict-test
+             (it "retains a forwarded completion verdict just like MCP, without a second exchange"
+                 (with-redefs [registry/provider-by-id
+                               (constantly {:provider/auth-start-fn (fn []
+                                                                      {:kind :pkce :flow {}})
+                                            :provider/auth-complete-fn (fn [& _]
+                                                                         :ok)})
+
+                               providers/rebuild-shared-router!
+                               (constantly nil)]
+
+                   (let [id (get-in (pauth/start-auth! :shared-return) [:flow :flow-id])]
+                     (try (expect (= "ok" (:status (pauth/complete-auth! id "test-code"))))
+                          (expect (= "ok" (:status (pauth/poll-auth! id))))
+                          (expect (= :unknown-flow (:error (pauth/complete-auth! id "test-code"))))
+                          (finally (pauth/cancel-auth! id)))))))

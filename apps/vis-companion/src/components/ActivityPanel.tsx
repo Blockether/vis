@@ -90,6 +90,7 @@ function activityStepLead(row: ActivityRow): string {
 
 /** What one step reads as end to end: the verb, then the thing it was applied to. */
 function activityStepHeadline(row: ActivityRow): string {
+  if (row.presentation) return row.presentation.headline;
   return [activityStepLead(row), activityStepObject(row)]
     .filter(Boolean)
     .join(" · ");
@@ -276,7 +277,13 @@ function activityStepDelta(row: ActivityRow): {
  * is a bullet in a list; a dot JOINED to it is a moment on a timeline, and this
  * axis is the second thing.
  */
-function ActivityNode({ state, disclosure = false }: { state: ActivityRow["state"]; disclosure?: boolean }) {
+function ActivityNode({
+  state,
+  disclosure = false,
+}: {
+  state: ActivityRow["state"];
+  disclosure?: boolean;
+}) {
   const hollow = state === "idle" || state === "cancelled";
   const edge =
     state === "failed"
@@ -668,7 +675,7 @@ function ActivityBody({
               <div
                 key={index}
                 className="min-w-0 overflow-x-auto"
-                role="region"
+                role="group"
                 aria-label="Activity table"
                 tabIndex={0}
               >
@@ -754,19 +761,18 @@ function ActivityStep({
   const nested = depth > 0;
   const failed = row.state === "failed";
   const running = row.state === "running";
-  // EVERY STEP STARTS SHUT. What it did is one line; what it left waits behind the
-  // chevron, so a turn of thirty calls reads as thirty lines and not as thirty
-  // receipts. Only a step still running, or one that failed, opens on its own —
-  // the first because its progress is the point, the second because the reason
-  // is — and a press still shuts either. The default follows the state until the
-  // reader decides, so a running step that settles folds itself away.
+  // Headline and summary remain visible. Only content follows this disclosure;
+  // running and failed steps start open until the reader makes a choice.
   const [toggled, setToggled] = useState<boolean | null>(null);
   const open = toggled ?? (running || failed);
-  const lead = activityStepLead(row);
-  const heading =
-    row.content?.[0]?.type === "heading" ? row.content[0] : undefined;
-  const content = heading ? row.content?.slice(1) : row.content;
-  const summary = heading?.text ?? activityStepObject(row);
+  const presentation = row.presentation;
+  const lead = presentation?.headline ?? activityStepLead(row);
+  const content = presentation?.content;
+  const sections = presentation?.sections ?? [];
+  const summary = presentation ? "" : activityStepObject(row);
+  const caption = presentation
+    ? (row.error_summary ?? presentation.summary)
+    : "";
   const delta = activityStepDelta(row);
   const duration = formatActivityDuration(row.duration_ms);
   const children = nested
@@ -798,13 +804,15 @@ function ActivityStep({
   )
     ? ""
     : summary;
-  const showsOutcome = Boolean(outcome) && (!row.content?.length || failed);
+  const showsOutcome = Boolean(outcome) && (!presentation || failed);
   const showsFiles = diffs.length === 0 && !hasChildren && touched.length > 0;
   // A chevron that opens onto nothing is a promise the row cannot keep, so a step
   // with no content, no outcome, no paths, no patch, no error and no grouped
   // changes wears none and answers no press.
   const openable =
+    Boolean(row.is_truncated) ||
     Boolean(content?.length) ||
+    sections.some((section) => section.content.length > 0) ||
     showsOutcome ||
     showsFiles ||
     diffs.length > 0 ||
@@ -812,13 +820,34 @@ function ActivityStep({
     hasChildren;
 
   const label = (
-    <>
-      {lead}
-      {object && (
+    <span className="flex min-w-0 items-baseline gap-2">
+      <span
+        className={
+          caption ? "min-w-0 max-w-[60%] shrink-0 truncate" : "min-w-0 truncate"
+        }
+        title={activityStepHeadline(row)}
+      >
+        {lead}
+        {object && (
+          <>
+            {" "}
+            <span className="ml-[5px] font-normal text-dialog-hint">
+              <ActivityText text={object} format={row.summary_format} />
+            </span>
+          </>
+        )}
+      </span>
+      {caption && (
         <>
-          {" "}
-          <span className="ml-[5px] font-normal text-dialog-hint">
-            <ActivityText text={object} format={heading ? undefined : row.summary_format} />
+          <span aria-hidden="true" className="text-dialog-hint">
+            ·
+          </span>
+          <span
+            data-activity-summary
+            className="min-w-0 truncate font-normal text-dialog-hint"
+            title={caption}
+          >
+            {caption}
           </span>
         </>
       )}
@@ -830,7 +859,7 @@ function ActivityStep({
           </span>
         </>
       )}
-    </>
+    </span>
   );
 
   return (
@@ -859,9 +888,11 @@ function ActivityStep({
               className="min-w-0 max-w-full"
               onClick={() => setToggled(!open)}
             >
-              <span className="min-w-0 truncate">{label}</span>
+              {label}
             </Disclosure>
-          ) : label}
+          ) : (
+            label
+          )}
         </Headline>
         {duration && (
           <time className="min-w-[38px] shrink-0 text-right font-mono text-chip text-code-duration">
@@ -877,14 +908,45 @@ function ActivityStep({
           </span>
         )}
       </div>
-      {open && content && (
+      {open && content && content.length > 0 && (
         <ActivityBody content={content} running={running} />
       )}
+      {sections.map((section, index) => (
+        <section
+          key={index}
+          data-activity-section
+          className="mt-[var(--text-ui--line-height)] min-w-0 pl-4.5"
+        >
+          <h5
+            className="truncate text-ui font-bold text-code-result"
+            title={section.headline}
+          >
+            {section.headline}
+          </h5>
+          {section.summary && (
+            <p
+              data-activity-summary
+              className="truncate text-ui text-dialog-hint"
+              title={section.summary}
+            >
+              {section.summary}
+            </p>
+          )}
+          {open && section.content.length > 0 && (
+            <ActivityBody content={section.content} running={running} />
+          )}
+        </section>
+      ))}
       {open && showsOutcome && (
         <ActivityOutcome
           text={outcome}
           format={failed ? undefined : row.result_format}
         />
+      )}
+      {open && row.is_truncated && (
+        <p className="mt-1.5 min-w-0 pl-4.5 font-mono text-meta text-dialog-hint">
+          Details truncated
+        </p>
       )}
       {/* A GROUP'S PATHS BELONG TO ITS CHANGES, not to the group as well: the head
           carries every child's resource, so painting them here and again under each
@@ -928,11 +990,21 @@ function ActivityStep({
  * Nothing closes the group: a bracket, like a card around it, is a second border
  * saying what the named row above it already said.
  */
+// Four steps form the preview. Live work and trouble never wait behind it.
+const ACTIVITY_STEPS_SHOWN = 4;
+
 function ActivityThread({ activity }: { activity?: ActivityProjection }) {
+  const [showAll, setShowAll] = useState(false);
   const rows = [...(activity?.rows ?? [])].sort(
     (left, right) => left.sequence - right.sequence,
   );
+  const preview = rows.filter(
+    (row, index) => index < ACTIVITY_STEPS_SHOWN || row.state !== "succeeded",
+  );
+  const hidden = rows.length - preview.length;
+  const shown = showAll ? rows : preview;
   const omitted = activity?.omitted.rows ?? 0;
+  const omission = `${omitted} ${omitted === 1 ? "step" : "steps"} omitted · Activity limit`;
 
   return (
     <ol
@@ -940,14 +1012,25 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
       data-activity-chronology
       className="relative -ml-6 mb-0.5 min-w-0 pt-4 pb-4.5 pl-[19px] sm:pl-[21px]"
     >
-      {rows.map((row) => (
+      {shown.map((row) => (
         <ActivityStep key={row.id} row={row} />
       ))}
-      {omitted > 0 && (
+      {hidden > 0 && (
         <li className="relative min-w-0">
-          <LoadMore label={moreCount(omitted, "step")}>
-            {moreCount(omitted, "step")}
+          <LoadMore
+            label={
+              showAll ? "Show fewer steps" : `Show ${moreCount(hidden, "step")}`
+            }
+            aria-expanded={showAll}
+            onClick={() => setShowAll((wasOpen) => !wasOpen)}
+          >
+            {showAll ? "show fewer steps" : `show ${moreCount(hidden, "step")}`}
           </LoadMore>
+        </li>
+      )}
+      {omitted > 0 && (
+        <li className="relative min-w-0 pl-5 font-sans text-meta text-dialog-hint">
+          {omission}
         </li>
       )}
       {rows.length === 0 && omitted === 0 && (

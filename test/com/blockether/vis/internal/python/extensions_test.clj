@@ -136,9 +136,46 @@
   (some #(when (= sym (:ext.symbol/symbol %)) (:ext.symbol/fn %))
         (get-in ext [:ext/engine :ext.engine/symbols])))
 
+(defdescribe
+  python-sdk-domain-isolation-test
+  (it
+    "keeps the package root inert and binds each extension to its own SDK module"
+    (let [source
+          (fn [name symbol]
+            (str "import blockether.vis as package\n"
+                 "import blockether.vis.extension as vis\n"
+                 "def probe(value):\n"
+                 "    \"Read this extension's state and API identity.\"\n"
+                 "    if value is not None:\n"
+                 "        vis.state['owner'] = value\n"
+                 "    return [vis.__name__, vis._registration['spec']['name'], "
+                 "vis.state.get('owner'), hasattr(package, '_host'), hasattr(package, 'state')]\n"
+                 "vis.register(vis.Extension(name="
+                 (pr-str name)
+                 ", alias="
+                 (pr-str symbol)
+                 ", description='SDK binding', "
+                 "symbols=[vis.Symbol(probe, name="
+                 (pr-str symbol)
+                 ")]))\n"))]
+      (with-loaded {"first.py" (source "sdk-first" "sdk_first")
+                    "second.py" (source "sdk-second" "sdk_second")}
+                   (fn [result _]
+                     (expect (= 2 (:loaded result)))
+                     (expect (zero? (:failed result)))
+                     (let [first-probe (symbol-fn (registered "sdk-first") 'sdk_first)
+                           second-probe (symbol-fn (registered "sdk-second") 'sdk_second)]
+
+                       (expect (= ["blockether.vis.extension" "sdk-first" "first" false false]
+                                  (:result (first-probe "first"))))
+                       (expect (= ["blockether.vis.extension" "sdk-second" "second" false false]
+                                  (:result (second-probe "second"))))
+                       (expect (= ["blockether.vis.extension" "sdk-first" "first" false false]
+                                  (:result (first-probe nil))))))))))
+
 (def ^:private counter-py
   "\"\"\"Counter fixture: tools + state + slash + prompt.\"\"\"
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def counter_bump(by):
@@ -150,7 +187,7 @@ def counter_bump(by):
 
 def counter_read():
     \"\"\"await counter_read() -> {\\\"count\\\"} — read the counter.\"\"\"
-    vis.publish_activity({\"type\": \"markdown\", \"text\": \"**Counter** ready\"})
+    vis.publish_activity(vis.ActivityPresentation(\"Counter\", \"Ready\", (vis.ActivityMarkdown(\"**Counter** ready\"),)))
     return {\"count\": vis.state.get(\"count\", 0)}
 
 
@@ -163,20 +200,20 @@ def _slash(ctx):
     return vis.ok(\"count is \" + str(vis.state.get(\"count\", 0)), data={\"args\": ctx[\"args\"]})
 
 
-vis.extension(
+vis.register(vis.Extension(
     name=\"counter\",
     description=\"Counter fixture extension.\",
     version=\"0.1.0\",
     kind=\"integration\",
     alias=\"counter\",
     symbols=[
-        vis.symbol(counter_bump, tag=\"mutation\"),
-        vis.symbol(counter_read, tag=\"observation\", activity=vis.Activity(presenter=\"tests\", label=\"checking counter\", render=lambda phase, **_: [{\"type\": \"text\", \"text\": phase}])),
-        vis.symbol(counter_boom, tag=\"observation\", is_hidden=True),
+        vis.Symbol(counter_bump, tag=\"mutation\"),
+        vis.Symbol(counter_read, tag=\"observation\", activity=vis.Activity(presenter=\"tests\", label=\"checking counter\", render=lambda phase, **_: vis.ActivityPresentation('Counter', 'checking counter', (vis.ActivityText(phase),)))),
+        vis.Symbol(counter_boom, tag=\"observation\", is_hidden=True),
     ],
     prompt=\"counter_ surface active.\",
-    slash_commands=[vis.slash(\"count\", _slash, doc=\"Show the counter.\")],
-)
+    slash_commands=[vis.SlashCommand(\"count\", _slash, doc=\"Show the counter.\")],
+))
 ")
 
 (defdescribe
@@ -213,9 +250,12 @@ vis.extension(
                                activity/presentation)]
             (expect (= 7 (count @events)))
             (expect (= ["start" "**Counter** ready" "success"]
-                       (mapv #(get-in % [:content 0 "text"])
+                       (mapv #(get-in % [:presentation "content" 0 "text"])
                              (filter #(= :content (:phase %)) @events))))
-            (expect (= [{"type" "text" "text" "success"}] (get-in projection [:rows 0 :content])))
+            (expect (= {"headline" "Counter"
+                        "summary" "checking counter"
+                        "content" [{"type" "text" "text" "success"}]}
+                       (get-in projection [:rows 0 :presentation])))
             (expect (= "failed" (:state projection)))
             (expect (= {:running 0 :succeeded 1 :failed 1 :cancelled 0} (:counts projection)))
             (expect (= "tests" (get-in projection [:rows 0 :presenter])))
@@ -255,7 +295,7 @@ vis.extension(
                                   (expect (= 1 (:loaded again))))))))
 
 ;; Regression, user report: an extension reading Python's conventional `__file__`
-;; global failed during loading before it could call `vis.extension(...)`.
+;; global failed during loading before it could call `vis.Extension(...)`.
 (defdescribe
   extension-entry-module-globals-test
   (it
@@ -264,7 +304,7 @@ vis.extension(
       {"entry_globals.py"
        (str
          "import os
-from blockether import vis
+import blockether.vis.extension as vis
 "
          "ENTRY_FILE = os.path.realpath(__file__)
 "
@@ -277,8 +317,8 @@ from blockether import vis
 "
          "    return {'file': ENTRY_FILE, 'globals': CONVENTIONAL}
 "
-         "vis.extension(name='entry-globals', description='entry globals', alias='entry', "
-         "symbols=[vis.symbol(entry_metadata)])
+         "vis.register(vis.Extension(name='entry-globals', description='entry globals', alias='entry', "
+         "symbols=[vis.Symbol(entry_metadata)]))
 ")}
       (fn [result {:keys [ext-dir]}]
         (expect (= {:loaded 1 :failed 0 :changed? true} result))
@@ -289,7 +329,7 @@ from blockether import vis
 
 (def ^:private object-namespace-py
   "\"\"\"Object namespace fixture.\"\"\"
-from blockether import vis
+import blockether.vis.extension as vis
 
 from dataclasses import dataclass
 
@@ -312,10 +352,10 @@ class Jenkins:
         return 'secret'
 
 jenkins = Jenkins()
-vis.extension(
+vis.register(vis.Extension(
     name='glms', description='Object namespace fixture.', kind='integration', alias='glms',
-    symbols=[vis.symbol(jenkins, name='glms_jenkins')],
-)
+    symbols=[vis.Symbol(jenkins, name='glms_jenkins')],
+))
 ")
 
 (defdescribe python-object-namespace-test
@@ -350,7 +390,7 @@ vis.extension(
                        (expect (= "build" (get-in (deploy "build" 42) [:result "job"]))))))))
 
 (def ^:private recursive-object-namespace-py
-  "from blockether import vis
+  "import blockether.vis.extension as vis
 
 class IssueNamespace:
     def find_issue(self, query):
@@ -377,11 +417,11 @@ class UberworkspaceNamespace:
         \"\"\"Check the workspace.\"\"\"
         return 'pong'
 
-vis.extension(
+vis.register(vis.Extension(
     name='uberworkspace', description='Recursive object namespace fixture.',
     kind='integration', alias='uberworkspace',
-    symbols=[vis.symbol(UberworkspaceNamespace(), name='uberworkspace')],
-)
+    symbols=[vis.Symbol(UberworkspaceNamespace(), name='uberworkspace')],
+))
 ")
 
 ;; Regression, issue #171: object namespaces stopped after one level, forcing
@@ -445,7 +485,7 @@ vis.extension(
                (finally (ep/dispose-python-context! ctx))))))))
 
 (def ^:private invalid-recursive-object-namespace-py
-  "from blockether import vis
+  "import blockether.vis.extension as vis
 
 class Leaf:
     def run(self):
@@ -466,7 +506,7 @@ class Unsupported:
 errors = []
 for name, value in [('cycle', cycle), ('repeated', Repeated()), ('unsupported', Unsupported())]:
     try:
-        vis.symbol(value, name=name)
+        vis.Symbol(value, name=name)
     except ValueError as error:
         errors.append(str(error))
 raise RuntimeError(' | '.join(errors))
@@ -536,7 +576,7 @@ raise RuntimeError(' | '.join(errors))
 (def ^:private one-interpreter-py
   "import os
 import sys
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def session_probe(path):
@@ -549,12 +589,12 @@ def session_probe(path):
     return {'pid': os.getpid(), 'value': marker.value, 'text': text}
 
 
-vis.extension(
+vis.register(vis.Extension(
     name='one-interpreter',
     description='Session interpreter probe.',
     alias='one_interpreter',
-    symbols=[vis.symbol(session_probe)],
-)
+    symbols=[vis.Symbol(session_probe)],
+))
 ")
 
 (defdescribe
@@ -658,7 +698,7 @@ vis.extension(
 
 (def ^:private kwargs-py
   "\"\"\"Kwargs fixture: keyword arguments must survive the sandbox fold.\"\"\"
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def kw_probe(name, mode=\"plain\", is_deep=False):
@@ -671,17 +711,17 @@ def kw_mapping(payload):
     return {\"payload\": payload}
 
 
-vis.extension(
+vis.register(vis.Extension(
     name=\"kwargs\",
     description=\"Keyword-argument fixture extension.\",
     version=\"0.1.0\",
     kind=\"integration\",
     alias=\"kw\",
     symbols=[
-        vis.symbol(kw_probe, tag=\"observation\"),
-        vis.symbol(kw_mapping, tag=\"observation\"),
+        vis.Symbol(kw_probe, tag=\"observation\"),
+        vis.Symbol(kw_mapping, tag=\"observation\"),
     ],
-)
+))
 ")
 
 (defdescribe
@@ -719,7 +759,7 @@ vis.extension(
 (def ^:private env-py
   "\"\"\"Declared host env allowlist fixture.\"\"\"
 import os
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def env_probe():
@@ -730,27 +770,27 @@ def env_probe():
             \"host_default\": vis.host_env(\"VIS_TEST_NEVER_SET_129\", \"fallback\")}
 
 
-vis.extension(
+vis.register(vis.Extension(
     name=\"env-allowlist\",
     description=\"Declared env allowlist fixture.\",
     version=\"0.1.0\",
     kind=\"integration\",
     alias=\"env\",
-    symbols=[vis.symbol(env_probe, tag=\"observation\")],
+    symbols=[vis.Symbol(env_probe, tag=\"observation\")],
     env=[\"PATH\", \"VIS_TEST_NEVER_SET_129\"],
-)
+))
 ")
 
 (def ^:private env-bad-py
   "\"\"\"Bad env= fixture -- not a list.\"\"\"
-from blockether import vis
+import blockether.vis.extension as vis
 
 
-vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
+vis.register(vis.Extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\"))
 ")
 
 ;; Regression, issue #129: a Python extension could not read host env vars.
-;; `vis.extension(...)` did not accept `env=`, so any extension declaring the
+;; `vis.Extension(...)` did not accept `env=`, so any extension declaring the
 ;; variables it needed raised at load and its provider was silently absent.
 ;; Now `env=` declares an allowlist the host resolves from the process
 ;; environment (`System/getenv`), and the declaration lands on `:ext/env` so
@@ -810,7 +850,7 @@ vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
 
 (def ^:private state-mapping-py
   "\"\"\"vis.state as a whole mapping fixture.\"\"\"
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def state_probe():
@@ -837,14 +877,14 @@ def state_probe():
     return probe
 
 
-vis.extension(
+vis.register(vis.Extension(
     name=\"state-mapping\",
     description=\"vis.state mapping fixture.\",
     version=\"0.1.0\",
     kind=\"integration\",
     alias=\"state\",
-    symbols=[vis.symbol(state_probe, tag=\"mutation\")],
-)
+    symbols=[vis.Symbol(state_probe, tag=\"mutation\")],
+))
 ")
 
 ;; Regression: `vis.state` answered five methods, so an extension could not `pop`
@@ -898,7 +938,7 @@ vis.extension(
 
 (def ^:private moods-py
   "\"\"\"Dynamic prompt/activation fixture.\"\"\"
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def _prompt(env):
@@ -914,14 +954,14 @@ def _toggle(ctx):
     return vis.ok(\"toggled\")
 
 
-vis.extension(
+vis.register(vis.Extension(
     name=\"moods\",
     description=\"Dynamic prompt fixture.\",
     kind=\"fun\",
     activation=_active,
     prompt=_prompt,
-    slash_commands=[vis.slash(\"mood\", _toggle, doc=\"Toggle mood.\")],
-)
+    slash_commands=[vis.SlashCommand(\"mood\", _toggle, doc=\"Toggle mood.\")],
+))
 ")
 
 (defdescribe dynamic-callables-test
@@ -938,11 +978,11 @@ vis.extension(
                               (fn [_ _]
                                 (expect (true? ((:ext/activation-fn (registered "moods")) {})))))))
 
-;; Ctx contribution — vis.extension(ctx=...) folds into the session bag
+;; Ctx contribution — vis.Extension(ctx=...) folds into the session bag
 
 (def ^:private ctxer-py
   "\"\"\"Ctx-contribution fixture.\"\"\"
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def _ctx(env):
@@ -953,48 +993,50 @@ def _bad_ctx(env):
     return \"not a dict\"
 
 
-vis.extension(
+vis.register(vis.Extension(
     name=\"ctxer\",
     description=\"Ctx fixture extension.\",
     kind=\"fun\",
     ctx=_ctx,
-)
+))
 ")
 
 (defdescribe
   ctx-contribution-test
-  (it "vis.extension(ctx=...) registers an :ext/ctx-fn that folds into the session bag"
-      (with-loaded {"ctxer.py" ctxer-py}
-                   (fn [_ _]
-                     (let [ext
-                           (registered "ctxer")
+  (it
+    "vis.register(vis.Extension(ctx=...)) registers an :ext/ctx-fn that folds into the session bag"
+    (with-loaded {"ctxer.py" ctxer-py}
+                 (fn [_ _]
+                   (let [ext
+                         (registered "ctxer")
 
-                           contribution
-                           ((:ext/ctx-fn ext) {:workspace/root "/p" :session-id "s1"})]
+                         contribution
+                         ((:ext/ctx-fn ext) {:workspace/root "/p" :session-id "s1"})]
 
-                       ;; STRING-keyed all the way down, ready to deep-merge into `session`
-                       (expect (= 0 (get-in contribution ["session_env" "demo" "hits"])))
-                       (expect (string? (get-in contribution ["session_env" "demo" "cwd"])))
-                       ;; and it merges through the real aggregation path
-                       (let [merged (extension/ctx-contributions {:workspace/root "/p"} [ext])]
-                         (expect (= 0 (get-in merged ["session_env" "demo" "hits"]))))))))
+                     ;; STRING-keyed all the way down, ready to deep-merge into `session`
+                     (expect (= 0 (get-in contribution ["session_env" "demo" "hits"])))
+                     (expect (string? (get-in contribution ["session_env" "demo" "cwd"])))
+                     ;; and it merges through the real aggregation path
+                     (let [merged (extension/ctx-contributions {:workspace/root "/p"} [ext])]
+                       (expect (= 0 (get-in merged ["session_env" "demo" "hits"]))))))))
   (it "a ctx fn that returns a non-map degrades to an empty contribution"
       (with-loaded {"badctx.py" (str/replace ctxer-py "ctx=_ctx" "ctx=_bad_ctx")}
                    (fn [_ _]
                      (expect (= {} ((:ext/ctx-fn (registered "ctxer")) {:workspace/root "/p"}))))))
   (it "a non-callable ctx= is rejected at load"
-      (with-loaded {"badctx2.py"
-                    (str "from blockether import vis\n"
-                         "vis.extension(name='bc2', description='d', kind='x', ctx=42)\n")}
-                   (fn [result _]
-                     (expect (= 1 (:failed result)))
-                     (expect (str/includes? (:error (first (pyx/load-failures))) "ctx="))))))
+      (with-loaded
+        {"badctx2.py"
+         (str "import blockether.vis.extension as vis\n"
+              "vis.register(vis.Extension(name='bc2', description='d', kind='x', ctx=42))\n")}
+        (fn [result _]
+          (expect (= 1 (:failed result)))
+          (expect (str/includes? (:error (first (pyx/load-failures))) "ctx must be a callable"))))))
 
 ;; Op hooks — before(=guard) blocks, after observes
 
 (def ^:private guard-py
   "\"\"\"Guard fixture.\"\"\"
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def _guard(call):
@@ -1004,12 +1046,12 @@ def _guard(call):
     return None
 
 
-vis.extension(
+vis.register(vis.Extension(
     name=\"guard\",
     description=\"Guard fixture extension.\",
     kind=\"guard\",
-    op_hooks=[vis.op_hook([\"fs\", \"patch\"], _guard, phase=\"before\")],
-)
+    op_hooks=[vis.OpHook([\"fs\", \"patch\"], _guard, phase=\"before\")],
+))
 ")
 
 (defdescribe
@@ -1056,7 +1098,7 @@ vis.extension(
 
 (def ^:private fs-gate-py
   "\"\"\"Filesystem gate fixture.\"\"\"
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def _fs_gate(access):
@@ -1065,29 +1107,29 @@ def _fs_gate(access):
     return None
 
 
-vis.extension(
+vis.register(vis.Extension(
     name=\"vault\",
     description=\"Vault fixture extension.\",
     kind=\"guard\",
-    op_hooks=[vis.op_hook([\"fs_access\"], _fs_gate)],
-)
+    op_hooks=[vis.OpHook([\"fs_access\"], _fs_gate)],
+))
 ")
 
 (def ^:private broken-fs-gate-py
   "\"\"\"Filesystem gate that breaks.\"\"\"
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def _fs_gate(access):
     raise RuntimeError(\"the rule table is unreadable\")
 
 
-vis.extension(
+vis.register(vis.Extension(
     name=\"broken-vault\",
     description=\"Broken vault fixture extension.\",
     kind=\"guard\",
-    op_hooks=[vis.op_hook([\"fs_access\"], _fs_gate)],
-)
+    op_hooks=[vis.OpHook([\"fs_access\"], _fs_gate)],
+))
 ")
 
 (defdescribe
@@ -1152,7 +1194,7 @@ vis.extension(
           (expect (= p (ep/boundary-view p)))))))
 
 (def ^:private filter-py
-  "from blockether import vis
+  "import blockether.vis.extension as vis
 
 def _req(r):
     if r['method'] == 'POST':
@@ -1164,12 +1206,12 @@ def _resp(r):
         return vis.block('upstream 403')
     return None
 
-vis.extension(
+vis.register(vis.Extension(
     name='filt',
     description='Egress filter fixture.',
     kind='guard',
-    network_filters=[vis.network_filter(_req), vis.network_filter(_resp)],
-)
+    network_filters=[vis.NetworkFilter(_req), vis.NetworkFilter(_resp)],
+))
 ")
 
 (defdescribe
@@ -1209,21 +1251,24 @@ vis.extension(
   load-failure-test
   (it "a broken file is a recorded load failure, never a crash"
       (with-loaded
-        {"broken.py" "from blockether import vis\nraise RuntimeError('nope at import')\n"}
+        {"broken.py"
+         "import blockether.vis.extension as vis\nraise RuntimeError('nope at import')\n"}
         (fn [result _]
           (expect (= 0 (:loaded result)))
           (expect (= 1 (:failed result)))
           (expect (str/includes? (:error (first (pyx/load-failures))) "nope at import")))))
-  (it "a file that never calls vis.extension() is a load failure"
+  (it "a file that never calls vis.register(vis.Extension()) is a load failure"
       (with-loaded {"empty.py" "x = 1\n"}
                    (fn [result _]
                      (expect (= 1 (:failed result)))
                      (expect (str/includes? (:error (first (pyx/load-failures)))
-                                            "never called vis.extension")))))
+                                            "never called vis.register")))))
   (it "a tool without a docstring is rejected with a clear message"
-      (with-loaded {"nodoc.py" (str "from blockether import vis\n" "def nodoc_x():\n    return 1\n"
-                                    "vis.extension(name='nodoc', description='d', alias='nodoc',\n"
-                                    "              kind='x', symbols=[vis.symbol(nodoc_x)])\n")}
+      (with-loaded {"nodoc.py"
+                    (str
+                      "import blockether.vis.extension as vis\n" "def nodoc_x():\n    return 1\n"
+                      "vis.register(vis.Extension(name='nodoc', description='d', alias='nodoc',\n"
+                      "              kind='x', symbols=[vis.Symbol(nodoc_x)]))\n")}
                    (fn [result _]
                      (expect (= 1 (:failed result)))
                      (expect (str/includes? (:error (first (pyx/load-failures))) "docstring"))))))
@@ -1237,38 +1282,39 @@ vis.extension(
   provider-preset-dialect-test
   (it "an accepted alias normalizes to svar's own api-style"
       (with-loaded
-        {"dialect.py" (str "from blockether import vis\n"
-                           "vis.extension(name='dialect', description='d',\n"
-                           "              providers=[vis.provider(id='dialect', label='Dialect',\n"
-                           "                  preset={'base_url': 'https://dialect.test/v1',\n"
-                           "                          'api_style': 'openai_responses'})])\n")}
+        {"dialect.py"
+         (str "import blockether.vis.extension as vis\n"
+              "vis.register(vis.Extension(name='dialect', description='d',\n"
+              "              providers=[vis.Provider(id='dialect', label='Dialect',\n"
+              "                  preset=vis.ProviderPreset(base_url='https://dialect.test/v1',\n"
+              "                          api_style='openai_responses'))]))\n")}
         (fn [_ _]
           (expect (= :openai-compatible-responses
                      (:api-style (:provider/preset (registry/provider-by-id :dialect))))))))
   (it "an api_style naming no wire dialect is refused, never keywordized"
-      (with-loaded {"baddialect.py"
-                    (str "from blockether import vis\n"
-                         "vis.extension(name='baddialect', description='d',\n"
-                         "              providers=[vis.provider(id='baddialect', label='Bad',\n"
-                         "                  preset={'base_url': 'https://bad.test/v1',\n"
-                         "                          'api_style': 'openai-responses-v2'})])\n")}
-                   (fn [result _]
-                     (expect (= 1 (:failed result)))
-                     (expect (str/includes? (:error (first (pyx/load-failures)))
-                                            "names no wire dialect")))))
+      (with-loaded
+        {"baddialect.py"
+         (str "import blockether.vis.extension as vis\n"
+              "vis.register(vis.Extension(name='baddialect', description='d',\n"
+              "              providers=[vis.Provider(id='baddialect', label='Bad',\n"
+              "                  preset=vis.ProviderPreset(base_url='https://bad.test/v1',\n"
+              "                          api_style='openai-responses-v2'))]))\n")}
+        (fn [result _]
+          (expect (= 1 (:failed result)))
+          (expect (str/includes? (:error (first (pyx/load-failures))) "names no wire dialect")))))
   (it "a credential the extension issues may declare the wire dialect too"
       ;; The dialect is a property of the ENDPOINT, and a managed provider's endpoint
       ;; only exists once the credential is issued — so `get_token_fn` takes the same
       ;; vocabulary as the preset does.
       (with-loaded
         {"tokendialect.py"
-         (str "from blockether import vis\n" "def _token():\n"
-              "    return {'token': 'k', 'api_url': 'https://issued.test/v1',\n"
-              "            'api_style': 'openai_responses', 'responses_path': '/responses'}\n"
-              "vis.extension(name='tokendialect', description='d',\n"
-              "              providers=[vis.provider(id='tokendialect', label='Issued',\n"
-              "                  preset={'base_url': 'https://issued.test/v1'},\n"
-              "                  get_token_fn=_token)])\n")}
+         (str "import blockether.vis.extension as vis\n" "def _token():\n"
+              "    return vis.ProviderCredential('k', api_url='https://issued.test/v1',\n"
+              "            api_style='openai_responses', responses_path='/responses')\n"
+              "vis.register(vis.Extension(name='tokendialect', description='d',\n"
+              "              providers=[vis.Provider(id='tokendialect', label='Issued',\n"
+              "                  preset=vis.ProviderPreset(base_url='https://issued.test/v1'),\n"
+              "                  get_token_fn=_token)]))\n")}
         (fn [_ _]
           (expect (= :openai-compatible-responses
                      (:api-style ((:provider/get-token-fn (registry/provider-by-id
@@ -1351,7 +1397,7 @@ vis.extension(
 
 (def ^:private pkgext-py
   "\"\"\"Package-backed fixture: imports a sibling package next to it.\"\"\"
-from blockether import vis
+import blockether.vis.extension as vis
 from mypkg.core import add
 from mypkg import VERSION
 
@@ -1361,14 +1407,14 @@ def pkg_add(a, b):
     return {\"sum\": add(a, b), \"version\": VERSION}
 
 
-vis.extension(
+vis.register(vis.Extension(
     name=\"pkgext\",
     description=\"Package-backed fixture extension.\",
     version=\"0.1.0\",
     kind=\"integration\",
     alias=\"pkg\",
-    symbols=[vis.symbol(pkg_add, tag=\"observation\")],
-)
+    symbols=[vis.Symbol(pkg_add, tag=\"observation\")],
+))
 ")
 
 (defdescribe
@@ -1399,13 +1445,13 @@ vis.extension(
         {"my_ext/mypkg/__init__.py" "VERSION = \"9.9\"\n"
          "my_ext/mypkg/core.py" "def add(a, b):\n    return a + b\n"
          "my_ext/extension.py"
-         (str "from blockether import vis\n" "from mypkg.core import add\n"
+         (str "import blockether.vis.extension as vis\n" "from mypkg.core import add\n"
               "def mx_add(a, b):\n"
               "    \"\"\"await mx_add(a, b) -> {\"sum\"} — add via the sibling package.\"\"\"\n"
               "    return {\"sum\": add(a, b)}\n"
-              "vis.extension(name=\"myext\", description=\"d\", version=\"0.1.0\",\n"
+              "vis.register(vis.Extension(name=\"myext\", description=\"d\", version=\"0.1.0\",\n"
               "              kind=\"integration\", alias=\"mx\",\n"
-              "              symbols=[vis.symbol(mx_add, tag=\"observation\")])\n")
+              "              symbols=[vis.Symbol(mx_add, tag=\"observation\")]))\n")
          "my_ext/test_core.py" "def test_ok():\n    assert 1 == 1\n"}
         (fn [result _]
           ;; the package dir contributes exactly ONE extension; the
@@ -1430,12 +1476,14 @@ vis.extension(
 
       (write-ext! ext-dir "my_ext/mypkg/__init__.py" "VERSION = \"1.0\"\n")
       (write-ext! ext-dir "my_ext/mypkg/core.py" "def add(a, b):\n    return a + b\n")
-      (write-ext! ext-dir
-                  "my_ext/extension.py"
-                  (str "from blockether import vis\n" "def noop():\n"
-                       "    \"\"\"await noop() -> {} — nothing.\"\"\"\n" "    return {}\n"
-                       "vis.extension(name=\"mx\", description=\"d\", kind=\"fun\", alias=\"mx\",\n"
-                       "              symbols=[vis.symbol(noop, tag=\"observation\")])\n"))
+      (write-ext!
+        ext-dir
+        "my_ext/extension.py"
+        (str
+          "import blockether.vis.extension as vis\n" "def noop():\n"
+          "    \"\"\"await noop() -> {} — nothing.\"\"\"\n" "    return {}\n"
+          "vis.register(vis.Extension(name=\"mx\", description=\"d\", kind=\"fun\", alias=\"mx\",\n"
+          "              symbols=[vis.Symbol(noop, tag=\"observation\")]))\n"))
       ;; a test INSIDE the package — imports mypkg via the sys.path sugar
       (write-ext! ext-dir
                   "my_ext/test_core.py"
@@ -1564,23 +1612,23 @@ vis.extension(
                    (expect (str/includes? report "test_beta"))))
                (finally (ps/db-dispose-connection! store)))))))
 
-;; Providers — a `vis.provider(...)` registers a first-class provider descriptor
+;; Providers — a `vis.Provider(...)` registers a first-class provider descriptor
 
 (def ^:private provider-py
   "'''Acme provider fixture.'''
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def _token():
-    return {'token': 'sk-test-123', 'api_url': 'https://acme.test/v1'}
+    return vis.ProviderCredential('sk-test-123', api_url='https://acme.test/v1')
 
 
 def _status():
-    return {'is_authenticated': True, 'source': 'env-var', 'provider_id': 'acme'}
+    return vis.ProviderStatus(True, source='env-var', provider_id='acme')
 
 
 def _detect():
-    return {'token': 'sk-test-123', 'source': 'env-var'}
+    return vis.ProviderCredential('sk-test-123', source='env-var')
 
 
 _logout_calls = {'n': 0}
@@ -1592,23 +1640,20 @@ def _logout():
 
 
 def _limits():
-    return {'provider_id': 'acme', 'status': 'ok',
-            'dynamic': {'limits': [{'id': 'acme-daily', 'label': 'Daily tokens',
-                                    'scope': 'account', 'kind': 'tokens',
-                                    'precision': 'exact', 'source': 'provider-api',
-                                    'is_unlimited': False,
-                                    'used': 25.49, 'limit': 100.0}]}}
+    return vis.ProviderLimits(provider_id='acme', limits=[
+        vis.ProviderLimit('acme-daily', 'Daily tokens', scope='account', kind='tokens',
+            precision='exact', source='provider-api', used=25.49, limit=100.0)])
 
 
 # Strict 0-param refresh: the runtime calls (f rejected-token); the adapter
 # must DROP the extra arg and still return the fresh token.
 def _refresh():
-    return {'token': 'sk-fresh-999', 'api_url': 'https://acme.test/v1'}
+    return vis.ProviderCredential('sk-fresh-999', api_url='https://acme.test/v1')
 
 
 # 1-param refresh: must RECEIVE the rejected token the runtime threads in.
 def _refresh_with_arg(rejected):
-    return {'token': 'sk-fresh-abc', 'rejected_was': rejected}
+    return vis.ProviderCredential('sk-fresh-' + rejected)
 
 
 def _auth(printer):
@@ -1625,7 +1670,7 @@ def _auth_prompt():
 def _enrich(provider, router_opts):
     # provider crosses in as a plain string-keyed dict (stringify-deep) so the
     # hook can read model names; return an enriched model list.
-    return [{'name': m['name'], 'context': 262144, 'is_tool_call': True}
+    return [vis.ProviderModel(m['name'], context=262144, is_tool_call=True)
             for m in provider['models']]
 
 
@@ -1643,21 +1688,21 @@ def seen_selected():
     return _events['selected']
 
 
-vis.extension(
+vis.register(vis.Extension(
     name='provider-acme',
     description='Acme static-key provider fixture.',
     alias='acme',
-    symbols=[vis.symbol(seen_selected)],
+    symbols=[vis.Symbol(seen_selected)],
     providers=[
-        vis.provider(
+        vis.Provider(
             id='acme',
             label='Acme AI',
-            preset={'base_url': 'https://acme.test/v1',
-                    'api_style': 'openai',
-                    'default_models': ['acme-large', 'acme-small'],
-                    'responses_path': '/responses',
-                    'llm_headers': {'X-Initiator': 'agent'},
-                    'extra_body': {'temperature': 0.6, 'top_p': 0.95}},
+            preset=vis.ProviderPreset(base_url='https://acme.test/v1',
+                    api_style='openai',
+                    default_models=['acme-large', 'acme-small'],
+                    responses_path='/responses',
+                    llm_headers={'X-Initiator': 'agent'},
+                    extra_body={'temperature': 0.6, 'top_p': 0.95}),
             get_token_fn=_token,
             status_fn=_status,
             detect_fn=_detect,
@@ -1667,7 +1712,7 @@ vis.extension(
             enrich_models_fn=_enrich,
             on_selected_fn=_on_selected,
         ),
-        vis.provider(
+        vis.Provider(
             id='acme-oauth',
             label='Acme OAuth',
             refresh_token_fn=_refresh_with_arg,
@@ -1675,13 +1720,13 @@ vis.extension(
             auth_prompt_fn=_auth_prompt,
         ),
     ],
-)
+))
 ")
 
 (defdescribe
   provider-test
   (it
-    "a vis.provider(...) registers a first-class provider descriptor (preset + every provider fn)"
+    "a vis.Provider(...) registers a first-class provider descriptor (preset + every provider fn)"
     (with-loaded
       {"acme.py" provider-py}
       (fn [_ _]
@@ -1761,7 +1806,7 @@ vis.extension(
                       "Or set ACME_TOKEN=... in the environment."]
                      ((:provider/auth-prompt-fn oauth))))
           ;; refresh-token-fn, 1-param: RECEIVES the rejected token.
-          (expect (= {:token "sk-fresh-abc" :rejected-was "old-rejected-token"}
+          (expect (= {:token "sk-fresh-old-rejected-token"}
                      ((:provider/refresh-token-fn oauth) "old-rejected-token")))
           ;; enrich-models-fn: host provider + router-opts marshal INTO Python as
           ;; plain string-keyed dicts; the return keywordizes and the snake
@@ -1781,46 +1826,56 @@ vis.extension(
           (let [seen (symbol-fn ext (clojure.core/symbol "seen_selected"))]
             (expect (= {"source" "tui" "provider_id" "acme"} (get-in (seen) [:result])))))))))
 
+(defdescribe
+  python-provider-refresh-once-test
+  (it
+    "does not retry a refresh callback after its body raises"
+    (with-loaded
+      {"refresh_once.py"
+       "import blockether.vis.extension as vis\ndef refresh(rejected=None):\n    vis.state['refresh_calls'] = vis.state.get('refresh_calls', 0) + 1\n    raise RuntimeError('fixture refresh failure')\ndef calls():\n    '''Read the number of refresh attempts.'''\n    return vis.state.get('refresh_calls', 0)\nvis.register(vis.Extension(name='refresh-once', description='Refresh regression', alias='once', symbols=[vis.Symbol(calls)], providers=[vis.Provider(id='refresh-once', label='Refresh once', refresh_token_fn=refresh)]))\n"}
+      (fn [_ _]
+        (let [provider (registry/provider-by-id :refresh-once)]
+          (expect (nil? ((:provider/refresh-token-fn provider) "fixture-rejected")))
+          (expect (= 1 (get-in ((symbol-fn (registered "refresh-once") 'calls)) [:result]))))))))
+
 ;; Regression: a MANAGED provider declared by a PYTHON extension was a flag that
-;; never crossed the host boundary - `is_managed=True` in `vis.provider(...)`
+;; never crossed the host boundary - `is_managed=True` in `vis.Provider(...)`
 ;; reached the entry decoder and every credential seam below still saw an
 ;; ordinary API-key provider: a key band, an `Add provider` row, a startable flow.
 (def ^:private managed-provider-py
   "'''Corp gateway fixture - the runtime issues the credential.'''
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def _token():
-    return {'token': 'issued-by-runtime', 'api_url': 'https://corp.test/v1'}
+    return vis.ProviderCredential('issued-by-runtime', api_url='https://corp.test/v1')
 
 
-vis.extension(
+vis.register(vis.Extension(
     name='provider-corp',
     description='Managed corporate gateway fixture.',
     providers=[
-        vis.provider(
+        vis.Provider(
             id='corp-managed',
             label='Corp Gateway',
             is_managed=True,
-            preset={'base_url': 'https://corp.test/v1',
-                    'api_style': 'openai',
-                    'default_models': ['corp-large']},
+            preset=vis.ProviderPreset(base_url='https://corp.test/v1',
+                    api_style='openai', default_models=['corp-large']),
             get_token_fn=_token,
         ),
-        vis.provider(
+        vis.Provider(
             id='corp-byok',
             label='Corp BYOK',
-            preset={'base_url': 'https://corp.test/v1',
-                    'api_style': 'openai',
-                    'default_models': ['corp-large']},
+            preset=vis.ProviderPreset(base_url='https://corp.test/v1',
+                    api_style='openai', default_models=['corp-large']),
         ),
     ],
-)
+))
 ")
 
 (defdescribe
   python-managed-provider-test
-  (it "carries is_managed=True from blockether.vis.provider(...) to every credential seam"
+  (it "carries is_managed=True from blockether.vis.Provider(...) to every credential seam"
       (with-loaded {"corp.py" managed-provider-py}
                    (fn [_ _]
                      ;; The DECLARED flag reaches the registry entry; an undeclared one stays
@@ -1866,12 +1921,12 @@ vis.extension(
 (def ^:private shell-provider-py
   "The ONE shelling-provider fixture. Both process-boundary cases load it — the
    session jail and the user's `shell` toggle — so the two cannot drift apart."
-  "from blockether import vis\ndef detect():\n    handle = vis.shell({'command': 'printf regular-shell'})\n    result = handle.wait(30)\n    for _ in range(3):\n        if not result.get('timed_out'):\n            break\n        result = handle.wait(30)\n    return {'token': result['out'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])")
+  "import blockether.vis.extension as vis\ndef detect():\n    handle = vis.shell({'command': 'printf regular-shell'})\n    result = handle.wait(30)\n    for _ in range(3):\n        if not result.get('timed_out'):\n            break\n        result = handle.wait(30)\n    return vis.ProviderCredential(result['out'], source='shell')\nvis.register(vis.Extension(name='shell-provider', description='shell provider', providers=[vis.Provider(id='shell-provider', label='Shell provider', detect_fn=detect)]))")
 
 (def ^:private popen-probe-py
   "Issue #142's own reproduction as an extension: start a child, hand the pid
    the handle carries straight back to the host."
-  "import subprocess\nfrom blockether import vis\ndef probe():\n    '''await probe() -> {'pid'} — start a child and report the handle it got.'''\n    child = subprocess.Popen(['/bin/sleep', '39'])\n    return {'pid': child.pid, 'poll': child.poll()}\nvis.extension(name='popen-probe', description='popen probe', alias='popen', symbols=[vis.symbol(probe, tag='observation')])")
+  "import subprocess\nimport blockether.vis.extension as vis\ndef probe():\n    '''await probe() -> {'pid'} — start a child and report the handle it got.'''\n    child = subprocess.Popen(['/bin/sleep', '39'])\n    return {'pid': child.pid, 'poll': child.poll()}\nvis.register(vis.Extension(name='popen-probe', description='popen probe', alias='popen', symbols=[vis.Symbol(probe, tag='observation')]))")
 
 (defdescribe
   python-extension-process-boundary-test
@@ -1879,7 +1934,7 @@ vis.extension(
     "lets a provider callback spawn a native subprocess outside any session"
     (with-loaded
       {"process_provider.py"
-       "import subprocess\nfrom blockether import vis\ndef detect():\n    result = subprocess.run(['/bin/sh', '-c', 'printf extension-native'], capture_output=True, text=True, check=True)\n    return {'token': result.stdout, 'source': 'subprocess'}\nvis.extension(name='process-provider', description='process provider', providers=[vis.provider(id='process-provider', label='Process provider', detect_fn=detect)])"}
+       "import subprocess\nimport blockether.vis.extension as vis\ndef detect():\n    result = subprocess.run(['/bin/sh', '-c', 'printf extension-native'], capture_output=True, text=True, check=True)\n    return vis.ProviderCredential(result.stdout, source='subprocess')\nvis.register(vis.Extension(name='process-provider', description='process provider', providers=[vis.Provider(id='process-provider', label='Process provider', detect_fn=detect)]))"}
       (fn [_ _]
         (expect (= {:token "extension-native" :source :subprocess}
                    ((:provider/detect-fn (registry/provider-by-id :process-provider))))))))
@@ -1986,7 +2041,7 @@ vis.extension(
     "keeps the latest and session-snapshot jail APIs distinct"
     (with-loaded
       {"jail.py"
-       "from blockether import vis\ndef latest():\n    \"Use the latest jail.\"\n    return vis.jailed_shell({'command':'echo latest'})['out']\ndef session():\n    \"Use the session jail.\"\n    return vis.jailed_shell_session({'command':'echo session'}).wait(20)['out']\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(latest), vis.symbol(session)])"}
+       "import blockether.vis.extension as vis\ndef latest():\n    \"Use the latest jail.\"\n    return vis.jailed_shell({'command':'echo latest'})['out']\ndef session():\n    \"Use the session jail.\"\n    return vis.jailed_shell_session({'command':'echo session'}).wait(20)['out']\nvis.register(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(latest), vis.Symbol(session)]))"}
       (fn [_ _]
         (let [ext
               (registered "jail")
@@ -2025,7 +2080,7 @@ vis.extension(
     ;; :result" — blaming the extension for the framework's own payload.
     (with-loaded
       {"jail.py"
-       "from blockether import vis\ndef run():\n    \"Shell out.\"\n    r = vis.jailed_shell({'command': 'echo hi'})\n    return [r['out'], r['stage'], sorted(r.keys())]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    r = vis.jailed_shell({'command': 'echo hi'})\n    return [r['out'], r['stage'], sorted(r.keys())]\nvis.register(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
       (fn [_ _]
         (let [run
               (symbol-fn (registered "jail") 'run)
@@ -2048,7 +2103,7 @@ vis.extension(
     ;; `{"op": "logs", "id": …}` grammar that the handle object replaced.
     (with-loaded
       {"jail.py"
-       "from blockether import vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    return [sh['id'], sh.logs(offset=0)['stage'], sh.wait(5)['stage'], sh.type('y')['stage'], sh.stop()['stage']]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    return [sh['id'], sh.logs(offset=0)['stage'], sh.wait(5)['stage'], sh.type('y')['stage'], sh.stop()['stage']]\nvis.register(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
       (fn [_ _]
         (let [run
               (symbol-fn (registered "jail") 'run)
@@ -2070,7 +2125,7 @@ vis.extension(
     "raises a failing host tool envelope instead of handing Python the envelope"
     (with-loaded
       {"jail.py"
-       "from blockether import vis\ndef run():\n    \"Shell out.\"\n    return vis.jailed_shell({'command': 'nope'})\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    return vis.jailed_shell({'command': 'nope'})\nvis.register(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
       (fn [_ _]
         (let [run
               (symbol-fn (registered "jail") 'run)
@@ -2094,7 +2149,7 @@ vis.extension(
   "rejects a Python set so serial command ordering cannot be lost"
   (with-loaded
     {"jail.py"
-     "from blockether import vis\ndef run():\n    return vis.jailed_shell({'echo first', 'echo second'})\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+     "import blockether.vis.extension as vis\ndef run():\n    return vis.jailed_shell({'echo first', 'echo second'})\nvis.register(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
     (fn [_ _]
       (let [run
             (symbol-fn (registered "jail") 'run)
@@ -2214,7 +2269,7 @@ vis.extension(
 
 (def ^:private asker-py
   "
-from blockether import vis
+import blockether.vis.extension as vis
 
 def ask_key():
     'Ask for deploy details.'
@@ -2264,9 +2319,9 @@ def ask_validated():
     )
     return {'ok': bool(answer), 'email': answer['email']}
 
-vis.extension(name='asker', description='asker', alias='a',
-              symbols=[vis.symbol(ask_key), vis.symbol(ask_cancelled),
-                       vis.symbol(ask_camel_case), vis.symbol(ask_validated)])
+vis.register(vis.Extension(name='asker', description='asker', alias='a',
+              symbols=[vis.Symbol(ask_key), vis.Symbol(ask_cancelled),
+                       vis.Symbol(ask_camel_case), vis.Symbol(ask_validated)]))
 ")
 
 (defdescribe
@@ -2413,13 +2468,13 @@ vis.extension(name='asker', description='asker', alias='a',
 
 (def ^:private hook-asker-py
   "
-from blockether import vis
+import blockether.vis.extension as vis
 
 def hook_prompt(env):
     answer = vis.ask('HookAsk', [{'name': 'go', 'type': 'checkbox'}], timeout_ms=20000)
     return 'hook:' + str(answer.reason)
 
-vis.extension(name='hookasker', description='hookasker', alias='hk', prompt=hook_prompt)
+vis.register(vis.Extension(name='hookasker', description='hookasker', alias='hk', prompt=hook_prompt))
 ")
 
 (defdescribe python-hook-environment-test
@@ -2456,7 +2511,7 @@ vis.extension(name='hookasker', description='hookasker', alias='hk', prompt=hook
 ;; Torn-down contexts heal instead of dying (issues #102, #103)
 
 (def ^:private rebuilder-py
-  "from blockether import vis
+  "import blockether.vis.extension as vis
 
 def ping():
     '''await ping() -> str — answer pong.'''
@@ -2466,8 +2521,8 @@ def boom():
     '''await boom() -> str — always raises.'''
     raise ValueError('kaboom')
 
-vis.extension(name='rebuilder', description='rebuilder', alias='rb',
-              symbols=[vis.symbol(ping), vis.symbol(boom)])
+vis.register(vis.Extension(name='rebuilder', description='rebuilder', alias='rb',
+              symbols=[vis.Symbol(ping), vis.Symbol(boom)]))
 ")
 
 (defdescribe python-extension-context-heal-test
@@ -2534,7 +2589,7 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
 
 (def ^:private forms-py
   "'''Form builder fixture: composes a request and checks it without asking.'''
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def _refusal(title, fields, **options):
@@ -2588,14 +2643,14 @@ def forms_report():
     }
 
 
-vis.extension(
+vis.register(vis.Extension(
     name='forms',
     description='Form builder fixture extension.',
     version='0.1.0',
     kind='integration',
     alias='forms',
-    symbols=[vis.symbol(forms_report, tag='observation')],
-)
+    symbols=[vis.Symbol(forms_report, tag='observation')],
+))
 ")
 
 (defdescribe
@@ -2670,25 +2725,25 @@ vis.extension(
 ;; the single inverse of the gateway's `wire-key`, with no allow-list to forget.
 (def ^:private provider-is-keys-py
   "'''Provider fixture pinning `is_*` key spelling across the boundary.'''
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def _status():
-    return {'is_authenticated': True, 'is_stale': False, 'source': 'env-var'}
+    return vis.ProviderStatus(True, source='env-var', extra={'is_stale': False})
 
 
-vis.extension(
+vis.register(vis.Extension(
     name='provider-iskeys',
     description='is_* key spelling fixture.',
     providers=[
-        vis.provider(
+        vis.Provider(
             id='iskeys',
             label='Is Keys',
-            preset={'base_url': 'https://iskeys.test/v1', 'is_hidden': True},
+            preset=vis.ProviderPreset(base_url='https://iskeys.test/v1', is_hidden=True),
             status_fn=_status,
         ),
     ],
-)
+))
 ")
 
 (defdescribe python-provider-is-key-test
@@ -2711,15 +2766,15 @@ vis.extension(
 ;; Freshness — only a process start and `/reload` put new bytes live
 
 (def ^:private sidecar-py
-  "from blockether import vis
+  "import blockether.vis.extension as vis
 
 def peek():
     '''await peek() -> str — the sidecar module's version, read at call time.'''
     import sidecar_impl
     return sidecar_impl.VERSION
 
-vis.extension(name='sidecar', description='sidecar', alias='sd',
-              symbols=[vis.symbol(peek)])
+vis.register(vis.Extension(name='sidecar', description='sidecar', alias='sd',
+              symbols=[vis.Symbol(peek)]))
 ")
 
 (def ^:private sidecar-impl-py "VERSION = 'v1'\n")
@@ -2904,7 +2959,7 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
 
 (def ^:private fs-door-py
   "\"\"\"Filesystem door fixture.\"\"\"
-from blockether import vis
+import blockether.vis.extension as vis
 
 
 def fsdoor_probe(path, text):
@@ -2923,13 +2978,13 @@ def fsdoor_probe(path, text):
     }
 
 
-vis.extension(
+vis.register(vis.Extension(
     name=\"fsdoor\",
     description=\"Reads and writes through the host's door.\",
     kind=\"integration\",
     alias=\"fsdoor\",
-    symbols=[vis.symbol(fsdoor_probe, tag=\"mutation\")],
-)
+    symbols=[vis.Symbol(fsdoor_probe, tag=\"mutation\")],
+))
 ")
 
 (defdescribe

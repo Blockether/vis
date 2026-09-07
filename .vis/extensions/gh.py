@@ -48,7 +48,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass
 
-from blockether import vis
+import blockether.vis.extension as vis
 
 # `gh run view --json <these>` is the whole payload the view is built from: one call per poll.
 RUN_FIELDS = "jobs,status,conclusion,workflowName,headBranch,url,displayTitle,number,event,databaseId"
@@ -1653,12 +1653,14 @@ the human can watch and stop; its WatchOutcome carries every job, step and faile
 watch() instead of a shell polling loop — it signs in by itself when needed."""
 
 
-vis.extension(
-    name="gh",
-    description="GitHub through the gh CLI: sign in, list runs, watch Actions live.",
-    version="0.3.0",
-    kind="integration",
-    alias="gh",
-    symbols=[vis.symbol(gh, name="gh", tag="observation")],
-    prompt=PROMPT,
+vis.register(
+    vis.Extension(
+        name="gh",
+        description="GitHub through the gh CLI: sign in, list runs, watch Actions live.",
+        version="0.3.0",
+        kind="integration",
+        alias="gh",
+        symbols=[vis.Symbol(gh, name="gh", tag="observation")],
+        prompt=PROMPT,
+    )
 )

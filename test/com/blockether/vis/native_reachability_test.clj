@@ -222,7 +222,7 @@
 ;; the build that produced it was green. `all-source-roots` copied a hardcoded
 ;; ["src" "resources"] into the AOT class dir while the root deps.edn `:paths`
 ;; had grown a third entry, `packages/vis-agent/src`. Without it the image had no
-;; `blockether/vis/__init__.py`, so `env-python` threw while `com.blockether.vis.core` was
+;; `blockether/vis/extension.py`, so `env-python` threw while `com.blockether.vis.core` was
 ;; initializing in the BUILDER, poisoning that class for the whole image.
 (defdescribe
   aot-copies-every-root-classpath-root-test
@@ -233,14 +233,14 @@
                      "the image; a literal list drops the next one that is added"))
         (expect
           (not (str/includes? src "(into [\"src\" \"resources\"]"))
-          "the hardcoded root pair is what shipped an image with no blockether/vis/__init__.py")))
+          "the hardcoded root pair is what shipped an image with no blockether/vis/extension.py")))
   (it "keeps the distributable vis Python module on the classpath it is read from"
       (let [paths (:paths (edn/read-string (slurp (io/file "deps.edn"))))]
         (expect (some #{"packages/vis-agent/src"} paths)
-                (str "the engine slurps `blockether/vis/__init__.py` off the classpath; its root "
+                (str "the engine slurps `blockether/vis/extension.py` off the classpath; its root "
                      "belongs in deps.edn :paths, which is also what the image copies"))
-        (expect (some? (io/resource "blockether/vis/__init__.py"))
-                "blockether/vis/__init__.py must resolve as a classpath resource"))))
+        (expect (some? (io/resource "blockether/vis/extension.py"))
+                "blockether/vis/extension.py must resolve as a classpath resource"))))
 
 ;; Regression, this branch: once GraalPy was dropped, every command that initializes
 ;; the manifest died in the BINARY with "Required initializer failed:

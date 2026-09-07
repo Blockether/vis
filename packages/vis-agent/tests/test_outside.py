@@ -1,7 +1,7 @@
 """The package outside a Vis session: the contract is the specification.
 
 Every test here asks the same question in a different place — does `vis` behave
-the way `vis_contract`'s document says it behaves when no engine is in the room — so a
+the way the canonical contract's document says it behaves when no engine is in the room — so a
 contract op that grows, moves or changes its outside behavior fails HERE, in the
 package, and not in an extension somebody wrote against it.
 """
@@ -9,9 +9,9 @@ package, and not in an extension somebody wrote against it.
 import inspect
 import json
 
+import blockether.vis.extension as vis
 import pytest
-from blockether import vis, vis_contract
-from blockether.vis import _outside
+from blockether.vis import _contracts, _outside
 
 CONTRACT = _outside.contract
 
@@ -26,7 +26,7 @@ def _op(name):
 def test_the_host_is_a_contract_host_and_serves_exactly_the_declared_ops():
     # The protocol is the interface anyone else implements, so this host has to
     # satisfy it the same way a stranger's would.
-    assert isinstance(_outside.host, vis_contract.Host)
+    assert isinstance(_outside.host, vis.Host)
     served = sorted(n for n in vars(_outside.host) if not n.startswith("_"))
     assert served == sorted(op["name"] for op in CONTRACT["ops"])
 
@@ -50,7 +50,7 @@ class _Recorder:
 
     def __init__(self):
         self.calls = []
-        for name in vis_contract.OPS:
+        for name in _contracts.OPS:
             setattr(self, name, self._record(name))
 
     def _record(self, name):
@@ -66,8 +66,8 @@ def test_any_object_that_satisfies_the_protocol_can_be_the_host(monkeypatch):
     # module cannot tell them apart, because the protocol is the only agreement
     # between them. That is what makes a third host somebody else's to write.
     stranger = _Recorder()
-    assert isinstance(stranger, vis_contract.Host)
-    assert vis_contract.check_host(stranger) is stranger
+    assert isinstance(stranger, vis.Host)
+    assert _outside.check_host(stranger) is stranger
 
     monkeypatch.setattr(vis, "_host", stranger)
     vis.log("info", "hello")

@@ -22,7 +22,7 @@
    The model can call an extension TOOL through the ordinary host wrapper, envelope-
    checked like any tool, but cannot choose the trusted identity or evaluate code in
    the extension namespace. Host capabilities are reachable only through the bound
-   `blockether.vis` API: what crosses is JSON text, so no host object is reachable from Python.
+   `blockether.vis.extension` API: what crosses is JSON text, so no host object is reachable from Python.
    Startup, reload and calls with no owning session use the shared registration worker.
 
    A context is only a NAMESPACE in its owning embedded interpreter: opening one costs
@@ -30,7 +30,7 @@
    (tool, activation, prompt, slash, op hook) are serialized with `locking` on its
    session name, the same proven pattern as the printer context.
 
-   The file's top-level `vis.extension(...)` call registers through the
+   The file's top-level `vis.register(vis.Extension(...))` call registers through the
    ordinary `register-extension!` — from the registry's perspective a
    Python extension is indistinguishable from a Clojure one (activation,
    prompt assembly, slash dispatch, `vis-agent extension list` all just work).
@@ -65,10 +65,10 @@
 
 (set! *warn-on-reflection* true)
 
-;; The `blockether.vis` Python module (bootstrap source)
+;; The `blockether.vis.extension` Python module (bootstrap source)
 ;;
 ;; Executed in each extension session BEFORE the extension file. Builds a
-;; real `blockether.vis` module (registered in `sys.modules`, so `from blockether import vis` works)
+;; real `blockether.vis.extension` module (registered in `sys.modules`, so `import blockether.vis.extension as vis` works)
 ;; whose functions live in the module's own namespace — the extension
 ;; file's globals stay clean. Host callbacks (`__vis_host_*`, installed as
 ;; session globals before this runs) are handed in through the module dict.
@@ -93,22 +93,22 @@
                     {:type ::missing-python-source :path path}))))
 
 (def ^:no-doc bootstrap-python
-  "The `blockether.vis` module bootstrap. Executed in each extension session BEFORE the
-   extension file: it builds a real `blockether.vis` module (registered in `sys.modules`, so
-   `from blockether import vis` works) whose functions live in the module's own namespace, while
+  "The `blockether.vis.extension` module bootstrap. Executed in each extension session BEFORE the
+   extension file: it builds a real `blockether.vis.extension` module (registered in `sys.modules`, so
+   `import blockether.vis.extension as vis` works) whose functions live in the module's own namespace, while
    the extension file's globals stay clean. Host callbacks (`__vis_host_*`,
    installed as session globals before this runs) are handed in through the
    module dict.
 
    TWO real `.py` files, assembled here and nowhere else. The BODY is the
-   distributable package `packages/vis-agent/src/blockether/vis/__init__.py` — the very file
+   distributable package `packages/vis-agent/src/blockether/vis/extension.py` — the very file
    PyPI ships as `vis-agent`, so an author reads, lints and unit-tests the code
    the sandbox runs — handed to the injector as the `_vis_body` literal, because
    `exec` into a module dict is the one thing that keeps the API off the
-   extension's globals. The INJECTOR is `vis-python/extension_bootstrap.py`,
+   extension's globals. The INJECTOR is `vis-guest/extension_bootstrap.py`,
    which also seals this session's Python callables so the host can hold them."
-  (str "_vis_body = " (python-string-literal (classpath-src "blockether/vis/__init__.py"))
-       "\n" (classpath-src "vis-python/extension_bootstrap.py")))
+  (str "_vis_body = " (python-string-literal (classpath-src "blockether/vis/extension.py"))
+       "\n" (classpath-src "vis-guest/extension_bootstrap.py")))
 
 ;; Marshalling helpers
 
@@ -387,7 +387,7 @@
 
 ;; Trusted extension context
 
-;; Declared host environment (`vis.extension(env=["NAME", ...])`)
+;; Declared host environment (`vis.Extension(env=["NAME", ...])`)
 ;;
 ;; An extension DECLARES the environment variables it needs; the host resolves
 ;; them through `config/extension-env-status` (the `environment:` declaration for
@@ -668,7 +668,7 @@
   (contract/host-globals))
 
 (defn ^:no-doc bind-inert-host!
-  "Install every host member as a REFUSAL, so the `blockether.vis` module can be BUILT without
+  "Install every host member as a REFUSAL, so the `blockether.vis.extension` module can be BUILT without
    any of it being usable.
 
    `vis-agent extension check` needs the real module -- it reads the builders and
@@ -944,7 +944,7 @@
            nil))))
 
 (defn- ctx-adapter
-  "`:ext/ctx-fn` for a Python `vis.extension(ctx=...)` callable. Runs per turn
+  "`:ext/ctx-fn` for a Python `vis.register(vis.Extension(ctx=...))` callable. Runs per turn
    during ctx render: hands the Python fn the `slim-env` dict and folds the
    dict it returns into the model's `session` bag (deep-merged with every
    other extension's slice). The returned map MUST be STRING-keyed all the way
@@ -961,7 +961,7 @@
            {}))))
 
 (defn- slash-adapter
-  "`:slash/run-fn` for one `vis.slash(...)` entry. The Python callable
+  "`:slash/run-fn` for one `vis.SlashCommand(...)` entry. The Python callable
    receives `{'channel', 'args', 'raw', 'session_id'}` and returns
    `vis.ok(...)` / `vis.err(...)` (or a plain string / None)."
   [ext-name ctx pyfn]
@@ -1060,7 +1060,7 @@
     result))
 
 (defn- network-filter-adapter
-  "Python `vis.network_filter(fn)` -> a host egress network filter `(fn [ctx])`.
+  "Python `vis.NetworkFilter(fn)` -> a host egress network filter `(fn [ctx])`.
    Fires at BOTH phases: the callable receives the decrypted request
    `{'phase','method','host','path','headers'}` on the way out and the upstream
    response `{'phase','method','host','path','status','headers'}` on the way back
@@ -1205,7 +1205,7 @@
           (get spec "ops"))))
 
 ;; ── Providers: DECODED against a declared shape, never walked ────────────────
-;; A `vis.provider(...)` dict -> a canonical provider descriptor entry, and a
+;; A typed `vis.Provider(...)` declaration -> a canonical provider descriptor entry, and a
 ;; provider CALLABLE's return -> the map the host schema behind it already
 ;; declares. There is ONE mechanism: `decode`, driven by a per-contract table of
 ;; engine key -> the coercion that key's spec demands (`token-fields`,
@@ -1361,21 +1361,6 @@
    provider."
   {:base-url as-str :api-style as-api-style :default-models as-strs :is-hidden as-bool})
 
-(defn- call-provider-fn
-  "Invoke a Python provider callable with `args`, tolerating an arg-count
-   mismatch the same way the loop's refresh path tolerates it for Clojure
-   hooks (`(f rejected)` falling back to `(f)`, loop.clj): a Python callable
-   that rejects the supplied args is retried with one fewer TRAILING arg, down
-   to zero. In practice only `refresh_token` is ever handed an arg (the
-   rejected token), so both a 0-param `def refresh_token():` and a 1-param
-   `def refresh_token(rejected):` work. A genuine 0-arg failure re-throws (the
-   caller logs it and yields nil)."
-  [ext-name ctx pyfn args]
-  (loop [args (vec args)]
-    (let [r (try {:ok (call-py-ext ext-name nil ctx pyfn args)}
-                 (catch Throwable t (if (seq args) {:retry (vec (butlast args))} (throw t))))]
-      (if (contains? r :ok) (:ok r) (recur (:retry r))))))
-
 (defn- provider-fn-adapter
   "Wrap a Python provider callable as a Clojure provider fn. Args marshal in; the
    result is plainified and DECODED against `fields`, the shape that slot's host
@@ -1383,7 +1368,7 @@
    broken provider fn never bricks router build / auth."
   [ext-name ctx pyfn fields]
   (fn [& args]
-    (try (decoded-result fields (plainify (call-provider-fn ext-name ctx pyfn args)))
+    (try (decoded-result fields (plainify (call-py-ext ext-name nil ctx pyfn (vec args))))
          (catch Throwable t
            (tel/log! {:level :warn
                       :id ::provider-fn-failed
@@ -1485,7 +1470,7 @@
     nil))
 
 (defn- ->provider-entry
-  "`spec` is a Python `vis.provider(...)` dict — STRING keys. Each callable slot
+  "`spec` is a Python `vis.Provider(...)` dict — STRING keys. Each callable slot
    is adapted with the field table its own host schema declares."
   [ext-name ctx spec]
   (let [adapt
@@ -1880,7 +1865,7 @@
 
      (try (let [reg (:registration initialized)]
             (when (nil? reg)
-              (throw (ex-info (str (.getName f) " never called vis.extension(...)")
+              (throw (ex-info (str (.getName f) " never called vis.register(vis.Extension(...))")
                               {:type ::no-registration :file path})))
             (let [spec (registration->spec ctx reg)
                   validated (extension/register-extension! spec)]

@@ -4,8 +4,7 @@ import os
 import shlex
 
 import pytest
-from blockether.vis.client import TransportError
-from blockether.vis.local import LocalEngine
+from blockether.vis.engine import LocalEngine, TransportError
 
 
 def test_missing_executable_is_reported_without_a_live_process(tmp_path):
@@ -45,7 +44,7 @@ def test_real_local_engine(tmp_path):
 def test_startup_failure_closes_owned_process(tmp_path, code, error):
     import sys
 
-    from blockether.vis.client import ProtocolError, VisTimeout
+    from blockether.vis.engine import ProtocolError, VisTimeout
 
     expected = {
         "timeout": VisTimeout,
@@ -65,8 +64,8 @@ def test_request_timeout_preserves_error_and_closes_process(tmp_path):
     import json
     import sys
 
-    from blockether.vis.client import VisTimeout
-    from blockether.vis_contract import GATEWAY
+    from blockether.vis._contracts import GATEWAY
+    from blockether.vis.engine import VisTimeout
 
     hello = json.dumps({"protocol": GATEWAY["protocol"]["version"]})
     code = f"import time; print({hello!r}, flush=True); time.sleep(30)"
@@ -95,7 +94,7 @@ def test_local_event_polling_uses_the_canonical_cursor_key(monkeypatch, tmp_path
 
 @pytest.mark.parametrize("kind", ["session", "job"])
 def test_local_event_polling_has_a_bounded_idle_timeout(monkeypatch, tmp_path, kind):
-    from blockether.vis.client import VisTimeout
+    from blockether.vis.engine import VisTimeout
 
     engine = LocalEngine(executable="unused", root=tmp_path, timeout=0.01)
     polls = []
@@ -125,7 +124,7 @@ def test_local_event_polling_has_a_bounded_idle_timeout(monkeypatch, tmp_path, k
 
 
 def test_invalid_local_event_does_not_advance_the_cursor(monkeypatch, tmp_path):
-    from blockether.vis.client import ProtocolError
+    from blockether.vis.engine import ProtocolError
 
     engine = LocalEngine(executable="unused", root=tmp_path)
     monkeypatch.setattr(
@@ -173,8 +172,8 @@ def test_local_job_events_poll_the_canonical_resource(
 def test_stream_protocol_failure_closes_the_owned_process(tmp_path):
     import sys
 
-    from blockether.vis.client import ProtocolError
-    from blockether.vis_contract import GATEWAY
+    from blockether.vis._contracts import GATEWAY
+    from blockether.vis.engine import ProtocolError
 
     code = (
         f"import sys; print('{{\"protocol\": {GATEWAY['protocol']['version']}}}', flush=True); "
@@ -193,8 +192,8 @@ def test_local_errors_preserve_the_canonical_gateway_code(tmp_path):
     import json
     import sys
 
-    from blockether.vis.client import GatewayError
-    from blockether.vis_contract import GATEWAY
+    from blockether.vis._contracts import GATEWAY
+    from blockether.vis.engine import GatewayError
 
     error = base64.b64encode(
         json.dumps({"error": {"type": "not_found"}}).encode()

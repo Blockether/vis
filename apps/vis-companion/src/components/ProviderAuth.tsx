@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { AuthFlow, ProviderAuthState, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
+import { clientAuthFlow, openAuthUrl, watchAuth, type AuthWatch } from '../lib/oauth';
 import { Banner, Button, ConfirmRow, DialogFrame, IconButton, Input, ListRow, Modal } from './ui';
 import {
   ChevronIcon,
@@ -17,9 +18,6 @@ import {
 import { MENU_WIDTH, Menu, MenuHeading, MenuItem } from './Menu';
 import { SwipeActions, type SwipeAction } from './SwipeActions';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
-
-/** How long to keep polling a device flow before giving up on our side. */
-const DEVICE_POLL_CEILING_MS = 15 * 60 * 1000;
 
 /** The daemon classifies live evidence once; every surface only paints it. */
 export function providerAuthState(provider: RouterProvider): ProviderAuthState {
@@ -44,15 +42,10 @@ export function preferredModelFirst(models: string[], preferred?: string | null)
   return [...models.filter((model) => model === preferred), ...models.filter((model) => model !== preferred)];
 }
 
-/**
- * Open an OAuth URL in the system browser. `window.open` is the one call that
- * works identically on web, iOS, and Android under Capacitor's WebView, so the
- * app pulls in no extra native plugin to sign a provider in.
- */
+/** Request an external browser window; native hosts own their platform URL handling. */
 export function openProviderUrl(url: string): void {
-  window.open(url, '_blank', 'noopener,noreferrer');
+  openAuthUrl(url);
 }
-
 /**
  * THE VERDICT AS A SHAPE. Four states used to leave here as one dot in four inks
  * — and two of them were the SAME dot: verified and rejected differed by colour
@@ -380,11 +373,9 @@ export function useProviderFleet(client: GatewayClient): ProviderFleet {
  * The whole headless OAuth exchange on top of the fleet, used by the ONE
  * surface that owns provider accounts: gateway settings.
  *
- * The daemon runs the exchange end to end. `device` providers (GitHub Copilot)
- * show a code and finish by polling — the best phone UX, since nothing has to
- * be pasted back. `pkce` providers (Anthropic, Codex) open a browser and take
- * the final redirect URL back. `api-key` providers take the key. No token,
- * verifier, or device code ever lands on this device.
+ * The daemon owns every exchange. Browser and device flows both finish by
+ * polling. A reachable loopback receiver can deliver the browser result; other
+ * clients retain manual URL entry. No token or PKCE verifier lands here.
  */
 export function useProviderAuth(client: GatewayClient): ProviderAuth {
   const fleet = useProviderFleet(client);
@@ -393,69 +384,36 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
   const [redirectUrl, setRedirectUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [presets, setPresets] = useState<ProviderPreset[] | null>(null);
-  const pollRef = useRef<number | null>(null);
+  const watchRef = useRef<AuthWatch | null>(null);
+  const startGeneration = useRef(0);
+  const stopPolling = useCallback(() => { watchRef.current?.stop(); watchRef.current = null; }, []);
 
-  const stopPolling = useCallback(() => {
-    if (pollRef.current !== null) {
-      window.clearTimeout(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
+  useEffect(() => {
+    setFlow(null); setRedirectUrl(''); setApiKey('');
+    return () => { startGeneration.current += 1; stopPolling(); };
+  }, [client, setFlow, stopPolling]);
 
-  useEffect(() => stopPolling, [stopPolling]);
-
-  /**
-   * Poll a device flow until the daemon reports a verdict.
-   *
-   * Self-scheduling: the next poll is armed only AFTER the previous one
-   * settles, so a slow gateway can never stack overlapping requests the way a
-   * fixed `setInterval` would. The cadence is the provider's own
-   * `interval_ms` (GitHub rejects faster polling), floored at 2s.
-   */
-  const watchDeviceFlow = useCallback(
-    (started: AuthFlow) => {
-      const deadline = Date.now() + DEVICE_POLL_CEILING_MS;
-      const every = Math.max(2000, started.interval_ms ?? 5000);
-      stopPolling();
-      const tick = () => {
-        pollRef.current = window.setTimeout(() => {
-          void (async () => {
-            if (Date.now() > deadline) {
-              stopPolling();
-              setFlow(null);
-              setErr('Authorization timed out. Start again when ready.', started.provider_id);
-              return;
-            }
-            try {
-              const verdict = await client.pollProviderAuth(started.provider_id, started.flow_id);
-              if (pollRef.current === null) return;
-              if (verdict.status === 'pending') {
-                tick();
-                return;
-              }
-              stopPolling();
-              setFlow(null);
-              if (verdict.status === 'ok') {
-                setNote(`Signed in to ${started.provider_id}.`, started.provider_id);
-                await reload(undefined, { force: true });
-              } else {
-                setErr(verdict.message ?? 'Authorization failed.', started.provider_id);
-              }
-            } catch (e) {
-              stopPolling();
-              setFlow(null);
-              setErr((e as Error).message, started.provider_id);
-            }
-          })();
-        }, every);
-      };
-      tick();
-    },
-    [client, reload, stopPolling],
-  );
+  const watchFlow = useCallback((started: AuthFlow) => {
+    watchRef.current = watchAuth(started, {
+      complete: input => started.kind === 'api-key'
+        ? client.submitProviderKey(started.provider_id, started.flow_id, input)
+        : client.completeProviderAuth(started.provider_id, started.flow_id, input),
+      poll: () => client.pollProviderAuth(started.provider_id, started.flow_id),
+      cancel: () => client.cancelProviderAuth(started.provider_id, started.flow_id),
+    }, verdict => {
+      setFlow(null); setErr(null); setRedirectUrl(''); setApiKey('');
+      if (verdict.status === 'ok') {
+        setNote(`Signed in to ${started.provider_id}.`, started.provider_id);
+        void reload(undefined, { force: true });
+      } else setErr(verdict.message ?? 'Authorization failed.', started.provider_id);
+    }, message => setErr(message, started.provider_id));
+  }, [client, reload, setErr, setFlow, setNote]);
 
   const signIn = useCallback(
     async (provider: RouterProvider) => {
+      const generation = ++startGeneration.current;
+      stopPolling();
+      setFlow(null);
       setPending(`auth:${provider.id}`);
       setErr(null);
       setNote(null);
@@ -463,16 +421,21 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
       setApiKey('');
       try {
         const started = await client.startProviderAuth(provider.id);
-        setFlow(started);
-        if (started.url) openProviderUrl(started.url);
-        if (started.kind === 'device') watchDeviceFlow(started);
+        if (generation !== startGeneration.current) {
+          void client.cancelProviderAuth(started.provider_id, started.flow_id).catch(() => {});
+          return;
+        }
+        const url = started.url ?? started.verification_uri;
+        const presented = clientAuthFlow({ ...started, url }, client.base);
+        setFlow(presented);
+        watchFlow(presented);
       } catch (e) {
-        setErr((e as Error).message, provider.id);
+        if (generation === startGeneration.current) setErr((e as Error).message, provider.id);
       } finally {
-        setPending(null);
+        if (generation === startGeneration.current) setPending(null);
       }
     },
-    [client, watchDeviceFlow],
+    [client, setErr, setFlow, setNote, setPending, stopPolling, watchFlow],
   );
 
   /**
@@ -506,68 +469,26 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     [client, setErr, setPending, setProviders],
   );
 
-  const finishPkce = useCallback(async () => {
-    if (!flow || !redirectUrl.trim()) return;
+  const finishInput = useCallback(async (input: string) => {
+    if (!flow || !input.trim() || !watchRef.current) return;
+    const generation = startGeneration.current;
     setPending('auth:complete');
-    try {
-      const verdict = await client.completeProviderAuth(
-        flow.provider_id,
-        flow.flow_id,
-        redirectUrl.trim(),
-      );
-      if (verdict.status === 'ok') {
-        setNote(`Signed in to ${flow.provider_id}.`, flow.provider_id);
-        setFlow(null);
-        setRedirectUrl('');
-        await reload(undefined, { force: true });
-      } else {
-        setErr(verdict.message ?? 'Authorization failed.', flow.provider_id);
-      }
-    } catch (e) {
-      setErr((e as Error).message, flow.provider_id);
-    } finally {
-      setPending(null);
-    }
-  }, [client, flow, redirectUrl, reload]);
+    try { await watchRef.current.complete(input.trim()); }
+    catch (e) { if (generation === startGeneration.current) setErr((e as Error).message, flow.provider_id); }
+    finally { if (generation === startGeneration.current) setPending(null); }
+  }, [flow, setErr, setPending]);
 
-  /**
-   * Finish an `api-key` flow. The key goes straight to the daemon, which
-   * writes it into ITS config — this device never stores a credential.
-   */
-  const finishApiKey = useCallback(async () => {
-    if (!flow || !apiKey.trim()) return;
-    setPending('auth:complete');
-    try {
-      const verdict = await client.submitProviderKey(flow.provider_id, flow.flow_id, apiKey.trim());
-      if (verdict.status === 'ok') {
-        setNote(`Signed in to ${flow.provider_id}.`, flow.provider_id);
-        setFlow(null);
-        setApiKey('');
-        await reload(undefined, { force: true });
-      } else {
-        setErr(verdict.message ?? 'Authorization failed.', flow.provider_id);
-      }
-    } catch (e) {
-      setErr((e as Error).message, flow.provider_id);
-    } finally {
-      setPending(null);
-    }
-  }, [apiKey, client, flow, reload]);
+  const finishPkce = useCallback(() => finishInput(redirectUrl), [finishInput, redirectUrl]);
+  const finishApiKey = useCallback(() => finishInput(apiKey), [finishInput, apiKey]);
 
   const cancelFlow = useCallback(async () => {
-    const current = flow;
+    startGeneration.current += 1;
     stopPolling();
     setFlow(null);
+    setPending(null);
     setRedirectUrl('');
     setApiKey('');
-    if (current) {
-      try {
-        await client.cancelProviderAuth(current.provider_id, current.flow_id);
-      } catch {
-        // A flow the daemon already forgot is exactly the state we want.
-      }
-    }
-  }, [client, flow, stopPolling]);
+  }, [client, setFlow, setPending, stopPolling]);
 
   /**
    * What this machine can still add. Read on demand: the daemon answers with
@@ -728,15 +649,16 @@ function apiKeyHintLine(instructions: readonly string[] | null | undefined): str
 }
 
 /**
- * The live sign-in step: a device code to type into the browser, a redirect URL
- * to paste back, or an API key to enter. Only ever rendered by
+ * The live sign-in step: browser return, device consent, or an API key.
+ * Manual redirect input remains available as a fallback. Only rendered by
  * `ProviderNotice`, INSIDE the card of the provider the flow belongs to.
  */
 function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
+  const [manual, setManual] = useState(false);
   const { flow } = auth;
   if (!flow) return null;
   const busy = auth.pending === 'auth:complete';
-
+  const showManual = manual || !flow.callback_mode || flow.callback_mode === 'manual';
   // Only an api-key flow gets its daemon guidance pruned to the navigable line;
   // null means "nothing of it belongs here" rather than "no instructions".
   const apiKeyHint =
@@ -745,7 +667,7 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
   return (
     <div className="space-y-3 border border-accent/50 bg-panel-2 p-3">
       <p className="font-mono text-body font-bold text-white">
-        {flow.kind === 'device' ? 'Waiting for authorization…' : 'Finish sign-in'}
+        {flow.kind === 'api-key' || (flow.kind === 'pkce' && showManual) ? 'Finish sign-in' : 'Waiting for authorization…'}
       </p>
 
       {flow.user_code && (
@@ -774,7 +696,12 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
         </Button>
       )}
 
-      {flow.kind === 'pkce' && (
+      {flow.kind === 'pkce' && !showManual && (
+        <Button variant="secondary" className="w-full" onClick={() => setManual(true)}>
+          Use manual callback
+        </Button>
+      )}
+      {flow.kind === 'pkce' && showManual && (
         <div className="space-y-2">
           <label
             className="block font-mono text-meta uppercase tracking-[0.1em] text-dialog-hint"
@@ -817,7 +744,7 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
       )}
 
       <div className="flex flex-col gap-2 sm:flex-row">
-        {flow.kind === 'pkce' && (
+        {flow.kind === 'pkce' && showManual && (
           <Button
             className="flex-1"
             disabled={!auth.redirectUrl.trim() || busy}
@@ -872,7 +799,7 @@ export function ProviderNotice({
     <div className="space-y-2 border-t border-dialog-edge p-3">
       {err && <Banner kind="err">{err.text}</Banner>}
       {note && <Banner kind="ok">{note.text}</Banner>}
-      {isFlowing && <ProviderFlowPanel auth={auth} />}
+      {isFlowing && <ProviderFlowPanel key={auth.flow?.flow_id} auth={auth} />}
     </div>
   );
 }

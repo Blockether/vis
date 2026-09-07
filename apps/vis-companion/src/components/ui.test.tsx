@@ -2127,6 +2127,10 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(html().match(/bg-dialog-edge/g)?.length).toBe(2);
     });
 
+    it("gives interactive rules a touch target and a compact mouse target", () => {
+      expect(html()).toContain("min-h-11 mouse:min-h-7");
+    });
+
     it("is a rule and not a button when nothing can be loaded", () => {
       const reported = renderToStaticMarkup(
         <LoadMore label="2 more lines">2 more lines</LoadMore>,

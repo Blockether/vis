@@ -45,8 +45,8 @@
    :note! (fn [title line]
             (swap! log conj [:note title line])
             nil)
-   :wait! (fn [title _line-fn done?]
-            (swap! log conj [:wait title])
+   :wait! (fn [title line-fn done?]
+            (swap! log conj [:wait title (line-fn)])
             ;; The real one holds the band until the daemon answers or the clock
             ;; runs out; so does this, without a terminal.
             (loop [n 0]
@@ -405,44 +405,43 @@
                       "GitHub Copilot")))
           (expect (= false @start-called?)))))
   (it
-    "drives the device flow THROUGH THE GATEWAY, never the provider in-process"
-    (let [started
+    "shows the device code and polls immediately without another user action"
+    (let [log
+          (atom [])
+
+          opened
           (atom nil)
 
           polled
-          (atom 0)
-
-          log
-          (atom [])]
+          (atom 0)]
 
       (with-redefs [vis/gateway-provider-status
                     (constantly {"is_authenticated" false})
 
                     vis/gateway-provider-auth-start!
-                    (fn [provider-id]
-                      (reset! started provider-id)
-                      copilot-device-flow)
+                    (constantly copilot-device-flow)
 
                     vis/gateway-provider-auth-poll!
                     (fn [& _]
                       (swap! polled inc)
-                      {"status" "ok"})]
+                      {"status" "ok"})
+
+                    vis/gateway-provider-auth-cancel!
+                    (constantly nil)
+
+                    opener/open!
+                    #(reset! opened %)]
 
         (expect (= true
                    (@#'provider/gateway-device-login!
-                    ;; `w` — "I authorized in the browser" — on the code band.
-                    (band-stub {"GitHub Copilot" {:action :wait}} log)
+                    (band-stub {} log)
                     :github-copilot-individual
                     "GitHub Copilot")))
-        (expect (= :github-copilot-individual @started))
+        (expect (= "https://github.com/login/device" @opened))
         (expect (= 1 @polled))
-        ;; The code and the URL are the two things the user must SEE, so they
-        ;; are the band's own group headings — not a window over the list.
-        (let [spec (second (first (filter #(= :transient (first %)) @log)))]
-          (expect (str/includes? (str (mapv :title (:groups spec))) "ABCD-EFGH"))
-          (expect (str/includes? (str (mapv :title (:groups spec)))
-                                 "https://github.com/login/device"))))))
-  (it "cancels the gateway flow when the user escapes the code band"
+        (expect (str/includes? (str @log) "ABCD-EFGH"))
+        (expect (empty? (filter #(#{:transient :read} (first %)) @log))))))
+  (it "cancels the gateway flow when the user escapes the waiting band"
       (let [cancelled
             (atom nil)
 
@@ -455,75 +454,73 @@
                       vis/gateway-provider-auth-start!
                       (constantly copilot-device-flow)
 
+                      vis/gateway-provider-auth-poll!
+                      (constantly {"status" "pending"})
+
                       vis/gateway-provider-auth-cancel!
-                      (fn [_ flow-id]
-                        (reset! cancelled flow-id))]
+                      (fn [_ id]
+                        (reset! cancelled id))
+
+                      opener/open!
+                      (constantly nil)]
 
           (expect (nil? (@#'provider/gateway-device-login!
-                         (band-stub {} log)
+                         (assoc (band-stub {} log)
+                           :wait! (fn [& _]
+                                    false))
                          :github-copilot-individual
                          "GitHub Copilot"
                          true)))
           (expect (= "flow-1" @cancelled)))))
-  (it "surfaces the gateway's error verdict in the band instead of claiming success"
+  (it "surfaces a denied device flow instead of claiming success"
       (let [log (atom [])]
         (with-redefs [vis/gateway-provider-status (constantly {"is_authenticated" false})
                       vis/gateway-provider-auth-start! (constantly copilot-device-flow)
-                      vis/gateway-provider-auth-poll!
-                      (constantly {"status" "error" "message" "device authorization failed"})
-                      dlg/text-view-dialog! (fn [& _]
-                                              (throw (ex-info "a refusal opened a dialog" {})))]
+                      vis/gateway-provider-auth-poll! (constantly {"status" "error"
+                                                                   "message" "Approval denied"})
+                      vis/gateway-provider-auth-cancel! (constantly nil)
+                      opener/open! (constantly nil)]
 
           (expect (nil? (@#'provider/gateway-device-login!
-                         (band-stub {"GitHub Copilot" {:action :wait}} log)
+                         (band-stub {} log)
                          :github-copilot-individual
                          "GitHub Copilot")))
-          (expect (str/includes? (str (notes log)) "device authorization failed")))))
-  (it
-    "times out pending device authorization instead of holding the band forever"
-    (let [cancelled?
-          (atom false)
+          (expect (str/includes? (str (notes log)) "Approval denied")))))
+  (it "uses the gateway expiry instead of waiting indefinitely"
+      (let [log
+            (atom [])
 
-          log
-          (atom [])
+            cancelled
+            (atom 0)]
 
-          pending-result
-          (reify
-            java.util.concurrent.Future
-              (cancel [_ _] (reset! cancelled? true) true)
-              (isCancelled [_] @cancelled?)
-              (isDone [_] false)
-              (get [_] @(promise))
-              (get [_ _ _] (throw (java.util.concurrent.TimeoutException.)))
-            clojure.lang.IDeref
-              (deref [_] @(promise))
-            clojure.lang.IPending
-              (isRealized [_] false))]
+        (with-redefs [vis/gateway-provider-status
+                      (constantly {"is_authenticated" false})
 
-      (with-redefs [vis/gateway-provider-status
-                    (constantly {"is_authenticated" false})
+                      vis/gateway-provider-auth-start!
+                      (constantly (assoc copilot-device-flow "expires_at" 0))
 
-                    vis/gateway-provider-auth-start!
-                    (constantly copilot-device-flow)
+                      vis/gateway-provider-auth-poll!
+                      (constantly {"status" "pending"})
 
-                    vis/gateway-provider-auth-cancel!
-                    (constantly nil)
+                      vis/gateway-provider-auth-cancel!
+                      (fn [& _]
+                        (swap! cancelled inc))
 
-                    provider/device-wait-timeout-ms
-                    50
+                      opener/open!
+                      (constantly nil)]
 
-                    vis/worker-future
-                    (fn [_ _]
-                      pending-result)]
+          (expect (nil? (@#'provider/gateway-device-login!
+                         (band-stub {} log)
+                         :github-copilot-individual
+                         "GitHub Copilot")))
+          (expect (= 1 @cancelled))
+          (expect (str/includes? (str (notes log)) "timed out"))))))
 
-        (expect (nil? (@#'provider/gateway-device-login!
-                       (band-stub {"GitHub Copilot" {:action :wait}} log)
-                       :github-copilot-individual
-                       "GitHub Copilot")))
-        (expect (= true @cancelled?))
-        (expect (str/includes? (str (notes log)) "Timed out"))))))
-
-(def ^:private codex-redirect "http://localhost:1455/auth/callback?code=abc&state=s")
+(def ^:private codex-device-flow
+  {"flow_id" "flow-1"
+   "kind" "device"
+   "user_code" "ABCD-EFGH"
+   "url" "https://auth.openai.com/codex/device"})
 
 (defdescribe
   codex-oauth-ready-test
@@ -560,11 +557,11 @@
                     vis/gateway-provider-auth-start!
                     (fn [provider-id]
                       (swap! seen assoc :started provider-id)
-                      {"flow_id" "flow-1" "url" "https://auth.openai.com/authorize?x=1"})
+                      codex-device-flow)
 
-                    vis/gateway-provider-auth-complete!
-                    (fn [provider-id flow-id url]
-                      (swap! seen assoc :completed [provider-id flow-id url])
+                    vis/gateway-provider-auth-poll!
+                    (fn [provider-id flow-id]
+                      (swap! seen assoc :polled [provider-id flow-id])
                       {"status" "ok"})
 
                     opener/open!
@@ -580,19 +577,16 @@
                     (fn [& _]
                       (throw (ex-info "the paste opened a dialog" {})))]
 
-        (expect (= true
-                   (@#'provider/codex-oauth-ready!
-                    (band-stub {"OpenAI Codex — paste the final browser URL:" codex-redirect}
-                               log))))
+        (expect (= true (@#'provider/codex-oauth-ready! (band-stub {} log))))
         (expect (= :openai-codex (:started @seen)))
-        (expect (= "https://auth.openai.com/authorize?x=1" (:opened @seen)))
-        (expect (= [:openai-codex "flow-1" codex-redirect] (:completed @seen)))
+        (expect (= "https://auth.openai.com/codex/device" (:opened @seen)))
+        (expect (= [:openai-codex "flow-1"] (:polled @seen)))
         ;; The band says what saying yes COSTS before it opens a browser.
         (let [[_ question opts] (first (filter #(= :confirm (first %)) @log))]
           (expect (str/includes? question "Codex"))
           (expect (str/includes? (:cost opts) "browser"))
           (expect (= "Yes, open the browser" (:yes-label opts)))))))
-  (it "cancels the gateway flow when the user pastes nothing"
+  (it "cancels the Codex flow when the user escapes"
       (let [cancelled
             (atom nil)
 
@@ -603,16 +597,23 @@
                       (constantly {"is_authenticated" false})
 
                       vis/gateway-provider-auth-start!
-                      (constantly {"flow_id" "flow-1" "url" "https://auth.openai.com/x"})
+                      (constantly codex-device-flow)
 
                       vis/gateway-provider-auth-cancel!
                       (fn [provider-id flow-id]
                         (reset! cancelled [provider-id flow-id]))
 
+                      vis/gateway-provider-auth-poll!
+                      (constantly {"status" "pending"})
+
                       opener/open!
                       (constantly true)]
 
-          (expect (= false (@#'provider/codex-oauth-ready! (band-stub {} log))))
+          (expect (= false
+                     (@#'provider/codex-oauth-ready!
+                      (assoc (band-stub {} log)
+                        :wait! (fn [& _]
+                                 false)))))
           (expect (= [:openai-codex "flow-1"] @cancelled)))))
   (it "forces a fresh gateway flow when re-authenticating existing credentials"
       (let [start-called?
@@ -627,18 +628,15 @@
                       vis/gateway-provider-auth-start!
                       (fn [& _]
                         (reset! start-called? true)
-                        {"flow_id" "flow-1" "url" "https://auth.openai.com/x"})
+                        codex-device-flow)
 
-                      vis/gateway-provider-auth-complete!
+                      vis/gateway-provider-auth-poll!
                       (constantly {"status" "ok"})
 
                       opener/open!
                       (constantly true)]
 
-          (expect (= true
-                     (@#'provider/codex-oauth-ready!
-                      (band-stub {"OpenAI Codex — paste the final browser URL:" codex-redirect} log)
-                      true)))
+          (expect (= true (@#'provider/codex-oauth-ready! (band-stub {} log) true)))
           (expect (= true @start-called?)))))
   (it "does not force Codex login from a plain authenticate call when credentials exist"
       (let [start-called?
@@ -752,6 +750,7 @@
         (with-redefs [vis/gateway-provider-status (constantly {"is_authenticated" false})
                       vis/gateway-provider-auth-start! (constantly copilot-device-flow)
                       vis/gateway-provider-auth-poll! (constantly {"status" "ok"})
+                      opener/open! (constantly nil)
                       dlg/text-view-dialog! (fn [& _]
                                               (throw (ex-info "success opened a dialog" {})))
                       dlg/text-viewer-dialog! (fn [& _]
@@ -766,17 +765,13 @@
   (it "codex success closes the band silently"
       (let [log (atom [])]
         (with-redefs [vis/gateway-provider-status (constantly {"is_authenticated" false})
-                      vis/gateway-provider-auth-start!
-                      (constantly {"flow_id" "flow-1" "url" "https://auth.openai.com/x"})
-                      vis/gateway-provider-auth-complete! (constantly {"status" "ok"})
+                      vis/gateway-provider-auth-start! (constantly codex-device-flow)
+                      vis/gateway-provider-auth-poll! (constantly {"status" "ok"})
                       opener/open! (constantly true)
                       dlg/text-view-dialog! (fn [& _]
                                               (throw (ex-info "success opened a dialog" {})))]
 
-          (expect (= true
-                     (@#'provider/codex-oauth-ready!
-                      (band-stub {"OpenAI Codex — paste the final browser URL:" codex-redirect}
-                                 log))))
+          (expect (= true (@#'provider/codex-oauth-ready! (band-stub {} log))))
           (expect (empty? (notes log))))))
   (it "anthropic success closes the band silently (parity with copilot/codex)"
       (let [log (atom [])]

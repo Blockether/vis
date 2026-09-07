@@ -1,6 +1,6 @@
-# Published as `vis-agent`, imported as `blockether.vis`. The engine executes the same
-# `src/blockether/vis/__init__.py` that the wheel ships. `vis-contract` supplies the canonical
-# JSON declarations, and `version` mirrors the repo-root `VIS_VERSION`.
+# Published as `vis-agent`: extension authoring and engine clients in one SDK.
+# The engine executes `src/blockether/vis/extension.py`; the wheel bundles the
+# canonical JSON resources. `version` mirrors the repo-root `VIS_VERSION`.
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -9,12 +9,12 @@ build-backend = "hatchling.build"
 [project]
 name = "vis-agent"
 version = "0.1.42"
-description = "The Vis extension API — write a Vis extension in Python, and run it with or without Vis."
+description = "The Vis Python SDK — author extensions and control local or remote engines."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-dependencies = ["vis-contract==0.1.42"]
+dependencies = ["jsonschema>=4.23,<5"]
 authors = [{ name = "Blockether" }]
 keywords = ["vis", "agent", "extension", "automation", "human-in-the-loop"]
 classifiers = [
@@ -30,8 +30,11 @@ Homepage = "https://github.com/Blockether/vis"
 Source = "https://github.com/Blockether/vis"
 Issues = "https://github.com/Blockether/vis/issues"
 
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/blockether"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/blockether", "tests", "README.md", "LICENSE"]
+include = ["src/blockether", "tests", "hatch_build.py", "README.md", "LICENSE"]

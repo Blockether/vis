@@ -212,6 +212,57 @@ function activityContentFromWire(value: unknown): ActivityContent[] | null {
   return value as ActivityContent[];
 }
 
+export interface ActivitySection {
+  headline: string;
+  summary: string;
+  content: ActivityContent[];
+}
+
+export interface ActivityPresentation extends ActivitySection {
+  sections?: ActivitySection[];
+}
+
+function activityPresentationFromWire(
+  value: unknown,
+): ActivityPresentation | null {
+  const raw = record(value);
+  if (
+    !raw ||
+    !hasExactKeys(raw, ["headline", "summary", "content"], ["sections"])
+  )
+    return null;
+  const sections = raw.sections === undefined ? [] : raw.sections;
+  if (!Array.isArray(sections) || sections.length > 8) return null;
+  const bytes = (s: string) => new TextEncoder().encode(s).length;
+  if (bytes(JSON.stringify(value)) > 32768) return null;
+  let blockCount = 0;
+  for (const [index, candidate] of [raw, ...sections].entries()) {
+    const section = record(candidate);
+    if (
+      !section ||
+      !hasExactKeys(
+        section,
+        ["headline", "summary", "content"],
+        index === 0 ? ["sections"] : [],
+      )
+    )
+      return null;
+    for (const key of ["headline", "summary"]) {
+      const line = section[key];
+      if (
+        typeof line !== "string" ||
+        bytes(line) > 512 ||
+        /[\u0000-\u001f\u007f\u2028\u2029]/.test(line)
+      )
+        return null;
+    }
+    if (!section.headline || !activityContentFromWire(section.content))
+      return null;
+    blockCount += (section.content as ActivityContent[]).length;
+  }
+  return blockCount <= 32 ? (value as ActivityPresentation) : null;
+}
+
 export interface ActivityRow {
   id: string;
   sequence: number;
@@ -230,7 +281,7 @@ export interface ActivityRow {
   evidence: ActivityEvidence[];
   children?: ActivityRow[];
   is_truncated?: boolean;
-  content?: ActivityContent[];
+  presentation?: ActivityPresentation;
 }
 
 /**
@@ -379,7 +430,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
         "is_truncated",
         "summary_format",
         "result_format",
-        "content",
+        "presentation",
       ],
     )
   ) {
@@ -428,10 +479,10 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
   const children = childrenRaw?.map((child) =>
     activityRowFromWire(child, depth + 1),
   );
-  const content =
-    raw.content === undefined
+  const presentation =
+    raw.presentation === undefined
       ? undefined
-      : activityContentFromWire(raw.content);
+      : activityPresentationFromWire(raw.presentation);
   if (
     !id ||
     sequence === null ||
@@ -451,7 +502,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     (raw.error_summary !== undefined && errorSummary === undefined) ||
     (raw.summary_format !== undefined && !summaryFormat) ||
     (raw.result_format !== undefined && !resultFormat) ||
-    content === null ||
+    presentation === null ||
     childrenRaw === null ||
     children?.some((child) => child === null) ||
     (raw.is_truncated !== undefined && raw.is_truncated !== true)
@@ -475,7 +526,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     ...(summaryFormat ? { summary_format: summaryFormat } : {}),
     ...(resultFormat ? { result_format: resultFormat } : {}),
     ...(children ? { children: children as ActivityRow[] } : {}),
-    ...(content ? { content } : {}),
+    ...(presentation ? { presentation } : {}),
     ...(raw.is_truncated === true ? { is_truncated: true } : {}),
   };
 }

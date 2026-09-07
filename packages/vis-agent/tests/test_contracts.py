@@ -6,14 +6,15 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
-from blockether import vis_contract
+from blockether.vis import _contracts, _outside
+from blockether.vis.extension import Host
 
 
 def protocol_methods():
     """The declared calls on `Host`, by name."""
     return {
         name: member
-        for name, member in vars(vis_contract.Host).items()
+        for name, member in vars(Host).items()
         if inspect.isfunction(member) and not name.startswith("_")
     }
 
@@ -24,13 +25,13 @@ def complete_host():
     class Host:
         pass
 
-    for name in vis_contract.OPS:
+    for name in _contracts.OPS:
         setattr(Host, name, lambda self, *args, **kwargs: None)
     return Host()
 
 
 def test_the_contract_is_read_from_canonical_documents():
-    assert not (Path(vis_contract.__file__).with_name("contract.json")).exists()
+    assert not (Path(_contracts.__file__).with_name("contract.json")).exists()
     for name, key in {
         "gateway": "gateway",
         "view": "view",
@@ -42,19 +43,19 @@ def test_the_contract_is_read_from_canonical_documents():
         "test-runner": "test_runner",
     }.items():
         document = json.loads(
-            (vis_contract._DATA / f"{name}.json").read_text(encoding="utf-8")
+            (_contracts._DATA / f"{name}.json").read_text(encoding="utf-8")
         )
-        assert vis_contract.CONTRACT[key] == document
+        assert _contracts.CONTRACT[key] == document
 
     host = json.loads(
-        (vis_contract._DATA / "python-host.json").read_text(encoding="utf-8")
+        (_contracts._DATA / "python-host.json").read_text(encoding="utf-8")
     )
-    assert vis_contract.VERSION == host["version"]
-    assert list(vis_contract.OPS.values()) == host["ops"]
+    assert _contracts.VERSION == host["version"]
+    assert list(_contracts.OPS.values()) == host["ops"]
 
 
 def test_gateway_contract_is_whole():
-    gateway = vis_contract.GATEWAY
+    gateway = _contracts.GATEWAY
     operations = [
         operation
         for route in gateway["routes"]
@@ -62,7 +63,7 @@ def test_gateway_contract_is_whole():
     ]
     by_path = {route["path"]: route for route in gateway["routes"]}
 
-    assert gateway is vis_contract.CONTRACT["gateway"]
+    assert gateway is _contracts.CONTRACT["gateway"]
     assert gateway["version"] == 5
     lease = gateway["client_lease"]
     assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
@@ -104,8 +105,8 @@ def test_gateway_contract_is_whole():
 
 
 def test_every_op_is_completely_declared():
-    assert vis_contract.OPS
-    for name, op in vis_contract.OPS.items():
+    assert _contracts.OPS
+    for name, op in _contracts.OPS.items():
         assert op["name"] == name
         assert op["global"] == f"__vis_host_{name}__"
         assert 0 <= op["arity"] <= 3
@@ -114,16 +115,16 @@ def test_every_op_is_completely_declared():
 
 
 def test_a_refusal_is_written_exactly_where_an_op_refuses():
-    for name, op in vis_contract.OPS.items():
+    for name, op in _contracts.OPS.items():
         refuses = op["outside"] == "refuse"
         assert refuses == ("refusal" in op)
-        assert refuses == (vis_contract.refusal(name) is not None)
+        assert refuses == (_contracts.refusal(name) is not None)
         if refuses:
             assert f"vis.{name}" in op["refusal"]
 
 
 def test_the_protocol_declares_exactly_the_documents_ops():
-    assert set(protocol_methods()) == set(vis_contract.OPS)
+    assert set(protocol_methods()) == set(_contracts.OPS)
 
 
 def test_the_protocol_takes_the_arguments_the_document_counts():
@@ -134,7 +135,7 @@ def test_the_protocol_takes_the_arguments_the_document_counts():
             if parameter.kind
             in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
         ]
-        assert len(positional) - 1 == vis_contract.OPS[name]["arity"], name
+        assert len(positional) - 1 == _contracts.OPS[name]["arity"], name
 
 
 def test_every_op_carries_its_summary_into_the_protocol():
@@ -143,15 +144,15 @@ def test_every_op_carries_its_summary_into_the_protocol():
 
 
 def test_the_shell_grammar_is_a_grammar():
-    shell = vis_contract.SHELL
+    shell = _contracts.SHELL
     assert shell["default_op"] in shell["spawn_ops"]
     assert not set(shell["spawn_ops"]) & set(shell["handle_ops"])
-    assert "shell" in vis_contract.OPS
+    assert "shell" in _contracts.OPS
 
 
 def test_the_content_vocabulary_is_whole():
-    content = vis_contract.CONTENT
-    assert content is vis_contract.CONTRACT["content"]
+    content = _contracts.CONTENT
+    assert content is _contracts.CONTRACT["content"]
     assert content["version"] == 2
     assert set(content["roles"]) == {"user", "assistant", "system", "developer", "tool"}
     assert set(content["block_types"]) == {
@@ -168,8 +169,8 @@ def test_the_content_vocabulary_is_whole():
 
 
 def test_the_toggle_vocabulary_is_whole():
-    toggle = vis_contract.TOGGLE
-    assert toggle is vis_contract.CONTRACT["toggle"]
+    toggle = _contracts.TOGGLE
+    assert toggle is _contracts.CONTRACT["toggle"]
     assert toggle["version"] == 1
     assert toggle["default_type"] in toggle["types"]
     assert set(toggle["boolean_wire"]) == {"true", "false"}
@@ -180,8 +181,8 @@ def test_the_toggle_vocabulary_is_whole():
 
 
 def test_the_provider_limits_vocabulary_is_whole():
-    provider = vis_contract.PROVIDER
-    assert provider is vis_contract.CONTRACT["provider"]
+    provider = _contracts.PROVIDER
+    assert provider is _contracts.CONTRACT["provider"]
     assert provider["version"] == 1
     limits = provider["limits"]
     assert set(limits) == {
@@ -200,7 +201,7 @@ def test_the_provider_limits_vocabulary_is_whole():
 
 
 def test_the_view_vocabulary_is_whole():
-    view = vis_contract.VIEW
+    view = _contracts.VIEW
     assert set(view["kinds"]) == {"input", "live"}
     for key in (
         "field_types",
@@ -223,17 +224,17 @@ def test_the_view_vocabulary_is_whole():
 
 
 def test_every_portable_contract_area_is_exported():
-    assert vis_contract.CONFIG is vis_contract.CONTRACT["config"]
-    assert vis_contract.SURFACE is vis_contract.CONTRACT["surface"]
-    assert vis_contract.TEST_RUNNER is vis_contract.CONTRACT["test_runner"]
-    assert vis_contract.SURFACE["capabilities"] == ["format", "lint", "test"]
-    assert "paths" in vis_contract.TEST_RUNNER["selector_keys"]
+    assert _contracts.CONFIG is _contracts.CONTRACT["config"]
+    assert _contracts.SURFACE is _contracts.CONTRACT["surface"]
+    assert _contracts.TEST_RUNNER is _contracts.CONTRACT["test_runner"]
+    assert _contracts.SURFACE["capabilities"] == ["format", "lint", "test"]
+    assert "paths" in _contracts.TEST_RUNNER["selector_keys"]
 
 
 def test_check_host_answers_a_complete_host():
     host = complete_host()
-    assert vis_contract.check_host(host) is host
-    assert isinstance(host, vis_contract.Host)
+    assert _outside.check_host(host) is host
+    assert isinstance(host, Host)
 
 
 def test_check_host_names_the_ops_a_host_does_not_answer():
@@ -242,11 +243,11 @@ def test_check_host_names_the_ops_a_host_does_not_answer():
             return None
 
     with pytest.raises(TypeError) as raised:
-        vis_contract.check_host(Partial())
+        _outside.check_host(Partial())
     message = str(raised.value)
     assert "shell" in message
     assert "state_get" not in message
-    assert str(vis_contract.VERSION) in message
+    assert str(_contracts.VERSION) in message
 
 
 @pytest.mark.parametrize(
@@ -263,26 +264,26 @@ def test_check_host_names_the_ops_a_host_does_not_answer():
 )
 def test_schema_refuses_non_document_names(name):
     with pytest.raises(ValueError):
-        vis_contract.schema(name)
+        _contracts.schema(name)
 
 
 def test_activity_export_and_payload_free_validation():
-    assert vis_contract.ACTIVITY is vis_contract.CONTRACT["activity"]
+    assert _contracts.ACTIVITY is _contracts.CONTRACT["activity"]
     declaration = {"presenter": "tests", "label": "Checking"}
-    assert vis_contract.validate("activity", "declaration", declaration) is declaration
+    assert _contracts.validate("activity", "declaration", declaration) is declaration
     for bad in (
         {"presenter": "unknown"},
         {"presenter": "tests", "label": "one\ntwo"},
         {"presenter": "tests", "secret": "do-not-echo"},
     ):
         with pytest.raises(ValueError) as error:
-            vis_contract.validate("activity", "declaration", bad)
+            _contracts.validate("activity", "declaration", bad)
         assert "do-not-echo" not in str(error.value)
     with pytest.raises(ValueError):
-        vis_contract.validate("view", "missing-definition", {})
+        _contracts.validate("view", "missing-definition", {})
 
 
 def test_op_answers_one_entry_or_nothing():
-    assert vis_contract.op("shell")["name"] == "shell"
-    assert vis_contract.op("detonate") is None
-    assert vis_contract.refusal("shell") is None
+    assert _contracts.op("shell")["name"] == "shell"
+    assert _contracts.op("detonate") is None
+    assert _contracts.refusal("shell") is None
