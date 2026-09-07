@@ -1,7 +1,9 @@
 {
   "lang": "python",
-  "workspace_filesystem": {"library": "library"},
-  "prompt": "Use the prebound project paths advertised in the session: in m.py add function c returning 3 after b; in library/value.py change answer() to return 42. Keep other functions unchanged. Use the prebound project paths directly, without assigning them or constructing new Path objects for registered roots. After editing, use Python assertions to verify both advertised path globals are pathlib.Path objects and match their session registry entries. Say PATH-GLOBALS-OK only after the assertions pass.",
+  "workspace_filesystem": {
+    "library": "library"
+  },
+  "prompt": "Use the prebound project paths advertised in the session: in m.py add function c returning 3 after b; in library/value.py change answer() to return 42. Keep other functions unchanged. Use the prebound project paths directly, without assigning them or constructing new Path objects for registered roots. After editing, use Python assertions to verify project_root_path and library_path are pathlib.Path objects, project_root_path matches workspace.root, and library_path matches the cwd of its python_name entry in workspace.filesystem_roots. Assert the library cwd appears only once in filesystem_roots and workspace has no path_globals key. Say PATH-GLOBALS-OK only after the assertions pass.",
   "want": {
     "m.py": [
       "def a(",
@@ -21,7 +23,9 @@
   "want_forms": [
     "project_root_path",
     "library_path",
-    "path_globals",
+    "filesystem_roots",
+    "python_name",
+    "cwd",
     "assert"
   ],
   "want_answer": [

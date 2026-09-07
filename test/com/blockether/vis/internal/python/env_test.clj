@@ -139,16 +139,17 @@
       [ctx {}]
       (ep/bind-ctx! ctx
                     {"workspace" {"root" "/workspace/main"
-                                  "path_globals" {"project_root_path" "/workspace/main"
-                                                  "fff_path" "/workspace/fff"
-                                                  "spel_path" "/workspace/spel"}}})
+                                  "filesystem_roots"
+                                  [{"cwd" "/workspace/fff" "python_name" "fff_path"}
+                                   {"cwd" "/workspace/spel" "python_name" "spel_path"}
+                                   {"cwd" "/cache"} {"cwd" "/private" "is_denied" true}]}})
       (expect
         (=
           "True\n"
           (:stdout
             (ep/run-python-block
               ctx
-              "print(all(isinstance(globals()[n], pathlib.Path) and str(globals()[n]) == p for n, p in session['workspace']['path_globals'].items()))"))))
+              "print(all(isinstance(globals()[e['python_name']], pathlib.Path) and str(globals()[e['python_name']]) == e['cwd'] for e in session['workspace']['filesystem_roots'] if 'python_name' in e))"))))
       (expect (nil? (:error (ep/run-python-block ctx
                                                  "fff_path = None\ndel spel_path\nsaved = 42"))))
       (expect (= "/workspace/fff /workspace/spel 42\n"
@@ -160,9 +161,9 @@
                               "def fff_src():\n    return str(fff_path / 'src')"))))
       (ep/bind-ctx! ctx
                     {"workspace" {"root" "/workspace/main"
-                                  "path_globals" {"project_root_path" "/workspace/main"
-                                                  "fff_path" "/drafts/fff"
-                                                  "svar_path" "/workspace/svar"}}})
+                                  "filesystem_roots"
+                                  [{"cwd" "/drafts/fff" "python_name" "fff_path" "isolated" true}
+                                   {"cwd" "/workspace/svar" "python_name" "svar_path"}]}})
       (expect
         (=
           "/drafts/fff/src /workspace/svar False False\n"
@@ -185,9 +186,9 @@
             (expect (nil? (:error (ep/run-python-block ctx "taken_path = 42")))))
           (expect (str/includes? (try (ep/bind-ctx! ctx
                                                     {"workspace" {"root" "/workspace/rejected"
-                                                                  "path_globals"
-                                                                  {"taken_path"
-                                                                   "/workspace/other"}}})
+                                                                  "filesystem_roots"
+                                                                  [{"python_name" "taken_path"
+                                                                    "cwd" "/workspace/other"}]}})
                                       "no error"
                                       (catch Exception e (ex-message e)))
                                  "Python name collision: taken_path"))
@@ -214,7 +215,8 @@
         [ctx {}]
         (ep/bind-ctx! ctx
                       {"workspace" {"root" "/workspace/main"
-                                    "path_globals" {"fff_path" "/workspace/fff"}}})
+                                    "filesystem_roots" [{"cwd" "/workspace/fff"
+                                                         "python_name" "fff_path"}]}})
         (doseq [sym
                 '[session project_root_path fff_path fff_path.method]
 
@@ -239,8 +241,8 @@
         [ctx {} (constantly [(System/getProperty "user.dir")]) {:worker? true :jail-enabled? true}]
         (ep/bind-ctx! ctx
                       {"workspace" {"root" (System/getProperty "user.dir")
-                                    "path_globals" {"fixture_path" (System/getProperty
-                                                                     "user.dir")}}})
+                                    "filesystem_roots" [{"python_name" "fixture_path"
+                                                         "cwd" (System/getProperty "user.dir")}]}})
         (expect (nil? (:error (ep/run-python-block
                                 ctx
                                 "project_root_path = None\nfixture_path = None\nsession = None"))))

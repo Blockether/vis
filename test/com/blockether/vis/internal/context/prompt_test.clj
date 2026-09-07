@@ -915,7 +915,10 @@
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "Write a PROGRAM, not a transcript"))
                    (expect (str/includes? text "`project_root_path`"))
-                   (expect (str/includes? text "`session[\"workspace\"][\"path_globals\"]`"))
+                   (expect (str/includes? text "`session[\"workspace\"][\"filesystem_roots\"]`"))
+                   (expect (str/includes? text "`python_name`"))
+                   (expect (str/includes? text "`cwd`"))
+                   (expect (not (str/includes? text "path_globals")))
                    (expect (str/includes? text "prebound `Path` objects"))
                    (expect (str/includes? text "do not redefine them or guess aliases"))
                    (expect (not (str/includes? text "prebound `root`")))

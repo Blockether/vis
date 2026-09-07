@@ -511,9 +511,13 @@ never silently overwritten.
 
 `search: false` entries (typically caches) receive no automatic name; an explicit
 `python_name` opts them in. The implicit `~/.vis` grant has none. A path global does
-not grant access or change read-only policy. Drafted entries point at their working
-copies; denied entries have no alias. The exact registry is advertised in
-`session["workspace"]["path_globals"]` and refreshed with the Python bindings.
+not grant access or change read-only policy. In
+`session["workspace"]["filesystem_roots"]`, each registered entry's `python_name`
+binds a `Path` pointing at its `cwd` — the current working copy, including drafts.
+Entries without an alias omit `python_name`; denied entries retain `is_denied: true`
+and have no alias. The primary workspace is only `session["workspace"]["root"]`,
+bound as `project_root_path`, not repeated among the additional roots. These entries
+and their Python bindings refresh together; no separate path registry is published.
 
 `draft` decides what an engine-isolated session sees:
 

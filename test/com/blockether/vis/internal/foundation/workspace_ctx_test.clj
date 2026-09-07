@@ -19,30 +19,64 @@
     (io/delete-file f true)))
 
 (defdescribe
-  project-path-globals-test
-  (it "publishes the current project and remaps registered siblings into their working copies"
+  project-filesystem-roots-test
+  (it
+    "merges registered names into filesystem roots and advertises working copies only once"
+    (let [block
+          (wctx/render-block
+            {:workspace {:root "/draft/main" :repo-root "/projects/main"}
+             :filesystem-roots
+             [{:trunk "/projects/main" :clone "/draft/main" :primary? true}
+              {:trunk "/projects" :clone "/draft/broad"}
+              {:trunk "/projects/library" :clone "/draft/library" :draft :copy-only}
+              {:trunk "/projects/private" :clone "/projects/private" :denied? true}
+              {:trunk "/cache" :clone "/draft/cache" :no-search? true}]
+             :project-paths {"main_path" "/projects/main"
+                             "library_path" "/projects/library"
+                             "nested_path" "/projects/library/nested"
+                             "private_path" "/projects/private"
+                             "private_nested_path" "/projects/private/nested"
+                             "reference_path" "/projects/reference"
+                             "readonly_path" "/reference/readonly"}})
+
+          roots
+          (get block "filesystem_roots")]
+
+      (expect (= "/draft/main" (get block "root")))
+      (expect (not (contains? block "path_globals")))
+      (expect (= {"library_path" "/draft/library"
+                  "nested_path" "/draft/library/nested"
+                  "reference_path" "/draft/broad/reference"
+                  "readonly_path" "/reference/readonly"}
+                 (into {}
+                       (keep #(when (get % "python_name") [(get % "python_name") (get % "cwd")]))
+                       roots)))
+      (expect (= [{"cwd" "/draft/library"
+                   "python_name" "library_path"
+                   "isolated" true
+                   "draft" "copy-only"}]
+                 (filter #(= "/draft/library" (get % "cwd")) roots)))
+      (expect (= [{"cwd" "/projects/private" "isolated" false "draft" "shared" "is_denied" true}]
+                 (filter #(get % "is_denied") roots)))
+      (expect (some #(= {"cwd" "/draft/cache" "isolated" true "draft" "shared"} %) roots))
+      (expect (not-any? #(#{"/projects/main" "/draft/main"} (get % "cwd")) roots))))
+  (it "keeps the main root in workspace.root without an extra catalog or duplicate root row"
       (let [block (wctx/render-block
-                    {:workspace {:root "/draft/main" :repo-root "/projects/main"}
-                     :filesystem-roots
-                     [{:trunk "/projects" :clone "/draft/broad"}
-                      {:trunk "/projects/library" :clone "/draft/library"}
-                      {:trunk "/projects/private" :clone "/projects/private" :denied? true}]
-                     :project-paths {"main_path" "/projects/main"
-                                     "library_path" "/projects/library"
-                                     "nested_path" "/projects/library/nested"
-                                     "private_path" "/projects/private"
-                                     "private_nested_path" "/projects/private/nested"
-                                     "reference_path" "/projects/reference"}})]
-        (expect (= {"project_root_path" "/draft/main"
-                    "library_path" "/draft/library"
-                    "nested_path" "/draft/library/nested"
-                    "reference_path" "/draft/broad/reference"}
-                   (get block "path_globals")))))
-  (it "exports only the primary root without a registered catalog"
-      (expect (= {"project_root_path" "/projects/main"}
-                 (get (wctx/render-block {:workspace {:root "/projects/main"
-                                                      :repo-root "/projects/main"}})
-                      "path_globals")))))
+                    {:workspace {:root "/projects/main" :repo-root "/projects/main"}
+                     :filesystem-roots [{:trunk "/projects/main" :clone "/projects/main"}]
+                     :project-paths {"main_path" "/projects/main"}})]
+        (expect (= "/projects/main" (get block "root")))
+        (expect (not (contains? block "path_globals")))
+        (expect (not (contains? block "filesystem_roots")))))
+  (it "preserves explicitly registered distinct names for the same directory"
+      (let [roots (get (wctx/render-block {:workspace {:root "/projects/main"}
+                                           :filesystem-roots [{:trunk "/projects/library"
+                                                               :clone "/projects/library"}]
+                                           :project-paths {"library_path" "/projects/library"
+                                                           "reference_path" "/projects/library"}})
+                       "filesystem_roots")]
+        (expect (= ["library_path" "reference_path"] (mapv #(get % "python_name") roots)))
+        (expect (= ["/projects/library" "/projects/library"] (mapv #(get % "cwd") roots))))))
 
 (defdescribe
   render-block-test

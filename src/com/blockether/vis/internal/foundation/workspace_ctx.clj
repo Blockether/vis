@@ -26,33 +26,53 @@
    set never blows the CTX budget."
   50)
 
-(defn- project-path-globals
-  "Project registrations onto the session's permitted working copies, never denied trunks."
+(defn- project-filesystem-roots
+  "Merge registrations into filesystem roots, projecting names and cwd onto permitted working copies."
   [root repo-root filesystem-roots project-paths]
   (let [own
         (set [root (canonical-path repo-root)])
 
         mappings
-        (sort-by (comp count :trunk) > filesystem-roots)]
+        (sort-by (comp count :trunk) > filesystem-roots)
 
-    (reduce-kv (fn [bindings alias path]
-                 (let [source
-                       (.toPath (io/file path))
+        projects
+        (keep
+          (fn [[alias path]]
+            (let [source
+                  (.toPath (io/file path))
 
-                       mapping
-                       (some #(when (.startsWith source (.toPath (io/file (:trunk %)))) %)
-                             mappings)]
+                  mapping
+                  (some #(when (.startsWith source (.toPath (io/file (:trunk %)))) %) mappings)]
 
-                   (if (or (contains? own path) (:denied? mapping))
-                     bindings
-                     (let [target (if mapping
-                                    (str (.resolve (.toPath (io/file (:clone mapping)))
-                                                   (.relativize (.toPath (io/file (:trunk mapping)))
-                                                                source)))
-                                    path)]
-                       (if (= root target) bindings (assoc bindings alias target))))))
-               (sorted-map "project_root_path" root)
-               (or project-paths {}))))
+              (when-not (or (contains? own path) (:denied? mapping))
+                (let [target (if mapping
+                               (str (.resolve
+                                      (.toPath (io/file (or (:clone mapping) (:trunk mapping))))
+                                      (.relativize (.toPath (io/file (:trunk mapping))) source)))
+                               path)]
+                  (when-not (= root target)
+                    (assoc mapping
+                      :trunk path
+                      :clone target
+                      :python-name alias))))))
+          (sort-by key project-paths))
+
+        registered
+        (into #{} (map :trunk) projects)]
+
+    (mapv (fn [{:keys [trunk clone draft denied? python-name]}]
+            (cond-> {"cwd" (if denied? trunk (or clone trunk))
+                     "isolated" (boolean (and clone (not= clone trunk)))
+                     "draft" (name (or draft :shared))}
+              denied?
+              (assoc "is_denied" true)
+
+              python-name
+              (assoc "python_name" python-name)))
+          (concat
+            projects
+            (remove #(or (:primary? %) (contains? own (:trunk %)) (contains? registered (:trunk %)))
+              filesystem-roots)))))
 
 (defn render-block
   "Project a hydrated `{:workspace :session-state}` pair into the
@@ -62,12 +82,11 @@
    stringified `git/vcs-kind`).
 
    workspace identity — `\"root\"` `\"isolated\"` `\"id\"` `\"label\"`
-     `\"filesystem_roots\"` (configured `workspace.filesystem` catalog entries,
-     each with its `\"draft\"` isolation policy and whether this session sees an
-     `\"isolated\"` private copy; the session's OWN trunk↔clone pair is folded
-     into \"root\"/\"isolated\" instead)
-   \"path_globals\" — the exact prebound Python Path name -> working-directory catalog;
-     cache-only grants and draft-denied roots are never implicitly exported.
+     `\"filesystem_roots\"` — additional roots with their working `\"cwd\"`, `\"draft\"`
+       isolation policy and `\"isolated\"` flag. A registered project's `\"python_name\"`
+       binds a prebound Python Path to that same cwd; caches and denied roots have
+       no automatic name. The session's OWN root stays in `\"root\"`/`\"isolated\"`
+       and binds `project_root_path`, never a duplicate filesystem-roots row.
    `\"changed\"` / `\"changed_paths\"` — since-fork edits
    session linkage — `\"session_state_id\"` `\"session_id\"` `\"session_title\"`
      `\"session_fork_of\"` (foreign namespaces stay folded)"
@@ -84,13 +103,14 @@
         isolated?
         (not= :live (or (:workspace-backend workspace) (when fork-ms :legacy-isolated) :live))
 
+        roots
+        (project-filesystem-roots root (:repo-root workspace) filesystem-roots project-paths)
+
         changed
         (when (and root fork-ms (.exists (io/file root)))
           (try (workspace/changed-paths root fork-ms) (catch Throwable _ nil)))]
 
     (cond-> {"root" root
-             "path_globals"
-             (project-path-globals root (:repo-root workspace) filesystem-roots project-paths)
              "isolated" isolated?
              "vcs_kind" (some-> (git-core/vcs-kind root)
                                 name)}
@@ -100,15 +120,8 @@
       (:label workspace)
       (assoc "label" (:label workspace))
 
-      (seq (remove :primary? filesystem-roots))
-      (assoc "filesystem_roots"
-        (mapv (fn [{:keys [trunk clone draft denied?]}]
-                (cond-> {"cwd" trunk
-                         "isolated" (boolean (and clone (not= clone trunk)))
-                         "draft" (name (or draft :shared))}
-                  denied?
-                  (assoc "is_denied" true)))
-              (remove :primary? filesystem-roots)))
+      (seq roots)
+      (assoc "filesystem_roots" roots)
 
       changed
       (assoc "changed"

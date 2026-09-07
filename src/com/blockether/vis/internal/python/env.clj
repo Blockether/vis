@@ -711,8 +711,9 @@
 (def ^:private context-bindings-python
   "def __vis_bind_ctx__(g, data, fallback):
     workspace = data.get('workspace') or {}
-    paths = {name: __import__('pathlib').Path(path)
-             for name, path in (workspace.get('path_globals') or {}).items()}
+    paths = {entry['python_name']: __import__('pathlib').Path(entry['cwd'])
+             for entry in (workspace.get('filesystem_roots') or [])
+             if entry.get('python_name') and not entry.get('is_denied')}
     paths['project_root_path'] = __import__('pathlib').Path(workspace.get('root') or fallback)
     old = set(g.get('__vis_path_names__', ['project_root_path']))
     names = set(paths)
@@ -730,11 +731,12 @@
 ")
 
 (defn bind-ctx!
-  "Refresh `session` and the prebound Path globals in workspace.path_globals.
+  "Refresh `session` and prebound Paths from workspace.root and filesystem_roots.
 
    `project_root_path` always points at the working workspace (or the host working
-   directory for a standalone context). Registered names share the prompt's exact
-   registry, disappear when removed, and cannot overwrite tools or user variables.
+   directory for a standalone context). Each filesystem root's `python_name` binds
+   its working `cwd`, sharing the prompt's exact entries. Removed names disappear;
+   new names cannot overwrite tools or user variables.
    All are host-owned: block-local shadows cannot replace later blocks' bindings."
   [session data]
   (py-exec! session

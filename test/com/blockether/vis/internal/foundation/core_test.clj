@@ -47,11 +47,17 @@
             delta
             (renderer/render-ctx-delta standing removed)]
 
-        (expect (= {"project_root_path" "/projects/main" "library_path" "/projects/library"}
-                   (get-in standing ["workspace" "path_globals"])))
-        (expect (str/includes? rendered "\"library_path\": \"/projects/library\""))
-        (expect (str/includes? delta
-                               "del session[\"workspace\"][\"path_globals\"][\"library_path\"]"))
+        (expect (= "/projects/main" (get-in standing ["workspace" "root"])))
+        (expect (= [{"cwd" "/projects/library"
+                     "python_name" "library_path"
+                     "isolated" false
+                     "draft" "shared"}]
+                   (filter #(get % "python_name")
+                           (get-in standing ["workspace" "filesystem_roots"]))))
+        (expect (not (contains? (get standing "workspace") "path_globals")))
+        (expect (str/includes? rendered "\"python_name\": \"library_path\""))
+        (expect (= 1 (count (re-seq #"\"/projects/library\"" rendered))))
+        (expect (str/includes? delta "del session[\"workspace\"][\"filesystem_roots\"]"))
         (python-env/bind-ctx! python standing)
         (expect (= "/projects/main /projects/library\n"
                    (:stdout (python-env/run-python-block

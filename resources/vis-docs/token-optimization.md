@@ -83,7 +83,7 @@ This turns many reads plus a reduction into one visible result instead of one tr
 
 The sandbox keeps state between blocks, so treat it as one program the session is building rather than a run of disposable snippets.
 
-Derive workspace paths from `project_root_path`, a prebound `pathlib.Path` supplied by the host. Registered projects have their own prebound names, such as `fff_path` or `vis_python_runtime_path`; `session["workspace"]["path_globals"]` lists the exact available names and directories. Do not redefine them or guess an alias. The registry and its `Path` bindings refresh together before every block, including draft paths and removed projects:
+Derive workspace paths from `project_root_path`, a prebound `pathlib.Path` supplied by the host for `session["workspace"]["root"]`. Additional projects advertise their exact names in `session["workspace"]["filesystem_roots"]`: an entry with `python_name` binds a prebound `Path` to that entry's `cwd`, such as `fff_path` or `vis_python_runtime_path`. Entries without `python_name` have no path global. Do not redefine these names or guess an alias. The entries and their `Path` bindings refresh together before every block, including draft paths and removed projects:
 
 ```python
 src, tests = project_root_path / "src", project_root_path / "test"
