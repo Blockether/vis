@@ -2,6 +2,15 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.43 (5468) — 2026-09-07
+<!-- commit: 063f8998138a1888c28a31a347ddb1fda02334ce -->
+
+- Join Activity with execution bands
+- Keep only macOS on self-hosted runners
+- Register OAuth callbacks in existing projects
+- Record companion build 5463
+
+
 ## 0.1.43 (5463) — 2026-09-07
 <!-- commit: 548183a79fd7a98368a3085c93df1f1705d04c35 -->
 
