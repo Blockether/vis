@@ -94,6 +94,21 @@ describe("queued turns tray", () => {
       expect(onError).toHaveBeenCalledWith("queue changed first"),
     );
   });
+  it("keeps one queued turn to one row instead of stacking a title above it", () => {
+    render(
+      <QueuedTurnsTray
+        client={gateway()}
+        sid="session-1"
+        queued={queued}
+        paused={null}
+        onError={() => {}}
+      />,
+    );
+
+    const queue = screen.getByRole("region", { name: "Queued messages" });
+    expect(queue.parentElement?.childElementCount).toBe(1);
+  });
+
   it("keeps a long queue in a named keyboard-scrollable region", () => {
     render(
       <QueuedTurnsTray

@@ -70,14 +70,10 @@ export function QueuedTurnsTray({
         </div>
       )}
 
-      {/* This is paper arriving over the dock, not a full-width page band. It
-          shares the composer's field radius and shadow so both read as one object. */}
+      {/* The queue is one compact dock row per turn. Its labelled region carries
+          the context without stacking a title row above the message. */}
       {queued.length > 0 && (
         <div className="mb-1.5 overflow-clip rounded-field border border-dialog-edge bg-panel shadow-[3px_3px_0_var(--dialog-shadow)]">
-          <div className="flex items-center gap-1.5 border-b border-dialog-edge bg-dialog-title px-2.5 py-1 font-mono text-meta font-bold text-dialog-title-foreground">
-            <span aria-hidden="true">┌</span>
-            Queued · {queued.length}
-          </div>
           <div
             role="region"
             aria-label="Queued messages"
@@ -92,7 +88,7 @@ export function QueuedTurnsTray({
                 <div
                   key={item.turnId}
                   role="listitem"
-                  className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 py-1 first:border-t-0 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${isBusy ? " opacity-50" : ""}`}
+                  className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 first:border-t-0 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none mouse:py-1${isBusy ? " opacity-50" : ""}`}
                 >
                 <span className="shrink-0 font-mono text-meta font-bold text-accent-ink">
                   #{index + 1}
