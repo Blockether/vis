@@ -1204,9 +1204,9 @@
     (rift-excluded-paths clone)))
 
 (defn changed-paths
-  "Repo-relative paths of files under `clone` whose mtime is newer than
-   `fork-ms` — i.e. exactly what the agent touched since the fork
-   (`clonefile` preserves source mtimes, so untouched files stay older).
+  "Repo-relative paths of files under `clone` whose mtime is at or after
+   `fork-ms`. Fork creation advances the millisecond boundary after seeding,
+   so untouched files stay strictly older, including copied pending work.
    Prunes VCS/build/cache dirs (`prune-dir?`) — landing `.git/` would corrupt
    trunk's repo, and tool caches would flood the result. Returns a vec
    of strings.
@@ -1243,7 +1243,7 @@
                           (visitFile [file ^BasicFileAttributes attrs]
                             (let [rel (.relativize root ^Path file)]
                               (when (and (not (skip? rel))
-                                         (> (.toMillis (.lastModifiedTime attrs)) (long fork-ms)))
+                                         (>= (.toMillis (.lastModifiedTime attrs)) (long fork-ms)))
                                 ;; Repo-relative DISPLAY paths are `/`-separated on every OS.
                                 (.add acc (paths/unixify rel))))
                             FileVisitResult/CONTINUE)
@@ -1611,6 +1611,15 @@
         current
         (insert-trunk! db-info session-state-id canon)))))
 
+(defn- fork-baseline-ms
+  "Advance past seeding's millisecond so edits at the returned baseline are unambiguous."
+  []
+  (let [seeded-at (long (util/now-ms))]
+    (loop []
+
+      (let [now (long (util/now-ms))]
+        (if (> now seeded-at) now (do (Thread/sleep 1) (recur)))))))
+
 (defn- fork-extra-roots!
   "Mint one private Rift clone per planned extra root (`[{:trunk :policy}]`,
    from `draft-isolation-plan`). Returns persistable entries, each recording
@@ -1625,7 +1634,7 @@
                            (backend-fork! trunk trunk name (draft-backend-for trunk))]
                        (cond-> {:trunk trunk
                                 :clone (file-path root)
-                                :fork-ms (util/now-ms)
+                                :fork-ms (fork-baseline-ms)
                                 :backend (clojure.core/name (backend-id backend))
                                 :policy (clojure.core/name (draft-policy-id policy))}
                          mechanism
@@ -1699,10 +1708,10 @@
             (when clean? (rift/clean! {:at root :commit "HEAD"})))
           (catch Throwable t (try (discard-root! backend root) (catch Throwable _ nil)) (throw t)))
 
-        ;; Capture AFTER the clone returns: cloned files keep their (older)
-        ;; source mtime, so only post-fork agent edits exceed this baseline.
+        ;; Seeded files must be strictly older than the persisted baseline;
+        ;; an agent edit in the baseline's own millisecond still needs to land.
         fork-ms
-        (util/now-ms)
+        (fork-baseline-ms)
 
         ;; Every catalog root whose `draft` policy demands a PRIVATE copy gets one
         ;; minted here, so the draft never writes through to the real root. The

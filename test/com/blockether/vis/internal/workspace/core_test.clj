@@ -8,6 +8,7 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.workspace.core :as ws]
+            [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]]
             [next.jdbc :as jdbc]))
 
@@ -129,6 +130,16 @@
   (it "workspace-root returns nil for blank input"
       (expect (nil? (ws/workspace-root "   ")))
       (expect (nil? (ws/workspace-root nil)))))
+
+(defdescribe fork-baseline-ms-test
+             (it "advances the persisted baseline past the final seeding millisecond"
+                 (let [ticks (atom [100 100 101])]
+                   (with-redefs [util/now-ms (fn ^long []
+                                               (let [now (first @ticks)]
+                                                 (swap! ticks rest)
+                                                 (long now)))]
+                     (expect (= 101 (#'ws/fork-baseline-ms)))
+                     (expect (empty? @ticks))))))
 
 (defdescribe
   changed-paths-test

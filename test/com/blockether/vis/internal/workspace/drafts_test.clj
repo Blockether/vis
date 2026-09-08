@@ -244,11 +244,19 @@
                                                   :label "ignored"
                                                   :from (seed-trunk! store base)})]
                        (expect (false? (.exists (io/file (:root draft) "secret.env"))))
-                       (spit (io/file (:root draft) "new.txt") "edited in the draft\n")
+                       (expect (empty? (ws/changed-paths (:root draft) (:fork-ms draft)))
+                               "copied pending work is older than the apply baseline")
+                       (let [file (io/file (:root draft) "new.txt")]
+                         (spit file "edited in the draft\n")
+                         ;; Deterministic regression for writes within the fork's millisecond.
+                         (expect (.setLastModified file
+                                                   (long (or (:apply-fork-ms draft)
+                                                             (:fork-ms draft))))))
                        (.delete (io/file (:root draft) "a.txt"))
                        (let [{:keys [changed]} (ws/apply! store {:workspace-id (:id draft)})]
                          (expect (= {"new.txt" :modify "a.txt" :delete}
                                     (into {} (map (juxt :path :status)) changed)))
+                         (expect (= "edited in the draft\n" (slurp (io/file base "new.txt"))))
                          (expect (= "TOKEN=1\n" (slurp (io/file base "secret.env"))))
                          (expect (false? (.exists (io/file base "a.txt")))))))))))
 
