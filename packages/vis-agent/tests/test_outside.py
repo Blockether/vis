@@ -594,17 +594,6 @@ def test_a_nap_answers_a_surface_the_moment_it_touches_the_view(monkeypatch):
     # for details the extension already had.
     recorder = vis.testing.LiveRecorder(vis._host)
     monkeypatch.setattr(vis, "_host", recorder)
-    now = [0.0]
-    slept = []
-
-    def fake_sleep(seconds):
-        now[0] += seconds
-        slept.append(seconds)
-        if len(slept) == 2:
-            recorder.select("jobs", ["b"])
-
-    monkeypatch.setattr(vis.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(vis.time, "sleep", fake_sleep)
     view = vis.live(
         "CI",
         [
@@ -618,15 +607,13 @@ def test_a_nap_answers_a_surface_the_moment_it_touches_the_view(monkeypatch):
         ],
     )
 
-    # Nothing to wait for costs nothing: no slice, no host call.
+    # A change before the host starts waiting must not be lost.
+    before = len(recorder.said)
     assert view.sleep(0) is False
-    assert slept == []
-
+    assert len(recorder.said) == before
+    recorder.select("jobs", ["b"])
     assert view.sleep(3.0) is True
-    assert sum(slept) <= 0.5
     assert recorder.node("jobs")["selected_ids"] == ["b"]
-
-    slept.clear()
-    assert view.sleep(1.0) is False
-    assert sum(slept) == pytest.approx(1.0)
+    assert len(recorder.said) == before + 1
+    assert view.sleep(0.01) is False
     view.close()

@@ -1836,6 +1836,7 @@
         (reset! cell patched)
         (sink/append! (:file entry) applied)
         (publish! (:channel-ids entry) (lifecycle-event :view/patch entry {:patch applied}))
+        (.notifyAll ^Object cell)
         patched))))
 
 (defn select-live!
@@ -2098,6 +2099,7 @@
                               (seq snapshots)
                               (assoc :selection-snapshots snapshots)))
                (deliver (:promise entry) model-result)
+               (.notifyAll ^Object cell)
                (publish! (:channel-ids entry)
                          (lifecycle-event :view/close entry {:result artifact-result}))
                (tel/log! {:level :debug
@@ -2653,6 +2655,40 @@
         (str "no live view " view-id " is open — it was closed, interrupted, or never opened")))
     {:view-id view-id :is-open false :result result}))
 
+(defn- live-state
+  "Read a snapshot, or wait on its monitor until its sequence changes or it closes.
+   Check and wait share the patch/close lock, so no notification can be lost.
+   A timeout carries no picture and publishes no activity or view event."
+  [view-id opts]
+  (let [timeout
+        (get opts "timeout_ms" 0)
+
+        after
+        (get opts "after_seq")]
+
+    (when-not (and (integer? timeout)
+                   (<= 0 timeout 86400000)
+                   (or (zero? (long timeout)) (and (integer? after) (<= 0 after Long/MAX_VALUE))))
+      (invalid-live-patch!
+        "state timeout_ms must be 0..86400000; a wait requires nonnegative after_seq"))
+    (if-let [entry (live-entry view-id)]
+      (let [cell (:view entry)
+            began (System/nanoTime)]
+
+        (locking cell
+          (loop []
+
+            (let [view @cell
+                  remaining (- (long timeout) (quot (- (System/nanoTime) began) 1000000))]
+
+              (cond (realized? (:promise entry))
+                    {:view-id view-id :is-open false :result @(:promise entry)}
+                    (or (zero? (long timeout)) (not= after (:seq view)))
+                    {:view-id view-id :is-open true :view view}
+                    (<= remaining 0) {:view-id view-id :is-open true :timed-out true}
+                    :else (do (.wait ^Object cell (long remaining)) (recur)))))))
+      (live-ended view-id))))
+
 (defn live-dispatch
   "One live-view op: an options map with wire keys in, the answer map out.
 
@@ -2679,10 +2715,7 @@
           (live-ended view-id)))
 
       "state"
-      (let [view-id (live-handle-id opts op)]
-        (if-let [view (live-view view-id)]
-          {:view-id view-id :is-open true :view view}
-          (live-ended view-id)))
+      (live-state (live-handle-id opts op) opts)
 
       "close"
       (let [view-id (live-handle-id opts op)]
@@ -2698,9 +2731,8 @@
    rather than minting keywords from guest data — so an extension always reaches
    the channels the host picked, exactly as [[request-json!]] does.
 
-   Nothing blocks. A form parks the extension because it owes the human a value;
-   a view owes nobody anything, so the push crosses, the surfaces learn, and the
-   extension carries on."
+   Only a `state` with `timeout_ms` blocks: it waits for a change or close,
+   without periodic guest callbacks or publishing a view event."
   [envelope-json]
   (let [envelope (json/read-json (str envelope-json) :key-fn identity)]
     (when-not (map? envelope) (invalid-live-view! "a live envelope must be a JSON object"))

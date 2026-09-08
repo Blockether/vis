@@ -8328,6 +8328,22 @@
                           (hi/close-live! view-id))
                         (try (env/dispose-python-context! pc) (catch Throwable _ nil)))))))))
 
+(defdescribe live-view-blocking-wait-bridge-test
+             (it "waits through the guest host bridge and returns only a timeout envelope"
+                 (let [[result left]
+                       (watching-block
+                         (str (open-a-view)
+                              "before = __import__('time').monotonic()\n"
+                              "waited = json.loads(__vis_host_live__(json.dumps({'op': 'state', "
+                              "'view_id': answer['view_id'], 'after_seq': answer['view']['seq'], "
+                              "'timeout_ms': 30})))\n"
+                              "assert waited['timed_out'] and 'view' not in waited\n"
+                              "assert __import__('time').monotonic() - before >= 0.03\n"
+                              "print('waited without polling')\n"))]
+                   (expect (nil? (:error result)))
+                   (expect (str/includes? (str (:stdout result)) "waited without polling"))
+                   (expect (= 1 (count left))))))
+
 (defdescribe live-view-owns-the-eval-wall-test
              ;; Regression, reported from the app: watching a CI run died at `Timeout (300s)` with the
              ;; build still going — five minutes is the eval backstop, and a run worth
@@ -8379,7 +8395,10 @@
                                                     (swap! outcomes conj outcome)
                                                     (settle-running state outcome summary))]
               (cancelled-watching-block
-                (str (open-a-view) "import time\n" "print('polled once')\n" "time.sleep(30)\n")))
+                (str (open-a-view)
+                     "print('polled once')\n"
+                     "__vis_host_live__(json.dumps({'op': 'state', 'view_id': answer['view_id'], "
+                     "'after_seq': answer['view']['seq'], 'timeout_ms': 30000}))\n")))
 
             row
             (first (:attachments result))]

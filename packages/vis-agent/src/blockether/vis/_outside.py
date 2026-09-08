@@ -1000,6 +1000,8 @@ def live(envelope_json):
             raise Refused(complaint)
         view_id = str(uuid.uuid4())
         held = {"view_id": view_id, "view": json.loads(json.dumps(view)), "seq": 0}
+        held["condition"] = threading.Condition()
+        held["view"]["seq"] = 0
         held["view"]["id"] = view_id
         _LIVE_VIEWS[view_id] = held
         print("\n== {} ==".format(view.get("title")), file=sys.stderr)
@@ -1015,6 +1017,23 @@ def live(envelope_json):
         raise Refused(
             f"no live view {view_id} is open — it was closed, interrupted, or never opened"
         )
+    with held["condition"]:
+        if op == "state" and envelope.get("timeout_ms", 0) > 0:
+            changed = held["condition"].wait_for(
+                lambda: "result" in held or held["seq"] != envelope.get("after_seq"),
+                timeout=envelope["timeout_ms"] / 1000,
+            )
+            if not changed:
+                return json.dumps(
+                    {"view_id": view_id, "is_open": True, "timed_out": True}
+                )
+        answer = _live_handle(held, envelope, op, view_id)
+        if op in {"patch", "close"}:
+            held["condition"].notify_all()
+        return answer
+
+
+def _live_handle(held, envelope, op, view_id):
     if held.get("result"):
         # The engine answers an ended view from its record rather than refusing;
         # the loop pushing into it learns WHY it stopped, in one shape.
@@ -1027,6 +1046,7 @@ def live(envelope_json):
         ops = (envelope.get("patch") or {}).get("ops") or []
         _live_say([_live_apply(held["view"], one) for one in ops])
         held["seq"] += 1
+        held["view"]["seq"] = held["seq"]
         return json.dumps({"view_id": view_id, "is_open": True, "seq": held["seq"]})
     ending_spec = envelope.get("ending") or {}
     verdict = _live_verdict(held, ending_spec)

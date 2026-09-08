@@ -229,7 +229,8 @@ export function NativeNotificationsPanel({
   // Nothing is claimed before that machine's own answer is read back; a machine
   // this device never connected to answers no.
   const [notify, setNotify] = useState(false);
-
+  // Cached devices do not mean the local permission and preference have loaded.
+  const [isLoaded, setIsLoaded] = useState(false);
   const load = useCallback(
     async (signal?: AbortSignal) => {
       try {
@@ -243,6 +244,7 @@ export function NativeNotificationsPanel({
         setDevices(state.devices);
         setPerm(permission);
         setNotify(wanted);
+        setIsLoaded(true);
         setErr(null);
         // A machine that was upgraded since the last visit answers now: take
         // the remembered refusal back off rather than staying hidden until the
@@ -363,7 +365,7 @@ export function NativeNotificationsPanel({
   // WHOLE fleet at one request each (`lib/notify.ts`), the row paints from
   // there, and the revalidating read below is answered by that same request
   // (`gateway.ts`).
-  const isSettled = devices !== null && areMasksRead;
+  const isSettled = isLoaded && devices !== null && areMasksRead;
   const live = isSettled
     ? notifyVerdict({
         isHeld: isHeldBy(devices ?? [], masks),

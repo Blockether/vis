@@ -1342,7 +1342,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   const lineCount = value ? value.split("\n").length : 0;
   return (
     <section
-      className="relative z-0 ml-1 min-w-0 border-l-2 border-code-foreground/60 bg-code px-3"
+      className="relative z-0 min-w-0 border-l-2 border-code-foreground/60 bg-code px-3"
       data-execution-code
     >
       <div className="flex min-h-8 min-w-0 items-center gap-2">
@@ -1646,7 +1646,7 @@ const FormTrace = memo(function FormTrace({
       <div
         className={
           detectedActivity
-            ? "relative z-0 ml-1 min-w-0 border-l-2 border-code-foreground/60 bg-code px-3"
+            ? "relative z-0 min-w-0 border-l-2 border-code-foreground/60 bg-code px-3"
             : "min-w-0"
         }
         data-execution-activity={detectedActivity || undefined}
@@ -1753,11 +1753,10 @@ function observeBox(
   };
 }
 
-// Execution text starts at the transcript edge; only nested details are indented.
-// Human content places its own stroke on the shared spine.
-const RAIL_SPINE = "ml-1.5";
-// Unstroked media begins at the spine's paper edge.
-const RAIL_SPINE_PAPER = "ml-2";
+// Rails align with role headings; content keeps a consistent inner gutter.
+const RAIL_SPINE = "ml-0";
+// Unstroked media begins just inside the two-pixel rail.
+const RAIL_SPINE_PAPER = "ml-0.5";
 
 
 export const ThinkingBand = memo(function ThinkingBand({

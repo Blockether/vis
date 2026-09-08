@@ -598,11 +598,7 @@
             (extension/publish-activity! blocks)))
     (put! g
           "__vis_host_live__"
-          ;; Live view: one JSON envelope in, one JSON answer out, and
-          ;; NOTHING blocks. A view is work reporting on itself, so the
-          ;; extension keeps running while the human watches it move —
-          ;; the opposite of `request_input`, which parks until a human
-          ;; answers.
+          ;; Pushes return immediately; a timed state read waits for change or close.
           (fn [envelope]
             ((requiring-resolve 'com.blockether.vis.internal.view.core/live-json!) envelope)))
     (put! g

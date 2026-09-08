@@ -66,7 +66,13 @@ class Host(Protocol):
         """Ask the human, and block until the answer settles or is cancelled."""
 
     def live(self, envelope_json: str) -> str:
-        """Open, patch, read or close one live view with the canonical grammar."""
+        """Open, patch, read or close a live view.
+
+        `state` accepts timeout_ms (0..86400000) and after_seq (nonnegative).
+        A positive timeout blocks until the sequence differs or the view closes.
+        An unchanged timeout returns is_open=True, timed_out=True, without view.
+        Ordinary state reads and changed waits return the current view with seq.
+        """
 
     def activity(self, presentation: dict[str, Any]) -> bool:
         """Replace the running symbol's headline, summary, content and sections."""
@@ -2254,6 +2260,7 @@ class LiveView:
         # INSIDE the window and would swallow the very first op.
         self._last_flush = None
         self._last_read = None
+        self._seq = 0
         answer = self._call({"op": "open", "view": request})
         self.view_id = str(answer.get("view_id") or "")
         self._settle(answer)
@@ -2268,7 +2275,10 @@ class LiveView:
         self._is_open = bool(answer.get("is_open"))
         view = answer.get("view")
         if isinstance(view, dict):
+            self._seq = view.get("seq", 0)
             self._learn(view.get("nodes"))
+        elif answer.get("seq") == self._seq + 1:
+            self._seq = answer["seq"]
         if not self._is_open and answer.get("result"):
             self._result = answer["result"]
         return answer
@@ -2385,34 +2395,35 @@ class LiveView:
         self._last_read = time.monotonic()
         return answer.get("view")
 
-    def sleep(self, seconds, slice_ms=200):
-        """Wait out `seconds`, waking the MOMENT a surface changes the view.
+    def sleep(self, seconds):
+        """Block until the view changes, ends, or `seconds` elapse.
 
-        A tap on a selectable row, an expanded node or a stop is shared state, not
-        provider data: it is already in the view before any provider answers. A
-        loop that naps between polls waits here instead of in `time.sleep`, so the
-        details a person just asked for are pushed within a slice rather than at
-        the end of the nap. Answers True when it woke early (something changed, or
-        the view ended), False when the whole time passed untouched.
-
-        Reads the view once per slice — five host calls a second by default, and
-        none at all outside a nap. `seconds` at or below zero costs nothing.
+        One host wait replaces periodic state reads. An unchanged timeout returns
+        no view payload. Returns True on change or close, False on timeout.
+        Nonpositive durations do not flush or call the host.
         """
+        import math
+
         seconds = float(seconds)
+        if not math.isfinite(seconds) or seconds > 86400:
+            raise ValueError("sleep duration must be finite and at most 86400 seconds")
         if seconds <= 0:
             return False
-        step = max(0.01, float(slice_ms) / 1000.0)
-        deadline = time.monotonic() + seconds
-        before = self._json.dumps(self.state(), sort_keys=True)
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
-            time.sleep(min(step, remaining))
-            if self._json.dumps(self.state(), sort_keys=True) != before:
-                return True
-            if not self._is_open:
-                return True
+        self.flush()
+        if not self._is_open:
+            return True
+        answer = self._settle(
+            self._call(
+                {
+                    "op": "state",
+                    "view_id": self.view_id,
+                    "after_seq": self._seq,
+                    "timeout_ms": math.ceil(seconds * 1000),
+                }
+            )
+        )
+        self._last_read = time.monotonic()
+        return not answer.get("timed_out", False)
 
     @property
     def is_interrupted(self):
@@ -2677,6 +2688,9 @@ class _LiveRecorder:
     _COLLECTION = {"stat": "stats", "steps": "steps", "table": "rows", "link": "links"}
 
     def __init__(self, inner, view_id="test-live-view"):
+        import threading
+
+        self._condition = threading.Condition()
         self._inner = inner
         self.said = []
         self.view_id = str(view_id)
@@ -2807,6 +2821,7 @@ class _LiveRecorder:
     def picture(self):
         """Return the terminal, layout-free picture surfaces and the model read."""
         picture = self._copy(self._view)
+        picture.pop("seq", None)
         leaves = []
         for node in self._nodes(picture.get("nodes")):
             if node.get("type") == "group":
@@ -2822,11 +2837,33 @@ class _LiveRecorder:
         import json
 
         envelope = json.loads(envelope_json)
+        with self._condition:
+            if envelope.get("op") == "state" and envelope.get("timeout_ms", 0) > 0:
+                changed = self._condition.wait_for(
+                    lambda: (
+                        self._result is not None
+                        or self._seq != envelope.get("after_seq")
+                    ),
+                    timeout=envelope["timeout_ms"] / 1000,
+                )
+                if not changed:
+                    return json.dumps(
+                        {"view_id": self.view_id, "is_open": True, "timed_out": True}
+                    )
+            answer = self._dispatch_live(envelope)
+            if envelope.get("op") in {"patch", "close"}:
+                self._condition.notify_all()
+            return answer
+
+    def _dispatch_live(self, envelope):
+        import json
+
         action = envelope.get("op")
         if action == "open":
             self._view = self._materialize(envelope["view"])
             self._result = None
             self._seq = 0
+            self._view["seq"] = self._seq
             answer = {"view_id": self.view_id, "is_open": True, "view": self._view}
         elif self._result is not None:
             answer = {"view_id": self.view_id, "is_open": False, "result": self._result}
@@ -2834,6 +2871,7 @@ class _LiveRecorder:
             for op in (envelope.get("patch") or {}).get("ops") or []:
                 self._apply(op)
             self._seq += 1
+            self._view["seq"] = self._seq
             answer = {"view_id": self.view_id, "is_open": True, "seq": self._seq}
         elif action == "state":
             answer = {"view_id": self.view_id, "is_open": True, "view": self._view}

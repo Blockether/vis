@@ -1077,14 +1077,26 @@ def test_a_tap_during_the_nap_is_answered_before_the_next_poll(recorder, monkeyp
     now = [0.0]
     slept = []
 
-    def fake_sleep(seconds):
-        now[0] += seconds
-        slept.append(seconds)
-        if len(slept) == 2:
-            recorder.select("jobs", [selected])
+    original_live = recorder.live
+
+    def live(envelope_json):
+        envelope = json.loads(envelope_json)
+        if envelope.get("timeout_ms"):
+            if not slept:
+                now[0] += 0.1
+                slept.append(0.1)
+                recorder.select("jobs", [selected])
+            else:
+                seconds = envelope["timeout_ms"] / 1000
+                now[0] += seconds
+                slept.append(seconds)
+                return json.dumps(
+                    {"view_id": recorder.view_id, "is_open": True, "timed_out": True}
+                )
+        return original_live(envelope_json)
 
     monkeypatch.setattr(vis.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(vis.time, "sleep", fake_sleep)
+    monkeypatch.setattr(recorder, "live", live)
 
     def poll():
         events.append("poll")
@@ -1098,9 +1110,8 @@ def test_a_tap_during_the_nap_is_answered_before_the_next_poll(recorder, monkeyp
 
     second_poll = [index for index, one in enumerate(events) if one == "poll"][1]
     assert events.index(f"log {selected}") < second_poll
-    # The tap was answered a slice after it landed, not a tick.
-    assert gh.NAP_SLICE_S * 1000 < vis._FLUSH_MS
-    assert sum(slept[:2]) <= gh.NAP_SLICE_S * 2
+    # Two event waits: one tap, then the unchanged remainder. No 50 ms slices.
+    assert len(slept) == 2
     # GitHub keeps its own cadence: the tap neither polls it nor cuts the tick short.
     assert sum(slept) == pytest.approx(3.0)
 

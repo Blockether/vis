@@ -2428,3 +2428,74 @@
                 (expect (nil? @deadline))
                 (hi/close-live! (:id two))
                 (expect (< @deadline (+ (System/currentTimeMillis) 1000))))))))))
+
+(defdescribe
+  live-blocking-state-test
+  (it "waits without publishing and omits an unchanged picture"
+      (let [events
+            (atom [])
+
+            chan
+            (fresh-channel)]
+
+        (ce/add-channel-event-listener! chan ::wait-test #(swap! events conj %))
+        (try
+          (watching
+            (assoc (live-spec {:id "now" :type "status" :text "Ready"}) :channel-ids [chan])
+            (fn [view]
+              (let [begin
+                    (System/nanoTime)
+
+                    before
+                    @events
+
+                    answer
+                    (hi/live-dispatch
+                      {"op" "state" "view_id" (:id view) "after_seq" (:seq view) "timeout_ms" 30})]
+
+                (expect (true? (:timed-out answer)))
+                (expect (not (contains? answer :view)))
+                (expect (= before @events))
+                (expect (>= (- (System/nanoTime) begin) 30000000)))))
+          (finally (ce/remove-channel-event-listener! chan ::wait-test)))))
+  (it "wakes for a patch or close, including a change before registration"
+      (recorded
+        (fn []
+          (doseq [action
+                  [:patch :close]
+
+                  before?
+                  (if (= action :patch) [false true] [false])]
+
+            (let [view
+                  (hi/open-live! (live-spec {:id "now" :type "status" :text "Ready"}))
+
+                  id
+                  (:id view)
+
+                  change!
+                  #(case action :patch (hi/patch-live! id
+                                                       [{:op :set :node-id "now" :text "Changed"}])
+                     :close (hi/interrupt-live! id "Stop"))]
+
+              (try (when before? (change!))
+                   (let [waiting (future (hi/live-dispatch {"op" "state"
+                                                            "view_id" id
+                                                            "after_seq" (:seq view)
+                                                            "timeout_ms" 1000}))]
+                     (when-not before? (Thread/sleep 30) (change!))
+                     (let [answer (deref waiting 500 ::timeout)]
+                       (expect (not= ::timeout answer))
+                       (expect (= (= action :patch) (:is-open answer)))
+                       (when (= action :patch)
+                         (expect (= "Changed" (get-in answer [:view :nodes 0 :text]))))))
+                   (finally (hi/close-live! id)))))))))
+
+(defdescribe
+  live-wait-validation-test
+  (it "refuses invalid wait options before touching a view"
+      (doseq [options [{"timeout_ms" -1} {"timeout_ms" 86400001} {"timeout_ms" 1}
+                       {"timeout_ms" 1 "after_seq" -1} {"timeout_ms" 1 "after_seq" true}]]
+        (expect (str/includes? (live-refusal #(hi/live-dispatch
+                                                (merge {"op" "state" "view_id" "unused"} options)))
+                               "timeout_ms")))))

@@ -5986,7 +5986,7 @@ h = 8"
                                  (when (str/includes? l needle) i))
                                rows)))]
 
-    (it "joins execution surfaces without a decorative rail"
+    (it "aligns execution rails with the role heading"
         (let [head
               (row-with "Read the app first")
 
@@ -6004,7 +6004,7 @@ h = 8"
                   "the line runs from the first band to the edge above the prose")
           (expect (not-any? rail-at? [(dec (long prose)) prose (inc (long prose))])
                   "the prose and its air are off the line")
-          (expect (not-any? rail-at? (range (+ (long prose) 2) (inc (long tail))))
+          (expect (some rail-at? (range (+ (long prose) 2) (inc (long tail))))
                   "the line resumes below the prose and runs to the last band")))
     ;; Regression, issue photo-2026-09-02: the receipt rail overwrote the first character
     ;; of model prose between tool blocks, so `Balanced` was painted as `│alanced`. The
@@ -6030,7 +6030,7 @@ h = 8"
               (row-with "RESULT")]
 
           (expect (and python result) "the receipt paints a program and its result")
-          (expect (not (rail-at? python)) "Code uses its surface, not a rail")
+          (expect (rail-at? python) "Code carries the execution rail")
           (expect (not (rail-at? result)) "Result stays free of rails")))
     (it "leaves the answer off the line"
         (let [answer (row-with "Done.")]

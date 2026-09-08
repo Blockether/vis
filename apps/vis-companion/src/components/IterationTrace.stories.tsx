@@ -80,7 +80,7 @@ export const ThinkingAndCode: Story = {
     await expect(
       code.querySelector("button")!.getBoundingClientRect().height,
     ).toBeGreaterThanOrEqual(28);
-    await expect(program.left - thought.left).toBeCloseTo(4, 0);
+    await expect(program.left - thought.left).toBeCloseTo(0, 0);
     await expect(program.right).toBeCloseTo(thought.right, 0);
     await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
     await expect(code.querySelector("pre")?.textContent).toContain(
@@ -156,6 +156,23 @@ export const Exchange: Story = {
       />
     </>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const heading = canvas.getByText("You");
+    const bubble = heading.closest("article")!.querySelector(".border-l-2")!;
+    const code = canvasElement.querySelector("[data-execution-code]")!;
+    await expect(bubble.getBoundingClientRect().left).toBeCloseTo(
+      heading.getBoundingClientRect().left,
+      0,
+    );
+    await expect(code.getBoundingClientRect().left).toBeCloseTo(
+      bubble.getBoundingClientRect().left,
+      0,
+    );
+    await expect(getComputedStyle(bubble).paddingLeft).toBe(
+      getComputedStyle(code).paddingLeft,
+    );
+  },
 };
 
 /**
@@ -304,7 +321,7 @@ export const JoinedActivity: Story = {
       code.getBoundingClientRect().right,
       0,
     );
-    // The execution rail is inset from prose, with one consistent text gutter.
+    // The execution rail aligns with prose and role headings, with a consistent text gutter.
     const trace = thought.parentElement!;
     const edge = trace.parentElement!.getBoundingClientRect().left;
     const textEdge = (element: Element) => {
@@ -317,9 +334,9 @@ export const JoinedActivity: Story = {
     };
     await expect(textEdge(thought)).toBeCloseTo(edge, 0);
     const executionEdge = textEdge(code);
-    await expect(code.getBoundingClientRect().left - edge).toBeCloseTo(4, 0);
+    await expect(code.getBoundingClientRect().left - edge).toBeCloseTo(0, 0);
     await expect(getComputedStyle(code).borderLeftWidth).toBe("2px");
-    await expect(executionEdge - edge).toBeCloseTo(18, 0);
+    await expect(executionEdge - edge).toBeCloseTo(14, 0);
     const band = canvas.getByRole("button", { name: "Expand Activity" });
     await expect(band).toHaveTextContent("ACTIVITY");
     await expect(band).toHaveTextContent("13 operations");

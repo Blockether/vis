@@ -151,6 +151,9 @@ def test_live_view_documentation_renders_terminal_jobs(monkeypatch):
     recorder = vis.testing.LiveRecorder(vis._host)
     monkeypatch.setattr(vis, "_host", recorder)
     requests = []
+    polled_at = []
+    now = [0.0]
+    waits = []
     replies = iter(
         [
             {
@@ -184,16 +187,26 @@ def test_live_view_documentation_renders_terminal_jobs(monkeypatch):
 
     def shell(request):
         requests.append(request)
+        polled_at.append(now[0])
         fields = request["command"].split("--json ")[1].split(",")
         snapshot = next(replies)
         return SimpleNamespace(
             wait=lambda _: {"out": json.dumps({key: snapshot[key] for key in fields})}
         )
 
+    def sleep(view, seconds):
+        # A local event wakes early; the next GitHub request still waits five seconds.
+        waits.append(seconds)
+        now[0] += 0.1 if len(waits) == 1 else seconds
+        return len(waits) == 1
+
     monkeypatch.setattr(vis, "shell", shell)
-    monkeypatch.setattr(vis.LiveView, "sleep", lambda self, seconds: False)
+    monkeypatch.setattr(namespace["time"], "monotonic", lambda: now[0])
+    monkeypatch.setattr(vis.LiveView, "sleep", sleep)
     result = namespace["watch_run"](1)
     assert len(requests) == 2
+    assert polled_at == [0.0, 5.0]
+    assert len(waits) == 2
     assert result["summary"] == "Run result: success"
     assert recorder.node("jobs")["rows"][0]["cells"] == ["Tests", "success"]
     assert recorder.node("progress")["done"] == 1

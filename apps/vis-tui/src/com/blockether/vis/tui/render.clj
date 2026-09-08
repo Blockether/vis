@@ -2063,7 +2063,7 @@
                     (p/fill-rect! g bx y bubble-w 1))
                   (when execution-rail?
                     (p/set-colors! g t/code-block-fg t/code-block-bg)
-                    (p/put-str! g (+ (long bx) 1) y "│ "))
+                    (p/put-str! g bx y "│ "))
                   ;; Record exact screen coordinates for the post-refresh image pass.
                   (when (and *image-placements* (contains? #{:image :image-pad} (:kind meta)))
                     (swap! *image-placements* conj

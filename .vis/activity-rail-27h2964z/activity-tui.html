@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Activity review</title>
+<style>
+:root { color-scheme: dark light; --cell-w: 8.44px; --row-h: 18px; --ink: #e8e8e8; --paper: #111111; }
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; background: var(--paper); color: var(--ink); }
+body { overflow: hidden; }
+#viewport { position: fixed; inset: 0; overflow: auto; padding: var(--row-h) var(--cell-w); background: var(--paper); }
+#review-controls { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 4px 8px; font: 12px/18px ui-monospace, monospace; }
+#review-controls span { margin-right: auto; }
+#review-controls button { min-height: 44px; padding: 0 10px; font: inherit; color: inherit; background: var(--paper); border: 1px solid currentColor; }
+#review-controls button[aria-pressed="true"] { font-weight: bold; text-decoration: underline; }
+body[data-live="false"] #viewport { top: 52px; }
+body[data-live="false"] #canvas { position: relative; }
+body[data-live="false"] #terminal { position: absolute; transform-origin: top left; overflow: hidden; user-select: text; touch-action: auto; }
+body[data-live="false"] .cursor { display: none; }
+#terminal, #probe { font: 14px/18px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-variant-ligatures: none; }
+#terminal { position: relative; display: grid; width: max-content; height: max-content; outline: none; user-select: none; cursor: default; touch-action: manipulation; }
+.frame, #cells, #media-layer { display: contents; }
+#terminal.focused { outline: 1px solid var(--ink); outline-offset: 2px; }
+#terminal.inspect { background-image: linear-gradient(to right, color-mix(in srgb, var(--ink) 12%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--ink) 12%, transparent) 1px, transparent 1px); background-size: var(--cell-w) var(--row-h); }
+#input { position: fixed; left: 0; top: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; resize: none; pointer-events: none; caret-color: transparent; }
+#probe { position: fixed; left: -10000px; top: -10000px; white-space: pre; visibility: hidden; }
+.cell { min-width: 0; height: var(--row-h); overflow: hidden; white-space: pre; line-height: var(--row-h); }
+.bold { font-weight: 700; }
+.italic { font-style: italic; }
+.underline { text-decoration-line: underline; text-underline-offset: 2px; }
+.strike { text-decoration-line: line-through; }
+.underline.strike { text-decoration-line: underline line-through; }
+.blink { animation: lanterna-blink 1s steps(1, end) infinite; }
+.bordered { outline: 1px solid currentColor; outline-offset: -1px; }
+.fraktur { font-family: UnifrakturCook, UnifrakturMaguntia, fantasy; }
+.circled { border: 1px solid currentColor; border-radius: 999px; text-align: center; }
+@keyframes lanterna-blink { 50% { color: transparent; } }
+@media (prefers-reduced-motion: reduce) { .blink { animation-duration: 2s; } }
+.cursor { z-index: 3; width: var(--cell-w); height: var(--row-h); pointer-events: none; box-shadow: inset 0 -2px currentColor; }
+.cursor[hidden] { display: none; }
+.media { z-index: 2; display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; overflow: hidden; background: transparent; color: var(--ink); }
+audio.media { align-self: center; height: min(54px, 100%); }
+</style>
+</head>
+<body data-lanterna-terminal="true" data-transport="static" data-live="false" data-endpoint-prefix="" data-endpoint-query="" data-bridge-id="" data-resizable="false" data-min-cols="1" data-max-cols="1000" data-min-rows="1" data-max-rows="1000" style="--ink:#262626;--paper:#faf3eb"><nav id="review-controls" aria-label="Static frame viewing"><span>Static frame</span><button type="button" id="fit-width" aria-pressed="true">Fit width</button><button type="button" id="actual-size" aria-pressed="false">Actual size</button></nav><div id="viewport" tabindex="0" aria-label="Terminal frame scroll area"><div id="canvas"><div id="terminal" role="region" aria-label="Terminal" tabindex="-1" style="grid-template-columns:repeat(44,var(--cell-w));grid-template-rows:repeat(15,var(--row-h))"><div class="frame" data-version="5" data-cols="44" data-rows="15" data-ink="#262626" data-paper="#faf3eb"><div id="cells"><span class="cell bold" style="grid-column:2 / span 3;grid-row:3;color:#107636;background-color:#faf3eb">Vis</span><span class="cell" style="grid-column:2 / span 40;grid-row:5;color:#625d57;background-color:#f5eee4">                                        </span><span class="cell italic" style="grid-column:2 / span 31;grid-row:6;color:#625d57;background-color:#f5eee4">Inspect files, apply the patch,</span><span class="cell" style="grid-column:33 / span 9;grid-row:6;color:#625d57;background-color:#f5eee4">         </span><span class="cell italic" style="grid-column:2 / span 15;grid-row:7;color:#625d57;background-color:#f5eee4">then run tests.</span><span class="cell" style="grid-column:17 / span 25;grid-row:7;color:#625d57;background-color:#f5eee4">                         </span><span class="cell" style="grid-column:2 / span 40;grid-row:8;color:#625d57;background-color:#f5eee4">                                        </span><span class="cell" style="grid-column:3 / span 39;grid-row:9;color:#262626;background-color:#f2ebdf">│                                      </span><span class="cell" style="grid-column:3 / span 2;grid-row:10;color:#262626;background-color:#f2ebdf">│ </span><span class="cell bold" style="grid-column:5 / span 4;grid-row:10;color:#262626;background-color:#f2ebdf">CODE</span><span class="cell" style="grid-column:9 / span 33;grid-row:10;color:#262626;background-color:#f2ebdf">  +3 more             ▸  1.2s  ❐ </span><span class="cell" style="grid-column:3 / span 39;grid-row:11;color:#262626;background-color:#f2ebdf">│                                      </span><span class="cell" style="grid-column:3 / span 2;grid-row:12;color:#262626;background-color:#f2ebdf">│ </span><span class="cell bold" style="grid-column:5 / span 8;grid-row:12;color:#7c28b4;background-color:#f2ebdf">ACTIVITY</span><span class="cell" style="grid-column:13 / span 29;grid-row:12;color:#262626;background-color:#f2ebdf">     1 failed · 7 oper...  ▸ </span><span class="cell" style="grid-column:3 / span 39;grid-row:13;color:#262626;background-color:#f2ebdf">│                                      </span></div><div id="media-layer"></div><span id="cursor" class="cursor" aria-hidden="true" hidden></span></div></div></div></div><textarea id="input" disabled tabindex="-1" aria-label="Terminal keyboard input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea><span id="probe" aria-hidden="true">00000000000000000000000000000000000000000000000000</span><template id="patch"></template>
+<script>
+(() => {
+  'use strict';
+  const body = document.body;
+  const terminal = document.getElementById('terminal');
+  const input = document.getElementById('input');
+  const viewport = document.getElementById('viewport');
+  const probe = document.getElementById('probe');
+  const template = document.getElementById('patch');
+  const transport = body.dataset.transport;
+  const bridge = body.dataset.bridgeId;
+  const live = transport !== 'static';
+  const resizable = body.dataset.resizable === 'true';
+  const endpoint = path => `${body.dataset.endpointPrefix}${path}${body.dataset.endpointQuery}`;
+  const bridgeMessage = (type, payload = {}) => window.parent.postMessage({type, bridge, ...payload}, '*');
+  const post = (path, values) => {
+    if (transport === 'parent') {
+      bridgeMessage('lanterna.terminal.post', {path, values});
+      return Promise.resolve();
+    }
+    return fetch(endpoint(path), {
+      method: 'POST',
+      headers: {'content-type': 'application/x-www-form-urlencoded;charset=UTF-8'},
+      body: new URLSearchParams(values)
+    });
+  };
+  let frame = terminal.querySelector('.frame');
+  let columns = Number(frame.dataset.cols);
+  let rows = Number(frame.dataset.rows);
+  let cellWidth = 8.44;
+  let rowHeight = 18;
+  let resizeTimer = 0;
+  let moveFrame = 0;
+  let pendingMove = null;
+  let composing = false;
+  let inputTail = Promise.resolve();
+  let fitWidth = true;
+
+  function fitReview() {
+    if (live) return;
+    const available = Math.max(1, viewport.clientWidth - 2 * cellWidth);
+    const scale = fitWidth ? Math.min(1, available / (columns * cellWidth)) : 1;
+    terminal.style.transform = `scale(${scale})`;
+    const canvas = document.getElementById('canvas');
+    canvas.style.width = `${columns * cellWidth * scale}px`;
+    canvas.style.height = `${rows * rowHeight * scale}px`;
+    document.getElementById('fit-width').setAttribute('aria-pressed', String(fitWidth));
+    document.getElementById('actual-size').setAttribute('aria-pressed', String(!fitWidth));
+  }
+
+  if (!live) {
+    for (const id of ['fit-width', 'actual-size']) {
+      document.getElementById(id).addEventListener('click', () => {
+        fitWidth = id === 'fit-width';
+        fitReview();
+      });
+    }
+    new ResizeObserver(fitReview).observe(viewport);
+  }
+
+  function apply(next) {
+    if (next !== frame) {
+      const media = new Map(Array.from(frame.querySelectorAll('[data-media-id]'), node => [node.dataset.mediaId, node]));
+      for (const replacement of next.querySelectorAll('[data-media-id]')) {
+        const current = media.get(replacement.dataset.mediaId);
+        if (current && current.outerHTML === replacement.outerHTML) replacement.replaceWith(current);
+      }
+      terminal.replaceChildren(next);
+      frame = next;
+    }
+    columns = Number(frame.dataset.cols);
+    rows = Number(frame.dataset.rows);
+    body.style.setProperty('--ink', frame.dataset.ink);
+    body.style.setProperty('--paper', frame.dataset.paper);
+    terminal.style.gridTemplateColumns = `repeat(${columns}, var(--cell-w))`;
+    terminal.style.gridTemplateRows = `repeat(${rows}, var(--row-h))`;
+  }
+
+  function receive(html) {
+    template.innerHTML = html;
+    const next = template.content.firstElementChild;
+    if (next) apply(next);
+  }
+
+  function measure() {
+    const box = probe.getBoundingClientRect();
+    cellWidth = box.width / 50;
+    rowHeight = parseFloat(getComputedStyle(probe).lineHeight) || 18;
+    document.documentElement.style.setProperty('--cell-w', `${cellWidth}px`);
+    document.documentElement.style.setProperty('--row-h', `${rowHeight}px`);
+    if (!live) terminal.style.transform = 'none';
+    cellWidth = terminal.getBoundingClientRect().width / Math.max(1, columns);
+    document.documentElement.style.setProperty('--cell-w', `${cellWidth}px`);
+    fitReview();
+  }
+
+  function resizeToViewport() {
+    if (!live || !resizable) return;
+    const nextColumns = Math.max(Number(body.dataset.minCols), Math.min(Number(body.dataset.maxCols), Math.floor((viewport.clientWidth - (2 * cellWidth)) / cellWidth)));
+    const nextRows = Math.max(Number(body.dataset.minRows), Math.min(Number(body.dataset.maxRows), Math.floor((viewport.clientHeight - (2 * rowHeight)) / rowHeight)));
+    if (nextColumns !== columns || nextRows !== rows) post('/resize', {cols: nextColumns, rows: nextRows}).catch(() => {});
+  }
+
+  function requestResize() {
+    if (!live || !resizable) return;
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resizeToViewport, 40);
+  }
+
+  function sendInput(values) {
+    if (!live) return;
+    inputTail = inputTail.then(() => post('/input', values)).catch(() => {});
+  }
+
+  function point(event) {
+    const box = terminal.getBoundingClientRect();
+    const columnWidth = box.width / Math.max(1, columns);
+    const lineHeight = box.height / Math.max(1, rows);
+    return {
+      col: Math.max(0, Math.min(columns - 1, Math.floor((event.clientX - box.left) / columnWidth))),
+      row: Math.max(0, Math.min(rows - 1, Math.floor((event.clientY - box.top) / lineHeight)))
+    };
+  }
+
+  function mouse(action, event, button) {
+    const position = point(event);
+    sendInput({kind: 'mouse', action, button, col: position.col, row: position.row});
+  }
+
+  input.addEventListener('keydown', event => {
+    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'g') {
+      event.preventDefault();
+      terminal.classList.toggle('inspect');
+      return;
+    }
+    const paste = !event.altKey && (((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v') || (!event.ctrlKey && !event.metaKey && event.shiftKey && event.key === 'Insert'));
+    if (!live || event.metaKey || event.isComposing || event.key === 'Dead' || event.key === 'Process' || paste) return;
+    event.preventDefault();
+    const printable = Array.from(event.key).length === 1;
+    const textModifier = printable && (event.getModifierState('AltGraph') || event.key.codePointAt(0) > 127);
+    const ctrl = event.ctrlKey && !textModifier;
+    const alt = event.altKey && !textModifier;
+    if (printable && !ctrl && !alt) sendInput({kind: 'text', text: event.key});
+    else sendInput({kind: 'key', key: event.key, code: event.code, ctrl, alt, shift: event.shiftKey});
+  });
+  input.addEventListener('compositionstart', () => { composing = true; });
+  input.addEventListener('compositionend', event => {
+    composing = false;
+    input.value = '';
+    if (event.data) sendInput({kind: 'text', text: event.data});
+  });
+  input.addEventListener('input', () => {
+    if (composing || !input.value) return;
+    const text = input.value;
+    input.value = '';
+    sendInput({kind: 'text', text});
+  });
+  input.addEventListener('paste', event => {
+    if (!live) return;
+    event.preventDefault();
+    sendInput({kind: 'paste', text: event.clipboardData.getData('text')});
+  });
+  input.addEventListener('focus', () => terminal.classList.add('focused'));
+  input.addEventListener('blur', () => terminal.classList.remove('focused'));
+
+  terminal.addEventListener('pointerdown', event => {
+    if (!live || event.target.closest('.media')) return;
+    event.preventDefault();
+    input.focus({preventScroll: true});
+    try { terminal.setPointerCapture(event.pointerId); } catch (_) {}
+    mouse('CLICK_DOWN', event, event.button + 1);
+  });
+  terminal.addEventListener('pointerup', event => {
+    if (!live || event.target.closest('.media')) return;
+    event.preventDefault();
+    mouse('CLICK_RELEASE', event, 0);
+  });
+  terminal.addEventListener('pointermove', event => {
+    if (!live || event.target.closest('.media')) return;
+    pendingMove = event;
+    if (moveFrame) return;
+    moveFrame = requestAnimationFrame(() => {
+      const current = pendingMove;
+      pendingMove = null;
+      moveFrame = 0;
+      mouse(current.buttons ? 'DRAG' : 'MOVE', current, current.buttons ? 1 : 0);
+    });
+  });
+  terminal.addEventListener('wheel', event => {
+    if (!live || event.target.closest('.media')) return;
+    event.preventDefault();
+    mouse(event.deltaY < 0 ? 'SCROLL_UP' : 'SCROLL_DOWN', event, event.deltaY < 0 ? 4 : 5);
+  }, {passive: false});
+  terminal.addEventListener('contextmenu', event => { if (live) event.preventDefault(); });
+
+  apply(frame);
+  Promise.resolve(document.fonts && document.fonts.ready).then(() => {
+    measure();
+    requestResize();
+    if (live) input.focus({preventScroll: true});
+  });
+  if (resizable) new ResizeObserver(requestResize).observe(viewport);
+  if (transport === 'http') {
+    const eventUrl = endpoint('/events');
+    const separator = eventUrl.includes('?') ? '&' : '?';
+    const stream = new EventSource(`${eventUrl}${separator}after=${frame.dataset.version}`);
+    stream.addEventListener('frame', event => receive(event.data));
+    stream.addEventListener('open', () => {
+      requestResize();
+      document.title = document.title.replace(/ — disconnected$/, '');
+    });
+    stream.addEventListener('error', () => {
+      if (!document.title.endsWith(' — disconnected')) document.title += ' — disconnected';
+    });
+  } else if (transport === 'parent') {
+    window.addEventListener('message', event => {
+      const data = event.data;
+      if (event.source !== window.parent || !data || typeof data !== 'object' || data.bridge !== bridge) return;
+      if (data.type === 'lanterna.terminal.frame' && typeof data.html === 'string') receive(data.html);
+      if (data.type === 'lanterna.terminal.resync') requestResize();
+    });
+    bridgeMessage('lanterna.terminal.ready', {after: Number(frame.dataset.version)});
+  }
+})();
+</script>
+</body>
+</html>

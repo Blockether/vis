@@ -21,6 +21,7 @@ before stopping the view; cancelling the confirmation keeps it running.
 
 ```python
 import json
+import time
 
 import blockether.vis.extension as vis
 
@@ -47,6 +48,7 @@ def watch_run(run_id):
         description=f"{len(run['jobs'])} jobs",
     ) as view:
         seen = {}
+        done = 0
         while True:
             if view.is_interrupted:
                 return view.close(summary="Stopped watching before the run completed")
@@ -56,10 +58,17 @@ def watch_run(run_id):
                     seen[job["databaseId"]] = state
                     view["jobs"].upsert(str(job["databaseId"]), [job["name"], state],
                                         tone=TONES.get(job["conclusion"], "error"))
-            view["progress"].set(done=sum(1 for j in run["jobs"] if j["status"] == "completed"))
+            completed = sum(1 for j in run["jobs"] if j["status"] == "completed")
+            if completed != done:
+                view["progress"].set(done=completed)
+                done = completed
             if run["status"] == "completed":
                 break
-            view.sleep(5)
+            deadline = time.monotonic() + 5
+            while (remaining := deadline - time.monotonic()) > 0:
+                view.sleep(remaining)
+                if view.is_interrupted:
+                    return view.close(summary="Stopped watching before the run completed")
             run = poll(run_id)
         view["run"].set(run["conclusion"], tone=TONES.get(run["conclusion"], "error"))
         return view.close(summary=f"Run result: {run['conclusion']}")
@@ -115,8 +124,16 @@ has its own Markdown output.
 
 ## Updating
 
-- `view.sleep(seconds)` returns `True` when a user changes the view, allowing
-  prompt handling of actions. Use it instead of `time.sleep` in view loops.
+- `view.sleep(seconds)` blocks in the host until the view changes, closes or the
+  timeout expires. It returns `True` for a change or close, `False` for a timeout.
+  There is no periodic state polling while it waits, and an unchanged timeout
+  returns no view payload. Use it instead of `time.sleep` in view loops.
+- Waiting does not publish view updates or activity. Send only changed data;
+  external services still need their own polling interval. A click or Stop
+  should not trigger another GitHub request.
+  The example keeps a five-second deadline even when a view event wakes it early.
+- Wait durations must be finite and at most 86400 seconds. Nonpositive durations
+  return `False` without a host call.
 - `with view.batch(): ...` sends multiple node changes as one patch.
 - The first update is sent immediately. Further updates within `flush_ms`
   (100 ms by default) are batched. Set the interval with

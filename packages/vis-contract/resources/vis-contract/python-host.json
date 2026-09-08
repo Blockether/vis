@@ -77,7 +77,7 @@
       "name": "live",
       "global": "__vis_host_live__",
       "arity": 1,
-      "summary": "Open, patch, read or close one live view.",
+      "summary": "Open, patch, read (optionally waiting for a change) or close one live view.",
       "outside": "local"
     },
     {

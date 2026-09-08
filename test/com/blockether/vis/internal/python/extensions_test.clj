@@ -43,7 +43,7 @@
 (defdescribe bootstrap-python-test
              ;; Regression, td-f2732d: JSON slash escaping made the embedded API invalid Python.
              (it "embeds division operators without JSON-only slash escapes"
-                 (expect (str/includes? pyx/bootstrap-python "float(slice_ms) / 1000.0"))
+                 (expect (str/includes? pyx/bootstrap-python " / 1000"))
                  (expect (not (str/includes? pyx/bootstrap-python "\\/")))))
 
 (defn- temp-dir

@@ -65,11 +65,6 @@ SLOW_TICK_S = 8.0
 BACKOFF_AFTER_S = 300.0
 MAX_CONSECUTIVE_POLL_FAILURES = 3
 
-# A tick is GITHUB's cadence, never the human's. The nap between two polls is slept in
-# slices shorter than the live-frame batching window: every slice reads shared selection,
-# so the derived timeline and cached log join the same frame as the row tap.
-NAP_SLICE_S = 0.05
-
 # The model's copy of a log is a TAIL: the whole log stays in the view's record. The settled tail
 # is the engine's own model budget for a log node, so the picture elides nothing; a job that fails
 # mid-run says less, because the run is not over and the story is still moving.
@@ -1339,7 +1334,7 @@ def _nap(
         remaining = deadline - time.monotonic()
         if remaining <= 0 or view.is_interrupted:
             return shape, manual_selection, shown_selection
-        if view.sleep(remaining, slice_ms=NAP_SLICE_S * 1000):
+        if view.sleep(remaining):
             shape, manual_selection, shown_selection = _sync_surface_selection(
                 view, payload, shape, manual_selection, log_of, cache, shown_selection
             )
@@ -1374,8 +1369,7 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                 if view.is_interrupted:
                     break
                 try:
-                    # The nap is where a tap is ANSWERED: shared state is read every
-                    # slice, so a click does not wait out the tick.
+                    # A host event wakes a selection change without polling the view.
                     shape, manual_selection, shown_selection = _nap(
                         view,
                         _tick(time.monotonic() - began),

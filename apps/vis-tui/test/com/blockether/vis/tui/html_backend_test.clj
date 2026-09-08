@@ -215,7 +215,7 @@
             (is (nil? (column "Read ×3")))
             (is (nil? (column "Command failed")))
             (doseq [line (filter #(str/includes? % "│") lines)]
-              (is (= (+ 1 (column "Vis")) (str/index-of line "│"))))
+              (is (= (column "Vis") (str/index-of line "│"))))
             (when (seq expansions) (is (= (column "CODE") (column "inspect_files()"))))))))))
 
 (deftest screen-accepts-a-transport-neutral-html-terminal-test

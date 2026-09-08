@@ -4,7 +4,7 @@
 // every single open of the settings dialog painted a pulsing amber `Connect`
 // labelled `Checking…` first and settled into a quiet `Disconnect` a moment
 // later — on a machine this device had been connected to for days.
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const native = vi.hoisted(() => ({ store: new Map<string, string>() }));
@@ -143,6 +143,41 @@ describe("reopening the notifications panel", () => {
     ).toBe("false");
   });
 
+  // Regression: cached devices and fast registration IDs must not turn the
+  // remembered switch off while the remaining async inputs are still loading.
+  it.each([true, false])(
+    "keeps the cached verdict until revalidation settles (%s)",
+    async (wanted) => {
+      rememberNotifyVerdict(MACHINE, true);
+      await setGatewayNotify(MACHINE, wanted);
+      let resolveDevices!: (value: typeof held) => void;
+      const response = new Promise<typeof held>((resolve) => {
+        resolveDevices = resolve;
+      });
+      const client = slowMachine(held);
+      client.devices = () => response;
+      const view = render(
+        <NativeNotificationsPanel
+          client={client}
+          gateway={{ url: MACHINE, label: "buildbox" }}
+        />,
+      );
+      await act(async () => {});
+      expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe(
+        "true",
+      );
+      expect(cachedNotifyVerdict(MACHINE)).toBe(true);
+
+      await act(async () => {
+        resolveDevices(held);
+      });
+      expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe(
+        String(wanted),
+      );
+      expect(cachedNotifyVerdict(MACHINE)).toBe(wanted);
+      view.unmount();
+    },
+  );
   // Regression, user report (paraphrased: make these buttons circles with icons in
   // the headers, the settings are too big): the panel used to SPELL `Checking…` on
   // a full-width button, so waiting was a word. It is the control's own busy state
