@@ -974,12 +974,11 @@ or live gateway restart is included. Existing main-worktree changes are preserve
 
 Phrase: publish a complete, tested native production release and verify its installed processes.
 
-Context: `deps.edn` pins runtime 0.5.5 at the current runtime main. Native delivery is
-manual-only in `.github/workflows/native-release.yml`; `.github/workflows/release.yml`
-publishes bootstrap assets before native artifacts exist. `bin/install-vis-agent`,
-`bin/vis-agent`, native integration tests, and companion workflows define the delivery
-boundary. Published version tags must remain immutable; production follows complete
-stable releases rather than a force-moved tag or an implicit JVM fallback.
+Context: `deps.edn` pins runtime 0.5.5 at the current runtime main. The previous release
+published bootstrap assets before native artifacts existed. `bin/install-vis-agent`,
+`bin/vis-agent`, native integration tests and companion workflows define the delivery
+boundary. Production now selects complete stable native bundles; explicit JVM development
+remains available. Published version tags remain immutable, including the bootstrap tag.
 
 1. Verify runtime and reproduce delivery gaps.
    Rationale: an archive or a successful compilation does not prove native execution.
@@ -1013,13 +1012,19 @@ stable releases rather than a force-moved tag or an implicit JVM fallback.
    explicit verification results and any concrete unresolved blockers reported.
    Unknowns: none beyond the preceding phases.
 
-Plan state: phase 1 verified locally; phase 2 in progress. Runtime release is green on
-all published architectures. Native dry-run 34265004719 built all three engine images;
-Linux failed namespace setup and macOS failed SDK Python setup, both now corrected.
-Clean JVM suite: 5032 tests passed before the final worker-cancellation regression.
-Final full run: 5034 tests, with two unrelated draft/worktree failures during concurrent
-workspace edits; affected release/runtime suites pass. SDK: all 343 tests passed,
-including HTTP and stdio. Companion: 2401 tests passed, 2 skipped; compiler lint,
-typecheck and formatting passed. Scoped Clojure lint and reflection checks are clean.
-A new native dry run, complete release promotion and deployment remain.
-Preserve unrelated infrastructure, council-default/docs and draft-test work.
+Plan state: phases 1 and 2 implemented and locally verified; phase 3 in progress.
+Runtime main and published v0.5.5 match the consumer pin; four native archives and the jar
+are uploaded. Native dry-run 34270462640 passed on Linux x64, Linux ARM64 and macOS ARM64,
+including installed-wrapper/gateway smoke checks, native tests, real HTTP/stdio Python SDK
+checks and standalone TUI builds. Native macOS x64 is not supported by the pinned CE toolchain.
+The production installer and 15-artifact draft gate have regression coverage. Release,
+container, palette and loop suites: 541 tests passed; scoped lint, reflection, workflow
+validation and shell checks passed. Companion: 2408 tests passed, 2 skipped; 184 browser
+stories passed; full theme contrast scan, compiler lint and production build passed.
+Full local JVM run: 5042 cases with a foundation prompt-size failure and an unrelated,
+uncommitted draft-discard-veto regression. Neither failure is marked resolved.
+Main CI 34273001995 passed macOS and all Python jobs but failed Linux council history
+with zero operation rows. Local focused and full loop suites pass; assertion diagnostics
+now include the actual forms rather than treating the failure as resolved.
+No new Vis version/tag, complete stable promotion or server deployment has happened.
+Preserve unrelated infrastructure, settings, council-default/docs, TUI and draft-test work.

@@ -1,9 +1,9 @@
-import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, userEvent } from 'storybook/test';
-import { useState, type ReactNode } from 'react';
-import { STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
-import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
-import { Markdown } from './ChatContent';
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, userEvent } from "storybook/test";
+import { useState, type ReactNode } from "react";
+import { STORY_MACHINES, STORY_SESSION } from "../dev/story-data";
+import { HUMAN_INPUT_CHOICE_MARKS } from "../lib/human-input";
+import { Markdown } from "./ChatContent";
 import {
   CheckIcon,
   CopyIcon,
@@ -14,7 +14,7 @@ import {
   SendIcon,
   SettingsIcon,
   StopIcon,
-} from './icons';
+} from "./icons";
 import {
   BackButton,
   BandButton,
@@ -48,7 +48,7 @@ import {
   Spinner,
   Switch,
   TextButton,
-} from './ui';
+} from "./ui";
 import {
   HeaderActions,
   HeaderMeta,
@@ -66,7 +66,7 @@ import {
   PullToSearchHint,
   RowDisclosure,
   SectionHeader,
-} from './SessionNavigator';
+} from "./SessionNavigator";
 
 /**
  * THE VOCABULARY, DRAWN ONCE EACH, BY THE CODE THAT SHIPS IT.
@@ -92,7 +92,7 @@ import {
  * so the fleet, the session and the payloads are the SAME ones in every frame.
  */
 const meta = {
-  title: 'Vocabulary/Controls',
+  title: "Vocabulary/Controls",
 } satisfies Meta;
 
 export default meta;
@@ -187,45 +187,56 @@ export const Marks: Story = {
 export const CodeCopy: Story = {
   render: () => (
     <Sheet>
-      <Markdown>{[
-        'After starting the new version, retry:',
-        '',
-        '```bash',
-        'vis-agent python uv sync --project ./einmal --locked',
-        '```',
-        '',
-        'Then run `/reload`. The gateway was not restarted.',
-        '',
-        '```diff',
-        '--- a/config.txt',
-        '+++ b/config.txt',
-        '@@ -1 +1 @@',
-        '-before',
-        '+after',
-        '```',
-      ].join('\n')}</Markdown>
+      <Markdown>
+        {[
+          "After starting the new version, retry:",
+          "",
+          "```bash",
+          "vis-agent python uv sync --project ./einmal --locked",
+          "```",
+          "",
+          "Then run `/reload`. The gateway was not restarted.",
+          "",
+          "```diff",
+          "--- a/config.txt",
+          "+++ b/config.txt",
+          "@@ -1 +1 @@",
+          "-before",
+          "+after",
+          "```",
+        ].join("\n")}
+      </Markdown>
     </Sheet>
   ),
   play: async ({ canvas }) => {
     // Storybook supplies a clipboard stub; native clipboard behavior is not exercised here.
     const user = userEvent.setup();
-    const buttons = canvas.getAllByRole('button', { name: 'Copy code' });
+    const buttons = canvas.getAllByRole("button", { name: "Copy code" });
+    const codeRegions = canvas.getAllByRole("region", { name: /code$/i });
+    for (const region of codeRegions) {
+      const button = region.parentElement!.querySelector("button")!;
+      button.focus();
+      await user.tab();
+      await expect(region).toHaveFocus();
+    }
     for (const button of buttons) {
-      await expect(button.textContent).toBe('');
+      await expect(button.textContent).toBe("");
       const box = button.getBoundingClientRect();
-      const blockElement = button.closest('.relative.bg-code')!;
+      const blockElement = button.closest(".relative.bg-code")!;
       const block = blockElement.getBoundingClientRect();
       // Long, horizontally scrolling code must not show through the copy icon.
-      await expect(getComputedStyle(button.parentElement!).backgroundColor).toBe(
-        getComputedStyle(blockElement).backgroundColor,
-      );
+      await expect(
+        getComputedStyle(button.parentElement!).backgroundColor,
+      ).toBe(getComputedStyle(blockElement).backgroundColor);
       await expect(box.left).toBeGreaterThan(block.left + block.width / 2);
       await expect(box.right).toBeLessThanOrEqual(block.right);
       await expect(box.top).toBeGreaterThanOrEqual(block.top);
       await expect(box.bottom).toBeLessThanOrEqual(block.bottom);
     }
     await user.click(buttons[0]);
-    await expect(canvas.getByRole('button', { name: 'Copied' })).toHaveAttribute('title', 'Copied');
+    await expect(
+      canvas.getByRole("button", { name: "Copied" }),
+    ).toHaveAttribute("title", "Copied");
   },
 };
 
@@ -237,7 +248,10 @@ export const Chips: Story = {
         <Chip isOn>Running</Chip>
       </Group>
       <Group of="CopyChip, icon-only and labeled">
-        <CopyChip value="vis-agent python uv sync --project ./einmal --locked" label="Copy code" />
+        <CopyChip
+          value="vis-agent python uv sync --project ./einmal --locked"
+          label="Copy code"
+        />
         <CopyChip value="fd3c03f9" label="Copy session id">
           fd3c03f9
         </CopyChip>
@@ -252,7 +266,6 @@ export const Chips: Story = {
     </Sheet>
   ),
 };
-
 
 function SwitchDemo() {
   const [isOn, setIsOn] = useState(true);
@@ -278,10 +291,12 @@ export const Fields: Story = {
     </Sheet>
   ),
   play: async ({ canvas }) => {
-    const notifications = canvas.getByRole('switch', { name: /^Notify on this machine/ });
-    await expect(notifications).toHaveAttribute('aria-checked', 'true');
+    const notifications = canvas.getByRole("switch", {
+      name: /^Notify on this machine/,
+    });
+    await expect(notifications).toHaveAttribute("aria-checked", "true");
     await userEvent.click(notifications);
-    await expect(notifications).toHaveAttribute('aria-checked', 'false');
+    await expect(notifications).toHaveAttribute("aria-checked", "false");
   },
 };
 
@@ -308,12 +323,17 @@ export const Rows: Story = {
             sub="downloading, 42%"
             isSelected={false}
             leadingAction={{
-              label: 'Download Piper English',
+              label: "Download Piper English",
               icon: <DownloadIcon className="size-3" />,
-               onClick: noop,
+              onClick: noop,
             }}
           />
-          <ChoiceCell className="w-full" title="System voice" sub="ready" isSelected />
+          <ChoiceCell
+            className="w-full"
+            title="System voice"
+            sub="ready"
+            isSelected
+          />
         </div>
       </Group>
       <Group of="Disclosure and OptionRow">
@@ -326,7 +346,12 @@ export const Rows: Story = {
         <Disclosure className="w-full" isOpen={false} tone="execution">
           Read ×8 · 6 files
         </Disclosure>
-        <Disclosure className="w-full" isOpen={false} tone="execution" inlineChevron>
+        <Disclosure
+          className="w-full"
+          isOpen={false}
+          tone="execution"
+          inlineChevron
+        >
           CODE +12 more
         </Disclosure>
         <Disclosure className="w-full" isOpen tone="execution" inlineChevron>
@@ -399,7 +424,7 @@ export const Feedback: Story = {
         <Banner
           kind="err"
           title="Authentication rejected"
-           dismiss={{ label: 'Dismiss', onClick: noop }}
+          dismiss={{ label: "Dismiss", onClick: noop }}
         >
           Sign in again to keep this provider.
         </Banner>
@@ -413,17 +438,22 @@ export const Feedback: Story = {
   ),
 };
 
-
 /** A pick that owns which one is picked, because a sheet has to show both faces. */
 function ChoiceRowDemo() {
-  const [picked, setPicked] = useState('production');
-  const [any, setAny] = useState<string[]>(['tests']);
+  const [picked, setPicked] = useState("production");
+  const [any, setAny] = useState<string[]>(["tests"]);
   const toggle = (value: string) =>
-    setAny((on) => (on.includes(value) ? on.filter((v) => v !== value) : [...on, value]));
+    setAny((on) =>
+      on.includes(value) ? on.filter((v) => v !== value) : [...on, value],
+    );
   return (
     <div className="flex w-full flex-col gap-3">
-      <div className="flex flex-col gap-1" role="radiogroup" aria-label="Environment">
-        {['production', 'staging'].map((value) => (
+      <div
+        className="flex flex-col gap-1"
+        role="radiogroup"
+        aria-label="Environment"
+      >
+        {["production", "staging"].map((value) => (
           <ChoiceRow
             key={value}
             isOn={picked === value}
@@ -440,8 +470,12 @@ function ChoiceRowDemo() {
           </ChoiceRow>
         ))}
       </div>
-      <div className="flex flex-col gap-1" role="group" aria-label="What to run">
-        {['tests', 'lint'].map((value) => (
+      <div
+        className="flex flex-col gap-1"
+        role="group"
+        aria-label="What to run"
+      >
+        {["tests", "lint"].map((value) => (
           <ChoiceRow
             key={value}
             isOn={any.includes(value)}
@@ -472,20 +506,20 @@ export const Selection: Story = {
           question={`Delete ${STORY_SESSION.title}?`}
           cost="61 turns and every artifact go with it."
           confirmLabel="Delete"
-           onKeep={noop}
-           onConfirm={noop}
+          onKeep={noop}
+          onConfirm={noop}
         />
       </Group>
     </Sheet>
   ),
   play: async ({ canvas }) => {
-    const staging = canvas.getByRole('radio', { name: 'staging' });
+    const staging = canvas.getByRole("radio", { name: "staging" });
     await userEvent.click(staging);
-    await expect(staging).toHaveAttribute('aria-checked', 'true');
+    await expect(staging).toHaveAttribute("aria-checked", "true");
 
-    const lint = canvas.getByRole('button', { name: 'lint' });
+    const lint = canvas.getByRole("button", { name: "lint" });
     await userEvent.click(lint);
-    await expect(lint).toHaveAttribute('aria-pressed', 'true');
+    await expect(lint).toHaveAttribute("aria-pressed", "true");
   },
 };
 
@@ -503,7 +537,9 @@ function HeaderRenameDemo() {
 
 function PagerDemo() {
   const [page, setPage] = useState(2);
-  return <Pager page={page} pageCount={7} onPage={setPage} label="vis sessions" />;
+  return (
+    <Pager page={page} pageCount={7} onPage={setPage} label="vis sessions" />
+  );
 }
 
 /**
@@ -520,7 +556,7 @@ export const Bands: Story = {
           name={STORY_MACHINES[0].name}
           qualifier={STORY_SESSION.where}
           qualifierTitle={STORY_SESSION.where}
-           onRename={noop}
+          onRename={noop}
           renameLabel={`Rename ${STORY_MACHINES[0].name}`}
         />
       </Group>
@@ -529,7 +565,7 @@ export const Bands: Story = {
           name={STORY_SESSION.project}
           qualifier={STORY_SESSION.where}
           qualifierTitle={STORY_SESSION.where}
-           disclosure={{ isOpen: true, onToggle: noop, label: 'Collapse vis' }}
+          disclosure={{ isOpen: true, onToggle: noop, label: "Collapse vis" }}
         />
       </Group>
       <Group of="What a band counts">
@@ -544,7 +580,10 @@ export const Bands: Story = {
       </Group>
       <Group of="The trailing cluster of a row">
         <HeaderActions>
-          <RowDisclosure label={`Show details for ${STORY_SESSION.id}`} isOpen={false} />
+          <RowDisclosure
+            label={`Show details for ${STORY_SESSION.id}`}
+            isOpen={false}
+          />
         </HeaderActions>
       </Group>
       <Group of="A header name that edits in place, and the step through a long list">
@@ -588,7 +627,11 @@ function MachineSwitcherDemo() {
             }
             onClick={() => setOn(machine.name)}
           >
-            <MachineMark color={machine.color} isHollow={machine.isDown} isChecking={isChecking} />
+            <MachineMark
+              color={machine.color}
+              isHollow={machine.isDown}
+              isChecking={isChecking}
+            />
             {machine.name}
           </MachineTab>
         );
@@ -607,7 +650,11 @@ export const Machines: Story = {
     <Sheet>
       <Group of="MachineMark, two sizes, one still being checked and one that is not answering">
         {STORY_MACHINES.map((machine) => (
-          <MachineMark key={machine.name} color={machine.color} isHollow={machine.isDown} />
+          <MachineMark
+            key={machine.name}
+            color={machine.color}
+            isHollow={machine.isDown}
+          />
         ))}
         <MachineMark color={STORY_MACHINES[1].color} isChecking />
         <MachineMark color={STORY_MACHINES[0].color} size="banner" />
@@ -628,8 +675,15 @@ export const Machines: Story = {
           isBusy
           onPress={noop}
         />
-        <MachineProjectsButton machine={STORY_MACHINES[0].name} onPress={noop} />
-        <MachineProjectsButton machine={STORY_MACHINES[0].name} isQuiet onPress={noop} />
+        <MachineProjectsButton
+          machine={STORY_MACHINES[0].name}
+          onPress={noop}
+        />
+        <MachineProjectsButton
+          machine={STORY_MACHINES[0].name}
+          isQuiet
+          onPress={noop}
+        />
       </Group>
     </Sheet>
   ),
@@ -637,21 +691,24 @@ export const Machines: Story = {
 
 function SettingsChoiceDemo() {
   const [open, setOpen] = useState(true);
-  const [engine, setEngine] = useState('piper');
+  const [engine, setEngine] = useState("piper");
   return (
     <div className="grid w-full grid-cols-1 gap-px bg-dialog-edge">
       <div className="grid bg-input">
         <SettingsChoiceDisclosure
           title="Piper (gateway)"
           sub="ready"
-          isSelected={engine === 'piper'}
+          isSelected={engine === "piper"}
           isOpen={open}
           controls="story-piper-settings"
-          onSelect={() => setEngine('piper')}
+          onSelect={() => setEngine("piper")}
           onToggle={() => setOpen((one) => !one)}
         />
         {open && (
-          <p id="story-piper-settings" className="px-3 py-2 font-mono text-meta text-dialog-hint">
+          <p
+            id="story-piper-settings"
+            className="px-3 py-2 font-mono text-meta text-dialog-hint"
+          >
             English · downloaded
           </p>
         )}
@@ -660,10 +717,10 @@ function SettingsChoiceDemo() {
         <SettingsChoiceDisclosure
           title="This device"
           sub="system TTS"
-          isSelected={engine === 'device'}
+          isSelected={engine === "device"}
           isOpen={false}
           controls="story-device-settings"
-          onSelect={() => setEngine('device')}
+          onSelect={() => setEngine("device")}
           onToggle={() => undefined}
         />
         <p id="story-device-settings" hidden>
@@ -673,7 +730,6 @@ function SettingsChoiceDemo() {
     </div>
   );
 }
-
 
 /** A SETTINGS PANEL IS ROWS, and a row is a question with its answer beside it. */
 export const Settings: Story = {
@@ -696,13 +752,13 @@ export const Settings: Story = {
         <NotifyConnectionSwitch
           machine={STORY_MACHINES[0].name}
           isOn
-           onClick={noop}
+          onClick={noop}
         />
         <NotifyConnectionSwitch
           machine={STORY_MACHINES[1].name}
           isOn={false}
           isChecking
-           onClick={noop}
+          onClick={noop}
         />
       </Group>
     </Sheet>
@@ -717,21 +773,21 @@ export const Settings: Story = {
  */
 export const Dialogs: Story = {
   render: () => (
-     <Modal size="fit" onDismiss={noop}>
+    <Modal size="fit" onDismiss={noop}>
       <DialogFrame
         title="Delete this session?"
         subtitle={STORY_SESSION.title}
         actions={<BandButton isPrimary>Delete</BandButton>}
         closeLabel="Close the delete dialog"
-         onClose={noop}
+        onClose={noop}
       >
         <div className="p-4">
           <ConfirmRow
             question={`Delete ${STORY_SESSION.title}?`}
             cost="61 turns and every artifact go with it."
             confirmLabel="Delete"
-             onKeep={noop}
-             onConfirm={noop}
+            onKeep={noop}
+            onConfirm={noop}
           />
         </div>
       </DialogFrame>
@@ -742,13 +798,13 @@ export const Dialogs: Story = {
 /** The full-height dialog: a list inside it gets every pixel the glass has. */
 export const DialogFull: Story = {
   render: () => (
-     <Modal onDismiss={noop}>
+    <Modal onDismiss={noop}>
       <DialogFrame
         title={`Projects on ${STORY_MACHINES[0].name}`}
         subtitle={STORY_SESSION.where}
         actions={<BandButton isPrimary>Add</BandButton>}
         closeLabel="Close the projects dialog"
-         onClose={noop}
+        onClose={noop}
       >
         <div className="flex flex-col">
           <ListRow isFramed>vis</ListRow>
@@ -769,7 +825,7 @@ export const Overlay: Story = {
       title="fleet.csv"
       subtitle="7 rows × 5 cols · 268 B"
       actions={<BandButton>Download</BandButton>}
-       onClose={noop}
+      onClose={noop}
     >
       <div className="p-4">
         <p className="font-mono text-meta text-dialog-hint">
@@ -792,7 +848,7 @@ export const Band: Story = {
             subtitle={`${STORY_MACHINES[0].name} · protocol 7`}
             actions={<BandButton>Export</BandButton>}
             closeLabel="Close settings"
-             onClose={noop}
+            onClose={noop}
           />
         </div>
       </Group>
@@ -802,7 +858,7 @@ export const Band: Story = {
             title="fleet.csv"
             isStacked
             closeLabel="Close fleet.csv"
-             onClose={noop}
+            onClose={noop}
           />
         </div>
       </Group>
@@ -814,7 +870,7 @@ export const Band: Story = {
 export const Gestures: Story = {
   render: () => (
     <Sheet>
-      {(['none', 'pulling', 'armed'] as const).map((phase) => (
+      {(["none", "pulling", "armed"] as const).map((phase) => (
         <Group key={phase} of={`PullToSearchHint — ${phase}`}>
           <div className="relative h-16 w-full transform-gpu overflow-hidden bg-level-project">
             <PullToSearchHint phase={phase} />

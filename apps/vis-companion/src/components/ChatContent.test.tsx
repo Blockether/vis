@@ -55,7 +55,10 @@ const count = (html: string, pattern: RegExp) =>
 describe("code block copy controls", () => {
   it.each([
     ["bash", "vis-agent python uv sync --project ./einmal --locked"],
-    ["diff", "--- a/config.txt\n+++ b/config.txt\n@@ -1 +1 @@\n-before\n+after"],
+    [
+      "diff",
+      "--- a/config.txt\n+++ b/config.txt\n@@ -1 +1 @@\n-before\n+after",
+    ],
   ])(
     "copies a %s block with an icon and accessible feedback",
     async (language, source) => {
@@ -1075,7 +1078,9 @@ describe("Activity follows the combined Python source", () => {
       details.open = true;
       fireEvent(details, new Event("toggle", { bubbles: true }));
     }
-    for (const toggle of painted.getAllByRole("button", { name: "Expand result" })) {
+    for (const toggle of painted.getAllByRole("button", {
+      name: "Expand result",
+    })) {
       fireEvent.click(toggle);
     }
     expect(painted.container.textContent).toContain("first result");
@@ -1113,10 +1118,14 @@ describe("Activity follows the combined Python source", () => {
   });
 
   it("keeps mixed outcomes nested while the failure stays visible", () => {
-    const painted = render(<AssistantMessage turn={turnOf([
-      { source: "fail()", error: { message: "Operation failed" } },
-      { source: "print_summary()", stdout: "Successful output" },
-    ])} />);
+    const painted = render(
+      <AssistantMessage
+        turn={turnOf([
+          { source: "fail()", error: { message: "Operation failed" } },
+          { source: "print_summary()", stdout: "Successful output" },
+        ])}
+      />,
+    );
     expect(painted.getByText(/Operation failed/)).toBeVisible();
     expect(painted.queryByRole("button", { name: "Expand result" })).toBeNull();
     fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
@@ -1180,7 +1189,9 @@ describe("Activity follows the combined Python source", () => {
       expect(painted.container.textContent).not.toContain("line_6()");
       expect(painted.container.textContent).toContain("18 matches");
       fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
-      expect(painted.getByRole("button", { name: "Expand result" })).toBeVisible();
+      expect(
+        painted.getByRole("button", { name: "Expand result" }),
+      ).toBeVisible();
     },
   );
 
@@ -1524,6 +1535,23 @@ describe("a markdown table", () => {
     expect(/<p class="[^"]*text-justify/.test(markdown)).toBe(true);
     expect(/<code class="[^"]*break-all/.test(markdown)).toBe(true);
     expect(/<pre class="[^"]*text-left/.test(markdown)).toBe(true);
+  });
+  it("makes scrollable code blocks keyboard-focusable named regions", () => {
+    // CI 34270446372: axe rejected the horizontally scrolling CodeCopy story.
+    const markup = renderToStaticMarkup(
+      <Markdown>
+        {
+          "```bash\nprintf 'a long command line'\n```\n\n```text\nsecond block\n```"
+        }
+      </Markdown>,
+    );
+    const blocks = markup.match(/<pre\b[^>]*>/g) ?? [];
+    expect(blocks).toHaveLength(2);
+    for (const block of blocks) {
+      expect(block).toContain('tabindex="0"');
+      expect(block).toContain('role="region"');
+      expect(block).toContain('aria-label="');
+    }
   });
 });
 // Reported from a phone: a message was sent, the session title updated, and the

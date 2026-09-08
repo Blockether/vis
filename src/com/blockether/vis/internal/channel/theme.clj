@@ -716,14 +716,14 @@
    :green [88 117 57]
    :magenta [152 84 241]
    :orange [177 92 0]
-   :purple [120 71 189]
+   :purple [112 62 181]
    :red [245 42 101]
    :red1 [198 67 67]
    :yellow [140 108 62]
    ;; TokyoNight Day's vivid terminal colours are marks, not readable small text.
-   ;; These keep each hue while clearing 4.5:1 on its canonical #e1e2e7 paper.
+   ;; These keep each hue while clearing 4.5:1 on the code and status surfaces.
    :cyan-ink [0 98 127]
-   :green-ink [70 97 34]
+   :green-ink [64 90 30]
    :orange-ink [143 72 0]
    :red-ink [145 48 63]
    :yellow-ink [100 70 30]})

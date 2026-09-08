@@ -466,6 +466,9 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
       )}
       <pre
         className={`${compact ? "py-2 text-meta " : "py-2.5 text-ui "} m-0 max-w-full overflow-x-auto overscroll-x-contain text-left font-mono text-code-foreground`}
+        role="region"
+        aria-label={language ? `${language} code` : "Code"}
+        tabIndex={0}
       >
         <code className="block min-w-max [tab-size:2]">
           {lines.map((segments, index) => (
@@ -1211,23 +1214,49 @@ const ToolCard = memo(function ToolCard({
   // RESULT has its own fold inside CODE; failures remain visible without expanding source.
   const [resultOpen, setResultOpen] = useState(false);
   // The tally counts what the reader would see: fence rows around a stdout block are not output.
-  const resultLines = body ? body.split("\n").filter((line) => !line.startsWith("```")).length : 0;
+  const resultLines = body
+    ? body.split("\n").filter((line) => !line.startsWith("```")).length
+    : 0;
   const resultShown = failed || interrupted || resultOpen;
-  if (embedded) return (
-    <div data-code-result className="min-w-0 bg-result py-3 text-meta text-code-result">
-      {failed || interrupted ? (
-        <BandLabel tone={stateTone}>{stateLabel}</BandLabel>
-      ) : (
-        <Disclosure isOpen={resultOpen} tone="execution" inlineChevron className="min-w-0"
-          aria-label={resultOpen ? "Collapse result" : "Expand result"}
-          onClick={() => setResultOpen((open) => !open)}>
-          <BandLabel tone={stateTone}>RESULT{!resultOpen && resultLines > 0 && <BandTally> +{resultLines} more</BandTally>}</BandLabel>
-        </Disclosure>
-      )}
-      {resultShown && (failed ? <pre className="mt-2 whitespace-pre-wrap break-words font-mono">{body}</pre>
-        : <div className="mt-2"><Markdown compact nested>{body}</Markdown></div>)}
-    </div>
-  );
+  if (embedded)
+    return (
+      <div
+        data-code-result
+        className="min-w-0 bg-result py-3 text-meta text-code-result"
+      >
+        {failed || interrupted ? (
+          <BandLabel tone={stateTone}>{stateLabel}</BandLabel>
+        ) : (
+          <Disclosure
+            isOpen={resultOpen}
+            tone="execution"
+            inlineChevron
+            className="min-w-0"
+            aria-label={resultOpen ? "Collapse result" : "Expand result"}
+            onClick={() => setResultOpen((open) => !open)}
+          >
+            <BandLabel tone={stateTone}>
+              RESULT
+              {!resultOpen && resultLines > 0 && (
+                <BandTally> +{resultLines} more</BandTally>
+              )}
+            </BandLabel>
+          </Disclosure>
+        )}
+        {resultShown &&
+          (failed ? (
+            <pre className="mt-2 whitespace-pre-wrap break-words font-mono">
+              {body}
+            </pre>
+          ) : (
+            <div className="mt-2">
+              <Markdown compact nested>
+                {body}
+              </Markdown>
+            </div>
+          ))}
+      </div>
+    );
   const headline = (
     <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
       {stateLabel ? (
@@ -1333,10 +1362,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   const [expanded, setExpanded] = useState(false);
   const lineCount = value ? value.split("\n").length : 0;
   return (
-    <section
-      className="relative z-0 min-w-0 bg-code px-3"
-      data-execution-code
-    >
+    <section className="relative z-0 min-w-0 bg-code px-3" data-execution-code>
       <div className="flex min-h-8 min-w-0 items-center gap-2">
         {showCode ? (
           <Disclosure
@@ -1375,7 +1401,13 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
       </div>
       {expanded && showCode && (
         <div className="py-3" data-code-body>
-          <SyntaxCodeBlock value={value} language={language} compact bare frameless />
+          <SyntaxCodeBlock
+            value={value}
+            language={language}
+            compact
+            bare
+            frameless
+          />
         </div>
       )}
       {failure}
@@ -1623,9 +1655,11 @@ const FormTrace = memo(function FormTrace({
           duration={formatDuration(form.duration_ms)}
           failure={
             cards.some((card) => card.error != null)
-              ? cards.filter((card) => card.error != null).map((card, index) => (
-                <ToolCard key={index} form={card} embedded />
-              ))
+              ? cards
+                  .filter((card) => card.error != null)
+                  .map((card, index) => (
+                    <ToolCard key={index} form={card} embedded />
+                  ))
               : undefined
           }
         >
@@ -1634,9 +1668,7 @@ const FormTrace = memo(function FormTrace({
       )}
       <div
         className={
-          detectedActivity
-            ? "relative z-0 min-w-0 bg-code px-3"
-            : "min-w-0"
+          detectedActivity ? "relative z-0 min-w-0 bg-code px-3" : "min-w-0"
         }
         data-execution-activity={detectedActivity || undefined}
         role={running ? "status" : "group"}
@@ -1746,7 +1778,6 @@ function observeBox(
 const RAIL_SPINE = "ml-0";
 // Unstroked media begins just inside the two-pixel rail.
 const RAIL_SPINE_PAPER = "ml-0.5";
-
 
 export const ThinkingBand = memo(function ThinkingBand({
   children,

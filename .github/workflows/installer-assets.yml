@@ -1,66 +1,51 @@
 name: Installer assets
 
-# The documented one-liner
-# (github.com/OWNER/REPO/releases/download/installer/install-vis-agent) must be
-# as fresh as the branch it installs from, and it must stay on github.com:
-# raw.githubusercontent.com is blocked on many corporate networks.
-#
-# So `installer` is a ROLLING release, not a version. This workflow force-moves
-# that single tag to the commit that changed either script and re-uploads both
-# assets in place. No snapshot release is created per commit — there is exactly
-# one `installer` entry, forever, and it is a PRERELEASE, so `releases/latest`
-# still resolves to the newest `vX.Y.Z` (which keeps its own snapshot of the
-# same two scripts, from release.yml).
-#
-# The path filter is the point: content only changes when these files change, so
-# a commit that touches neither would only re-upload identical bytes.
-
+# Refresh the documented rolling bootstrap only after a complete stable release.
+# The installer tag is never moved; the versioned release remains immutable.
 on:
-  push:
-    branches: [main]
-    paths:
-      - bin/install-vis-agent
-      - bin/vis-agent
-      - .github/workflows/installer-assets.yml
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Current complete stable release tag
+        type: string
+        required: true
 
 permissions:
   contents: write
 
-# One rolling tag, so one publisher at a time; a superseded run would upload
-# older scripts over newer ones.
 concurrency:
   group: installer-assets
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish:
-    name: Refresh the rolling installer release
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@v7
-
-      - name: Move the installer tag
-        run: git tag -f installer "$GITHUB_SHA"
-
-      - uses: ./.github/actions/git-push
         with:
-          refspec: refs/tags/installer
-          force: "true"
-
-      - name: Refresh both installer assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ inputs.tag }}
+      - name: Require the latest complete stable release
         run: |
           set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$RUNNER_TEMP/release.json"
+          python3 bin/verify-release-assets.py "$RUNNER_TEMP/release.json" "$RELEASE_TAG" --published
+      - name: Refresh both bootstrap assets without moving a tag
+        run: |
+          set -euo pipefail
+          notes="Bootstrap scripts from complete stable release $RELEASE_TAG. Installs the native engine, Python runtime and terminal client; source development requires --jvm."
           if gh release view installer >/dev/null 2>&1; then
-            gh release edit installer --target "$GITHUB_SHA" --prerelease --latest=false
             gh release upload installer bin/install-vis-agent bin/vis-agent --clobber
+            gh release edit installer --prerelease --latest=false --title 'Installer (stable)' --notes "$notes"
           else
             gh release create installer bin/install-vis-agent bin/vis-agent \
-              --prerelease \
-              --latest=false \
-              --target "$GITHUB_SHA" \
-              --title 'Installer (main)' \
-              --notes 'Rolling bootstrap scripts, refreshed from every commit on `main` that changes them. Not a version: `releases/latest` is still the newest `vX.Y.Z`. The scripts only bootstrap — `vis-agent update` then checks the source out at the newest commit of `main` and refreshes the wrapper from it.'
+              --prerelease --latest=false --target "$(git rev-parse HEAD)" \
+              --title 'Installer (stable)' --notes "$notes"
           fi

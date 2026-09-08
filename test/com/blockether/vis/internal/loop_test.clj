@@ -9778,7 +9778,10 @@
                                            (mapcat :forms iterations)))
                       operations (filter #(str/starts-with? (:operation %) "council.") rows)]
 
-                  (expect (= (if (= request "receive") 3 2) (count operations)))
+                  (expect (= (if (= request "receive") 3 2) (count operations))
+                          (pr-str {:request request
+                                   :forms (mapv #(select-keys % [:error :stdout :activity])
+                                                (mapcat :forms iterations))}))
                   (doseq [row operations]
                     (expect (some #(= "council-group" (:type %)) (:resources row))))
                   (expect (= (if (= request "receive") 5 2) (count iterations)))

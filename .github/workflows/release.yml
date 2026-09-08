@@ -2,258 +2,113 @@ name: Release & Deploy to Clojars
 
 on:
   push:
-    # v[0-9]* and not v*: `v*` also matches the `voice-assets-pack` tag, and
-    # pushing that model pack started this workflow against a ref that is not
-    # a version at all.
     tags: ['v[0-9]*']
 
 permissions:
   contents: write
 
-jobs:
-  release:
-    runs-on: ubuntu-latest
-    name: Release & Deploy to Clojars
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
+jobs:
+  verify:
+    name: Verify release source
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  prepare:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: main
-          fetch-depth: 1
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Fetch tags and changelog history
-        run: |
-          git fetch --tags --no-recurse-submodules origin
-          git fetch --deepen=200 origin main
-
+          ref: ${{ github.sha }}
+          fetch-depth: 0
       - name: Verify tag, main, and VIS_VERSION are identical
         run: |
           set -euo pipefail
-          VERSION=$(tr -d '[:space:]' < VIS_VERSION)
-          EXPECTED="v$VERSION"
-          test "$GITHUB_REF_NAME" = "$EXPECTED" || {
-            echo "$GITHUB_REF_NAME does not match VIS_VERSION=$VERSION (expected $EXPECTED)" >&2
-            exit 1
-          }
-          TAG_COMMIT=$(git rev-parse "$GITHUB_REF_NAME^{commit}")
-          test "$TAG_COMMIT" = "$(git rev-parse HEAD)" || {
-            echo "$GITHUB_REF_NAME must point at current main before release" >&2
-            exit 1
-          }
-
-      # Jars deployed to Clojars are built on the SAME locked JDK as everything
-      # else (.graalvm-version) — the action also refuses a
-      # half-bumped/unlocked pin before anything is published.
-      - uses: ./.github/actions/setup-graalvm-25
-
-      - uses: DeLaGuardo/setup-clojure@13.6.1
-        with:
-          cli: latest
-
-      - name: Cache Clojure deps
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.m2/repository
-            ~/.gitlibs
-            ~/.clojure/.cpcache
-          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'packages/**/deps.edn') }}
-          restore-keys: |
-            deps-${{ runner.os }}-
-
-      - name: Generate changelog
-        id: changelog
-        shell: bash
+          test "$RELEASE_TAG" = "v$(tr -d '[:space:]' < VIS_VERSION)"
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          test "$(git rev-parse origin/main)" = "$(git rev-parse HEAD)"
+      - name: Prepare unpublished release
         run: |
           set -euo pipefail
-          PREV_TAG=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n 2 | tail -n 1)
-          CURRENT_TAG=${{ github.ref_name }}
-          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
-            RANGE="$CURRENT_TAG"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
+            python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["draft"], "Published releases are immutable"' "$RUNNER_TEMP/release.json"
+            gh release upload "$RELEASE_TAG" bin/install-vis-agent bin/vis-agent --clobber
           else
-            RANGE="${PREV_TAG}..${CURRENT_TAG}"
+            gh release create "$RELEASE_TAG" bin/install-vis-agent bin/vis-agent \
+              --verify-tag --draft --title "$RELEASE_TAG" --generate-notes
           fi
 
-          CHANGELOG=$(git log --pretty=format:"- %s (%h)" $RANGE)
-
-          package_changes() {
-            local any=false
-            echo "### Package changes"
-            echo ""
-
-            local root_entries
-            root_entries=$(git log --pretty=format:"- %s (%h)" $RANGE -- . ':(exclude)extensions' || true)
-            if [ -n "$root_entries" ]; then
-              any=true
-              echo "#### com.blockether/vis"
-              echo "$root_entries"
-              echo ""
-            fi
-
-            while IFS= read -r deps_file; do
-              local dir short lib entries
-              dir="${deps_file%/deps.edn}"
-              short=$(basename "$dir")
-              lib="com.blockether/$short"
-              entries=$(git log --pretty=format:"- %s (%h)" $RANGE -- "$dir" || true)
-              if [ -n "$entries" ]; then
-                any=true
-                echo "#### $lib"
-                echo "$entries"
-                echo ""
-              fi
-            done < <(find extensions -mindepth 2 -maxdepth 3 -name deps.edn -print | sort)
-
-            if [ "$any" = false ]; then
-              echo "- No package-scoped changes."
-              echo ""
-            fi
-          }
-
-          package_changes > /tmp/package_changes.md
-
-          {
-            echo "## What's Changed"
-            echo ""
-            echo "$CHANGELOG"
-            echo ""
-            cat /tmp/package_changes.md
-            echo "**Full Changelog**: https://github.com/Blockether/vis/compare/${PREV_TAG}...${CURRENT_TAG}"
-          } > /tmp/release_body.md
-
-      # The documented one-liner is an asset of the ROLLING `installer` release
-      # (releases/download/installer/install-vis-agent, refreshed by
-      # installer-assets.yml on every commit that touches these scripts), because
-      # raw.githubusercontent.com is blocked on many corporate networks while
-      # github.com release downloads are not. Every version release keeps its own
-      # snapshot of the same two scripts, so releases/latest/download/... — the
-      # URL already in the wild — never stops working. They only bootstrap: what
-      # they install is never a tag, it is the branch tip, since a published
-      # release can carry broken source. These two scripts ARE the release payload
-      # right now: native-release.yml no longer runs on a tag (native builds are
-      # unreliable — see its header), so a release ships the launcher plus the
-      # Clojars deploy and the launcher runs the JVM source runtime.
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          body_path: /tmp/release_body.md
-          files: |
-            bin/install-vis-agent
-            bin/vis-agent
-          fail_on_unmatched_files: true
-
-      - name: Check if version exists on Clojars
-        id: check-clojars
-        shell: bash
-        run: |
-          set -euo pipefail
-          # The monorepo publishes com.blockether/vis plus every package discovered
-          # from packages/*/deps.edn. Probe the root vis jar as the bellwether —
-          # every release deploys the full selected package set together.
-          VERSION="${GITHUB_REF_NAME#v}"
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://repo.clojars.org/com/blockether/vis/$VERSION/vis-$VERSION.jar")
-          if [ "$STATUS" = "200" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Version $VERSION already exists on Clojars - skipping deploy"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build & Deploy monorepo packages to Clojars
-        if: steps.check-clojars.outputs.exists != 'true'
-        env:
-          CLOJARS_USERNAME: blockether-deployer
-          CLOJARS_PASSWORD: ${{ secrets.CLOJARS_DEPLOY_TOKEN }}
-        run: clojure -X:deps prep && clojure -T:build deploy
-
-      - name: Stamp the published Clojars version in the docs
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          sed -i "s/{:mvn\/version \"[^\"]*\"}/{:mvn\/version \"$VERSION\"}/g" README.md resources/vis-docs/index.md
-
-      - name: Update CHANGELOG.md
-        shell: bash
-        run: |
-          set -euo pipefail
-          PREV_TAG=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n 2 | tail -n 1)
-          CURRENT_TAG=${{ github.ref_name }}
-          DATE=$(date +%Y-%m-%d)
-          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
-            RANGE="$CURRENT_TAG"
-          else
-            RANGE="${PREV_TAG}..${CURRENT_TAG}"
-          fi
-          COMMITS=$(git log --pretty=format:"- %s" $RANGE)
-          if [ ! -f /tmp/package_changes.md ]; then
-            echo "### Package changes" > /tmp/package_changes.md
-            echo "" >> /tmp/package_changes.md
-            echo "- Package change details were unavailable for this release run." >> /tmp/package_changes.md
-          fi
-          UNRELEASED_LINE=$(grep -n '^## \[Unreleased\]' CHANGELOG.md | head -1 | cut -d: -f1)
-          if [ -z "$UNRELEASED_LINE" ]; then
-            echo "ERROR: Could not find ## [Unreleased] section in CHANGELOG.md"
-            exit 1
-          fi
-          {
-            head -n "$UNRELEASED_LINE" CHANGELOG.md
-            echo ""
-            echo "## [$CURRENT_TAG] - $DATE"
-            echo ""
-            echo "### Changed"
-            echo "$COMMITS"
-            echo ""
-            cat /tmp/package_changes.md
-            echo ""
-            tail -n +$((UNRELEASED_LINE + 1)) CHANGELOG.md
-          } > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
-          sed -i "s|\[Unreleased\]: .*|[Unreleased]: https://github.com/Blockether/vis/compare/${CURRENT_TAG}...HEAD|" CHANGELOG.md
-          if ! grep -q "^\[${CURRENT_TAG}\]:" CHANGELOG.md; then
-            echo "[$CURRENT_TAG]: https://github.com/Blockether/vis/releases/tag/${CURRENT_TAG}" >> CHANGELOG.md
-          fi
-
-      - name: Commit release notes
-        id: notes
-        run: |
-          set -euo pipefail
-          git config user.name "blockether-deployer"
-          git config user.email "contact@blockether.com"
-          git add README.md CHANGELOG.md resources/vis-docs/index.md
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            echo "pushable=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git commit -m "release: update release notes for ${{ github.ref_name }}"
-          echo "pushable=true" >> "$GITHUB_OUTPUT"
-
-      - name: Push release notes
-        if: steps.notes.outputs.pushable == 'true'
-        uses: ./.github/actions/git-push
-        with:
-          refspec: HEAD:main
-          rebase-onto: main
+  native:
+    needs: prepare
+    uses: ./.github/workflows/native-release.yml
+    with:
+      tag: ${{ github.ref_name }}
+      only: all
+    secrets: inherit
 
   mobile:
-    name: Release matching iOS and Android apps
-    needs: release
+    needs: prepare
     uses: ./.github/workflows/mobile-release.yml
     with:
       platforms: both
-      # Every tester channel on both stores, the same build: a release that lands on `beta`
-      # alone leaves internal and alpha a version behind, which is how they drifted before.
-      # `all` is resolved against each store at release time — every tester track this Play
-      # listing has, every TestFlight internal group and the public link — so a channel added
-      # in a console is served by the next tag without touching this file.
       track: all
       audience: all
+      require_complete: true
     secrets: inherit
 
   desktop:
-    name: Release matching desktop apps
-    needs: release
+    needs: prepare
     uses: ./.github/workflows/desktop-companion.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
+
+  publish:
+    name: Verify complete assets, deploy libraries and publish stable
+    needs: [prepare, native, mobile, desktop]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require every verified product artifact
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
+          python3 bin/verify-release-assets.py "$RUNNER_TEMP/release.json" "$RELEASE_TAG"
+      - uses: ./.github/actions/setup-graalvm-25
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+      - name: Deploy monorepo packages to Clojars
+        env:
+          CLOJARS_USERNAME: blockether-deployer
+          CLOJARS_PASSWORD: ${{ secrets.CLOJARS_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://repo.clojars.org/com/blockether/vis/$VERSION/vis-$VERSION.jar")
+          case "$STATUS" in
+            200) echo "Version $VERSION already deployed; resuming draft publication" ;;
+            404) clojure -X:deps prep && clojure -T:build deploy ;;
+            *) echo "Cannot verify Clojars version (HTTP $STATUS)" >&2; exit 1 ;;
+          esac
+      - name: Publish complete stable release
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest
+
+  installer:
+    needs: publish
+    uses: ./.github/workflows/installer-assets.yml
     with:
       tag: ${{ github.ref_name }}
     secrets: inherit

@@ -1,0 +1,17 @@
+name: Require draft release
+description: Refuse uploads to an already published immutable version.
+inputs:
+  tag:
+    description: Existing draft release tag
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RELEASE_TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" | \
+          python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["draft"], "Published releases are immutable; create a new version"'

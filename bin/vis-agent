@@ -5,21 +5,12 @@
 #   1. run Vis,
 #   2. update Vis — and this command with it — (`vis-agent update`).
 #
-# There is nothing to choose. How Vis was installed decides what runs:
-#   native  the released build, unpacked beside this wrapper (release bundle,
-#           container image), or one Vis built from the source it owns
-#   jvm     `clojure -M:vis` from the source Vis owns, pinned to main's newest
-#           commit — what `bin/install-vis-agent` puts in place
+# Production installs use the stable native release and matching Python/TUI
+# sidecars. A source checkout or --jvm explicitly selects source development.
+# An installed native runtime takes precedence unless --jvm is requested.
+# `vis-agent runtime` reports the selection without starting the engine.
 #
-# The native build wins whenever one is installed, because it is the published
-# runtime. `vis-agent runtime` reports which one runs; it never switches, and
-# `vis-agent update` keeps that runtime — and this command — current.
-#
-# Where this file sits decides nothing either. A copy of this wrapper inside a
-# repository checkout is still only the command: it runs the runtime Vis owns
-# under ~/.vis, never the tree it happens to be sitting in.
-#
-# Vis follows main. Everything Vis owns lives under ~/.vis:
+# Managed development source and release state live under ~/.vis:
 #   install/vis-agent-native   the private native runtime
 #   install/src                the checkout Vis owns
 #   install/ref                the commit that checkout is pinned to
@@ -506,16 +497,17 @@ configure_system_trust() {
   fi
 }
 
-# What runs: the native build when one is installed, otherwise the source Vis
-# owns (or, from a checkout with nothing installed, that checkout — see
-# `find_jvm_source`). Installing IS the decision; the ONE override is `--jvm` /
-# `VIS_JVM=1`, which forces the source runtime so a developer can run live edits
-# from a checkout even when a native is installed.
+# Preserve explicit source development; a standalone command defaults to native.
+# In particular, an absent native runtime must not silently install JVM source.
 runtime_effective() {
-  if (( ! force_jvm )) && find_native >/dev/null 2>&1; then
-    printf 'native\n'
-  else
+  if (( force_jvm )); then
     printf 'jvm\n'
+  elif find_native >/dev/null 2>&1; then
+    printf 'native\n'
+  elif find_jvm_source >/dev/null 2>&1; then
+    printf 'jvm\n'
+  else
+    printf 'native\n'
   fi
 }
 
@@ -693,9 +685,8 @@ EOF
 }
 
 # ── Release bundle ───────────────────────────────────────────────────────────
-# Every release publishes exactly one asset per platform: the bundle that carries
-# the launcher together with its native runtime.
-#   vis-agent-<os>-<arch>.tar.gz
+# Every supported platform has an engine/Python bundle and a matching TUI bundle.
+#   vis-agent-<os>-<arch>.tar.gz and vis-tui-<os>-<arch>.tar.gz
 vis_platform_asset() {
   local os arch
   case "$(uname -s)" in
@@ -861,7 +852,7 @@ update_native() {
   local target="${1:-latest}" track="${2:-stable}"
   require_cmd curl "the native runtime"
   require_cmd tar "the native runtime"
-  local asset api dl json archive unpack native_dir
+  local asset api dl json archive unpack native_dir tui_asset tui_dl tui_archive tui_unpack
   asset="$(vis_platform_asset)"
   if [[ "$target" != latest ]]; then
     api="https://api.github.com/repos/$vis_repo_slug/releases/tags/$target"
@@ -881,11 +872,14 @@ update_native() {
   if [[ -z "$dl" ]]; then
     die "update: no native runtime published for '$asset' on the $track track." \
         "Checked $api" \
-        "The stable track carries Linux x64 and arm64; the beta track is built on" \
-        "free runners only, so it carries the same two and never macOS." \
-        "Elsewhere Vis runs from the source it owns: install it with bin/install-vis-agent"
+        "Stable releases support Linux x64/arm64 and macOS arm64; beta supports Linux." \
+        "No JVM fallback was installed. For source development use install-vis-agent --jvm."
   fi
 
+  tui_asset="${asset/vis-agent-/vis-tui-}"
+  tui_dl="$(vis_asset_url "$json" "$tui_asset")"
+  [[ -n "$tui_dl" ]] || die "update: incomplete release: missing $tui_asset" \
+      "The engine and terminal client must come from the same release."
   # Where the private runtime belongs: beside an installed launcher, or in Vis
   # state when the launcher is a tracked checkout file we must never overwrite.
   if (( launcher_is_git_owned )); then
@@ -900,26 +894,31 @@ update_native() {
 
   archive="$(mktemp "${TMPDIR:-/tmp}/vis-agent-bundle.XXXXXX.tar.gz")"
   unpack="$(mktemp -d "${TMPDIR:-/tmp}/vis-agent-unpack.XXXXXX")"
-  trap 'rm -rf "$unpack" "$archive"' RETURN
+  tui_archive="$(mktemp "${TMPDIR:-/tmp}/vis-tui-bundle.XXXXXX.tar.gz")"
+  tui_unpack="$(mktemp -d "${TMPDIR:-/tmp}/vis-tui-unpack.XXXXXX")"
+  trap 'rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive"' EXIT
   say "downloading $dl"
   curl -fSL "$dl" -o "$archive" || exit 1
   tar -xzf "$archive" -C "$unpack" || exit 1
-  [[ -x "$unpack/vis-agent" && -x "$unpack/vis-agent-native" ]] || \
-    die "update: the release bundle is missing its launcher or native runtime"
+  say "downloading $tui_dl"
+  curl -fSL "$tui_dl" -o "$tui_archive" || exit 1
+  tar -xzf "$tui_archive" -C "$tui_unpack" || exit 1
+  [[ -x "$unpack/vis-agent" && -x "$unpack/vis-agent-native" && -s "$unpack/vis-agent-native.build" ]] || \
+    die "update: the release bundle is missing its launcher, native runtime or build stamp"
+  [[ -d "$unpack/vis-agent-python/python" ]] && \
+    compgen -G "$unpack/vis-agent-python/libvispython.*" >/dev/null || \
+    die "update: the release bundle is missing its Python runtime"
+  [[ -x "$tui_unpack/vis-tui" ]] || die "update: the release bundle is missing its terminal client"
 
   mv -f "$unpack/vis-agent-native" "$native_dir/vis-agent-native"
-  # The stamp travels with the runtime it describes, and is replaced with it:
-  # otherwise `vis-agent runtime` dates a new binary by the old build.
-  rm -f "$native_dir/vis-agent-native.build"
-  [[ ! -f "$unpack/vis-agent-native.build" ]] || \
-    mv -f "$unpack/vis-agent-native.build" "$native_dir/vis-agent-native.build"
+  mv -f "$unpack/vis-agent-native.build" "$native_dir/vis-agent-native.build"
+  mv -f "$tui_unpack/vis-tui" "$native_dir/vis-tui"
   # The embedded-CPython sidecar travels WITH the runtime it was built for: the
   # interpreter is a cdylib plus a vendored tree, never part of the binary.
   # Always clear the old one first, so a stale directory cannot outlive a
   # downgrade and hand the runtime an interpreter it was not built against.
   rm -rf "$native_dir/vis-agent-python"
-  [[ ! -d "$unpack/vis-agent-python" ]] || \
-    mv -f "$unpack/vis-agent-python" "$native_dir/vis-agent-python"
+  mv -f "$unpack/vis-agent-python" "$native_dir/vis-agent-python"
   if (( launcher_is_git_owned )); then
     # Never overwrite a tracked development launcher: the released one lives in
     # Vis state; source stays the checkout's responsibility.
@@ -931,16 +930,16 @@ update_native() {
     mv -f "$unpack/vis-agent" "$launcher_path"
     [[ ! -f "$unpack/install-vis-agent" ]] || mv -f "$unpack/install-vis-agent" "$bin_dir/install-vis-agent"
   fi
-  rm -rf "$unpack" "$archive"
-  trap - RETURN
-  say "installed launcher + native runtime from $asset"
+  rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive"
+  trap - EXIT
+  say "installed launcher + native runtime + Python + TUI from the same release"
 }
 
 vis_update_usage() {
   cat >&2 <<'EOF'
 Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild] [--keep-gateway]
-         (no target)   the newest release on the remembered track for a native
-                       install, or main's newest commit for a source install
+         (no target)   the newest complete release on the remembered native track;
+                       source development follows main (vis-agent --jvm update)
          vX.Y.Z        that release instead of the newest, once — naming a
                        version never moves the remembered track
          --track NAME  follow that distribution track from now on:
@@ -956,11 +955,10 @@ Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild] [--keep-gatew
                        it) so the next session starts on the runtime just installed.
                        A busy or user-owned gateway is never touched: once its work
                        closes, its own reap lets the next session start the new build
-       Update takes the runtime that is installed forward; it never swaps one
-       runtime for the other, and never changes track on its own. The vis-agent
-       command travels with it: a native update replaces this file from the
-       release bundle, a source update copies it out of the source it just
-       pinned.
+        A standalone command installs stable native releases by default.
+        Existing source development stays on source unless --track is explicit.
+        Use --jvm to opt into source development; it cannot be combined with --track.
+        Native updates include the matching Python runtime and terminal client.
 EOF
 }
 
@@ -987,9 +985,9 @@ release_stale_gateway() {
       ;;
   esac
 }
-# `update` moves the installed runtime forward — the only runtime there is.
+# Update installed releases, or explicitly selected source development.
 vis_do_update() {
-  local target="" rebuild=0 keep_gateway=0 track="" arg
+  local target="" rebuild=0 keep_gateway=0 track="" arg effective
   while (( $# )); do
     arg="$1"
     case "$arg" in
@@ -1026,6 +1024,14 @@ vis_do_update() {
   [[ -z "$target" || "$target" == latest || "$track" != beta ]] || \
     die "update: the beta track has no versions — its single 'beta' release moves" \
         "Take the newest beta with 'vis-agent update --track beta'"
+  effective="$(runtime_effective)"
+  if [[ -n "$track" ]]; then
+    (( ! force_jvm )) || die "update: --jvm and --track cannot be combined"
+    effective=native
+  fi
+  if [[ "$effective" == native ]] && (( rebuild )); then
+    die "update: --rebuild needs explicit source development" "Run: vis-agent --jvm update --rebuild"
+  fi
   mkdir -p "$vis_install_dir"
   # Switching tracks is an explicit act and it STICKS: every later `update`
   # follows the remembered track, and nothing else ever moves it. Otherwise a
@@ -1044,17 +1050,13 @@ vis_do_update() {
     release_stale_gateway
   fi
 
-  case "$(runtime_effective)" in
+  case "$effective" in
     jvm)
-      [[ -z "$track" ]] || die "update: --track selects a PUBLISHED native distribution, and this Vis runs the source runtime" \
-                               "The source runtime follows main; there is no track to choose"
       update_source "$target"
       sync_wrapper_from_source "$managed_src"
       if (( rebuild )); then build_native_runtime "$managed_src"; fi
       ;;
     native)
-      (( ! rebuild )) || die "update: --rebuild builds FROM source, and this Vis runs the native runtime" \
-                             "Install the source runtime with bin/install-vis-agent to build from it"
       update_native "${target:-latest}" "$(vis_track)"
       ;;
   esac
@@ -1099,7 +1101,8 @@ if (( tui_requested )) && [[ "$runtime" == native ]]; then
     cd "$invocation_cwd"
     run_measured_or_exec "process native TUI" "$tui_runtime" "$@"
   fi
-  runtime=jvm
+  die "the native terminal client is not installed" \
+      "Run: vis-agent update" "Source development requires explicit --jvm."
 fi
 
 configure_system_trust "$runtime"

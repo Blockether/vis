@@ -20,6 +20,36 @@
     (is (= (companion-themes/catalog-module) (generated companion-themes/catalog-file-name))
         "run `clojure -X:companion-themes`")))
 
+(defn- contrast-ratio
+  [foreground background]
+  (let [linear
+        (fn [component]
+          (let [c (/ (double component) 255.0)]
+            (if (<= c 0.04045) (/ c 12.92) (Math/pow (/ (+ c 0.055) 1.055) 2.4))))
+
+        luminance
+        (fn [rgb]
+          (reduce + (map * [0.2126 0.7152 0.0722] (map linear rgb))))
+
+        a
+        (double (luminance foreground))
+
+        b
+        (double (luminance background))]
+
+    (/ (+ (max a b) 0.05) (+ (min a b) 0.05))))
+
+(deftest code-text-clears-aa-on-its-rendered-background
+  ;; CodeCopy exposed these small-text pairs on Tokyo Day's darker code surfaces.
+  (doseq [[id {:keys [palette]}]
+          theme/built-in-themes
+
+          [foreground background]
+          [[:code-syntax-special-fg :code-block-bg] [:code-success-fg :code-ok-bg]]]
+
+    (is (<= 4.5 (contrast-ratio (get palette foreground) (get palette background)))
+        (str id " " foreground " on " background))))
+
 (deftest all-tokyonight-styles-ship-in-the-application-catalog
   ;; Regression, user report: the first adapter collapsed TokyoNight's application planes
   ;; onto nearly identical paint and left Tokyo Day's body copy needlessly faint.

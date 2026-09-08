@@ -614,7 +614,7 @@ printf '%s' '" refreshed-pem "'
                                                      "VIS_SYSTEM_CA_CERT" ""
                                                      "VIS_SYSTEM_TRUSTSTORE" ""
                                                      "SSL_CERT_FILE" (.getAbsolutePath host-bundle)}
-                                                    ["update" "--keep-gateway"])]
+                                                    ["--jvm" "update" "--keep-gateway"])]
              (expect (zero? exit) output)
              (expect (= replacement (slurp installed)))
              (expect (str/includes? (slurp managed-bundle) refreshed-pem)

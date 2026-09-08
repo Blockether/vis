@@ -10,18 +10,24 @@ name: Native Release
 # Speech models download on first use. Each artifact carries only its build host's
 # native libraries. No JVM uberjar is published; libraries still go to Clojars.
 #
-# TAG PUBLISHING IS OFF — releases are JVM-only for now. v0.1.39 and v0.1.40 both
-# shipped with NO native asset at all: hosted macOS never finished the image
-# (5 h 51 min, killed by its own timeout) and linux-arm64 died of
-# OutOfMemoryError in the points-to analysis on a 16 GB runner. A tag that
-# reliably produces nothing is worse than a tag that does not try: the release
-# is the `vis-agent` launcher plus Clojars, and the launcher already runs the
-# JVM source runtime when no native sidecar is installed. This workflow stays
-# dispatch-only so a platform can be re-proven by hand; restore
-# `push: {tags: ["v[0-9]*"]}` here (and its assertion in
-# test/com/blockether/vis/release_bundle_test.clj) once a green run exists for
-# every asset in the matrix.
+# Stable publication is owned by release.yml. Its draft stays unpublished until
+# all native tests, SDK checks, terminal clients and companion builds pass.
+# Manual branch dispatches remain dry runs; tag recovery may only update a draft.
 on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      only:
+        type: string
+        default: all
+      native_args:
+        type: string
+        default: ''
+      builder_heap:
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       tag:
@@ -129,15 +135,7 @@ jobs:
           #   * larger runners are billed even on public repositories, so paying
           #     GitHub buys a machine that still cannot hold the analysis.
     steps:
-      # WHERE this build lands, decided once and read by the attach step.
-      # A v* ref (a tag push, or a dispatch naming an existing tag) PUBLISHES:
-      # the asset is attached to that tag's release, so a CI-only fix can still
-      # reach a release already cut. A dispatch from a BRANCH is a DRY RUN — it
-      # builds, stages and runs every smoke test, and publishes nothing. That
-      # split is what makes the release build verifiable without spending a tag
-      # on it; without it `tag_name` falls back to `main` and softprops CREATES
-      # a release called main (walked into exactly that while proving the
-      # runner gate).
+      # Branch dispatches are dry runs; version tags may attach only to a draft.
       - name: Decide where this build lands
         id: target
         shell: bash
@@ -147,12 +145,14 @@ jobs:
             v[0-9]*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo "attaching to $ref" ;;
             *) echo 'publish=false' >> "$GITHUB_OUTPUT"; echo "dry run on $ref: building and testing, publishing nothing" ;;
           esac
-      # A dispatch may name an ALREADY-PUSHED tag: build that tag's source with
-      # THIS (fixed) workflow file, and attach the asset to that tag's release —
-      # otherwise a CI-only fix could never be applied to a release already cut.
+      # Tag recovery builds the immutable tag's source and may update only its draft.
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
+      - uses: ./.github/actions/require-draft-release
+        if: steps.target.outputs.publish == 'true'
+        with:
+          tag: ${{ inputs.tag || github.ref_name }}
       - name: Provision and verify Linux isolation
         if: runner.os == 'Linux'
         run: |
@@ -274,9 +274,10 @@ jobs:
           # the branch ref the dispatch ran from.
           tag_name: ${{ inputs.tag || github.ref_name }}
           fail_on_unmatched_files: true
+          draft: true
 
   # ── macOS arm64 ────────────────────────────────────────────────────────────
-  # Self-hosted ARM64 macOS. Tag publishing stays disabled until every platform is proven.
+  # Self-hosted ARM64 macOS participates in the same complete-release gate.
   macos:
     name: native / vis-agent-macos-arm64.tar.gz
     if: inputs.only != 'linux'
@@ -346,6 +347,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
+      - uses: ./.github/actions/require-draft-release
+        if: steps.target.outputs.publish == 'true'
+        with:
+          tag: ${{ inputs.tag || github.ref_name }}
       - uses: ./.github/actions/setup-graalvm-25
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
@@ -426,6 +431,7 @@ jobs:
             ${{ env.VIS_TUI_ASSET }}
           tag_name: ${{ inputs.tag || github.ref_name }}
           fail_on_unmatched_files: true
+          draft: true
 
   # ── macOS runner pickup guard ──────────────────────────────────────────────
   # An offline or busy runner, or a label no machine

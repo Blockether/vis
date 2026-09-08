@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-
+  workflow_call:
 # Every commit that lands on main is verified on its own, so a push gets a group
 # of its own: sharing one group per ref meant a rapid series of merges cancelled
 # each other -- an in-progress run was killed by the next push, and even with

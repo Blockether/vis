@@ -166,6 +166,126 @@
                 :fetch-calls fetch-calls}))))
       (finally (delete-tree! root)))))
 
+(defn- with-native-install-fixture
+  "Exercise installed commands with local release archives and no Git/JVM access."
+  [{:keys [installer? installed? missing-worker? missing-tui?]} f]
+  (let [root
+        (.toFile (Files/createTempDirectory "vis-native-install-" (make-array FileAttribute 0)))
+
+        home
+        (doto (io/file root "home") .mkdirs)
+
+        bin
+        (doto (io/file home "bin") .mkdirs)
+
+        tools
+        (doto (io/file root "tools") .mkdirs)
+
+        payload
+        (doto (io/file root "payload") .mkdirs)
+
+        tui
+        (doto (io/file root "tui") .mkdirs)
+
+        launcher
+        (io/file bin "vis-agent")
+
+        native
+        (io/file bin "vis-agent-native")
+
+        urls
+        (io/file root "urls")
+
+        archive
+        (io/file root "engine.tar.gz")
+
+        tui-archive
+        (io/file root "tui.tar.gz")
+
+        env
+        {"HOME" (.getAbsolutePath home)
+         "VIS_HOME" (.getAbsolutePath (io/file home ".vis"))
+         "VIS_JVM" "0"
+         "VIS_INSTALL_DIR" (.getAbsolutePath bin)
+         "PATH" (str (.getAbsolutePath tools) ":" (.getAbsolutePath bin) ":" (System/getenv "PATH"))
+         "VIS_TEST_URLS" (.getAbsolutePath urls)
+         "VIS_TEST_ARCHIVE" (.getAbsolutePath archive)
+         "VIS_TEST_TUI_ARCHIVE" (.getAbsolutePath tui-archive)}]
+
+    (try
+      (doseq [file [launcher (io/file payload "vis-agent")]]
+        (io/copy (io/file "bin/vis-agent") file)
+        (.setExecutable ^java.io.File file true))
+      (when installed? (write-executable! native "#!/usr/bin/env bash\necho old-runtime\n"))
+      (write-executable! (io/file payload "vis-agent-native")
+                         "#!/usr/bin/env bash\necho new-runtime\n")
+      (spit (io/file payload "vis-agent-native.build") "9.9.9 abc123 stable now\n")
+      (when-not missing-worker?
+        (.mkdirs (io/file payload "vis-agent-python/python"))
+        (spit (io/file payload "vis-agent-python/libvispython.so") "runtime"))
+      (when-not missing-tui?
+        (write-executable! (io/file tui "vis-tui") "#!/usr/bin/env bash\necho native-tui\n"))
+      (doseq [[dir dest] [[payload archive] [tui tui-archive]]]
+        (let [{:keys [exit output]} (run-bash ["tar" "-czf" (.getAbsolutePath ^java.io.File dest)
+                                               "-C" (.getAbsolutePath ^java.io.File dir) "."]
+                                              {})]
+          (expect (zero? exit) output)))
+      (doseq [tool ["git" "java" "clojure"]]
+        (write-executable! (io/file tools tool)
+                           (str "#!/usr/bin/env bash\necho 'unexpected " tool "' >&2\nexit 77\n")))
+      (write-executable!
+        (io/file tools "uname")
+        "#!/usr/bin/env bash\ncase $1 in -s) echo Linux;; -m) echo x86_64;; esac\n")
+      (write-executable!
+        (io/file tools "curl")
+        (str
+          "#!/usr/bin/env bash\nset -euo pipefail\nurl=''; dest=''\n"
+          "while (( $# )); do case $1 in -o) dest=$2; shift;; https:*) url=$1;; esac; shift; done\n"
+          "printf '%s\\n' \"$url\" >> \"$VIS_TEST_URLS\"\n" "case $url in\n"
+          "  */releases/latest|*/releases/tags/v9.9.9) printf '%s' '"
+          "{\"assets\":[{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-agent-linux-x64.tar.gz\"},"
+          "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-tui-linux-x64.tar.gz\"}]}' ;;\n"
+          "  */vis-agent-linux-x64.tar.gz) cp \"$VIS_TEST_ARCHIVE\" \"$dest\" ;;\n"
+          "  */vis-tui-linux-x64.tar.gz) cp \"$VIS_TEST_TUI_ARCHIVE\" \"$dest\" ;;\n"
+          "  *) echo 'unexpected release URL' >&2; exit 22 ;;\nesac\n"))
+      (let [result (run-bash (if installer?
+                               ["bash" "bin/install-vis-agent"]
+                               ["bash" (.getAbsolutePath launcher) "update" "--keep-gateway"])
+                             env)]
+        (f (assoc result
+             :bin bin
+             :native native
+             :launcher launcher
+             :env env
+             :urls (if (.exists urls) (slurp urls) ""))))
+      (finally (delete-tree! root)))))
+
+(defdescribe
+  production-install-test
+  (it "installs a stable native engine, Python runtime and matching TUI without Git or Java"
+      (with-native-install-fixture
+        {:installer? true}
+        (fn [{:keys [exit output bin launcher env urls]}]
+          (expect (zero? exit) output)
+          (expect (not (str/includes? output "unexpected")) output)
+          (expect (str/includes? urls "/releases/latest") urls)
+          (expect (.isDirectory (io/file bin "vis-agent-python/python")))
+          (expect (.canExecute (io/file bin "vis-tui")))
+          (let [runtime (run-bash ["bash" (.getAbsolutePath launcher) "runtime"] env)]
+            (expect (str/includes? (:output runtime) "native") (:output runtime))))))
+  (it "acquires native releases when a standalone wrapper has no runtime yet"
+      (with-native-install-fixture {}
+                                   (fn [{:keys [exit output urls]}]
+                                     (expect (zero? exit) output)
+                                     (expect (str/includes? urls "/releases/latest") urls))))
+  (it "rejects incomplete bundles before replacing any installed component"
+      (doseq [missing [:missing-worker? :missing-tui?]]
+        (with-native-install-fixture {:installed? true missing true}
+                                     (fn [{:keys [exit output native]}]
+                                       (expect (not (zero? exit)) output)
+                                       (expect (str/includes? (slurp native) "old-runtime")
+                                               output))))))
+
 ;; Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: source update
 ;; replaced the runtime before asking its protocol-2 gateway to stop, then labelled a
 ;; transient fetch reset as an unadvertised main branch and downloaded all history.
@@ -958,11 +1078,10 @@
       ;; The rolling tag is not a v* tag: a beta must never look like a stable
       ;; release to any workflow that keys off `v*`.
       (expect (str/includes? beta "VIS_BETA_TAG: beta") beta)
-      ;; Regression, releases v0.1.39 and v0.1.40: both tags published with no
-      ;; native asset — hosted macOS was killed by its own timeout and
-      ;; linux-arm64 died of OutOfMemoryError — so a tag paid hours of CI to
-      ;; produce nothing. Until a platform is green again a release is JVM-only:
-      ;; release.yml still fires on the tag, native-release.yml is dispatch-only.
+      ;; Regression, releases v0.1.39 and v0.1.40: stable tags published without
+      ;; native assets. The complete release workflow now calls native builds;
+      ;; a second independent tag trigger could publish outside that gate.
+      (expect (str/includes? stable "workflow_call:") stable)
       (expect (not (str/includes? stable "tags: ['v[0-9]*']")) stable)
       (expect (str/includes? (slurp ".github/workflows/release.yml") "tags: ['v[0-9]*']")
               "release.yml")
@@ -1213,3 +1332,58 @@
         (expect (str/includes? workflow
                                "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"))
         (expect (str/includes? workflow "bwrap --unshare-all --ro-bind / / /bin/true")))))
+
+(defdescribe
+  complete-release-gate-test
+  (it "keeps stable publication behind native, mobile, desktop and full CI verification"
+      (let [release
+            (slurp ".github/workflows/release.yml")
+
+            native
+            (slurp ".github/workflows/native-release.yml")
+
+            mobile
+            (slurp ".github/workflows/mobile-release.yml")]
+
+        (doseq [needle ["uses: ./.github/workflows/ci.yml"
+                        "uses: ./.github/workflows/native-release.yml"
+                        "needs: [prepare, native, mobile, desktop]" "bin/verify-release-assets.py"
+                        "--draft" "--draft=false --latest" "require_complete: true"]]
+          (expect (str/includes? release needle) needle))
+        (expect (str/includes? native "workflow_call:"))
+        (expect (not (str/includes? release "git commit")))
+        (expect (str/includes? mobile "require_complete:"))
+        (expect (str/includes? mobile "IFS= read -r keychain"))
+        (expect (str/includes? mobile "security default-keychain -d user -s \"$keychain\""))
+        (expect (str/includes? mobile "security list-keychain -d user -s \"${keychains[@]}\""))
+        (doseq [needle ["-ios.ipa" "-android.aab"]]
+          (expect (str/includes? mobile needle) needle))))
+  (it "refreshes the bootstrap only from a complete published stable release without moving tags"
+      (let [workflow (slurp ".github/workflows/installer-assets.yml")]
+        (expect (str/includes? workflow "workflow_call:"))
+        (expect (str/includes? workflow "--published"))
+        (expect (not (str/includes? workflow "branches: [main]")))
+        (expect (not (str/includes? workflow "git tag -f")))))
+  (it
+    "requires every uploaded platform artifact and rejects published or mismatched releases"
+    (let
+      [{:keys [exit output]}
+       (run-bash
+         ["python3" "-c"
+          (str
+            "import runpy\n"
+            "m = runpy.run_path('bin/verify-release-assets.py')\n" "tag = 'v9.8.7'\n"
+            "names = m['required_assets'](tag)\n" "assert len(names) == 15, names\n"
+            "release = {'tag_name': tag, 'draft': True, 'prerelease': False, 'assets': "
+            "[{'name': n, 'size': 42, 'state': 'uploaded'} for n in names]}\n"
+            "m['verify_release'](release, tag)\n"
+            "m['verify_release'](dict(release, draft=False), tag, draft=False)\n"
+            "bad = [dict(release, assets=release['assets'][:i] + release['assets'][i+1:]) for i in range(len(names))]\n"
+            "bad += [dict(release, draft=False), dict(release, prerelease=True), dict(release, tag_name='v9.8.6')]\n"
+            "bad += [dict(release, assets=[dict(a, size=0) for a in release['assets']]), "
+            "dict(release, assets=[dict(a, state='starter') for a in release['assets']])]\n"
+            "for candidate in bad:\n" "    try: m['verify_release'](candidate, tag)\n"
+            "    except ValueError: pass\n"
+            "    else: raise AssertionError('accepted incomplete or immutable release')\n")]
+         {})]
+      (expect (zero? exit) output))))

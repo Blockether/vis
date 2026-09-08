@@ -1,26 +1,8 @@
 #!/usr/bin/env bash
-# Install the `vis-agent` command.
-#
-# Step 1 installs the public Bash wrapper — the only command a user ever runs.
-# Step 2 hands off to it: `vis-agent update` checks the source Vis owns out at
-# the newest commit of main and runs from there.
-#
-# There is one runtime here and nothing to select: the JVM source runtime. No
-# native binary is downloaded and no release tag is checked out — every install
-# and every `vis-agent update` lands on the newest commit of main, because that
-# is where fixes land first.
-#
-# The two SCRIPTS are a different question: they are downloaded as GitHub
-# RELEASE ASSETS (github.com/OWNER/REPO/releases/download/installer/...), never
-# from raw.githubusercontent.com — that host is blocked on many corporate
-# networks while github.com and its release downloads are not. `installer` is a
-# ROLLING release: every commit on main that touches these two scripts re-uploads
-# them, so the assets are never older than the branch. Step 2 refreshes the
-# wrapper from the source it just pinned, so a stale asset never survives an
-# install.
-#
-# Runtime acquisition therefore always belongs to vis-agent itself, so the
-# command and its runtime can never drift apart.
+# Install the stable native engine, Python runtime and terminal client.
+# The launcher acquires matching release assets. Source development is an explicit
+# --jvm opt-in; a missing native asset never falls back to a source checkout.
+# Bootstrap scripts use GitHub release assets, not raw.githubusercontent.com.
 
 set -euo pipefail
 
@@ -28,17 +10,19 @@ repo_slug="${VIS_REPO_SLUG:-Blockether/vis}"
 install_dir="${VIS_INSTALL_DIR:-$HOME/.local/bin}"
 vis_home="${VIS_HOME:-$HOME/.vis}"
 
+jvm=0
 usage() {
   cat <<EOF
-Usage: install-vis-agent [--install-dir PATH]
+Usage: install-vis-agent [--install-dir PATH] [--jvm]
 
-Installs the public command first:
-  $install_dir/vis-agent          the command you run
+Installs the latest complete stable release:
+  $install_dir/vis-agent          command and native engine
+  $install_dir/vis-agent-python   bundled Python runtime
+  $install_dir/vis-tui            native terminal client
 
-then lets it acquire its own runtime:
-  $vis_home/install/src           source at the newest commit on main
-                                  (needs Java 25+, the Clojure CLI, git)
-
+No JDK or Clojure installation is required.
+  --jvm    opt into source development on main instead (git and JDK 25+);
+           run it with vis-agent --jvm, update with vis-agent --jvm update.
 Environment overrides:
   VIS_INSTALL_DIR    command directory (default: ~/.local/bin)
   VIS_HOME           state directory (default: ~/.vis)
@@ -53,6 +37,10 @@ while [[ $# -gt 0 ]]; do
       install_dir="$2"
       shift 2
       ;;
+    --jvm)
+      jvm=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -65,15 +53,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Acquisition needs curl and git. The launcher alone validates the selected JDK
-# when a JVM runtime is actually started (JAVA_CMD / JAVA_HOME / PATH).
+# Only source development needs Git. Native bundles need curl and tar.
+required=(curl tar)
+if (( jvm )); then required=(curl git); fi
 missing=()
-for cmd in curl git; do
+for cmd in "${required[@]}"; do
   command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
 done
 if (( ${#missing[@]} > 0 )); then
   echo "vis-agent install: missing required command(s): ${missing[*]}" >&2
-  echo "  Installation needs git and curl; JVM use additionally needs JDK 25+." >&2
+  echo "  Native installation needs curl and tar; --jvm also needs git and JDK 25+." >&2
   exit 1
 fi
 
@@ -90,14 +79,9 @@ if [[ -d "$install_dir/vis-agent" ]]; then
 fi
 
 # ── 1. install the vis-agent command ────────────────────────────────────────
-# The wrapper is downloaded from the rolling `installer` release, which every
-# commit on main that touches it refreshes (raw.githubusercontent.com is
-# unreachable from many corporate networks). It is only a bootstrap: step 2
-# refreshes it from the source it pins, so the two can only ever end up the same
-# file. Run from a checkout and the wrapper next to this script is used
-# directly; the sibling deps.edn proves it is a real checkout rather than an
-# unrelated file in the current directory. What gets installed is the same
-# either way: the command in $install_dir, and the runtime under $vis_home.
+# The rolling installer asset only bootstraps acquisition. The stable bundle
+# replaces it with the launcher built at the same tag as its engine and TUI.
+# A checkout can supply this bootstrap locally; its tracked files stay untouched.
 wrapper=""
 here="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 if [[ -n "$here" && -f "$here/vis-agent" && -f "$here/../deps.edn" ]]; then
@@ -147,9 +131,9 @@ if (( ! path_configured )); then
 fi
 
 # ── 2. vis-agent acquires its own runtime ───────────────────────────────────
-# The command owns runtime acquisition, so `update` is the whole of step 2:
-# nothing is selected, because nothing else is installed.
-if ! ( VIS_HOME="$vis_home" "$install_dir/vis-agent" update ); then
+runtime_args=(update --track stable)
+if (( jvm )); then runtime_args=(--jvm update); fi
+if ! ( VIS_JVM=0 VIS_HOME="$vis_home" "$install_dir/vis-agent" "${runtime_args[@]}" ); then
   if (( ! path_configured )); then
     cat >&2 <<EOF
 
@@ -159,18 +143,15 @@ EOF
   exit 1
 fi
 
-cat <<EOF
-
-Vis Agent is installed for this user:
-  $install_dir/vis-agent          the command
-  $vis_home/install/src           source runtime, at the newest commit on main
-
-  JVM use requires JDK 25+ (any distribution); set JAVA_CMD or JAVA_HOME if needed.
-
-  vis-agent help
-  vis-agent runtime               what is installed, and where
-  vis-agent update                moves both onto the newest commit
-EOF
+if (( jvm )); then
+  echo "Vis Agent source development installed at $vis_home/install/src."
+  echo "Run: vis-agent --jvm help (requires JDK 25+)."
+  echo "Update source: vis-agent --jvm update"
+else
+  echo "Vis Agent stable native release installed in $install_dir."
+  echo "Run: vis-agent help; vis-agent tui; vis-agent runtime"
+  echo "Update to the next complete stable release: vis-agent update"
+fi
 
 if (( ! path_configured )); then
   cat <<EOF

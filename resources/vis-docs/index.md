@@ -20,8 +20,9 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 Public beta apps. Connect them to your Vis gateway: [pairing instructions](gateway.md).
 
 You can [read the installer](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent)
-before running it. It installs `vis-agent` in `~/.local/bin` and downloads its runtime.
-Git is required; Java and the Clojure CLI are installed automatically when needed.
+before running it. It installs the stable native engine, bundled Python and terminal
+client in `~/.local/bin`. Installation requires `curl` and `tar`, not Java or Git.
+Use the installer's `--jvm` option only for source development.
 
 For runtime options and manual setup, see [Runtime distributions](distributions.md).
 
