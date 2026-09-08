@@ -975,7 +975,8 @@
                registered (run ["extension" "list"])]
 
               (expect (= 0 (:exit imported)) (:output imported))
-              (expect (str/includes? (:output imported) (str value " " module)) (:output imported))
+              (expect (str/includes? (:output imported) (str value " " (.getCanonicalPath module)))
+                      (:output imported))
               (expect (= 0 (:exit registered)) (:output registered))
               (expect (str/includes? (:output registered) (str "native-editable-" value))
                       (:output registered))))
