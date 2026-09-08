@@ -14,15 +14,15 @@
 
    Each file is first evaluated in a TRUSTED gateway-wide registration namespace.
    When one of its callables runs for a gateway session, the extension is realized
-   again in a trusted namespace beside that session's untrusted sandbox: ONE worker
-   process, ONE interpreter, separate namespace and trust identities. Imports and
-   native-library state are shared inside that session process; Python globals and
-   authority are not. Another session owns another process.
+   again in the session's separate trusted worker. The sandbox has its own process,
+   interpreter and host-call connection. Extension imports and native-library state
+   are shared only with other trusted extensions in that session. Another session
+   owns another pair of processes.
 
    The model can call an extension TOOL through the ordinary host wrapper, envelope-
    checked like any tool, but cannot choose the trusted identity or evaluate code in
-   the extension namespace. Host capabilities are reachable only through the bound
-   `blockether.vis.extension` API: what crosses is JSON text, so no host object is reachable from Python.
+   the extension namespace. The `blockether.vis.extension` API exposes host capabilities;
+   only sealed data crosses the boundary, never live Python or host objects.
    Startup, reload and calls with no owning session use the shared registration worker.
 
    A context is only a NAMESPACE in its owning embedded interpreter: opening one costs
@@ -168,12 +168,11 @@
 
    Args cross as ONE JSON string rather than as spliced literals: an argument is
    arbitrary data, and only the JSON encoder is allowed to decide how it spells."
-  [cid args preserve-objects?]
+  [cid args]
   (str "__vis_call__("
        (python-string-literal (str cid))
        ", "
        (python-string-literal (json/write-json-str (vec args)))
-       (when preserve-objects? ", True")
        ")"))
 
 (def ^:private host-callable-key
@@ -235,25 +234,13 @@
   ([sess path x]
    (cond (and (map? x) (= 1 (count x)) (contains? x callable-key))
          (let [cid (str (get x callable-key))]
-           (with-meta (fn invoke-sealed ([args] (invoke-sealed args false))
-                        ([args preserve-objects?] (let [[sealed callbacks] (sealed-args args)]
-                                                    (when (seq callbacks)
-                                                      ;; `install-sync-tools!` hands the installer the session itself,
-                                                      ;; so the installer is passed whole rather than partially applied.
-                                                      (python-host/install-sync-tools!
-                                                        sess
-                                                        callbacks
-                                                        install-sync-tool-in!))
-                                                    (try (unseal sess
-                                                                 (run-in sess
-                                                                         (python-call-expr
-                                                                           cid
-                                                                           sealed
-                                                                           preserve-objects?)))
-                                                         (finally (when (seq callbacks)
-                                                                    (release-callbacks!
-                                                                      sess
-                                                                      (keys callbacks))))))))
+           (with-meta (fn [args]
+                        (let [[sealed callbacks] (sealed-args args)]
+                          (when (seq callbacks)
+                            (python-host/install-sync-tools! sess callbacks install-sync-tool-in!))
+                          (try (unseal sess (run-in sess (python-call-expr cid sealed)))
+                               (finally (when (seq callbacks)
+                                          (release-callbacks! sess (keys callbacks)))))))
              {callable-path-key path}))
          (map? x) (into {}
                         (map (fn [[k v]]
@@ -273,8 +260,8 @@
    session it belongs to, so this is only the arity the adapters call through —
    kept as one place because every adapter's defensiveness is written against
    it."
-  ([_sess f args] (f (vec args) false))
-  ([_sess f args preserve-objects?] (f (vec args) preserve-objects?)))
+  [_sess f args]
+  (f (vec args)))
 
 (defn- plainify
   "Deep-convert the `->clj` view of a Python value into plain EDN-printable
@@ -702,9 +689,9 @@
 (defonce
   ^:private
   ^{:doc
-    "`[worker-key extension-name]` -> one realized extension registration in
-           that session's interpreter. The gateway registry never points at these
-           rows; its wrappers select them only for the owning session."}
+    "`[sandbox-worker-key extension-name]` -> one realized registration in
+           the session's separate trusted extension worker. The gateway registry
+           never points at these rows; wrappers select them for the owning session."}
   session-contexts
   (atom {}))
 
@@ -775,15 +762,15 @@
         @loaded))
 
 (defn- session-call-target
-  "Resolve a registry callable to the matching namespace in the invoking
-   session's worker. Calls with no worker-backed session keep using the one
-   gateway-wide registration namespace."
+  "Resolve a registry callable to the invoking session's trusted extension
+   worker, never its sandbox. Calls with no worker-backed session use the
+   gateway-wide trusted registration namespace."
   [ext-name env source-ctx source-f]
   (let [effective-env
         (or (not-empty env) extension/*current-environment*)
 
-        ;; An extension CALL is guest work, so the sandbox it needs is built here
-        ;; if the session has not entered Python yet.
+        ;; The sandbox key identifies the owning session; extension code is never
+        ;; installed in that process. Its trusted worker is created on demand.
         worker
         (env/python-context effective-env)
 
@@ -798,7 +785,8 @@
                       (let [cached (get @session-contexts cache-key)]
                         (if (identical? source-ctx (:source-context cached))
                           cached
-                          (let [fresh (initialize-extension-context! worker
+                          (let [fresh (initialize-extension-context! (pyext/extension-worker-key
+                                                                       worker)
                                                                      (str ext-name)
                                                                      (io/file (:snapshot entry))
                                                                      (:path entry)
@@ -834,26 +822,18 @@
                      str)})
 
 (defn- call-py-ext
-  "Invoke a Python callable in the invoking session's interpreter when that
-   session owns a worker, otherwise in the gateway-wide registration context.
-   The extension namespace is trusted; the sandbox namespace beside it is not."
-  ([ext-name env ctx f args] (call-py-ext ext-name env ctx f args false))
-  ([ext-name env ctx f args preserve-objects?]
-   (let [effective-env
-         (or (not-empty env) extension/*current-environment*)
+  "Invoke trusted extension code outside the model interpreter. Only sealed data
+   crosses the process boundary; Python object references cannot cross it."
+  [ext-name env ctx f args]
+  (let [effective-env
+        (or (not-empty env) extension/*current-environment*)
 
-         [call-ctx call-f]
-         (session-call-target ext-name effective-env ctx f)
+        [call-ctx call-f]
+        (session-call-target ext-name effective-env ctx f)]
 
-         preserve-local?
-         (and preserve-objects?
-              (some-> effective-env
-                      env/python-context
-                      pyext/worker-live?))]
-
-     (extension/with-context
-       {:ext (or extension/*current-extension* {:ext/name ext-name}) :env effective-env}
-       (python-host/conveying call-ctx (call-py call-ctx call-f args preserve-local?))))))
+    (extension/with-context {:ext (or extension/*current-extension* {:ext/name ext-name})
+                             :env effective-env}
+                            (python-host/conveying call-ctx (call-py call-ctx call-f args)))))
 
 (defn- sctx->env
   "Minimal state env for a slash callback: the persistence handle and session
@@ -916,7 +896,7 @@
   [ext-name sym ctx pyfn]
   (fn [& args]
     (let [argv (vec args)]
-      (try (extension/success {:result (call-py-ext ext-name nil ctx pyfn argv true)})
+      (try (extension/success {:result (call-py-ext ext-name nil ctx pyfn argv)})
            (catch Throwable t
              (if-let [fresh (and (not *healing-symbol*)
                                  (context-dead? ctx)
@@ -1927,10 +1907,10 @@
     (discard-context! ctx)))
 
 (defn ^:no-doc close-session-contexts!
-  "Forget every trusted extension namespace owned by `worker`. The worker process
-   is about to die, so entering its interpreter to close each namespace would add
-   work to the exact process teardown is reclaiming."
+  "Stop the session's separate trusted extension worker and forget its namespaces.
+   Teardown does not enter an interpreter that may be blocked in native code."
   [worker]
+  (pyext/stop-worker! (pyext/extension-worker-key worker))
   (let [locals (into []
                      (filter (fn [[[k _] _]]
                                (= worker k)))

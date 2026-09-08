@@ -144,7 +144,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.163` | Apache-2.0 | 617 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.39` | MIT | 175 KB | Blockether (in-house) |
-| `com.blockether/vis-python-runtime` | `git:0b2ddef7d34195768f327518a926a422c28f2805` | MIT | source checkout | Blockether (in-house) |
+| `com.blockether/vis-python-runtime` | `git:fefc006bb8f3fcacfbf7edd48a85c4556573aa5a` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.fasterxml.jackson.core/jackson-core` | `2.22.1` | Apache-2.0 | 580 KB | 3rd-party |
 | `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.22.1` | Apache-2.0 | 72 KB | 3rd-party |

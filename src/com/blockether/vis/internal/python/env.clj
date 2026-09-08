@@ -1279,18 +1279,16 @@
   (atom #{}))
 
 (defn dispose-python-context!
-  "Drop `session`: its worker or local namespace, every trusted extension
-   namespace beside it, the host bindings they could call, and the right for this
-   environment to run Python again. Gateway teardown kills the session process
-   rather than entering an interpreter that may be wedged."
+  "Drop `session`: its sandbox, separate trusted extension worker, host bindings
+   and the right for this environment to run Python again. Gateway teardown kills
+   the processes rather than entering an interpreter that may be wedged."
   [session]
   (when session
     (swap! disposed-sessions conj session)
     (discard-block-stdout! session)
     (python-host/forget-session! session)
-    ;; A gateway worker also holds this session's trusted extension namespaces.
-    ;; Close those while the process is still alive; the registry itself remains
-    ;; gateway-wide and outlives every one of these per-session realizations.
+    ;; Reclaim the separate trusted extension process too. The gateway registry
+    ;; outlives these per-session extension realizations.
     (when-let [close-extensions
                (resolve 'com.blockether.vis.internal.python.extensions/close-session-contexts!)]
       (try (close-extensions session) (catch Throwable _ nil)))

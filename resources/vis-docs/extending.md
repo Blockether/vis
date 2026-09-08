@@ -210,12 +210,12 @@ automatically install missing imports; this is not an install-free test workflow
 After unit tests pass, verify extension registration and a tool call in a Vis
 session: explicit sync, `/reload`, then call the tool. `vis-agent extension list`
 checks registration only. A passing package test alone does not prove that the
-prepared dependencies can be imported and called in the session worker.
+prepared dependencies can be imported and called in the trusted extension worker.
 
-**Current limitation:** the confined worker refuses native calls through `ctypes`.
-SciPy's low-level callback initialization requires those calls, so SciPy is not
-currently supported there even when sync and standalone Python tests succeed.
-Do not treat successful installation or registration as a compatibility check.
+Trusted extension workers support native calls through `ctypes`, including SciPy's
+callback initialization. The model sandbox remains a separate, confined process.
+Verify a representative calculation through the extension tool; installation or
+registration alone is not a compatibility check.
 
 ## Developing outside Vis
 
@@ -489,9 +489,10 @@ and does not block the turn.
 
 ## Filesystem and processes
 
-Extension code runs in a trusted namespace, separate from the model's sandbox.
-A gateway-wide worker loads extension registrations. Session calls use another
-instance beside that session's sandbox, in the session's worker process.
+Extension code runs in a trusted process, separate from the model's sandbox.
+A gateway-wide worker loads registrations. Each session gets a separate trusted
+extension worker on its first extension call; session disposal stops both workers.
+The workers do not share interpreter memory or host-call identities.
 
 | | Model sandbox | Extension context |
 | --- | --- | --- |
@@ -499,7 +500,13 @@ instance beside that session's sandbox, in the session's worker process.
 | Filesystem | workspace roots when the jail is enabled | your user's permissions |
 | Network and processes | gateway policy; no direct spawn | unrestricted |
 | Environment | project values | declared `env` plus project values |
-| Lifetime | session worker | registration or session instance; reloaded by `/reload` |
+| Native calls through `ctypes` | refused under confinement | supported |
+| Lifetime | session worker | separate registration or session worker; reloaded by `/reload` |
+
+Tool results cross as data. Objects and dataclasses expose their public fields as
+frozen data records in the sandbox, including nested records. The original class,
+methods, native pointers and object identity stay in the trusted process. Expose
+operations as declared tools rather than methods on returned objects.
 
 `subprocess`, `os.system` and `vis.shell({...})` run without the jail. Output
 not read by the extension is captured in its log. Child processes receive

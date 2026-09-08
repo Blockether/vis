@@ -24,6 +24,7 @@
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.python.extensions :as pyx]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
+            [com.blockether.vis.internal.python.worker :as worker]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.extension.registry :as registry]
@@ -606,26 +607,28 @@ raise RuntimeError(' | '.join(errors))
                             (ep/run-python-block ctx "print('glms_jenkins' in globals())"))))
                (finally (ep/dispose-python-context! ctx))))))))
 
-(def ^:private one-interpreter-py
-  "import os
+(def ^:private trusted-process-py
+  "import ctypes
+import os
 import sys
+import types
 import blockether.vis.extension as vis
 
 
 def session_probe(path):
-    \"\"\"await session_probe(path) -> dict — read a path the sandbox may not.\"\"\"
-    marker = sys.modules['vis_session_probe']
+    \"\"\"Read through the trusted host API and convert a local native value.\"\"\"
+    marker = sys.modules.setdefault('vis_session_probe', types.SimpleNamespace(value=0))
     marker.value += 2
-    # Under a jail the interpreter refuses this path to Python — the extension
-    # is trusted, so it goes through the door the host gave it.
+    number = ctypes.c_int(42)
+    native = ctypes.cast(ctypes.pointer(number), ctypes.POINTER(ctypes.c_int)).contents.value
     text = vis.fs.read_text(path)
-    return {'pid': os.getpid(), 'value': marker.value, 'text': text}
+    return {'pid': os.getpid(), 'value': marker.value, 'text': text, 'native': native}
 
 
 vis.register(vis.Extension(
-    name='one-interpreter',
-    description='Session interpreter probe.',
-    alias='one_interpreter',
+    name='trusted-process',
+    description='Trusted extension process probe.',
+    alias='trusted_process',
     symbols=[vis.Symbol(session_probe)],
 ))
 ")
@@ -633,9 +636,9 @@ vis.register(vis.Extension(
 (defdescribe
   python-extension-session-interpreter-test
   (it
-    "runs trusted extension namespaces beside the owning sandbox namespace"
+    "keeps trusted native execution and host permissions outside the owning sandbox"
     (with-loaded
-      {"one_interpreter.py" one-interpreter-py}
+      {"trusted_process.py" trusted-process-py}
       (fn [_ _]
         (let [sandbox-root
               (temp-dir)
@@ -650,7 +653,7 @@ vis.register(vis.Extension(
               (spit outside "trusted")
 
               ext
-              (registered "one-interpreter")
+              (registered "trusted-process")
 
               registered-before
               ext
@@ -672,7 +675,7 @@ vis.register(vis.Extension(
 
               env
               {:python-context ctx
-               :session-id "one-interpreter-session"
+               :session-id "trusted-process-session"
                :extensions (atom [ext])
                :active-extensions (atom [])}]
 
@@ -683,24 +686,46 @@ vis.register(vis.Extension(
                (ep/run-python-block
                  ctx
                  (str
-                   "import os, sys, types\n" "sandbox_pid = os.getpid()\n"
-                   "sys.modules['vis_session_probe'] = types.SimpleNamespace(value=40)\n" "try:\n"
-                   "    open(" (pr-str (.getCanonicalPath outside))
-                   ", encoding='utf-8').read()\n" "    sandbox_access = 'open'\n"
-                   "except Exception:\n" "    sandbox_access = 'refused'\n"
-                   "answer = await session_probe(" (pr-str (.getCanonicalPath outside))
+                   "import os, sys, types\n"
+                   "sandbox_pid = os.getpid()\n"
+                   "sys.modules['vis_session_probe'] = types.SimpleNamespace(value=40)\n"
+                   "try:\n"
+                   "    open("
+                   (pr-str (.getCanonicalPath outside))
+                   ", encoding='utf-8').read()\n"
+                   "    sandbox_access = 'open'\n"
+                   "except Exception:\n"
+                   "    sandbox_access = 'refused'\n"
+                   "answer = await session_probe("
+                   (pr-str (.getCanonicalPath outside))
                    ")\n"
-                   "print(sandbox_pid, answer['pid'], answer['value'], answer['text'], sandbox_access)"))
+                   "second = await session_probe("
+                   (pr-str (.getCanonicalPath outside))
+                   ")\n"
+                   "print(sandbox_pid, answer['pid'], answer['value'], answer['text'], sandbox_access, "
+                   "answer['native'], second['value'], sys.modules['vis_session_probe'].value)"))
 
                words
-               (str/split (str/trim (:stdout result)) #"\s+")]
+               (str/split (str/trim (or (:stdout result) "")) #"\s+")]
 
-              (expect (= (first words) (second words)))
-              (expect (= ["42" "trusted" "refused"] (subvec (vec words) 2)))
-              (expect (identical? registered-before (registered "one-interpreter")))
-              (expect (contains? @@#'pyx/session-contexts [ctx "one-interpreter"])))
+              (expect (nil? (:error result)) (pr-str result))
+              (expect (not= (first words) (second words)))
+              (expect (= ["2" "trusted" "refused" "42" "4" "40"] (subvec (vec words) 2)))
+              (expect (identical? registered-before (registered "trusted-process")))
+              (let [local-ctx
+                    (:context (get @@#'pyx/session-contexts [ctx "trusted-process"]))
+
+                    workers
+                    @@#'worker/workers]
+
+                (expect (some? local-ctx))
+                (expect (not (contains? @(get-in workers [ctx :peer :host-sessions]) local-ctx)))
+                (expect (contains?
+                          @(get-in workers [(worker/extension-worker-key ctx) :peer :host-sessions])
+                          local-ctx))))
             (finally (ep/dispose-python-context! ctx)))
-          (expect (not (contains? @@#'pyx/session-contexts [ctx "one-interpreter"]))))))))
+          (expect (not (worker/worker-live? (worker/extension-worker-key ctx))))
+          (expect (not (contains? @@#'pyx/session-contexts [ctx "trusted-process"]))))))))
 
 ;; Tool adapter — envelope semantics
 
@@ -1632,7 +1657,7 @@ vis.register(vis.Extension(
 (defdescribe
   extension-index-wheel-registration-test
   (it
-    "downloads a wheel from vis.yml's index and calls the tool in its session worker"
+    "downloads a wheel from vis.yml's index and calls the tool in its trusted worker"
     (doseq [mode
             [:pip :uv-default :uv-index :uv-path]
 
@@ -1723,10 +1748,19 @@ vis.register(vis.Extension(
                "from vis_einmal_dependency_fixture import VALUE\ndef answer():\n    return VALUE\n"
                ".vis/extensions/einmal.py"
                (if uv?
-                 (-> split-extension-script
-                     (str/replace "# dependencies = [\"vis-einmal-dependency-fixture==0.0.1\"]"
-                                  "# dependencies = []")
-                     (str/replace "# [tool.vis]" "# [tool.vis]\n# project = '../../einmal'"))
+                 (->
+                   split-extension-script
+                   (str/replace "# dependencies = [\"vis-einmal-dependency-fixture==0.0.1\"]"
+                                "# dependencies = []")
+                   (str/replace "# [tool.vis]" "# [tool.vis]\n# project = '../../einmal'")
+                   (str/replace
+                     "    return answer()"
+                     (str
+                       "    import vis_autoinstall\n"
+                       "    def forbid_install(name):\n        raise AssertionError('unexpected install')\n"
+                       "    finder = vis_autoinstall._VisAutoInstall(forbid_install)\n"
+                       "    assert finder._wanted('absent_manual_fixture', None) is None\n"
+                       "    return answer()")))
                  split-extension-script)
                "vis.yml" (str "python:\n  index_url: http://127.0.0.1:"
                               (.getPort (.getAddress server))
@@ -1829,11 +1863,7 @@ vis.register(vis.Extension(
                           [probe
                            (ep/run-python-block
                              ctx
-                             (str
-                               "import vis_autoinstall\n"
-                               "def forbid_install(name):\n    raise AssertionError('unexpected install')\n"
-                               "finder = vis_autoinstall._VisAutoInstall(forbid_install)\n"
-                               "assert finder._wanted('absent_manual_fixture', None) is None\n"))]
+                             "import sys\nassert not getattr(sys, '_vis_manual_dependencies', False)")]
                           (expect (nil? (:error probe))))
                         (let [lock-file (io/file ext-dir "einmal/uv.lock")
                               lock-before (slurp lock-file)]

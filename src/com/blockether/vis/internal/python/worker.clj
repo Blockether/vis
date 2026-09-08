@@ -1,22 +1,14 @@
 (ns com.blockether.vis.internal.python.worker
-  "ONE Python execution environment per session: the runtime-owned worker
-   holding the interpreter that session's sandbox AND its extensions run in.
+  "Process boundaries for model Python and trusted Python extensions.
 
-   Why a process and not a namespace. Confinement, the thread cap and the
-   network capability are PROCESS state in the embedded runtime — one policy for
-   everything the interpreter serves — so sessions sharing one interpreter share
-   one policy, and `sys.modules`, every module global and every native library's
-   cache with it. A worker per session makes the policy the session's own, gives
-   each session its own imports, and lets a wedged interpreter be killed without
-   touching anybody else's work.
+   Each session's sandbox owns a confined runtime worker. Its trusted extension
+   namespaces run in a separate worker, preserving their host APIs and native
+   library support without sharing interpreter memory or host-call authority
+   with model code. Registration outside a session uses the shared trusted worker.
 
-   Why the sandbox and the extensions belong TOGETHER in it. They are the same
-   session's Python; what separates them is not a process but TRUST, which the
-   runtime keeps per session name: an extension namespace is marked trusted and
-   reaches the filesystem through `vis.fs`, the sandbox is not and is confined.
-   The identity behind that flag is what the runtime was ASKED to run, which no
-   Python can forge — `exec` into another namespace's globals does not move a
-   block into it (measured; it did, against an identity taken from frames).
+   Confinement, imports, native libraries and interpreter state are process-wide.
+   A per-session extension worker keeps that state separate from other sessions
+   as well as from the sandbox. Only the host chooses a worker's role.
 
    The wire is ONE line of JSON per message over a unix socket, both ways. The
    parent asks (`install-runtime`, `install-tool`, `exec`, `run`, `run-block`,
@@ -158,6 +150,16 @@
    loading at startup, whose REGISTRATION is the gateway's and not a session's."
   "shared")
 
+(defrecord ^:private TrustedExtensionWorker [session])
+
+(defn extension-worker-key
+  "Host-owned worker identity for a session's trusted extensions, not its sandbox.
+   The key is never accepted from Python or reconstructed from a wire payload."
+  [session]
+  (->TrustedExtensionWorker session))
+
+(defn- trusted-worker? [k] (or (= k shared-key) (instance? TrustedExtensionWorker k)))
+
 (defn- worker-jvm-options
   "Preserve runtime flags, but keep the parent's JFR recording process-local.
    Its destination and repository are neither the worker's nor writable in its jail."
@@ -189,7 +191,7 @@
    Must happen before the first interpreter request; a missing policy fails closed.
    A session being (re)built under a key that was retired is that key's new life."
   [k policy-fn]
-  (when (or (= k shared-key) (not (ifn? policy-fn)))
+  (when (or (trusted-worker? k) (not (ifn? policy-fn)))
     (throw (ex-info "A session Python worker requires a launch policy"
                     {:type ::worker-policy-missing :worker k})))
   (swap! worker-policy-fns assoc k policy-fn)
@@ -198,7 +200,7 @@
 
 (defn- launch-policy!
   [k run-directory control-socket boot-read-paths]
-  (when-not (= k shared-key)
+  (when-not (trusted-worker? k)
     (let [policy-fn
           (get @worker-policy-fns k)
 

@@ -706,10 +706,10 @@
 
 (defdescribe
   native-package-worker-compatibility-test
-  ;; Explicit integration run downloads pinned public wheels through uv. A blocked
-  ;; SciPy result is a known compatibility limitation, NOT a successful calculation.
+  ;; Manual sync must prepare packages that perform real work through extension tools.
+  ;; Trusted native calls run outside the model sandbox, without changing its policy.
   (it
-    "checks native wheels in the CLI and records the confined worker's SciPy refusal"
+    "computes with native wheels in the CLI and a separate trusted extension process"
     (let [dir
           (temp-dir "vis-native-packages")
 
@@ -758,8 +758,12 @@
             "# project = '../../implementation'\n"
             "# source_paths = ['../../implementation/src']\n# ///\n"
             "import blockether.vis.extension as vis\n" "from package_checks import packages_check\n"
+            "from dataclasses import dataclass\n"
+            "@dataclass(frozen=True, slots=True)\nclass PackageStatus:\n    state: str\n"
+            "def packages_status():\n    \"Return a typed extension result.\"\n    return PackageStatus('ready')\n"
             "vis.register(vis.Extension(name='package-check', alias='packages', "
-            "description='Native package compatibility', symbols=[vis.Symbol(packages_check)]))\n"))
+            "description='Native package compatibility', "
+            "symbols=[vis.Symbol(packages_check), vis.Symbol(packages_status)]))\n"))
         (let [locked (run-binary dir
                                  ["uv" "lock" "--project" (str project) "--python"
                                   (com.blockether.vispython.Locations/pythonExecutable
@@ -813,7 +817,7 @@
                                 (extension/registered-extensions))]
 
                   (expect ext)
-                  ;; Compare the development JVM and the packaged native worker under one policy.
+                  ;; Exercise both processes with the JVM and packaged native entrypoints.
                   (doseq [native? [false true]]
                     (with-redefs-fn {#'worker/child-argv
                                      (fn [lib socket guest-dir]
@@ -834,8 +838,7 @@
                                    :session-id "native-package-check"
                                    :extensions (atom [ext])
                                    :active-extensions (atom [])
-                                   :db-info store}
-                              worker-log (:log (get @@#'worker/workers ctx))]
+                                   :db-info store}]
 
                           (try
                             (lp/sync-active-extension-symbols! env [ext])
@@ -843,7 +846,12 @@
                               [answer
                                (ep/run-python-block
                                  ctx
-                                 "import json\nprint('PACKAGE_CHECK ' + json.dumps(await packages_check()))")
+                                 (str
+                                   "import json, dataclasses\n"
+                                   "status = await packages_status()\n"
+                                   "assert type(status).__name__ == 'PackageStatus' and status.state == 'ready'\n"
+                                   "assert dataclasses.is_dataclass(status)\n"
+                                   "print('PACKAGE_CHECK ' + json.dumps(await packages_check()))"))
                                report (package-check-result (:stdout answer))
                                statuses (into {}
                                               (map (fn [[name result]]
@@ -852,23 +860,19 @@
                                ^Process process (:process (get @@#'worker/workers ctx))]
 
                               (expect (nil? (:error answer)) (pr-str answer))
-                              (expect (= (.pid process) (:pid report)))
+                              (expect (not= (.pid process) (:pid report)))
+                              (expect (= (.pid ^Process
+                                               (:process (get @@#'worker/workers
+                                                              (worker/extension-worker-key ctx))))
+                                         (:pid report)))
                               (expect (true? (:manual report)))
-                              (expect
-                                (= {:numpy "ok" :scipy "error" :pydantic "ok" :cryptography "ok"}
-                                   statuses)
-                                (pr-str report))
-                              (expect (str/includes? (get-in report [:packages :scipy :error] "")
-                                                     "native symbol through ctypes"))
-                              (expect (every? #(get-in report [:packages % :prepared])
-                                              [:numpy :pydantic :cryptography]))
+                              (expect (= {:numpy "ok" :scipy "ok" :pydantic "ok" :cryptography "ok"}
+                                         statuses)
+                                      (pr-str report))
+                              (expect (every? :prepared (vals (:packages report))))
                               (println "PACKAGE_COMPATIBILITY"
                                        (if native? :native :jvm)
                                        (pr-str statuses)))
-                            (catch Exception error
-                              (throw (ex-info "Package worker compatibility check failed"
-                                              {:log worker-log :native? native?}
-                                              error)))
                             (finally (ep/dispose-python-context! ctx)))))))))))
           (expect (= lock-before (slurp (io/file project "uv.lock"))))
           (expect (not (.exists (io/file project ".venv"))))

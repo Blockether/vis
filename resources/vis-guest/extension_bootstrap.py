@@ -34,40 +34,35 @@ import json as _vis_json
 import sys as _vis_sys
 import types as _vis_types
 
-import vis_runtime as _vis_runtime
-
 # The host prepends _vis_body with the canonical SDK source.
 _vis_callables = {}
 _vis_call_seq = [0]
 
 
-def __vis_seal__(value, preserve_objects=False):
-    """Seal callables and optionally retain real CPython result objects."""
+def __vis_seal__(value):
+    """Seal callables and public result data for the process boundary."""
     if callable(value):
         _vis_call_seq[0] += 1
         cid = f"c{_vis_call_seq[0]}"
         _vis_callables[cid] = value
         return {"__vis_callable__": cid}
     if isinstance(value, dict):
-        return {str(k): __vis_seal__(v, preserve_objects) for k, v in value.items()}
+        return {str(k): __vis_seal__(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [__vis_seal__(v, preserve_objects) for v in value]
+        return [__vis_seal__(v) for v in value]
     if _vis_dataclasses.is_dataclass(value) and not isinstance(value, type):
         attrs = {f.name: getattr(value, f.name) for f in _vis_dataclasses.fields(value)}
     else:
         attrs = getattr(value, "__dict__", None)
     if isinstance(attrs, dict):
-        sealed = {
+        return {
             "__vis_object__": type(value).__name__,
             "__vis_attrs__": {
-                str(k): __vis_seal__(v, preserve_objects)
+                str(k): __vis_seal__(v)
                 for k, v in attrs.items()
                 if not str(k).startswith("_")
             },
         }
-        if preserve_objects:
-            sealed["__vis_object_ref__"] = _vis_runtime._hold_extension_object(value)
-        return sealed
     return value
 
 
@@ -94,10 +89,10 @@ def __vis_unseal_host__(value):
     return value
 
 
-def __vis_call__(cid, args_json, preserve_objects=False):
+def __vis_call__(cid, args_json):
     """Invoke sealed callable ``cid`` and seal its answer for the host trip."""
     args = __vis_unseal_host__(_vis_json.loads(args_json))
-    return __vis_seal__(_vis_callables[cid](*args), preserve_objects)
+    return __vis_seal__(_vis_callables[cid](*args))
 
 
 def __vis_member__(op):
