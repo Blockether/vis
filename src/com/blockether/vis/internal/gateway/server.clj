@@ -1332,6 +1332,39 @@
                             keyword)]
     (json-response {:report (provider-limits/provider-limits provider-id)})))
 
+(defn- provider-consume-reset-credit-handler
+  "POST /v1/providers/:provider-id/reset-credits/consume.
+   Account identity and a stable idempotency key are required; credentials never
+   leave the daemon. Unknown results are errors, not optimistic quota updates."
+  [request]
+  (let [body
+        (try (body-json request) (catch Exception _ nil))
+
+        provider-id
+        (some-> (get-in request [:path-params :provider-id])
+                keyword)
+
+        {:keys [error message] :as result}
+        (provider-limits/consume-reset-credit! provider-id
+                                               {:account-id (get body "account_id")
+                                                :idempotency-key (get body "idempotency_key")})]
+
+    (if error
+      (error-response (case error
+                        :unknown-provider
+                        404
+
+                        (:reset-unsupported :invalid-reset-request)
+                        400
+
+                        :account-changed
+                        409
+
+                        502)
+                      error
+                      message)
+      (json-response result))))
+
 (defn- provider-models-handler
   "GET /v1/providers/:provider-id/models[?show_all=true] — the LIVE model
    catalog for ONE provider, fetched DAEMON-side so the gateway stays the SOLE
@@ -1488,6 +1521,7 @@
 
     {:id (name id)
      :label (config/display-label id)
+     :is-managed (providers/managed? id)
      :base-url (or (config/provider-base-url provider) (:base-url provider))
      :models (into [] (keep :name) (:models provider))
      :model-details (mapv (fn [model]
@@ -1671,44 +1705,24 @@
               (json-response (router-fleet-json))))))
 
 (defn- remove-provider-handler
-  "DELETE /v1/providers/:provider-id — drop it from the fleet and run its
-   registered logout, so removing a provider never leaves a credential behind.
-   Idempotent, and `is_removed` answers the OUTCOME: true once nothing by that
-   name is in the fleet, whether this call removed it or it was never there.
-   Never an error."
+  "DELETE /v1/providers/:provider-id — remove a user-owned provider and its credential.
+   Extension-managed providers return 409 without mutation. Otherwise idempotent:
+   `is_removed` is true once the provider is absent, even if it was never configured."
   [request]
-  (let [provider-id
-        (some-> (get-in request [:path-params :provider-id])
-                keyword)
+  (let [provider-id (some-> (get-in request [:path-params :provider-id])
+                            keyword)]
+    (try (when provider-id (providers/remove-provider! provider-id :gateway))
+         (let [fleet (router-fleet-json)
+               survivor (some #(= provider-id
+                                  (some-> (:id %)
+                                          keyword))
+                              (:providers fleet))]
 
-        _
-        (some-> provider-id
-                (providers/remove-provider! :gateway))
-
-        fleet
-        (router-fleet-json)
-
-        ;; A provider still in the fleet after a removal that changed nothing is
-        ;; not config-backed: it is synthesized on every read from an env var or
-        ;; a credential file, so there is no entry in `state.yml` to delete and
-        ;; deleting again will never work. Saying only `is_removed: false` left
-        ;; the UI with nothing to show and the user with a button that silently
-        ;; does nothing — name the source and what would actually remove it.
-        ;; A provider that survives its own removal is a bug now, not a
-        ;; documented limitation: `remove-provider!` records the deletion for
-        ;; every source, so the fleet must no longer offer it whether it came
-        ;; from config, an env var or a stored credential.
-        ;; `is_removed` answers the OUTCOME, not which mechanism ran. Reporting
-        ;; whether the config file changed made deleting an env-var or
-        ;; credential-backed provider read as a failure even when it worked:
-        ;; those never had a config entry to change. Gone is gone.
-        survivor
-        (first (filter #(= provider-id
-                           (some-> (:id %)
-                                   keyword))
-                       (:providers fleet)))]
-
-    (json-response (assoc fleet :is-removed (nil? survivor)))))
+           (json-response (assoc fleet :is-removed (not survivor))))
+         (catch clojure.lang.ExceptionInfo e
+           (if (= :provider/managed (:type (ex-data e)))
+             (error-response 409 :provider-managed (ex-message e))
+             (throw e))))))
 
 (defn- toggle-json
   "One settings row as JSON — the wire twin of the server-side
@@ -2791,6 +2805,54 @@
                             state/context-snapshot)]
     (json-response snapshot)
     (session-404 (get-in request [:path-params :sid]))))
+
+(defn- council-handler
+  [operation]
+  (fn [request]
+    (try (let [raw
+               (if (= operation :publish)
+                 (let [body (try (body-json request) (catch Exception _ nil))]
+                   (when-not (map? body)
+                     (throw (ex-info "Expected a Council JSON object" {:error :invalid-request})))
+                   body)
+                 (:query-params request))
+
+               opts
+               (into {}
+                     (map (fn [[k v]]
+                            [(keyword k)
+                             (if (and (string? v) (contains? #{"thread_id" "after" "limit"} k))
+                               (Long/parseLong v)
+                               v)]))
+                     raw)
+
+               opts
+               (cond-> opts
+                 (= operation :get)
+                 (assoc :entry_id (Long/parseLong (get-in request [:path-params :entry-id]))))]
+
+           (json-response
+             (state/council-operation! (get-in request [:path-params :sid]) operation opts)))
+         (catch NumberFormatException _
+           (error-response 400 :invalid-request "Council identifiers and cursors must be integers"))
+         (catch clojure.lang.ExceptionInfo e
+           (let [kind
+                 (:error (ex-data e))
+
+                 status
+                 (case kind
+                   (:group-not-found :entry-not-found)
+                   404
+
+                   (:disabled :inactive-session :invalid-recipient :idempotency-conflict)
+                   409
+
+                   (:invalid-request :invalid-thread)
+                   400
+
+                   (throw e))]
+
+             (error-response status kind (ex-message e)))))))
 
 (defn- transcript-handler
   "Transcript rows for a session, optionally WINDOWED: `?limit=` (window size,
@@ -4189,6 +4251,8 @@
         ["/providers/:provider-id" {:delete remove-provider-handler}]
         ["/providers/:provider-id/status" {:get provider-status-handler}]
         ["/providers/:provider-id/limits" {:get provider-limits-handler}]
+        ["/providers/:provider-id/reset-credits/consume"
+         {:post provider-consume-reset-credit-handler}]
         ["/providers/:provider-id/models" {:get provider-models-handler}]
         ["/providers/:provider-id/auth/start" {:post provider-auth-start-handler}]
         ["/providers/:provider-id/auth/complete" {:post provider-auth-complete-handler}]
@@ -4249,6 +4313,12 @@
         [(sid-route "/speech/jobs/:job-id/audio") {:get speech-job-audio-handler}]
         [(sid-route "/events-since") {:get events-since-handler}]
         [(sid-route "/seq") {:get seq-handler}] [(sid-route "/context") {:get context-handler}]
+        [(sid-route "/council") {:get (council-handler :binding)}]
+        [(sid-route "/council/members") {:get (council-handler :members)}]
+        [(sid-route "/council/threads") {:get (council-handler :threads)}]
+        [(sid-route "/council/entries")
+         {:get (council-handler :read) :post (council-handler :publish)}]
+        [(sid-route "/council/entries/:entry-id") {:get (council-handler :get)}]
         [(sid-route "/transcript") {:get transcript-handler}]
         [(sid-route "/artifacts") {:get session-artifacts-handler}]
         [(sid-route "/transcript.md") {:get transcript-md-handler}]
@@ -4372,12 +4442,6 @@
     (wrap-errors)
     (wrap-cors)))
 
-(defn local-handler
-  "Build the SDK handler for an owned stdio engine, without opening HTTP listeners.
-   The caller owns process lifetime and must select an isolated database."
-  []
-  (app nil []))
-
 (defonce ^:private live-app
   ;; `{:handler ring-handler :fp routes-fingerprint}` — the handler Jetty
   ;; actually calls, rebuilt whenever the contribution fingerprint moves
@@ -4441,6 +4505,13 @@
        (catch Throwable t
          (tel/log! {:level :warn :id ::toggles-hydrate-failed :data {:error (ex-message t)}}
                    "Toggle hydration from config failed; defaults stand."))))
+
+(defn local-handler
+  "Build the SDK handler for an owned stdio engine, without opening HTTP listeners.
+   The caller owns process lifetime and must select an isolated database."
+  []
+  (install-toggle-persistence!)
+  (app nil []))
 
 (defn- bind-failure?
   "True when `t`'s cause chain carries a port-already-bound `BindException` —

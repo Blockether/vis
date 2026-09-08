@@ -12,6 +12,7 @@
             [com.blockether.vis.tui.scroll :as scroll]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as theme]
+            [com.blockether.vis.tui.shared-theme :as shared-theme]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.gui2 Button GridLayout Panel TextGraphicsComponent]
@@ -127,109 +128,84 @@
 
 (deftest nested-result-execution-disclosures-test
   ;; Result stays inside Code; Activity remains independent through every fold state.
-  (doseq [cols
-          [40 80 160]
+  (try
+    (doseq [theme-id (map keyword (shared-theme/available-theme-ids))]
+      (theme/apply-theme! theme-id)
+      (doseq [cols [40 80 160]
+              status ["running" "succeeded" "failed"]]
 
-          status
-          ["running" "succeeded" "failed"]]
+        (with-open [html (activity-review-terminal cols 50)
+                    hs (doto (TerminalScreen. html) (.startScreen))
+                    terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
+                    ts (doto (TerminalScreen. terminal) (.startScreen))]
 
-    (with-open [html
-                (activity-review-terminal cols 50)
+          (let [rows (activity-review-rows status)
+                _ (paint-activity-review! hs rows {})
+                code-region (first (filter #(str/ends-with? (str (:node-id %)) ":code")
+                                           (.current interactions/hit-map)))
+                _ (paint-activity-review! hs rows (toggle-review-region {} code-region))
+                regions (into [code-region]
+                              (map (fn [suffix]
+                                     (first (filter #(str/ends-with? (str (:node-id %)) suffix)
+                                                    (.current interactions/hit-map))))
+                                   [":result" ":#band"]))]
 
-                hs
-                (doto (TerminalScreen. html) (.startScreen))
+            (is (every? some? regions))
+            (doseq [result-open? [false true]
+                    code-open? [false true]
+                    activity-open? [false true]]
 
-                terminal
-                (DefaultVirtualTerminal. (TerminalSize. cols 50))
+              (let [open-states [code-open? result-open? activity-open?]
+                    expansions (reduce (fn [folds [region open?]]
+                                         (if open? (toggle-review-region folds region) folds))
+                                       {}
+                                       (map vector regions open-states))
+                    _ (paint-activity-review! hs rows expansions)
+                    _ (paint-activity-review! ts rows expansions)
+                    grid (cell-grid terminal cols 50)
+                    lines (mapv (fn [row]
+                                  (apply str
+                                    (map #(.getCharacterString
+                                            ^com.googlecode.lanterna.TextCharacter %)
+                                         row)))
+                                grid)
+                    row-of (fn [label]
+                             (first (keep-indexed #(when (str/includes? %2 label) %1) lines)))
+                    labels (if code-open? ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])
+                    positions (mapv row-of labels)
+                    text (str/join "\n" lines)]
 
-                ts
-                (doto (TerminalScreen. terminal) (.startScreen))]
+                (is (= (cell-grid html cols 50) grid))
+                (is (every? some? positions))
+                (is (apply < positions))
+                (is (not-any? #(str/starts-with? % " │") lines))
+                (is (= (and code-open? result-open?) (str/includes? text "Read 3 files.")))
+                (is (= code-open? (some? (row-of "RESULT"))))
+                (is (= code-open? (str/includes? text "inspect_files()")))
+                (is (= activity-open? (str/includes? text "Read ×3")))
+                (doseq [y (range (row-of "CODE") (inc (long (row-of "ACTIVITY"))))]
+                  (is (= theme/code-block-bg
+                         (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
+                                              (get-in grid [y 2])))))
+                (doseq [[label row open?]
+                        (map vector
+                             labels
+                             positions
+                             (if code-open? open-states [code-open? activity-open?]))]
+                  (let [col (str/index-of (nth lines row) label)
+                        hit (.lookup interactions/hit-map (TerminalPosition. (int col) (int row)))
+                        background-at (fn [y]
+                                        (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
+                                                             (get-in grid [y col])))]
 
-      (let [rows
-            (activity-review-rows status)
-
-            _
-            (paint-activity-review! hs rows {})
-
-            code-region
-            (first (filter #(str/ends-with? (str (:node-id %)) ":code")
-                           (.current interactions/hit-map)))
-
-            _
-            (paint-activity-review! hs rows (toggle-review-region {} code-region))
-
-            regions
-            (into [code-region]
-                  (map (fn [suffix]
-                         (first (filter #(str/ends-with? (str (:node-id %)) suffix)
-                                        (.current interactions/hit-map))))
-                       [":result" ":#band"]))]
-
-        (is (every? some? regions))
-        (doseq [result-open?
-                [false true]
-
-                code-open?
-                [false true]
-
-                activity-open?
-                [false true]]
-
-          (let [open-states
-                [code-open? result-open? activity-open?]
-
-                expansions
-                (reduce (fn [folds [region open?]]
-                          (if open? (toggle-review-region folds region) folds))
-                        {}
-                        (map vector regions open-states))
-
-                _
-                (paint-activity-review! hs rows expansions)
-
-                _
-                (paint-activity-review! ts rows expansions)
-
-                grid
-                (cell-grid terminal cols 50)
-
-                lines
-                (mapv (fn [row]
-                        (apply str
-                          (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %)
-                               row)))
-                      grid)
-
-                row-of
-                (fn [label]
-                  (first (keep-indexed #(when (str/includes? %2 label) %1) lines)))
-
-                labels
-                (if code-open? ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])
-
-                positions
-                (mapv row-of labels)
-
-                text
-                (str/join "\n" lines)]
-
-            (is (= (cell-grid html cols 50) grid))
-            (is (every? some? positions))
-            (is (apply < positions))
-            (is (not-any? #(str/starts-with? % " │") lines))
-            (is (= (and code-open? result-open?) (str/includes? text "Read 3 files.")))
-            (is (= code-open? (some? (row-of "RESULT"))))
-            (is (= code-open? (str/includes? text "inspect_files()")))
-            (is (= activity-open? (str/includes? text "Read ×3")))
-            (doseq [[label row open?] (map vector
-                                           labels
-                                           positions
-                                           (if code-open? open-states [code-open? activity-open?]))]
-              (let [col (str/index-of (nth lines row) label)
-                    hit (.lookup interactions/hit-map (TerminalPosition. (int col) (int row)))]
-
-                (is (= :toggle-details (:kind hit)))
-                (is (= (not open?) (:collapsed? hit)))))))))))
+                    ;; Expanding Code must retain a single filled band, including Result
+                    ;; and the blank row above each disclosure.
+                    (is (str/blank? (nth lines (dec row))))
+                    (is (= theme/code-block-bg (background-at (dec row))))
+                    (is (= theme/code-block-bg (background-at row)))
+                    (is (= :toggle-details (:kind hit)))
+                    (is (= (not open?) (:collapsed? hit)))))))))))
+    (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
 
 (deftest joined-activity-html-native-parity-test
   (doseq [cols

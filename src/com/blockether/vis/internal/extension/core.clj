@@ -524,7 +524,8 @@
          (every? optional-fn?
                  [:provider/status-fn :provider/logout-fn :provider/detect-fn :provider/auth-fn
                   :provider/get-token-fn :provider/refresh-token-fn :provider/limits-fn
-                  :provider/enrich-models-fn :provider/on-selected-fn])
+                  :provider/consume-reset-credit-fn :provider/enrich-models-fn
+                  :provider/on-selected-fn])
          (optional-field? x :provider/is-managed boolean?)
          (optional-field? x :provider/limits-cache-ms pos-int?))))
 

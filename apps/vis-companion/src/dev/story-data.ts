@@ -720,6 +720,7 @@ export const STORY_LIVE_VIEW: LiveView = (() => {
 export const STORY_PROVIDERS: RouterProvider[] = [
   {
     id: 'anthropic',
+    is_managed: false,
     label: 'Anthropic',
     models: ['claude-opus-5', 'claude-sonnet-4-5'],
     is_default: true,
@@ -735,6 +736,7 @@ export const STORY_PROVIDERS: RouterProvider[] = [
   },
   {
     id: 'openai',
+    is_managed: false,
     label: 'OpenAI',
     models: ['gpt-5.2', 'gpt-5-mini'],
     is_default: false,
@@ -749,6 +751,7 @@ export const STORY_PROVIDERS: RouterProvider[] = [
   },
   {
     id: 'ollama',
+    is_managed: false,
     label: 'Ollama',
     base_url: 'http://127.0.0.1:11434',
     models: [],
@@ -800,6 +803,8 @@ export function storyProviderAuth(
     reload: nothing,
     refresh: nothing,
     recheck: nothing,
+    resetLimits: async () => 'reset',
+    hasPendingReset: () => false,
     signIn: nothing,
     finishPkce: nothing,
     finishApiKey: nothing,

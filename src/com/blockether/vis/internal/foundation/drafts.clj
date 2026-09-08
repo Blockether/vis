@@ -222,7 +222,7 @@
        "discard the current one first. Only the agent manages drafts; the user reviews the branch. "
        "Extension hooks on `draft/create` may refuse.")
      :params [{:name "label" :note "draft name; also the `vis/<label>` branch"}
-              {:name "clean" :note "`True` seeds from `HEAD` without pending trunk changes"}]
+              {:name "clean" :note "`True` excludes pending trunk changes"}]
      :call {:pos ["label"] :opt-pos ["clean"]}
      :result
      (str

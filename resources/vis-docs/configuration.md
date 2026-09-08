@@ -446,6 +446,7 @@ without `env` or `headers` keeps the stored values.
 toggles:
   shell: false          # default true; removes shell(...) from the sandbox
   introspection: true   # default false; lets the agent read its own session data
+  council: false        # default false; project log and explicit active-session pings
   draft_backend: auto   # auto | worktree | rift | off; how the agent isolates a draft (see drafts.md)
 ```
 
@@ -483,13 +484,14 @@ vendored repositories, re-include it here:
 # vis.yml
 grep:
   include_gitignored_paths: [repositories/]
-  always_exclude: [.git/, node_modules/, target/]   # replaces the default list
 ```
 
-Both lists use `.gitignore` pattern syntax. `always_exclude` defaults to
-`.git/`, `node_modules/`, `target/`, `build/`, `dist/`, `__pycache__/`,
-`.venv/`, `.gradle/`, `vendor/`, `.next/` and `out/`; setting the key replaces
-that list. Run `/reload` after editing.
+Both lists use `.gitignore` pattern syntax. Omit `always_exclude` to use the
+defaults: `.git/`, `node_modules/`, `target/`, `build/`, `dist/`, `__pycache__/`,
+`.venv/`, `.gradle/`, `vendor/`, `.next/`, `out/`, `.m2/`, `.shadow-cljs/`,
+`cljs-runtime/`, `.cpcache/`, `.clj-kondo/`, `.calva/`, `.lsp/` and `.rift/`.
+Setting `always_exclude` replaces, rather than extends, that list.
+Run `/reload` after editing.
 
 ## See also
 

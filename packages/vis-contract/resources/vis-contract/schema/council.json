@@ -1,0 +1,487 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vis.blockether.com/schema/council.json",
+  "type": "object",
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "limits": {
+      "const": {
+        "content_bytes": 65536,
+        "title_bytes": 256,
+        "recipients": 256,
+        "preview_bytes": 1024,
+        "batch_entries": 20,
+        "batch_bytes": 8192,
+        "page_entries": 50,
+        "page_bytes": 262144,
+        "lookup_timeout_ms": 100,
+        "idempotency_key_bytes": 256
+      }
+    }
+  },
+  "required": [
+    "version",
+    "limits"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "group_request": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "publish": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ping": {
+          "oneOf": [
+            {
+              "const": "all"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          ]
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "group_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thread_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "activation_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "additionalProperties": false
+    },
+    "page_request": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thread_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "after": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "get_request": {
+      "type": "object",
+      "properties": {
+        "entry_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "group_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "entry_id"
+      ],
+      "additionalProperties": false
+    },
+    "member": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "running",
+            "queued",
+            "held"
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "title",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "session_context": {
+      "type": "object",
+      "properties": {
+        "default_group_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "default_group_id"
+      ],
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "default_group_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "activation_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "required": [
+        "default_group_id",
+        "activation_id"
+      ],
+      "additionalProperties": false
+    },
+    "source_ref": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "turn": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "iter": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "next_form": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "turn",
+            "iter",
+            "next_form"
+          ],
+          "additionalProperties": false
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "session_id",
+        "scope"
+      ],
+      "additionalProperties": false
+    },
+    "entry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "thread_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "group_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1
+        },
+        "author_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source": {
+          "enum": [
+            "host",
+            "sdk"
+          ]
+        },
+        "ping": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_ref": {
+          "$ref": "#/$defs/source_ref"
+        }
+      },
+      "required": [
+        "id",
+        "thread_id",
+        "group_id",
+        "content",
+        "author_session_id",
+        "created_at",
+        "source",
+        "ping"
+      ],
+      "additionalProperties": false
+    },
+    "thread": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "author_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "thread_id",
+        "title",
+        "author_session_id",
+        "created_at"
+      ],
+      "additionalProperties": false
+    },
+    "preview": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "thread_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "group_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1
+        },
+        "author_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "thread_id",
+        "group_id",
+        "content",
+        "author_session_id",
+        "created_at",
+        "truncated"
+      ],
+      "additionalProperties": false
+    },
+    "publication_ref": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "thread_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "group_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_ref": {
+          "$ref": "#/$defs/source_ref"
+        }
+      },
+      "required": [
+        "id",
+        "thread_id",
+        "group_id"
+      ],
+      "additionalProperties": false
+    },
+    "activity_resource": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "council-group",
+            "council-thread",
+            "council-entry"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "entry_page": {
+      "type": "object",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/entry"
+          }
+        },
+        "after": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "entries",
+        "after",
+        "has_more"
+      ],
+      "additionalProperties": false
+    },
+    "thread_page": {
+      "type": "object",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/thread"
+          }
+        },
+        "after": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "entries",
+        "after",
+        "has_more"
+      ],
+      "additionalProperties": false
+    },
+    "input_batch": {
+      "type": "object",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/preview"
+          }
+        },
+        "after": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "has_more": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "entries",
+        "after",
+        "has_more"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

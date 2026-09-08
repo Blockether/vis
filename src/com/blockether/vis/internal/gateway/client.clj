@@ -1949,6 +1949,37 @@
       (some? (get error "data"))
       (assoc :data (get error "data")))))
 
+(defn- provider-reset-credits<-wire
+  [credits]
+  (when (map? credits)
+    (cond-> {:status (wire-enum (get credits "status"))}
+      (some? (get credits "available_count"))
+      (assoc :available-count (get credits "available_count"))
+
+      (some? (get credits "account_id"))
+      (assoc :account-id (get credits "account_id"))
+
+      (some? (get credits "message"))
+      (assoc :message (get credits "message")))))
+
+(defn consume-provider-reset-credit!
+  "Consume the reset confirmed for this account. The caller keeps the same
+   idempotency key until a recognized outcome is received. No route probing or
+   daemon restart is appropriate for a mutation."
+  [provider-id account-id idempotency-key]
+  (let [entry (ensure-gateway!)]
+    (ensure-client! entry)
+    (let [result (send-json-with-entry!
+                   entry
+                   "POST"
+                   (str "/v1/providers/" (enc (name provider-id)) "/reset-credits/consume")
+                   {:account_id account-id :idempotency_key idempotency-key})
+          outcome (get result "outcome")]
+
+      (if (contains? #{"reset" "nothing_to_reset" "no_credit" "already_redeemed"} outcome)
+        {:outcome outcome}
+        (throw (ex-info "Could not confirm the reset. Retry the same attempt." {}))))))
+
 (defn- provider-limits<-wire
   "Restore the gateway provider-limits report to the engine/TUI shape using the
   explicit provider-limits schema only. Do not generic-walk gateway data here:
@@ -1978,6 +2009,10 @@
                          (some? (get static "tpm"))
                          (assoc :tpm (get static "tpm")))
                :dynamic (cond-> {:limits (mapv provider-limit-row<-wire (or limits []))}
+                          (some? (get dynamic "reset_credits"))
+                          (assoc :reset-credits
+                            (provider-reset-credits<-wire (get dynamic "reset_credits")))
+
                           (some? (get dynamic "note"))
                           (assoc :note (get dynamic "note")))}
         (some? error)

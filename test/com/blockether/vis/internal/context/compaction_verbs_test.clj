@@ -14,10 +14,12 @@
         as two string leaves: `folds` (stable gists, one structural delta per fold)
         and `now` (volatile position + budget + live, re-emitted each iteration),
         via `ctx-engine/folds-view` → `ctx-renderer/render-ctx-delta`."
-  (:require [com.blockether.vis.internal.context.engine :as eng]
+  (:require [com.blockether.vis.internal.content :as content]
+            [com.blockether.vis.internal.context.engine :as eng]
             [com.blockether.vis.internal.context.renderer :as cr]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [clojure.string :as str]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -418,6 +420,155 @@
 
         (expect (= :vis/fold-session-turn-unknown (:type (ex-data ex)))))))
 
+(defdescribe
+  fold-session-recap-only-history-test
+  ;; User report after stopping the agent and restarting the gateway: t1 has a
+  ;; Q/A recap, while the iteration universe contains only settled steps of t2.
+  (it "folds and re-folds a recap-only turn without duplicating or recharging its gist"
+      (doseq [key ["t1" "-t1" "t1-t1"]]
+        (let [ca (atom {"session_turn" 2
+                        "engine_iter_universe" (mapv #(str "t2/i" %) (range 1 12))
+                        "engine_turn_weights" {1 5000}
+                        "engine_utilization" {}})
+              sf (get (compaction-verbs ca) 'fold-session)]
+
+          (expect (str/includes? (sf key "completed turn") "saved ~5k tokens"))
+          (expect (str/includes? (sf key "updated checkpoint") "saved ~0 tokens"))
+          (expect (= ["updated checkpoint"]
+                     (mapv #(get % "gist") (get @ca "session_summaries")))))))
+  (it "does not substitute another turn or invent missing iteration scopes"
+      (doseq [key ["-t0" "t3-t3" "t1/i1-i9"]]
+        (let [ca (atom {"session_turn" 2
+                        "engine_iter_universe" ["t2/i1"]
+                        "engine_turn_weights" {1 5000}})
+              sf (get (compaction-verbs ca) 'fold-session)
+              ex (try (sf key "unknown") nil (catch clojure.lang.ExceptionInfo e e))]
+
+          (expect (= :vis/fold-session-unknown-key (:type (ex-data ex))))
+          (expect (nil? (get @ca "session_summaries"))))))
+  (it "freezes an open range even when only recap-only turns exist"
+      (let [ca
+            (atom {"session_turn" 2 "engine_iter_universe" [] "engine_turn_weights" {1 5000}})
+
+            sf
+            (get (compaction-verbs ca) 'fold-session)]
+
+        (expect (str/starts-with? (sf "t1-" "prior work") "folded since t1"))
+        (let [resolved (first (expand-through (get @ca "session_summaries") ["t2/i1"] [1 2]))]
+          (expect (= #{1} (get resolved "turns")))
+          (expect (empty? (get resolved "scopes")))))))
+
+(defn- with-rebuilt-fold-history
+  "Persist a turn, run startup recovery after rebuild, and exercise the restored fold context."
+  [scoped? turn-status f]
+  (let [dir
+        (.toFile (java.nio.file.Files/createTempDirectory
+                   "vis-fold-rebuild"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+
+        db-path
+        (.getPath (java.io.File. dir "vis.mdb"))
+
+        session-id
+        (atom nil)]
+
+    (try
+      (let [initial (lp/create-environment ::router {:db db-path})]
+        (try (let [db (:db-info initial)
+                   turn-id (persistance/db-store-session-turn!
+                             db
+                             {:parent-session-id (:session-id initial)
+                              :user-request "Complete the first turn"})]
+
+               (reset! session-id (:session-id initial))
+               (persistance/db-store-iteration!
+                 db
+                 {:session-turn-id turn-id
+                  :code (if scoped? "print('settled')" "")
+                  :forms
+                  (if scoped? [{:scope "t1/i1/f1" :src "print('settled')" :stdout "settled"}] [])})
+               (expect (persistance/db-update-session-turn!
+                         db
+                         turn-id
+                         (cond-> {:status turn-status :ctx {"session_turn" 1}}
+                           (= :done turn-status)
+                           (assoc :content [(content/prose "The first turn is complete")])))))
+             (finally (lp/dispose-environment! initial))))
+      (let [rebuilt (lp/create-environment ::router {:db db-path :session @session-id})]
+        (try (expect (= (if (= :running turn-status) 1 0)
+                        (lp/db-sweep-orphaned-running-turns! (:db-info rebuilt))))
+             (let [ca (:ctx-atom rebuilt)
+                   turns (persistance/db-list-session-turns (:db-info rebuilt) @session-id)
+                   iterations (persistance/db-list-session-turn-iterations (:db-info rebuilt)
+                                                                           (:id (first turns)))
+                   seeded (mapv (fn [iteration]
+                                  [(:position iteration)
+                                   {:forms-vec (:forms iteration)
+                                    :preserved-thinking/replay? false
+                                    :cross-turn/turn-status (:status (first turns))}])
+                                iterations)
+                   current (apply trailer (map #(str "t2/i" %) (range 1 12)))]
+
+               (expect (= 1 (get @ca "session_turn")))
+               (expect (= 1 (count turns)))
+               (expect (= (if (= :running turn-status) :interrupted turn-status)
+                          (:status (first turns))))
+               (expect (= 1 (count iterations)))
+               (expect (= :done (:status (first iterations))))
+               (let [prior (first (#'lp/previous-turn-context rebuilt nil))]
+                 (expect (= "Complete the first turn" (:user-request prior)))
+                 (expect (= (when (= :done turn-status) "The first turn is complete")
+                            (:answer prior))))
+               (swap! ca assoc "session_turn" 2)
+               (#'lp/stamp-iter-universe! ca (into seeded current))
+               (f rebuilt))
+             (finally (lp/dispose-environment! rebuilt))))
+      (finally (doseq [file (reverse (file-seq dir))]
+                 (.delete ^java.io.File file))))))
+
+(defn- expect-rebuilt-history-fold
+  "Check that a restored prior turn folds without depending on indexed iterations."
+  [scoped? turn-status]
+  (with-rebuilt-fold-history
+    scoped?
+    turn-status
+    (fn [environment]
+      (let [ca
+            (:ctx-atom environment)
+
+            sf
+            (get (compaction-verbs ca) 'fold-session)
+
+            current
+            (apply trailer (map #(str "t2/i" %) (range 1 12)))
+
+            expected-scopes
+            (into (if scoped? ["t1/i1"] []) (map #(str "t2/i" %) (range 1 12)))]
+
+        (expect (= expected-scopes (get @ca "engine_iter_universe")))
+        (expect (pos? (get-in @ca ["engine_turn_weights" 1])))
+        (expect (str/starts-with? (sf "-t1" "preserved work") "folded through t1"))
+        (let [prior (#'lp/previous-turn-context environment nil)]
+          (if scoped?
+            (expect (nil? prior))
+            (do (expect (= 1 (count prior)))
+                (expect (:checkpoint? (first prior)))
+                (expect (= [1] (:turns (first prior))))
+                (expect (= "preserved work" (:gist (first prior)))))))
+        (expect (= current (apply-summaries current (get @ca "session_summaries"))))))))
+
+(defdescribe fold-session-environment-rebuild-test
+             (it "folds a persisted prior iteration after rebuilding the environment"
+                 (expect-rebuilt-history-fold true :done))
+             (it "folds a persisted recap-only turn after rebuilding the environment"
+                 (expect-rebuilt-history-fold false :done))
+             ;; User report: the agent was stopped and restarted while a turn was active.
+             ;; Leave the stored turn running; use the daemon's actual startup recovery.
+             (it "folds saved iterations after startup recovers an interrupted turn"
+                 (expect-rebuilt-history-fold true :running))
+             (it "folds an interrupted turn without indexed iterations after startup recovery"
+                 (expect-rebuilt-history-fold false :running)))
+
 ;; ── layer 1b: the KEY grammar (pure parse, no ctx) ──────────────────────────
 
 (defdescribe
@@ -533,6 +684,20 @@
   (it "a bare tN records whole-turn intent even when the universe is empty"
       (let [out (first (expand-through [{"scopes" #{"t1"}}] []))]
         (expect (= #{1} (get out "turns")))))
+  (it "uses persisted turns for whole-turn ranges without fabricating iterations"
+      (doseq [[key turns scopes] [["-t1" #{1} #{}] ["-t2/i1" #{1 2} #{"t2/i1"}]
+                                  ["t1-t3" #{1 2 3} #{"t2/i1"}] ["t1-t1,t3-t3" #{1 3} #{}]
+                                  ["t1/i1-i9" #{} #{}] ["-t0" #{} #{}]]]
+        (let [out (first (expand-through [(:intent (eng/fold-key key))] ["t2/i1" "t4/i1"] [1 3]))]
+          (expect (= turns (set (get out "turns"))))
+          (expect (= scopes (get out "scopes"))))))
+  (it "keeps unrelated recap gists and supersedes only the covered recap"
+      (let [out (-> [{"through" "t1" "gist" "first"} {"scopes" #{"t2"} "gist" "second"}
+                     {"from" "t1" "to" "t1" "gist" "updated"}]
+                    (expand-through ["t3/i1"] [1 2])
+                    supersede-summaries)]
+        (expect (= ["second" "updated"] (mapv #(get % "gist") out)))
+        (expect (= [#{2} #{1}] (mapv #(get % "turns") out)))))
   (it "a range selector spanning every iteration of a turn records that turn"
       (let [out (first (expand-through [{"through" "t2/i1"}] universe))]
         ;; t1 fully inside the window; t2 only partially (t2/i2 is outside).

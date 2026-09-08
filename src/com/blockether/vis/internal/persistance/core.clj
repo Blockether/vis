@@ -672,3 +672,13 @@
   (when-let [c @shared-conn]
     (try (db-dispose-connection! c) (catch Exception _ nil))
     (reset! shared-conn nil)))
+
+(defdelegate db-council-get [db-info id])
+
+(defdelegate db-council-replay [db-info sid key])
+
+(defdelegate db-council-insert! [db-info row recipients])
+
+(defdelegate db-council-page [db-info gid thread roots? after limit])
+
+(defdelegate db-council-pending [db-info sid activation gid after limit])

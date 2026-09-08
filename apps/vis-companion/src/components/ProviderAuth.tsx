@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
-import type { AuthFlow, ProviderAuthState, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
+import type { AuthFlow, ProviderAuthState, ProviderLimitRow, ProviderPreset, ProviderResetOutcome, RouterProvider } from '../lib/types';
+import { ProviderLimitReset } from './ProviderLimitReset';
 import { clientAuthFlow, openAuthUrl, watchAuth, type AuthWatch } from '../lib/oauth';
 import { Banner, Button, ConfirmRow, DialogFrame, IconButton, Input, ListRow, Modal } from './ui';
 import {
@@ -11,6 +12,7 @@ import {
   CircleXIcon,
   MARK_NUDGE,
   PlusIcon,
+  RefreshIcon,
   SortIcon,
   StarIcon,
   TrashIcon,
@@ -276,6 +278,8 @@ export interface ProviderAuth extends ProviderFleet {
   setApiKey: (value: string) => void;
   signIn: (provider: RouterProvider) => Promise<void>;
   recheck: (providerId: string) => Promise<void>;
+  resetLimits: (providerId: string, accountId: string) => Promise<ProviderResetOutcome>;
+  hasPendingReset: (providerId: string, accountId: string) => boolean;
   finishPkce: () => Promise<void>;
   finishApiKey: () => Promise<void>;
   cancelFlow: () => Promise<void>;
@@ -470,6 +474,24 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     [client, setErr, setPending, setProviders],
   );
 
+  const resetLimits = useCallback(async (providerId: string, accountId: string) => {
+    try {
+      return await client.consumeProviderResetCredit(providerId, accountId);
+    } finally {
+      // Do not keep an old allowance actionable if the following live read fails.
+      setProviders(rows => rows?.map(row => row.id === providerId ? {
+        ...row,
+        limits: { ...row.limits, dynamic: { ...row.limits?.dynamic, reset_credits: {
+          status: 'error' as const, account_id: accountId, message: 'Refresh to check available resets.',
+        } } },
+      } : row) ?? rows);
+      await recheck(providerId);
+    }
+  }, [client, recheck, setProviders]);
+
+  const hasPendingReset = useCallback((providerId: string, accountId: string) =>
+    client.hasPendingProviderReset(providerId, accountId), [client]);
+
   const finishInput = useCallback(async (input: string) => {
     if (!flow || !input.trim() || !watchRef.current) return;
     const generation = startGeneration.current;
@@ -549,6 +571,7 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
    */
   const removeProvider = useCallback(
     async (provider: RouterProvider) => {
+      if (provider.is_managed) return;
       setPending(`remove:${provider.id}`);
       setErr(null);
       setNote(null);
@@ -623,6 +646,8 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     setApiKey,
     signIn,
     recheck,
+    resetLimits,
+    hasPendingReset,
     finishPkce,
     finishApiKey,
     cancelFlow,
@@ -1037,9 +1062,9 @@ function ProviderModelMenu({
  * THE PROVIDER ACCOUNTS, one pressable disclosure each — the same slab a
  * machine gets, slid the same way.
  *
- * A provider IS a machine-sized thing: it is signed in or it is not, it holds
- * a rank, and it can be dropped. Its rank and removal verbs stay under the
- * trailing edge, while pressing a signed-in row opens that account's limits.
+ * A provider has sign-in status and routing actions. Only user-owned providers
+ * can be removed. Actions stay under the trailing edge; pressing a signed-in
+ * row opens that account's limits.
  * The collapsed row keeps only the most urgent number so the fleet remains
  * scannable.
  *
@@ -1095,7 +1120,7 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
           .map(limitRowText)
           .filter((line): line is string => line !== null);
 
-        if (removing === provider.id)
+        if (removing === provider.id && !provider.is_managed)
           return (
             // What removing COSTS, inside the frame that asks it: the daemon runs
             // the provider's own logout AND drops its config entry, so this is the
@@ -1119,6 +1144,14 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
         // carries neither; the default provider cannot also hold the fallback,
         // which is the whole point of a fallback.
         const actions: SwipeAction[] = [];
+        if (authed)
+          actions.push({
+            key: 'refresh',
+            label: 'Refresh',
+            name: `Refresh limits for ${provider.label}`,
+            icon: <RefreshIcon isBusy={isProbing} className="size-4" />,
+            onSelect: () => { if (!pending) void auth.recheck(provider.id); },
+          });
         if (provider.models.length > 0)
           actions.push({
             key: 'default',
@@ -1138,14 +1171,15 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
             icon: <SortIcon className="size-4" />,
             onSelect: (anchor) => openModels(provider, 'fallback', anchor),
           });
-        actions.push({
-          key: 'remove',
-          label: 'Remove',
-          name: `Sign out of ${provider.label} and remove it from this machine`,
-          icon: <TrashIcon className="size-4" />,
-          tone: 'danger',
-          onSelect: () => setRemoving(provider.id),
-        });
+        if (!provider.is_managed)
+          actions.push({
+            key: 'remove',
+            label: 'Remove',
+            name: `Sign out of ${provider.label} and remove it from this machine`,
+            icon: <TrashIcon className="size-4" />,
+            tone: 'danger',
+            onSelect: () => setRemoving(provider.id),
+          });
 
         return (
           <div key={provider.id}>
@@ -1228,6 +1262,14 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                     No limits reported by this provider.
                   </p>
                 ) : null}
+                {authed && provider.id === 'openai-codex' && (
+                  <ProviderLimitReset
+                    credits={provider.limits?.dynamic?.reset_credits}
+                    isChecking={isProbing}
+                    hasPending={!!provider.limits?.dynamic?.reset_credits?.account_id && auth.hasPendingReset(provider.id, provider.limits.dynamic.reset_credits.account_id)}
+                    onConsume={accountId => auth.resetLimits(provider.id, accountId)}
+                  />
+                )}
               </div>
             )}
             <ProviderNotice auth={auth} provider={provider} />

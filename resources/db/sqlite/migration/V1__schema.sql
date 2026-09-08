@@ -365,6 +365,8 @@ CREATE TABLE session_turn_iteration (
                                   ),
   -- Request-aligned context budget and text estimates; never prompt contents.
   request_health                 BLOB,
+  council_input                  BLOB,
+  council_publications           BLOB,
   llm_thinking                    TEXT,
   -- Model markdown PROSE returned ALONGSIDE a tool call. NULL = no prose.
   llm_assistant_prose             TEXT,
@@ -833,3 +835,32 @@ END;
 -- SQLite schema that Flyway has just baselined at version 0.
 INSERT INTO transcript_request_fts(transcript_request_fts) VALUES ('rebuild');
 INSERT INTO transcript_reply_fts(transcript_reply_fts) VALUES ('rebuild');
+
+-- Council is an append-only project log. Activation identities are process-local targets.
+CREATE TABLE council_entry (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_id TEXT NOT NULL,
+  author_sid TEXT NOT NULL,
+  activation_id TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('host', 'sdk')),
+  source_ref BLOB,
+  thread_id INTEGER REFERENCES council_entry(id),
+  title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 256),
+  content TEXT NOT NULL CHECK (length(CAST(content AS BLOB)) BETWEEN 1 AND 65536),
+  created_at INTEGER NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  CHECK ((thread_id IS NULL AND title IS NOT NULL) OR (thread_id IS NOT NULL AND title IS NULL)),
+  UNIQUE (author_sid, idempotency_key)
+);
+CREATE INDEX idx_council_group ON council_entry(group_id, id);
+CREATE INDEX idx_council_thread ON council_entry(group_id, thread_id, id);
+CREATE TABLE council_ping (
+  recipient_sid TEXT NOT NULL,
+  activation_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  entry_id INTEGER NOT NULL REFERENCES council_entry(id) ON DELETE CASCADE,
+  PRIMARY KEY (recipient_sid, activation_id, group_id, entry_id)
+);
+
+CREATE INDEX idx_council_ping_entry ON council_ping(entry_id, recipient_sid);

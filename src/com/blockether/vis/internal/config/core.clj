@@ -1320,11 +1320,12 @@
 (def default-search-always-exclude
   "Default `:grep :always-exclude` patterns (`.gitignore` syntax) guarding
    the subtrees an `:include-gitignored-paths` overlay re-includes:
-   machine-generated dirs nobody wants surfaced even inside a rescued vendored
+   build, dependency and tool directories inside a re-included
    repo. Setting `:always-exclude` in config REPLACES this list (vectors
    replace on merge, like everywhere else in config)."
   [".git/" "node_modules/" "target/" "build/" "dist/" "__pycache__/" ".venv/" ".gradle/" "vendor/"
-   ".next/" "out/"])
+   ".next/" "out/" ".m2/" ".shadow-cljs/" "cljs-runtime/" ".cpcache/" ".clj-kondo/" ".calva/"
+   ".lsp/" ".rift/"])
 
 (defn search-overlay
   "Return the grep overlay as an internal keyword-keyed map, or nil when unset.

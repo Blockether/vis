@@ -195,6 +195,33 @@
       (providers/remove-provider! :warm nil)
       (is (nil? @@cache) "remove-provider! drops the snapshot"))))
 
+;; Regression (user report): extension-owned providers must not be deleted,
+;; including providers whose extension exposes an interactive sign-in flow.
+(deftest removing-a-managed-provider-has-no-side-effects
+  (doseq [auth-fn [nil (fn [_])]]
+    (let [effects (atom [])
+          record! (fn [effect]
+                    (fn [& _]
+                      (swap! effects conj effect)))
+          registered (cond-> {:provider/id :extension-owned
+                              :provider/is-managed true
+                              :provider/logout-fn (record! :logout)}
+                       auth-fn
+                       (assoc :provider/auth-fn auth-fn))]
+
+      (with-redefs [registry/provider-by-id (constantly registered)
+                    config/remove-config-provider! (record! :remove)
+                    config/suppress-provider! (record! :suppress)
+                    config/reload-config! (record! :reload)
+                    providers/ensure-default-selection! (record! :retag)
+                    providers/rebuild-shared-router! (record! :rebuild)]
+
+        (let [result (try (providers/remove-provider! :extension-owned :gateway)
+                          (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+          (is (= :provider/managed (:type result)))
+          (is (= :extension-owned (:provider-id result)))
+          (is (empty? @effects)))))))
+
 (defn- with-machine-config
   "Run `f` against an in-memory machine config `raw` — the string-keyed shape
    `load-global-config-raw` answers — and return that config as it stands

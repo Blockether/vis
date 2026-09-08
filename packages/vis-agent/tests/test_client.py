@@ -479,6 +479,45 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
             )
             assert calls[-1][1] == expected_path
             seen.add((words[0], words[1]))
+    # Council intentionally lives on a session-bound handle rather than raw client mutations.
+    entry = {
+        "id": 1,
+        "thread_id": 1,
+        "group_id": "G",
+        "content": "Entry",
+        "author_session_id": "example",
+        "created_at": 1,
+        "source": "sdk",
+        "ping": [],
+    }
+
+    def council_response(method, path, _body):
+        route = path.split("?")[0]
+        if route.endswith("/council"):
+            return 200, {"default_group_id": "G", "activation_id": "active"}
+        if route.endswith("/members"):
+            return 200, []
+        if route.endswith("/1") or method == "POST":
+            return 200, entry
+        return 200, {"entries": [], "after": 0, "has_more": False}
+
+    with endpoint(council_response) as (url, calls):
+        council = GatewayClient(url).session("example").council()
+        council.members()
+        council.threads()
+        council.read()
+        council.get(1)
+        council.publish("Entry")
+        seen.update(
+            (
+                method,
+                path.split("?")[0]
+                .replace("/example/", "/:sid/")
+                .replace("/entries/1", "/entries/:entry-id"),
+            )
+            for method, path, _, _ in calls
+            if "/council" in path
+        )
     assert seen == expected
 
 

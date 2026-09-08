@@ -2,6 +2,17 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+
+## 0.1.44 (5528) — 2026-09-08
+<!-- commit: 39cba5db14213b15d20173d43ac0f3e158d68067 -->
+
+- Add confirmed account limit resets
+- Remove obsolete subscription and compatibility paths
+- Align code copy icon with activity chevron
+- Keep code clear behind copy icons
+- Use icon-only copy controls
+- Record companion build 5520
+
 ## 0.1.44 (5520) — 2026-09-08
 <!-- commit: bb9bad25ee6d49f5e52f5bc2983c859e23796558 -->
 

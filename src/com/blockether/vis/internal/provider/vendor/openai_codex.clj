@@ -840,13 +840,96 @@
           (str "OpenAI Codex usage request failed: HTTP " status)
           {:type :provider/openai-codex-usage-error :status status :body body :url usage-url})))))
 
+(defn- reset-credits-report
+  "Read the backend's reset allowance, never infer it from quota percentages.
+   The usage summary avoids a second request when available. Missing support or
+   a failed detail request is not zero credits. Account ids are metadata; tokens
+   and upstream response bodies never enter the report."
+  [access-token account-id usage]
+  (let [summary-count
+        (field (field usage :rate_limit_reset_credits) :available_count)
+
+        known-count?
+        #(and (integer? %) (<= 0 (long %)))
+
+        available
+        (fn [n]
+          {:status :ok :available-count n :account-id account-id})]
+
+    (if (known-count? summary-count)
+      (available summary-count)
+      (try (let [{:keys [status body]} (http/get
+                                         (str CODEX_BASE_URL "/wham/rate-limit-reset-credits")
+                                         {:headers {"Authorization" (str "Bearer " access-token)
+                                                    "chatgpt-account-id" account-id
+                                                    "Accept" "application/json"}
+                                          :timeout 5000
+                                          :throw false})]
+             (cond (= 404 status) {:status :unsupported}
+                   (= 200 status)
+                   (let [n (field (json/read-json body :key-fn keyword) :available_count)]
+                     (if (known-count? n)
+                       (available n)
+                       {:status :error :message "Reset availability was not reported."}))
+                   :else {:status :error :message "Could not check available resets. Try again."}))
+           (catch Exception _
+             {:status :error :message "Could not check available resets. Try again."})))))
+
 (defn dynamic-limits!
-  "Fetch and normalize OpenAI Codex dynamic quota data for an access
-   token/account id pair. Optional `model-ref` selects the Codex Spark
-   nested bucket when applicable."
+  "Fetch quota windows and account-scoped reset availability. Optional
+   `model-ref` selects Codex Spark's quota bucket; reset credits remain scoped
+   to the account, not the model or conversation."
   ([access-token account-id] (dynamic-limits! access-token account-id nil))
   ([access-token account-id model-ref]
-   (usage->dynamic-limits (fetch-usage! access-token account-id) model-ref)))
+   (let [usage (fetch-usage! access-token account-id)]
+     (assoc (usage->dynamic-limits usage model-ref)
+       :reset-credits (reset-credits-report access-token account-id usage)))))
+
+(defn- post-reset-credit!
+  [{:keys [account-id idempotency-key]} {:keys [token llm-headers]}]
+  (if (not= account-id (get llm-headers "chatgpt-account-id"))
+    {:error :account-changed
+     :message "The Codex account changed. Review its limits before using a reset."}
+    (http/post (str CODEX_BASE_URL "/wham/rate-limit-reset-credits/consume")
+               {:headers {"Authorization" (str "Bearer " token)
+                          "chatgpt-account-id" account-id
+                          "Content-Type" "application/json"
+                          "Accept" "application/json"}
+                :body (json/write-json-str {:redeem_request_id idempotency-key})
+                :timeout 10000
+                :throw false})))
+
+(defn consume-reset-credit!
+  "Use one reset explicitly confirmed for `account-id`. `idempotency-key`
+   identifies the logical attempt and MUST survive retries, including a lost
+   response. A 401/403 refresh retries that same attempt only, with account
+   identity checked again. A timeout or unknown response never implies success."
+  [{:keys [account-id idempotency-key] :as attempt}]
+  (if-not (and (util/non-blank-string? account-id) (util/non-blank-string? idempotency-key))
+    {:error :invalid-reset-request :message "Account and idempotency key are required."}
+    (try (let [provider-token
+               (get-openai-codex-token!)
+
+               first-response
+               (post-reset-credit! attempt provider-token)
+
+               {:keys [status body error] :as response}
+               (if (contains? #{401 403} (:status first-response))
+                 (post-reset-credit! attempt (force-refresh-token! (:token provider-token)))
+                 first-response)]
+
+           (if error
+             response
+             (let [outcome (when (= 200 status)
+                             (field (json/read-json body :key-fn keyword) :code))]
+               (if (contains? #{"reset" "nothing_to_reset" "no_credit" "already_redeemed"} outcome)
+                 {:outcome outcome}
+                 {:error :reset-unconfirmed
+                  :message
+                  "Could not confirm the reset. Retry the same attempt to check its result."}))))
+         (catch Exception _
+           {:error :reset-unconfirmed
+            :message "Could not confirm the reset. Retry the same attempt to check its result."}))))
 
 (defn- usage-report-from-token!
   [{:keys [token llm-headers]}]
@@ -947,4 +1030,5 @@
                         :provider/auth-await-fn #'auth-await
                         :provider/get-token-fn #'get-openai-codex-token!
                         :provider/refresh-token-fn #'force-refresh-token!
-                        :provider/limits-fn #'limits}]})))
+                        :provider/limits-fn #'limits
+                        :provider/consume-reset-credit-fn #'consume-reset-credit!}]})))

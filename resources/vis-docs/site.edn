@@ -13,6 +13,9 @@
     {:blurb "Send follow-ups, cancel a task and exit."
      :page "queue-and-cancel"
      :title "Controlling a session"}
+    {:blurb "Exchange project messages and explicit pings between active sessions."
+     :page "council"
+     :title "Council"}
     {:blurb "Save or share a session." :page "exporting-sessions" :title "Exporting sessions"}
     {:blurb "Work in an isolated copy and land it on a branch." :page "drafts" :title "Drafts"}
     {:blurb "Use Vis from your phone or another machine."

@@ -1,6 +1,8 @@
 (ns com.blockether.vis.internal.foundation.core
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.council.core :as council]
+            [com.blockether.vis.internal.council.host :as council-host]
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.doctor :as doctor]
@@ -19,7 +21,7 @@
 (defn- combined-prompt
   "Render the dynamic language matrix and toggle-gated core guidance."
   [env]
-  (->> [(language-surface/prompt env) (introspection/prompt env)]
+  (->> [(language-surface/prompt env) (introspection/prompt env) (council/prompt env)]
        (remove str/blank?)
        (str/join "\n\n")))
 
@@ -81,9 +83,15 @@
         ;; Recomputed EVERY turn from active-extensions, so the model sees a
         ;; language pack's verbs (repl_eval/test/format) the turn it activates.
         lang-tools
-        (language-surface/capability-data env)]
+        (language-surface/capability-data env)
+
+        council-context
+        (council-host/context env)]
 
     (cond-> {}
+      council-context
+      (assoc "session_council" council-context)
+
       ws-block
       (assoc "session_workspace" ws-block)
 
@@ -109,6 +117,7 @@
                                                    (editing/available-editing-symbols)
                                                    environment/environment-symbols
                                                    introspection/all-symbols
+                                                   council-host/symbols
                                                    shell/shell-symbols
                                                    drafts/symbols))}
      :ext/kind "foundation"

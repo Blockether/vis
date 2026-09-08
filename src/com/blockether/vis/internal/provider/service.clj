@@ -637,6 +637,17 @@
 
     (str label marker)))
 
+(defn- reset-credits-text
+  [{:keys [status available-count message]}]
+  (case status
+    :ok
+    (str "Available limit resets: " available-count)
+
+    :error
+    (or message "Reset availability is unknown.")
+
+    nil))
+
 (defn status-text
   "Multi-line human status + limits report for a configured provider.
    The single source for the TUI 'Show Status + Limits' dialog and the
@@ -679,6 +690,8 @@
          (if (seq dynamic)
            (concat ["Dynamic limits:"] (map #(str "- " (format-limit-row %)) dynamic))
            ["Dynamic limits: none reported"])
+         (when-let [resets (reset-credits-text (get-in limits [:dynamic :reset-credits]))]
+           [resets])
          (when-let [note (get-in limits [:dynamic :note])]
            [(str "Note: " note)])
          (when (seq (:static limits))
@@ -764,6 +777,8 @@
                                " |"))
                         dynamic))
            ["" "_No dynamic account limits reported._"])
+         (when-let [resets (reset-credits-text (get-in limits [:dynamic :reset-credits]))]
+           ["" resets])
          (when-let [note (get-in limits [:dynamic :note])]
            ["" (str "_" note "_")])
          (when (or rpm tpm)
@@ -1427,9 +1442,13 @@
 (defn remove-provider!
   "Remove a provider from the persisted fleet AND run the registered
    extension's logout when present. Invalidates the fleet snapshot.
-   Returns true when config changed."
+   Returns true when config changed. Extension-managed providers are rejected
+   before logout or any config mutation with `:type :provider/managed`."
   ([provider-id] (remove-provider! provider-id nil))
   ([provider-id source]
+   (when (managed? provider-id)
+     (throw (ex-info "Provider is managed by its extension and cannot be removed."
+                     {:type :provider/managed :provider-id provider-id})))
    (when-let [logout-fn (:provider/logout-fn (registry/provider-by-id provider-id))]
      (try (logout-fn) (catch Throwable _ nil)))
    (let [;; Both halves, always: drop the config entry when there is one, and

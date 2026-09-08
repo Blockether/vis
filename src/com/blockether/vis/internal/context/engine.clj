@@ -217,7 +217,7 @@
   "EXACT set of `session_*` keys the model is meant to see. Security access is
    included as an environment-derived value; engine bookkeeping remains hidden."
   ["session_id" "session_turn" "session_scope" "session_workspace" "session_access" "session_env"
-   "session_routing" "session_language_tools" "session_symbols"])
+   "session_routing" "session_language_tools" "session_symbols" "session_council"])
 
 (defn scope-key
   "Ordered key for a scope so ranges can compare scopes: `\"t1/i2\"` or
@@ -416,11 +416,14 @@
    universe iteration of that turn. An ENUMERATED `tN/iN` list never yields
    whole-turn intent — even when it happens to name every iteration — so a
    fine-grained fold can never silently erase a turn's Q/A recap downstream
-   (`previous-turn-context` keys Q/A removal off `\"turns\"`, not scope cover).
+   (`previous-turn-context` keys Q/A removal off `turns`, not scope cover).
+   Optional `turns` names persisted turns, including turns with no indexed iterations.
+   A range selects an iteration-less turn only when it spans that entire turn;
+   an iteration cursor inside the turn is not evidence of whole-turn coverage.
 
    Intents with none of these keys pass through untouched. Pure — same inputs →
    same output."
-  [summaries universe]
+  [summaries universe & [turns]]
   (let [ukeys
         (into []
               (keep (fn [u]
@@ -445,7 +448,7 @@
                 ukeys))
 
         universe-turns
-        (into #{}
+        (into (set turns)
               (map (fn [[_ k]]
                      (first k)))
               ukeys)
@@ -468,9 +471,9 @@
                       (when-let [tn (turn-key raw)]
                         [tn (if upper? Long/MAX_VALUE Long/MIN_VALUE)])))
 
-                ;; ONE window → the universe scopes inside it. Each window resolves
-                ;; independently, so several disjoint spans in one intent can never
-                ;; blur into the gap between them.
+                ;; Resolve each window independently so disjoint ranges cannot
+                ;; select the turns between them. The same predicate checks scopes
+                ;; and both boundaries of a persisted turn without iterations.
                 window
                 (fn [r]
                   (let [thr
@@ -489,19 +492,12 @@
                         (when-let [c (get r "since")]
                           (cursor-key c false))]
 
-                    (cond-> #{}
-                      thr
-                      (into (pick (fn [k]
-                                    (<= (compare k thr) 0))))
-
-                      (or frm to)
-                      (into (pick (fn [k]
-                                    (and (or (nil? frm) (>= (compare k frm) 0))
-                                         (or (nil? to) (<= (compare k to) 0))))))
-
-                      snc
-                      (into (pick (fn [k]
-                                    (>= (compare k snc) 0)))))))
+                    (fn [k]
+                      (or (and thr (<= (compare k thr) 0))
+                          (and (or frm to)
+                               (or (nil? frm) (>= (compare k frm) 0))
+                               (or (nil? to) (<= (compare k to) 0)))
+                          (and snc (>= (compare k snc) 0))))))
 
                 expl
                 (into #{}
@@ -514,16 +510,23 @@
                 ;; Scopes selected by RANGE selectors only — bulk intent, kept
                 ;; separate so whole-turn coverage is derived from the RANGE, never
                 ;; from an enumerated iteration list. Every window UNIONS.
+                windows
+                (mapv window (intent-ranges s))
+
                 range-sel
-                (into #{} (mapcat window) (intent-ranges s))
+                (into #{} (mapcat pick) windows)
 
                 whole-turns
                 (into (into #{} (keep turn-key) (get s "scopes"))
-                      (when (seq range-sel)
-                        (filter (fn [tn]
-                                  (let [ts (turn-scopes tn)]
-                                    (and (seq ts) (every? range-sel ts))))
-                                universe-turns)))]
+                      (filter (fn [tn]
+                                (let [ts (turn-scopes tn)]
+                                  (if (seq ts)
+                                    (every? range-sel ts)
+                                    (some (fn [within?]
+                                            (and (within? [tn Long/MIN_VALUE])
+                                                 (within? [tn Long/MAX_VALUE])))
+                                          windows))))
+                              universe-turns))]
 
             (cond-> (-> s
                         (dissoc "through" "from" "to" "since" "ranges")
@@ -541,22 +544,36 @@
    for equal sets the later/newer wins), and the dropped summary's explicit
    whole-turn intent (`\"turns\"`) is MERGED into a surviving coverer so a
    fold-of-fold can never resurrect an already-folded turn's Q/A recap.
-   Order-stable. Expects scopes already resolved (run AFTER expand-through).
+   Recap-only turns also count as coverage, so their gists can be superseded
+   without dropping unrelated recaps. Order-stable. Expects resolved scopes.
    Pure."
   [summaries]
   (let [v
         (vec summaries)
+
+        coverage
+        (mapv (fn [summary]
+                (let [scopes
+                      (set (get summary "scopes"))
+
+                      scoped-turns
+                      (into #{} (keep (comp first scope-key)) scopes)]
+
+                  (into scopes
+                        (comp (remove scoped-turns) (map #(str "t" %)))
+                        (get summary "turns"))))
+              v)
 
         n
         (count v)
 
         covered?
         (fn [i]
-          (let [si (set (get (nth v i) "scopes"))]
+          (let [si (nth coverage i)]
             (and (seq si)
                  (boolean (some (fn [j]
                                   (when (not= i j)
-                                    (let [sj (set (get (nth v j) "scopes"))]
+                                    (let [sj (nth coverage j)]
                                       (and (every? sj si)           ; si ⊆ sj
                                            (or (not (every? si sj)) ; proper subset → superset wins
                                                (< (long i) (long j))))))) ; equal → later wins
@@ -567,11 +584,11 @@
         ;; covered): index → extra turns to merge.
         surviving-coverer
         (fn [i]
-          (let [si (set (get (nth v i) "scopes"))]
+          (let [si (nth coverage i)]
             (some (fn [j]
                     (when (and (not= i j)
                                (not (covered? j))
-                               (let [sj (set (get (nth v j) "scopes"))]
+                               (let [sj (nth coverage j)]
                                  (and (every? sj si)
                                       (or (not (every? si sj)) (< (long i) (long j))))))
                       j))
@@ -757,7 +774,8 @@
          (boolean (seq universe))
 
          resolved
-         (when has-uni? (supersede-summaries (expand-through summaries universe)))
+         (when has-uni?
+           (supersede-summaries (expand-through summaries universe (keys turn-weights))))
 
          uni-set
          (set universe)

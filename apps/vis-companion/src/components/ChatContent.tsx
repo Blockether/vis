@@ -3665,7 +3665,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       ref={paintSkip}
     >
       <div
-        className={`mb-4 flex items-baseline justify-between gap-2 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
+        className={`mb-4 flex items-center justify-between gap-2 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
       >
         <span>Vis</span>
         {onFork && (

@@ -49,6 +49,7 @@
     [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.session.titling :as titling]
     [com.blockether.vis.internal.config.toggles :as toggles]
+    [com.blockether.vis.internal.council.core :as council]
     [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
     [com.blockether.vis.internal.workspace.core :as workspace]
     [taoensso.telemere :as tel])
@@ -2129,8 +2130,8 @@
                              turn-data))
                      (catch Throwable _ nil)))
             universe (into [] (comp (mapcat :iter-scopes) (distinct)) turn-data)
-            resolved (ctx-engine/supersede-summaries (ctx-engine/expand-through (or summaries [])
-                                                                                universe))
+            resolved (ctx-engine/supersede-summaries
+                       (ctx-engine/expand-through (or summaries []) universe (map :turn turn-data)))
             ;; A whole-turn fold removes turn T's Q/A recap only when a later
             ;; turn issued it and therefore saw T's completed answer. A fold issued
             ;; during T may collapse settled results but cannot summarize the answer
@@ -2784,9 +2785,9 @@
     a STRING in the `ctx-engine/fold-key` grammar — \"t2/i5\" one step, \"t2\" a
     whole turn, \"t2/i1-i56\" a range, \"-t2/i56\"/\"t2/i5-\" an open one, commas
     to union several — disjoint RANGES included (a list of key strings works
-    too). Anything that is not a step key, or that resolves to no settled step,
-    is refused BY NAME with the
-    grammar. The gist is OPTIONAL: pass it to KEEP a one-line takeaway; OMIT it
+     too). Anything that is not a step key, or that resolves to neither settled
+     steps nor a turn recap, is refused BY NAME with the grammar. The gist is
+     OPTIONAL: pass it to KEEP a one-line takeaway; OMIT it
     to discard the step with no summary line. Recorded intents are string-keyed
     because they persist inside the ctx blob; `ctx-engine/expand-through` owns
     their shape and `apply-summaries` renders them."
@@ -2818,13 +2819,18 @@
                                      (and (contains? r "from") (not (contains? r "to")))))
                                (ctx-engine/intent-ranges intent)))
 
-                universe
+                ctx
                 (some-> ctx-atom
-                        deref
-                        (get "engine_iter_universe"))]
+                        deref)
 
-            (if (and unbounded? (seq universe))
-              (first (ctx-engine/expand-through [intent] universe))
+                universe
+                (get ctx "engine_iter_universe")
+
+                turns
+                (keys (get ctx "engine_turn_weights"))]
+
+            (if (and unbounded? (or (seq universe) (seq turns)))
+              (first (ctx-engine/expand-through [intent] universe turns))
               intent)))
 
         parse-key
@@ -2879,7 +2885,8 @@
 
                       winners
                       (-> tagged
-                          (ctx-engine/expand-through universe)
+                          (ctx-engine/expand-through universe
+                                                     (keys (get ctx "engine_turn_weights")))
                           ctx-engine/supersede-summaries)
 
                       kept
@@ -2914,6 +2921,9 @@
                   universe
                   (get ctx "engine_iter_universe")
 
+                  turns
+                  (keys (get ctx "engine_turn_weights"))
+
                   weights
                   (get ctx "engine_iter_weights")
 
@@ -2925,10 +2935,10 @@
                   ;; re-stamped visible weights; the earlier summary already hid its raw
                   ;; payload even though its old weight is still present in this ctx.
                   expanded
-                  (ctx-engine/expand-through [base] (or universe []))
+                  (ctx-engine/expand-through [base] (or universe []) turns)
 
                   existing
-                  (ctx-engine/expand-through (get ctx "session_summaries") (or universe []))
+                  (ctx-engine/expand-through (get ctx "session_summaries") (or universe []) turns)
 
                   already-scopes
                   (into #{} (mapcat #(get % "scopes")) existing)
@@ -3093,9 +3103,9 @@
 
          (if-let [[base label] (parse-key fold-key)]
            (let [turn (current-turn)
-                 uni (some-> ctx-atom
-                             deref
-                             (get "engine_iter_universe"))
+                 ctx (some-> ctx-atom
+                             deref)
+                 uni (get ctx "engine_iter_universe")
                  universe (set uni)
                  ;; Resolve the selector against the SETTLED wire. `universe` is every
                  ;; iteration already on THIS request's trailer: all prior turns PLUS
@@ -3104,7 +3114,9 @@
                  ;; steps; an EXPLICIT `tN/iN` literal is the one shape that survives
                  ;; resolution verbatim, so it is the only way to point at the live
                  ;; iteration still being emitted (present on no trailer, absent here).
-                 resolved (first (ctx-engine/expand-through [base] (or uni [])))
+                 resolved (first (ctx-engine/expand-through [base]
+                                                            (or uni [])
+                                                            (keys (get ctx "engine_turn_weights"))))
                  ;; The live iteration is any CURRENT-turn (or future) scope not yet
                  ;; settled. Prior turns are always foldable, AND so is every finished
                  ;; iteration of the current turn — only the in-flight iteration is
@@ -3186,6 +3198,11 @@
                (str "folded " label note (when g (str " → " g)))))
            (str "fold_session: nothing to fold — " ctx-engine/fold-key-grammar))))}))
 
+(defn- iteration-record-scope
+  "Use an input-only iteration's scope without inventing a tool form."
+  [rec]
+  (or (:iteration-scope rec) (some iter-of-scope (keep :scope (:forms-vec rec)))))
+
 (defn- apply-summaries
   "Wire-only rewrite of `trailer-iters` applying `fold_session` intents at
    iteration granularity. A summary carries concrete `scopes`, an optional
@@ -3200,8 +3217,7 @@
   (if (empty? summaries)
     (vec trailer-iters)
     (let [iter-scope-of
-          (fn [rec]
-            (some iter-of-scope (keep :scope (:forms-vec rec))))
+          iteration-record-scope
 
           ;; Resolve ranges against this trailer, then keep only scopes owned by
           ;; the intent's canonical at_turn. A turn may fold its own settled work
@@ -3894,8 +3910,11 @@
                          (+img [textual])
                          [])))))]
 
-     (mapv (fn [[pos :as entry]]
-             [pos (vec (group-of entry))])
+     (mapv (fn [[pos iter-rec :as entry]]
+             [pos
+              (vec (concat (when (and (not (:collapsed? iter-rec)) (:council-input iter-rec))
+                             [(council/input-message (:council-input iter-rec))])
+                           (group-of entry)))])
            iters))))
 
 (defn- conversation-suffix
@@ -3971,8 +3990,7 @@
   ([ctx-atom trailer-iters wire-iters pricing]
    (when ctx-atom
      (let [scope-of
-           (fn [rec]
-             (some iter-of-scope (keep :scope (:forms-vec rec))))
+           iteration-record-scope
 
            uni
            (into []
@@ -7347,8 +7365,7 @@
   (let [calls
         (into []
               (comp (filter (fn [[_ rec]]
-                              (contains? scopes
-                                         (some iter-of-scope (keep :scope (:forms-vec rec))))))
+                              (contains? scopes (iteration-record-scope rec))))
                     (mapcat (fn [[_ rec]]
                               (keep :name (:tool-calls rec)))))
               trailer-iters)
@@ -7414,7 +7431,7 @@
          universe
          (into []
                (keep (fn [[_ rec]]
-                       (some iter-of-scope (keep :scope (:forms-vec rec)))))
+                       (iteration-record-scope rec)))
                trailer-iters)
 
          already-folded
@@ -8341,7 +8358,37 @@
                    replay-target
                    {:describe-images
                     (replay-image-describer environment user-request (:provider replay-target))})
-                 provider-messages (into (vec messages) conversation-suffix-msgs)
+                 provider-base (into (vec messages) conversation-suffix-msgs)
+                 council-active (when (council/enabled? environment)
+                                  (get (council/runtime (:db-info environment)
+                                                        (str (:session-id environment)))
+                                       (str (:session-id environment))))
+                 _council-start (swap! (:ctx-atom environment) assoc
+                                  :council-actor council-active
+                                  :council-publications [])
+                 council-input (when council-active
+                                 (council/prepare-input!
+                                   (:db-info environment)
+                                   (str (:session-id environment))
+                                   (:activation-id council-active)
+                                   (:group-id council-active)
+                                   (:input-state council-active)
+                                   [session-turn-id iteration]
+                                   ;; Conservative: one UTF-8 byte per spare token, plus headroom.
+                                   (max 0
+                                        (- (long effective-fold-budget)
+                                           (long (svar-router/count-messages
+                                                   (or (:name pre-resolved-model)
+                                                       (:model pre-resolved-model))
+                                                   provider-base))
+                                           256))))
+                 council-trailer (cond-> (vec trailer-iters)
+                                   (seq (:entries council-input))
+                                   (conj [(inc (long iteration))
+                                          {:iteration-scope (str "t" (or turn-position 1)
+                                                                 "/i" (inc (long iteration)))
+                                           :council-input council-input}]))
+                 provider-messages (council/append-input provider-base council-input)
                  effective-messages-atom (atom provider-messages)
                  install-projection! (fn [projection]
                                        (when-let [base (:canonical-base-messages projection)]
@@ -8350,7 +8397,9 @@
                                                                     :resumed? false}))
                                        (when-let [summary (:summary projection)]
                                          (swap! emergency-summaries-atom conj summary))
-                                       (reset! effective-messages-atom (:messages projection)))
+                                       (reset! effective-messages-atom (council/append-input
+                                                                         (:messages projection)
+                                                                         council-input)))
                  context-estimator (request-context-estimator
                                      @(:prompt-cache-history-atom environment)
                                      (:provider pre-resolved-model)
@@ -8691,6 +8740,9 @@
                                                            (:name resolved-model)
                                                            (:provider resolved-model))]
                               (cond-> {:session-turn-id session-turn-id
+                                       :council-input council-input
+                                       :council-publications (:council-publications @(:ctx-atom
+                                                                                       environment))
                                        :vars []
                                        :code (or err-partial-content "")
                                        :thinking err-reasoning
@@ -8755,6 +8807,7 @@
                         (recur (assoc loop-state
                                  :iteration (inc (long iteration))
                                  :empty-iteration-streak 0
+                                 :trailer-iters council-trailer
                                  :messages (conj messages {:role "user" :content error-feedback})
                                  :llm-provider {:error llm-provider-error}
                                  :trace (conj trace trace-entry))))))
@@ -8881,6 +8934,9 @@
                                 budget (context-fold-budget limit)]
 
                             (cond-> {:session-turn-id session-turn-id
+                                     :council-input council-input
+                                     :council-publications (:council-publications @(:ctx-atom
+                                                                                     environment))
                                      :request-health
                                      (cond-> (assoc (:request-health iteration-result)
                                                :budget-tokens budget
@@ -9064,6 +9120,7 @@
                             (recur (merge loop-state
                                           {:iteration (inc (long iteration))
                                            :empty-iteration-streak empty-streak
+                                           :trailer-iters council-trailer
                                            :trace (conj trace trace-entry)}))))
                         (do
                           (log-stage! :iteration/stop
@@ -9113,7 +9170,8 @@
                                                       [pos (dissoc rec :reinspect-attachments)])
                                                     (or trailer-iters []))
                                               [(inc (long iteration))
-                                               {:thinking thinking
+                                               {:council-input council-input
+                                                :thinking thinking
                                                 :blocks blocks
                                                 ;; `forms-vec` is the one scope source: persistence
                                                 ;; and model context both read it.
