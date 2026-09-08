@@ -435,7 +435,10 @@
          steps
          [{:input 150000 :code "print('settled evidence')"} {:input 157843 :code fold-code}
           {:input 15614
-           :code "print('sandbox-fold-count:', session['utilization'].get('fold_count'))"}
+           :code
+           (str
+             "print('sandbox-fold-count:', session['utilization'].get('fold_count'))\n"
+             "print('sandbox-fold-measurement:', session['utilization'].get('fold_measurement'))")}
           {:input 20736}]]
 
      (try (with-redefs [svar/ask-code!
@@ -445,7 +448,10 @@
 
                             (swap! requests conj (:messages opts))
                             (swap! snapshots conj (ctx-loop/session-snapshot environment))
-                            (merge {:api-usage {:input-tokens input :output-tokens 1} :tokens {}}
+                            (merge {:api-usage {:input-tokens input :output-tokens 1}
+                                    :routed/provider-id :lmstudio
+                                    :routed/model "model"
+                                    :tokens {}}
                                    (if code
                                      {:stop-reason :tool-calls
                                       :tool-calls [{:id (str "call-" idx)
@@ -465,12 +471,34 @@
 
             (expect (= [prior-folds prior-folds folds folds]
                        (mapv #(get-in % ["session_utilization" "fold_count"]) @snapshots)))
+            ;; Blockether/vis#174: report the next request's provider-measured net
+            ;; reduction, once for all folds issued between the same two requests.
+            (if (> folds prior-folds)
+              (do (expect (= "pending"
+                             (get-in (nth @snapshots 2)
+                                     ["session_utilization" "fold_measurement" "status"])))
+                  (expect (= {"status" "measured"
+                              "source" "provider_usage"
+                              "before_input_tokens" 157843
+                              "after_input_tokens" 15614
+                              "net_reduction_tokens" 142229
+                              "fold_count" (- folds prior-folds)}
+                             (select-keys
+                               (get-in (last @snapshots) ["session_utilization" "fold_measurement"])
+                               ["status" "source" "before_input_tokens" "after_input_tokens"
+                                "net_reduction_tokens" "fold_count"])))
+                  (expect (= (get-in (last @snapshots) ["session_utilization" "fold_measurement"])
+                             (get-in (persistance/db-session-usage-stats db sid)
+                                     [:health :fold-measurement])))
+                  (expect (re-find #"sandbox-fold-measurement: [^\n]*'net_reduction_tokens': 142229"
+                                   wire)))
+              (expect (nil? (get-in (last @snapshots) ["session_utilization" "fold_measurement"]))))
             (expect (str/includes? wire (str "sandbox-fold-count: " folds)))
             {:latest-input (some-> readings
                                    last
                                    second
                                    parse-long)
-             :wire-folds (some-> (re-seq #"fold_count[^\n]*?(\d+)" wire)
+             :wire-folds (some-> (re-seq #"sandbox-fold-count: (\d+)" wire)
                                  last
                                  second
                                  parse-long)
@@ -528,6 +556,91 @@
                  (fold-usage-scenario
                    (str "example = \"fold_session('-t1/i1', 'unused')\"\n"
                         "print('folded through t1/i1')\nfold_session('t1/i2', 'live')"))))))
+
+(defn- fold-measurement-fixture
+  "A foldable context whose stale utilization deliberately disagrees with the response."
+  [response]
+  (let [ctx (atom (#'lp/record-provider-input
+                   {"session_turn" 2
+                    "engine_iter_universe" ["t1/i1" "t1/i2"]
+                    "engine_iter_weights" {"t1/i1" 12000 "t1/i2" 3400}
+                    "engine_utilization" {"last_request_tokens" 999999}}
+                   response))]
+    [ctx (get (#'lp/compaction-verbs ctx) 'fold-session)]))
+
+(defdescribe
+  provider-fold-measurement-test
+  ;; Blockether/vis#174: provider totals, not tokenizer estimates, settle a fold batch.
+  (it
+    "keeps signed net changes and refuses missing or incomparable provider samples"
+    (let [response
+          {:llm-provider :lmstudio :llm-model "model" :api-usage {:input-tokens 100000}}
+
+          input-path
+          [:api-usage :input-tokens]]
+
+      (doseq [[before after turn expected]
+              [[response (assoc-in response input-path 20000) 2
+                {"status" "measured" "net_reduction_tokens" 80000}]
+               [response response 2 {"status" "measured" "net_reduction_tokens" 0}]
+               [response (assoc-in response input-path 120000) 2
+                {"status" "measured" "net_reduction_tokens" -20000}]
+               [(dissoc response :api-usage) response 2
+                {"status" "unavailable" "reason" "missing_before_usage"}]
+               [(assoc-in response input-path 0) response 2
+                {"status" "unavailable" "reason" "missing_before_usage"}]
+               [(assoc-in response input-path -1) response 2
+                {"status" "unavailable" "reason" "missing_before_usage"}]
+               [response (dissoc response :api-usage) 2
+                {"status" "unavailable" "reason" "missing_after_usage"}]
+               [response (assoc-in response input-path 0) 2
+                {"status" "unavailable" "reason" "missing_after_usage"}]
+               [response (assoc response :llm-provider :other) 2
+                {"status" "unavailable" "reason" "route_changed"}]
+               [response (assoc response :llm-model "other") 2
+                {"status" "unavailable" "reason" "route_changed"}]
+               [(dissoc response :llm-provider) response 2
+                {"status" "unavailable" "reason" "unknown_route"}]
+               [response (assoc response :llm-model " ") 2
+                {"status" "unavailable" "reason" "unknown_route"}]
+               [response response 3 {"status" "unavailable" "reason" "turn_changed"}]]]
+        (let [[ctx fold] (fold-measurement-fixture before)]
+          (expect (str/includes? (fold "t1/i1" "retained") "provider net change pending"))
+          (swap! ctx assoc "session_turn" turn)
+          (swap! ctx #'lp/record-provider-input after)
+          (let [measurement (get @ctx "engine_fold_measurement")]
+            (expect (= expected
+                       (select-keys measurement ["status" "reason" "net_reduction_tokens"])))
+            (expect (= 1 (get measurement "fold_count")))
+            (expect (= "provider_usage" (get measurement "source")))
+            (expect (= measurement
+                       (get-in (eng/session-view @ctx) ["session_utilization" "fold_measurement"])))
+            ;; A later response must not settle the same fold again, even when the
+            ;; first post-fold response had no usage or a different route.
+            (swap! ctx #'lp/record-provider-input response)
+            (expect (= measurement (get @ctx "engine_fold_measurement"))))))))
+  (it "groups folds before one response and starts the next batch from its fresh input"
+      (let [response
+            {:llm-provider :lmstudio :llm-model "model" :api-usage {:input-tokens 100000}}
+
+            [ctx fold]
+            (fold-measurement-fixture response)]
+
+        (fold "t1/i1" "first")
+        (fold "t1/i1" "refined")
+        (swap! ctx #'lp/record-provider-input (assoc-in response [:api-usage :input-tokens] 20000))
+        (expect (= {"fold_count" 2 "net_reduction_tokens" 80000}
+                   (select-keys (get @ctx "engine_fold_measurement")
+                                ["fold_count" "net_reduction_tokens"])))
+        (fold "t1/i2" "next batch")
+        (expect (= {"status" "pending" "fold_count" 1 "before_input_tokens" 20000}
+                   (select-keys (get @ctx "engine_fold_measurement")
+                                ["status" "fold_count" "before_input_tokens"
+                                 "net_reduction_tokens"])))
+        (swap! ctx #'lp/record-provider-input (assoc-in response [:api-usage :input-tokens] 30000))
+        (expect (= {"status" "measured" "fold_count" 1 "net_reduction_tokens" -10000}
+                   (select-keys (get @ctx "engine_fold_measurement")
+                                ["status" "fold_count" "net_reduction_tokens"]))))))
 
 (defdescribe
   loop-stage-logging-test

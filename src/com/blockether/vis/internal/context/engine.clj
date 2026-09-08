@@ -892,8 +892,9 @@
    Keeps ONLY `model-facing-keys` (so engine bookkeeping never leaks) and
    projects `engine_utilization` → `session_utilization`. Its `fold_count`
    is the session's executed-operation count, independent of receipts, summary
-   supersession and provider measurements. The second arity takes legacy
-   `warnings` for call-site compatibility but ignores them.
+   supersession and provider measurements. `fold_measurement` reports the latest
+   fold batch's net provider-input reduction once the next response arrives.
+   The second arity ignores legacy `warnings`.
    Pure; STRING keys in and out."
   ([ctx] (session-view ctx nil))
   ([ctx _warnings]
@@ -906,6 +907,9 @@
    ;; `{}` and the breadcrumbs alone carry the gists until the next send re-stamps.
    (let [fold-count
          (get ctx "engine_fold_count")
+
+         fold-measurement
+         (get ctx "engine_fold_measurement")
 
          budget
          (when (seq (get ctx "session_summaries"))
@@ -922,9 +926,12 @@
 
          util
          (-> (cond-> (or (get ctx "engine_utilization")
-                         (when (or (seq budget) (some? fold-count)) {}))
+                         (when (or (seq budget) (some? fold-count) fold-measurement) {}))
                (some? fold-count)
                (assoc "fold_count" fold-count)
+
+               fold-measurement
+               (assoc "fold_measurement" fold-measurement)
 
                (seq budget)
                (merge budget)

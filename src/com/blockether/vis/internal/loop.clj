@@ -2281,6 +2281,59 @@
                           (not pressured?)
                           (dissoc "engine_overbudget_hint_turn")))))))
 
+(defn- record-provider-input
+  "Stamp this response's input, even when missing, and settle a pending fold batch.
+   The signed reduction is net request shrinkage, not isolated fold savings or cost."
+  [ctx response]
+  (let [input
+        (get-in response [:api-usage :input-tokens])
+
+        sample
+        {"turn" (get ctx "session_turn")
+         "provider" (some-> (:llm-provider response)
+                            name
+                            str/trim
+                            not-empty)
+         "model" (some-> (:llm-model response)
+                         str
+                         str/trim
+                         not-empty)
+         "input_tokens" (when (and (integer? input) (pos? (long input))) (long input))}
+
+        pending
+        (get ctx "engine_fold_measurement")
+
+        before
+        (get pending "before_input_tokens")
+
+        after
+        (get sample "input_tokens")
+
+        reason
+        (cond (nil? before) "missing_before_usage"
+              (nil? after) "missing_after_usage"
+              (not (every? some?
+                           [(get pending "provider") (get pending "model") (get sample "provider")
+                            (get sample "model")]))
+              "unknown_route"
+              (not= (get pending "turn") (get sample "turn")) "turn_changed"
+              (not= (select-keys pending ["provider" "model"])
+                    (select-keys sample ["provider" "model"]))
+              "route_changed")]
+
+    (cond-> (assoc ctx "engine_provider_input" sample)
+      (= "pending" (get pending "status"))
+      (assoc "engine_fold_measurement"
+        (cond-> (assoc pending
+                  "status" (if reason "unavailable" "measured")
+                  "source" "provider_usage"
+                  "after_input_tokens" after)
+          reason
+          (assoc "reason" reason)
+
+          (nil? reason)
+          (assoc "net_reduction_tokens" (- (long before) (long after))))))))
+
 (defn- stamp-prompt-cache-status!
   "Store Svar's opaque current-turn prompt-cache status for model-facing rendering."
   [ctx-atom status]
@@ -2901,6 +2954,16 @@
                   ;; refine an ever-growing fold-of-fold chain on every request.
                   (assoc ctx
                     "engine_fold_count" (inc (long (or (get ctx "engine_fold_count") 0)))
+                    "engine_fold_measurement"
+                    (if (= "pending" (get-in ctx ["engine_fold_measurement" "status"]))
+                      (update (get ctx "engine_fold_measurement") "fold_count" inc)
+                      (let [sample (get ctx "engine_provider_input")]
+                        (merge (select-keys sample ["turn" "provider" "model"])
+                               {"status" "pending"
+                                "fold_count" 1
+                                "before_input_tokens" (when (= (get sample "turn")
+                                                               (get ctx "session_turn"))
+                                                        (get sample "input_tokens"))})))
                     "session_summaries" (into []
                                               (keep-indexed (fn [idx summary]
                                                               (when (contains? kept idx) summary)))
@@ -3149,7 +3212,13 @@
                          :pending? (>= (long total) (long SESSION_REBASE_RECLAIMED_TOKENS)))))))
                (tel/log! {:level :info :id ::fold-session :data {:intent intent}}
                          "model folded scopes")
-               (str "folded " label note (when g (str " → " g)))))
+               (str
+                 "folded "
+                 label
+                 note
+                 (when (get ctx "engine_provider_input")
+                   " · provider net change pending in session['utilization']['fold_measurement']")
+                 (when g (str " → " g)))))
            (str "fold_session: nothing to fold — " ctx-engine/fold-key-grammar))))}))
 
 (defn- iteration-record-scope
@@ -5204,11 +5273,17 @@
           api-usage (:api-usage ask-result)
           actual-provider (actual-llm-provider resolved-model ask-result)
           actual-model (actual-llm-model resolved-model ask-result)
-          request-health (prompt/request-health environment messages provider-tools actual-model)
           ;; Blockether/vis#174: publish measured input before Python can fold this request.
           _ (when on-response
               (on-response
                 {:api-usage api-usage :llm-provider actual-provider :llm-model actual-model}))
+          fold-measurement (get (some-> (:ctx-atom environment)
+                                        deref)
+                                "engine_fold_measurement")
+          request-health
+          (cond-> (prompt/request-health environment messages provider-tools actual-model)
+            fold-measurement
+            (assoc :fold-measurement fold-measurement))
           _ (log-context-token-counts! messages
                                        actual-provider
                                        actual-model
@@ -8445,6 +8520,8 @@
                            :on-response
                            (fn [response]
                              (stamp-served-route! environment response)
+                             (when-let [ca (:ctx-atom environment)]
+                               (swap! ca record-provider-input response))
                              (when-let [input (get-in response [:api-usage :input-tokens])]
                                (let [window (iteration-context-limit max-context-tokens
                                                                      (turn-served-model environment)

@@ -54,6 +54,21 @@ windows. A `hint` begins at 75% of that budget, becomes more urgent at 90%, and
 requires folding above 100%. It remains while usage is high. `saturation` and
 `headroom_tokens` are measured against the model's hard input limit.
 
+A fold receipt estimates removal with the local tokenizer. The next provider
+response supplies the actual post-fold input count, without an extra model call.
+`session["utilization"]["fold_measurement"]` then reports `status: "measured"`,
+`before_input_tokens`, `after_input_tokens` and their signed difference,
+`net_reduction_tokens`. A positive difference means less input; a negative one
+means growth. This is the net change of the whole request, including the gist,
+new tool traffic and other prompt changes, not isolated fold savings or money saved.
+
+All `fold_session` calls between those two requests share one measurement and a
+`fold_count`; the reduction is not credited to each fold separately. Until the response arrives,
+the status is `pending`. Missing input usage, an unknown or changed provider/model,
+or a turn change makes the measurement `unavailable`, with a `reason`, rather
+than reusing an older count. The latest result is also stored in request health
+as `fold_measurement` for session introspection.
+
 ## Example editing workflow
 
 Locate code with `grep`, read the relevant region with `cat`, apply a `patch`,
