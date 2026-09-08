@@ -9771,7 +9771,8 @@
                                                :content "done"
                                                :tool-calls []
                                                :tokens {}})))]
-                  (lp/iteration-loop environment request {:session-turn-id tid}))
+                  (let [result (lp/iteration-loop environment request {:session-turn-id tid})]
+                    (expect (pos? @idx) (pr-str result))))
                 (let [iterations (persistance/db-list-session-turn-iterations db tid)
                       rows (mapcat #(tree-seq (comp seq :children) :children %)
                                    (mapcat #(get-in % [:activity :rows])

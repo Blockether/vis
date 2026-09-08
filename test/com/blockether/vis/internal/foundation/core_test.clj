@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.foundation.core-test
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.context.agents :as agents]
@@ -85,8 +86,14 @@
   ;; The Markdown-builder surface was reorganised; the merged-symbols
   ;; assertion drifted from the live extension shape.
   (it "keeps only dynamic language routing in the foundation prompt"
-      (with-redefs [agents/instructions (fn []
-                                          {:found? false})]
+      (with-redefs [agents/instructions
+                    (fn []
+                      {:found? false})
+
+                    ;; This contract excludes explicitly toggle-gated core guidance.
+                    toggles/enabled?
+                    (constantly false)]
+
         (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
           ;; Stable state/introspection/self-doc contracts belong in CORE or tool docs.
           (expect (not (str/includes? prompt "Env strategy")))
