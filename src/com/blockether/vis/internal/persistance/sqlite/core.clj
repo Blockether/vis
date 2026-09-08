@@ -34,7 +34,8 @@
   (:import (com.zaxxer.hikari HikariConfig HikariDataSource HikariPoolMXBean)
            (java.io File RandomAccessFile)
            (java.nio.channels FileLock)
-           (java.nio.file Files LinkOption Paths)
+           (java.nio.file Files FileSystems LinkOption Paths)
+           (java.nio.file.attribute FileAttribute PosixFilePermissions)
            (java.sql SQLException)
            (java.util.concurrent.atomic AtomicLong)
            (javax.sql DataSource)
@@ -237,6 +238,31 @@
    burst — a large attachment row — pays a single truncate."
   (* 16 1024 1024))
 
+(defn- ensure-native-temp-dir!
+  "Keep xerial's cleanup scan inside a private SQLite directory, not system temp.
+   Respect an explicit org.sqlite.tmpdir; resolve the default only at runtime."
+  []
+  (locking org.sqlite.SQLiteJDBCLoader
+    (or (System/getProperty "org.sqlite.tmpdir")
+        (let [dir
+              (Paths/get (System/getProperty "user.home")
+                         (into-array String [".vis" "native" "sqlite"]))
+
+              attrs
+              (if (contains? (.supportedFileAttributeViews (FileSystems/getDefault)) "posix")
+                (into-array FileAttribute
+                            [(PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString
+                                                                     "rwx------"))])
+                (make-array FileAttribute 0))]
+
+          (Files/createDirectories dir attrs)
+          (when-not (Files/isDirectory dir (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+            (throw (java.io.IOException.
+                     "SQLite native temp path must be a directory, not a symlink")))
+          (let [path (str (.toAbsolutePath dir))]
+            (System/setProperty "org.sqlite.tmpdir" path)
+            path)))))
+
 (defn- raw-sqlite-datasource
   "Build a configured xerial `SQLiteDataSource` (the plain non-pooled
    one). All pragmas (`journal_mode=WAL`, `synchronous=NORMAL`,
@@ -247,6 +273,7 @@
    The returned object is what we hand to Hikari as its underlying
    DataSource; callers should NOT call `getConnection` on this directly."
   ^DataSource [^String url]
+  (ensure-native-temp-dir!)
   (let [cfg
         (doto (SQLiteConfig.)
           (.setJournalMode SQLiteConfig$JournalMode/WAL)

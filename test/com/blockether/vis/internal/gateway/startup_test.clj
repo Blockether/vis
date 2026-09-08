@@ -51,8 +51,10 @@
                          :ext/name
                          ((requiring-resolve
                            'com.blockether.vis.internal.extension.core/registered-extensions)))
+            :home (System/getProperty "user.home")
             :loaded-namespaces (set (map ns-name (all-ns)))
-            :ready-ms (.getUptime (java.lang.management.ManagementFactory/getRuntimeMXBean))})
+            :ready-ms (.getUptime (java.lang.management.ManagementFactory/getRuntimeMXBean))
+            :sqlite-tmpdir (System/getProperty "org.sqlite.tmpdir")})
           (swap!
            result
            assoc
@@ -181,6 +183,7 @@
     (let [result (cold-start! (inc n))]
       (println "Gateway startup" (pr-str (dissoc result :loaded-namespaces)))
       (is (= 200 (:health-status result)))
+      (is (= (str (:home result) "/.vis/native/sqlite") (:sqlite-tmpdir result)))
       (is (every? (set (:extensions result))
                   ["foundation-core" "language-clojure" "language-python"]))
       ;; Registration must keep callable handlers, not eagerly compile both formatters.
