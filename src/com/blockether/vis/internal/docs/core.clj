@@ -306,6 +306,8 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 .content pre{font-family:inherit;position:relative;background:var(--code-bg);border:1px solid var(--line);
   border-radius:0;padding:1.25rem 1.4rem;overflow:auto;margin:1.4rem 0;box-shadow:var(--shadow)}
 .content pre code{display:block;background:none;border:none;padding:0;font-size:var(--text-small);line-height:1.65;color:var(--code-fg)}
+.content pre code.language-python{font-size:.75rem}
+.content p img{max-width:100%;height:auto}
 /* Wrap shell examples visually; preserve their text for selection and copying. */
 .content pre:has(>code.language-bash){white-space:pre-wrap;overflow-wrap:anywhere}
 .content ul,.content ol{padding-inline-start:3ch;list-style-position:outside}
@@ -352,7 +354,8 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 .token.string,.token.char{color:#965028}
 .token.function,.token.class-name{color:#1e5ab4;font-weight:600}
 .token.number,.token.symbol{color:#7846aa}
-.token.punctuation{color:#505050}
+.token.punctuation,.token.operator{color:#505050}
+.token.builtin,.token.decorator{color:#1e5ab4}
 /* brand logo */
 .top .brand .logo{height:1.7rem;width:auto;display:block}
 /* footer Blockether mark */
@@ -440,10 +443,13 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
    `*.md` href through the same mode-aware `href` the sidebar nav uses;
    absolute URLs (scheme or leading `/`) pass through untouched."
   ^String [^String html mode]
-  (str/replace html
-               #"href=\"([^\"#:/][^\":]*?)\.md(#[^\"]*)?\""
-               (fn [[_ slug frag]]
-                 (str "href=\"" (href mode slug) (or frag "") "\""))))
+  (-> html
+      (str/replace #"href=\"([^\"#:/][^\":]*?)\.md(#[^\"]*)?\""
+                   (fn [[_ slug frag]]
+                     (str "href=\"" (href mode slug) (or frag "") "\"")))
+      (str/replace #"(src|href)=\"assets/([^\"]+)\""
+                   (fn [[_ attr rel]]
+                     (str attr "=\"" (asset mode rel) "\"")))))
 
 (defn- nav-html
   [{:keys [pages]} active-slug mode]
@@ -482,6 +488,8 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
            (for [{:keys [level id text]} toc]
              (str "<a class=\"lvl-" level "\" href=\"#" id "\">" (esc text) "</a>")))
          "</aside>")))
+
+(def ^:private prism-js (delay (slurp (io/resource "vis-transcript/prism.min.js"))))
 
 (defn page-html
   "Full HTML document for one page. `mode` ∈ #{:static :live}."
@@ -548,13 +556,19 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       "</div>"
       "</article></main>"
       (or (toc-html toc) "<div></div>")
-      "</div></body></html>")))
+      "</div><script>"
+      @prism-js
+      "
+Prism.highlightAll();</script></body></html>")))
 
 ;; static site
 
 (def ^:private asset-files
   {"vis-docs/assets/logo.png" "assets/logo.png"
    "vis-docs/assets/blockether.png" "assets/blockether.png"
+   "vis-docs/assets/screenshots/ask.png" "assets/screenshots/ask.png"
+   "vis-docs/assets/screenshots/live-running.png" "assets/screenshots/live-running.png"
+   "vis-docs/assets/screenshots/live-stop.png" "assets/screenshots/live-stop.png"
    "vis-docs/assets/fonts/jetbrains-mono.woff2" "assets/fonts/jetbrains-mono.woff2"})
 
 (defn- copy-assets!

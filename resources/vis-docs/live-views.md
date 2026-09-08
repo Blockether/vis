@@ -4,6 +4,19 @@ A live view displays status, progress, tables or logs while an extension runs.
 `vis.live(...)` opens the view and returns a handle for updates. The user can
 watch it in the terminal or Companion app and stop it at any time.
 
+## In the terminal
+
+The example below updates a single pane as jobs finish, rather than printing a
+new message on every poll. This capture shows example job data in the actual
+Vis terminal renderer. Select an image to view it full size.
+
+[![Vis live view showing CI run 42, one of three jobs complete and a job status table](assets/screenshots/live-running.png)](assets/screenshots/live-running.png)
+
+Press Escape to open the stop confirmation. You can add a note for the agent
+before stopping the view; cancelling the confirmation keeps it running.
+
+[![Vis live view stop confirmation with an optional note for the agent](assets/screenshots/live-stop.png)](assets/screenshots/live-stop.png)
+
 ## Example
 
 ```python

@@ -20,6 +20,12 @@ else:
     vis.log("info", "deploy skipped: " + answer.reason)
 ```
 
+The request above opens this form in the Vis terminal. Select a target, enter
+notes and submit; the extension resumes with the answer. Password input stays
+masked. This capture uses example data. Select the image to view it full size.
+
+[![Vis terminal form with Target, Release notes and a masked Deploy token field](assets/screenshots/ask.png)](assets/screenshots/ask.png)
+
 Request options:
 
 | Option | Meaning |

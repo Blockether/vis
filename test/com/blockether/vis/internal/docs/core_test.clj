@@ -4,6 +4,56 @@
             [com.blockether.vis.internal.docs.core :as docs]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defdescribe
+  python-presentation-test
+  (it "loads the bundled Python highlighter and reduces Python code size in both modes"
+      (let [{:keys [pages] :as site}
+            (docs/collect)
+
+            page
+            (first (filter #(= "human-input" (:slug %)) pages))]
+
+        (doseq [mode
+                [:static :live]
+
+                :let [html
+                      (docs/page-html site page mode)]]
+
+          (expect (str/includes? html "Prism.languages.python="))
+          (expect (str/includes? html "Prism.highlightAll();</script>"))
+          (expect (str/includes? html ".content p img{max-width:100%;height:auto}"))
+          (expect (str/includes? html ".content pre code.language-python{font-size:.75rem}")))))
+  (it
+    "resolves screenshot sources and full-size links in both modes"
+    (let [{:keys [pages] :as site} (docs/collect)]
+      (doseq [[slug image] [["human-input" "ask"] ["live-views" "live-running"]
+                            ["live-views" "live-stop"]]
+              mode [:static :live]
+              :let [page (first (filter #(= slug (:slug %)) pages))
+                    html (docs/page-html site page mode)
+                    path (str (when (= mode :live) "/docs/") "assets/screenshots/" image ".png")]]
+
+        (expect (str/includes? html (str "src=\"" path "\"")))
+        (expect (str/includes? html (str "href=\"" path "\"")))))))
+
+(defdescribe screenshot-assets-test
+             (it "serves every screenshot as a PNG and includes it in static assets"
+                 (doseq [name
+                         ["ask" "live-running" "live-stop"]
+
+                         :let [rel
+                               (str "screenshots/" name ".png")
+
+                               response
+                               (docs/handle {:uri (str "/docs/assets/" rel)})]]
+
+                   (expect (= (str "assets/" rel)
+                              (get @#'docs/asset-files (str "vis-docs/assets/" rel))))
+                   (expect (= 200 (:status response)))
+                   (expect (= "image/png" (get-in response [:headers "content-type"])))
+                   (with-open [body ^java.io.InputStream (:body response)]
+                     (expect (= [137 80 78 71 13 10 26 10] (vec (repeatedly 8 #(.read body)))))))))
+
 (def ^:private rewrite-md-links @#'docs/rewrite-md-links)
 
 (defdescribe rewrite-md-links-test
