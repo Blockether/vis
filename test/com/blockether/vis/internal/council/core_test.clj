@@ -67,11 +67,21 @@
   (try (f) false (catch clojure.lang.ExceptionInfo e (= kind (:error (ex-data e))))))
 
 (deftest council-toggle-contract-test
-  ;; C31: registered even when disabled, exposed through gateway settings.
+  ;; Council is available without configuration; an explicit opt-out still wins.
   (let [spec (toggles/toggle-spec "council")]
     (is (some? spec))
-    (is (false? (:default spec)))
-    (is (true? (:persist? spec)))))
+    (is (true? (:default spec)))
+    (is (true? (:persist? spec))))
+  (with-redefs-fn {#'toggles/state (atom {})}
+    (fn []
+      (toggles/hydrate-from-config! {})
+      (is (true? (council 'enabled?)))
+      (is (string? (council 'prompt nil)))
+      (toggles/hydrate-from-config! {:toggles {"council" false}})
+      (is (false? (council 'enabled?)))
+      (is (nil? (council 'prompt nil)))
+      (toggles/reset-to-default! "council")
+      (is (true? (council 'enabled?))))))
 
 (deftest thread-workflow-test
   ;; C10/C21/C27/C29/C30: one identifier throughout; no parent aliases.

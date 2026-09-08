@@ -3004,7 +3004,7 @@
     (nth choices (mod (inc (long (if (neg? idx) 0 idx))) (count choices)))))
 
 (defn- apply-registry-toggle
-  [values {:keys [toggle-id]}]
+  [values {:keys [toggle-id value]}]
   (try
     (let [spec
           (vis/toggle-spec toggle-id)
@@ -3015,7 +3015,7 @@
             (vis/gateway-toggle-setting! toggle-id)
 
             :enum
-            (vis/gateway-cycle-setting! toggle-id)
+            (vis/gateway-set-setting-value! toggle-id value)
 
             (throw (ex-info "Unsupported registry setting type"
                             {:toggle-id toggle-id :type (:type spec)})))
@@ -3046,7 +3046,7 @@
       values)))
 
 (defn- apply-settings-option
-  [values {:keys [key type choices set-key item-id toggle-id]}]
+  [values {:keys [key type choices set-key item-id] :as row}]
   (case type
     :choice
     (update values key #(cycle-choice choices %))
@@ -3062,7 +3062,7 @@
                 (if (contains? s item-id) (disj s item-id) (conj s item-id)))))
 
     :registry-toggle
-    (apply-registry-toggle values {:toggle-id toggle-id})
+    (apply-registry-toggle values row)
 
     values))
 
@@ -3232,9 +3232,44 @@
                    (notify-settings-change! callbacks next-values)))]
     (theme-picker! screen g region choices (get @values key) apply!)))
 
+(defn- pick-setting-value!
+  "Open the enum's choice list on its saved value; Escape leaves it unchanged."
+  [screen {:keys [label toggle-id]}]
+  (let [choices
+        (vec (:choices (vis/toggle-spec toggle-id)))
+
+        current
+        (vis/toggle-value toggle-id)
+
+        items
+        (mapv (fn [choice]
+                (cond-> {:label choice :value choice}
+                  (= current choice)
+                  (assoc :hint "current")))
+              choices)
+
+        component
+        (select-modal-component label items {:height :content})]
+
+    (:value (run-modal! screen
+                        (assoc-in component
+                          [:init :selected]
+                          (max 0 (.indexOf ^java.util.List choices current)))))))
+
 (defn- activate-settings-row!
   [^TerminalScreen screen g region values callbacks row]
   (case (:type row)
+    :registry-toggle
+    (let [enum?
+          (= :enum (:type (vis/toggle-spec (:toggle-id row))))
+
+          value
+          (when enum? (pick-setting-value! screen row))]
+
+      (when (or (not enum?) (and value (not= value (vis/toggle-value (:toggle-id row)))))
+        (->> (swap! values apply-settings-option (assoc row :value value))
+             (notify-settings-change! callbacks))))
+
     :action
     (when-let [f (get callbacks (:id row))]
       ;; An action gets the SAME frame handle a provider row gets, so it can

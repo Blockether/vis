@@ -54,6 +54,32 @@ import { NotificationsPanel } from "./NotificationSettings";
 import { SpeechEnginesPanel, type SaveSpeechPrefs } from "./SpeechSettings";
 import { FormLabel, SettingsPanel } from "./SettingsLayout";
 
+/** Native closed-choice setting: keyboard/touch selection, with saving disabling input. */
+export function EnumSetting({
+  toggle,
+  busy = false,
+  onPick,
+}: {
+  toggle: Toggle;
+  busy?: boolean;
+  onPick: (value: string) => void;
+}) {
+  return (
+    <select
+      aria-label={toggle.label}
+      aria-busy={busy}
+      value={toggle.value}
+      disabled={busy}
+      onChange={(event) => onPick(event.target.value)}
+      className="min-h-11 min-w-0 max-w-full self-center appearance-auto rounded-control border border-edge bg-input px-2.5 py-1 font-mono text-ui text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted mouse:min-h-7"
+    >
+      {toggle.choices?.map((choice) => (
+        <option key={choice} value={choice}>{choice}</option>
+      ))}
+    </select>
+  );
+}
+
 /**
  * ONE MACHINE'S OWN SETTINGS, standing under that machine's own row in `SettingsDialog`.
  *
@@ -160,6 +186,7 @@ export function MachineSettings({
   }
 
   async function pick(toggle: Toggle, value: string) {
+    setErr(null);
     setPending(toggle.id);
     try {
       patch(await client.setSetting(toggle.id, "value", value));
@@ -311,21 +338,11 @@ export function MachineSettings({
                     )}
 
                     {toggle.type === "enum" && toggle.choices && (
-                      <div className="col-span-full flex min-w-0 flex-wrap gap-1.5">
-                        {toggle.choices.map((choice) => {
-                          const selected = toggle.value === choice;
-                          return (
-                            <Chip
-                              key={choice}
-                              isOn={selected}
-                              disabled={busy}
-                              onClick={() => pick(toggle, choice)}
-                            >
-                              {choice}
-                            </Chip>
-                          );
-                        })}
-                      </div>
+                      <EnumSetting
+                        toggle={toggle}
+                        busy={busy}
+                        onPick={(value) => void pick(toggle, value)}
+                      />
                     )}
                   </div>
                 );

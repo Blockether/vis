@@ -375,11 +375,10 @@
   [id]
   (send-json! "POST" "/v1/settings" {:id id :action "toggle"}))
 
-(defn cycle-setting!
-  "Atomically advance one enum setting in the gateway and return its refreshed
-   string-keyed settings row."
-  [id]
-  (send-json! "POST" "/v1/settings" {:id id :action "cycle"}))
+(defn set-setting-value!
+  "Set an explicit enum value in the gateway and return its refreshed settings row."
+  [id value]
+  (send-json! "POST" "/v1/settings" {:id id :action "value" :value value}))
 
 (defn create-session! [opts] (send-json! "POST" "/v1/sessions" opts))
 
@@ -2034,7 +2033,7 @@
 
 (def gateway-current-seq current-seq)
 
-(def gateway-cycle-setting! cycle-setting!)
+(def gateway-set-setting-value! set-setting-value!)
 
 (def gateway-delete-queued-turn! delete-queued-turn!)
 

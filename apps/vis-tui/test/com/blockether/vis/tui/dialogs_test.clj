@@ -657,6 +657,93 @@
                  (let [settings-subsection-text (var-get #'dlg/settings-subsection-text)]
                    (expect (= "◆ Exa" (settings-subsection-text "Exa" 80))))))
 
+(defn- exercise-backend-picker
+  "Run the production Settings picker on a virtual terminal with a fixture gateway."
+  [keys {:keys [width fail?] :or {width 80}}]
+  (let [id
+        "dialogs_draft_backend"
+
+        terminal
+        (DefaultVirtualTerminal. (TerminalSize. width 25))
+
+        screen
+        (TerminalScreen. terminal)
+
+        requests
+        (atom [])
+
+        frames
+        (atom [])
+
+        errors
+        (atom [])
+
+        read-key
+        @#'dlg/read-modal-key!]
+
+    (toggles/register-toggle! {:id id
+                               :label "Draft backend"
+                               :type :enum
+                               :choices ["auto" "worktree" "rift" "off"]
+                               :default "worktree"
+                               :settings? false})
+    (try (.startScreen screen)
+         (doseq [key keys]
+           (.addInput terminal
+                      (case key
+                        :enter
+                        (KeyStroke. KeyType/Enter)
+
+                        :down
+                        (KeyStroke. KeyType/ArrowDown)
+
+                        (term/keystroke key))))
+         (with-redefs-fn
+           {#'dlg/load-inventories! (constantly nil)
+            #'dlg/settings-rows (constantly
+                                  [{:type :registry-toggle :toggle-id id :label "Draft backend"}])
+            #'dlg/read-modal-key! (fn [s]
+                                    (swap! frames conj
+                                      (str/join "\n" (map :text (term/painted-rows terminal))))
+                                    (read-key s))
+            #'vis/send-json! (fn [_ path body]
+                               (swap! requests conj [path body])
+                               (if fail?
+                                 (throw (ex-info "Save refused" {}))
+                                 {"id" id "type" "enum" "value" (or (:value body) "auto")}))
+            #'vis/notify! (fn [message & _]
+                            (swap! errors conj message))}
+           #(dlg/settings-dialog! screen {}))
+         {:requests @requests :frames @frames :errors @errors :value (vis/toggle-value id)}
+         (finally (toggles/reset-to-default! id) (.stopScreen screen)))))
+
+(defdescribe
+  settings-enum-dropdown-test
+  (it "shows every backend and the current choice without saving on open or Escape"
+      (doseq [width [40 100]]
+        (let [{:keys [requests frames value]} (exercise-backend-picker [:enter :esc :esc]
+                                                                       {:width width})]
+          (expect (empty? requests))
+          (expect (= "worktree" value))
+          (expect (some (fn [frame]
+                          (every? #(str/includes? frame %)
+                                  ["auto" "worktree" "rift" "off" "current"]))
+                        frames)))))
+  (it "starts on the saved value and submits only the explicitly selected backend"
+      (let [{:keys [requests value]} (exercise-backend-picker [:enter :down :enter :esc] {})]
+        (expect (= [["/v1/settings" {:id "dialogs_draft_backend" :action "value" :value "rift"}]]
+                   requests))
+        (expect (= "rift" value))))
+  (it "confirming the current backend is a no-op"
+      (let [{:keys [requests value]} (exercise-backend-picker [:enter :enter :esc] {})]
+        (expect (empty? requests))
+        (expect (= "worktree" value))))
+  (it "a refused save leaves the effective backend unchanged"
+      (let [{:keys [errors value]} (exercise-backend-picker [:enter :down :enter :esc]
+                                                            {:fail? true})]
+        (expect (= "worktree" value))
+        (expect (= ["Setting was not changed: Save refused"] errors)))))
+
 (defdescribe
   apply-settings-option-test
   (it "toggle rows flip booleans"
@@ -706,7 +793,7 @@
   ;; REQUIRES a :label (register-toggle! rejects label-less specs), so the
   ;; id-derived fallback-label path no longer exists.
   (it
-    "registry enum rows adopt the value cycled by the daemon"
+    "registry enum rows submit an explicit value and adopt the daemon response"
     (let [apply-settings-option
           (var-get #'dlg/apply-settings-option)
 
@@ -725,13 +812,14 @@
         (expect (= "Enum Test: low"
                    (settings-option-label {:type :registry-toggle :toggle-id id :label "Enum Test"}
                                           {})))
-        (with-redefs [vis/gateway-cycle-setting! (fn [toggle-id]
-                                                   (swap! called conj toggle-id)
-                                                   {"id" toggle-id "type" "enum" "value" "high"})]
+        (with-redefs [vis/gateway-set-setting-value!
+                      (fn [toggle-id value]
+                        (swap! called conj [toggle-id value])
+                        {"id" toggle-id "type" "enum" "value" "high"})]
           (let [out (apply-settings-option {:something "else"}
-                                           {:type :registry-toggle :toggle-id id})]
+                                           {:type :registry-toggle :toggle-id id :value "medium"})]
             (expect (= {:something "else"} out))
-            (expect (= [id] @called))
+            (expect (= [[id "medium"]] @called))
             (expect (= "high" (vis/toggle-value id)))
             (expect (= "Enum Test: high"
                        (settings-option-label

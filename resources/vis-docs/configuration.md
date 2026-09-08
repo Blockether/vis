@@ -448,7 +448,7 @@ without `env` or `headers` keeps the stored values.
 toggles:
   shell: false          # default true; removes shell(...) from the sandbox
   introspection: true   # default false; lets the agent read its own session data
-  council: false        # default false; project log and explicit active-session pings
+  council: true         # default true; project log and explicit active-session pings
   draft_backend: auto   # auto | worktree | rift | off; how the agent isolates a draft (see drafts.md)
 ```
 

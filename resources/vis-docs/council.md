@@ -5,12 +5,12 @@ It does not schedule work, wake idle sessions or require approval to continue.
 
 ## Enable Council
 
-Council is **off by default**. Enable the `council` toggle in gateway settings,
+Council is **on by default**. Disable the `council` toggle in gateway settings,
 or in the merged configuration:
 
 ```yaml
 toggles:
-  council: true
+  council: false
 ```
 
 The gateway persists toggle changes. The local stdio engine also loads this

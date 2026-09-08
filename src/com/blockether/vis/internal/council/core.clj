@@ -18,7 +18,7 @@
                            :label "Council"
                            :description
                            "Let active sessions exchange project messages and explicit pings."
-                           :default false
+                           :default true
                            :owner :vis
                            :persist? true
                            :group :sandbox})
