@@ -2825,6 +2825,57 @@
     (json-response snapshot)
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- council-handler
+  [operation]
+  (fn [request]
+    (try (let [raw
+               (if (= operation :publish)
+                 (try
+                   (let [body (body-json request)]
+                     (when-not (map? body)
+                       (throw (ex-info "Expected a Council JSON object" {:error :invalid-request})))
+                     body)
+                   (catch Exception _
+                     (throw (ex-info "Expected a Council JSON object" {:error :invalid-request}))))
+                 (:query-params request))
+
+               opts
+               (into {}
+                     (map (fn [[k v]]
+                            [(keyword k)
+                             (if (and (string? v) (contains? #{"thread_id" "after" "limit"} k))
+                               (Long/parseLong v)
+                               v)]))
+                     raw)
+
+               opts
+               (cond-> opts
+                 (= operation :get)
+                 (assoc :entry_id (Long/parseLong (get-in request [:path-params :entry-id]))))]
+
+           (json-response
+             (state/council-operation! (get-in request [:path-params :sid]) operation opts)))
+         (catch NumberFormatException _
+           (error-response 400 :invalid-request "Council identifiers and cursors must be integers"))
+         (catch clojure.lang.ExceptionInfo e
+           (let [kind
+                 (:error (ex-data e))
+
+                 status
+                 (case kind
+                   (:group-not-found :entry-not-found)
+                   404
+
+                   (:disabled :inactive-session :invalid-recipient :idempotency-conflict)
+                   409
+
+                   (:invalid-request :invalid-thread)
+                   400
+
+                   (throw e))]
+
+             (error-response status kind (ex-message e)))))))
+
 (defn- transcript-handler
   "Transcript rows for a session, optionally WINDOWED: `?limit=` (window size,
   defaulting to the NEWEST rows) and `?offset=` (0-based start in the
@@ -4325,6 +4376,12 @@
         [(sid-route "/speech/jobs/:job-id/audio") {:get speech-job-audio-handler}]
         [(sid-route "/events-since") {:get events-since-handler}]
         [(sid-route "/seq") {:get seq-handler}] [(sid-route "/context") {:get context-handler}]
+        [(sid-route "/council") {:get (council-handler :binding)}]
+        [(sid-route "/council/members") {:get (council-handler :members)}]
+        [(sid-route "/council/threads") {:get (council-handler :threads)}]
+        [(sid-route "/council/entries")
+         {:get (council-handler :read) :post (council-handler :publish)}]
+        [(sid-route "/council/entries/:entry-id") {:get (council-handler :get)}]
         [(sid-route "/transcript") {:get transcript-handler}]
         [(sid-route "/artifacts") {:get session-artifacts-handler}]
         [(sid-route "/transcript.md") {:get transcript-md-handler}]
@@ -4452,12 +4509,6 @@
     (wrap-errors)
     (wrap-cors)))
 
-(defn local-handler
-  "Build the SDK handler for an owned stdio engine, without opening HTTP listeners.
-   The caller owns process lifetime and must select an isolated database."
-  []
-  (app nil []))
-
 (defonce ^:private live-app
   ;; `{:handler ring-handler :fp routes-fingerprint}` — the handler Jetty
   ;; actually calls, rebuilt whenever the contribution fingerprint moves
@@ -4521,6 +4572,13 @@
        (catch Throwable t
          (tel/log! {:level :warn :id ::toggles-hydrate-failed :data {:error (ex-message t)}}
                    "Toggle hydration from config failed; defaults stand."))))
+
+(defn local-handler
+  "Build the SDK handler for an owned stdio engine, without opening HTTP listeners.
+   The caller owns process lifetime and must select an isolated database."
+  []
+  (install-toggle-persistence!)
+  (app nil []))
 
 (defn- bind-failure?
   "True when `t`'s cause chain carries a port-already-bound `BindException` —

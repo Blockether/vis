@@ -16,6 +16,7 @@ def _load_document(name):
 
 _DOCUMENT_NAMES = (
     "activity",
+    "council",
     "gateway",
     "view",
     "content",

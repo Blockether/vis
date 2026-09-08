@@ -67,10 +67,15 @@
 
 (defn new-id [] (->id (new-uuid)))
 
+(defonce ^:private sqlite-write-lock (Object.))
+
 (defn query!
   "Run a HoneySQL map and return rows with unqualified lower-case keys."
   [db-info q]
-  (jdbc/execute! (ds db-info) (sql/format q) {:builder-fn rs/as-unqualified-lower-maps}))
+  ;; Shared-cache memory stores cannot overlap a table reader with a writer.
+  ;; WAL-backed files retain concurrent reads; both paths use the existing writer boundary.
+  (let [run #(jdbc/execute! (ds db-info) (sql/format q) {:builder-fn rs/as-unqualified-lower-maps})]
+    (if (= :memory (:mode db-info)) (locking sqlite-write-lock (run)) (run))))
 
 (defn query-one! [db-info q] (first (query! db-info q)))
 
@@ -712,8 +717,6 @@
 ;; SQLite write policy
 
 (def ^:private sqlite-write-retry-delays-ms [5 10 20 40 80 160])
-
-(defonce ^:private sqlite-write-lock (Object.))
 
 (defn- sqlite-busy-cause?
   [^Throwable t]
@@ -3804,6 +3807,12 @@
                         (some? cost-usd)
                         (assoc :cost_usd (double cost-usd))
 
+                        (:council-input opts)
+                        (assoc :council_input (->blob (:council-input opts)))
+
+                        (seq (:council-publications opts))
+                        (assoc :council_publications (->blob (:council-publications opts)))
+
                         (and (pos? (long (or (get tokens "input") 0))) (:request-health opts))
                         (assoc :request_health (->blob (:request-health opts)))
 
@@ -4221,6 +4230,12 @@
 
       (some? forms-vec)
       (assoc :forms forms-vec)
+
+      (:council_input row)
+      (assoc :council-input (<-blob (:council_input row)))
+
+      (:council_publications row)
+      (assoc :council-publications (<-blob (:council_publications row)))
 
       (some? (:request_health row))
       (assoc :request-health (<-blob (:request_health row)))
@@ -4803,3 +4818,113 @@
             (sort-by :rank)
             (take result-limit)
             vec)))))
+
+(defn- council-rows
+  [db rows]
+  (let [pings (when (seq rows)
+                (group-by :entry_id
+                          (query! db
+                                  {:select [:entry_id :recipient_sid]
+                                   :from [:council_ping]
+                                   :where [:in :entry_id (mapv :id rows)]
+                                   :order-by [:entry_id :recipient_sid]})))]
+    (mapv (fn [row]
+            (cond-> {:id (:id row)
+                     :thread_id (or (:thread_id row) (:id row))
+                     :group_id (:group_id row)
+                     :author_session_id (:author_sid row)
+                     :content (:content row)
+                     :created_at (:created_at row)
+                     :source (:source row)
+                     :ping (mapv :recipient_sid (get pings (:id row)))}
+              (:title row)
+              (assoc :title (:title row))
+
+              (:source_ref row)
+              (assoc :source_ref (<-blob (:source_ref row)))))
+          rows)))
+
+(defn db-council-get
+  [db id]
+  (first (council-rows db (query! db {:select [:*] :from [:council_entry] :where [:= :id id]}))))
+
+(defn db-council-replay
+  [db sid key]
+  (when-let [row (query-one! db
+                             {:select [:*]
+                              :from [:council_entry]
+                              :where [:and [:= :author_sid sid] [:= :idempotency_key key]]})]
+    {:fingerprint (:fingerprint row) :entry (first (council-rows db [row]))}))
+
+(defn db-council-insert!
+  "Entry and frozen recipient generations commit together; replays recheck inside the writer."
+  [db row recipients]
+  (sqlite-write-tx!
+    db
+    (fn [tx]
+      (if-let [replay (db-council-replay tx (:author_sid row) (:idempotency_key row))]
+        replay
+        (do (execute! tx
+                      {:insert-into :council_entry
+                       :values [(cond-> row
+                                  (:source_ref row)
+                                  (update :source_ref ->blob))]})
+            (let [id (:id (query-one! tx {:select [[[:raw "last_insert_rowid()"] :id]]}))]
+              (when (seq recipients)
+                (execute! tx
+                          {:insert-into :council_ping
+                           :values (mapv (fn [[sid activation]]
+                                           {:entry_id id
+                                            :group_id (:group_id row)
+                                            :recipient_sid sid
+                                            :activation_id activation})
+                                         recipients)}))
+              {:fingerprint (:fingerprint row) :entry (db-council-get tx id)}))))))
+
+(defn db-council-page
+  "Keyset pages. A thread uses a root PK seek and an indexed continuation seek, never a group scan."
+  [db gid thread roots? after limit]
+  (let [root
+        (when (and thread (< (long after) (long thread)))
+          (query-one! db
+                      {:select [:*]
+                       :from [:council_entry]
+                       :where [:and [:= :id thread] [:= :group_id gid] [:= :thread_id nil]]}))
+
+        rows
+        (into (if root [root] [])
+              (query! db
+                      {:select (if roots? [:id :title :author_sid :created_at] [:*])
+                       :from [:council_entry]
+                       :where (cond-> [:and [:= :group_id gid] [:> :id after]]
+                                roots?
+                                (conj [:= :thread_id nil])
+
+                                thread
+                                (conj [:= :thread_id thread]))
+                       :order-by [:id]
+                       :limit (- (long limit) (if root 1 0))}))]
+
+    (if roots?
+      (mapv (fn [r]
+              {:thread_id (:id r)
+               :title (:title r)
+               :author_session_id (:author_sid r)
+               :created_at (:created_at r)})
+            rows)
+      (council-rows db rows))))
+
+(defn db-council-pending
+  "Seek recipient/activation/group before touching the log. This is a pure read."
+  [db sid activation gid after limit]
+  (mapv #(assoc (dissoc % :author_sid) :author_session_id (:author_sid %))
+        (query! db
+                {:select [:e.id [[:coalesce :e.thread_id :e.id] :thread_id] :e.group_id
+                          :e.author_sid :e.created_at [[:substr :e.content 1 1025] :content]
+                          [[:raw "length(CAST(e.content AS BLOB))"] :content_bytes]]
+                 :from [[:council_ping :p]]
+                 :join [[:council_entry :e] [:= :e.id :p.entry_id]]
+                 :where [:and [:= :p.recipient_sid sid] [:= :p.activation_id activation]
+                         [:= :p.group_id gid] [:> :p.entry_id after]]
+                 :order-by [:p.entry_id]
+                 :limit limit})))

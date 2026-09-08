@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.format :as fmt]
@@ -205,35 +206,68 @@
   [sid tid]
   (get-in @registry [(sid-key sid) :turns tid]))
 
+(defn- council-state
+  [entry]
+  (cond (some (fn [[_ turn]]
+                (and (= "running" (:status turn)) (:cancel-token turn)))
+              (:turns entry))
+        "running"
+        (and (or (:council-local? entry) (:council entry))
+             (some #(= "queued" (:status %)) (vals (:turns entry))))
+        (if (:queue-paused entry) "held" "queued")))
+
+(defn- council-transition
+  [old entry fresh]
+  (when entry
+    (let [candidate (cond-> entry
+                      (:council old)
+                      (assoc :council (:council old)))]
+      (if-let [status (council-state candidate)]
+        (assoc candidate :council (assoc (or (:council old) (force fresh)) :state status))
+        (dissoc candidate :council)))))
+
+(defn- fresh-council [] {:activation-id (str (random-uuid)) :input-state (atom {})})
+
 (defn- update-session!
-  "THE write path: apply `f` to `sid`'s entry (nil when it has none yet), so a
-   caller that means to CREATE the entry says so with `(or entry ...)`. `f` runs
-   inside the `swap!` and is retried on contention, so it must be pure."
+  "The atomic registry write boundary also publishes a fully initialized Council activation."
   [sid f]
-  (swap! registry update (sid-key sid) f)
+  (let [fresh (delay (fresh-council))]
+    (swap! registry update
+      (sid-key sid)
+      (fn [old]
+        (council-transition old (f old) fresh))))
   nil)
 
 (defn- update-existing-session!
-  "Apply `f` to `sid`'s entry only when it HAS one. `update-session!` would
-   otherwise leave a nil entry under a live key, and a key is all it takes for
-   the journal tailer to start draining a stranger's session."
+  "Apply f only to an existing registry record."
   [sid f]
-  (swap! registry (fn [reg]
-                    (let [k (sid-key sid)]
-                      (if (contains? reg k) (update reg k f) reg))))
+  (let [fresh (delay (fresh-council))]
+    (swap! registry (fn [reg]
+                      (let [k (sid-key sid)]
+                        (if (contains? reg k)
+                          (update reg
+                                  k
+                                  (fn [old]
+                                    (council-transition old (f old) fresh)))
+                          reg)))))
   nil)
 
-(defn- update-turn!
-  "Apply `f` to one turn record in place."
-  [sid tid f]
-  (swap! registry update-in [(sid-key sid) :turns tid] f)
-  nil)
+(defn- update-turn! [sid tid f] (update-session! sid #(update-in % [:turns tid] f)))
 
-(defn- put-session!
-  "Install `entry` as `sid`'s whole registry record."
-  [sid entry]
-  (swap! registry assoc (sid-key sid) entry)
-  nil)
+(defn- put-session! [sid entry] (update-session! sid (constantly entry)))
+
+(council/install-runtime!
+  (fn [db session-id]
+    (into {}
+          (keep (fn [[sid entry]]
+                  (when-let [active (:council entry)]
+                    (when-let [record (persistance/db-get-session db sid)]
+                      (when-let [gid (:project-id record)]
+                        [sid
+                         (assoc active
+                           :group-id (str gid)
+                           :title (:title record))]))))
+                (if session-id (select-keys @registry [session-id]) @registry)))))
 
 (defn- drop-session!
   "Forget `sid`'s registry record entirely."
@@ -3822,7 +3856,7 @@
           ;; a submit is often the FIRST touch of a session after a daemon
           ;; restart, and zero would renumber under every attached client's
           ;; cursor — their streams would go silent for the whole new turn.
-          (let [entry (or entry (fresh-entry sid))]
+          (let [entry (assoc (or entry (fresh-entry sid)) :council-local? true)]
             (cond (and idempotency-key (get-in entry [:idempotency idempotency-key]))
                   (do (vreset! decision [:idempotent (get-in entry [:idempotency idempotency-key])])
                       entry)
@@ -5449,3 +5483,34 @@
   (try (lp/db-info)
        true
        (catch Throwable t (tel/log! :warn ["gateway: db warmup failed" (ex-message t)]) false)))
+
+(defn council-operation!
+  "Transport adapter. A Council request never calls submit-turn! or opens an environment."
+  [sid operation opts]
+  (let [db
+        (lp/db-info)
+
+        sid
+        (str sid)]
+
+    (case operation
+      :binding
+      (council/binding-info db sid opts)
+
+      :members
+      (council/members db #(council/runtime db) sid opts)
+
+      :threads
+      (council/threads db sid opts)
+
+      :read
+      (council/read-entries db sid opts)
+
+      :get
+      (council/get-entry db sid opts)
+
+      :publish
+      (council/publish! db
+                        #(council/runtime db)
+                        {:session-id sid :activation-id (:activation_id opts) :source "sdk"}
+                        opts))))

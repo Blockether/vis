@@ -20,9 +20,23 @@ from ._client import (
     Turn,
     VisTimeout,
 )
+from ._council import (
+    Council,
+    CouncilEntry,
+    CouncilMember,
+    CouncilPage,
+    CouncilSource,
+    CouncilThread,
+)
 from ._local import LocalEngine
 
 __all__ = [
+    "Council",
+    "CouncilEntry",
+    "CouncilMember",
+    "CouncilPage",
+    "CouncilSource",
+    "CouncilThread",
     "Event",
     "Events",
     "GatewayClient",

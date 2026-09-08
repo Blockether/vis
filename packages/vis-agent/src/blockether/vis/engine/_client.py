@@ -2122,6 +2122,18 @@ class Session:
         )
         return response.json() if response.content else None
 
+    def council(self, *, group_id: str | None = None):
+        """Bind a Council handle to this activation, or a read-only handle when idle."""
+        from ._council import Council
+
+        binding = self._call(
+            "GET",
+            "/council",
+            query={"group_id": group_id} if group_id is not None else {},
+        )
+        validate("council", "binding", binding)
+        return Council(self, binding["default_group_id"], binding["activation_id"])
+
     def read(self):
         return self._call("GET")
 

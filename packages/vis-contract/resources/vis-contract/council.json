@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "limits": {
+    "content_bytes": 65536,
+    "title_bytes": 256,
+    "recipients": 256,
+    "preview_bytes": 1024,
+    "batch_entries": 20,
+    "batch_bytes": 8192,
+    "page_entries": 50,
+    "page_bytes": 262144,
+    "lookup_timeout_ms": 100,
+    "idempotency_key_bytes": 256
+  }
+}

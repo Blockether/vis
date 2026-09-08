@@ -425,6 +425,34 @@
   (with-open [st (.createStatement conn)]
     (.executeUpdate st sql)))
 
+(defn- install-missing-canonical-tables!
+  "Install newly added V1 tables and their indexes from the canonical DDL, atomically.
+   Existing tables are left to the additive-column pass; no rows or objects are replaced."
+  [^DataSource ds locations]
+  (let [objects (canonical-objects (migration-sql-texts locations))]
+    (with-open [conn (.getConnection ds)]
+      (let [missing (into #{}
+                          (comp (filter #(= "table" (:kind %)))
+                                (filter #(empty? (existing-columns conn (:name %))))
+                                (map :name))
+                          objects)
+            additions (filter (fn [{:keys [kind name sql]}]
+                                (or (and (= "table" kind) (contains? missing name))
+                                    (and (= "index" kind)
+                                         (contains? missing
+                                                    (second (re-find
+                                                              #"(?i)\bon\s+[\"`\[]?([A-Za-z0-9_]+)"
+                                                              sql))))))
+                              objects)]
+
+        (when (seq additions)
+          (.setAutoCommit conn false)
+          (try (doseq [{:keys [sql]} additions]
+                 (execute-ddl! conn sql))
+               (.commit conn)
+               (catch Throwable error (.rollback conn) (throw error))
+               (finally (.setAutoCommit conn true))))))))
+
 (defn- restoring-dependents!
   "Run `alter!` between DROPPING every schema object whose DDL names `column`
    and recreating the ones the canonical SQL still defines, each recreated FTS5
@@ -610,6 +638,7 @@
         (.migrate flyway)
         (catch Throwable e
           (if (repairable-validation-error? e) (do (.repair flyway) (.migrate flyway)) (throw e)))))
+    (install-missing-canonical-tables! ds locs)
     (reconcile-canonical-columns! ds locs)
     (realign-drifted-columns! ds locs)
     (delete-retired-rows! ds)

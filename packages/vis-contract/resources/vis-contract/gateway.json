@@ -593,6 +593,60 @@
     {
       "audience": "sdk",
       "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/council"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        },
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/council/entries"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/council/entries/:entry-id"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/council/members"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "get": {
+          "request": "none",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/council/threads"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "post": {
           "request": "none",
           "response": "json"

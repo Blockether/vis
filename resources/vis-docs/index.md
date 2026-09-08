@@ -71,6 +71,7 @@ To check which runtime is installed, run `vis-agent runtime`.
 - [Controlling a session](queue-and-cancel.md) — send follow-ups, cancel a task and exit.
 - [Exporting sessions](exporting-sessions.md) — save or share a session.
 - [Remote access and the Companion app](gateway.md) — use Vis from your phone or another machine.
+- [Council](council.md) — exchange project messages and explicit pings between active sessions.
 - [Reporting a bug](reporting-bugs.md) — report a problem without exposing private data.
 
 ### Extensions

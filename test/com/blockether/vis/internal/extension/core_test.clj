@@ -476,54 +476,54 @@
 ;; may not carry a second, schema-shaped door beside that name. This walks the
 ;; live registry rather than a fixture, so obsolete schema or renderer metadata
 ;; cannot quietly return.
-(defdescribe every-function-is-a-python-name-test
-             (it "registers no schema or replay renderer on any symbol"
-                 ;; Reading the docs table loads the built-in extensions, so the walk
-                 ;; below sees the same registry a live session does.
-                 (extension/sandbox-symbol-docs)
-                 (let [entries
-                       (into [] (mapcat extension/ext-symbols) (extension/registered-extensions))
+(defdescribe
+  every-function-is-a-python-name-test
+  (it "registers no schema or replay renderer on any symbol"
+      ;; Reading the docs table loads the built-in extensions, so the walk
+      ;; below sees the same registry a live session does.
+      (extension/sandbox-symbol-docs)
+      (let [entries
+            (into [] (mapcat extension/ext-symbols) (extension/registered-extensions))
 
-                       dead-keys
-                       (into #{}
-                             (comp (mapcat keys)
-                                   (filter (fn [k]
-                                             ;; `:ext.symbol/call` STAYS: it maps a kwargs dict onto
-                                             ;; positional params for a PYTHON call, and is not a schema.
-                                             (contains? #{:ext.symbol/schema :ext.symbol/replay
-                                                          :ext.symbol/render-start-call-fn
-                                                          :ext.symbol/render-finish-call-fn}
-                                                        k))))
-                             entries)]
+            dead-keys
+            (into #{}
+                  (comp (mapcat keys)
+                        (filter (fn [k]
+                                  ;; `:ext.symbol/call` STAYS: it maps a kwargs dict onto
+                                  ;; positional params for a PYTHON call, and is not a schema.
+                                  (contains? #{:ext.symbol/schema :ext.symbol/replay
+                                               :ext.symbol/render-start-call-fn
+                                               :ext.symbol/render-finish-call-fn}
+                                             k))))
+                  entries)]
 
-                   (expect (< 20 (count entries)))
-                   (expect (= #{} dead-keys))))
-             (it "keeps no by-name renderer registry to look a card up in"
-                 ;; A result is painted from its OWN data now. A registry keyed by tool
-                 ;; name is how per-tool cards grew back last time: one lookup, then a
-                 ;; declaration per verb to feed it.
-                 (let [nm 'finish-call-renderers-by-name]
-                   (expect (nil? (ns-resolve 'com.blockether.vis.internal.extension.core nm))
-                           (str nm))))
-             (it "binds every doc-bearing symbol under a bare Python name"
-                 (let [docs
-                       (extension/sandbox-symbol-docs)
+        (expect (< 20 (count entries)))
+        (expect (= #{} dead-keys))))
+  (it "keeps no by-name renderer registry to look a card up in"
+      ;; A result is painted from its OWN data now. A registry keyed by tool
+      ;; name is how per-tool cards grew back last time: one lookup, then a
+      ;; declaration per verb to feed it.
+      (let [nm 'finish-call-renderers-by-name]
+        (expect (nil? (ns-resolve 'com.blockether.vis.internal.extension.core nm)) (str nm))))
+  (it "binds every doc-bearing symbol under a Python member path"
+      (let [docs
+            (extension/sandbox-symbol-docs)
 
-                       bound
-                       (set (keys (extension/builtin-sandbox-bindings (fn []
-                                                                        nil))))]
+            bound
+            (set (keys (extension/builtin-sandbox-bindings (fn []
+                                                             nil))))]
 
-                   (expect (seq docs))
-                   (doseq [sym (keys docs)]
-                     ;; A name the model can type: one segment, munged to underscores
-                     ;; when it reaches the sandbox (`_shell-stop` -> `_shell_stop`).
-                     (expect (re-matches #"[A-Za-z_][A-Za-z0-9_-]*" (name sym)) (str sym)))
-                   ;; Every bound door is DOCUMENTED — `doc(name)` is the only contract
-                   ;; a function has now, so a binding without one is unreachable prose.
-                   ;; (The reverse does not hold: an aliased extension such as MCP's
-                   ;; `call` documents itself here and binds as `mcp__call` per turn.)
-                   (doseq [sym bound]
-                     (expect (contains? (set (keys docs)) sym) (str sym))))))
+        (expect (seq docs))
+        (doseq [sym (keys docs)]
+          ;; Council is a dotted namespace; each path segment is a Python name.
+          (expect (re-matches #"[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*" (name sym))
+                  (str sym)))
+        ;; Every bound door is DOCUMENTED — `doc(name)` is the only contract
+        ;; a function has now, so a binding without one is unreachable prose.
+        ;; (The reverse does not hold: an aliased extension such as MCP's
+        ;; `call` documents itself here and binds as `mcp__call` per turn.)
+        (doseq [sym bound]
+          (expect (contains? (set (keys docs)) sym) (str sym))))))
 
 (defdescribe
   symbol-signature-test

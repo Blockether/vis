@@ -49,6 +49,7 @@
     [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.session.titling :as titling]
     [com.blockether.vis.internal.config.toggles :as toggles]
+    [com.blockether.vis.internal.council.core :as council]
     [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
     [com.blockether.vis.internal.workspace.core :as workspace]
     [taoensso.telemere :as tel])
@@ -3186,6 +3187,11 @@
                (str "folded " label note (when g (str " → " g)))))
            (str "fold_session: nothing to fold — " ctx-engine/fold-key-grammar))))}))
 
+(defn- iteration-record-scope
+  "Use an input-only iteration's scope without inventing a tool form."
+  [rec]
+  (or (:iteration-scope rec) (some iter-of-scope (keep :scope (:forms-vec rec)))))
+
 (defn- apply-summaries
   "Wire-only rewrite of `trailer-iters` applying `fold_session` intents at
    iteration granularity. A summary carries concrete `scopes`, an optional
@@ -3200,8 +3206,7 @@
   (if (empty? summaries)
     (vec trailer-iters)
     (let [iter-scope-of
-          (fn [rec]
-            (some iter-of-scope (keep :scope (:forms-vec rec))))
+          iteration-record-scope
 
           ;; Resolve ranges against this trailer, then keep only scopes owned by
           ;; the intent's canonical at_turn. A turn may fold its own settled work
@@ -3894,8 +3899,11 @@
                          (+img [textual])
                          [])))))]
 
-     (mapv (fn [[pos :as entry]]
-             [pos (vec (group-of entry))])
+     (mapv (fn [[pos iter-rec :as entry]]
+             [pos
+              (vec (concat (when (and (not (:collapsed? iter-rec)) (:council-input iter-rec))
+                             [(council/input-message (:council-input iter-rec))])
+                           (group-of entry)))])
            iters))))
 
 (defn- conversation-suffix
@@ -3971,8 +3979,7 @@
   ([ctx-atom trailer-iters wire-iters pricing]
    (when ctx-atom
      (let [scope-of
-           (fn [rec]
-             (some iter-of-scope (keep :scope (:forms-vec rec))))
+           iteration-record-scope
 
            uni
            (into []
@@ -7347,8 +7354,7 @@
   (let [calls
         (into []
               (comp (filter (fn [[_ rec]]
-                              (contains? scopes
-                                         (some iter-of-scope (keep :scope (:forms-vec rec))))))
+                              (contains? scopes (iteration-record-scope rec))))
                     (mapcat (fn [[_ rec]]
                               (keep :name (:tool-calls rec)))))
               trailer-iters)
@@ -7414,7 +7420,7 @@
          universe
          (into []
                (keep (fn [[_ rec]]
-                       (some iter-of-scope (keep :scope (:forms-vec rec)))))
+                       (iteration-record-scope rec)))
                trailer-iters)
 
          already-folded
@@ -8341,7 +8347,38 @@
                    replay-target
                    {:describe-images
                     (replay-image-describer environment user-request (:provider replay-target))})
-                 provider-messages (into (vec messages) conversation-suffix-msgs)
+                 provider-base (into (vec messages) conversation-suffix-msgs)
+                 council-active (when (council/enabled? environment)
+                                  (get (council/runtime (:db-info environment)
+                                                        (str (:session-id environment)))
+                                       (str (:session-id environment))))
+                 _council-start (swap! (:ctx-atom environment) assoc
+                                  :council-actor council-active
+                                  :council-publications [])
+                 council-input (when council-active
+                                 (council/prepare-input!
+                                   (:db-info environment)
+                                   (str (:session-id environment))
+                                   (:activation-id council-active)
+                                   (:group-id council-active)
+                                   (:input-state council-active)
+                                   [session-turn-id iteration]
+                                   ;; Conservative: one UTF-8 byte per spare token, plus headroom.
+                                   (max 0
+                                        (min 7936
+                                             (- (long effective-fold-budget)
+                                                (long (svar-router/count-messages
+                                                        (or (:name pre-resolved-model)
+                                                            (:model pre-resolved-model))
+                                                        provider-base))
+                                                256)))))
+                 council-trailer (cond-> (vec trailer-iters)
+                                   (seq (:entries council-input))
+                                   (conj [(inc (long iteration))
+                                          {:iteration-scope (str "t" (or turn-position 1)
+                                                                 "/i" (inc (long iteration)))
+                                           :council-input council-input}]))
+                 provider-messages (council/append-input provider-base council-input)
                  effective-messages-atom (atom provider-messages)
                  install-projection! (fn [projection]
                                        (when-let [base (:canonical-base-messages projection)]
@@ -8350,7 +8387,9 @@
                                                                     :resumed? false}))
                                        (when-let [summary (:summary projection)]
                                          (swap! emergency-summaries-atom conj summary))
-                                       (reset! effective-messages-atom (:messages projection)))
+                                       (reset! effective-messages-atom (council/append-input
+                                                                         (:messages projection)
+                                                                         council-input)))
                  context-estimator (request-context-estimator
                                      @(:prompt-cache-history-atom environment)
                                      (:provider pre-resolved-model)
@@ -8691,6 +8730,9 @@
                                                            (:name resolved-model)
                                                            (:provider resolved-model))]
                               (cond-> {:session-turn-id session-turn-id
+                                       :council-input council-input
+                                       :council-publications (:council-publications @(:ctx-atom
+                                                                                       environment))
                                        :vars []
                                        :code (or err-partial-content "")
                                        :thinking err-reasoning
@@ -8755,6 +8797,7 @@
                         (recur (assoc loop-state
                                  :iteration (inc (long iteration))
                                  :empty-iteration-streak 0
+                                 :trailer-iters council-trailer
                                  :messages (conj messages {:role "user" :content error-feedback})
                                  :llm-provider {:error llm-provider-error}
                                  :trace (conj trace trace-entry))))))
@@ -8881,6 +8924,9 @@
                                 budget (context-fold-budget limit)]
 
                             (cond-> {:session-turn-id session-turn-id
+                                     :council-input council-input
+                                     :council-publications (:council-publications @(:ctx-atom
+                                                                                     environment))
                                      :request-health
                                      (cond-> (assoc (:request-health iteration-result)
                                                :budget-tokens budget
@@ -9064,6 +9110,7 @@
                             (recur (merge loop-state
                                           {:iteration (inc (long iteration))
                                            :empty-iteration-streak empty-streak
+                                           :trailer-iters council-trailer
                                            :trace (conj trace trace-entry)}))))
                         (do
                           (log-stage! :iteration/stop
@@ -9113,7 +9160,8 @@
                                                       [pos (dissoc rec :reinspect-attachments)])
                                                     (or trailer-iters []))
                                               [(inc (long iteration))
-                                               {:thinking thinking
+                                               {:council-input council-input
+                                                :thinking thinking
                                                 :blocks blocks
                                                 ;; `forms-vec` is the one scope source: persistence
                                                 ;; and model context both read it.
