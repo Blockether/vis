@@ -366,6 +366,8 @@ export interface RouterModelDetails {
 export interface RouterProvider {
   id: string;
   label: string;
+  /** The registering extension owns this provider; manual removal is not allowed. */
+  is_managed: boolean;
   base_url?: string;
   models: string[];
   /** Missing metadata is unknown support, never permission to send a wire field. */

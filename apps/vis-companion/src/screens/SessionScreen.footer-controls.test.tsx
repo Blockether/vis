@@ -10,6 +10,7 @@ import { renderSessionScreen, subscriptionHub } from "./session-screen-harness";
 function routerProvider(id: string, overrides: Partial<RouterProvider> = {}): RouterProvider {
   return {
     id,
+    is_managed: false,
     label: id,
     models: ["gpt-6-astra"],
     is_default: true,

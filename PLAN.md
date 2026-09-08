@@ -855,7 +855,7 @@ implementation do not satisfy this sequence. The planning-only probes above are 
 - [ ] Phase 5: a fully green broad run remains blocked by baseline failures listed below.
   Scoped Council verification, reference measurements, native checks and lint pass.
 
-Implementation commit `98f92d7bd` was integrated with `main` at `e66f83912` in
+Implementation commit `98f92d7bd` was integrated with `main` at `e20c1b4e6` in
 `.gitworktrees/council` on `feat/council`.
 The persisted `council` toggle defaults off. Enabled sessions expose only the default group in
 public Council metadata; activation identity remains host-owned. There is no wakeup, wait, reply
@@ -906,11 +906,14 @@ Verification checkpoint:
 - Clojure formatting and lint/reflection and Python formatting/lint pass for the scoped files.
   Canonical Council document/schema and served-page links pass; the unrelated broad failures remain
   reported above. `git diff --check` passes.
-- GraalVM CE 25.3.4.1 built the integrated sources successfully in 3m52s with 23 build warnings.
+- Before the later main merges, GraalVM CE 25.3.4.1 built the Council engine in 3m52s with 23 warnings.
   The resulting binary passed 11 native cases and five Council/LocalEngine SDK cases.
-- After the final main merge, the 276 Council/HTTP/store cases, the Python/model boundary case,
-  five JVM Council/LocalEngine SDK cases and 260 TUI rendering cases passed again. The incoming main
-  changes affect only the companion and standalone TUI; Council engine source/resources are unchanged.
+- After integrating main at `e66f83912`, the 276 Council/HTTP/store cases, the Python/model boundary
+  case, five JVM Council/LocalEngine SDK cases and 260 TUI rendering cases passed again.
+- Provider and search commits through `e20c1b4e6` then merged without conflicts. Combined Council,
+  gateway, store, provider and editing suites passed 565 cases; configuration passed 149. The model
+  boundary case and five real JVM SDK cases passed again. Merged gateway formatting and lint/reflection
+  pass. The native results above precede these provider/search changes, not a rebuilt final image.
 
 Reference performance (milliseconds; informational, not wall-clock unit-test assertions):
 macOS/aarch64, 14 logical processors, JVM 25.0.3, bundled SQLite 3.53.2. The fixture uses 10 active

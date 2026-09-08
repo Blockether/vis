@@ -42,6 +42,14 @@ it('starts provider sign-in on a paired HTTP gateway without another consent dia
   expect(window.open).toHaveBeenCalledOnce();
 });
 
+it('does not request removal of an extension-managed provider', async () => {
+  const client = { ...clientFor(), removeProvider: vi.fn().mockResolvedValue([]) };
+  const { result } = renderHook(() => useProviderAuth(client as unknown as GatewayClient));
+  await act(async () => result.current.removeProvider({ ...provider, is_managed: true }));
+  expect(client.removeProvider).not.toHaveBeenCalled();
+  expect(result.current.pending).toBeNull();
+});
+
 describe('browser-flow lifecycle in the shared Companion UI', () => {
   it('polls a fresh PKCE flow, closes the sign-in form and refreshes the fleet automatically', async () => {
     vi.useFakeTimers(); vi.spyOn(window, 'open').mockReturnValue(null);

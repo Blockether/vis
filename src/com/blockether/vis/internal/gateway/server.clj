@@ -1521,6 +1521,7 @@
 
     {:id (name id)
      :label (config/display-label id)
+     :is-managed (providers/managed? id)
      :base-url (or (config/provider-base-url provider) (:base-url provider))
      :models (into [] (keep :name) (:models provider))
      :model-details (mapv (fn [model]
@@ -1704,44 +1705,24 @@
               (json-response (router-fleet-json))))))
 
 (defn- remove-provider-handler
-  "DELETE /v1/providers/:provider-id — drop it from the fleet and run its
-   registered logout, so removing a provider never leaves a credential behind.
-   Idempotent, and `is_removed` answers the OUTCOME: true once nothing by that
-   name is in the fleet, whether this call removed it or it was never there.
-   Never an error."
+  "DELETE /v1/providers/:provider-id — remove a user-owned provider and its credential.
+   Extension-managed providers return 409 without mutation. Otherwise idempotent:
+   `is_removed` is true once the provider is absent, even if it was never configured."
   [request]
-  (let [provider-id
-        (some-> (get-in request [:path-params :provider-id])
-                keyword)
+  (let [provider-id (some-> (get-in request [:path-params :provider-id])
+                            keyword)]
+    (try (when provider-id (providers/remove-provider! provider-id :gateway))
+         (let [fleet (router-fleet-json)
+               survivor (some #(= provider-id
+                                  (some-> (:id %)
+                                          keyword))
+                              (:providers fleet))]
 
-        _
-        (some-> provider-id
-                (providers/remove-provider! :gateway))
-
-        fleet
-        (router-fleet-json)
-
-        ;; A provider still in the fleet after a removal that changed nothing is
-        ;; not config-backed: it is synthesized on every read from an env var or
-        ;; a credential file, so there is no entry in `state.yml` to delete and
-        ;; deleting again will never work. Saying only `is_removed: false` left
-        ;; the UI with nothing to show and the user with a button that silently
-        ;; does nothing — name the source and what would actually remove it.
-        ;; A provider that survives its own removal is a bug now, not a
-        ;; documented limitation: `remove-provider!` records the deletion for
-        ;; every source, so the fleet must no longer offer it whether it came
-        ;; from config, an env var or a stored credential.
-        ;; `is_removed` answers the OUTCOME, not which mechanism ran. Reporting
-        ;; whether the config file changed made deleting an env-var or
-        ;; credential-backed provider read as a failure even when it worked:
-        ;; those never had a config entry to change. Gone is gone.
-        survivor
-        (first (filter #(= provider-id
-                           (some-> (:id %)
-                                   keyword))
-                       (:providers fleet)))]
-
-    (json-response (assoc fleet :is-removed (nil? survivor)))))
+           (json-response (assoc fleet :is-removed (not survivor))))
+         (catch clojure.lang.ExceptionInfo e
+           (if (= :provider/managed (:type (ex-data e)))
+             (error-response 409 :provider-managed (ex-message e))
+             (throw e))))))
 
 (defn- toggle-json
   "One settings row as JSON — the wire twin of the server-side

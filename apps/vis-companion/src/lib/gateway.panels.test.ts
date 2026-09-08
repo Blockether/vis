@@ -32,6 +32,7 @@ const servers: McpServer[] = [
 const providers: RouterProvider[] = [
   {
     id: 'anthropic',
+    is_managed: false,
     label: 'Anthropic',
     models: ['claude-opus-5'],
     is_default: true,
