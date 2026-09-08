@@ -4,11 +4,10 @@
    `:draft/approve`, `:draft/discard`), so an extension can veto it with a
    `:before` guard or observe it with an `:after` hook.
 
-   Approval is how a draft lands: everything in the draft is staged and
-   committed on its `vis/<label>` branch, which the trunk repository then holds
-   — a linked worktree shares the refs already, a Rift clone is fetched from —
-   and the user merges with their own tools. Nothing here touches the trunk
-   working tree or its index; `git commit` itself still crosses the
+   Approval commits the draft on `vis/<label>` and merges it into the local
+   default branch: `origin/HEAD`, otherwise `main` or `master`. Divergence is
+   merged inside the draft before fast-forwarding the target; target checkouts
+   must be clean. No remote is pushed. Every new commit crosses the
    `:git/commit` boundary through `workspace.git/commit!`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
@@ -63,7 +62,7 @@
       (if (branch-taken? repo branch) (recur (str base "-" i) (inc i)) branch))))
 
 (defn- draft-branch
-  "True when `branch` is one drafts land on."
+  "The draft branch, if `branch` names one."
   [branch]
   (and branch (str/starts-with? branch workspace/draft-branch-prefix) branch))
 
@@ -153,6 +152,15 @@
   "Stage every change in the draft except backend bookkeeping; returns the
    staged paths."
   [^File root]
+  (doseq [operation
+          ["MERGE_HEAD" "CHERRY_PICK_HEAD" "REVERT_HEAD" "rebase-merge" "rebase-apply"]
+
+          :when (.exists (io/file (git! root
+                                        ["rev-parse" "--path-format=absolute" "--git-path"
+                                         operation])))]
+
+    (throw (ex-info "Finish or abort the draft's existing Git operation before approving."
+                    {:type :draft/in-progress :operation operation})))
   (git! root ["add" "-A" "--" "."])
   (git! root ["rm" "-r" "-q" "--cached" "--ignore-unmatch" "--" ".rift" ".trash"])
   (git-lines root ["diff" "--cached" "--name-only"]))
@@ -172,24 +180,104 @@
     (when-not (= 0 exit) (throw (git-error root ["commit"] result)))
     (git! root ["rev-parse" "HEAD"])))
 
+(defn- target-branch
+  "The local branch named by origin/HEAD, falling back to main or master."
+  [^File trunk]
+  (let [{:keys [exit out]}
+        (git/run-git trunk ["symbolic-ref" "--quiet" "refs/remotes/origin/HEAD"] git-timeout)
+
+        remote-ref
+        (when (= 0 exit) (str/trim (str out)))
+
+        target
+        (or (when (and remote-ref (str/starts-with? remote-ref "refs/remotes/origin/"))
+              (subs remote-ref (count "refs/remotes/origin/")))
+            (some #(when (branch-taken? trunk %) %) ["main" "master"]))]
+
+    (when-not (and target (branch-taken? trunk target) (not (draft-branch target)))
+      (throw (ex-info "Approval needs a local default branch: origin/HEAD, main or master."
+                      {:type :draft/no-target-branch :target-branch target})))
+    target))
+
+(defn- target-checkout
+  "The checkout holding `target`, nil when the branch is not checked out."
+  [^File trunk target]
+  (let [separator (str (char 0))]
+    (some (fn [entry]
+            (let [fields (str/split entry (re-pattern separator))]
+              (when (some #{(str "branch refs/heads/" target)} fields)
+                (some #(when (str/starts-with? % "worktree ") (io/file (subs % 9))) fields))))
+          (str/split (git! trunk ["worktree" "list" "--porcelain" "-z"])
+                     (re-pattern (str separator separator))))))
+
+(defn- require-clean-target!
+  [^File checkout target]
+  (when-not (= target (current-branch checkout))
+    (throw (ex-info "The target checkout changed branches; retry approval."
+                    {:type :draft/target-moved :target-branch target})))
+  (when-not (str/blank? (git! checkout ["status" "--porcelain" "--untracked-files=all"]))
+    (throw (ex-info (str "Approval needs a clean "
+                         target
+                         " checkout at "
+                         (.getPath checkout)
+                         "; commit or stash its changes first. No changes were overwritten.")
+                    {:type :draft/dirty-target :target-branch target :root (.getPath checkout)}))))
+
+(defn- ancestor?
+  [^File root ancestor descendant]
+  (let [{:keys [exit] :as result}
+        (git/run-git root ["merge-base" "--is-ancestor" ancestor descendant] git-timeout)]
+    (case exit
+      0
+      true
+
+      1
+      false
+
+      (throw (git-error root ["merge-base" "--is-ancestor" ancestor descendant] result)))))
+
+(defn- merge-target!
+  "Merge target history in the draft, never in the user's checkout."
+  [^File root target-sha message]
+  (when-not (ancestor? root target-sha "HEAD")
+    (try
+      (git! root
+            ["merge" "--no-ff" "--no-commit" "--no-autostash" "--no-overwrite-ignore" target-sha])
+      (commit! root message)
+      (catch Exception e
+        ;; The draft was committed before this merge. Restore that commit on
+        ;; conflicts or commit vetoes so the agent can resolve and retry safely.
+        (when (= 0
+                 (:exit
+                   (git/run-git root ["rev-parse" "--verify" "--quiet" "MERGE_HEAD"] git-timeout)))
+          (git! root ["merge" "--abort"]))
+        (throw e)))))
+
+(defn- land!
+  [^File trunk target target-sha sha]
+  (if-let [checkout (target-checkout trunk target)]
+    (do (require-clean-target! checkout target)
+        (git! checkout ["merge" "--ff-only" "--no-autostash" "--no-overwrite-ignore" sha]))
+    ;; Compare-and-swap refuses a concurrent update; never reset another branch
+    ;; or switch the user's checkout just to move an unchecked-out target.
+    (git! trunk ["update-ref" (str "refs/heads/" target) sha target-sha])))
+
 (defn approve!
-  "Land the draft `workspace-id` as one commit on its `vis/<label>` branch, made
-   visible in the trunk repository: a worktree shares the refs, a Rift clone is
-   fetched from (fast-forward only, so repeated approvals stack). Crosses the
-   `:draft/approve` boundary with the staged file list, then `:git/commit`
-   through `workspace.git/commit!`. Returns `{:status :approved …}` with
-   `:branch`, `:commit` and `:files`, or `{:status :nothing-to-approve}` when the
-   draft holds no change. The draft stays active afterwards; discarding it keeps
-   an approved branch.
+  "Commit the draft and merge it into the local default branch (origin/HEAD,
+   otherwise main or master). A diverged target is merged inside the draft,
+   then the target is fast-forwarded. Dirty target checkouts refuse; conflicts
+   leave the draft commit available for resolution and retry. No push, stash,
+   force update or checkout switch. The draft stays active.
 
-   `opts`: `:workspace-id`, optional `:message` (subject line; the
-   `Vis-Session`/`Vis-Draft` trailers are always appended)."
+   Crosses :draft/approve and, for each new commit, :git/commit. Returns
+   {:status :approved :branch … :target-branch … :commit … :files …}, or
+   :nothing-to-approve only when the target already includes the draft and
+   there are no pending changes. Existing draft commits can be retried without
+   creating another commit. opts: :workspace-id and optional :message;
+   Vis-Session/Vis-Draft trailers are appended to new commits."
   [env {:keys [workspace-id message]}]
-  (let [db-info
-        (:db-info env)
-
-        ws
-        (require-draft db-info workspace-id)
+  (let [ws
+        (require-draft (:db-info env) workspace-id)
 
         root
         (io/file (:root ws))
@@ -199,37 +287,62 @@
 
         _
         (when-not (workspace/git-managed? trunk)
-          (throw (ex-info (str "Approval needs a Git-managed project: "
-                               (:repo-root ws)
-                               " is not a repository. Use apply to copy the draft's files instead.")
+          (throw (ex-info "Approval needs a Git-managed project."
                           {:type :draft/not-git-managed :workspace-id workspace-id})))
+
+        target
+        (target-branch trunk)
 
         branch
         (ensure-draft-branch! root trunk (:label ws))
 
-        files
-        (stage-all! root)]
+        target-sha
+        (if (worktree? ws)
+          (git! trunk ["rev-parse" (str "refs/heads/" target)])
+          (do (git! root
+                    ["fetch" "--quiet" "--no-tags" (.getPath trunk) (str "refs/heads/" target)])
+              (git! root ["rev-parse" "FETCH_HEAD"])))
 
-    (if (empty? files)
-      {:status :nothing-to-approve :branch branch :files [] :workspace ws}
+        staged
+        (stage-all! root)
+
+        files
+        (vec (distinct (concat (git-lines root ["diff" "--name-only" (str target-sha "...HEAD")])
+                               staged)))]
+
+    (if (and (empty? staged) (ancestor? root "HEAD" target-sha))
+      {:status :nothing-to-approve :branch branch :target-branch target :files [] :workspace ws}
       (through-hooks
         :draft/approve
         env
-        (hook-ctx ws {:branch branch :files files :message message})
+        (hook-ctx ws {:branch branch :target-branch target :files files :message message})
         (fn []
-          (let [sha (commit! root (commit-message (:label ws) message (:session-id env)))]
+          (when-let [checkout (target-checkout trunk target)]
+            (require-clean-target! checkout target))
+          (when (seq staged) (commit! root (commit-message (:label ws) message (:session-id env))))
+          (merge-target! root
+                         target-sha
+                         (commit-message (:label ws)
+                                         (str "merge: approve " (:label ws) " into " target)
+                                         (:session-id env)))
+          (let [sha (git! root ["rev-parse" "HEAD"])]
             (when-not (worktree? ws)
               (git! trunk
-                    ["fetch" "--quiet" (.getPath root)
+                    ["fetch" "--quiet" "--no-tags" (.getPath root)
                      (str "refs/heads/" branch ":refs/heads/" branch)]))
-            (let [result {:status :approved :branch branch :commit sha :files files :workspace ws}]
+            (land! trunk target target-sha sha)
+            (let [result {:status :approved
+                          :branch branch
+                          :target-branch target
+                          :commit sha
+                          :files files
+                          :workspace ws}]
               (workspace/fire-hook! :on-approve ws (dissoc result :workspace))
               result)))))))
 
 (defn status
-  "Landing status of draft `ws`: its `:branch`, how many approved commits the
-   trunk's HEAD lacks (`:ahead`) and how many paths in the draft still differ
-   from that branch (`:pending`); the git facts are nil outside a repository."
+  "Landing status: draft :branch, :target-branch, commits the target lacks
+   (:ahead) and pending paths (:pending). Git facts are nil outside a repository."
   [ws]
   (let [root
         (io/file (:root ws))
@@ -241,7 +354,10 @@
         (and (.isDirectory root) (workspace/git-managed? trunk) (workspace/git-managed? root))
 
         branch
-        (when git? (draft-branch (current-branch root)))]
+        (when git? (draft-branch (current-branch root)))
+
+        target
+        (when git? (try (target-branch trunk) (catch clojure.lang.ExceptionInfo _ nil)))]
 
     {:workspace-id (:id ws)
      :label (:label ws)
@@ -255,9 +371,12 @@
                         workspace/mechanism-id
                         name)
      :branch branch
-     :ahead (when branch
-              (let [{:keys [exit out]}
-                    (git/run-git trunk ["rev-list" "--count" (str "HEAD.." branch)] git-timeout)]
+     :target-branch target
+     :ahead (when (and branch target)
+              (let [{:keys [exit out]} (git/run-git trunk
+                                                    ["rev-list" "--count"
+                                                     (str "refs/heads/" target ".." branch)]
+                                                    git-timeout)]
                 (when (= 0 exit) (parse-long (str/trim (str out))))))
      :pending
      (when git?

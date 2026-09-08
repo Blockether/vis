@@ -14,9 +14,8 @@
    preserves source mtimes, so files the agent touches in the clone get
    a fresh mtime greater than the fork timestamp we capture at clone
    time. `apply!` lands exactly those files back into cwd, uncommitted; the
-   `workspace.drafts` namespace owns the alternative landing — `approve!`, one
-   commit on the draft's `vis/<label>` branch that the user merges with their own
-   tools.
+   `workspace.drafts/approve!` instead commits the draft and merges it into the
+   repository's local default branch.
 
    Vis never mutates JVM user.dir. Channels rebind *workspace-root* per
    turn from the active workspace; tools resolve paths via
@@ -818,7 +817,7 @@
   "The backend `create!` forks `workspace-or-root` with under the current
    `draft_backend` setting, or nil when drafts are off or nothing can fork it.
    `:auto` prefers a linked Git worktree — a checkout sharing the repository's
-   objects and refs, so an approved draft is a branch the user already has — and
+   objects and refs with the trunk repository — and
    falls back to a Rift copy-on-write clone for projects without Git history."
   [workspace-or-root]
   (let [setting
@@ -914,7 +913,7 @@
        :mechanism (mechanism-id (:mechanism forked))})))
 
 (def draft-branch-prefix
-  "Prefix of the branches drafts are checked out on and approved into: `vis/<label>`."
+  "Prefix of the draft working branches: `vis/<label>`. Approval merges into the default branch."
   "vis/")
 
 (defn- git!
@@ -1042,8 +1041,8 @@
 
 (defn- git-worktree-discard!
   "Detach the linked worktree at `root` from its repository and delete its
-   `vis/…` branch when that branch carries no commit of its own — an approved
-   branch outlives the draft."
+   `vis/…` branch when Git considers it merged. Unmerged commits keep their
+   branch; approved work remains on the default branch."
   [root]
   (let [wt
         (io/file (file-path root))
@@ -1065,8 +1064,8 @@
       (do (git* repo ["worktree" "remove" "--force" (.getPath wt)])
           (git* repo ["worktree" "prune"])
           (when (and branch (str/starts-with? branch draft-branch-prefix))
-            ;; `-d` refuses a branch holding commits HEAD lacks: an approved draft
-            ;; keeps its branch, an untouched one is cleaned up.
+            ;; `-d` refuses to delete unmerged work. A merged or untouched draft
+            ;; branch can be removed without losing its commits.
             (git* repo ["branch" "-d" branch])))
       (tel/log! :warn
                 ["workspace: worktree draft has no repository; left in place" (.getPath wt)]))))
@@ -1642,10 +1641,10 @@
    `:workspace/drafts-disabled`, with no capable backend
    `:workspace/capability-unavailable`.
 
-   The fork PARENT is chosen so `apply!` and `approve!` land back where it forked
-   from: pass `:from <parent-workspace>` to clone that workspace's `:root` and
-   inherit its `:repo-root` (landing target); otherwise the parent is the
-   user's real cwd (trunk).
+   Pass `:from <parent-workspace>` to clone that workspace's `:root` and inherit
+   its `:repo-root`; otherwise the parent is the user's real cwd (trunk).
+   `apply!` copies files back to repo-root; `approve!` merges into that
+   repository's default branch, which may have a different checkout.
 
    By default the draft carries the parent's pending work: a Rift clone copies
    it, a worktree checks HEAD out and replays the uncommitted diff plus untracked

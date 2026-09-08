@@ -18,19 +18,22 @@
 
 (defn- draft-block
   "`\"draft\"` — the landing facts of the draft the session works in: its
-   backend, the `vis/<label>` branch approvals commit to, how many approved
-   commits the trunk lacks and how many paths still differ from that branch.
+   backend, its `vis/<label>` branch and default target branch, how many draft
+   commits the target lacks and how many paths still differ from the draft branch.
    Git facts are omitted when they cannot be read; the block never fails the
    turn."
   [workspace]
-  (let [{:keys [backend branch ahead pending]} (try (drafts/status workspace)
-                                                    (catch Throwable _ nil))]
+  (let [{:keys [backend branch target-branch ahead pending]} (try (drafts/status workspace)
+                                                                  (catch Throwable _ nil))]
     (cond-> {"label" (:label workspace)}
       backend
       (assoc "backend" backend)
 
       branch
       (assoc "branch" branch)
+
+      target-branch
+      (assoc "target_branch" target-branch)
 
       ahead
       (assoc "approved_ahead" ahead)

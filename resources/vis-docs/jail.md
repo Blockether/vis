@@ -71,11 +71,14 @@ Vis automatically grants jailed processes read-only access to recognized Java
 installations used by the host JVM, host `JAVA_HOME`, or the first absolute `java`
 executable on the host `PATH`. Detection resolves symlinks and requires a Java
 installation layout; it does not execute launchers, scan other versions, or grant
-entire toolchain-manager directories. These grants are frozen in the session's
+entire toolchain-manager directories.
+
+These grants are frozen in the session's
 policy snapshot and appear under `session["access"]["filesystem"]["process_read_only"]`
 with descriptions. They are excluded from default searches and do not become
 workspace roots or grant Python filesystem tools additional access. Explicit
 catalog grants retain their access mode and search setting; deny rules still win.
+
 Per-call environment overrides do not add runtime grants. A different or
 unrecognized toolchain needs an explicit grant; host toolchain changes require
 `/reload` before an existing session gains access.

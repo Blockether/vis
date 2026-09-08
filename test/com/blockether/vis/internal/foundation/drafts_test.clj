@@ -131,11 +131,18 @@
               ctx-in-draft
               (ctx-root env)
 
+              ctx-target
+              (get-in ((:ext/ctx-fn foundation/vis-extension) env)
+                      ["session_workspace" "draft" "target_branch"])
+
               draft-status
               (:result (drafts/draft-status env))
 
               _
-              (spit (io/file draft-root "b.txt") "new\n")
+              (do (spit (io/file draft-root "b.txt") "new\n") (spit (io/file base "a.txt") "x\n"))
+
+              draft-content
+              (slurp (io/file draft-root "a.txt"))
 
               approved
               (:result (drafts/draft-approve env "feat: add b"))
@@ -157,23 +164,26 @@
           (expect (not= base draft-root))
           ;; the ctx block follows the live pointer the same turn
           (expect (= draft-root ctx-in-draft))
+          (expect (= "main" (get draft-status "target_branch")))
+          (expect (= "main" ctx-target))
           (expect (true? (get draft-status "in_draft")))
           (expect (= draft-root (get draft-status "root")))
           ;; the pending trunk edit came along
-          (expect (= "x\npending\n" (slurp (io/file draft-root "a.txt"))))
+          (expect (= "x\npending\n" draft-content))
           (expect (= "approved" (get approved "status")))
           (expect (= 2 (count (get approved "files"))))
-          (expect (= "feat: add b" (git! base "log" "-1" "--format=%s" "vis/feature-x")))
-          (expect (= "init" (git! base "log" "-1" "--format=%s" "HEAD")))
+          (expect (= "main" (get approved "target_branch")))
+          (expect (= "feat: add b" (git! base "log" "-1" "--format=%s" "main")))
+          (expect (= (get approved "commit") (git! base "rev-parse" "main")))
           (expect (= "nothing-to-approve" (get again "status")))
           (expect (= "discarded" (get discarded "status")))
           (expect (= "vis/feature-x" (get discarded "branch")))
-          (expect (= 1 (get discarded "approved_ahead")))
+          (expect (= 0 (get discarded "approved_ahead")))
           (expect (= base (get discarded "root")))
           (expect (= base (ctx-root env)))
           (expect (false? (get trunk-status "in_draft")))
           (expect (= base (get trunk-status "root")))
-          (expect (str/includes? (git! base "branch" "--list" "vis/*") "vis/feature-x"))))))
+          (expect (= "new\n" (slurp (io/file base "b.txt"))))))))
   (it "clean=True seeds from HEAD and leaves pending trunk work behind"
       (with-session "vis-fdrafts-clean"
                     (fn [_base env]

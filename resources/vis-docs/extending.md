@@ -411,9 +411,10 @@ the call.
 
 `ops` also names the draft lifecycle: `"draft/create"`, `"draft/approve"` and
 `"draft/discard"` run for the sandbox's `draft_create()`, `draft_approve()` and
-`draft_discard()` and for the workspace HTTP routes alike. Their `args` carry the
-draft's `workspace_id`, `label`, `root`, `repo_root`, `backend` and, for an
-approval, `branch`, `files` and `message`. A `before` hook that returns
+`draft_discard()`. Their `args` carry the draft's `workspace_id`, `label`,
+`root`, `repo_root`, `backend` and, for approval, `branch`, `target_branch`,
+`files` and `message`. Approval commits and merges into the default branch;
+each new commit also crosses `git/commit`. A `before` hook that returns
 `vis.block(reason)` refuses the operation and the user sees the reason. See
 [Drafts](drafts.md).
 
