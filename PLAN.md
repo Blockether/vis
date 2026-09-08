@@ -855,7 +855,8 @@ implementation do not satisfy this sequence. The planning-only probes above are 
 - [ ] Phase 5: a fully green broad run remains blocked by baseline failures listed below.
   Scoped Council verification, reference measurements, native checks and lint pass.
 
-Implementation was integrated with `main` at `f5a3a27ed` in `.gitworktrees/council` on `feat/council`.
+Implementation commit `98f92d7bd` was integrated with `main` at `e66f83912` in
+`.gitworktrees/council` on `feat/council`.
 The persisted `council` toggle defaults off. Enabled sessions expose only the default group in
 public Council metadata; activation identity remains host-owned. There is no wakeup, wait, reply
 completion gate, implicit ping, message-parent selector or cross-engine presence service.
@@ -907,6 +908,9 @@ Verification checkpoint:
   reported above. `git diff --check` passes.
 - GraalVM CE 25.3.4.1 built the integrated sources successfully in 3m52s with 23 build warnings.
   The resulting binary passed 11 native cases and five Council/LocalEngine SDK cases.
+- After the final main merge, the 276 Council/HTTP/store cases, the Python/model boundary case,
+  five JVM Council/LocalEngine SDK cases and 260 TUI rendering cases passed again. The incoming main
+  changes affect only the companion and standalone TUI; Council engine source/resources are unchanged.
 
 Reference performance (milliseconds; informational, not wall-clock unit-test assertions):
 macOS/aarch64, 14 logical processors, JVM 25.0.3, bundled SQLite 3.53.2. The fixture uses 10 active

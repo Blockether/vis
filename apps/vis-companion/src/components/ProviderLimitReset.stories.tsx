@@ -10,7 +10,6 @@ const meta = {
   args: {
     credits: { status: 'ok', account_id: '00000000-0000-4000-8000-000000000001', available_count: 2 },
     onConsume: fn(async () => 'reset' as const),
-    onRefresh: fn(async () => {}),
   },
 } satisfies Meta<typeof ProviderLimitReset>;
 export default meta;
@@ -27,7 +26,8 @@ export const Confirmation: Story = {
 };
 export const NoResets: Story = { args: { credits: { status: 'ok', account_id: 'account-1', available_count: 0 } } };
 export const Loading: Story = { args: { isChecking: true } };
-export const Unknown: Story = { args: { credits: undefined } };
+export const GatewayMissing: Story = { args: { credits: undefined } };
+export const Unknown: Story = { args: { credits: { status: 'error' } } };
 export const Unsupported: Story = { args: { credits: { status: 'unsupported' } } };
 export const Uncertain: Story = {
   args: { hasPending: true, onConsume: fn(async () => { throw new Error('Result unknown'); }) },

@@ -132,6 +132,19 @@ export const ActivityAxis: Story = {
 
 const forkFromAnswer = fn();
 
+async function expectForkAlignment(answer: HTMLElement) {
+  const canvas = within(answer);
+  const role = canvas.getByText("Vis", { exact: true }).getBoundingClientRect();
+  const action = canvas
+    .getByRole("button", { name: "Fork from here" })
+    .getBoundingClientRect();
+  // Regression: the icon-led action must share the role label's vertical center.
+  await expect(action.top + action.height / 2).toBeCloseTo(
+    role.top + role.height / 2,
+    0,
+  );
+}
+
 /**
  * THE EXCHANGE — your message and the turn it started, on ONE line.
  *
@@ -182,6 +195,7 @@ export const Exchange: Story = {
     ).toBeNull();
     await userEvent.hover(answer);
     await expect(fork).toBeVisible();
+    await expectForkAlignment(answer);
     forkFromAnswer.mockClear();
     await userEvent.click(fork);
     await expect(forkFromAnswer).toHaveBeenCalledOnce();
@@ -209,6 +223,7 @@ export const Forking: Story = {
     await userEvent.hover(answer);
     await expect(fork).toBeDisabled();
     await expect(fork).toHaveTextContent("Forking...");
+    await expectForkAlignment(answer);
   },
 };
 

@@ -11,7 +11,7 @@ const credits = { status: 'ok' as const, account_id: 'account-1', available_coun
 
 it('requires explicit confirmation, focuses Cancel, and never submits on Escape', () => {
   const consume = vi.fn();
-  render(<ProviderLimitReset credits={credits} onConsume={consume} onRefresh={async () => {}} />);
+  render(<ProviderLimitReset credits={credits} onConsume={consume} />);
   fireEvent.click(screen.getByRole('button', { name: 'Reset limits…' }));
   expect(consume).not.toHaveBeenCalled();
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
@@ -23,11 +23,13 @@ it('requires explicit confirmation, focuses Cancel, and never submits on Escape'
 });
 
 it('distinguishes zero, missing, unsupported and loading without offering a new spend', () => {
-  const base = { onConsume: vi.fn(), onRefresh: async () => {} };
+  const base = { onConsume: vi.fn() };
   const view = render(<ProviderLimitReset {...base} credits={{ ...credits, available_count: 0 }} />);
   expect(screen.getByText('0 resets available')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Reset limits…' })).toBeDisabled();
   view.rerender(<ProviderLimitReset {...base} />);
+  expect(screen.getByText('The gateway did not report reset availability. Check that it is up to date.')).toBeTruthy();
+  view.rerender(<ProviderLimitReset {...base} credits={{ status: 'error' }} />);
   expect(screen.getByText('Available resets could not be checked.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Reset limits…' })).toBeNull();
   view.rerender(<ProviderLimitReset {...base} credits={{ status: 'unsupported' }} />);
@@ -40,7 +42,7 @@ it('distinguishes zero, missing, unsupported and loading without offering a new 
 it.each<ProviderResetOutcome>(['reset', 'nothing_to_reset', 'no_credit', 'already_redeemed'])('reports %s and prevents double submission while pending', async outcome => {
   let finish!: (result: ProviderResetOutcome) => void;
   const consume = vi.fn(() => new Promise<ProviderResetOutcome>(resolve => { finish = resolve; }));
-  render(<ProviderLimitReset credits={credits} onConsume={consume} onRefresh={async () => {}} />);
+  render(<ProviderLimitReset credits={credits} onConsume={consume} />);
   fireEvent.click(screen.getByRole('button', { name: 'Reset limits…' }));
   fireEvent.click(screen.getByRole('button', { name: 'Use 1 reset' }));
   fireEvent.click(screen.getByRole('button', { name: 'Checking result…' }));
@@ -53,7 +55,7 @@ it.each<ProviderResetOutcome>(['reset', 'nothing_to_reset', 'no_credit', 'alread
 
 it('refuses an account switch after confirmation opened', () => {
   const consume = vi.fn();
-  const props = { onConsume: consume, onRefresh: async () => {} };
+  const props = { onConsume: consume };
   const view = render(<ProviderLimitReset {...props} credits={credits} />);
   fireEvent.click(screen.getByRole('button', { name: 'Reset limits…' }));
   view.rerender(<ProviderLimitReset {...props} credits={{ ...credits, account_id: 'account-2' }} />);
@@ -65,6 +67,30 @@ it('refuses an account switch after confirmation opened', () => {
 function ConnectedRows({ client }: { client: GatewayClient }) {
   return <ProviderRows auth={useProviderAuth(client)} />;
 }
+
+// Regression: a gateway started before reset support returned limits but no
+// reset_credits. Refresh belongs to the provider's swipe actions, not the reset panel.
+it('refreshes missing reset data from the row action without consuming a reset', async () => {
+  const client = new GatewayClient({ id: 'reset-refresh', url: 'https://gateway.example.com', token: 'test' } as GatewayConn);
+  const provider: RouterProvider = {
+    id: 'openai-codex', label: 'OpenAI Codex', models: ['gpt-5'], is_default: true, default_model: 'gpt-5', is_fallback: false, fallback_model: null,
+    status: { is_authenticated: true, auth_state: 'verified' }, limits: { status: 'ok', dynamic: { limits: [] } },
+  };
+  vi.spyOn(client, 'router').mockResolvedValue([provider]);
+  vi.spyOn(client, 'providerStatus').mockResolvedValue(provider.status!);
+  const read = vi.spyOn(client, 'providerLimits').mockResolvedValue(provider.limits!);
+  const consume = vi.spyOn(client, 'consumeProviderResetCredit');
+  render(<ConnectedRows client={client} />);
+  fireEvent.click(await screen.findByRole('button', { name: /OpenAI Codex/i, expanded: false }));
+  await screen.findByText('The gateway did not report reset availability. Check that it is up to date.');
+  expect(screen.queryByRole('button', { name: 'Refresh limits' })).toBeNull();
+  read.mockResolvedValue({ status: 'ok', dynamic: { reset_credits: { ...credits, available_count: 3 } } });
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh limits for OpenAI Codex' }));
+  await screen.findByText('3 resets available');
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(consume).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: /OpenAI Codex/i, expanded: true })).toBeTruthy();
+});
 
 it('crosses the real rows, hook and HTTP client; refreshes quotas and retries a lost response after reopening', async () => {
   let count = 1;

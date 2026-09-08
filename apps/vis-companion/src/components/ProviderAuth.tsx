@@ -12,6 +12,7 @@ import {
   CircleXIcon,
   MARK_NUDGE,
   PlusIcon,
+  RefreshIcon,
   SortIcon,
   StarIcon,
   TrashIcon,
@@ -1142,6 +1143,14 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
         // carries neither; the default provider cannot also hold the fallback,
         // which is the whole point of a fallback.
         const actions: SwipeAction[] = [];
+        if (authed)
+          actions.push({
+            key: 'refresh',
+            label: 'Refresh',
+            name: `Refresh limits for ${provider.label}`,
+            icon: <RefreshIcon isBusy={isProbing} className="size-4" />,
+            onSelect: () => { if (!pending) void auth.recheck(provider.id); },
+          });
         if (provider.models.length > 0)
           actions.push({
             key: 'default',
@@ -1257,7 +1266,6 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                     isChecking={isProbing}
                     hasPending={!!provider.limits?.dynamic?.reset_credits?.account_id && auth.hasPendingReset(provider.id, provider.limits.dynamic.reset_credits.account_id)}
                     onConsume={accountId => auth.resetLimits(provider.id, accountId)}
-                    onRefresh={() => auth.recheck(provider.id)}
                   />
                 )}
               </div>

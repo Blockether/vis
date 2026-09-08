@@ -89,3 +89,28 @@ export const NativeLoopbackReturn: Story = {
     await expect(args.auth.openSignInPage).toHaveBeenCalledOnce();
   },
 };
+
+/** Production provider row; only the gateway callbacks and account report are fixtures. */
+export const CodexLimits: Story = {
+  args: { auth: {
+    ...storyProviderAuth([{
+      id: 'openai-codex', label: 'OpenAI Codex (ChatGPT OAuth)',
+      models: ['gpt-5'], is_default: true, default_model: 'gpt-5', is_fallback: false, fallback_model: null,
+      status: { is_authenticated: true, auth_state: 'verified', source: 'auth-file' },
+      limits: { status: 'ok', dynamic: {
+        limits: [{ label: 'Codex 5h quota (%)', limit: 100, remaining: 100 }, { label: 'Codex 7d quota (%)', limit: 100, remaining: 76 }],
+        reset_credits: { status: 'ok', available_count: 3, account_id: 'account-1' },
+      } },
+    }]),
+    recheck: fn(async () => {}),
+    resetLimits: fn(async () => 'reset' as const),
+  } },
+  play: async ({ canvas, args }) => {
+    await userEvent.click(canvas.getByRole('button', { name: /OpenAI Codex/i, expanded: false }));
+    await expect(canvas.getByText('3 resets available')).toBeVisible();
+    await expect(canvas.queryByRole('button', { name: 'Refresh limits' })).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByRole('button', { name: 'Refresh limits for OpenAI Codex (ChatGPT OAuth)' }));
+    await expect(args.auth.recheck).toHaveBeenCalledTimes(2);
+    await expect(args.auth.resetLimits).not.toHaveBeenCalled();
+  },
+};

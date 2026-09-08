@@ -149,6 +149,10 @@
              (it "keeps result labels flush on the quiet result band"
                  (expect (= t/result-bg (result-row-bg {:kind :result-headline} false)))
                  (expect (= t/result-bg (result-row-bg {:kind :toggle-details} false))))
+             (it "keeps nested result labels, body and padding inside Code"
+                 (expect (= t/code-block-bg (result-row-bg {:code-result? true} false)))
+                 (expect (= t/link-chrome-hover-bg
+                            (result-row-bg {:kind :toggle-details :code-result? true} true))))
              (it "keeps body rows quiet and gives hover the strongest affordance"
                  (expect (= t/result-bg (result-row-bg nil false)))
                  (expect (= t/link-chrome-hover-bg (result-row-bg {:kind :toggle-details} true)))))

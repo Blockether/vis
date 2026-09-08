@@ -334,6 +334,17 @@ describe('ProviderRows', () => {
     expect(screen.queryByRole('region', { name: 'GITHUB-COPILOT limits' })).toBeNull();
   });
 
+  it.each([null, 'status:github-copilot', 'auth:complete'])('keeps row refresh read-only and ignores it while busy (%s)', pending => {
+    const asked: string[] = [];
+    render(<ProviderRows auth={state({
+      providers: [signedIn()], pending,
+      recheck: async providerId => { asked.push(providerId); },
+    })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh limits for GITHUB-COPILOT' }));
+    expect(asked).toEqual(pending ? [] : ['github-copilot']);
+    expect(screen.getByRole('button', { name: /GITHUB-COPILOT/i, expanded: false })).toBeTruthy();
+  });
+
   it('presses into a live re-check for an account that is already signed in', () => {
     const asked: string[] = [];
     render(
