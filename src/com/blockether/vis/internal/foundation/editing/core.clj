@@ -1,41 +1,17 @@
 (ns com.blockether.vis.internal.foundation.editing.core
-  "Filesystem tools exposed as bare symbols in the Python sandbox.
+  "Host-side file reading, search, listing and anchored editing.
 
-   Two layers:
+   `cat` and `grep` return line/hash addresses consumed by `patch`. One patch
+   validates every edit and the resulting syntax before replacing one file.
+   `list-directories` supplies the Python `ls` shim. Standard Python owns file
+   creation, copying, moving and deletion.
 
-   1. Structured helpers for tree / search:
-
-        (ls dir)              ; a DIRECTORY -> a compact TREE STRING, ready to print:
-        (ls dir, depth=2)     ; a `path  Nd Nf` header, then `name/` per directory and
-                              ; `name  size` per file, directories first. `depth`
-                              ; descends. The walk runs inside the block, so mapping a
-                              ; tree costs no wire round trip.
-                              ; A nil or blank path throws before any I/O.
-        (grep query)          ; -> ONE anchored TEXT block, never a map: a summary line,
-                              ; then `  <line>:<hash>| <text>` rows under each path;
-                              ; query = a term or list of terms (OR), smart-case
-                              ; substring — or a REGEX with `is_regex`.
-                              ; Opts: paths/include/limit/is_hidden/is_regex
-
-   2. Cwd-safe wrappers over the babashka.fs file API. Code is edited by ADDRESS
-      with `cat`/`patch` — ONE `patch`
-      call carries every edit for one file and writes once; plain Python owns
-      whole-file creation and deletion:
-
-        (create-dirs path)
-        (copy src dest)
-        (move src dest)
-        (delete path)
-        (delete-if-exists path)
-        (exists? path)
-
-   Hard guard: every path must stay inside the session's working
-   directory (`fs/cwd`); `..` traversal is rejected before any I/O."
+   Paths are confined to the session's allowed roots. Host operations also
+   consult extension-owned `:fs/access` gates."
   (:require [babashka.fs :as fs]
             [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.set :as set]
             [clojure.string :as str]
             [com.blockether.fff :as fff]
             [com.blockether.parinferish.balance :as balance]
@@ -47,11 +23,9 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.workspace.fff-index :as fff-index]
             [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.workspace.git :as git]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace.core :as workspace]
-            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
+            [com.blockether.vis.internal.workspace.core :as workspace])
   (:import (java.io File)
            (java.nio.file AtomicMoveNotSupportedException
                           CopyOption
@@ -60,7 +34,7 @@
                           Path
                           StandardCopyOption)))
 
-;; Tools in this namespace (grep/cat/patch/move/…) can execute
+;; Tools in this namespace (grep/cat/patch) can execute
 ;; DEFERRED on a virtual thread that has entered the CPython Python session —
 ;; e.g. inside `await gather(grep(a), cat(b))`. While on a context-entered thread, GraalVM's
 ;; HostAccess DENIES reflective Java calls (clojure.lang.Reflector → "Cannot
@@ -339,11 +313,9 @@
               vec)))
 
 (def ^:private vis-always-roots
-  "The `~/.vis` directory tree that file tools may ALWAYS reach, independent of
-   workspace roots. Canonical (symlinks resolved), computed once on first use;
-   dropped when `user.home` is unset. Kept SEPARATE from `temp-roots`: a write
-   here was never captured as a session attachment even when the temp capture
-   was live (see `capture-temp-write!`)."
+  "The `~/.vis` directory tree that file tools may always reach, independent of
+   workspace roots. Canonical paths are computed once on first use; entries
+   are dropped when `user.home` is unset."
   (delay (->> [".vis"]
               (keep (fn [^String sub]
                       (some-> (System/getProperty "user.home")
@@ -352,32 +324,6 @@
                       (try (.toPath (.getCanonicalFile f)) (catch Throwable _ nil))))
               distinct
               vec)))
-
-(defn- under-temp-root?
-  "True when `f` canonicalizes under a system temp root (`/tmp`, `$TMPDIR`)."
-  [^File f]
-  (try (let [^java.nio.file.Path cp (.toPath (.getCanonicalFile f))]
-         (boolean (some (fn [^java.nio.file.Path tr]
-                          (.startsWith cp tr))
-                        @temp-roots)))
-       (catch Throwable _ false)))
-
-(defn- capture-temp-write!
-  "DORMANT — a no-op while `mpl-capture/incidental-capture-enabled?` is false, and
-   that is the whole point: a file tool writing scratch into temp is not an
-   artifact anyone asked for. What a session should SHOW is what a tool `attach`es
-   deliberately.
-
-   It streamed a just-written TEMP file (under `/tmp` or `$TMPDIR`) to the DB as a
-   `session_iteration_attachment` — the host-side twin of the sandbox OUTBOX
-   tap. A no-op for a non-temp path, or when no capture sink is bound (the file
-   tool ran outside a driven block). NEVER throws — a capture must not break an
-   edit."
-  [^File f]
-  (try (when (and mpl-capture/incidental-capture-enabled? (under-temp-root? f))
-         (mpl-capture/record-file! (.toPath f)))
-       (catch Throwable _ nil))
-  nil)
 
 (defn- safe-path
   ^File [p]
@@ -641,12 +587,6 @@
                        (assoc "searched" resolved)))))
         resolutions))
 
-(defn- ensure-parent-dirs!
-  [^File f]
-  (when-let [parent (.getParentFile f)]
-    (.mkdirs parent))
-  f)
-
 (defn- path->target
   [requested kind]
   (try (let [f (safe-path requested)]
@@ -823,10 +763,8 @@
                :kind kind}})))
 
 (defn- fs-access-refusal
-  "First `:fs/access` refusal among `paths`, or nil when every one is allowed.
-
-   ONE place asks the gate, so Python bindings and sandbox `open(...)` cannot
-   (`\"file-read\"`, `\"file-write\"`)."
+  "First extension-owned `:fs/access` refusal among `paths`, or nil when all
+   paths are allowed. Host readers and writers use `file-read` and `file-write`."
   [env kind operation paths]
   (when (extension/gate-hooked? :fs/access)
     (some (fn [path]
@@ -847,56 +785,6 @@
     (if-let [refusal (fs-access-refusal env kind operation (extracted-paths path-extractor args))]
       {:result (gate-refusal-failure op kind operation refusal)}
       {:env env :fn f :args args})))
-
-(defn- mutation-atomic?
-  "True when a patch args vector carries the documented `atomic`
-   escape flag - on the lone edit map, or on ANY edit in the batch."
-  [args]
-  (let [a (first args)]
-    (boolean (cond (map? a) (get a "atomic")
-                   (sequential? a) (some #(and (map? %) (get % "atomic")) a)
-                   :else false))))
-
-(defn- plan-required-failure
-  "Failure envelope for a write-intent op the env's `:mutation-gate` refused.
-   `refusal` is the gate's human-readable reason string."
-  [op kind paths refusal]
-  (let [t (util/now-ms)]
-    (extension/failure {:result nil
-                        :op op
-                        :metadata {:target (path->target "." kind)
-                                   :started-at-ms t
-                                   :finished-at-ms t
-                                   :duration-ms 0
-                                   :paths paths}
-                        :error {:message (str refusal)
-                                :type :ext.foundation.editing/plan-required
-                                :reason :plan-required
-                                :hint (str refusal)
-                                :loop-hint (str refusal)
-                                :paths paths}})))
-
-(defn- plan-gated-before-fn
-  "Write-intent gate for patch. The `:fs/access` gate runs
-   FIRST (an extension's boundary always wins); only AFTER it clears does this
-   consult the env's OPTIONAL `:mutation-gate`. The gate receives
-   `{:op :paths :atomic?}` and returns a refusal string to short-circuit with a
-   `:plan-required` failure, or nil to pass through. No `:mutation-gate` on the
-   env = pass through unchanged (the gate is opt-in)."
-  [op kind path-extractor]
-  (let [protect (fs-access-before-fn op kind "file-write" path-extractor)]
-    (fn [env f args]
-      (let [out (protect env f args)]
-        (if (contains? out :result)
-          out
-          (if-let [gate (:mutation-gate env)]
-            (let [paths (extracted-paths path-extractor args)
-                  refusal (gate {:op op :paths paths :atomic? (mutation-atomic? args)})]
-
-              (if (util/non-blank-string? refusal)
-                {:result (plan-required-failure op kind paths refusal)}
-                {:env env :fn f :args args}))
-            out))))))
 
 ;; Engine contract lives in `com.blockether.vis.internal.extension.core`:
 ;;   `extension/op-tag`          - canonical op-keyword -> :observation | :mutation value.
@@ -2994,118 +2882,12 @@
          :total-file-count @total-files
          :total-file-count-exact? (and (not @breadth-capped?) (not @time-capped?))}))))
 
-;; Per-path consecutive-failure tracker (Roo-style loop detector)
-;;
-;; A process-wide atom of `{absolute-path consecutive-fail-count}`. We bump
-;; on every failed WRITE that touched the path and reset to zero when the
-;; same path's write applies cleanly. Once the count crosses
-;; `write-fail-loop-threshold`, the error message escalates with a hard
-;; "stop blind retry" hint that nudges the model out of the loop.
-
-(def ^:private write-fail-counts (atom {}))
-
-(def ^:private write-fail-loop-threshold 3)
-
-(defn- bump-write-fail-count!
-  ^long [^java.io.File file]
-  (let [abs (.getAbsolutePath file)]
-    (long (get (swap! write-fail-counts update abs (fnil inc 0)) abs))))
-
-(defn- clear-write-fail-count!
-  [^java.io.File file]
-  (let [abs (.getAbsolutePath file)]
-    (swap! write-fail-counts dissoc abs)))
-
-(defn- write-loop-hint
-  [^long n path]
-  (when (>= n (long write-fail-loop-threshold))
-    (str "Write failed " n
-         " times on " path
-         ". Stop retrying: re-read the target once with cat, then spend the fresh"
-         " anchors it hands back — an anchor from that read cannot be stale.")))
-
-;; write-safe — whole-file write primitive (create or overwrite)
-;;
-;; Python owns whole-file writes (`Path.write_text`, `open(p, "w")`) on the
-;; model-facing side, bounded by the sandbox roots; this primitive asks the
-;; `:fs/access` gate.
-;;
-;; Shape:
-;;   {:success? true
-;;    :plan   {:path :before :after :op}}
-;;   {:success? false
-;;    :failures [<failure-with-:reason>]
-;;    :loop-hint <string-or-nil>
-;;    :message  <human-readable>}
-;;
-;; The `:is_overwrite` knob defaults to true. `:expected_mtime` /
-;; `:expected_size` guard an atomic read-modify-write on an existing file
-;; against the `:mtime` / `:size` a caller read earlier.
-;;
-;; The write itself is ATOMIC (`atomic-replace!`): the bytes land in a sibling
-;; temp file that carries the target's own mode and a rename publishes them, so
-;; a failure ANYWHERE — including one mid-write — leaves the previous source
-;; exactly as the caller last read it and answers `:reason :io-error`.
-
-(def ^:private write-required-keys #{"path" "content"})
-
-(def ^:private write-optional-keys
-  ;; "atomic" = the documented multi-file escape flag (read from raw args by
-  ;; `mutation-atomic?`); allowed here so it isn't refused as unknown.
-  ;; "allow_dirty" = the retired spelling of "is_dirty_ok"; still accepted so
-  ;; older call sites keep working, but only `is_dirty_ok` is advertised.
-  #{"expected_mtime" "expected_size" "is_overwrite" "atomic" "is_dirty_ok" "allow_dirty"})
-
-(def ^:private write-allowed-keys (set/union write-required-keys write-optional-keys))
-
-(defn- coerce-write-args
-  [args]
-  (when-not (map? args)
-    (throw (ex-info "write expects a single map argument"
-                    {:type :ext.foundation.editing/invalid-write-args :got (type args)})))
-  (let [missing
-        (seq (remove #(contains? args %) write-required-keys))
-
-        unknown
-        (seq (remove write-allowed-keys (keys args)))]
-
-    (when missing
-      (throw (ex-info (str "write missing required keys: "
-                           (str/join ", " (map #(str "'" % "'") missing))
-                           " (write needs 'path' and 'content').")
-                      {:type :ext.foundation.editing/invalid-write-args
-                       :missing (vec missing)
-                       :args args})))
-    (when unknown
-      (throw (ex-info (str "write has unknown keys: "
-                           (str/join ", " (map #(str "'" % "'") unknown))
-                           ". Allowed: "
-                           (str/join ", " (sort write-allowed-keys))
-                           ".")
-                      {:type :ext.foundation.editing/invalid-write-args
-                       :unknown (vec unknown)
-                       :allowed (vec write-allowed-keys)
-                       :args args})))
-    (when-not (string? (get args "content"))
-      (throw (ex-info "write \"content\" must be a string"
-                      {:type :ext.foundation.editing/invalid-write-args
-                       :got (type (get args "content"))}))))
-  (update args "path" str))
-
 (defn- atomic-replace!
-  "Put `content` in `file` as ONE atomic replacement — the WRITE half of every
-   editor's all-or-nothing promise.
+  "Replace `file` through a sibling temporary file, preserving its permissions.
+   Publishing uses an atomic rename where supported. A failed write leaves the
+   previous source intact and removes the temporary file.
 
-   `spit` opened the target and truncated it IN PLACE, so a failure mid-write
-   destroyed the only copy of the previous source and escaped `write-safe`'s
-   never-throw contract as a raw java exception. Here the bytes go to a sibling
-   temp file that inherits the target's own mode (a patched script keeps its +x
-   bit), and only a rename publishes them: a reader sees the old file or the new
-   one, never a torn one, and a failure ANYWHERE leaves the previous source
-   exactly as the caller last read it.
-
-   Answers nil when the bytes landed, or a `{:reason :io-error :message …}`
-   failure the caller reports like any other refusal — nothing was written."
+   Returns nil on success or an `:io-error` map for the patch refusal."
   [^File file rel ^String content]
   (let [^Path target
         (.toPath file)
@@ -3143,164 +2925,6 @@
                           (or (ex-message t) (str t))
                           ". The file is unchanged.")})
          (finally (try (Files/deleteIfExists tmp-path) (catch Throwable _ nil))))))
-
-(defn write-safe
-  "Whole-file write primitive: create a new file OR overwrite an
-   existing one with `:content`, as ONE atomic replacement. Returns a
-   structured result; **never throws on normal failure paths** (file exists
-   with is_overwrite false, stale mtime/size, path escape, or bytes that
-   could not land — the previous source stands).
-
-   Required keys: `:path`, `:content` (string).
-   Optional keys:
-     :is_overwrite       default true; when false and target exists
-                       → :reason :exists
-     :expected_mtime   staleness guard; mismatch → :reason :stale
-     :expected_size    staleness guard; mismatch → :reason :stale
-
-   Success shape:
-     {:success? true
-      :plan {:path :before :after :op}
-      :checks [<check>]}
-
-   Failure shape:
-     {:success? false
-      :failures [<failure-with-:reason>]
-      :checks   [<check>]
-      :loop-hint <string-or-nil>
-      :message  <human-readable>}"
-  [args]
-  (let [args
-        (coerce-write-args args)
-
-        path
-        (get args "path")
-
-        content
-        (str (get args "content"))
-
-        is_overwrite
-        (if (contains? args "is_overwrite") (get args "is_overwrite") true)
-
-        is_dirty_ok
-        (boolean
-          (if (contains? args "is_dirty_ok") (get args "is_dirty_ok") (get args "allow_dirty")))
-
-        expected_mtime
-        (get args "expected_mtime")
-
-        expected_size
-        (get args "expected_size")
-
-        resolved
-        (try {:file (safe-path path) :rel (rel-path (safe-path path))}
-             (catch clojure.lang.ExceptionInfo e
-               {:error {:reason (case (:type (ex-data e))
-                                  :ext.foundation.editing/path-escape
-                                  :path-escape
-
-                                  :path-error)
-                        :message (ex-message e)
-                        :data (ex-data e)}}))]
-
-    (if-let [perr (:error resolved)]
-      (let [check {:edit-index 0 :path path :reason (:reason perr) :path-error perr}
-            file-for-counter (try (safe-path path) (catch Throwable _ nil))
-            n (when file-for-counter (bump-write-fail-count! file-for-counter))]
-
-        {:success? false
-         :failures [(cond-> check
-                      n
-                      (assoc :consecutive-failures n))]
-         :checks [check]
-         :loop-hint (when (and file-for-counter n) (write-loop-hint n path))
-         :message (str "write failed: " (:message perr))})
-      (let [^java.io.File file (:file resolved)
-            rel (:rel resolved)
-            exists? (.exists file)
-            is-dir? (and exists? (.isDirectory file))
-            before (when (and exists? (not is-dir?)) (slurp file))
-            actual-mtime (when exists? (.lastModified file))
-            actual-size (when exists? (.length file))
-            fail
-            (cond is-dir? {:reason :path-is-dir :message (str "write target is a directory: " rel)}
-                  (and (not is_overwrite) exists?)
-                  {:reason :exists
-                   :path rel
-                   :message
-                   (str "write refused: " rel " already exists and :is_overwrite is false")}
-                  ;; A whole-file write over a file with UNCOMMITTED changes is
-                  ;; how a truncated reconstruction silently wipes work. Refuse
-                  ;; it: surgical edits belong in patch().
-                  (and exists? (not is-dir?) (not is_dirty_ok) (git/file-dirty? file))
-                  {:reason :dirty
-                   :path rel
-                   :message (str "write refused: "
-                                 rel
-                                 " has UNCOMMITTED changes — a "
-                                 "whole-file write would clobber edits already in flight "
-                                 "(this is exactly how a truncated reconstruction wipes a "
-                                 "file). Make surgical changes with patch(...) "
-                                 "instead, or commit/checkout "
-                                 rel
-                                 " first. Pass is_dirty_ok=True to overwrite on purpose.")}
-                  (and exists?
-                       (some? expected_mtime)
-                       (pos? (long expected_mtime))
-                       (not= (long expected_mtime) (long actual-mtime)))
-                  {:reason :stale
-                   :stale {:reason :stale-mtime
-                           :expected_mtime expected_mtime
-                           :actual-mtime actual-mtime
-                           :actual-size actual-size}
-                   :message (str "write refused: " rel " mtime changed since :expected_mtime")}
-                  (and exists? (some? expected_size) (not= (long expected_size) (long actual-size)))
-                  {:reason :stale
-                   :stale {:reason :stale-size
-                           :expected_size expected_size
-                           :actual-size actual-size
-                           :actual-mtime actual-mtime}
-                   :message (str "write refused: " rel " size changed since :expected_size")})]
-
-        (if fail
-          (let [n (bump-write-fail-count! file)]
-            {:success? false
-             :failures [(assoc fail
-                          :edit-index 0
-                          :path rel
-                          :consecutive-failures n)]
-             :checks [(assoc fail
-                        :edit-index 0
-                        :path rel)]
-             :loop-hint (write-loop-hint n rel)
-             :message (cond-> (:message fail)
-                        (>= n (long write-fail-loop-threshold))
-                        (str "\n" (write-loop-hint n rel)))})
-          (do (ensure-parent-dirs! file)
-              (if-let [io-fail (atomic-replace! file rel content)]
-                ;; The bytes never reached the target, so this reads like every other
-                ;; refusal instead of surfacing a raw java IO exception: the previous
-                ;; source stands and the caller reports that nothing was written.
-                (let [n (bump-write-fail-count! file)]
-                  {:success? false
-                   :failures [(assoc io-fail
-                                :edit-index 0
-                                :path rel
-                                :consecutive-failures n)]
-                   :checks [(assoc io-fail
-                              :edit-index 0
-                              :path rel)]
-                   :loop-hint (write-loop-hint n rel)
-                   :message (:message io-fail)})
-                (do (fff-index/note-fs-write!)
-                    (capture-temp-write! file)
-                    (clear-write-fail-count! file)
-                    {:success? true
-                     :plan {:path rel :before before :after content :op (if exists? :update :add)}
-                     :checks [{:edit-index 0
-                               :path rel
-                               :op (if exists? :update :add)
-                               :existed? exists?}]}))))))))
 
 ;; Batch path specs + directory listing
 
@@ -4147,20 +3771,22 @@
                     resolved)
           "  note: a replacement carries a `line:hash│ ` gutter, written verbatim")
 
-        ;; is_dirty_ok: an anchored span replace is SURGICAL and content-verified —
-        ;; the dirty guard exists to stop a blind whole-file rewrite, not this.
-        result
-        (write-safe {"path" path "content" written-content "is_dirty_ok" true})]
+        failure
+        (atomic-replace! f rel written-content)]
 
-    (if-not (:success? result)
-      (throw (ex-info (str "patch refused — nothing was written.\n  " (:message result))
-                      {:type :ext.foundation.editing/patch-refused
-                       :reason (or (:reason (first (:failures result))) :write-refused)
-                       :path rel}))
-      (let [new-lines (hashline/split-content-lines written-content)]
+    (if failure
+      (throw (ex-info
+               (str "patch refused — nothing was written.\n  " (:message failure))
+               {:type :ext.foundation.editing/patch-refused :reason (:reason failure) :path rel}))
+      (let [_
+            (fff-index/note-fs-write!)
+
+            new-lines
+            (hashline/split-content-lines written-content)]
+
         (tool-success
           {:op :patch
-           :path (get-in result [:plan :path])
+           :path rel
            :kind :file
            :result (str (patch-status-line rel
                                            total
@@ -4246,7 +3872,7 @@
        "is named; one you WROTE is never deleted or retyped, so a closer too many, or `(` typed where `]` "
        "belongs, is refused instead of guessed at.")
      :call {:pos ["path" "edits"]}
-     :before-fn (plan-gated-before-fn :patch :file read-arg-paths)
+     :before-fn (fs-access-before-fn :patch :file "file-write" read-arg-paths)
      :tag :mutation
      :presenter :patch
      :on-error-fn (tool-failure-on-error :patch :file)}))

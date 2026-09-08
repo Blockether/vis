@@ -4,30 +4,36 @@
    Smoke-checks the loaded extension surface (symbol vector, doc
    strings, prompt fragment) plus behavioral coverage of the
    anchored-text read/search verbs (`cat`, `grep`), the anchored writer
-   (`patch`) and the thin babashka.fs wrappers (`copy`, `move`, ...).
-
-   Tests reach private fns directly through the registry to avoid
-   bringing up a full SCI sandbox. Temp files land under
-   `target/editing-test/` (always inside the repo cwd, so
-   `safe-path` accepts them)."
+   (`patch`). Most tests invoke host functions directly; fixtures live under
+   `target/editing-test/`, inside the workspace roots accepted by `safe-path`."
   (:require [com.blockether.vis.test-python-context :as tpc]
             [babashka.fs :as fs]
             [clojure.set]
             [clojure.string :as string]
-            ;; Loads/registers the built-in foundation extension so direct private
-            ;; tool calls below see the same op-tag registry as production.
-            [com.blockether.vis.internal.foundation.core]
+            [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.internal.workspace.fff-index :as fff-index]
             [com.blockether.vis.internal.foundation.editing.diff :as diff]
             [com.blockether.vis.internal.foundation.editing.escapes :as escapes]
             [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
-            [lazytest.core :refer [defdescribe describe expect it throws?]]))
+            [lazytest.core :refer
+             [around-each defdescribe describe expect it set-ns-context! throws?]]))
+
+;; Direct editing calls need the registration normally supplied by the manifest.
+(set-ns-context! [(around-each [f]
+                               (let [registered? (some #(= "foundation-core" (:ext/name %))
+                                                       (extension/registered-extensions))]
+                                 (when-not registered? (foundation/register!))
+                                 (try (f)
+                                      (finally (when-not registered?
+                                                 (extension/deregister-extension!
+                                                   "foundation-core"))))))])
 
 (defn- private-var
   "The Var behind one of `editing.core`'s private tool fns — `with-redefs-fn` needs
@@ -377,20 +383,6 @@
                            (catch clojure.lang.ExceptionInfo e e))]
               (expect (some? err))
               (expect (= :ext.foundation.editing/path-escape (:type (ex-data err))))))))
-    (it "write refuses to create files outside cwd"
-        ;; Note: we deliberately do NOT (.exists) the escape path here; the
-        ;; check is whether `write-safe` REFUSED to act. /etc/passwd exists
-        ;; on macOS regardless of our actions; what matters is :reason :path-escape
-        ;; and the cwd guard kicking in before any IO.
-        (let [write (private-fn "write-safe")]
-          (doseq [p escape-paths]
-            (let [r (write {"path" p "content" "hi"})]
-              (expect (false? (:success? r)))
-              (expect (= :path-escape
-                         (-> r
-                             :failures
-                             first
-                             :reason)))))))
     (it "a READ path outside cwd is refused at the same gate"
         ;; Defense in depth: even reads can't leak through path traversal.
         (let [safe-path (private-fn "safe-path")]
@@ -410,23 +402,9 @@
                                        "bash-symbol"))))
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
                                        "run-bash-safe"))))))
-  (it "write tool fully removed: no symbol, no tool, no arg normalizer"
-      ;; The whole-file write is Python's job now (`Path.write_text`, `open(p, "w")`),
-      ;; which crosses the SAME `:fs/access` gate. `write-safe` survives only as the
-      ;; internal primitive a whole-buffer rewrite commits through.
-      (let [symbols
-            (map :ext.symbol/symbol (editing/available-editing-symbols))
-
-            private-var
-            (fn [n]
-              (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" n)))]
-
-        (expect (not-any? #{'write} symbols))
-        (expect (nil? (private-var "write-symbol")))
-        (expect (nil? (private-var "write-tool")))
-        (expect (nil? (private-var "normalize-write-args")))
-        ;; the primitive stays: a whole-buffer rewrite commits through it
-        (expect (some? (private-var "write-safe")))))
+  (it "editing exposes only anchored read, search and patch tools"
+      (expect (= #{'cat 'grep 'patch}
+                 (set (map :ext.symbol/symbol (editing/available-editing-symbols))))))
   (it "every editing symbol carries a non-blank :doc and an :arglists vector"
       (doseq [s
               @editing/editing-symbols
@@ -444,35 +422,15 @@
       (expect (nil? (some #(when (= 'preview (:ext.symbol/symbol %)) %)
                           @editing/editing-symbols)))))
 
-(it "defers op classification to the engine contract (no editing-local copy)"
-    ;; The classification table + presentation map live in
-    ;; `com.blockether.vis.internal.extension.core` (`op-tag`,
-    ;; `op-presentation`). Editing used to keep a thin shim; that
-    ;; shim is gone and callers go straight to the engine. Tags
-    ;; collapsed to observation/mutation values; ops not in the
-    ;; registration table fail closed instead of defaulting to observation.
-    (doseq [[op tag] [[:cat :observation] [:z/locators :observation] [:grep :observation]
-                      [:patch :mutation] [:create-dirs :mutation] [:delete :mutation]
-                      [:move :mutation]]]
-      (expect (= tag (extension/op-tag op)))
-      (expect (= {:tag tag} (extension/op-presentation op))))
-    (let [thrown (try (extension/op-tag :v/extensions) nil (catch clojure.lang.ExceptionInfo e e))]
-      (expect (= :extension/unregistered-op (:type (ex-data thrown))))))
-
-(defn- gate-env
-  "A plain env carrying a `:mutation-gate` stub that records the call payload into
-   `seen!` and returns `ret` (a refusal string or nil)."
-  [seen! ret]
-  {:extensions (atom [])
-   :mutation-gate (fn [payload]
-                    (reset! seen! payload)
-                    ret)})
+(defdescribe editing-op-classification-test
+             (it "uses the engine's observation and mutation tags"
+                 (doseq [[op tag] [[:cat :observation] [:grep :observation] [:patch :mutation]]]
+                   (expect (= tag (extension/op-tag op)))
+                   (expect (= {:tag tag} (extension/op-presentation op))))))
 
 (defn- with-fs-gate!
-  "Install `hook-fn` as the one `:fs/access` gate for `body`, then tear it down.
-   A gate lives in the GLOBAL op-hook registry rather than on the env, and that
-   IS the contract: an extension declares a boundary once and every surface — the
-   editors here, the Python interpreter's own filesystem — asks that same one."
+  "Install the host tools' extension-owned `:fs/access` gate for `body`, then
+   unregister it even if the test fails."
   [hook-fn body]
   (try (extension/register-op-hook! {:op :fs/access :owner :ext/test-fs-gate :fn hook-fn})
        (body)
@@ -606,66 +564,7 @@
                                            ["target/editing-test/a.clj"])]
 
                            (expect (not (contains? out :result)))
-                           (expect (= 1 @depth)))))))
-  (it ":fs/access refuses BEFORE the env's :mutation-gate is consulted"
-      (with-fs-gate! (fn [_env _op _ctx]
-                       "owner API only")
-                     (fn []
-                       (let [before
-                             (:ext.symbol/before-fn (private-fn "patch-symbol"))
-
-                             out
-                             (before {:extensions (atom [])
-                                      :mutation-gate (fn [_]
-                                                       (throw (ex-info "gate must not run" {})))}
-                                     (constantly :ok)
-                                     ["target/editing-test/protected/x.clj"
-                                      [{"from" "1:000" "replace" "x"}]])]
-
-                         (expect (= :ext.foundation.editing/path-protected
-                                    (-> out
-                                        :result
-                                        :error
-                                        :type)))))))
-  (it ":mutation-gate refusal becomes a :plan-required failure carrying its paths"
-      (let [seen!
-            (atom nil)
-
-            before
-            (:ext.symbol/before-fn (private-fn "patch-symbol"))
-
-            out
-            (before (gate-env seen! "Write a PLAN.md first.")
-                    (constantly :ok)
-                    ["target/editing-test/a.clj" [{"from" "1:000" "replace" "x"}]])]
-
-        (expect (= :ext.foundation.editing/plan-required
-                   (-> out
-                       :result
-                       :error
-                       :type)))
-        (expect (= "Write a PLAN.md first."
-                   (-> out
-                       :result
-                       :error
-                       :hint)))
-        (expect (= :patch (:op @seen!)))
-        (expect (= ["target/editing-test/a.clj"] (:paths @seen!)))
-        (expect (false? (:atomic? @seen!)))))
-  (it "a nil :mutation-gate answer passes the op through"
-      (let [seen!
-            (atom nil)
-
-            before
-            (:ext.symbol/before-fn (private-fn "patch-symbol"))
-
-            out
-            (before (gate-env seen! nil)
-                    (constantly :ok)
-                    ["target/editing-test/a.clj" [{"from" "1:000" "replace" "x"}]])]
-
-        (expect (not (contains? out :result)))
-        (expect (some? @seen!)))))
+                           (expect (= 1 @depth))))))))
 
 (defdescribe
   vis-ls-test
@@ -2573,41 +2472,26 @@
             (expect (= (.replace (str trunk "/x.txt") "\\" "/") (rel-path f)))) ;; display shows real trunk path, `/`-normalized
           (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
 
-(defdescribe
-  native-temp-write-capture-dormant-test
-  ;; The native twin of the sandbox outbox tap is retired with it: a file tool
-  ;; writing scratch into /tmp is not an artifact anyone asked for, so nothing
-  ;; streams to the DB and the companion has nothing to show. Only what a tool
-  ;; `attach`es is recorded — see `mpl-capture/incidental-capture-enabled?`.
-  (it
-    "a write to /tmp no longer streams to the DB attachment sink"
-    (let [write-safe
-          (private-fn "write-safe")
+(defdescribe patch-does-not-attach-test
+             (it "edits in temp and workspace do not become attachments"
+                 (let [tmp
+                       (str (fs/create-temp-file {:prefix "vis-patch-capture-" :suffix ".txt"}))
 
-          sink
-          (atom [])
+                       ws
+                       (write-temp! "patch/no-attachment.txt" "before\n")
 
-          seen
-          (atom #{})
+                       sink
+                       (atom [])]
 
-          tmp
-          (str (System/getProperty "java.io.tmpdir") "/vis-native-tmpcap-" (System/nanoTime) ".txt")
-
-          ws
-          "target/editing-test/vis-native-nontmp.txt"]
-
-      (fs/create-dirs "target/editing-test")
-      (binding [mpl-capture/*attachment-sink*
-                sink
-
-                mpl-capture/*outbox-seen*
-                seen]
-
-        (expect (:success? (write-safe {"path" tmp "content" "temp scratch, not an artifact"})))
-        (expect (:success? (write-safe {"path" ws "content" "not captured either"}))))
-      ;; NEITHER write reached the sink: the temp capture is off, and a
-      ;; workspace write was never captured in the first place.
-      (expect (empty? @sink)))))
+                   (try (spit tmp "before\n")
+                        (binding [mpl-capture/*attachment-sink* sink]
+                          (doseq [path [tmp ws]]
+                            (expect
+                              (:success?
+                                (patch-span path (hashline/line-anchor 1 "before") nil "after")))
+                            (expect (= "after\n" (slurp path)))))
+                        (expect (empty? @sink))
+                        (finally (fs/delete-if-exists tmp))))))
 
 (defdescribe editing-native-contract-test
              (let [patch-description
@@ -2884,54 +2768,76 @@
           (expect (= 2 (get-in r [:result "file_count"])))
           (expect (= [ghost] (mapv #(get % "requested") (get-in r [:result "missing_paths"])))))))))
 
-(defdescribe
-  atomic-write-test
-  "Every editor write lands as ONE atomic replacement: a sibling temp file the
-   target's own mode is carried onto, published by a rename, leaving no debris —
-   and a write that cannot land answers a refusal with the previous source
-   untouched instead of a raw java exception."
-  (let [write-safe
-        (private-fn "write-safe")
+(defdescribe atomic-write-test
+             "Patch replacements preserve permissions and leave the original intact on failure."
+             (it "a write that cannot land returns an IO refusal without temporary debris"
+                 (let [dir
+                       (temp-dir-path "atomic1")
 
-        atomic-replace!
-        (private-fn "atomic-replace!")]
+                       missing
+                       (str dir "/no-such-dir/f.txt")
 
-    ;; Regression, issue #147: `spit` truncated the target IN PLACE, so a failure
-    ;; mid-write destroyed the only copy of the previous source and the raw IO
-    ;; exception escaped write-safe's documented never-throw contract.
-    (it "a write that cannot land answers a refusal instead of throwing"
-        (let [dir
-              (temp-dir-path "atomic1")
+                       result
+                       ((private-fn "atomic-replace!") (fs/file missing) "f.txt" "never lands")]
 
-              missing
-              (str dir "/no-such-dir/f.txt")
+                   (expect (= :io-error (:reason result)))
+                   (expect (string/includes? (:message result) "The file is unchanged."))
+                   (expect (not (fs/exists? missing)))
+                   (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
+                                           (fs/list-dir dir))))))
+             (it "patch preserves executable permissions and notifies the index once"
+                 (let [dir
+                       (temp-dir-path "atomic2")
 
-              r
-              (atomic-replace! (fs/file missing) "f.txt" "never lands")]
+                       path
+                       (write-temp! "atomic2/run.sh" "#!/bin/sh\necho one\n")
 
-          (expect (= :io-error (:reason r)))
-          (expect (string/includes? (str (:message r)) "The file is unchanged."))
-          (expect (not (fs/exists? missing)))
-          (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
-                                  (fs/list-dir dir))))))
-    (it "an overwrite carries the file's own mode and leaves no temp behind"
-        (let [dir
-              (temp-dir-path "atomic2")
+                       ^java.io.File file
+                       (fs/file path)
 
-              f
-              (str dir "/run.sh")
+                       notices
+                       (atom 0)]
 
-              ^java.io.File ff
-              (fs/file f)]
+                   (.setExecutable file true)
+                   (let [result
+                         (with-redefs [fff-index/note-fs-write! #(swap! notices inc)]
+                           (patch-span path (hashline/line-anchor 2 "echo one") nil "echo two"))]
+                     (expect (:success? result))
+                     (expect (= 1 @notices))
+                     (expect (= "#!/bin/sh\necho two\n" (slurp file)))
+                     (expect (.canExecute file))
+                     (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
+                                             (fs/list-dir dir)))))))
+             ;; Regression, issue #147: an interrupted write must never truncate the original.
+             (it "patch reports a partial temporary write as a refusal and keeps the original"
+                 (let [path
+                       (write-temp! "atomic3/keep.txt" "before\n")
 
-          (spit ff "#!/bin/sh\necho one\n")
-          (.setExecutable ff true)
-          (let [r (write-safe {"path" f "content" "#!/bin/sh\necho two\n"})]
-            (expect (:success? r))
-            (expect (= "#!/bin/sh\necho two\n" (slurp ff)))
-            (expect (.canExecute ff))
-            (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
-                                    (fs/list-dir dir)))))))))
+                       write-bytes
+                       spit
+
+                       notices
+                       (atom 0)
+
+                       thrown
+                       (with-redefs [clojure.core/spit
+                                     (fn [file content]
+                                       (write-bytes file (subs (str content) 0 2))
+                                       (throw (java.io.IOException. "interrupted write")))
+
+                                     fff-index/note-fs-write!
+                                     #(swap! notices inc)]
+
+                         (try (patch-span path (hashline/line-anchor 1 "before") nil "after")
+                              nil
+                              (catch clojure.lang.ExceptionInfo e e)))]
+
+                   (expect (= :ext.foundation.editing/patch-refused (:type (ex-data thrown))))
+                   (expect (= :io-error (:reason (ex-data thrown))))
+                   (expect (= "before\n" (slurp path)))
+                   (expect (zero? @notices))
+                   (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
+                                           (fs/list-dir (fs/parent path))))))))
 
 (defdescribe
   find-files-op-name-test

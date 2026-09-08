@@ -157,7 +157,7 @@
                                    "sess-deleted"]
 
                                (.setExecutable f true)
-                               (rw/record-pre! (ctx s 1 :fs) [(abs f)])
+                               (rw/record-pre! (ctx s 1 :shell) [(abs f)])
                                (io/delete-file f)
                                (expect (not (.exists f)))
                                (rw/restore! s 1)
@@ -390,7 +390,7 @@
               "sess-symlink"]
 
           (Files/createSymbolicLink (.toPath link) (.toPath target) (make-array FileAttribute 0))
-          (rw/record-pre! (ctx s 1 :fs) [(abs link)])
+          (rw/record-pre! (ctx s 1 :shell) [(abs link)])
           (io/delete-file link)
           (put! link "now a real file")
           (rw/restore! s 1)
@@ -409,7 +409,7 @@
               "sess-symlink-target"]
 
           (Files/createSymbolicLink (.toPath link) (.toPath target) (make-array FileAttribute 0))
-          (rw/record-pre! (ctx s 1 :fs) [(abs link)])
+          (rw/record-pre! (ctx s 1 :shell) [(abs link)])
           (let [e (first (filter #(= (abs link) (get % "path")) (rw/journal s)))]
             (expect (= "symlink" (get e "state")))
             (expect (nil? (get e "sha")) "a symlink must not be pooled as file content"))
@@ -424,7 +424,7 @@
 
                     (put! (io/file d "one.txt") "ONE")
                     (put! (io/file d "nested" "two.txt") "TWO")
-                    (rw/record-pre! (ctx s 1 :fs) [(abs d)] {:recurse? true})
+                    (rw/record-pre! (ctx s 1 :shell) [(abs d)] {:recurse? true})
                     (rm-rf d)
                     (expect (not (.exists d)))
                     (rw/restore! s 1)
@@ -439,7 +439,7 @@
                         "sess-tree-prune"]
 
                     (put! (io/file d "one.txt") "ONE")
-                    (rw/record-pre! (ctx s 1 :fs) [(abs d)] {:recurse? true})
+                    (rw/record-pre! (ctx s 1 :shell) [(abs d)] {:recurse? true})
                     (put! (io/file d "intruder.txt") "SHOULD NOT SURVIVE")
                     (rw/restore! s 1)
                     (expect (= "ONE" (slurp (io/file d "one.txt"))))
@@ -452,7 +452,7 @@
                         s
                         "sess-file-to-dir"]
 
-                    (rw/record-pre! (ctx s 1 :fs) [(abs f)])
+                    (rw/record-pre! (ctx s 1 :shell) [(abs f)])
                     (io/delete-file f)
                     (.mkdirs f)
                     (put! (io/file f "surprise.txt") "x")
@@ -468,7 +468,7 @@
                         "sess-dir-to-file"]
 
                     (put! (io/file d "inner.txt") "INNER")
-                    (rw/record-pre! (ctx s 1 :fs) [(abs d)] {:recurse? true})
+                    (rw/record-pre! (ctx s 1 :shell) [(abs d)] {:recurse? true})
                     (rm-rf d)
                     (put! d "I AM A FILE NOW")
                     (rw/restore! s 1)
@@ -650,10 +650,10 @@
                       (expect (contains? paths (abs b)))
                       (expect (contains? paths (abs c)))))))
   (it "hooks every mutating op and the shell sweep"
-      (expect (= #{:patch :fs :format_code} rw/mutation-ops))
+      (expect (= #{:patch :format_code} rw/mutation-ops))
       (expect (contains? rw/sweep-ops :shell))
       (let [hooked (set (map :op rw/op-hooks))]
-        (expect (every? hooked rw/mutation-ops))
+        (expect (= #{:patch :format_code :shell} hooked))
         (expect (every? hooked rw/sweep-ops))
         (expect (every? #(= :around (:phase %)) rw/op-hooks)))))
 

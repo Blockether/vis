@@ -81,7 +81,7 @@
 
 (def mutation-ops
   "Tool ops whose arguments name the files they are about to change."
-  #{:patch :fs :format_code})
+  #{:patch :format_code})
 
 (def sweep-ops
   "Tool ops that can change arbitrary files WITHOUT naming them. These get a
@@ -805,16 +805,9 @@
         (store-dir (:session ctx))
 
         baseline
-        (capture-baseline! dir ctx)
+        (capture-baseline! dir ctx)]
 
-        ;; Only `fs` can destroy a whole subtree (delete/move), so only `fs` pays
-        ;; for a recursive capture. Everything else treats a directory argument as
-        ;; a container — the files it actually edits are named individually, and
-        ;; the git baseline covers the rest.
-        recurse?
-        (= :fs (:op ctx))]
-
-    (record-pre! ctx (walk-paths args) {:recurse? recurse?})
+    (record-pre! ctx (walk-paths args) {:recurse? false})
     baseline))
 
 (defn around-hook

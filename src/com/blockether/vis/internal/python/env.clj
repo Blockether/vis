@@ -1789,12 +1789,8 @@
   (begin-block-stdout! session)
   (if-let [err (empty-block-error session code)]
     (do (discard-block-stdout! session) {:forms [{:source code :error err}] :error err})
-    (let [sink (atom [])
-          outbox-seen (atom #{})]
-
-      (with-bindings {#'extension/*current-form-idx* 0
-                      #'mpl-capture/*attachment-sink* sink
-                      #'mpl-capture/*outbox-seen* outbox-seen}
+    (let [sink (atom [])]
+      (with-bindings {#'extension/*current-form-idx* 0 #'mpl-capture/*attachment-sink* sink}
         ;; The doors run on the interpreter's own threads, so the bindings above
         ;; travel to them explicitly - see `python-host/conveying`.
         (python-host/conveying session

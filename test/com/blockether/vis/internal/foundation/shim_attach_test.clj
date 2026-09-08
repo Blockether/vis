@@ -415,12 +415,8 @@
                                   "    _r = 'NO-RAISE'\n" "except Exception as e:\n"
                                   "    _r = str(e)\n" "_r")))))))
 
-(defdescribe incidental-capture-dormant-test
-             ;; The automatic outbox pattern is RETIRED: the engine wires no `$VIS_OUTBOX`
-             ;; and no temp tap, so a sandbox that merely WRITES a file records nothing and
-             ;; the session (and the companion transcript reading it) stays free of scratch
-             ;; nobody asked for. `attach` is the one way an artifact is kept.
-             ;; See `mpl-capture/incidental-capture-enabled?` — flip it to re-arm both.
+(defdescribe explicit-attachment-only-test
+             ;; Files written by Python are not attachments unless explicitly attached.
              (it "records NOTHING for a file the sandbox merely writes"
                  (let [root
                        (temp-root)
@@ -428,8 +424,7 @@
                        pctx
                        (ctx-with-root root)
 
-                       ;; `temp-root` sits UNDER the system temp root, which is exactly the
-                       ;; widest case the old tap captured.
+                       ;; Ordinary writes under system temp are not collected either.
                        out
                        (block pctx
                               (str "with open('"

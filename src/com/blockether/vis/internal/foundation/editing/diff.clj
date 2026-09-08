@@ -1,14 +1,6 @@
 (ns com.blockether.vis.internal.foundation.editing.diff
-  "Unified-diff rendering and line accounting, for BOTH producers of a diff.
-
-   `patch` has always had the two texts and rendered its own hunks here; the
-   confined sandbox filesystem now has them too, because a plain
-   `open(path, \"w\")` from Python is an edit with a before and an after just
-   like an anchored patch is. One renderer, so a hand-written file and a patched
-   one reach Activity — and every surface reading it — in the SAME vocabulary.
-
-   A leaf on purpose: it is loaded long before the tool namespaces exist, so
-   this requires nothing of vis."
+  "Unified-diff rendering and line accounting for anchored patches.
+   Independent of the tool and activity namespaces."
   (:require [clojure.string :as str])
   (:import (com.github.difflib DiffUtils UnifiedDiffUtils)
            (com.github.difflib.patch AbstractDelta Chunk Patch)))
