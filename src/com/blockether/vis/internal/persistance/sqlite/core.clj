@@ -270,6 +270,13 @@
    descriptor and a few KiB."
   (max 8 (min 16 (* 2 (.availableProcessors (Runtime/getRuntime))))))
 
+(def ^:private ^long leak-detection-ms
+  "Hikari's leak-detection threshold in ms, 0 = off. Read once per process from
+   `vis.db.leak-detection-ms`; Hikari itself rejects anything under 2000."
+  (try (let [v (Long/parseLong (System/getProperty "vis.db.leak-detection-ms" "0"))]
+         (if (pos? v) (max 2000 v) 0))
+       (catch Exception _ 0)))
+
 (defn- pooled-datasource
   "Wrap `raw-ds` in a HikariCP pool. `pool-name` is the JMX name and
    shows up in thread names (`HikariPool-vis-rlm-disk-1`), which
@@ -288,8 +295,15 @@
                             stays warm.
      maxLifetime     = 0  - no network drop concern; recycling adds
                             zero value and creates spurious opens.
-     leakDetectionThreshold = 60s - surface checked-out-but-never-
-                                    returned connections in the log."
+     leakDetectionThreshold = OFF unless `-Dvis.db.leak-detection-ms=N`.
+                              Hikari implements the detector by allocating
+                              `new Exception(\"Apparent connection leak detected\")`
+                              - a full stack-trace fill - on EVERY checkout, so
+                              the future report has a trace to print. A JFR
+                              profile of a live gateway showed it as the single
+                              largest allocation site: 17 checkouts a second,
+                              each paying for a leak that never happens. It is a
+                              debugging aid; arm it when hunting one."
   ^HikariDataSource [^DataSource raw-ds ^String pool-name]
   (let [cfg (doto (HikariConfig.)
               (.setPoolName pool-name)
@@ -299,7 +313,7 @@
               (.setConnectionTimeout 30000)
               (.setIdleTimeout 0)
               (.setMaxLifetime 0)
-              (.setLeakDetectionThreshold 60000))]
+              (.setLeakDetectionThreshold leak-detection-ms))]
     (HikariDataSource. cfg)))
 
 (def ^:private ^String DB_FILENAME "vis.db")

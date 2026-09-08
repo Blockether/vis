@@ -3939,3 +3939,19 @@
            (jdbc/execute! (:datasource s) ["INSERT INTO churn (b) VALUES (?)" (byte-array 16)])
            (expect (>= limit (fs/size wal)))
            (finally (vis/db-dispose-connection! s) (fs/delete-tree root))))))
+
+(defdescribe pool-leak-detection-test
+             ;; Regression, gateway CPU audit: Hikari implements `leakDetectionThreshold` by
+             ;; allocating `new Exception("Apparent connection leak detected")` - a full
+             ;; stack-trace fill - on EVERY checkout, so a future report has a trace. It was
+             ;; always on, and a JFR profile of a live gateway showed it as the single largest
+             ;; allocation site: 17 checkouts a second paying for a leak that never happens.
+             (it "leaves Hikari's leak detector off unless a property arms it"
+                 (expect (zero? (long (var-get #'sqlite-core/leak-detection-ms))))
+                 (let [raw
+                       (doto (org.sqlite.SQLiteDataSource.) (.setUrl "jdbc:sqlite::memory:"))
+
+                       ds
+                       ((var-get #'sqlite-core/pooled-datasource) raw "vis-test-leak-off")]
+
+                   (try (expect (zero? (.getLeakDetectionThreshold ds))) (finally (.close ds))))))
