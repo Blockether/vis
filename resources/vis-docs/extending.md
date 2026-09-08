@@ -87,11 +87,11 @@ installs dependencies, then evaluates the entry and registers its tools.
 - Each declared root's contents are merged into the frozen extension directory.
   Missing directories, duplicate relative file names and roots containing the
   extension directory are rejected. Use narrow source roots such as `src`, not
-  the whole checkout or a virtual environment. `.vis-packages` is reserved.
+  the whole checkout or a virtual environment.
 - `dependencies` accepts standard package requirements, including version pins,
   extras and environment markers. Vis uses its bundled **pip**, installing only
-  wheels into the snapshot's private `.vis-packages` directory. It does not
-  modify the project's `.venv` or the shared sandbox package cache.
+  wheels into `~/.vis/python/packages`, shared with `python_execution` and other
+  extensions. It does not modify the project's `.venv`.
 - Set the index with [`python.index_url` in `vis.yml`](configuration.md#python-package-index).
   Normal pip authentication and certificate settings still apply. A missing
   wheel or failed install is a load failure, not a fallback to source builds.
@@ -101,10 +101,13 @@ installs dependencies, then evaluates the entry and registers its tools.
   an unchanged loader scan does neither. Source edits are not used by existing
   tools until reload. A failed reload retains the last working extension.
 
-The installed dependencies travel with that snapshot into session workers;
-calling a tool does not install them again. A snapshot is not a separate virtual
-environment: extensions in the same worker still share its interpreter and
-module cache, so incompatible dependency versions are not isolated.
+Source snapshots contain extension code, not installed dependencies. Both embedded
+workers import the same shared package directory; calling a tool does not install
+packages again. Each process has its own module cache and permissions. Dependency
+versions are shared across all sessions and extensions, not isolated per project.
+A failed reload retains the extension definition, but does not roll back shared
+package updates. After changing installed packages, use `/reload` to rebuild the
+session workers; an already running call can retain its imported modules until it ends.
 
 ### uv projects
 
@@ -132,27 +135,32 @@ vis-agent python uv sync --project ./einmal --locked
 ```
 
 Run this as the same OS user and with the same Vis runtime as the gateway.
-The command uses the embedded Python and runs real
-`uv sync --locked --no-editable --no-default-groups --no-python-downloads`.
-It respects uv sources and named indexes. It does not update `uv.lock` or touch
-the project's `.venv`. Default groups and optional extras are not installed.
+The command uses the embedded Python. It runs `uv export --locked --no-editable
+--no-default-groups --format pylock.toml`, then `uv pip install --target` on the
+exported lock. This preserves resolved sources, artifact hashes and named indexes
+while retaining unrelated packages in the shared directory. Python downloads are
+disabled. A temporary export in the project directory is removed afterwards;
+`uv.lock` and the project's `.venv` are unchanged. Default groups and optional
+extras are not installed.
 `--offline` and `--no-cache` are supported; other uv options are rejected so they
 cannot redirect the environment or interpreter. Generate the lockfile separately.
 
-Vis publishes dependencies under `~/.vis/python/projects/<project-hash>/<generation>/`.
-The command prints the prepared `.vis-packages` directory. Start and `/reload`
-**do not run an installer for uv projects**: they copy those prepared packages
-into the extension's private snapshot, then import and register its tools.
-A missing environment or changed `pyproject.toml`, `uv.lock`, runtime or default
-index is a load error with the sync command to run. A failed reload retains the
-last working extension. Sync failures do not replace the last prepared generation.
+Vis installs dependencies into **`~/.vis/python/packages`** and prints that path.
+There are no per-project package generations or dependency copies in extension
+snapshots. `~/.vis/python/projects/` contains readiness metadata only.
+Start and `/reload` **do not run an installer for uv projects**: they validate that
+metadata, then import and register the source snapshot. A missing environment or
+changed `pyproject.toml`, `uv.lock`, runtime, default index or recorded distribution
+metadata is a load error with the sync command to run. Readiness is recorded only
+after a successful install; changes to the shared directory are not rolled back.
 
 Package builds run only during the explicit command, with the invoking user's
 permissions; select trusted projects and dependencies. Local packages are installed
 noneditably. After changing an installed local package, run sync again. Code in
-`source_paths` only needs `/reload`. Once a manual project is loaded, missing-import
-autoinstall is disabled in that interpreter, including its session worker.
-Extensions still share the worker's module cache; conflicting versions are not isolated.
+`source_paths` only needs `/reload`. Imports in `python_execution` never install
+packages: the shared directory is read-only to sandbox code, and the host does not
+expose a package-install callback to it. Trusted extension declarations and explicit
+CLI installs can write to this directory. Conflicting dependency versions are not isolated.
 
 `python.index_url` supplies uv's default index; named source indexes are not replaced.
 Keep credentials in uv's supported credential configuration or the sync process's
@@ -203,9 +211,9 @@ PYTHONPATH=einmal/src vis-agent python -m pytest einmal/tests/ -q
 
 The spelling is `vis-agent python -m pytest`, not `vis-agent python pytest`.
 The explicit `PYTHONPATH` makes this example independent of package-layout
-inference. This command does not select the extension's private uv environment
-or prove that locked dependencies are prepared. The current embedded runtime can
-automatically install missing imports; this is not an install-free test workflow.
+inference. This command uses the shared Vis packages, not the project's `.venv`.
+Prepare the project's dependencies and install pytest explicitly before running it;
+imports do not install missing dependencies.
 
 After unit tests pass, verify extension registration and a tool call in a Vis
 session: explicit sync, `/reload`, then call the tool. `vis-agent extension list`

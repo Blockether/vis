@@ -38,6 +38,7 @@
    `vis-agent doctor`), never a crash."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
+            [com.blockether.vis-python-runtime :as runtime]
             [clojure.string :as str]
             [com.blockether.vis.contract.document :as contract-document]
             [com.blockether.vis.internal.context.agents :as agents]
@@ -726,22 +727,21 @@
              ctx
              (str "import sys as __vis_pathsys__\n"
                   "import os as __vis_pathos__\n"
-                  (when (.isFile (io/file snap ".vis-manual"))
-                    "__vis_pathsys__._vis_manual_dependencies = True\n")
                   "__vis_ext_dir__ = "
                   (python-string-literal (.getCanonicalPath snap))
                   "\n"
                   "__vis_frozen_home__ = "
                   (python-string-literal frozen-home)
                   "\n"
-                  "__file__ = "
-                  (python-string-literal entry-path)
-                  "\n"
-                  "__cached__ = None\n" "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
+                  "__file__ = " (python-string-literal entry-path)
+                  "\n" "__cached__ = None\n"
+                  "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
                   "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
-                  "__vis_packages__ = __vis_pathos__.path.join(__vis_ext_dir__, '.vis-packages')\n"
-                  "if __vis_pathos__.path.isdir(__vis_packages__):\n"
+                  "__vis_packages__ = " (python-string-literal (runtime/packages-dir))
+                  "\nif __vis_packages__ not in __vis_pathsys__.path:\n"
                   "    __vis_pathsys__.path.insert(1, __vis_packages__)\n"
+                  "import importlib as __vis_importlib__\n"
+                  "__vis_importlib__.invalidate_caches()\n"
                   "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
                   "                          if not __vis_p__.startswith(__vis_frozen_home__)\n"
                   "                          or __vis_pathos__.path.isdir(__vis_p__)]\n"
@@ -1786,11 +1786,6 @@
         files
         (mapcat import-root-files roots)]
 
-    (when (some (fn [[rel _]]
-                  (or (= rel ".vis-packages") (str/starts-with? rel ".vis-packages/")))
-                files)
-      (throw (ex-info "The extension import root reserves .vis-packages for installed dependencies"
-                      {:type ::source-collision})))
     (when (some (fn [[_ entries]]
                   (> (count entries) 1))
                 (group-by first files))
@@ -1863,14 +1858,8 @@
           [result
            (try
              (if project
-               (let [packages (python-runtime/prepared-project project)]
-                 (doseq [[rel file] (import-root-files packages)]
-                   (let [target (io/file (:dir frozen) ".vis-packages" rel)]
-                     (io/make-parents target)
-                     (io/copy file target)))
-                 (spit (io/file (:dir frozen) ".vis-manual") "")
-                 {:exit 0})
-               (python-runtime/pip-install! {:target (str (io/file (:dir frozen) ".vis-packages"))}
+               (do (python-runtime/prepared-project project) {:exit 0})
+               (python-runtime/pip-install! {:target (runtime/packages-dir) :upgrade? true}
                                             dependencies))
              (catch Throwable t
                (if project

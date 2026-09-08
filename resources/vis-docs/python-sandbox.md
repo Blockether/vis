@@ -62,14 +62,18 @@ Host functions exposed from Clojure apply their own permission checks. See
 
 ## Packages
 
-If a top-level import is not found on `sys.path`, the host tries to install
-a distribution with that name. Automatic installation accepts wheels only and
-requires session network access. If installation is refused, the import raises
-`ModuleNotFoundError`. Packages are installed in `~/.vis/python/packages`,
-which is shared across sessions and read-only to the sandbox.
+Both `python_execution` and trusted Python extension workers import packages from
+**`~/.vis/python/packages`**. They use the same installed files and versions, but
+separate interpreters, module caches and permissions. This directory is shared
+across sessions and read-only to sandbox code.
 
-Outside a session, `vis-agent python -m pip install <package>` installs into
-the same location, and `vis-agent python -m <module>` runs it.
+Imports do not install packages. Prepare a locked project explicitly with
+`vis-agent python uv sync --project PATH --locked`, or install a wheel with
+`vis-agent python -m pip install <package>`. These commands use the same directory;
+`vis-agent python -m <module>` runs against it. Missing imports raise
+`ModuleNotFoundError`. Sharing installed files does not relax sandbox restrictions:
+a package that requires refused native operations may work only in an extension.
+After updating installed packages, use `/reload` to rebuild session workers.
 
 Attachment functions are available without an import. `attach(...)` stores a
 file and returns its descriptor. Use `list_attachments()`, `get_attachment(...)`,
@@ -78,12 +82,13 @@ filename or id. Saving another file with the same name creates a new version.
 
 ## Sandbox versus project Python
 
-The sandbox and project interpreter have separate installed packages:
+An independently selected project interpreter has its own environment, unlike the
+two embedded Vis workers that share the package directory above:
 
 | Code | Where it runs |
 | --- | --- |
 | computations, tool calls and result filtering | `python_execution` (the sandbox) |
-| anything that imports your project's dependencies | a project interpreter: `repl_start({"language": "python"})`, then `repl_eval({"language": "python", "code": ...})` |
+| work against the project's own environment | a project interpreter: `repl_start({"language": "python"})`, then `repl_eval({"language": "python", "code": ...})` |
 
 The project interpreter runs as a subprocess selected from `uv`, Poetry, a
 `.venv` or `python3`. It uses the same jail and network policy as shell

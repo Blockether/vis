@@ -136,6 +136,36 @@
                     (pyx/reload-python-extensions! {:dirs []})
                     (ps/db-dispose-connection! store))))))
 
+(defn- with-shared-packages
+  "Give both test workers one isolated package directory, never the user's installation."
+  [f]
+  (let [home
+        (temp-dir)
+
+        packages
+        (.getCanonicalFile (io/file home ".vis/python/packages"))]
+
+    (.mkdirs packages)
+    (worker/stop-worker! worker/shared-key)
+    (try (with-redefs [runtime/packages-dir (constantly (str packages))]
+           (f packages))
+         (finally (worker/stop-worker! worker/shared-key)
+                  (doseq [file (reverse (file-seq home))]
+                    (io/delete-file file true))))))
+
+(defn- run-fixture-uv!
+  "Retain uv diagnostics only for the local test registry and fixture projects."
+  [project command]
+  (let [process
+        (.start (doto (ProcessBuilder. ^java.util.List command)
+                  (.directory project)
+                  (.redirectErrorStream true)))
+
+        output
+        (slurp (.getInputStream process))]
+
+    (expect (zero? (.waitFor process)) output)))
+
 (defn- registered
   [ext-name]
   (some #(when (= ext-name (:ext/name %)) %) (extension/registered-extensions)))
@@ -1569,45 +1599,49 @@ vis.register(vis.Extension(
   declared-extension-bootstrap-test
   (it
     "installs before imports, freezes external sources, and retains last-good on install failure"
-    (let [installs
-          (atom [])
+    (with-shared-packages
+      (fn [_]
+        (let [installs
+              (atom [])
 
-          fail?
-          (atom false)]
+              fail?
+              (atom false)]
 
-      (with-redefs [python-runtime/pip-install!
-                    (fn [opts specs]
-                      (swap! installs conj specs)
-                      (if @fail?
-                        {:exit 1 :out "private installer diagnostics must not be logged"}
-                        (do (write-ext! (io/file (:target opts))
-                                        "vis_einmal_dependency_fixture.py"
-                                        "VALUE = 42\n")
-                            {:exit 0})))]
-        (with-fresh-loaded
-          {"einmal/vis_einmal_fixture/__init__.py"
-           "def answer():\n    from vis_einmal_dependency_fixture import VALUE\n    return VALUE\n"
-           ".vis/extensions/einmal.py" split-extension-script}
-          (fn [_ {:keys [ext-dir]}]
-            (let [opts {:dirs [(str (io/file ext-dir ".vis/extensions"))]}
-                  invoke #(:result ((symbol-fn (registered "einmal-declared") 'einmal_answer)))]
+          (with-redefs [python-runtime/pip-install!
+                        (fn [opts specs]
+                          (swap! installs conj specs)
+                          (if @fail?
+                            {:exit 1 :out "private installer diagnostics must not be logged"}
+                            (do (write-ext! (io/file (:target opts))
+                                            "vis_einmal_dependency_fixture.py"
+                                            "VALUE = 42\n")
+                                {:exit 0})))]
+            (with-fresh-loaded
+              {"einmal/vis_einmal_fixture/__init__.py"
+               "def answer():\n    from vis_einmal_dependency_fixture import VALUE\n    return VALUE\n"
+               ".vis/extensions/einmal.py" split-extension-script}
+              (fn [_ {:keys [ext-dir]}]
+                (let [opts {:dirs [(str (io/file ext-dir ".vis/extensions"))]}
+                      invoke #(:result ((symbol-fn (registered "einmal-declared") 'einmal_answer)))]
 
-              (expect (= {:loaded 1 :failed 0 :changed? true} (pyx/reload-python-extensions! opts)))
-              (expect (= [["vis-einmal-dependency-fixture==0.0.1"]] @installs))
-              (expect (= 42 (invoke)))
-              (expect (false? (:changed? (pyx/load-python-extensions! opts))))
-              (expect (= 1 (count @installs)))
-              (write-ext! ext-dir
-                          "einmal/vis_einmal_fixture/__init__.py"
-                          "def answer():\n    return 43\n")
-              (expect (= 42 (invoke)))
-              (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
-              (expect (= 43 (invoke)))
-              (reset! fail? true)
-              (expect (= {:loaded 1 :failed 1 :changed? true} (pyx/reload-python-extensions! opts)))
-              (expect (= 43 (invoke)))
-              (expect (not (str/includes? (:error (first (pyx/load-failures)))
-                                          "private installer diagnostics"))))))))))
+                  (expect (= {:loaded 1 :failed 0 :changed? true}
+                             (pyx/reload-python-extensions! opts)))
+                  (expect (= [["vis-einmal-dependency-fixture==0.0.1"]] @installs))
+                  (expect (= 42 (invoke)))
+                  (expect (false? (:changed? (pyx/load-python-extensions! opts))))
+                  (expect (= 1 (count @installs)))
+                  (write-ext! ext-dir
+                              "einmal/vis_einmal_fixture/__init__.py"
+                              "def answer():\n    return 43\n")
+                  (expect (= 42 (invoke)))
+                  (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
+                  (expect (= 43 (invoke)))
+                  (reset! fail? true)
+                  (expect (= {:loaded 1 :failed 1 :changed? true}
+                             (pyx/reload-python-extensions! opts)))
+                  (expect (= 43 (invoke)))
+                  (expect (not (str/includes? (:error (first (pyx/load-failures)))
+                                              "private installer diagnostics"))))))))))))
 
 (defdescribe
   extension-metadata-validation-test
@@ -1667,219 +1701,227 @@ vis.register(vis.Extension(
                   local?
                   (= :uv-path mode)]]
 
-      (let
-        [wheel-name
-         "vis_einmal_dependency_fixture-0.0.1-py3-none-any.whl"
+      (with-shared-packages
+        (fn [packages]
+          (let
+            [wheel-name
+             "vis_einmal_dependency_fixture-0.0.1-py3-none-any.whl"
 
-         dist
-         "vis_einmal_dependency_fixture-0.0.1.dist-info/"
+             dist
+             "vis_einmal_dependency_fixture-0.0.1.dist-info/"
 
-         bytes
-         (ByteArrayOutputStream.)
+             bytes
+             (ByteArrayOutputStream.)
 
-         _
-         (with-open [zip (ZipOutputStream. bytes)]
-           (doseq
-             [[path text]
-              {"vis_einmal_dependency_fixture.py" "VALUE = 42\n"
-               (str dist "METADATA")
-               "Metadata-Version: 2.1\nName: vis-einmal-dependency-fixture\nVersion: 0.0.1\n"
-               (str dist "WHEEL")
-               "Wheel-Version: 1.0\nGenerator: vis-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
-               (str dist "RECORD") ""}]
-             (.putNextEntry zip (ZipEntry. path))
-             (.write zip (.getBytes ^String text StandardCharsets/UTF_8))
-             (.closeEntry zip)))
+             _
+             (with-open [zip (ZipOutputStream. bytes)]
+               (doseq
+                 [[path text]
+                  {"vis_einmal_dependency_fixture.py" "VALUE = 42\n"
+                   (str dist "METADATA")
+                   "Metadata-Version: 2.1\nName: vis-einmal-dependency-fixture\nVersion: 0.0.1\n"
+                   (str dist "WHEEL")
+                   "Wheel-Version: 1.0\nGenerator: vis-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+                   (str dist "RECORD") ""}]
+                 (.putNextEntry zip (ZipEntry. path))
+                 (.write zip (.getBytes ^String text StandardCharsets/UTF_8))
+                 (.closeEntry zip)))
 
-         wheel
-         (.toByteArray bytes)
+             wheel
+             (.toByteArray bytes)
 
-         requests
-         (atom [])
+             requests
+             (atom [])
 
-         installs
-         (atom 0)
+             installs
+             (atom 0)
 
-         install!
-         runtime/pip-install!
+             install!
+             runtime/pip-install!
 
-         server
-         (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+             server
+             (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
 
-        (.createContext server
-                        "/"
-                        (reify
-                          HttpHandler
-                            (handle [_ exchange]
-                              (let [^HttpExchange exchange
-                                    exchange
+            (.createContext server
+                            "/"
+                            (reify
+                              HttpHandler
+                                (handle [_ exchange]
+                                  (let [^HttpExchange exchange
+                                        exchange
 
-                                    path
-                                    (.getPath (.getRequestURI exchange))
+                                        path
+                                        (.getPath (.getRequestURI exchange))
 
-                                    is-wheel
-                                    (= path (str "/files/" wheel-name))
+                                        is-wheel
+                                        (= path (str "/files/" wheel-name))
 
-                                    body
-                                    (if is-wheel
-                                      wheel
-                                      (.getBytes (str "<a href='/files/" wheel-name "'>fixture</a>")
-                                                 StandardCharsets/UTF_8))]
+                                        body
+                                        (if is-wheel
+                                          wheel
+                                          (.getBytes
+                                            (str "<a href='/files/" wheel-name "'>fixture</a>")
+                                            StandardCharsets/UTF_8))]
 
-                                (swap! requests conj path)
-                                (.set (.getResponseHeaders exchange)
-                                      "Content-Type"
-                                      (if is-wheel "application/octet-stream" "text/html"))
-                                (.sendResponseHeaders exchange 200 (alength ^bytes body))
-                                (with-open [out (.getResponseBody exchange)]
-                                  (.write out ^bytes body))
-                                (.close exchange)))))
-        (.start server)
-        (try
-          (with-redefs [runtime/pip-install! (fn [opts specs]
-                                               (swap! installs inc)
-                                               (install! opts
-                                                         (into (vec specs)
-                                                               ["--isolated" "--proxy" ""
-                                                                "--retries" "0" "--timeout" "3"
-                                                                "--no-cache-dir"])))]
-            (with-fresh-loaded
-              {"einmal/vis_einmal_fixture/__init__.py"
-               "from vis_einmal_dependency_fixture import VALUE\ndef answer():\n    return VALUE\n"
-               ".vis/extensions/einmal.py"
-               (if uv?
-                 (->
-                   split-extension-script
-                   (str/replace "# dependencies = [\"vis-einmal-dependency-fixture==0.0.1\"]"
-                                "# dependencies = []")
-                   (str/replace "# [tool.vis]" "# [tool.vis]\n# project = '../../einmal'")
-                   (str/replace
-                     "    return answer()"
-                     (str
-                       "    import vis_autoinstall\n"
-                       "    def forbid_install(name):\n        raise AssertionError('unexpected install')\n"
-                       "    finder = vis_autoinstall._VisAutoInstall(forbid_install)\n"
-                       "    assert finder._wanted('absent_manual_fixture', None) is None\n"
-                       "    return answer()")))
-                 split-extension-script)
-               "vis.yml" (str "python:\n  index_url: http://127.0.0.1:"
-                              (.getPort (.getAddress server))
-                              "/simple\n")}
-              (fn [_ {:keys [ext-dir]}]
-                (with-redefs [config/load-config-raw #(@#'config/read-yaml-config-map
-                                                        (str (io/file ext-dir "vis.yml")))]
-                  (when uv?
-                    (when local?
-                      (write-ext!
-                        ext-dir
-                        "dependency/pyproject.toml"
-                        (str
-                          "[project]\nname = 'vis-einmal-dependency-fixture'\nversion = '0.0.1'\n"
-                          "[build-system]\nrequires = []\nbuild-backend = 'fixture_backend'\nbackend-path = ['.']\n"))
-                      (with-open [out (io/output-stream (io/file ext-dir "dependency" wheel-name))]
-                        (.write out ^bytes wheel))
-                      (write-ext!
-                        ext-dir
-                        "dependency/fixture_backend.py"
-                        (str
-                          "from pathlib import Path\nimport shutil\n"
-                          "def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):\n"
-                          "    name = '"
-                          wheel-name
-                          "'\n"
-                          "    shutil.copyfile(Path(__file__).with_name(name), Path(wheel_directory) / name)\n"
-                          "    return name\n")))
-                    (write-ext!
-                      ext-dir
-                      "einmal/pyproject.toml"
-                      (str
-                        "[project]\nname = 'fixture-project'\nversion = '0.0.1'\n"
-                        "requires-python = '>=3.12'\n"
-                        "dependencies = ['vis-einmal-dependency-fixture==0.0.1']\n"
-                        (cond
-                          local?
-                          "[tool.uv.sources]\nvis-einmal-dependency-fixture = {path = '../dependency', editable = true}\n"
-                          (= :uv-index mode)
-                          (str
-                            "[tool.uv.sources]\nvis-einmal-dependency-fixture = {index = 'fixture'}\n"
-                            "[[tool.uv.index]]\nname = 'fixture'\nurl = '"
-                            (get-in (config/load-config-raw) ["python" "index_url"])
-                            "'\nexplicit = true\n")
-                          :else "")))
-                    (let [p (.start (doto (ProcessBuilder.
-                                            ^java.util.List
-                                            ["uv" "lock" "--project"
-                                             (str (io/file ext-dir "einmal")) "--python"
-                                             (com.blockether.vispython.Interpreter/pythonExecutable)
-                                             "--default-index"
-                                             (get-in (config/load-config-raw)
-                                                     ["python" "index_url"]) "--no-cache"
-                                             "--no-python-downloads"])
-                                      (.redirectErrorStream true)))
-                          output (slurp (.getInputStream p))]
+                                    (swap! requests conj path)
+                                    (.set (.getResponseHeaders exchange)
+                                          "Content-Type"
+                                          (if is-wheel "application/octet-stream" "text/html"))
+                                    (.sendResponseHeaders exchange 200 (alength ^bytes body))
+                                    (with-open [out (.getResponseBody exchange)]
+                                      (.write out ^bytes body))
+                                    (.close exchange)))))
+            (.start server)
+            (try
+              (with-redefs [python-runtime/run-uv!
+                            run-fixture-uv!
 
-                      (expect (= 0 (.waitFor p)) output)))
-                  (when uv?
-                    (expect (= {:loaded 0 :failed 1 :changed? true}
-                               (pyx/reload-python-extensions!
-                                 {:dirs [(str (io/file ext-dir ".vis/extensions"))]})))
-                    (python-runtime/uv-command! ["sync" "--project" (str (io/file ext-dir "einmal"))
-                                                 "--locked"]))
-                  (expect (= {:loaded 1 :failed 0 :changed? true}
-                             (with-redefs [python-runtime/uv-sync!
-                                           (fn [& _]
-                                             (throw (ex-info "Loader must not sync" {})))]
-                               (pyx/reload-python-extensions!
-                                 {:dirs [(str (io/file ext-dir ".vis/extensions"))]}))))
-                  (when-not local?
-                    (expect (some #{"/simple/vis-einmal-dependency-fixture/"} @requests))
-                    (expect (some #{(str "/files/" wheel-name)} @requests)))
-                  (when uv? (expect (not (.exists (io/file ext-dir "einmal/.venv")))))
-                  (let [ext (registered "einmal-declared")
-                        made (ep/create-python-context {}
-                                                       (fn []
-                                                         [(.getCanonicalPath ext-dir)])
-                                                       {:worker? true
-                                                        :jail-enabled? true
-                                                        :enabled? false
-                                                        :allowed-domains []
-                                                        :denied-domains []
-                                                        :exclude-domains []}
-                                                       nil)
-                        ctx (:python-context made)
-                        env {:python-context ctx
-                             :session-id "declared-extension-worker"
-                             :extensions (atom [ext])
-                             :active-extensions (atom [])}]
+                            runtime/pip-install!
+                            (fn [opts specs]
+                              (swap! installs inc)
+                              (install! opts
+                                        (into (vec specs)
+                                              ["--isolated" "--proxy" "" "--retries" "0" "--timeout"
+                                               "3" "--no-cache-dir"])))]
 
-                    (try
-                      (lp/sync-active-extension-symbols! env [ext])
-                      (let [result (ep/run-python-block ctx "print(await einmal_answer())")]
-                        (expect (nil? (:error result)))
-                        (expect (= "42" (str/trim (:stdout result)))))
-                      (expect (= (if uv? 0 1) @installs))
+                (with-fresh-loaded
+                  {"einmal/vis_einmal_fixture/__init__.py"
+                   "import vis_einmal_dependency_fixture as dep\ndef answer():\n    return {'value': dep.VALUE, 'path': dep.__file__}\n"
+                   ".vis/extensions/einmal.py"
+                   (if uv?
+                     (-> split-extension-script
+                         (str/replace "# dependencies = [\"vis-einmal-dependency-fixture==0.0.1\"]"
+                                      "# dependencies = []")
+                         (str/replace "# [tool.vis]" "# [tool.vis]\n# project = '../../einmal'"))
+                     split-extension-script)
+                   "vis.yml" (str "python:\n  index_url: http://127.0.0.1:"
+                                  (.getPort (.getAddress server))
+                                  "/simple\n")}
+                  (fn [_ {:keys [ext-dir]}]
+                    (with-redefs [config/load-config-raw #(@#'config/read-yaml-config-map
+                                                            (str (io/file ext-dir "vis.yml")))]
                       (when uv?
-                        (let
-                          [probe
-                           (ep/run-python-block
-                             ctx
-                             "import sys\nassert not getattr(sys, '_vis_manual_dependencies', False)")]
-                          (expect (nil? (:error probe))))
-                        (let [lock-file (io/file ext-dir "einmal/uv.lock")
-                              lock-before (slurp lock-file)]
+                        (when local?
+                          (write-ext!
+                            ext-dir
+                            "dependency/pyproject.toml"
+                            (str
+                              "[project]\nname = 'vis-einmal-dependency-fixture'\nversion = '0.0.1'\n"
+                              "[build-system]\nrequires = []\nbuild-backend = 'fixture_backend'\nbackend-path = ['.']\n"))
+                          (with-open [out (io/output-stream
+                                            (io/file ext-dir "dependency" wheel-name))]
+                            (.write out ^bytes wheel))
+                          (write-ext!
+                            ext-dir
+                            "dependency/fixture_backend.py"
+                            (str
+                              "from pathlib import Path\nimport shutil\n"
+                              "def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):\n"
+                              "    name = '"
+                              wheel-name
+                              "'\n"
+                              "    shutil.copyfile(Path(__file__).with_name(name), Path(wheel_directory) / name)\n"
+                              "    return name\n")))
+                        (write-ext!
+                          ext-dir
+                          "einmal/pyproject.toml"
+                          (str
+                            "[project]\nname = 'fixture-project'\nversion = '0.0.1'\n"
+                            "requires-python = '>=3.12'\n"
+                            "dependencies = ['vis-einmal-dependency-fixture==0.0.1']\n"
+                            (cond
+                              local?
+                              "[tool.uv.sources]\nvis-einmal-dependency-fixture = {path = '../dependency', editable = true}\n"
+                              (= :uv-index mode)
+                              (str
+                                "[tool.uv.sources]\nvis-einmal-dependency-fixture = {index = 'fixture'}\n"
+                                "[[tool.uv.index]]\nname = 'fixture'\nurl = '"
+                                (get-in (config/load-config-raw) ["python" "index_url"])
+                                "'\nexplicit = true\n")
+                              :else "")))
+                        (let [p (.start
+                                  (doto (ProcessBuilder.
+                                          ^java.util.List
+                                          ["uv" "lock" "--project" (str (io/file ext-dir "einmal"))
+                                           "--python"
+                                           (com.blockether.vispython.Interpreter/pythonExecutable)
+                                           "--default-index"
+                                           (get-in (config/load-config-raw) ["python" "index_url"])
+                                           "--no-cache" "--no-python-downloads"])
+                                    (.redirectErrorStream true)))
+                              output (slurp (.getInputStream p))]
 
-                          (spit (io/file ext-dir "einmal/pyproject.toml")
+                          (expect (= 0 (.waitFor p)) output)))
+                      (when uv?
+                        (expect (= {:loaded 0 :failed 1 :changed? true}
+                                   (pyx/reload-python-extensions!
+                                     {:dirs [(str (io/file ext-dir ".vis/extensions"))]})))
+                        (python-runtime/uv-command! ["sync" "--project"
+                                                     (str (io/file ext-dir "einmal")) "--locked"]))
+                      (expect (= {:loaded 1 :failed 0 :changed? true}
+                                 (with-redefs [python-runtime/uv-sync!
+                                               (fn [& _]
+                                                 (throw (ex-info "Loader must not sync" {})))]
+                                   (pyx/reload-python-extensions!
+                                     {:dirs [(str (io/file ext-dir ".vis/extensions"))]}))))
+                      (when-not local?
+                        (expect (some #{"/simple/vis-einmal-dependency-fixture/"} @requests))
+                        (expect (some #{(str "/files/" wheel-name)} @requests)))
+                      (when uv? (expect (not (.exists (io/file ext-dir "einmal/.venv")))))
+                      (let [ext (registered "einmal-declared")
+                            made (ep/create-python-context {}
+                                                           (fn []
+                                                             [(.getCanonicalPath ext-dir)])
+                                                           {:worker? true
+                                                            :jail-enabled? true
+                                                            :enabled? false
+                                                            :allowed-domains []
+                                                            :denied-domains []
+                                                            :exclude-domains []}
+                                                           nil)
+                            ctx (:python-context made)
+                            env {:python-context ctx
+                                 :session-id "declared-extension-worker"
+                                 :extensions (atom [ext])
+                                 :active-extensions (atom [])}]
+
+                        (try
+                          (lp/sync-active-extension-symbols! env [ext])
+                          (let [result (ep/run-python-block
+                                         ctx
+                                         (str "from pathlib import Path\n"
+                                              "import vis_einmal_dependency_fixture as dep\n"
+                                              "result = await einmal_answer()\n"
+                                              "assert result['path'] == dep.__file__\n"
+                                              "assert Path(dep.__file__).parent == Path("
+                                              (pr-str (str packages))
+                                              ")\n" "print(result['value'])"))]
+                            (expect (nil? (:error result)))
+                            (expect (= "42" (str/trim (:stdout result)))))
+                          (expect (= (if uv? 0 1) @installs))
+                          (when uv?
+                            (let [probe (ep/run-python-block
+                                          ctx
+                                          "assert '__vis_pip_install__' not in globals()")]
+                              (expect (nil? (:error probe))))
+                            (let [lock-file (io/file ext-dir "einmal/uv.lock")
+                                  lock-before (slurp lock-file)]
+
+                              (spit
+                                (io/file ext-dir "einmal/pyproject.toml")
                                 "\n[project.optional-dependencies]\nstale = ['absent-fixture==1']\n"
                                 :append
                                 true)
-                          (expect (= {:loaded 1 :failed 1 :changed? true}
-                                     (pyx/reload-python-extensions!
-                                       {:dirs [(str (io/file ext-dir ".vis/extensions"))]})))
-                          (expect (= lock-before (slurp lock-file)))
-                          (expect (identical? ext (registered "einmal-declared")))
-                          (expect (= 42 (:result ((symbol-fn ext 'einmal_answer)))))))
-                      (finally (ep/dispose-python-context! ctx))))))))
-          (finally (.stop server 0)))))))
+                              (expect (= {:loaded 1 :failed 1 :changed? true}
+                                         (pyx/reload-python-extensions!
+                                           {:dirs [(str (io/file ext-dir ".vis/extensions"))]})))
+                              (expect (= lock-before (slurp lock-file)))
+                              (expect (identical? ext (registered "einmal-declared")))
+                              (expect (= 42
+                                         (get-in ((symbol-fn ext 'einmal_answer))
+                                                 [:result "value"])))))
+                          (finally (ep/dispose-python-context! ctx))))))))
+              (finally (.stop server 0)))))))))
 
 ;; Package-extension convention — a subdir holding extension.py = ONE extension
 

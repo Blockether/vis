@@ -709,7 +709,7 @@
   ;; Manual sync must prepare packages that perform real work through extension tools.
   ;; Trusted native calls run outside the model sandbox, without changing its policy.
   (it
-    "computes with native wheels in the CLI and a separate trusted extension process"
+    "imports the same native wheels from one directory in the CLI and both worker processes"
     (let [dir
           (temp-dir "vis-native-packages")
 
@@ -790,6 +790,11 @@
                                                         (throw (ex-info "Unexpected pip" {})))]
 
               (let [packages (python-runtime/prepared-project project)
+                    shared-package? (fn [{:keys [status path]}]
+                                      (and (= "ok" status)
+                                           path
+                                           (.startsWith (.toPath (io/file path))
+                                                        (.toPath ^File packages))))
                     baseline (run-binary
                                dir
                                (into cli
@@ -797,19 +802,17 @@
                                       (str
                                         "import sys, json\nsys.path[:0] = ["
                                         (pr-str (str source))
-                                        ", "
-                                        (pr-str (str packages))
                                         "]\n"
                                         "from package_checks import packages_check\n"
                                         "print('PACKAGE_CHECK ' + json.dumps(packages_check()))")])
                                120)
                     report (package-check-result (:output baseline))]
 
+                (expect (= (.getCanonicalFile (io/file (runtime/packages-dir))) packages))
                 (expect (= 0 (:exit baseline)) (:output baseline))
                 (expect (= #{:numpy :scipy :pydantic :cryptography} (set (keys (:packages report))))
                         (:output baseline))
-                (expect (every? #(and (= "ok" (:status %)) (:prepared %)) (vals (:packages report)))
-                        (pr-str report))
+                (expect (every? shared-package? (vals (:packages report))) (pr-str report))
                 (expect (= {:loaded 1 :failed 0 :changed? true}
                            (pyx/reload-python-extensions! {:dirs [(str entries)]})))
                 (let [jvm-worker @#'worker/child-argv
@@ -847,11 +850,18 @@
                                (ep/run-python-block
                                  ctx
                                  (str
-                                   "import json, dataclasses\n"
+                                   "import json, dataclasses, importlib.util\n"
+                                   "from pathlib import Path\n" "import numpy as np\n"
+                                   "assert np.dot([2, 3], [4, 5]) == 23\n"
+                                   "package_paths = {name: str(Path(importlib.util.find_spec(name).origin).resolve()) "
+                                   "for name in ('numpy', 'scipy', 'pydantic', 'cryptography')}\n"
                                    "status = await packages_status()\n"
                                    "assert type(status).__name__ == 'PackageStatus' and status.state == 'ready'\n"
                                    "assert dataclasses.is_dataclass(status)\n"
-                                   "print('PACKAGE_CHECK ' + json.dumps(await packages_check()))"))
+                                   "report = await packages_check()\n"
+                                   "assert all(report['packages'][name]['path'] == path "
+                                   "for name, path in package_paths.items())\n"
+                                   "print('PACKAGE_CHECK ' + json.dumps(report))"))
                                report (package-check-result (:stdout answer))
                                statuses (into {}
                                               (map (fn [[name result]]
@@ -865,20 +875,18 @@
                                                (:process (get @@#'worker/workers
                                                               (worker/extension-worker-key ctx))))
                                          (:pid report)))
-                              (expect (true? (:manual report)))
                               (expect (= {:numpy "ok" :scipy "ok" :pydantic "ok" :cryptography "ok"}
                                          statuses)
                                       (pr-str report))
-                              (expect (every? :prepared (vals (:packages report))))
+                              (expect (every? shared-package? (vals (:packages report))))
                               (println "PACKAGE_COMPATIBILITY"
                                        (if native? :native :jvm)
                                        (pr-str statuses)))
                             (finally (ep/dispose-python-context! ctx)))))))))))
           (expect (= lock-before (slurp (io/file project "uv.lock"))))
           (expect (not (.exists (io/file project ".venv"))))
-          (expect (= 1
-                     (count (filter #(= ".vis-packages" (.getName ^File %))
-                                    (file-seq (io/file dir ".vis/python/projects")))))))
+          (expect (.isDirectory (io/file dir ".vis/python/packages")))
+          (expect (not-any? #(= ".vis-packages" (.getName ^File %)) (file-seq dir))))
         (catch Exception error
           (doseq [log
                   (distinct (cons (:log (ex-data error)) (map :log (vals @@#'worker/workers))))

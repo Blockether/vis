@@ -17,7 +17,9 @@
    library — and `tar` does the unpacking because the tree carries symlinks and
    execute bits that no jar or zip round-trips."
   (:require [babashka.http-client :as http]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.contract.config :as contract-config]
             [com.blockether.vis.internal.config.core :as config]
@@ -155,62 +157,66 @@
         [flag index])
       [])))
 
+(defn- run-uv!
+  "Run uv without exposing registry diagnostics, which can contain credentials."
+  [^File project command]
+  (let [process (.start (doto (ProcessBuilder. ^java.util.List command)
+                          (.directory project)
+                          (.redirectErrorStream true)
+                          (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD)))]
+    (try
+      (when-not (.waitFor process 180 TimeUnit/SECONDS)
+        (throw (ex-info "uv dependency preparation timed out" {})))
+      (when-not (zero? (.exitValue process))
+        (throw
+          (ex-info
+            "uv dependency preparation failed; check uv.lock, project sources, python.index_url and Python compatibility"
+            {:exit (.exitValue process)})))
+      (finally (when (.isAlive process)
+                 (with-open [children (.descendants process)]
+                   (.forEach children
+                             (reify
+                               java.util.function.Consumer
+                                 (accept [_ child] (.destroyForcibly ^ProcessHandle child)))))
+                 (.destroyForcibly process))))))
+
 (defn uv-sync!
-  "Sync a locked uv project into a private snapshot using the embedded Python.
-   Uses uv's project sources and noneditable installs, never the project's .venv.
-   Builds are allowed for explicitly selected trusted projects. Output is discarded
-   because registry diagnostics may contain credentials. Requires uv on PATH."
-  ([project snapshot] (uv-sync! project snapshot []))
-  ([^File project ^File snapshot options]
-   (let [python
-         (Interpreter/pythonExecutable)
-
-         environment
-         (io/file snapshot ".vis-uv")
-
-         command
-         (into ["uv" "sync" "--locked" "--no-editable" "--no-default-groups" "--no-python-downloads"
-                "--python" python "--project" (str project)]
-               (concat (index-args "--default-index") options))
-
-         builder
-         (doto (ProcessBuilder. ^java.util.List command)
-           (.redirectErrorStream true)
-           (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD))]
-
+  "Install a locked uv project into the shared packages directory.
+   uv exports its resolved sources and artifact hashes to pylock.toml, then installs
+   that lock with its target-directory installer. Unrelated packages are retained.
+   Builds are allowed for explicitly selected trusted projects. No project .venv
+   or private dependency copy is created. Requires uv on PATH."
+  ([project packages] (uv-sync! project packages []))
+  ([^File project ^File packages options]
+   (let [python (Interpreter/pythonExecutable)]
      (when-not python (throw (ex-info "uv requires the embedded Python executable" {})))
-     (.put (.environment builder) "UV_PROJECT_ENVIRONMENT" (str environment))
-     (let [process (.start builder)]
-       (try
-         (when-not (.waitFor process 180 TimeUnit/SECONDS)
-           (throw (ex-info "Extension uv sync timed out" {})))
-         (when-not (zero? (.exitValue process))
-           (throw
-             (ex-info
-               "Extension uv sync failed; check uv.lock, project sources, python.index_url and Python compatibility"
-               {:exit (.exitValue process)})))
-         (finally (when (.isAlive process)
-                    (with-open [children (.descendants process)]
-                      (.forEach children
-                                (reify
-                                  java.util.function.Consumer
-                                    (accept [_ child] (.destroyForcibly ^ProcessHandle child)))))
-                    (.destroyForcibly process)))))
-     (let [candidates (distinct (map #(.getCanonicalFile ^File %)
-                                     (filter #(and (.isDirectory ^File %)
-                                                   (= "site-packages" (.getName ^File %)))
-                                             (file-seq environment))))]
-       (when-not (= 1 (count candidates))
-         (throw (ex-info "uv environment must have one site-packages directory" {})))
-       (Files/move (.toPath ^File (first candidates))
-                   (.toPath (io/file snapshot ".vis-packages"))
-                   (make-array CopyOption 0)))
-     {:exit 0})))
+     (.mkdirs packages)
+     ;; uv exports local source paths relative to the project, not --output-file.
+     (let [lock-file (.toFile (Files/createTempFile
+                                (.toPath project)
+                                "pylock.vis-"
+                                ".toml"
+                                (make-array java.nio.file.attribute.FileAttribute 0)))
+           common (concat ["--python" python "--no-python-downloads"]
+                          (index-args "--default-index")
+                          options)]
+
+       (try (run-uv! project
+                     (into ["uv" "export" "--locked" "--no-editable" "--no-default-groups"
+                            "--format" "pylock.toml" "--project" (str project) "--output-file"
+                            (str lock-file)]
+                           common))
+            (run-uv! project
+                     (into ["uv" "pip" "install" "--target" (str packages) "--requirements"
+                            (str lock-file) "--no-deps"]
+                           common))
+            {:exit 0}
+            (finally (Files/deleteIfExists (.toPath lock-file))))))))
 
 (defn- project-key
   [^File project]
   (util/sha256-hex (pr-str [(.getCanonicalPath project) runtime/version
-                            (Interpreter/pythonExecutable)
+                            (Interpreter/pythonExecutable) (runtime/packages-dir)
                             (slurp (io/file project "pyproject.toml"))
                             (slurp (io/file project "uv.lock")) (index-args "--default-index")])))
 
@@ -220,34 +226,64 @@
            ".vis" "python"
            "projects" (util/sha256-hex (.getCanonicalPath project))))
 
+(defn- package-metadata
+  "Record installed distribution metadata so a later conflicting install invalidates readiness."
+  [^File packages]
+  (reduce (fn [installed ^File dir]
+            (let [name
+                  (.getName dir)
+
+                  metadata
+                  (io/file dir "METADATA")
+
+                  record
+                  (io/file dir "RECORD")]
+
+              (if (and (.endsWith name ".dist-info") (.isFile metadata))
+                (let [distribution (-> (first (str/split name #"-" 2))
+                                       str/lower-case
+                                       (str/replace #"[_.]+" "-"))]
+                  (assoc-in installed
+                    [distribution name]
+                    (util/sha256-hex
+                      (str (slurp metadata) "\n" (when (.isFile record) (slurp record))))))
+                installed)))
+          (sorted-map)
+          (.listFiles packages)))
+
 (defn prepared-project
-  "Read a manually prepared project. Never runs an installer. A changed lock or
-   project manifest requires another explicit sync. Published generations are immutable."
+  "Validate a manually prepared project and return the shared packages directory.
+   Never installs or copies dependencies. A changed lock, runtime, index or installed
+   distribution requires another explicit sync. Project state stores metadata only."
   ^File [^File project]
-  (let [home
-        (project-home project)
+  (let [pointer
+        (io/file (project-home project) (str (project-key project) ".ready"))
 
-        pointer
-        (io/file home (str (project-key project) ".ready"))
+        packages
+        (.getCanonicalFile (io/file (runtime/packages-dir)))
 
-        generation
-        (when (.isFile pointer) (slurp pointer))
+        ready
+        (when (.isFile pointer) (try (edn/read-string (slurp pointer)) (catch Exception _ nil)))
 
-        dir
-        (when (and generation (re-matches #"[0-9a-f-]{36}" generation))
-          (io/file home generation ".vis-packages"))]
+        installed
+        (package-metadata packages)]
 
-    (when-not (and dir (.isDirectory ^File dir))
+    (when-not (and (.isDirectory packages)
+                   (= (str packages) (:packages ready))
+                   (map? (:metadata ready))
+                   (every? (fn [[name digest]]
+                             (= digest (get installed name)))
+                           (:metadata ready)))
       (throw (ex-info (str
                         "Missing or stale Vis environment; run: vis-agent python uv sync --project "
                         (pr-str (.getCanonicalPath project))
                         " --locked")
                       {:type ::project-sync-required})))
-    dir))
+    packages))
 
 (defn sync-project!
-  "Explicitly sync a trusted uv project and atomically publish its installed packages.
-   Does not modify the project .venv. Old generations remain usable by existing loaders."
+  "Explicitly install a trusted uv project into the one shared packages directory.
+   Publish readiness only after success; never remove unrelated installed packages."
   [^File project options]
   (when-not (every? #{"--offline" "--no-cache"} options)
     (throw (ex-info "Supported uv sync options: --project PATH, --locked, --offline, --no-cache"
@@ -261,27 +297,23 @@
         home
         (project-home project)
 
-        generation
-        (str (java.util.UUID/randomUUID))
-
-        staging
-        (io/file home generation)
+        packages
+        (.getCanonicalFile (io/file (runtime/packages-dir)))
 
         pointer
-        (io/file home (str generation ".ready"))]
+        (io/file home (str (java.util.UUID/randomUUID) ".ready"))]
 
-    (.mkdirs staging)
-    (try (uv-sync! project staging options)
+    (.mkdirs home)
+    (try (uv-sync! project packages options)
          (when-not (= key (project-key project))
            (throw (ex-info "Project changed during sync; run sync again" {})))
-         (spit pointer generation)
+         (spit pointer (pr-str {:packages (str packages) :metadata (package-metadata packages)}))
          (Files/move (.toPath pointer)
                      (.toPath (io/file home (str key ".ready")))
                      (into-array CopyOption
                                  [StandardCopyOption/ATOMIC_MOVE
                                   StandardCopyOption/REPLACE_EXISTING]))
-         {:exit 0 :packages (str (io/file staging ".vis-packages"))}
-         (catch Throwable t (delete-tree! staging) (throw t))
+         {:exit 0 :packages (str packages)}
          (finally (.delete pointer)))))
 
 (defn uv-command!

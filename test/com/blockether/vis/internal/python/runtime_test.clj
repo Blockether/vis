@@ -185,6 +185,7 @@
                     (io/delete-file f true))))))
 
 (deftest manual-uv-publication-test
+  (python-runtime/ensure-library!)
   (let [dir
         (temp-dir "vis-manual-uv")
 
@@ -194,60 +195,76 @@
         home
         (io/file dir "prepared")
 
+        packages
+        (.getCanonicalFile (io/file dir ".vis/python/packages"))
+
         failed?
         (atom false)
 
         calls
-        (atom [])]
+        (atom [])
+
+        args
+        ["sync" "--project" (str project) "--locked" "--offline"]
+
+        sync-required?
+        (fn []
+          (= :com.blockether.vis.internal.python.runtime/project-sync-required
+             (try (python-runtime/prepared-project project)
+                  nil
+                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))]
 
     (spit (io/file project "pyproject.toml") "[project]\nname='fixture'\nversion='1'\n")
     (spit (io/file project "uv.lock") "version = 1\n")
+    (.mkdirs packages)
+    (spit (io/file packages "unrelated.py") "VALUE = 7\n")
     (try
       (with-redefs-fn {#'python-runtime/project-home (fn [_]
                                                        home)
+                       #'runtime/packages-dir (constantly (str packages))
                        #'config/load-config-raw (constantly {})
                        #'python-runtime/uv-sync!
-                       (fn [p snapshot options]
-                         (swap! calls conj [p options])
+                       (fn [p target options]
+                         (swap! calls conj [p target options])
                          (when @failed? (throw (ex-info "simulated sync failure" {})))
-                         (.mkdirs (io/file snapshot ".vis-packages"))
-                         (spit (io/file snapshot ".vis-packages/value.py") "VALUE = 42"))}
+                         (spit (io/file target "value.py") "VALUE = 42")
+                         (let [metadata (io/file target "fixture-1.dist-info/METADATA")]
+                           (io/make-parents metadata)
+                           (spit metadata "Name: fixture\nVersion: 1\n")))}
         (fn []
-          (is (= :com.blockether.vis.internal.python.runtime/project-sync-required
-                 (try (python-runtime/prepared-project project)
-                      nil
-                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
-          (let [args
-                ["sync" "--project" (str project) "--locked" "--offline"]
-
-                result
-                (python-runtime/uv-command! args)
-
-                first-dir
-                (python-runtime/prepared-project project)]
-
-            (is (= (:packages result) (str first-dir)))
-            (is (= [[(.getCanonicalFile project) ["--offline"]]] @calls))
-            (is (not (.exists (io/file project ".venv"))))
-            (reset! failed? true)
-            (is (= "simulated sync failure"
-                   (try (python-runtime/uv-command! args) nil (catch Exception e (.getMessage e)))))
-            (is (= first-dir (python-runtime/prepared-project project)))
-            (reset! failed? false)
-            (python-runtime/uv-command! args)
-            (is (not= first-dir (python-runtime/prepared-project project)))
-            (is (.isFile (io/file first-dir "value.py"))))
+          (is (sync-required?))
+          (is (= {:exit 0 :packages (str packages)} (python-runtime/uv-command! args)))
+          (is (= packages (python-runtime/prepared-project project))
+              "uv and both workers use the one shared packages directory")
+          (is (= [[(.getCanonicalFile project) packages ["--offline"]]] @calls))
+          (is (not (.exists (io/file project ".venv"))))
+          (reset! failed? true)
+          (is (= "simulated sync failure"
+                 (try (python-runtime/uv-command! args) nil (catch Exception e (.getMessage e)))))
+          (is (= packages (python-runtime/prepared-project project)))
+          (reset! failed? false)
+          (python-runtime/uv-command! args)
+          (is (= packages (python-runtime/prepared-project project)))
+          (is (.isFile (io/file packages "value.py")))
+          (is (.isFile (io/file packages "unrelated.py")))
+          (is (not-any? #(.isDirectory ^java.io.File %) (.listFiles home)))
+          (let [extra (io/file packages "fixture-2.dist-info/METADATA")]
+            (io/make-parents extra)
+            (spit extra "Name: fixture\nVersion: 2\n")
+            (is (sync-required?) "A second installed version must not preserve stale readiness")
+            (io/delete-file extra)
+            (io/delete-file (.getParentFile extra)))
+          (spit (io/file packages "fixture-1.dist-info/METADATA") "Name: fixture\nVersion: 2\n")
+          (is (sync-required?) "A conflicting shared install invalidates the prepared project")
+          (python-runtime/uv-command! args)
           (spit (io/file project "uv.lock") "version = 2\n")
-          (is (= :com.blockether.vis.internal.python.runtime/project-sync-required
-                 (try (python-runtime/prepared-project project)
-                      nil
-                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+          (is (sync-required?))
           (let [before @calls]
-            (doseq [args [["pip" "install" "x"] ["sync" "--python" "other"] ["sync" "--active"]
-                          ["sync" "--project"]]]
-              (is (try (python-runtime/uv-command! args)
+            (doseq [invalid [["pip" "install" "x"] ["sync" "--python" "other"] ["sync" "--active"]
+                             ["sync" "--project"]]]
+              (is (try (python-runtime/uv-command! invalid)
                        false
                        (catch clojure.lang.ExceptionInfo _ true))))
             (is (= before @calls)))))
-      (finally (doseq [f (reverse (file-seq dir))]
-                 (io/delete-file f true))))))
+      (finally (doseq [file (reverse (file-seq dir))]
+                 (io/delete-file file true))))))

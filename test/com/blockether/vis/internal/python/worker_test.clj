@@ -41,18 +41,34 @@
 
 (defdescribe
   worker-session-state-test
-  (it
-    "imports host modules and preserves globals between blocks in the runtime worker"
-    (with-worker-context
-      (fn [session]
-        (expect
-          (=
-            "41\n"
-            (:stdout
-              (env/run-python-block
-                session
-                "import vis_introspection, vis_autoinstall\nworker_value = 41\nprint(worker_value)"))))
-        (expect (= "42\n" (:stdout (env/run-python-block session "print(worker_value + 1)"))))))))
+  (it "imports host modules and preserves globals between blocks in the runtime worker"
+      (with-worker-context
+        (fn [session]
+          (expect (= "41\n"
+                     (:stdout (env/run-python-block
+                                session
+                                "import vis_introspection
+worker_value = 41
+print(worker_value)"))))
+          (expect (= "42\n" (:stdout (env/run-python-block session "print(worker_value + 1)"))))))))
+
+(defdescribe
+  shared-packages-install-authority-test
+  (it "does not expose a package installer to sandbox code"
+      (let [installs (atom 0)]
+        (with-redefs [com.blockether.vis.internal.python.runtime/pip-install! (fn [& _]
+                                                                                (swap! installs inc)
+                                                                                {:exit 1})]
+          (with-worker-context
+            (fn [session]
+              (let [result (env/run-python-block
+                             session
+                             (str "assert '__vis_pip_install__' not in globals()\n"
+                                  "try:\n    import absent_shared_packages_fixture\n"
+                                  "except ModuleNotFoundError:\n    print('missing')\n"))]
+                (expect (nil? (:error result)))
+                (expect (= "missing\n" (:stdout result)))
+                (expect (zero? @installs)))))))))
 
 (defdescribe reload-worker-cleanup-test
              ;; Regression: /reload only advanced the policy epoch, leaving idle workers

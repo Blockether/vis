@@ -392,8 +392,10 @@
           (expect (not (str/includes? text "apropos")))
           (expect (not (str/includes? text "doc(name)")))
           (expect (str/includes? text "Auto-imported by `python_execution`"))
-          (expect (str/includes? text "REAL CPython with pip"))
-          (expect (str/includes? text "`numpy` IS numpy"))
+          (expect (str/includes? text "REAL CPython"))
+          (expect (str/includes? text "same `~/.vis/python/packages`"))
+          (expect (str/includes? text "Imports never install packages"))
+          (expect (not (str/includes? text "fetched once")))
           (expect (str/includes? text "Modules Vis publishes ITSELF"))
           (doseq [module ["PIL" "brotli" "fontTools" "numpy" "zoneinfo"]]
             (expect (str/includes? text (str "`" module "`"))))

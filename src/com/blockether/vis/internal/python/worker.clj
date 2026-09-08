@@ -76,7 +76,7 @@
                                            (throw (ex-info (str "Missing Vis guest module " name)
                                                            {:module name})))]
                           [name (slurp resource)])))
-                 ["vis_introspection.py" "vis_autoinstall.py" "vis_results.py"]))))
+                 ["vis_introspection.py" "vis_results.py"]))))
 
 (defn guest-source-dir
   "Stage and answer the directory containing Vis-owned Python guest modules."

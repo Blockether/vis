@@ -174,13 +174,8 @@
         (or (get-in @registry [session tool]) (get-in @registry [door-session tool]))]
 
     (when (and claimed session (not= claimed session))
-      ;; Loud only when the caller does NOT own the tool, which is somebody
-      ;; reaching for a neighbour's. A caller that owns it is served its own and
-      ;; the envelope is merely stale — `vis_autoinstall` keeps ONE finder for
-      ;; the process and re-points it at each new session's callable, so an
-      ;; import can carry the previous session's name (measured at gateway boot:
-      ;; caller `vis_sandbox_5`, claimed `vis_sandbox_4`). That used to run the
-      ;; OTHER session's closure, with the other session's network policy.
+      ;; A stale envelope never selects another session's closure or permissions.
+      ;; Only the connection-bound caller decides which registered tool can run.
       (tel/log! {:level (if f :debug :warn)
                  :id ::session-mismatch
                  :data {:tool tool :caller session :claimed claimed :served? (some? f)}

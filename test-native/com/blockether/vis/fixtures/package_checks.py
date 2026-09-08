@@ -1,7 +1,6 @@
 """Native-package compatibility checks; a blocked import is not a successful check."""
 
 import os
-import sys
 import traceback
 from pathlib import Path
 
@@ -72,7 +71,7 @@ def packages_check() -> dict:
             results[name] = {
                 "status": "ok",
                 "version": module.__version__,
-                "prepared": ".vis-packages" in Path(module.__file__).parts,
+                "path": str(Path(module.__file__).resolve()),
             }
         except Exception as error:
             results[name] = {
@@ -83,6 +82,5 @@ def packages_check() -> dict:
             }
     return {
         "packages": results,
-        "manual": getattr(sys, "_vis_manual_dependencies", False),
         "pid": os.getpid(),
     }

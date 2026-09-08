@@ -1092,44 +1092,6 @@
                                 (partial py-install-tool!))
     (try (py-install-module! session "network_probe") (catch Throwable _ nil))))
 
-(defn- pip-install!
-  "Install the distribution `spec` for the sandbox, answering whether it landed.
-
-   The HOST fetches it, because the guest may neither spawn a process nor route
-   its own egress — so this is a door with its own policy and not a hole in the
-   one the block runs under: only a plain distribution name, only when this
-   session has network at all, and only ever a WHEEL (the runtime's `pip` passes
-   `--only-binary=:all:`, since an sdist would run its own `setup.py` on the
-   host, outside every boundary here). Never throws: a refusal is `false` and
-   the guest sees the ordinary `ModuleNotFoundError`."
-  [network-enabled? spec]
-  (boolean (and network-enabled?
-                (string? spec)
-                (re-matches #"[A-Za-z0-9][A-Za-z0-9._-]{0,63}" spec)
-                (try (zero? (long (:exit (python-runtime/pip-install! [spec]) 1)))
-                     (catch Throwable t
-                       (tel/log! {:level :warn :id ::pip-install-failed :spec spec :error t})
-                       false)))))
-
-(defn- install-autoinstall!
-  "Let this session's first `import numpy` fetch numpy.
-
-   Vis used to answer that import with a reimplementation of its own; the
-   interpreter is the real one now, so the honest answer is the real wheel. The
-   finder is Vis' own guest module and goes LAST on `sys.meta_path`, so it only
-   ever sees a name neither the standard library nor an installed package could
-   resolve."
-  [session network-opts]
-  (try (python-host/install-sync-tools! session
-                                        {"__vis_pip_install__"
-                                         (partial pip-install! (boolean (:enabled? network-opts)))}
-                                        (fn [sess nm]
-                                          (if-let [k (worker-of sess)]
-                                            (pyext/install-sync-tool! k sess nm)
-                                            (runtime/install-sync-tool! sess nm))))
-       (exec! session "import vis_autoinstall; vis_autoinstall.install(__vis_pip_install__)")
-       (catch Throwable t (tel/log! {:level :warn :id ::autoinstall-failed :error t}) nil)))
-
 (defn- install-shims!
   "Give `session` every registered sandbox shim: its host bindings first, then
    its Python.
@@ -1262,7 +1224,6 @@
     (exec! session "__vis_stamp_tools__()")
     (install-network! session network-opts)
     (install-network-probe! session)
-    (install-autoinstall! session network-opts)
     {:python-context session
      :sandbox-ns :python
      :initial-ns-keys (set (map str (or (guest-value session "sorted(globals())") [])))}))
