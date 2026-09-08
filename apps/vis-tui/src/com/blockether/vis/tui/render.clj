@@ -2021,16 +2021,18 @@
                       ;; everything Vis says, whether it lands before a call or after it.
                       bg-color (if (:activity-content? meta) t/code-block-bg bg-color)
                       fg-color (if (:activity-content? meta) t/code-block-fg fg-color)
-                      content-col (long (or (:activity-content-col meta) 0))
+                      execution-rail? (:execution-rail? meta)
+                      rail-inset (if execution-rail? 3 0)
+                      content-col (+ (long (or (:activity-content-col meta) 0)) (long rail-inset))
                       x (+ (long bx)
                            (long (if (:activity-content? meta)
                                    content-col
-                                   (if (or user? error?) h-pad 0))))
+                                   (+ (long (if (or user? error?) h-pad 0)) (long rail-inset)))))
                       y (+ (long btop) (long i))
                       iw (if (:activity-content? meta)
                            (max 0 (- (long bubble-w) content-col))
-                           bubble-w)
-                      fbx (if (:activity-content? meta) (+ (long bx) content-col) bx)
+                           (max 0 (- (long bubble-w) (long rail-inset))))
+                      fbx (+ (long bx) (if (:activity-content? meta) content-col (long rail-inset)))
                       meta (if (:copy-width meta)
                              (assoc meta
                                :click-width (max 0 (- (long iw) (long (:copy-width meta)))))
@@ -2059,6 +2061,9 @@
                   (when (:activity-content? meta)
                     (p/set-bg! g t/code-block-bg)
                     (p/fill-rect! g bx y bubble-w 1))
+                  (when execution-rail?
+                    (p/set-colors! g t/code-block-fg t/code-block-bg)
+                    (p/put-str! g (+ (long bx) 1) y "│ "))
                   ;; Record exact screen coordinates for the post-refresh image pass.
                   (when (and *image-placements* (contains? #{:image :image-pad} (:kind meta)))
                     (swap! *image-placements* conj
@@ -5571,7 +5576,7 @@
             (boolean (answer item-key default-open?))))
 
         band-open?
-        (expanded? "#band" true)
+        (expanded? "#band" false)
 
         show-all?
         (expanded? "#steps" false)
@@ -6044,11 +6049,7 @@
                         (str (get states state) " " (name state))))
 
             summary
-            (if band-open?
-              (str (count activity-rows) " operation" (when (not= 1 (count activity-rows)) "s"))
-              (str/join " · "
-                        (map #(or (activity-field (:presentation %) :headline) (:operation %))
-                             rows)))
+            (str (count activity-rows) " operation" (when (not= 1 (count activity-rows)) "s"))
 
             suffix
             (str/join " · "
@@ -6572,7 +6573,7 @@
                 (or (some->> inline-error-code-lines
                              (mapv vector))
                     (mapv (fn [plain colored]
-                            (let [width (max 1 (- (long fill-w) 2))]
+                            (let [width (max 1 (- (long fill-w) 5))]
                               (if colored
                                 (p/ansi-fold-cols colored width)
                                 (p/fold-cols plain width))))
@@ -6835,11 +6836,12 @@
                                [(line-entry (str thinking-marker ""))])))
 
                 activity-surface
-                (when activity-run (activity-detail-entries activity-run fill-w session-id))]
+                (when activity-run
+                  (activity-detail-entries activity-run (max 1 (- (long fill-w) 3)) session-id))]
 
             (vec (concat comment-block
-                         code-block
-                         activity-surface
+                         (map #(update % :meta assoc :execution-rail? true)
+                              (concat code-block activity-surface))
                          (when (or (empty? code-block) code-expanded?) execution-details)
                          artifact-block
                          generic-run-entries))))

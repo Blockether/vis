@@ -46,28 +46,51 @@ afterEach(() => {
 
 describe("execution grouping", () => {
   it("owns source and result in one CODE disclosure before Activity", () => {
-    const view = render(<IterationTrace whole iterations={iterations([
-      { source: "print(42)\nprint(43)", stdout: "out-42\nout-43", duration_ms: 57,
-        activity: activity("succeeded", "first stage") },
-    ])} />);
+    const view = render(
+      <IterationTrace
+        whole
+        iterations={iterations([
+          {
+            source: "print(42)\nprint(43)",
+            stdout: "out-42\nout-43",
+            duration_ms: 57,
+            activity: activity("succeeded", "first stage"),
+          },
+        ])}
+      />,
+    );
     const band = view.container.querySelector("[data-execution-code]")!;
     // The label starts the row; its chevron and tally still expose the fold.
-    expect(view.getByRole("button", { name: "Expand code" }).textContent).toBe("CODE +2 more");
-    expect(view.getByRole("button", { name: "Expand code" }).querySelector("svg")).not.toBeNull();
+    expect(view.getByRole("button", { name: "Expand code" }).textContent).toBe(
+      "CODE +2 more",
+    );
+    expect(
+      view.getByRole("button", { name: "Expand code" }).querySelector("svg"),
+    ).not.toBeNull();
     expect(band.querySelector("[data-code-node]")).toBeNull();
     expect(view.queryByText("RESULT")).toBeNull();
     fireEvent.click(view.getByRole("button", { name: "Expand code" }));
     expect(band.textContent).toContain("print(42)");
-    expect(view.getByRole("button", { name: "Collapse code" }).textContent).toBe("CODE");
+    expect(
+      view.getByRole("button", { name: "Collapse code" }).textContent,
+    ).toBe("CODE");
     // The RESULT is its own fold and starts closed.
     expect(band.textContent).toContain("RESULT +2 more");
     expect(band.textContent).not.toContain("out-42");
     fireEvent.click(view.getByRole("button", { name: "Expand result" }));
     expect(band.textContent).toContain("out-42");
-    expect(view.getByRole("button", { name: "Collapse result" }).querySelector("svg")).not.toBeNull();
+    expect(
+      view
+        .getByRole("button", { name: "Collapse result" })
+        .querySelector("svg"),
+    ).not.toBeNull();
     expect(band.querySelector("summary")).toBeNull();
     expect(band.querySelector("details")).toBeNull();
-    expect(band.compareDocumentPosition(view.container.querySelector("[data-activity-row]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      band.compareDocumentPosition(
+        view.container.querySelector("[data-activity-row]")!,
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(view.getByText("57ms")).toBeTruthy();
     fireEvent.click(view.getByRole("button", { name: "Collapse code" }));
     expect(view.queryByText(/RESULT/)).toBeNull();
@@ -96,6 +119,7 @@ describe("execution grouping", () => {
     expect(
       view.queryByRole("button", { name: "Expand execution trace" }),
     ).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Expand Activity" }));
     fireEvent.click(view.getByRole("button", { name: /Search ×2/ }));
     const rows = [...view.container.querySelectorAll("[data-activity-row]")];
     expect(rows).toHaveLength(2);
@@ -132,6 +156,7 @@ describe("execution grouping", () => {
         state === "running" ? "status" : null,
       );
       if (state === "failed") expect(trace.textContent).toContain("Failed");
+      fireEvent.click(view.getByRole("button", { name: "Expand Activity" }));
       fireEvent.click(view.getByRole("button", { name: /Search ×2/ }));
       expect(
         view.container.querySelectorAll("[data-activity-row]"),
@@ -194,6 +219,7 @@ describe("execution grouping", () => {
         ])}
       />,
     );
+    fireEvent.click(view.getByRole("button", { name: "Expand Activity" }));
     fireEvent.click(view.getByRole("button", { name: /Search ×2/ }));
     expect(view.container.querySelectorAll("[data-activity-row]")).toHaveLength(
       2,

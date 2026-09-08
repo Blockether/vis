@@ -42,6 +42,8 @@ function paintActivity(
 ) {
   const { activity = activityProjection(), ...rest } = props;
   render(<ActivityPanel activity={activity} {...rest} />);
+  const expand = screen.queryByRole("button", { name: "Expand Activity" });
+  if (expand) fireEvent.click(expand);
   return document.body.innerHTML;
 }
 
@@ -89,6 +91,13 @@ describe("joined Activity operation groups", () => {
   it("groups adjacent reads, counts unique files and preserves disclosure through updates", () => {
     const activity = reads();
     const { rerender } = render(<ActivityPanel activity={activity} />);
+    const initiallyShut = screen.getByRole("button", {
+      name: "Expand Activity",
+    });
+    expect(initiallyShut.textContent).toContain("ACTIVITY");
+    expect(initiallyShut.textContent).toContain("3 operations");
+    expect(screen.queryByRole("button", { name: /Read ×3/ })).toBeNull();
+    fireEvent.click(initiallyShut);
     const group = screen.getByRole("button", { name: /Read ×3/ });
     expect(group.textContent).toContain("1 file");
     expect(group.getAttribute("aria-expanded")).toBe("false");
@@ -149,6 +158,8 @@ describe("joined Activity operation groups", () => {
         }}
       />,
     );
+    expect(screen.queryByRole("button", { name: /Read ×3/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Expand Activity" }));
     expect(
       screen.getByRole("button", { name: /Read ×3/ }).textContent,
     ).toContain("1 failed");
@@ -176,25 +187,23 @@ describe("joined Activity operation groups", () => {
         }}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Collapse Activity" }));
     const receipt = screen.getByRole("button", { name: "Expand Activity" });
-    expect(receipt.textContent).toContain("7 more groups");
+    expect(receipt.textContent).toContain("17 operations");
     expect(receipt.textContent).toContain("7 omitted");
   });
 
   it("updates commands by snapshot identity, not by parsing identical command strings", () => {
     const activity = reads();
-    const rows = activity.rows
-      .slice(0, 2)
-      .map((row) => ({
-        ...row,
-        operation: "shell",
-        summary: "npm test",
-        state: "running" as const,
-      }));
+    const rows = activity.rows.slice(0, 2).map((row) => ({
+      ...row,
+      operation: "shell",
+      summary: "npm test",
+      state: "running" as const,
+    }));
     const { rerender } = render(
       <ActivityPanel activity={{ ...activity, rows }} />,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Expand Activity" }));
     fireEvent.click(screen.getByRole("button", { name: /Shell ×2/ }));
     const next = {
       ...activity,
@@ -259,6 +268,7 @@ describe("one form's Activity on the phone", () => {
   it("keeps batch headers and summaries visible, spaces sections, and replaces them without resetting disclosure", () => {
     const activity = storyData.ACTIVITY_LISTING_BATCH;
     const { rerender } = render(<ActivityPanel activity={activity} />);
+    fireEvent.click(screen.getByRole("button", { name: "Expand Activity" }));
     const toggle = screen.getByRole("button", { name: /Listed 2 directories/ });
     expect(screen.getByText("3 directories · 2 files")).toBeTruthy();
     expect(screen.getByText("0 directories · 2 files")).toBeTruthy();
@@ -844,6 +854,7 @@ describe("what the axis does while the work is still moving", () => {
     const activity = ACTIVITY_LONG_RUNNING;
     const rows = activity.rows;
     const { rerender } = render(<ActivityPanel activity={activity} />);
+    fireEvent.click(screen.getByRole("button", { name: "Expand Activity" }));
     expect(document.querySelector('[data-activity-row="live-4"]')).toBeNull();
     expect(screen.getByText(/search-6 · running/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Search ×7/ }));
@@ -1155,6 +1166,7 @@ it("renders symbol content and replaces progress without changing lifecycle", ()
     },
   ];
   const { rerender } = render(<ActivityPanel activity={activity} />);
+  fireEvent.click(screen.getByRole("button", { name: "Expand Activity" }));
   expect(screen.getByRole("heading", { name: /Verification/ })).toBeTruthy();
   expect(screen.getByText("Prepared").tagName).toBe("STRONG");
   expect(screen.getByRole("cell", { name: "passed" })).toBeTruthy();

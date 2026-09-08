@@ -154,15 +154,21 @@
               (first (filter #(str/ends-with? (str (:node-id %)) ":#band")
                              (.current interactions/hit-map)))
 
+              opened-band
+              (toggle-review-region {} band)
+
+              _
+              (paint-activity-review! hs rows opened-band)
+
               read-group
               (first (filter #(str/ends-with? (str (:node-id %)) "call-0#group")
                              (.current interactions/hit-map)))
 
               expanded
-              (toggle-review-region {} read-group)
+              (toggle-review-region opened-band read-group)
 
               collapsed
-              (toggle-review-region expanded band)]
+              {}]
 
           (is (some? band))
           (is (some? read-group))
@@ -181,7 +187,7 @@
             (is (some #(str/includes? % "src/file-0.clj") (:lines replacement)))))))))
 
 (deftest joined-execution-text-left-edge-test
-  ;; Removing the rail must also remove its text gutter, in both folded states.
+  ;; Code and Activity share a rail and inset; prose keeps the transcript edge.
   (doseq [cols [40 80 120]]
     (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
                 screen (doto (TerminalScreen. terminal) (.startScreen))]
@@ -203,10 +209,14 @@
                 column (fn [text]
                          (some #(when (str/includes? % text) (str/index-of % text)) lines))]
 
-            (doseq [label ["Inspect files" "CODE" "ACTIVITY" "Read ×3" "Patch ×2" "Shell ×2"]]
-              (is (= (column "Vis") (column label)) (str label " shares the transcript text edge")))
-            (when (seq expansions) (is (= (column "Vis") (column "inspect_files()"))))
-            (is (= (+ 2 (column "Vis")) (column "Command failed")))))))))
+            (is (= (column "Vis") (column "Inspect files")))
+            (doseq [label ["CODE" "ACTIVITY"]]
+              (is (= (+ 3 (column "Vis")) (column label))))
+            (is (nil? (column "Read ×3")))
+            (is (nil? (column "Command failed")))
+            (doseq [line (filter #(str/includes? % "│") lines)]
+              (is (= (+ 1 (column "Vis")) (str/index-of line "│"))))
+            (when (seq expansions) (is (= (column "CODE") (column "inspect_files()"))))))))))
 
 (deftest screen-accepts-a-transport-neutral-html-terminal-test
   (with-open [terminal (-> (HtmlTerminal/builder)

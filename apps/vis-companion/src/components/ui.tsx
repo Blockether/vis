@@ -759,7 +759,7 @@ export function Disclosure({
       type="button"
       data-disclosure-toggle
       aria-expanded={isOpen}
-      className={`flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono ${tone === 'execution' ? 'min-h-11 text-ui mouse:min-h-7' : `min-h-8 mouse:min-h-6 ${tone === 'branch' ? 'text-ui' : 'text-chip'}`} transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none ${tone === 'caption' ? 'w-auto' : bleed ? 'w-[calc(100%_+_0.5rem)]' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
+      className={`flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono ${tone === 'execution' ? 'min-h-11 text-meta mouse:min-h-7' : `min-h-8 mouse:min-h-6 ${tone === 'branch' ? 'text-ui' : 'text-chip'}`} transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none ${tone === 'caption' ? 'w-auto' : bleed ? 'w-[calc(100%_+_0.5rem)]' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
       {...props}
     >
       {tone !== 'execution' && tone !== 'thinking' && (

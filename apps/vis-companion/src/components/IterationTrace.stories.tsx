@@ -16,9 +16,8 @@ import { AssistantMessage, IterationTrace, UserMessage } from "./ChatContent";
 /**
  * A TURN, DRAWN AS JOINED EXECUTION BANDS.
  *
- * Thinking, Code, Activity and the final answer share the transcript's text edge.
- * Removing a rail means removing its gutter too: no top-level label, paragraph or
- * source line reserves a leading disclosure slot. Only nested details are indented.
+ * Prose keeps the transcript edge. Code and Activity share an inset rail.
+ * Activity starts shut; its count and status remain visible until expanded.
  * Adjacent bands touch; a new step keeps its own spacing, facts and disclosure state.
  *
  * The data is `STORY_TURN_ITERATIONS` — the same iteration objects the gateway
@@ -78,13 +77,22 @@ export const ThinkingAndCode: Story = {
     const program = code.getBoundingClientRect();
     // Regression: a margin split the step, and CODE padded an already padded control.
     await expect(program.top).toBeCloseTo(thought.bottom, 0);
-    await expect(code.querySelector("button")!.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
-    await expect(program.left).toBeCloseTo(thought.left, 0);
+    await expect(
+      code.querySelector("button")!.getBoundingClientRect().height,
+    ).toBeGreaterThanOrEqual(28);
+    await expect(program.left - thought.left).toBeCloseTo(4, 0);
     await expect(program.right).toBeCloseTo(thought.right, 0);
     await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
-    await expect(code.querySelector("pre")?.textContent).toContain("print(paths)");
-    await userEvent.click(canvas.getByRole("button", { name: "Collapse code" }));
-    await expect(code.getBoundingClientRect().top).toBeCloseTo(thought.bottom, 0);
+    await expect(code.querySelector("pre")?.textContent).toContain(
+      "print(paths)",
+    );
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Collapse code" }),
+    );
+    await expect(code.getBoundingClientRect().top).toBeCloseTo(
+      thought.bottom,
+      0,
+    );
   },
 };
 
@@ -180,6 +188,12 @@ export const GroupStages: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(
+      canvas.queryByRole("list", { name: "Invocation chronology" }),
+    ).toBeNull();
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    await expect(
       canvas.getAllByRole("list", { name: "Invocation chronology" }),
     ).toHaveLength(1);
     await expect(
@@ -193,6 +207,12 @@ export const HiddenCode: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(
+      canvas.queryByRole("list", { name: "Invocation chronology" }),
+    ).toBeNull();
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    await expect(
       canvas.queryByRole("button", { name: "Copy code" }),
     ).toBeNull();
     await expect(
@@ -203,29 +223,52 @@ export const HiddenCode: Story = {
 
 export const Listing: Story = {
   args: { live: false, showCode: true, iterations: STORY_LISTING },
- };
+};
 
 export const CodeWithResult: Story = {
-  args: { live: false, showCode: true, iterations: STORY_LISTING.map((iteration) => ({
-    ...iteration, forms: iteration.forms?.map((form) => ({ ...form, stdout: "Listed 5 entries.", duration_ms: 57 })),
-  })) },
+  args: {
+    live: false,
+    showCode: true,
+    iterations: STORY_LISTING.map((iteration) => ({
+      ...iteration,
+      forms: iteration.forms?.map((form) => ({
+        ...form,
+        stdout: "Listed 5 entries.",
+        duration_ms: 57,
+      })),
+    })),
+  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.queryByText(/RESULT/)).toBeNull();
     const code = canvasElement.querySelector("[data-execution-code]")!;
     const copy = canvas.getByRole("button", { name: "Copy code" });
     const duration = within(code as HTMLElement).getByText("57ms");
-    await expect(duration.getBoundingClientRect().right).toBeLessThanOrEqual(copy.getBoundingClientRect().left);
-    await expect(copy.getBoundingClientRect().right).toBeLessThan(code.getBoundingClientRect().right);
+    await expect(duration.getBoundingClientRect().right).toBeLessThanOrEqual(
+      copy.getBoundingClientRect().left,
+    );
+    await expect(copy.getBoundingClientRect().right).toBeLessThan(
+      code.getBoundingClientRect().right,
+    );
     await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
     const band = canvasElement.querySelector("[data-execution-code]")!;
     await expect(band.textContent).toContain("RESULT +1 more");
     await expect(band.textContent).not.toContain("Listed 5 entries.");
-    await userEvent.click(canvas.getByRole("button", { name: "Expand result" }));
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand result" }),
+    );
     await expect(band.textContent).toContain("Listed 5 entries.");
     await expect(band.querySelector("summary")).toBeNull();
-    await expect(canvas.getByRole("button", { name: "Collapse code" }).querySelector("svg")).not.toBeNull();
-    await expect(canvas.getByRole("button", { name: "Collapse result" }).querySelector("svg")).not.toBeNull();
+    await expect(
+      canvas
+        .getByRole("button", { name: "Collapse code" })
+        .querySelector("svg"),
+    ).not.toBeNull();
+    await expect(
+      canvas
+        .getByRole("button", { name: "Collapse result" })
+        .querySelector("svg"),
+    ).not.toBeNull();
     await expect(band.textContent).toContain("57ms");
     await expect(canvas.getByText("42ms")).toBeTruthy();
   },
@@ -261,7 +304,7 @@ export const JoinedActivity: Story = {
       code.getBoundingClientRect().right,
       0,
     );
-    // Removing the rail also removes its reserved gutter, not just the stroke.
+    // The execution rail is inset from prose, with one consistent text gutter.
     const trace = thought.parentElement!;
     const edge = trace.parentElement!.getBoundingClientRect().left;
     const textEdge = (element: Element) => {
@@ -272,17 +315,21 @@ export const JoinedActivity: Story = {
       range.selectNodeContents(node!);
       return range.getBoundingClientRect().left;
     };
-    for (const element of [
-      thought,
-      code,
-      activity,
-      canvas.getByText("Checking the Activity layout and grouping."),
-      canvas.getByRole("button", { name: "Expand code" }),
-      canvas.getByRole("button", { name: "Collapse Activity" }),
-      canvas.getByRole("button", { name: /Read ×8/ }),
-      canvas.getByRole("button", { name: /Patch ×3/ }),
-    ]) {
-      await expect(textEdge(element)).toBeCloseTo(edge, 0);
+    await expect(textEdge(thought)).toBeCloseTo(edge, 0);
+    const executionEdge = textEdge(code);
+    await expect(code.getBoundingClientRect().left - edge).toBeCloseTo(4, 0);
+    await expect(getComputedStyle(code).borderLeftWidth).toBe("2px");
+    await expect(executionEdge - edge).toBeCloseTo(18, 0);
+    const band = canvas.getByRole("button", { name: "Expand Activity" });
+    await expect(band).toHaveTextContent("ACTIVITY");
+    await expect(band).toHaveTextContent("13 operations");
+    await expect(canvas.queryByRole("button", { name: /Read ×8/ })).toBeNull();
+    await expect(textEdge(band)).toBeCloseTo(executionEdge, 0);
+    await userEvent.click(band);
+    for (const label of [/Read ×8/, /Patch ×3/]) {
+      await expect(
+        textEdge(canvas.getByRole("button", { name: label })),
+      ).toBeCloseTo(executionEdge, 0);
     }
     const reads = canvas.getByRole("button", { name: /Read ×8/ });
     await expect(reads).toHaveTextContent("6 files");
@@ -297,7 +344,21 @@ export const JoinedActivity: Story = {
     );
     await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
     await expect(code.querySelector("pre")).not.toBeNull();
-    await expect(textEdge(code.querySelector("pre")!)).toBeCloseTo(edge, 0);
+    await expect(textEdge(code.querySelector("pre")!)).toBeCloseTo(
+      executionEdge,
+      0,
+    );
+    const codeSize = getComputedStyle(code.querySelector("pre")!).fontSize;
+    for (const element of [
+      reads,
+      canvas.getByText("6 files"),
+      canvas.getByText(/13 operations/),
+    ]) {
+      await expect(getComputedStyle(element).fontSize).toBe(codeSize);
+    }
+    await expect(getComputedStyle(canvas.getByText("ACTIVITY")).fontSize).toBe(
+      getComputedStyle(canvas.getByText("CODE")).fontSize,
+    );
     await userEvent.click(
       canvas.getByRole("button", { name: "Expand Activity" }),
     );
@@ -305,32 +366,66 @@ export const JoinedActivity: Story = {
     // Leave the design story in its compact initial state for visual review.
     await userEvent.click(reads);
     await userEvent.click(
+      canvas.getByRole("button", { name: "Collapse Activity" }),
+    );
+    await userEvent.click(
       canvas.getByRole("button", { name: "Collapse code" }),
     );
   },
 };
 export const JoinedActivitySettled: Story = {
-  args: { live: false, showCode: true, iterations: STORY_JOINED_ACTIVITY.succeeded },
+  args: {
+    live: false,
+    showCode: true,
+    iterations: STORY_JOINED_ACTIVITY.succeeded,
+  },
 };
 export const JoinedActivityFailed: Story = {
-  args: { live: false, showCode: true, iterations: STORY_JOINED_ACTIVITY.failed },
+  args: {
+    live: false,
+    showCode: true,
+    iterations: STORY_JOINED_ACTIVITY.failed,
+  },
 };
 export const JoinedActivityWithoutCode: Story = {
-  args: { live: true, showCode: false, iterations: STORY_JOINED_ACTIVITY.running },
- };
+  args: {
+    live: true,
+    showCode: false,
+    iterations: STORY_JOINED_ACTIVITY.running,
+  },
+};
 
 /** One interactive review sheet using the same production trace in three fixture states. */
 export const JoinedActivityReview: Story = {
-  render: () => <main className="grid min-w-0 gap-8 pb-8">
-    <header>
-      <h1 className="text-head font-semibold text-vis-message">Activity · joined execution</h1>
-      <p className="mt-2 text-ui text-dialog-hint">Interactive design · fixture data, no gateway connection.</p>
-    </header>
-    {(["running", "succeeded", "failed"] as const).map((state) => <section key={state} aria-label={state}>
-      <h2 className="mb-2 text-title font-semibold text-vis-message">{state === "running" ? "Working" : state === "succeeded" ? "Finished" : "Needs attention"}</h2>
-      <IterationTrace whole showCode live={state === "running"} iterations={STORY_JOINED_ACTIVITY[state]} />
-    </section>)}
-  </main>,
+  render: () => (
+    <main className="grid min-w-0 gap-8 pb-8">
+      <header>
+        <h1 className="text-head font-semibold text-vis-message">
+          Activity · joined execution
+        </h1>
+        <p className="mt-2 text-ui text-dialog-hint">
+          Interactive design · fixture data, no gateway connection.
+        </p>
+      </header>
+      {(["running", "succeeded", "failed"] as const).map((state) => (
+        <section key={state} aria-label={state}>
+          <h2 className="mb-2 text-title font-semibold text-vis-message">
+            {state === "running"
+              ? "Working"
+              : state === "succeeded"
+                ? "Finished"
+                : "Needs attention"}
+          </h2>
+          <IterationTrace
+            whole
+            showCode
+            live={state === "running"}
+            iterations={STORY_JOINED_ACTIVITY[state]}
+          />
+        </section>
+      ))}
+    </main>
+  ),
 };
 
 /** Prose and reasoning share their text edge, including the final answer. */

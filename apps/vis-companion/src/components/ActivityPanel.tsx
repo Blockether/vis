@@ -590,7 +590,7 @@ function ActivityBody({
         switch (block.type) {
           case "heading":
             return (
-              <h5 key={index} className="text-ui font-bold text-code-result">
+              <h5 key={index} className="text-meta font-bold text-code-result">
                 {block.text}
               </h5>
             );
@@ -598,7 +598,7 @@ function ActivityBody({
             return (
               <p
                 key={index}
-                className="whitespace-pre-wrap break-words text-ui text-code-result"
+                className="whitespace-pre-wrap break-words text-meta text-code-result"
               >
                 {block.text}
               </p>
@@ -632,7 +632,7 @@ function ActivityBody({
                 aria-label="Activity table"
                 tabIndex={0}
               >
-                <table className="w-full text-left text-ui text-code-result">
+                <table className="w-full text-left text-meta text-code-result">
                   <thead>
                     <tr>
                       {block.columns.map((column, at) => (
@@ -662,13 +662,13 @@ function ActivityBody({
                   </tbody>
                 </table>
                 {!block.rows.length && (
-                  <p className="text-ui text-dialog-hint">No rows</p>
+                  <p className="text-meta text-dialog-hint">No rows</p>
                 )}
               </div>
             );
           case "progress":
             return (
-              <div key={index} className="text-ui text-dialog-hint">
+              <div key={index} className="text-meta text-dialog-hint">
                 <p>
                   {block.label}
                   {block.total !== undefined
@@ -690,9 +690,9 @@ function ActivityBody({
           default:
             return (
               <div key={index} className="min-w-0">
-                <p className="text-ui text-dialog-hint">{block.label}</p>
+                <p className="text-meta text-dialog-hint">{block.label}</p>
                 {attachment?.(block.attachment_id) ?? (
-                  <p className="text-ui text-dialog-hint">
+                  <p className="text-meta text-dialog-hint">
                     Attachment unavailable
                   </p>
                 )}
@@ -839,8 +839,8 @@ function ActivityStep({
         <Headline
           className={
             nested
-              ? "min-w-0 text-ui font-medium text-code-result"
-              : "min-w-0 text-ui font-semibold text-code-result"
+              ? "min-w-0 text-meta font-medium text-code-result"
+              : "min-w-0 text-meta font-semibold text-code-result"
           }
         >
           {openable ? (
@@ -858,12 +858,12 @@ function ActivityStep({
         </Headline>
       </div>
       {!open && failed && !presentation && (
-        <p className="pb-1 pl-3 text-ui text-err-ink">
+        <p className="pb-1 pl-3 text-meta text-err-ink">
           {row.error_summary || "Operation failed"}
         </p>
       )}
       {row.state === "cancelled" && (
-        <p className="pb-1 pl-3 text-ui text-dialog-hint">Cancelled</p>
+        <p className="pb-1 pl-3 text-meta text-dialog-hint">Cancelled</p>
       )}
       {open && content && content.length > 0 && (
         <ActivityBody content={content} running={running} />
@@ -875,7 +875,7 @@ function ActivityStep({
           className="mt-[var(--text-ui--line-height)] min-w-0 pl-4.5"
         >
           <h5
-            className="truncate text-ui font-bold text-code-result"
+            className="truncate text-meta font-bold text-code-result"
             title={section.headline}
           >
             {section.headline}
@@ -883,7 +883,7 @@ function ActivityStep({
           {section.summary && (
             <p
               data-activity-summary
-              className="truncate text-ui text-dialog-hint"
+              className="truncate text-meta text-dialog-hint"
               title={section.summary}
             >
               {section.summary}
@@ -973,7 +973,7 @@ function ActivityGroup({ group }: { group: OperationGroup }) {
       >
         <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <span className="font-semibold">{title}</span>
-          {facts && <span className="text-ui text-dialog-hint">{facts}</span>}
+          {facts && <span className="text-meta text-dialog-hint">{facts}</span>}
         </span>
       </Disclosure>
       {!open &&
@@ -982,7 +982,7 @@ function ActivityGroup({ group }: { group: OperationGroup }) {
           .map((row) => (
             <p
               key={row.id}
-              className={`min-w-0 break-words pb-1 pl-3 text-ui ${row.state === "failed" ? "text-err-ink" : "text-dialog-hint"}`}
+              className={`min-w-0 break-words pb-1 pl-3 text-meta ${row.state === "failed" ? "text-err-ink" : "text-dialog-hint"}`}
             >
               {activityStepObject(row) ||
                 row.presentation?.headline ||
@@ -1041,7 +1041,7 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
         </li>
       )}
       {omitted > 0 && (
-        <li className="text-ui text-dialog-hint">
+        <li className="text-meta text-dialog-hint">
           {omitted} {omitted === 1 ? "step" : "steps"} omitted · Activity limit
         </li>
       )}
@@ -1051,7 +1051,7 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
 
 /** Joined execution band. Hiding it retains disclosure state and silences live re-announcements. */
 export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   if (
     !activity ||
     (!activity.rows.length &&
@@ -1059,23 +1059,11 @@ export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
       !Object.values(activity.counts).some(Boolean))
   )
     return null;
-  const groups = operationGroups(activity.rows);
   const total = Math.max(
     activity.rows.length + activity.omitted.rows,
     Object.values(activity.counts).reduce((sum, count) => sum + count, 0),
   );
-  const summary = open
-    ? `${total} ${total === 1 ? "operation" : "operations"}`
-    : [
-        ...groups
-          .slice(0, 3)
-          .map((group) =>
-            group.label
-              ? `${group.label}${group.rows.length > 1 ? ` ×${group.rows.length}` : ""}`
-              : group.rows[0].operation,
-          ),
-        ...(groups.length > 3 ? [`${groups.length - 3} more groups`] : []),
-      ].join(" · ");
+  const summary = `${total} ${total === 1 ? "operation" : "operations"}`;
   const states = (["running", "failed", "cancelled"] as const).flatMap(
     (state) =>
       activity.counts[state] ? [`${activity.counts[state]} ${state}`] : [],
@@ -1089,8 +1077,8 @@ export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
         onClick={() => setOpen((value) => !value)}
       >
         <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <BandLabel>Activity</BandLabel>
-          <span className="min-w-0 break-words text-ui text-dialog-hint">
+          <BandLabel>ACTIVITY</BandLabel>
+          <span className="min-w-0 break-words text-meta text-dialog-hint">
             {[
               summary,
               ...states,

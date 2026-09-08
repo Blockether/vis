@@ -1341,7 +1341,10 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   const [expanded, setExpanded] = useState(false);
   const lineCount = value ? value.split("\n").length : 0;
   return (
-    <section className="relative z-0 min-w-0 bg-code pr-3" data-execution-code>
+    <section
+      className="relative z-0 ml-1 min-w-0 border-l-2 border-code-foreground/60 bg-code px-3"
+      data-execution-code
+    >
       <div className="flex min-h-8 min-w-0 items-center gap-2">
         {showCode ? (
           <Disclosure
@@ -1621,13 +1624,31 @@ const FormTrace = memo(function FormTrace({
           <Markdown compact>{forms[0].comment}</Markdown>
         </div>
       )}
-      {(showCode && code || cards.length > 0) && (
-        <CollapsibleFormCode value={code} language={formCodeLanguage(form)} showCode={showCode && Boolean(code)} duration={formatDuration(form.duration_ms)} outcome={cards.some((card) => card.error != null) ? (cards.some((card) => interruptedPython(card)) ? "Interrupted" : "Failed") : undefined}>
-          {cards.map((card, index) => <ToolCard key={index} form={card} embedded />)}
+      {((showCode && code) || cards.length > 0) && (
+        <CollapsibleFormCode
+          value={code}
+          language={formCodeLanguage(form)}
+          showCode={showCode && Boolean(code)}
+          duration={formatDuration(form.duration_ms)}
+          outcome={
+            cards.some((card) => card.error != null)
+              ? cards.some((card) => interruptedPython(card))
+                ? "Interrupted"
+                : "Failed"
+              : undefined
+          }
+        >
+          {cards.map((card, index) => (
+            <ToolCard key={index} form={card} embedded />
+          ))}
         </CollapsibleFormCode>
       )}
       <div
-        className={detectedActivity ? "relative z-0 min-w-0 bg-code pr-3" : "min-w-0"}
+        className={
+          detectedActivity
+            ? "relative z-0 ml-1 min-w-0 border-l-2 border-code-foreground/60 bg-code px-3"
+            : "min-w-0"
+        }
         data-execution-activity={detectedActivity || undefined}
         role={running ? "status" : undefined}
         aria-live={running ? "polite" : undefined}

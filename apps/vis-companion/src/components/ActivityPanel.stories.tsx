@@ -48,14 +48,15 @@ export const LiveDisclosure: Story = {
   args: { activity: ACTIVITY_LONG_RUNNING },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
     await userEvent.click(canvas.getByRole("button", { name: /Search ×7/ }));
     const step = canvas.getByRole("button", { name: /Searched search-4/ });
     step.focus();
     await userEvent.keyboard("{Enter}");
     await expect(step).toHaveAttribute("aria-expanded", "true");
-    await userEvent.click(
-      canvas.getByRole("button", { name: /Search ×7/ }),
-    );
+    await userEvent.click(canvas.getByRole("button", { name: /Search ×7/ }));
     await expect(canvas.queryByText("result-4")).not.toBeInTheDocument();
   },
 };
@@ -65,7 +66,7 @@ export const Settled: Story = {
   args: { activity: ACTIVITY_SETTLED },
 };
 
-/** A failure has to survive being scrolled past, so it opens itself. */
+/** Failure counts remain visible; details wait for explicit expansion. */
 export const Failed: Story = {
   args: { activity: ACTIVITY_FAILED },
 };
@@ -91,6 +92,9 @@ export const Listing: Story = {
   args: { activity: ACTIVITY_LISTING },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
     const step = canvas.getByRole("button", { name: /Listed apps/ });
     await expect(canvas.getByText("3 directories · 2 files")).toBeVisible();
     await expect(canvas.queryByRole("table")).not.toBeInTheDocument();
@@ -107,6 +111,9 @@ export const ListingBatch: Story = {
   args: { activity: ACTIVITY_LISTING_BATCH },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
     await expect(canvas.getByText("0 directories · 2 files")).toBeVisible();
     const step = canvas.getByRole("button", { name: /Listed 2 directories/ });
     await userEvent.click(step);

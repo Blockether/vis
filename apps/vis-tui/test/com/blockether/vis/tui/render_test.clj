@@ -61,12 +61,18 @@
           (str/join "\n"
                     (map #(str/replace (:line %) #"[\uE110-\uE2FF]" "") (entries rows opened))))]
 
-    (it "groups adjacent operations under a separate Activity disclosure without rails"
-        (let [shown (text rows {})]
-          (doseq [label ["ACTIVITY" "Read ×2" "Patch ×2" "Shell ×2"]]
-            (expect (str/includes? shown label)))
-          (expect (not (re-find #"[│├]" shown)))
-          (expect (not (str/includes? shown "file-0")))))
+    (it "hides all operations until Activity is explicitly opened"
+        (let [shut
+              (text rows {})
+
+              shown
+              (text rows {"#band" true})]
+
+          (expect (str/includes? shut "ACTIVITY"))
+          (expect (str/includes? shut "6 operations"))
+          (doseq [label ["Read ×2" "Patch ×2" "Shell ×2"]]
+            (expect (not (str/includes? shut label)))
+            (expect (str/includes? shown label)))))
     (it "keeps failure context visible when its group is shut"
         (expect (str/includes? (text (assoc-in rows [1 :state] "failed") {}) "failed")))
     (it "folds Activity independently and retains its operation summary"
@@ -80,8 +86,8 @@
 (defn- step-expansions
   "Control step details while keeping the independent Activity band open."
   [open?]
-  (fn [key default]
-    (if (= key "#band") default open?)))
+  (fn [key _default]
+    (if (= key "#band") true open?)))
 
 (defn- projected-provider-error
   "Attach the presentation contract a standalone client receives from the gateway."
@@ -1298,8 +1304,8 @@
             (strip-sentinels (strip-ansi (str/join "\n" (:lines payload))))]
 
         (expect (str/includes? body "ACTIVITY"))
-        (expect (str/includes? body "Running npm test"))
-        (expect (str/includes? body "Searched 18 matches"))))
+        (expect (str/includes? body "1 running · 2 operations"))
+        (expect (not (str/includes? body "npm test")))))
   (it
     "uses the same trace renderer for live progress and cancelled bubbles"
     (let [;; Tool output paints purely as the program's stdout — both live
@@ -4342,7 +4348,7 @@
           expanded
           (render-text {:vis.channel-tui/expand-all-details? true})]
 
-      (expect (str/includes? collapsed "Searched source"))
+      (expect (not (str/includes? collapsed "Searched source")))
       (expect (not (str/includes? collapsed "answer = search()")))
       (expect (not (str/includes? collapsed "PYTHON")))
       (expect (not (str/includes? collapsed "one match")))
@@ -4452,7 +4458,7 @@ h = 8"
                      hits
                      (into []
                            (keep (fn [row]
-                                   (when-some [h (.lookup interactions/hit-map 4 (long row))]
+                                   (when-some [h (.lookup interactions/hit-map 7 (long row))]
                                      (assoc h :row row))))
                            (range 0 (+ 2 (count entries) 4)))
 
@@ -5117,10 +5123,10 @@ h = 8"
           expanded
           (render-row 80 {:vis.channel-tui/expand-all-details? true})]
 
-      (expect (str/includes? collapsed "test evidence companion suite"))
+      (expect (not (str/includes? collapsed "test evidence companion suite")))
       (expect (str/includes? collapsed "CODE"))
       (expect (not (str/includes? collapsed "PYTHON")))
-      (expect (str/includes? collapsed "18 matches"))
+      (expect (not (str/includes? collapsed "18 matches")))
       (expect (str/includes? collapsed "ACTIVITY"))
       (expect (str/includes? expanded "test evidence companion suite"))
       (expect (< (.indexOf ^String expanded "grep({...})")
@@ -5225,7 +5231,7 @@ h = 8"
       (expect (str/includes? collapsed "4.8s"))
       (expect (str/includes? collapsed "ACTIVITY"))
       (expect (some? collapsed-status-row))
-      (expect (< (.indexOf ^String collapsed "CODE") (.indexOf ^String collapsed "operation 1"))
+      (expect (< (.indexOf ^String collapsed "CODE") (.indexOf ^String collapsed "ACTIVITY"))
               "the source line precedes visible Activity")
       (expect (some? status-row))
       (expect (not (str/includes? expanded "line shown")))
@@ -5270,11 +5276,10 @@ h = 8"
             :text
             strip-ansi
             strip-sentinels)]
-      ;; Omitted operations remain counted on the chronology, not a redundant summary.
-      (expect (str/includes? receipt "2 steps omitted · Activity limit"))
-      (expect (str/includes? receipt "Patched"))
-      (expect (str/includes? receipt "Searched"))
-      (expect (str/includes? receipt "Ran tests"))
+      ;; A shut band reports counts, never operation details.
+      (expect (str/includes? receipt "2 omitted"))
+      (doseq [label ["Patched" "Searched" "Ran tests"]]
+        (expect (not (str/includes? receipt label))))
       (expect (str/includes? receipt "ACTIVITY"))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
@@ -5465,7 +5470,7 @@ h = 8"
           (row-with "Ran tests")]
 
       ;; Activity stays independent; CODE owns the complete output fold.
-      (expect (str/includes? collapsed-text "Shell ×2")
+      (expect (str/includes? collapsed-text "ACTIVITY")
               "Activity stays visible while source and result are collapsed")
       (expect (= :toggle-details (:kind result-toggle-meta))
               "RESULT is its own fold under CODE, collapsed by default")
@@ -5694,8 +5699,8 @@ h = 8"
               ((deref #'render/activity-detail-entries)
                 {:node-id "n1"
                  :activity-rows (:rows activity)
-                 :activity-expanded? (fn [key default]
-                                       (if (= key "#band") default (= "patch-1" key)))}
+                 :activity-expanded? (fn [key _default]
+                                       (if (= key "#band") true (= "patch-1" key)))}
                 120
                 "s1")
 
@@ -5788,7 +5793,7 @@ h = 8"
             {:node-id "n1"
              :activity-rows rows
              :activity-expanded? (fn [key default-open?]
-                                   (get opened key default-open?))}
+                                   (get opened key (if (= key "#band") true default-open?)))}
             100
             "s1"))
 
@@ -6191,9 +6196,9 @@ h = 8"
         marks
         (vec (ink-of "●"))]
 
-    (it "removes status dots and decorative rails"
+    (it "removes status dots but keeps the shared execution rail"
         (expect (empty? marks))
-        (expect (empty? (ink-of "│"))))
+        (expect (seq (ink-of "│"))))
     (it "retains a readable failure state in the operation text"
         (let [line (first (filter #(str/includes? (apply str (map :ch %)) "failed") grid))]
           (expect (some? line))
@@ -6229,7 +6234,11 @@ h = 8"
             {:iterations [{:iteration 1 :forms [{:code "search()" :activity value}]}]}
             100
             {:show-thinking true :show-iterations true}
-            {:session-id "live-more" :now-ms 1000 :turn-start-ms 0 :detail-expansions expansions}))
+            {:session-id "live-more"
+             :now-ms 1000
+             :turn-start-ms 0
+             :detail-expansions (assoc expansions
+                                  ["live-more" "iteration:i1:b1:activity:#band"] true)}))
 
         row-ids
         (fn [payload]
@@ -6588,15 +6597,15 @@ print(paths)"
             (first (filter #(str/includes? % "RESULT") lines))
 
             activity
-            (first (filter #(str/includes? % "54ms") lines))]
+            (first (filter #(str/includes? % "ACTIVITY") lines))]
 
         (expect (some? code))
         (expect (= expanded? (some? result)))
-        (expect (= (+ 3 (.indexOf ^String code "57ms")) (.indexOf ^String activity "54ms")))
+        (expect (= (.indexOf ^String code "CODE") (.indexOf ^String activity "ACTIVITY")))
         (when expanded?
           (expect (str/includes? result "▾"))
           (expect (< (.indexOf lines code) (.indexOf lines activity) (.indexOf lines result)))
-          (expect (= (.indexOf ^String result "RESULT")
+          (expect (= (+ 3 (.indexOf ^String result "RESULT"))
                      (.indexOf ^String (first (filter #(str/includes? % "print(42)") lines))
                                "print(42)"))))
         (expect (some? activity))
@@ -6658,7 +6667,7 @@ print(paths)"
       ;; CODE, its source and RESULT share one left column.
       (expect (= (.indexOf ^String code "CODE")
                  (.indexOf ^String source "print(42)")
-                 (.indexOf ^String result "RESULT")))))
+                 (+ 3 (.indexOf ^String result "RESULT"))))))
   (it
     "keeps syntax colour on every wrapped row of a long code line"
     (let
