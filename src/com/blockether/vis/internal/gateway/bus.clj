@@ -456,9 +456,9 @@
 
    SOUND by construction: it says yes only for a line the full parse would also
    read, so it can never skip a turn the full path would mirror; it can only
-   answer no and hand over. A line cut by the window's start is dropped, a
-   trailing partial line fails to parse and is dropped (as [[whole-bytes]] drops
-   it), and any IO trouble is a no.
+   answer no and hand over. A line cut by the window's start is dropped, and
+   [[whole-bytes]] excludes a trailing line without a newline even if its JSON
+   already parses. Any IO trouble is a no.
 
    The full path reads and JSON-parses the ENTIRE journal to learn that a turn is
    over - 82 ms for a 7 MB session, under the sid's tail lock, once per
@@ -469,7 +469,8 @@
                n (long (min len (long TAIL_SCAN_BYTES)))
                buf (byte-array n)
                got (read-at! raf (- len n) buf n)
-               lines (str/split-lines (String. buf 0 (int got) StandardCharsets/UTF_8))
+               whole (whole-bytes (if (== got n) buf (java.util.Arrays/copyOf buf (int got))))
+               lines (str/split-lines (String. buf 0 (int whole) StandardCharsets/UTF_8))
                ;; The window's first line is whole only when the window is the whole file.
                lines (if (< n len) (rest lines) lines)]
 

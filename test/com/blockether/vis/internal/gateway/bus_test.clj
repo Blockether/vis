@@ -734,6 +734,39 @@
             (spit f text)
             f))]
 
+    (it "requires a newline even when the terminal JSON is already complete"
+        ;; Regression: JSON validity is not the journal's complete-line boundary.
+        (with-temp-journal (fn [_ _]
+                             (doseq [type
+                                     ["turn.completed" "turn.failed" "turn.cancelled"]
+
+                                     prefix
+                                     ["" (str (line "turn.started") "\n")
+                                      (apply str (repeat 2000 (str (line "content.delta") "\n")))]]
+
+                               (let [f (journal! "tail-no-newline" (str prefix (line type)))]
+                                 (expect (false? (tail? f)))
+                                 (spit f "\n" :append true)
+                                 (expect (true? (tail? f))))))))
+    (it "hydrates the live prefix until the terminal newline arrives"
+        (with-temp-journal
+          (fn [capture _]
+            (let [sid
+                  "tail-hydrate-no-newline"
+
+                  started
+                  (turn-started "sibling" (var-get #'bus/producer-pid) sid "T")
+
+                  f
+                  (journal! sid (str (wire/json-str started) "\n" (line "turn.completed")))]
+
+              (bus/hydrate! sid)
+              (expect (= ["turn.started"] (mapv #(get % "type") @capture)))
+              (expect (< (long (get-in @(var-get #'bus/tails) [sid :off] 0)) (.length f)))
+              (spit f "\n" :append true)
+              (reset! capture [])
+              (bus/hydrate! sid)
+              (expect (empty? @capture))))))
     (it "answers yes when the terminal is followed by what the producer appends after it"
         (with-temp-journal (fn [_ _]
                              (let [f (journal! "tail-title"
