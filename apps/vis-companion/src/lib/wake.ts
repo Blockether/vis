@@ -76,8 +76,11 @@ function scheduleFromNative(): void {
 }
 
 function onVisibility(): void {
-  if (document.visibilityState === 'visible') scheduleFromDom();
-  else markAway();
+  if (document.visibilityState === 'visible') {
+    // Focus while already foreground is not a resume. A late DOM-visible signal
+    // after native resume must not restart streams and reload the session either.
+    if (sleptAt !== null) scheduleFromDom();
+  } else markAway();
 }
 
 function install(): void {

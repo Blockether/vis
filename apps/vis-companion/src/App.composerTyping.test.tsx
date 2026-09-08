@@ -86,6 +86,28 @@ describe("typing in the composer", () => {
     view.unmount();
   });
 
+  it("does not reload the session on foreground window focus", async () => {
+    const { view, composer } = await openFirstSession();
+    await type(composer, "keep these words");
+    const refreshes = () =>
+      view.requests.filter((request) =>
+        new URL(request).pathname.endsWith("/slashes"),
+      ).length;
+    const before = refreshes();
+    expect(before).toBeGreaterThan(0);
+
+    // These signals are spaced beyond wake coalescing, as in the phone diagnostics.
+    // The app never left the foreground, so focus must not reload the transcript.
+    for (let index = 0; index < 3; index += 1) {
+      window.dispatchEvent(new Event("focus"));
+      await settle(350);
+    }
+
+    expect(composer.value).toBe("keep these words");
+    expect(refreshes() - before).toBe(0);
+    view.unmount();
+  });
+
   it("hands the list the words on the way out", async () => {
     const { view, composer } = await openFirstSession();
     await type(composer, "half a thought");
