@@ -2130,8 +2130,8 @@
                              turn-data))
                      (catch Throwable _ nil)))
             universe (into [] (comp (mapcat :iter-scopes) (distinct)) turn-data)
-            resolved (ctx-engine/supersede-summaries (ctx-engine/expand-through (or summaries [])
-                                                                                universe))
+            resolved (ctx-engine/supersede-summaries
+                       (ctx-engine/expand-through (or summaries []) universe (map :turn turn-data)))
             ;; A whole-turn fold removes turn T's Q/A recap only when a later
             ;; turn issued it and therefore saw T's completed answer. A fold issued
             ;; during T may collapse settled results but cannot summarize the answer
@@ -2785,9 +2785,9 @@
     a STRING in the `ctx-engine/fold-key` grammar — \"t2/i5\" one step, \"t2\" a
     whole turn, \"t2/i1-i56\" a range, \"-t2/i56\"/\"t2/i5-\" an open one, commas
     to union several — disjoint RANGES included (a list of key strings works
-    too). Anything that is not a step key, or that resolves to no settled step,
-    is refused BY NAME with the
-    grammar. The gist is OPTIONAL: pass it to KEEP a one-line takeaway; OMIT it
+     too). Anything that is not a step key, or that resolves to neither settled
+     steps nor a turn recap, is refused BY NAME with the grammar. The gist is
+     OPTIONAL: pass it to KEEP a one-line takeaway; OMIT it
     to discard the step with no summary line. Recorded intents are string-keyed
     because they persist inside the ctx blob; `ctx-engine/expand-through` owns
     their shape and `apply-summaries` renders them."
@@ -2819,13 +2819,18 @@
                                      (and (contains? r "from") (not (contains? r "to")))))
                                (ctx-engine/intent-ranges intent)))
 
-                universe
+                ctx
                 (some-> ctx-atom
-                        deref
-                        (get "engine_iter_universe"))]
+                        deref)
 
-            (if (and unbounded? (seq universe))
-              (first (ctx-engine/expand-through [intent] universe))
+                universe
+                (get ctx "engine_iter_universe")
+
+                turns
+                (keys (get ctx "engine_turn_weights"))]
+
+            (if (and unbounded? (or (seq universe) (seq turns)))
+              (first (ctx-engine/expand-through [intent] universe turns))
               intent)))
 
         parse-key
@@ -2880,7 +2885,8 @@
 
                       winners
                       (-> tagged
-                          (ctx-engine/expand-through universe)
+                          (ctx-engine/expand-through universe
+                                                     (keys (get ctx "engine_turn_weights")))
                           ctx-engine/supersede-summaries)
 
                       kept
@@ -2915,6 +2921,9 @@
                   universe
                   (get ctx "engine_iter_universe")
 
+                  turns
+                  (keys (get ctx "engine_turn_weights"))
+
                   weights
                   (get ctx "engine_iter_weights")
 
@@ -2926,10 +2935,10 @@
                   ;; re-stamped visible weights; the earlier summary already hid its raw
                   ;; payload even though its old weight is still present in this ctx.
                   expanded
-                  (ctx-engine/expand-through [base] (or universe []))
+                  (ctx-engine/expand-through [base] (or universe []) turns)
 
                   existing
-                  (ctx-engine/expand-through (get ctx "session_summaries") (or universe []))
+                  (ctx-engine/expand-through (get ctx "session_summaries") (or universe []) turns)
 
                   already-scopes
                   (into #{} (mapcat #(get % "scopes")) existing)
@@ -3094,9 +3103,9 @@
 
          (if-let [[base label] (parse-key fold-key)]
            (let [turn (current-turn)
-                 uni (some-> ctx-atom
-                             deref
-                             (get "engine_iter_universe"))
+                 ctx (some-> ctx-atom
+                             deref)
+                 uni (get ctx "engine_iter_universe")
                  universe (set uni)
                  ;; Resolve the selector against the SETTLED wire. `universe` is every
                  ;; iteration already on THIS request's trailer: all prior turns PLUS
@@ -3105,7 +3114,9 @@
                  ;; steps; an EXPLICIT `tN/iN` literal is the one shape that survives
                  ;; resolution verbatim, so it is the only way to point at the live
                  ;; iteration still being emitted (present on no trailer, absent here).
-                 resolved (first (ctx-engine/expand-through [base] (or uni [])))
+                 resolved (first (ctx-engine/expand-through [base]
+                                                            (or uni [])
+                                                            (keys (get ctx "engine_turn_weights"))))
                  ;; The live iteration is any CURRENT-turn (or future) scope not yet
                  ;; settled. Prior turns are always foldable, AND so is every finished
                  ;; iteration of the current turn — only the in-flight iteration is
