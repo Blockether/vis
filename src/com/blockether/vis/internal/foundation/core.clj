@@ -41,13 +41,18 @@
   {:root (or (workspace/workspace-root env) (workspace/normalize-root (workspace/cwd)))})
 
 (defn- session-workspace-block
-  "Resolve the env's pinned workspace and render the canonical session workspace CTX block."
+  "Resolve the env's workspace and render the canonical session workspace CTX block.
+   The live confinement pointer wins over the turn-start pin, so a draft the agent
+   opens or discards mid-turn shows in the next block's `session[\"workspace\"]`."
   [env]
   (let [db
         (:db-info env)
 
         ws-id
-        (or (:workspace/id env)
+        (or (some-> (:workspace-atom env)
+                    deref
+                    :id)
+            (:workspace/id env)
             (some-> env
                     :workspace
                     :id))
@@ -108,7 +113,7 @@
                                                    drafts/symbols))}
      :ext/kind "foundation"
      :ext/slash-commands
-     (vec (concat workspace-slashes/specs drafts/specs session-slashes/specs rewind/slash-specs))
+     (vec (concat workspace-slashes/specs session-slashes/specs rewind/slash-specs))
      :ext/op-hooks rewind/op-hooks
      :ext/channel-contributions {:gateway.slot/http-routes [{:id :rewind/http
                                                              :fn rewind/routes-contribution}]}

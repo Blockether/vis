@@ -1,8 +1,9 @@
 (ns com.blockether.vis.internal.foundation.drafts-test
-  "The user's and the model's draft surface: `/draft`, `/approve`, `/discard`
-   move a pinned session through one draft, and `draft_status` /
-   `draft_approve` see the same draft from the sandbox. A real git repository
-   under a temp dir, an in-memory store and a rebound drafts home."
+  "The model's draft surface: `draft_create`, `draft_status`, `draft_approve`
+   and `draft_discard` move a pinned session through one draft from the
+   sandbox, and the foundation ctx block follows the live confinement pointer.
+   A real git repository under a temp dir, an in-memory store and a rebound
+   drafts home."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -70,14 +71,10 @@
             "VALUES (?,?,?,?,?)") state-id soul-id workspace-id 0 1])
     state-id))
 
-(defn- run-slash
-  [name ctx]
-  ((:slash/run-fn (first (filter #(= name (:slash/name %)) drafts/specs))) ctx))
-
 (defn- with-session
-  "Run `(f base ctx-fn env-fn)`: a pinned trunk session over a fresh repo.
-   `ctx-fn` builds a slash ctx from argv, `env-fn` the symbol env, both
-   following the live confinement pointer."
+  "Run `(f base env)`: a pinned trunk session over a fresh repo. `env` is the
+   symbol env a turn injects — store, session, state and the live confinement
+   pointer the symbols move."
   [prefix f]
   (let [base
         (temp-dir prefix)
@@ -102,76 +99,110 @@
                  (str (random-uuid))
 
                  state-id
-                 (pin-session! store soul (:id trunk))
-
-                 pointer
-                 (atom trunk)]
+                 (pin-session! store soul (:id trunk))]
 
              (f base
-                (fn [& argv]
-                  {:db-info store
-                   :session/id soul
-                   :session/state-id state-id
-                   :workspace-atom pointer
-                   :command/argv (vec argv)})
-                (fn []
-                  {:db-info store :session-id soul :workspace/id (:id @pointer)}))))
+                {:db-info store
+                 :session-id soul
+                 :session/state-id state-id
+                 :workspace/id (:id trunk)
+                 :workspace-atom (atom trunk)})))
          (finally (ps/db-close! store) (delete-tree! (str base "-store")) (delete-tree! base)))))
 
+(defn- ctx-root
+  "The root the foundation ctx block reports for `env` right now."
+  [env]
+  (get-in ((:ext/ctx-fn foundation/vis-extension) env) ["session_workspace" "root"]))
+
 (defdescribe
-  draft-slash-roundtrip-test
+  draft-symbol-roundtrip-test
   (it
-    "/draft opens a worktree draft the session then works in, /approve lands it, /discard returns to trunk"
+    "draft_create opens a worktree draft the session then works in, draft_approve lands it, draft_discard returns to trunk"
     (with-session
       "vis-fdrafts"
-      (fn [base ctx env]
+      (fn [base env]
         (let [opened
-              (run-slash "draft" (ctx "feature" "x"))
-
-              draft-status
-              (:result (drafts/draft-status (env)))
+              (drafts/draft-create env "feature-x")
 
               draft-root
-              (get draft-status "root")
+              (or (get (:result opened) "root")
+                  (throw (ex-info "draft_create refused" {:opened opened})))
+
+              ctx-in-draft
+              (ctx-root env)
+
+              draft-status
+              (:result (drafts/draft-status env))
 
               _
               (spit (io/file draft-root "b.txt") "new\n")
 
               approved
-              (run-slash "approve" (ctx "feat:" "add" "b"))
+              (:result (drafts/draft-approve env "feat: add b"))
 
               again
-              (:result (drafts/draft-approve (env) "again"))
+              (:result (drafts/draft-approve env "again"))
 
               discarded
-              (run-slash "discard" (ctx))
+              (:result (drafts/draft-discard env))
 
               trunk-status
-              (:result (drafts/draft-status (env)))]
+              (:result (drafts/draft-status env))]
 
-          (expect (= :ok (:slash/status opened)))
-          (expect (str/includes? (:slash/title opened) "feature-x"))
-          (expect (= "vis/feature-x" (get-in opened [:slash/data "branch"])))
-          (expect (true? (get draft-status "in_draft")))
-          (expect (= "worktree" (get draft-status "backend")))
+          (expect (true? (extension/envelope-success? opened)))
+          (expect (= "feature-x" (get (:result opened) "label")))
+          (expect (= "vis/feature-x" (get (:result opened) "branch")))
+          (expect (= "worktree" (get (:result opened) "backend")))
+          (expect (false? (get (:result opened) "clean")))
           (expect (not= base draft-root))
+          ;; the ctx block follows the live pointer the same turn
+          (expect (= draft-root ctx-in-draft))
+          (expect (true? (get draft-status "in_draft")))
+          (expect (= draft-root (get draft-status "root")))
           ;; the pending trunk edit came along
           (expect (= "x\npending\n" (slurp (io/file draft-root "a.txt"))))
-          (expect (= :ok (:slash/status approved)))
-          (expect (str/starts-with? (:slash/title approved) "Approved 2 path(s) on vis/feature-x"))
+          (expect (= "approved" (get approved "status")))
+          (expect (= 2 (count (get approved "files"))))
           (expect (= "feat: add b" (git! base "log" "-1" "--format=%s" "vis/feature-x")))
           (expect (= "init" (git! base "log" "-1" "--format=%s" "HEAD")))
           (expect (= "nothing-to-approve" (get again "status")))
-          (expect (= :ok (:slash/status discarded)))
-          (expect (str/includes? (:slash/body discarded) "vis/feature-x"))
+          (expect (= "discarded" (get discarded "status")))
+          (expect (= "vis/feature-x" (get discarded "branch")))
+          (expect (= 1 (get discarded "approved_ahead")))
+          (expect (= base (get discarded "root")))
+          (expect (= base (ctx-root env)))
           (expect (false? (get trunk-status "in_draft")))
           (expect (= base (get trunk-status "root")))
           (expect (str/includes? (git! base "branch" "--list" "vis/*") "vis/feature-x"))))))
-  (it "refuses what makes no sense: an unnamed draft, approving or discarding on trunk"
-      (with-session "vis-fdrafts-refuse"
-                    (fn [_base ctx env]
-                      (expect (= :error (:slash/status (run-slash "draft" (ctx)))))
-                      (expect (= :error (:slash/status (run-slash "approve" (ctx)))))
-                      (expect (= :error (:slash/status (run-slash "discard" (ctx)))))
-                      (expect (false? (extension/envelope-success? (drafts/draft-approve
-                                                                     (env)))))))))
+  (it "clean=True seeds from HEAD and leaves pending trunk work behind"
+      (with-session "vis-fdrafts-clean"
+                    (fn [_base env]
+                      (let [opened (drafts/draft-create env "clean-x" {"clean" true})]
+                        (expect (true? (extension/envelope-success? opened)))
+                        (expect (true? (get (:result opened) "clean")))
+                        (expect (= "x\n"
+                                   (slurp (io/file (get (:result opened) "root") "a.txt"))))))))
+  (it
+    "refuses what makes no sense: an unnamed draft, a second draft, approving or discarding on trunk"
+    (with-session "vis-fdrafts-refuse"
+                  (fn [_base env]
+                    (let [failed? (complement extension/envelope-success?)]
+                      (expect (failed? (drafts/draft-create env "")))
+                      (expect (failed? (drafts/draft-approve env)))
+                      (expect (failed? (drafts/draft-discard env)))
+                      (expect (true? (extension/envelope-success? (drafts/draft-create env "one"))))
+                      (let [second (drafts/draft-create env "two")]
+                        (expect (failed? second))
+                        (expect (str/includes? (get-in second [:error :message]) "one")))
+                      (expect (true? (extension/envelope-success? (drafts/draft-discard env))))
+                      (expect (failed? (binding [ws/*draft-backend* :off]
+                                         (drafts/draft-create env "three")))))))))
+
+(defdescribe
+  draft-symbols-test
+  (it
+    "the sandbox names draft_create, draft_status, draft_approve and draft_discard, and nothing else manages drafts"
+    (expect (= ["draft-status" "draft-create" "draft-approve" "draft-discard"]
+               (mapv (comp name :ext.symbol/symbol) drafts/symbols)))
+    (expect (empty? (filter #(#{"draft" "approve" "discard"} (:slash/name %))
+                            (:ext/slash-commands foundation/vis-extension))))))

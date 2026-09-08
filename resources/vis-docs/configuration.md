@@ -446,7 +446,7 @@ without `env` or `headers` keeps the stored values.
 toggles:
   shell: false          # default true; removes shell(...) from the sandbox
   introspection: true   # default false; lets the agent read its own session data
-  draft_backend: auto   # auto | worktree | rift | off; how /draft isolates work (see drafts.md)
+  draft_backend: auto   # auto | worktree | rift | off; how the agent isolates a draft (see drafts.md)
 ```
 
 Run `/reload` after editing.

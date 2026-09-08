@@ -1,13 +1,15 @@
 (ns com.blockether.vis.internal.foundation.drafts
-  "Drafts as the user and the model reach them: the `/draft`, `/approve` and
-   `/discard` slash commands, the `draft_status` / `draft_approve` sandbox
-   symbols and the `draft_backend` toggle. Each is a thin layer over
-   `workspace.drafts`, the boundary the daemon's HTTP routes use too, so an
-   extension hook on `:draft/*` sees every surface alike."
+  "Drafts as the model reaches them: the `draft_create`, `draft_status`,
+   `draft_approve` and `draft_discard` sandbox symbols and the `draft_backend`
+   toggle. Only the agent manages drafts — no channel offers a slash command
+   or a picker for them. Each symbol is a thin layer over `workspace.drafts`,
+   the boundary the daemon's HTTP routes use too, so an extension hook on
+   `:draft/*` sees every surface alike."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.workspace.drafts :as drafts]))
 
@@ -15,7 +17,7 @@
   {:id workspace/draft-backend-toggle-id
    :label "Draft backend"
    ;; One line for the Settings row (100 chars max); `doc("drafts")` has the rest.
-   :description "How /draft isolates work: git worktree, Rift clone, auto (first fit) or off."
+   :description "How the agent isolates a draft: git worktree, Rift clone, auto (first fit) or off."
    :type :enum
    :choices ["auto" "worktree" "rift" "off"]
    :default "auto"
@@ -23,21 +25,38 @@
    :persist? true
    :group :sandbox})
 
-;; Shared lookups: a slash ctx carries `:session/state-id` + `:session/id`, a
-;; symbol env carries `:workspace/id` + `:session-id`; both carry `:db-info`.
+;; The injected env carries `:db-info`, `:session-id`, `:session/state-id`,
+;; `:workspace/id` and `:workspace-atom`, the live sandbox confinement pointer.
 
-(defn- db-of [m] (or (:db-info m) (:db m)))
+(defn- db-of [env] (or (:db-info env) (:db env)))
 
-(defn- boundary-env [m] {:db-info (db-of m) :session-id (or (:session-id m) (:session/id m))})
+(defn- boundary-env [env] {:db-info (db-of env) :session-id (:session-id env)})
+
+(defn- state-id-of
+  "The session state the draft pins to: the env's, else the session's latest."
+  [env]
+  (or (:session/state-id env)
+      (when-let [db (db-of env)]
+        (some->> (:session-id env)
+                 (persistance/db-latest-session-state-id db)))))
 
 (defn- current-workspace
   "The workspace the session works in right now."
-  [m]
-  (when-let [db (db-of m)]
-    (or (when-let [state-id (:session/state-id m)]
+  [env]
+  (when-let [db (db-of env)]
+    (or (when-let [state-id (state-id-of env)]
           (workspace/for-session db state-id))
-        (when-let [wid (:workspace/id m)]
+        (when-let [wid (:workspace/id env)]
           (workspace/get db wid)))))
+
+(defn- sync-confinement!
+  "Push `ws` into the live sandbox confinement pointer, so the rest of this
+   turn reads and writes inside it."
+  [env ws]
+  (when ws
+    (some-> (:workspace-atom env)
+            (reset! ws)))
+  ws)
 
 (defn- message-arg
   "`draft_approve(\"subject\")` or `draft_approve({\"message\": ...})` — the subject, or nil."
@@ -48,6 +67,26 @@
           str
           str/trim
           not-empty))
+
+(defn- clean-arg
+  "`draft_create(name, clean=True)` or `draft_create(name, {\"clean\": true})`."
+  [x]
+  (boolean (if (map? x) (or (get x "clean") (:clean x)) x)))
+
+(defn- failure [message] (extension/failure {:error {:message message}}))
+
+(defn- not-in-draft
+  [tool]
+  (failure (str "Not in a draft: " tool
+                " works on the session's current draft and this session "
+                "works on its trunk. draft_create(\"name\") opens one.")))
+
+(defn- refusal
+  "A refused draft operation: the thrown message, plus the canonical `:hint`
+   when the refusal carries one."
+  [^clojure.lang.ExceptionInfo e]
+  (let [hint (:hint (ex-data e))]
+    (failure (if (str/blank? (str hint)) (ex-message e) (str (ex-message e) " " hint)))))
 
 ;; Sandbox symbols
 
@@ -63,22 +102,95 @@
                                                    :backend-setting
                                                    (name (workspace/draft-backend-setting))}))})))
 
+(defn draft-create
+  "Open a draft of the trunk and move the session into it."
+  [env label & [clean]]
+  (let [db
+        (db-of env)
+
+        state-id
+        (state-id-of env)
+
+        label
+        (some-> label
+                str
+                str/trim
+                not-empty)
+
+        clean?
+        (clean-arg clean)
+
+        current
+        (current-workspace env)
+
+        repo-root
+        (or (:repo-root current) (:root current) (workspace/trunk-root))]
+
+    (cond (or (nil? db) (nil? state-id)) (failure "Drafts need a persisted session.")
+          (nil? label) (failure "Name the draft: draft_create(\"name\").")
+          (workspace/draft? current) (failure (str "Already in draft '" (:label current)
+                                                   "': draft_approve() what should land, "
+                                                   "then draft_discard() before opening another."))
+          (not (workspace/isolated-workspaces-supported? repo-root))
+          (failure (str "Drafts are not available here. "
+                        (workspace/isolation-unavailable-hint repo-root)))
+          :else
+          (try (let [ws (drafts/create!
+                          (boundary-env env)
+                          {:session-state-id state-id :label label :from current :clean? clean?})]
+                 (sync-confinement! env ws)
+                 (extension/success {:op :draft-create
+                                     :result (wire/canonical (assoc (drafts/status ws)
+                                                               :in-draft true
+                                                               :clean clean?))}))
+               (catch clojure.lang.ExceptionInfo e (refusal e))))))
+
 (defn draft-approve
   "Land the session's current draft on its `vis/<label>` branch."
   [env & [message]]
   (let [ws (current-workspace env)]
     (if-not (workspace/draft? ws)
-      (extension/failure
-        {:error {:message
-                 (str "Not in a draft: draft_approve lands the session's current draft and this "
-                      "session works on its trunk. The user opens one with /draft <name>.")}})
+      (not-in-draft "draft_approve()")
       (try (extension/success {:op :draft-approve
                                :result (wire/canonical (dissoc (drafts/approve!
                                                                  (boundary-env env)
                                                                  {:workspace-id (:id ws)
                                                                   :message (message-arg message)})
                                                          :workspace))})
-           (catch clojure.lang.ExceptionInfo e (extension/failure {:throwable e}))))))
+           (catch clojure.lang.ExceptionInfo e (refusal e))))))
+
+(defn draft-discard
+  "Leave the session's current draft and remove its working copy. Approved
+   commits stay on the `vis/<label>` branch."
+  [env]
+  (let [db
+        (db-of env)
+
+        state-id
+        (state-id-of env)
+
+        ws
+        (current-workspace env)]
+
+    (cond (or (nil? db) (nil? state-id)) (failure "Drafts need a persisted session.")
+          (not (workspace/draft? ws)) (not-in-draft "draft_discard()")
+          :else
+          (try (let [{:keys [branch ahead]}
+                     (drafts/status ws)
+
+                     trunk
+                     (workspace/exit-to-trunk! db state-id (:repo-root ws))]
+
+                 (drafts/discard! (boundary-env env)
+                                  {:workspace-id (:id ws) :reason "discarded with draft_discard()"})
+                 (sync-confinement! env trunk)
+                 (extension/success {:op :draft-discard
+                                     :result (wire/canonical {:status :discarded
+                                                              :label (:label ws)
+                                                              :root (:root trunk)
+                                                              :branch branch
+                                                              :approved-ahead (or ahead 0)})}))
+               (catch clojure.lang.ExceptionInfo e (refusal e))))))
 
 (def draft-status-symbol
   (vis/symbol
@@ -88,13 +200,35 @@
      :description
      (str
        "Where this session's work lands — `draft_status()` says whether the session is inside a "
-       "draft (an isolated working copy the user opened with /draft) and, if so, which backend "
+       "draft (an isolated working copy opened with `draft_create`) and, if so, which backend "
        "holds it, the `vis/<name>` branch approvals commit to, how many approved commits the trunk "
        "lacks (`ahead`) and how many paths still differ from that branch (`pending`). Outside a "
        "draft it reports the trunk root and the `draft_backend` setting.")
      :result
      (str "String-keyed `{in_draft, root, ...}`; in a draft also `{workspace_id, label, repo_root, "
           "backend, mechanism, branch, ahead, pending}`.")}))
+
+(def draft-create-symbol
+  (vis/symbol
+    #'draft-create
+    {:inject-env? true
+     :tag :mutation
+     :description
+     (str
+       "Open a draft — an isolated working copy of this repository — and move the session into it. "
+       "The trunk checkout is left alone until `draft_approve()` lands the work on the `vis/<name>` "
+       "branch; `draft_discard()` throws the working copy away. Pending trunk changes come along; "
+       "`clean=True` seeds from `HEAD` and leaves them behind. One draft at a time: approve and "
+       "discard the current one first. Only the agent manages drafts; the user reviews the branch. "
+       "Extension hooks on `draft/create` may refuse.")
+     :params [{:name "label" :note "draft name; also the `vis/<label>` branch"}
+              {:name "clean" :note "`True` seeds from `HEAD` without pending trunk changes"}]
+     :call {:pos ["label"] :opt-pos ["clean"]}
+     :result
+     (str
+       "String-keyed `{in_draft: true, workspace_id, label, root, repo_root, backend, mechanism, "
+       "branch, ahead, pending, clean}`. Work under `root`: the sandbox is confined to it at once, "
+       "and `session[\"workspace\"]` / `project_root_path` follow from the next block on.")}))
 
 (def draft-approve-symbol
   (vis/symbol
@@ -107,181 +241,27 @@
        "and untracked path is staged, the commit carries `Vis-Session`/`Vis-Draft` trailers, and "
        "the trunk checkout is left untouched (the branch is reachable from it). "
        "`draft_approve()` uses the default subject, `draft_approve(\"subject\")` yours. The draft "
-       "stays open, so later work can be approved again. Only meaningful inside a draft; the user "
-       "opens one with /draft and reviews the branch afterwards. Extension hooks on `draft/approve` "
+       "stays open, so later work can be approved again. Only meaningful inside a draft opened with "
+       "`draft_create`; the user reviews the branch afterwards. Extension hooks on `draft/approve` "
        "may veto the landing.")
      :params [{:name "message" :note "commit subject; default `draft(<name>): approve`"}]
      :call {:lead-opt "message" :rest :never}
      :result (str "String-keyed `{status: approved|nothing_to_approve, branch, commit, files}`; "
                   "`files` lists the paths that landed.")}))
 
-(def symbols [draft-status-symbol draft-approve-symbol])
+(def draft-discard-symbol
+  (vis/symbol
+    #'draft-discard
+    {:inject-env? true
+     :tag :mutation
+     :description
+     (str
+       "Leave the session's current draft and remove its working copy; the session is back on the "
+       "trunk at once. Approved commits stay on the `vis/<name>` branch — `draft_approve()` first "
+       "when the work should survive. Unapproved changes in the draft are lost. Only meaningful "
+       "inside a draft. Extension hooks on `draft/discard` may refuse.")
+     :result (str
+               "String-keyed `{status: discarded, label, root, branch, approved_ahead}`; `root` is "
+               "the trunk the session works in again.")}))
 
-;; Slash commands
-
-(defn- err [msg & {:as extras}] (merge {:slash/status :error :slash/title msg} extras))
-
-(defn- refusal
-  "A refused draft operation as a slash error: the thrown message, and the
-   canonical `:hint` when the refusal carries one."
-  [^clojure.lang.ExceptionInfo e]
-  (let [hint (:hint (ex-data e))]
-    (cond-> (err (ex-message e))
-      hint
-      (assoc :slash/body hint))))
-
-(defn- sync-confinement!
-  "Push `ws` into the live sandbox confinement pointer for this turn."
-  [ctx ws]
-  (when ws
-    (some-> (:workspace-atom ctx)
-            (reset! ws)))
-  ws)
-
-(defn- draft-args
-  "`/draft <name...> [--clean]` — words become the label, joined by `-`."
-  [argv]
-  (let [words
-        (remove str/blank? (map str argv))
-
-        clean?
-        (boolean (some #{"--clean"} words))]
-
-    {:label (not-empty (str/join "-" (remove #{"--clean"} words))) :clean? clean?}))
-
-(defn- handle-draft
-  "`/draft <name> [--clean]` — open a draft from the trunk and work inside it.
-   A draft already open is parked, never lost."
-  [ctx]
-  (let [db
-        (db-of ctx)
-
-        state-id
-        (:session/state-id ctx)
-
-        {:keys [label clean?]}
-        (draft-args (:command/argv ctx))]
-
-    (cond (or (nil? db) (nil? state-id)) (err "Drafts need a persisted session")
-          (nil? label) (err "Name the draft" :slash/body "Usage: /draft <name> [--clean]")
-          :else
-          (let [current
-                (current-workspace ctx)
-
-                repo-root
-                (or (:repo-root current) (:root current) (workspace/trunk-root))]
-
-            (if-not (workspace/isolated-workspaces-supported? repo-root)
-              (err "Drafts are not available here"
-                   :slash/body
-                   (workspace/isolation-unavailable-hint repo-root))
-              (try (when (workspace/draft? current) (workspace/stash! db state-id))
-                   (let [trunk
-                         (workspace/for-session db state-id)
-
-                         ws
-                         (drafts/create!
-                           (boundary-env ctx)
-                           {:session-state-id state-id :label label :from trunk :clean? clean?})
-
-                         {:keys [backend branch] :as status}
-                         (drafts/status ws)]
-
-                     (sync-confinement! ctx ws)
-                     {:slash/status :ok
-                      :slash/title (str "Draft '"
-                                        (:label ws)
-                                        "' open ("
-                                        backend
-                                        (when branch (str ", branch " branch))
-                                        ")")
-                      :slash/body (str "Working copy: "
-                                       (:root ws)
-                                       (if clean?
-                                         ". Seeded from HEAD; pending trunk changes stayed behind."
-                                         ". Pending trunk changes came along.")
-                                       (if branch
-                                         (str " /approve lands the work on "
-                                              branch
-                                              "; /discard throws the working copy away.")
-                                         " /discard throws the working copy away."))
-                      :slash/data (wire/canonical status)})
-                   (catch clojure.lang.ExceptionInfo e (refusal e))))))))
-
-(defn- handle-approve
-  "`/approve [subject]` — land the current draft on its `vis/<name>` branch."
-  [ctx]
-  (let [ws
-        (current-workspace ctx)
-
-        message
-        (message-arg (str/join " " (:command/argv ctx)))]
-
-    (if-not (workspace/draft? ws)
-      (err "Not in a draft" :slash/body "/draft <name> opens one; /approve lands it.")
-      (try (let [{:keys [status branch commit files]}
-                 (drafts/approve! (boundary-env ctx) {:workspace-id (:id ws) :message message})]
-             (if (= :nothing-to-approve status)
-               {:slash/status :ok
-                :slash/title "Nothing to approve"
-                :slash/body (str "The draft already matches " branch ".")}
-               {:slash/status :ok
-                :slash/title (str "Approved " (count files) " path(s) on " branch)
-                :slash/body
-                (str "Commit "
-                     (subs (str commit) 0 (min 12 (count (str commit))))
-                     ". The draft stays open; the trunk checkout is untouched — merge or review "
-                     branch
-                     " there. /discard removes the working copy, not the branch.")
-                :slash/data (wire/canonical
-                              {:status status :branch branch :commit commit :files files})}))
-           (catch clojure.lang.ExceptionInfo e (refusal e))))))
-
-(defn- handle-discard
-  "`/discard` — leave the current draft and remove its working copy. Approved
-   commits stay on the `vis/<name>` branch."
-  [ctx]
-  (let [db
-        (db-of ctx)
-
-        state-id
-        (:session/state-id ctx)
-
-        ws
-        (current-workspace ctx)]
-
-    (cond (or (nil? db) (nil? state-id)) (err "Drafts need a persisted session")
-          (not (workspace/draft? ws))
-          (err "Not in a draft" :slash/body "There is nothing to discard on the trunk.")
-          :else (try (let [{:keys [branch ahead]}
-                           (drafts/status ws)
-
-                           trunk
-                           (workspace/exit-to-trunk! db state-id (:repo-root ws))]
-
-                       (drafts/discard! (boundary-env ctx)
-                                        {:workspace-id (:id ws) :reason "discarded with /discard"})
-                       (sync-confinement! ctx trunk)
-                       {:slash/status :ok
-                        :slash/title (str "Discarded draft '" (:label ws) "'")
-                        :slash/body
-                        (str "Back on " (:root trunk)
-                             ". " (if (and branch (pos? (or ahead 0)))
-                                    (str "Its " ahead " approved commit(s) stay on " branch ".")
-                                    "Nothing had been approved from it."))})
-                     (catch clojure.lang.ExceptionInfo e (refusal e))))))
-
-(def specs
-  "Declarative slash specs hooked onto foundation-core's manifest."
-  [{:slash/name "draft"
-    :slash/doc "Open an isolated draft of this repository and work inside it."
-    :slash/usage "/draft <name> [--clean]"
-    :slash/run-fn handle-draft}
-   {:slash/name "approve"
-    :slash/doc "Land the current draft as a commit on its vis/<name> branch."
-    :slash/usage "/approve [subject]"
-    :slash/run-fn handle-approve}
-   {:slash/name "discard"
-    :slash/doc "Leave the current draft and remove its working copy; approved commits stay."
-    :slash/usage "/discard"
-    :slash/run-fn handle-discard}])
+(def symbols [draft-status-symbol draft-create-symbol draft-approve-symbol draft-discard-symbol])
