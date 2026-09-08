@@ -703,11 +703,13 @@
     {:symbol 'run_tests
      :result
      (str
-       "String-keyed, stamped with `op`; absent fields mean not applicable. The verdict is `is_pass`. "
+       "String-keyed, stamped with `op`; absent fields mean not applicable; these fields may also be `None`. "
+       "Printing shows a verdict, counts and bounded diagnostics; all data remains accessible by "
+       "key or `dict(r)`/`json.dumps(r)`. Omitted text names its read-back field. The verdict is `is_pass`. "
        "Counts: `total`, `pass`, `fail`, `errored` (the erroring subset of `fail`), `skipped`, "
        "`selected`. `failures` carries ONE ROW PER FAULT — `test`, `type` (`fail` or `error`), "
        "`message`, plus `ns` (Clojure) or `file` (Python) — so a red run already names what to "
-       "open. `output` is the runner's own text; `runner`, `ns`, `target`, `framework`, `mode`, `ms` "
+       "open. `output` is the runner report; `runner`, `ns`, `target`, `framework`, `mode`, `ms` "
        "say what ran and how. A REPL that could not serve answers `repl_wedged`, `repl_unusable`, "
        "`recovered` and a `hint`; `timed_out`, `error`, `exit` carry the rest.")
      :description

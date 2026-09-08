@@ -359,4 +359,76 @@ before edits; its release version and Vis's production dependency pin remain unc
   393/834/1280px, and the exact exported bytes in Companion's opaque-origin DocFrame. Native
   terminal PNG and grid parity were checked. No Companion sandbox relaxation or app-code change.
 - Native iOS/WKWebView and a native-image binary were not exercised. No release, remote mutation
-  or gateway restart; installed binaries and previously generated HTML files are unchanged.
+or gateway restart; installed binaries and previously generated HTML files are unchanged.
+
+# Token-efficient built-in tool results
+
+Keep complete programmatic data and print the information needed for the next decision.
+
+## Context
+The session audit found oversized shell/test representations, a global session index in
+`read_session`, duplicate transcript projections, and historical discovery/shape errors.
+The audit reproduced the redundant index and null-heavy test result. Relevant owners
+are `internal/foundation/introspection.clj`, `internal/python/env.clj`, guest Python and
+the canonical SDK. Runtime machinery belongs to the sibling `vis-python-runtime` repository.
+Do not remove shell metadata, weaken patch validation, lower the global output limit, change
+cache/folding policy, or infer current defects from historical errors. Preserve unrelated work.
+
+## 1. Reproduce and pin contracts
+- Rationale: distinguish current failures from obsolete API observations.
+- Data: current sandbox results, SDK tests, Lazytest boundary tests, result consumers.
+- Acceptance criteria: regression tests for each changed behavior; discovery remains available
+  after bootstrap and refresh; no guessed aliases or discarded safety/diagnostic fields.
+- Unknowns: result-wrapper ownership, transcript consumers, existing test dependencies.
+
+## 2. Compact result presentation
+- Rationale: Python keeps the data; default printing should not expand administrative fields.
+- Data: shell states/log pages, test verdicts/failures, apropos records, session projections.
+- Acceptance criteria: short deterministic views, explicit failure/timeout/truncation signals,
+  full mapping/serialization and pagination preserved; embedded and SDK boundary coverage.
+- Unknowns: which presentation hooks already exist without duplicating runtime code.
+
+## 3. Lean session reads and aligned documentation
+- Rationale: one conversation should not query all sessions or repeat every content projection.
+- Data: canonical transcript builders, model-facing consumers and documentation contracts.
+- Acceptance criteria: no global index query; one full block-based model transcript retaining
+  folded history and diagnostics; human exports unchanged; documented canonical key names.
+- Unknowns: data unique to alternate transcript projections.
+
+## 4. Verify and measure
+- Rationale: size reduction must not hide failures or break the next programmatic decision.
+- Data: deterministic fixtures, affected SDK/JVM tests, formatting, lint/reflection, diff checks.
+- Acceptance criteria: affected checks pass and before/after representation sizes are reported
+  separately from task success or provider billing; no gateway restart, deployment or publishing.
+- Unknowns: local runtime dependency verification and native-image availability if needed.
+
+## Plan state
+- [x] Current redundant index and verbose shell/test results reproduced.
+- [x] Regression tests and compact result implementation.
+- [x] Lean session read and documentation.
+- [x] Pytest collection/early-exit failures cannot become a successful empty run; setup skips
+  remain skipped, and faults retain their complete diagnostic.
+- [x] Content-addressed guest modules prevent mixed engine versions from overwriting each other.
+- [x] Verification and measurements.
+
+Verification: 473 affected JVM cases passed in a clean run using the released runtime, with the
+normal network guard. The 55 SDK shell/view tests passed in an isolated project environment with
+its declared jsonschema dependency. Formatting is clean; clj-kondo and reflection/boxed-math lint
+passed for 10 Clojure files, and Ruff passed for both guest Python files. All five local documentation
+links resolve; scoped diff checks pass. The transient runtime archive/dependency setup blockers
+were resolved without changing the dependency pin or disabling test guards.
+
+Measured with `o200k_base` on the same input before/after each change:
+
+| Input | Before tokens | After tokens | Reduction |
+|---|---:|---:|---:|
+| Shell handle with a short successful log | 200 | 18 | 91.0% |
+| Test result with 48 passing cases | 419 | 47 | 88.8% |
+| Nine common apropos rows | 403 | 265 | 34.2% |
+| Captured session, complete JSON projection | 502,292 | 229,001 | 54.4% |
+
+The captured session's default print is 186 tokens; the complete projected data remains accessible.
+These are representation-size measurements, not task-success or provider-billing savings. No paid
+model benchmark or native-image build was run. A final cross-check reran the eight affected test
+namespaces (341 cases) against the current tree before commit. No gateway restart, deployment or
+release; unrelated working-tree changes are preserved.

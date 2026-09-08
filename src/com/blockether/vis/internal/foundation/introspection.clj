@@ -1085,65 +1085,53 @@
 (defn- foundation-usage-data
   "Compact token/cost, tool-outcome, and provider-routing ledger. It deliberately
    omits messages, code, results, and raw provider payloads."
-  [env session-id]
-  (let [target-id
-        (or session-id (:session-id env))
+  ([env session-id]
+   (let [target-id (or session-id (:session-id env))]
+     (foundation-usage-data env
+                            target-id
+                            (safe-call #(transcript/transcript (:db-info env) target-id) nil))))
+  ([env target-id data]
+   (let [empty-routing (merge (usage-routing []) (manual-model-switches (:db-info env) target-id))]
+     (if-not data
+       {:schema-version 1
+        :scope :session-usage
+        :session-id target-id
+        :session nil
+        :totals (assoc (merge (empty-usage) (empty-tool-usage)) :turns 0)
+        :turns []
+        :tools []
+        :tool-errors []
+        :tool-errors-truncated? false
+        :routing empty-routing}
+       (let [turns (mapv (fn [turn]
+                           (let [iterations (mapv (partial usage-iteration turn) (:iterations turn))
+                                 totals (usage-total iterations)]
 
-        data
-        (safe-call #(transcript/transcript (:db-info env) target-id) nil)
+                             {:position (:position turn)
+                              :status (:status turn)
+                              :iteration-count (count iterations)
+                              :tokens (:tokens totals)
+                              :cost-usd (:cost-usd totals)
+                              :tool-calls (:tool-calls totals)
+                              :tool-errors (:tool-errors totals)
+                              :tool-outcomes (:tool-outcomes totals)
+                              :iterations iterations}))
+                         (:turns data))
+             iterations (vec (mapcat :iterations turns))
+             {:keys [tool-errors tool-errors-truncated?]} (usage-tool-errors iterations)
+             routing (merge (usage-routing iterations)
+                            (manual-model-switches (:db-info env) target-id))]
 
-        empty-routing
-        (merge (usage-routing []) (manual-model-switches (:db-info env) target-id))]
-
-    (if-not data
-      {:schema-version 1
-       :scope :session-usage
-       :session-id target-id
-       :session nil
-       :totals (assoc (merge (empty-usage) (empty-tool-usage)) :turns 0)
-       :turns []
-       :tools []
-       :tool-errors []
-       :tool-errors-truncated? false
-       :routing empty-routing}
-      (let [turns
-            (mapv (fn [turn]
-                    (let [iterations
-                          (mapv (partial usage-iteration turn) (:iterations turn))
-
-                          totals
-                          (usage-total iterations)]
-
-                      {:position (:position turn)
-                       :status (:status turn)
-                       :iteration-count (count iterations)
-                       :tokens (:tokens totals)
-                       :cost-usd (:cost-usd totals)
-                       :tool-calls (:tool-calls totals)
-                       :tool-errors (:tool-errors totals)
-                       :tool-outcomes (:tool-outcomes totals)
-                       :iterations iterations}))
-                  (:turns data))
-
-            iterations
-            (vec (mapcat :iterations turns))
-
-            {:keys [tool-errors tool-errors-truncated?]}
-            (usage-tool-errors iterations)
-
-            routing
-            (merge (usage-routing iterations) (manual-model-switches (:db-info env) target-id))]
-
-        {:schema-version 1
-         :scope :session-usage
-         :session-id (get-in data [:session :id])
-         :session (select-keys (:session data) [:id :title :channel :provider :model])
-         :totals (assoc (usage-total iterations) :turns (count turns))
-         :turns (mapv #(update % :iterations (partial mapv public-usage-iteration)) turns)
-         :tools (usage-tools iterations)
-         :tool-errors tool-errors
-         :tool-errors-truncated? tool-errors-truncated?
-         :routing routing}))))
+         {:schema-version 1
+          :scope :session-usage
+          :session-id (get-in data [:session :id])
+          :session (select-keys (:session data) [:id :title :channel :provider :model])
+          :totals (assoc (usage-total iterations) :turns (count turns))
+          :turns (mapv #(update % :iterations (partial mapv public-usage-iteration)) turns)
+          :tools (usage-tools iterations)
+          :tool-errors tool-errors
+          :tool-errors-truncated? tool-errors-truncated?
+          :routing routing})))))
 
 (defn- safe-call
   [f default]
@@ -1158,34 +1146,35 @@
                 (when id [id (meta-turn-retries env id)])))
         turns))
 
-(def ^:private painted-block-keys
-  "Presentation metadata excluded from model introspection. Canonical `:stdout` remains."
-  [:op])
-
 (defn- model-iteration
-  "One transcript iteration with the presentation-only rows taken out: the painted
-   card IR off every block."
+  "Keep one block projection, including form-only timing/call diagnostics.
+   Presentation labels and the duplicate raw forms do not reach the model."
   [iteration]
-  (let [attachments (vec (:attachments iteration))]
-    (cond-> (dissoc iteration :attachments)
+  (let [attachments
+        (vec (:attachments iteration))
+
+        forms
+        (vec (:forms iteration))]
+
+    (cond-> (dissoc iteration :forms :attachments)
       (contains? iteration :blocks)
-      (update :blocks (partial mapv #(apply dissoc % painted-block-keys)))
+      (update :blocks
+              (fn [blocks]
+                (mapv (fn [idx block]
+                        (merge (dissoc (get forms idx) :src :op) (dissoc block :op)))
+                      (range (count blocks))
+                      blocks)))
 
       (seq attachments)
       (assoc :attachments attachments))))
 
 (defn- model-transcript
-  "`transcript/transcript` with everything that exists only to be PAINTED removed.
-
-   That projection is shared with HUMAN exports (`transcript-md` / `transcript-html`),
-   where card metadata and Activity receipts belong. The cut is made HERE — on the
-   one edge that reaches the model — and never inside the shared builder.
-
-   Both leaks were measured on a real session: every block handed the model card
-   metadata beside its canonical output, and nearly every attachment descriptor
-   named an Activity receipt whose bytes the sandbox reader refuses."
+  "One model-facing turns/iterations/blocks projection with full history.
+   Human exports retain dialog/timeline and presentation metadata in the shared
+   transcript builder. Only this edge removes duplicate projections and moves
+   form-only timing/call diagnostics into their corresponding blocks."
   [transcript-data]
-  (cond-> transcript-data
+  (cond-> (dissoc transcript-data :dialog :timeline)
     (seq (:turns transcript-data))
     (update :turns
             (partial mapv
@@ -1206,7 +1195,7 @@
         (or session-id (:session-id env))
 
         transcript-data
-        (safe-call #(model-transcript (transcript/transcript (:db-info env) target-id)) nil)
+        (safe-call #(transcript/transcript (:db-info env) target-id) nil)
 
         resolved-id
         (or (get-in transcript-data [:session :id]) target-id)
@@ -1227,12 +1216,11 @@
         (safe-call #(retries-by-turn env (:turns transcript-data)) {})
 
         usage
-        (safe-call #(foundation-usage-data env resolved-id) {})]
+        (safe-call #(foundation-usage-data env resolved-id transcript-data) {})]
 
-    {:schema-version 1
+    {:schema-version 2
      :scope :session
      :session-id resolved-id
-     :session-index (safe-call #(foundation-sessions-data env) [])
      :session session-summary
      :current-turn (safe-call #(foundation-turn env resolved-id) nil)
      :failures failures
@@ -1240,7 +1228,7 @@
      :session-forks forks
      :turn-retries turn-retries
      :usage usage
-     :transcript transcript-data}))
+     :transcript (model-transcript transcript-data)}))
 
 ;; ---------------------------------------------------------------------------
 ;; Strings-only boundary egress. read_session / get_session / list_sessions
@@ -1324,11 +1312,8 @@
 
 (defn- foundation-sessions
   "Envelope-wrapped session index (see `foundation-sessions-data`).
-   Returns a Vis tool envelope; sandbox callers receive the unwrapped
-   vector. The raw-data fn stays separate because `foundation-inspect-data`
-   EMBEDS the index inside its own envelope - the guard
-   (`assert-symbol-envelope!`) rejects a bare vector, which is exactly how
-   the index verb was broken for every caller (session 9c829d10)."
+   Returns a Vis tool envelope; sandbox callers receive the unwrapped vector.
+   The global index belongs only to this verb, never to a single-session read."
   ([env] (session-envelope :list-sessions (foundation-sessions-data env)))
   ([env search]
    (session-envelope :list-sessions (foundation-sessions-data env (search-arg search)))))
@@ -1390,14 +1375,18 @@
        "Read ONE conversation WHOLE — `read_session()` is the current session, "
        "`read_session(target)` another; `target` takes a bare id, an unambiguous prefix, or the "
        "copied `vis_session_id#<uuid>` marker. Filter "
-       "`transcript`/`turns`/`iterations`/`blocks` (`code`/`result`) in python_execution instead "
+       "`transcript`/`turns`/`iterations`/`blocks` (`code`/`stdout`/`error`) in python_execution instead "
        "of dumping it, and read current state off the live `session` map. This is the recovery "
        "path for raw folded content of THIS session — it does not undo a fold intent or restore "
        "it. Find ids with `list_sessions(search=…)`; one row alone is `get_session(id)`.")
      :result
-     (str "String-keyed `{session, current_turn, failures, diagnosis, session_forks, turn_retries, "
-          "usage, transcript}`. `usage` is compact token/cost/outcome/error/routing; its tool rows "
-          "OVERLAP, so never sum them.")}))
+     (str
+       "String-keyed `{session, current_turn, failures, diagnosis, session_forks, turn_retries, "
+       "usage, transcript}`. Printing shows a summary; all fields remain accessible by key or "
+       "`dict(r)`/`json.dumps(r)`. The transcript has one `turns`/`iterations`/`blocks` projection, "
+       "including folded history and block timing/call metadata, not duplicate `forms`, `dialog`, "
+       "or `timeline`. No global index: use `list_sessions()`. `usage` is compact "
+       "token/cost/outcome/error/routing; its tool rows OVERLAP, so never sum them.")}))
 
 (def get-session-symbol
   (vis/symbol
@@ -1455,7 +1444,7 @@
     "## Session introspection\n"
     "- Raw wire history: `~/.vis/gateway/events/<id>.ndjson`; never grep `.`.\n"
     "- Call `await read_session()` once. `usage` summarizes per-turn/iteration/tool/provider routing; tool rows overlap, never sum them.\n"
-    "- Folded content is readable ONLY here: `transcript/turns/iterations/blocks` (`code`/`result`).\n"
+    "- Folded content is readable ONLY here: `transcript/turns/iterations/blocks` (`code`/`stdout`/`error`).\n"
     "- Other conversation: `await list_sessions(search=\"…\")` ranks like the TUI/app search; then `get_session(id)` for one row, `read_session(id)` for its content.\n"
     "- A session id copied from the TUI or the companion app arrives MARKED as `vis_session_id#<uuid>` — that marker means 'this is a Vis session'; pass it verbatim (or the bare id) to `read_session`/`get_session`.\n"
     "- Filter in `python_execution`; never dump whole structures.\n"))

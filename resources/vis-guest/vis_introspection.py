@@ -92,6 +92,15 @@ def _live_doc(namespace, target):
         return ""
 
 
+class _AproposResults(list):
+    def __repr__(self):
+        return "\n".join(map(str, self)) if self else "apropos: no matches"
+
+
+def _item_repr(item):
+    return f"{item.type} {item.name} — {item.body}"
+
+
 def install(namespace):
     """Bind `apropos` and `doc` into `namespace`, closing over it.
 
@@ -106,10 +115,9 @@ def install(namespace):
             "__vis_apropos__",
             [_facts(namespace), "" if pattern is None else str(pattern)],
         )
-        item = namespace.get("__vis_AproposItem__")
-        if item is None:
-            return rows
-        return [item(row["kind"], row["name"], row["body"]) for row in rows]
+        return _AproposResults(
+            item(row["kind"], row["name"], row["body"]) for row in rows
+        )
 
     def doc(target=None):
         name = getattr(target, "name", None)
@@ -122,6 +130,8 @@ def install(namespace):
             [_facts(namespace), name, _live_doc(namespace, name)],
         )
 
+    item = namespace["__vis_AproposItem__"]
+    item.__repr__ = _item_repr
     namespace["apropos"] = apropos
     namespace["doc"] = doc
     return ["apropos", "doc"]

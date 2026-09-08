@@ -15,6 +15,33 @@ CPython installation, accessed through the JDK Foreign Function and Memory API.
 Tools such as `grep`, `cat`, `patch`, `shell` and `run_tests` are available as
 Python functions. `apropos` and `doc` inspect the available API synchronously.
 
+## Reading tool results
+
+Python receives complete tool data. Only printed text enters the model's next
+request. Keep results in variables and print the fields needed for a decision:
+
+```python
+r = await run_tests({"language": "python"})
+print(r)                 # verdict, counts and bounded diagnostics
+print(r["failures"])     # every recorded fault
+print(r["output"])       # full returned runner output
+```
+
+Shell results remain dictionary-like handles with `wait`, `logs`, `type` and
+`stop`. Their short view preserves status, exit and timeout information. If text
+is omitted, the view names the field or log cursor to read next. `dict(r)` exposes
+the mapping; `json.dumps(r)` serializes every field without the compact view.
+Do not routinely print either for large results.
+
+`apropos(pattern)` remains a list of `(type, name, body)` records. Printing it
+shows one compact row per symbol; attributes, indexing and `doc(row)` still work.
+
+`read_session()` prints a summary but returns a structured session. Its version-2
+model transcript has one content projection: `transcript["turns"]`, then
+`iterations`, then `blocks` with `code`, `stdout` and optional `error`. Folded
+history and form timing/call metadata remain available there. The global index is
+only in `list_sessions()`; human transcript exports retain their existing views.
+
 ## What the sandbox may do
 
 A CPython audit hook checks filesystem, process and network operations,
@@ -63,7 +90,7 @@ The project interpreter runs as a subprocess selected from `uv`, Poetry, a
 processes. Allow dependency cache directories through `workspace.filesystem`.
 `repl_connect` attaches to an existing process, which Vis cannot jail.
 
-`run_tests({"language": "python", "runner": "project"})` uses the project's pytest.
+`run_tests("python", {"runner": "project"})` uses the project's pytest.
 Use `"runner": "vispython"` for the sandbox runner. The default is configurable
 through `python.runner`; see [Configuration](configuration.md#python-import-roots).
 

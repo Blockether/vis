@@ -65,18 +65,26 @@
 
 (set! *warn-on-reflection* true)
 
-(defonce ^:private guest-source-directory
-  (delay (let [dir (io/file (System/getProperty "user.home") ".vis" "python" "vis-guest")]
-           (.mkdirs dir)
-           (doseq [name ["vis_introspection.py" "vis_autoinstall.py"]]
-             (let [resource (or (io/resource (str "vis-guest/" name))
-                                (throw (ex-info (str "Missing Vis guest module " name)
-                                                {:module name})))
-                   target (io/file dir name)
-                   source (slurp resource)]
+(defn- materialize-guest-sources!
+  "Stage modules under their content identity so engine versions cannot overwrite each other."
+  [root sources]
+  (let [dir (io/file root (util/sha256-hex (pr-str (into (sorted-map) sources))))]
+    (.mkdirs dir)
+    (doseq [[name source] sources]
+      (let [target (io/file dir name)]
+        (when-not (and (.isFile target) (= source (slurp target))) (spit target source))))
+    (.getCanonicalPath dir)))
 
-               (when-not (and (.isFile target) (= source (slurp target))) (spit target source))))
-           (.getCanonicalPath dir))))
+(defonce ^:private guest-source-directory
+  (delay (materialize-guest-sources!
+           (io/file (System/getProperty "user.home") ".vis" "python" "vis-guest")
+           (into {}
+                 (map (fn [name]
+                        (let [resource (or (io/resource (str "vis-guest/" name))
+                                           (throw (ex-info (str "Missing Vis guest module " name)
+                                                           {:module name})))]
+                          [name (slurp resource)])))
+                 ["vis_introspection.py" "vis_autoinstall.py" "vis_results.py"]))))
 
 (defn guest-source-dir
   "Stage and answer the directory containing Vis-owned Python guest modules."

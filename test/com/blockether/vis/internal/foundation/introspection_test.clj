@@ -11,7 +11,17 @@
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.test-python-context :as tpc]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
+
+;; Direct session reads need the registration normally supplied by the manifest.
+(set-ns-context! [(around-each [f]
+                               (let [registered? (some #(= "foundation-core" (:ext/name %))
+                                                       (extension/registered-extensions))]
+                                 (when-not registered? (foundation/register!))
+                                 (try (f)
+                                      (finally (when-not registered?
+                                                 (extension/deregister-extension!
+                                                   "foundation-core"))))))])
 
 (defdescribe patch-diagnosis-contract-test
              (let [classify
@@ -776,3 +786,82 @@
           (expect (= "python-only\n" (:stdout (first (:blocks human-iteration)))))
           (expect (= #{"ci-run.live.ndjson"} (set (map :filename (:attachments human-iteration))))))
         (finally (vis/db-dispose-connection! s))))))
+
+(defdescribe
+  read-session-single-projection-test
+  (it
+    "reads one transcript without querying the global index or duplicating content"
+    (let [index-reads
+          (atom 0)
+
+          transcript-reads
+          (atom 0)
+
+          form
+          {:src "print('value')"
+           :stdout "value\n"
+           :duration-ms 12
+           :svar-tool-call-id "call-fixture"
+           :vis-tool-name "python_execution"
+           :scope "t1/i1"
+           :error {:message "diagnostic"}
+           :op "shell"}
+
+          source
+          {:session {:id "fixture"}
+           :totals {}
+           :dialog [{:content "duplicate"}]
+           :timeline [{:code (:src form)}]
+           :turns [{:id "turn"
+                    :position 1
+                    :user-request "inspect"
+                    :iterations [{:id "iteration"
+                                  :position 1
+                                  :forms [form]
+                                  :thinking "reasoning"
+                                  :assistant-prose "reply"
+                                  :blocks [{:code (:src form)
+                                            :stdout (:stdout form)
+                                            :scope (:scope form)
+                                            :error (:error form)
+                                            :position 0
+                                            :op "shell"}]}]}]}
+
+          data
+          (with-redefs-fn {#'introspection/foundation-sessions-data (fn [& _]
+                                                                      (swap! index-reads inc)
+                                                                      [])
+                           #'transcript/transcript (fn [& _]
+                                                     (swap! transcript-reads inc)
+                                                     source)}
+            #(:result (introspection/read-session {:session-id "fixture" :db-info nil})))
+
+          model
+          (get data "transcript")
+
+          iteration
+          (get-in model ["turns" 0 "iterations" 0])
+
+          block
+          (get-in iteration ["blocks" 0])]
+
+      (expect (zero? @index-reads))
+      (expect (= 1 @transcript-reads))
+      (expect (not (contains? data "session_index")))
+      (expect (= 2 (get data "schema_version")))
+      (expect (= #{"session" "totals" "turns"} (set (keys model))))
+      (expect (not (contains? iteration "forms")))
+      (expect (= "reasoning" (get iteration "thinking")))
+      (expect (= "reply" (get iteration "assistant_prose")))
+      (expect (= {"code" "print('value')"
+                  "stdout" "value\n"
+                  "duration_ms" 12
+                  "svar_tool_call_id" "call-fixture"
+                  "vis_tool_name" "python_execution"
+                  "scope" "t1/i1"
+                  "error" {"message" "diagnostic"}
+                  "position" 0}
+                 block))
+      (expect (= 1 (count (get-in data ["usage" "turns"]))))
+      (expect (contains? source :dialog))
+      (expect (= [form] (get-in source [:turns 0 :iterations 0 :forms]))))))

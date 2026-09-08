@@ -2871,7 +2871,9 @@
        "started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}` plus the "
        "methods below. A log page slices directly as its `out` text (`page[-4000:]`), continues "
        "with `next(page)` or `page.pages()`, and keeps ordinary dict iteration as key iteration. "
-       "A fresh run has no `exit`; nonzero exit is data. "
+       "Printing shows status, exit, timing and bounded log text, with explicit timeout and "
+       "continuation notices. Every field remains accessible by key or `dict(sh)`/`json.dumps(sh)`. "
+       "A fresh run has `exit=None`; nonzero exit is data. "
        "`out` is the pty's ONE stream: stdout and stderr are the same channel there, so whatever "
        "the command wrote to either is IN it, in order — one name, and no `stderr` key.")
      :description

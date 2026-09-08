@@ -958,7 +958,7 @@
    They are installed by the ENGINE rather than the extension registry, so this
    is the only place their contract can come from."
   {'apropos
-   "apropos(pattern='') -> [AproposItem(type, name, body)]. REGULAR-EXPRESSION FILTER over every SYMBOL name this session can reach. The pattern is applied with Clojure `re-find`, so `numpy\\..*` finds NumPy members and an invalid expression is an error. Results preserve corpus order and are never ranked or capped. With no argument it lists every public symbol. `type` is function · class · module · tool · doc · skill; `name` is exactly what `doc()` reads; `body` is the opening of the symbol's own text. Pass a row directly to `doc(item)` for the whole document. Session-local `def`s are listed by `defs()`, not here."
+   "apropos(pattern='') -> [AproposItem(type, name, body)]. REGULAR-EXPRESSION FILTER over every SYMBOL name this session can reach. The pattern is applied with Clojure `re-find`, so `numpy\\..*` finds NumPy members and an invalid expression is an error. Results preserve corpus order and are never ranked or capped. With no argument it lists every public symbol. `type` is function · class · module · tool · doc · skill; `name` is exactly what `doc()` reads; `body` is the opening of the symbol's own text. Printing lists compact `type name — body` rows; indexing, attributes, tuple unpacking and JSON retain all three fields. Pass a row directly to `doc(item)` for the whole document. Session-local `def`s are listed by `defs()`, not here."
    'doc
    "doc(target) -> str. RETRIEVE one symbol whole: an `AproposItem` a search answered with, a function name, a Vis documentation slug or a skill name — case, whitespace and a trailing `.md` do not matter, and a callable wins a name collision. What comes back is what the target IS: a function's or class's own docstring, a module's, a whole documentation page, a whole `SKILL.md`. A DOTTED target reads ONE MEMBER live off the object itself — `doc(\"pandas.read_csv\")` prints that member's signature and docstring. `doc()` with no argument prints the curated index of the verbs a session starts from. A skill is one of these documents and nothing more: reading it is the whole of using it."
    'gather
@@ -1258,6 +1258,7 @@
                    (str (get PROCESS_SURFACE "off") " " (get PROCESS_SURFACE "extension"))}))
     (install-shims! session)
     (install-introspection! session)
+    (py-exec! session "import vis_results\nvis_results.install(globals())")
     (exec! session "__vis_stamp_tools__()")
     (install-network! session network-opts)
     (install-network-probe! session)
