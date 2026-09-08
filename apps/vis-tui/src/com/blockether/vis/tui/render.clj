@@ -1742,7 +1742,7 @@
 
       nil)))
 
-(def ^:private code-copy-label "COPY")
+(def ^:private code-copy-label "[COPY]")
 
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
@@ -2501,7 +2501,7 @@
                       (p/fill-rect! g fbx y fill-iw 1)
                       (paint-ansi-line! g x y (subs line 1) row-fg row-bg)
                       (when-let [copy-width (:copy-width meta)]
-                        (p/set-colors! g t/link-chrome-fg row-bg)
+                        (p/set-colors! g t/button-fg t/button-bg)
                         (p/styled g
                                   [p/BOLD]
                                   (p/put-str! g

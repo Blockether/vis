@@ -2,7 +2,10 @@
   "Python extension host — load fixture `.py` files into trusted CPython
    contexts and assert on the registry + adapter contracts. Boots real
    Python sessions (on the shared engine), no model in the loop."
-  (:require [clojure.java.io :as io]
+  (:require [babashka.http-client :as http]
+            [cheshire.core :as json]
+            [com.blockether.svar.core :as svar]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.channel.events :as channel-events]
             [com.blockether.vis.contract.activity :as activity-contract]
@@ -1413,6 +1416,94 @@ vis.register(vis.Extension(
                      (:api-style ((:provider/get-token-fn (registry/provider-by-id
                                                             :tokendialect))))))))))
 
+;; The default belongs to the transport, not credentials: a token-only callback
+;; must preserve a preset's custom path. Exercise the pinned Svar through HTTP.
+(defdescribe
+  provider-responses-path-test
+  (it
+    "routes Responses requests without a path and preserves explicit overrides"
+    (doseq [[preset-path credential-path configured-path expected-path]
+            [[nil nil nil "/responses"] ["responses" nil nil "/responses"]
+             ["/custom/responses" nil nil "/custom/responses"]
+             ["/preset/responses" "/credential/responses" nil "/credential/responses"]
+             ["/preset/responses" "/credential/responses" "/configured/responses"
+              "/configured/responses"]]
+
+            stream?
+            [false true]]
+
+      (with-loaded
+        {"responsesfixture.py"
+         (str "import blockether.vis.extension as vis\n"
+              "def credential():\n"
+              "    return vis.ProviderCredential('fixture'"
+              (when credential-path (str ", responses_path=" (pr-str credential-path)))
+              ")\n"
+              "vis.register(vis.Extension(name='responsesfixture', description='d',\n"
+              "    providers=[vis.Provider(id='responsesfixture', label='Responses fixture',\n"
+              "        preset=vis.ProviderPreset(base_url='https://gateway.example.com/v1',\n"
+              "            api_style='openai-responses'"
+              (when preset-path (str ", responses_path=" (pr-str preset-path)))
+              "), get_token_fn=credential)]))\n")}
+        (fn [loaded _]
+          (expect (= 1 (:loaded loaded)))
+          (let [provider
+                (config/->svar-provider
+                  (with-redefs [config/load-config-raw
+                                (constantly {"providers"
+                                             [(cond-> {"id" "responsesfixture"
+                                                       "models" [{"name" "fixture-model"}]}
+                                                configured-path
+                                                (assoc "responses_path" configured-path))]})]
+                    (first (:providers (config/load-config)))))
+
+                router
+                (svar/make-router [provider])
+
+                requests
+                (atom [])
+
+                reply
+                {:id "response-fixture"
+                 :output
+                 [{:type "message" :role "assistant" :content [{:type "output_text" :text "ok"}]}]
+                 :usage {:input_tokens 1 :output_tokens 1 :total_tokens 2}}]
+
+            (expect (= :openai-compatible-responses (:api-style provider)))
+            (expect (= (or configured-path credential-path preset-path) (:responses-path provider)))
+            (with-redefs [http/post (fn [url opts]
+                                      (swap! requests conj
+                                        {:url url :body (json/parse-string (:body opts) true)})
+                                      {:status 200
+                                       :headers {}
+                                       :body (if (= :stream (:as opts))
+                                               (io/input-stream (.getBytes
+                                                                  (str "data: "
+                                                                       (json/generate-string
+                                                                         {:type "response.completed"
+                                                                          :response reply})
+                                                                       "\n\ndata: [DONE]\n\n")
+                                                                  StandardCharsets/UTF_8))
+                                               (json/generate-string reply))})]
+              (expect (= "ok"
+                         (:content (svar/ask-code! router
+                                                   (cond-> {:routing {:provider :responsesfixture
+                                                                      :model "fixture-model"}
+                                                            :messages [{:role "user"
+                                                                        :content "hello"}]
+                                                            :tools []}
+                                                     stream?
+                                                     (assoc :on-chunk
+                                                       (fn [_])))))))
+              (expect (= 1 (count @requests)))
+              (let [{:keys [url body]} (first @requests)]
+                (expect (= (str "https://gateway.example.com/v1" expected-path) url))
+                (expect (= "fixture-model" (:model body)))
+                (expect (pos-int? (:max_output_tokens body)))
+                (expect (not (contains? body :max_tokens)))
+                (expect (seq (:input body)))
+                (expect (not (contains? body :messages)))))))))))
+
 ;; Reload + project-over-global precedence
 
 (defdescribe
@@ -1817,11 +1908,23 @@ vis.register(vis.Extension(
                             (str
                               "from pathlib import Path\nimport shutil\n"
                               "def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):\n"
-                              "    name = '"
-                              wheel-name
+                              "    name = '" wheel-name
                               "'\n"
                               "    shutil.copyfile(Path(__file__).with_name(name), Path(wheel_directory) / name)\n"
-                              "    return name\n")))
+                              "    return name\n"
+                              "def build_editable(wheel_directory, config_settings=None, metadata_directory=None):\n"
+                              "    from zipfile import ZipFile\n"
+                              "    root = Path(__file__).parent\n"
+                              "    name = '" wheel-name
+                              "'\n"
+                              "    with ZipFile(root / name) as source, ZipFile(Path(wheel_directory) / name, 'w') as target:\n"
+                              "        for entry in source.namelist():\n"
+                              "            if not entry.endswith('.py'):\n                target.writestr(entry, source.read(entry))\n"
+                              "        target.writestr('fixture.pth', str(root) + '\\n')\n"
+                              "    return name\n"))
+                          (write-ext! ext-dir
+                                      "dependency/vis_einmal_dependency_fixture.py"
+                                      "VALUE = 42\n"))
                         (write-ext!
                           ext-dir
                           "einmal/pyproject.toml"
@@ -1894,7 +1997,9 @@ vis.register(vis.Extension(
                                               "result = await einmal_answer()\n"
                                               "assert result['path'] == dep.__file__\n"
                                               "assert Path(dep.__file__).parent == Path("
-                                              (pr-str (str packages))
+                                              (pr-str (str (if local?
+                                                             (io/file ext-dir "dependency")
+                                                             packages)))
                                               ")\n" "print(result['value'])"))]
                             (expect (nil? (:error result)))
                             (expect (= "42" (str/trim (:stdout result)))))

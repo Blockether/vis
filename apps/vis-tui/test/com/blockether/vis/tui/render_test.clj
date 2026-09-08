@@ -497,7 +497,7 @@
             (first (filter #(str/includes? (body-of (:line %)) "CODE") entries))]
 
         (expect (some? band) (str "got: " (mapv :line entries)))
-        (expect (str/ends-with? (body-text band) "1m 1s  COPY"))
+        (expect (str/ends-with? (body-text band) "1m 1s  [COPY]"))
         (expect (some? head) (str "got: " (mapv :line entries)))
         (expect (= 1 (count (filter #(str/includes? (body-text %) "1m 1s") entries))))))
   ;; The three shapes the companion bands and the TUI did not: `toolCards`
@@ -5320,7 +5320,7 @@ h = 8"
                    (.indexOf ^String body "SECOND RESULT")
                    (.indexOf ^String body "FIRST OPERATION")
                    (.indexOf ^String body "Done.")))
-        (expect (= 1 (count (re-seq #" COPY" body))))
+        (expect (= 1 (count (re-seq #"\[COPY\]" body))))
         (expect (not (str/includes? body "STATUS")) "expanded detail does not repeat status")
         (expect (not (str/includes? body "Succeeded 1"))
                 "expanded detail does not repeat counters")))

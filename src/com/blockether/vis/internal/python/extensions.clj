@@ -2205,7 +2205,18 @@
    changed). Same return shape as `load-python-extensions!`. Live
    sessions pick the new tool bindings up at the next turn boundary."
   ([] (reload-python-extensions! nil))
-  ([opts] (locking ensure-load-lock (reset! last-fingerprint nil) (load-python-extensions! opts))))
+  ([opts]
+   (locking ensure-load-lock
+     ;; #175: the registration worker survives reloads, unlike session workers.
+     ;; Discard its editable imports before any extension imports source again.
+     (when (pyext/worker-live? pyext/shared-key)
+       (pyext/exec! pyext/shared-key
+                    runtime/default-session
+                    (str "import package_paths; package_paths.refresh("
+                         (python-string-literal (runtime/packages-dir))
+                         ", reload=True)")))
+     (reset! last-fingerprint nil)
+     (load-python-extensions! opts))))
 
 ;; The loader's own host extension: `/reload` + doctor surface
 

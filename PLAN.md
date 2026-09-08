@@ -610,8 +610,8 @@ Reopen tests cover the chosen supported behavior; they do not prove power-loss d
   cancellation of the remaining work or owner termination. A later turn or engine boot gets a new
   identity. Ignore mirrored foreign turns without authoritative activation ownership.
 - `members(group_id=...)` returns a snapshot: session id, title and running/queued/held state, not a
-  public activation id. Runtime ownership/generation metadata stays internal. Parent session ids can be added
-  with actual subagent support; agents need not maintain task descriptions.
+  public activation id. Runtime ownership/generation metadata stays internal. Parent session ids can
+  be added with actual subagent support; agents need not maintain task descriptions.
 - Pending lookup seeks the `council_ping` primary index by recipient, activation and group, then
   `entry_id > cursor ORDER BY entry_id LIMIT batch_limit + 1`, joining entries by key. Filtering
   unrelated log entries is not part of the algorithm. An empty inbox is cheap even if the group log
@@ -676,7 +676,8 @@ continuation without truncating the stored entry or silently dropping an oversiz
   later replies or fetch the full Council log into historical sessions. Full content remains an
   explicit Council read. `read_session()` and SDK `Session.transcript()` use this projection;
   `Session.read()` remains the session-record operation, not a transcript API.
-- Reading history, a log page, a thread list, a thread or a single entry never acknowledges a ping, advances its
+- Reading history, a log page, a thread list, a thread or a single entry never acknowledges a ping,
+  advances its
   delivery cursor, mutates a retained batch or schedules an iteration. Compaction may remove content
   from the live model context but must preserve these correlations in persisted history.
 - Activity describes actual host operations such as publish, members, threads and read. Give its existing
@@ -722,7 +723,7 @@ actual query/operation paths; mocks may control time, scheduling and provider IO
 | C26 | Real Python A publish -> SQLite -> ping in B's captured model input -> both histories and Activity, plus SDK roundtrip | Correlations agree across actual boundaries, including a truncated preview and paginated thread fetch; one entry and one retained append on retry. No mocked Council implementation, implicit acknowledgement, turn submission or wakeup. |
 | C27 | Root with explicit/omitted title; blank lines, multibyte fallback boundary and invalid title/content | Deterministic bounded first-nonempty-line fallback without a model call; explicit titles trimmed/validated, never silently truncated; full content unchanged; title persisted only on the root and immutable. |
 | C28 | Empty/multiple groups; sparse roots among 1,000 then 100,000 continuations; concurrent roots/replies and paginated `threads()` | Root-index seek with measured bounded query work, not a scan/group of continuations; exact summary fields with no bodies; stable ascending root-id order; count/byte limits, cursor and `has_more`; no duplicate roots or reordering on reply. |
-| C29 | Thread-selector-only contract; unsupported `parent_id`; title on a continuation, including an unchanged title | Host/SDK/wire reject unsupported fields and invalid combinations before writing. Entry schemas, storage and history/Activity correlations contain no message-parent field or compatibility path. Thread/root errors use C10; no selector implicitly creates a root only for a valid new-thread request. |
+| C29 | Thread-selector-only contract; unsupported `parent_id`; title on a continuation, including an unchanged title | Host/SDK/wire reject unsupported fields and invalid combinations before writing. Entry schemas, storage and history/Activity correlations contain no message-parent field or compatibility path. Thread/root errors use C10. Only omission of `thread_id` creates a new root, after normal validation. |
 | C30 | Host and SDK discover via `threads()`, read and publish using the returned `thread_id`, then retry | Same id reused without translating it to another selector; no new root or title change on continuation; no implicit ping. Explicit nondefault group stays scoped; original result survives retry; changed title/thread with the same key conflicts. Real boundary coverage includes thread-list Activity and read-only cursor behavior. |
 
 Test locations to extend, not a second bespoke harness:
@@ -830,8 +831,9 @@ implementation do not satisfy this sequence. The planning-only probes above are 
   session write fixtures. No paid model calls, live gateway restart, deployment or production-state mutation.
 - Acceptance criteria: run the matrix against the integrated implementation. Report fixture sizes,
   entry/recipient distribution, hardware, engine/SQLite versions, concurrency and warm/cold conditions.
-  Measure publish, history/thread-content/thread-list pages and pending lookups separately, with p50/p95/p99 and writer
-  contention alongside a no-Council baseline. Initial reference profile: 10 active sessions and up to
+  Measure publish, history/thread-content/thread-list pages and pending lookups separately, with
+  p50/p95/p99 and writer contention alongside a no-Council baseline. Initial reference profile:
+  10 active sessions and up to
   100,000 entries, including empty/rare/dense recipient distributions and burst broadcasts. Provisional
   targets are p95 publish below 50 ms and bounded page read below 20 ms on the declared reference
   profile; agree/freeze the reference and budgets before the acceptance run. These are not measured

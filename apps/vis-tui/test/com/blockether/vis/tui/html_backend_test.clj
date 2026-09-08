@@ -226,18 +226,20 @@
 
                (doseq [row [code-row activity-row]]
                  (is (= (- cols 5) (count (str/trimr (row-text row))))))
-               (is (str/ends-with? (str/trimr (row-text code-row)) "COPY"))
+               (is (str/ends-with? (str/trimr (row-text code-row)) "[COPY]"))
                (is (str/ends-with? (str/trimr (row-text activity-row)) "7 operations"))
-               (doseq [x (range (- cols 9) (- cols 5))]
+               (doseq [x (range (- cols 11) (- cols 5))]
                  (is (nil? (.lookup interactions/hit-map
                                     (TerminalPosition. (int x)
                                                        (.indexOf ^java.util.List grid code-row))))))
-               (doseq [cell (subvec code-row (- cols 9) (- cols 5))]
+               (doseq [cell (subvec code-row (- cols 11) (- cols 5))]
                  (is (.isBold ^com.googlecode.lanterna.TextCharacter cell))
-                 (is (= theme/link-chrome-fg
+                 (is (= theme/button-fg
                         (.getForegroundColor ^com.googlecode.lanterna.TextCharacter cell)))
-                 (is (not= theme/code-block-fg
-                           (.getForegroundColor ^com.googlecode.lanterna.TextCharacter cell))))))))
+                 (is (= theme/button-bg
+                        (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell)))
+                 (is (not= theme/code-block-bg
+                           (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter cell))))))))
        (finally (theme/apply-theme! (keyword shared-theme/default-theme-id)))))
 
 (deftest joined-activity-html-native-parity-test

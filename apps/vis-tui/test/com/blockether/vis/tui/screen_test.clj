@@ -2751,15 +2751,15 @@ therapy line 2"
           (first (keep-indexed #(when (str/includes? %2 "COPY") %1) grid))
 
           col
-          (.indexOf ^String (nth grid row) "COPY")
+          (.indexOf ^String (nth grid row) "[COPY]")
 
           regions
           (disclosure-copy-regions {:visible [{:top 0 :projected message}]} 3 50 80)]
 
       (expect (= 1 (count regions)))
-      (expect (= 4 (:width (first regions))))
-      (doseq [x (range col (+ col 4))]
+      (expect (= 6 (:width (first regions))))
+      (doseq [x (range col (+ col 6))]
         (expect (= code (:text (bubble-copy-hit {:row row :col x} regions)))))
-      (doseq [x [(dec col) (+ col 4) (+ col 5)]]
+      (doseq [x [(dec col) (+ col 6) (+ col 7)]]
         (expect (nil? (bubble-copy-hit {:row row :col x} regions))))
       (expect (nil? (bubble-copy-hit {:row row :col 4} regions))))))

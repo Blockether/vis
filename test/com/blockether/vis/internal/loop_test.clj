@@ -477,6 +477,33 @@
 
 (defdescribe
   post-fold-utilization-and-accounting-test
+  ;; Blockether/vis#174: the fold executes before run-iteration returns its usage.
+  (it "prices the fold against the response that requested it, not the previous response"
+      (let [baselines
+            (atom [])
+
+            original
+            @#'lp/compaction-verbs]
+
+        (with-redefs-fn {#'lp/compaction-verbs
+                         (fn [& args]
+                           (let [verbs
+                                 (apply original args)
+
+                                 fold
+                                 (get verbs 'fold-session)
+
+                                 ctx
+                                 (first args)]
+
+                             (assoc verbs
+                               'fold-session
+                               (fn [& params]
+                                 (swap! baselines conj
+                                   (get-in @ctx ["engine_utilization" "last_request_tokens"]))
+                                 (apply fold params)))))}
+          #(fold-usage-scenario "fold_session('-t1/i1', 'checkpoint')"))
+        (expect (= [157843] @baselines))))
   ;; Regression: a successful fold looked ineffective because the next request
   ;; still carried pre-fold usage, and an unprinted receipt counted as zero folds.
   (it "publishes fresh provider usage and counts a fold without its printed receipt"
@@ -564,7 +591,10 @@
                                                :resolved-model {:provider :lmstudio
                                                                 :name "local-model"}})]
                  (expect (= (:request-health result)
-                            (prompt/request-health environment (:messages @seen) (:tools @seen))))
+                            (prompt/request-health environment
+                                                   (:messages @seen)
+                                                   (:tools @seen)
+                                                   "local-model")))
                  (expect (seq (get-in result [:request-health :breakdown])))
                  (expect (not (str/includes? (pr-str (:request-health result)) "abcdefgh")))))
              (finally (lp/dispose-environment! environment)))))
@@ -2642,6 +2672,56 @@
 
 (defdescribe
   previous-turn-context-test
+  ;; Blockether/vis#174: an interrupted user message may be dense code, not prose.
+  (it "keeps prior user input when diagnostic token counting is unavailable"
+      (with-redefs [persistance/db-list-session-turns
+                    (constantly
+                      [{:id "t1" :position 1 :status :interrupted :user-request "keep this input"}])
+
+                    persistance/db-list-session-turn-iterations
+                    (constantly [])
+
+                    svar-router/count-messages
+                    (fn [_ _]
+                      (throw (ex-info "tokenizer unavailable" {})))]
+
+        (let [ca
+              (atom {})
+
+              prior
+              (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom ca} "t2")]
+
+          (expect (= "keep this input" (:user-request (first prior))))
+          (expect (nil? (get @ca "engine_turn_weights"))))))
+  (it "tokenizes the rendered recap of an interrupted turn without iterations"
+      (let [payload
+            (apply str (repeat 1000 "ą中42={x:17};\n"))
+
+            ca
+            (atom {})
+
+            model
+            "gpt-4"]
+
+        (with-redefs [persistance/db-list-session-turns
+                      (constantly
+                        [{:id "t1" :position 1 :status :interrupted :user-request payload}])
+
+                      persistance/db-list-session-turn-iterations
+                      (constantly [])]
+
+          (let [prior
+                (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom ca} "t2" model)
+
+                rendered
+                (prompt/previous-turn-context-block prior)
+
+                expected
+                (- (svar-router/count-messages model [{:role "user" :content rendered}])
+                   (svar-router/count-messages model []))]
+
+            (expect (= expected (get-in @ca ["engine_turn_weights" 1])))
+            (expect (> (get-in @ca ["engine_turn_weights" 1]) (quot (count payload) 4)))))))
   ;; Cross-process RESUME carry must be a pure function of the DB so the wire is
   ;; identical regardless of process (see DERIVED_WIRE.md). These pin: ALL prior
   ;; answered turns carried (not just the latest), each with its r[] scope index;

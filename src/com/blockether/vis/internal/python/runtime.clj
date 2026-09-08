@@ -183,7 +183,8 @@
 (defn uv-sync!
   "Install a locked uv project into the shared packages directory.
    uv exports its resolved sources and artifact hashes to pylock.toml, then installs
-   that lock with its target-directory installer. Unrelated packages are retained.
+   that lock with its target-directory installer, preserving editable local sources.
+   Unrelated packages are retained.
    Builds are allowed for explicitly selected trusted projects. No project .venv
    or private dependency copy is created. Requires uv on PATH."
   ([project packages] (uv-sync! project packages []))
@@ -202,9 +203,8 @@
                           options)]
 
        (try (run-uv! project
-                     (into ["uv" "export" "--locked" "--no-editable" "--no-default-groups"
-                            "--format" "pylock.toml" "--project" (str project) "--output-file"
-                            (str lock-file)]
+                     (into ["uv" "export" "--locked" "--no-default-groups" "--format" "pylock.toml"
+                            "--project" (str project) "--output-file" (str lock-file)]
                            common))
             (run-uv! project
                      (into ["uv" "pip" "install" "--target" (str packages) "--requirements"

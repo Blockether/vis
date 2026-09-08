@@ -14,10 +14,12 @@
         as two string leaves: `folds` (stable gists, one structural delta per fold)
         and `now` (volatile position + budget + live, re-emitted each iteration),
         via `ctx-engine/folds-view` → `ctx-renderer/render-ctx-delta`."
-  (:require [com.blockether.vis.internal.context.engine :as eng]
+  (:require [com.blockether.vis.internal.content :as content]
+            [com.blockether.vis.internal.context.engine :as eng]
             [com.blockether.vis.internal.context.renderer :as cr]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [clojure.string :as str]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -418,6 +420,155 @@
 
         (expect (= :vis/fold-session-turn-unknown (:type (ex-data ex)))))))
 
+(defdescribe
+  fold-session-recap-only-history-test
+  ;; User report after stopping the agent and restarting the gateway: t1 has a
+  ;; Q/A recap, while the iteration universe contains only settled steps of t2.
+  (it "folds and re-folds a recap-only turn without duplicating or recharging its gist"
+      (doseq [key ["t1" "-t1" "t1-t1"]]
+        (let [ca (atom {"session_turn" 2
+                        "engine_iter_universe" (mapv #(str "t2/i" %) (range 1 12))
+                        "engine_turn_weights" {1 5000}
+                        "engine_utilization" {}})
+              sf (get (compaction-verbs ca) 'fold-session)]
+
+          (expect (str/includes? (sf key "completed turn") "estimated removal ~5k tokens"))
+          (expect (str/includes? (sf key "updated checkpoint") "estimated removal ~0 tokens"))
+          (expect (= ["updated checkpoint"]
+                     (mapv #(get % "gist") (get @ca "session_summaries")))))))
+  (it "does not substitute another turn or invent missing iteration scopes"
+      (doseq [key ["-t0" "t3-t3" "t1/i1-i9"]]
+        (let [ca (atom {"session_turn" 2
+                        "engine_iter_universe" ["t2/i1"]
+                        "engine_turn_weights" {1 5000}})
+              sf (get (compaction-verbs ca) 'fold-session)
+              ex (try (sf key "unknown") nil (catch clojure.lang.ExceptionInfo e e))]
+
+          (expect (= :vis/fold-session-unknown-key (:type (ex-data ex))))
+          (expect (nil? (get @ca "session_summaries"))))))
+  (it "freezes an open range even when only recap-only turns exist"
+      (let [ca
+            (atom {"session_turn" 2 "engine_iter_universe" [] "engine_turn_weights" {1 5000}})
+
+            sf
+            (get (compaction-verbs ca) 'fold-session)]
+
+        (expect (str/starts-with? (sf "t1-" "prior work") "folded since t1"))
+        (let [resolved (first (expand-through (get @ca "session_summaries") ["t2/i1"] [1 2]))]
+          (expect (= #{1} (get resolved "turns")))
+          (expect (empty? (get resolved "scopes")))))))
+
+(defn- with-rebuilt-fold-history
+  "Persist a turn, run startup recovery after rebuild, and exercise the restored fold context."
+  [scoped? turn-status f]
+  (let [dir
+        (.toFile (java.nio.file.Files/createTempDirectory
+                   "vis-fold-rebuild"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
+
+        db-path
+        (.getPath (java.io.File. dir "vis.mdb"))
+
+        session-id
+        (atom nil)]
+
+    (try
+      (let [initial (lp/create-environment ::router {:db db-path})]
+        (try (let [db (:db-info initial)
+                   turn-id (persistance/db-store-session-turn!
+                             db
+                             {:parent-session-id (:session-id initial)
+                              :user-request "Complete the first turn"})]
+
+               (reset! session-id (:session-id initial))
+               (persistance/db-store-iteration!
+                 db
+                 {:session-turn-id turn-id
+                  :code (if scoped? "print('settled')" "")
+                  :forms
+                  (if scoped? [{:scope "t1/i1/f1" :src "print('settled')" :stdout "settled"}] [])})
+               (expect (persistance/db-update-session-turn!
+                         db
+                         turn-id
+                         (cond-> {:status turn-status :ctx {"session_turn" 1}}
+                           (= :done turn-status)
+                           (assoc :content [(content/prose "The first turn is complete")])))))
+             (finally (lp/dispose-environment! initial))))
+      (let [rebuilt (lp/create-environment ::router {:db db-path :session @session-id})]
+        (try (expect (= (if (= :running turn-status) 1 0)
+                        (lp/db-sweep-orphaned-running-turns! (:db-info rebuilt))))
+             (let [ca (:ctx-atom rebuilt)
+                   turns (persistance/db-list-session-turns (:db-info rebuilt) @session-id)
+                   iterations (persistance/db-list-session-turn-iterations (:db-info rebuilt)
+                                                                           (:id (first turns)))
+                   seeded (mapv (fn [iteration]
+                                  [(:position iteration)
+                                   {:forms-vec (:forms iteration)
+                                    :preserved-thinking/replay? false
+                                    :cross-turn/turn-status (:status (first turns))}])
+                                iterations)
+                   current (apply trailer (map #(str "t2/i" %) (range 1 12)))]
+
+               (expect (= 1 (get @ca "session_turn")))
+               (expect (= 1 (count turns)))
+               (expect (= (if (= :running turn-status) :interrupted turn-status)
+                          (:status (first turns))))
+               (expect (= 1 (count iterations)))
+               (expect (= :done (:status (first iterations))))
+               (let [prior (first (#'lp/previous-turn-context rebuilt nil))]
+                 (expect (= "Complete the first turn" (:user-request prior)))
+                 (expect (= (when (= :done turn-status) "The first turn is complete")
+                            (:answer prior))))
+               (swap! ca assoc "session_turn" 2)
+               (#'lp/stamp-iter-universe! ca (into seeded current))
+               (f rebuilt))
+             (finally (lp/dispose-environment! rebuilt))))
+      (finally (doseq [file (reverse (file-seq dir))]
+                 (.delete ^java.io.File file))))))
+
+(defn- expect-rebuilt-history-fold
+  "Check that a restored prior turn folds without depending on indexed iterations."
+  [scoped? turn-status]
+  (with-rebuilt-fold-history
+    scoped?
+    turn-status
+    (fn [environment]
+      (let [ca
+            (:ctx-atom environment)
+
+            sf
+            (get (compaction-verbs ca) 'fold-session)
+
+            current
+            (apply trailer (map #(str "t2/i" %) (range 1 12)))
+
+            expected-scopes
+            (into (if scoped? ["t1/i1"] []) (map #(str "t2/i" %) (range 1 12)))]
+
+        (expect (= expected-scopes (get @ca "engine_iter_universe")))
+        (expect (pos? (get-in @ca ["engine_turn_weights" 1])))
+        (expect (str/starts-with? (sf "-t1" "preserved work") "folded through t1"))
+        (let [prior (#'lp/previous-turn-context environment nil)]
+          (if scoped?
+            (expect (nil? prior))
+            (do (expect (= 1 (count prior)))
+                (expect (:checkpoint? (first prior)))
+                (expect (= [1] (:turns (first prior))))
+                (expect (= "preserved work" (:gist (first prior)))))))
+        (expect (= current (apply-summaries current (get @ca "session_summaries"))))))))
+
+(defdescribe fold-session-environment-rebuild-test
+             (it "folds a persisted prior iteration after rebuilding the environment"
+                 (expect-rebuilt-history-fold true :done))
+             (it "folds a persisted recap-only turn after rebuilding the environment"
+                 (expect-rebuilt-history-fold false :done))
+             ;; User report: the agent was stopped and restarted while a turn was active.
+             ;; Leave the stored turn running; use the daemon's actual startup recovery.
+             (it "folds saved iterations after startup recovers an interrupted turn"
+                 (expect-rebuilt-history-fold true :running))
+             (it "folds an interrupted turn without indexed iterations after startup recovery"
+                 (expect-rebuilt-history-fold false :running)))
+
 ;; ── layer 1b: the KEY grammar (pure parse, no ctx) ──────────────────────────
 
 (defdescribe
@@ -533,6 +684,20 @@
   (it "a bare tN records whole-turn intent even when the universe is empty"
       (let [out (first (expand-through [{"scopes" #{"t1"}}] []))]
         (expect (= #{1} (get out "turns")))))
+  (it "uses persisted turns for whole-turn ranges without fabricating iterations"
+      (doseq [[key turns scopes] [["-t1" #{1} #{}] ["-t2/i1" #{1 2} #{"t2/i1"}]
+                                  ["t1-t3" #{1 2 3} #{"t2/i1"}] ["t1-t1,t3-t3" #{1 3} #{}]
+                                  ["t1/i1-i9" #{} #{}] ["-t0" #{} #{}]]]
+        (let [out (first (expand-through [(:intent (eng/fold-key key))] ["t2/i1" "t4/i1"] [1 3]))]
+          (expect (= turns (set (get out "turns"))))
+          (expect (= scopes (get out "scopes"))))))
+  (it "keeps unrelated recap gists and supersedes only the covered recap"
+      (let [out (-> [{"through" "t1" "gist" "first"} {"scopes" #{"t2"} "gist" "second"}
+                     {"from" "t1" "to" "t1" "gist" "updated"}]
+                    (expand-through ["t3/i1"] [1 2])
+                    supersede-summaries)]
+        (expect (= ["second" "updated"] (mapv #(get % "gist") out)))
+        (expect (= [#{2} #{1}] (mapv #(get % "turns") out)))))
   (it "a range selector spanning every iteration of a turn records that turn"
       (let [out (first (expand-through [{"through" "t2/i1"}] universe))]
         ;; t1 fully inside the window; t2 only partially (t2/i2 is outside).
@@ -1153,33 +1318,36 @@
           (expect (str/includes? (:block @standing) "session ="))
           (expect (str/includes? delta "session[\"turn\"] = 2"))
           (expect (str/includes? delta "session[\"workspace\"]")))))
-  (it "a broader re-fold charges only scopes newly visible since the earlier fold"
-      ;; Multiple `fold_session` calls can happen before the next provider projection
-      ;; re-stamps `engine_iter_weights`. The second card and rebase ledger must not
-      ;; charge the first fold's raw payload again merely because its old weight remains.
-      (let [ca
-            (atom {"session_turn" 3
-                   "engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3"]
-                   "engine_iter_weights" {"t1/i1" 120000 "t1/i2" 80000 "t1/i3" 30000}
-                   "engine_utilization" {"auto_compress_above" 200000}})
+  (it
+    "a broader re-fold charges only scopes newly visible since the earlier fold"
+    ;; Multiple `fold_session` calls can happen before the next provider projection
+    ;; re-stamps `engine_iter_weights`. The second card and rebase ledger must not
+    ;; charge the first fold's raw payload again merely because its old weight remains.
+    (let [ca
+          (atom {"session_turn" 3
+                 "engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3"]
+                 "engine_iter_weights" {"t1/i1" 120000 "t1/i2" 80000 "t1/i3" 30000}
+                 "engine_utilization" {"auto_compress_above" 200000}})
 
-            rebase
-            (atom {:reclaimed-tokens 0 :pending? false})
+          rebase
+          (atom {:reclaimed-tokens 0 :pending? false})
 
-            sf
-            (get (compaction-verbs ca rebase) 'fold-session)
+          sf
+          (get (compaction-verbs ca rebase) 'fold-session)
 
-            first-card
-            (sf ["t1/i1"] "first")
+          first-card
+          (sf ["t1/i1"] "first")
 
-            broader-card
-            (sf "-t1/i3" "broader")]
+          broader-card
+          (sf "-t1/i3" "broader")]
 
-        (expect (= "folded t1/i1 · saved ~120k tokens · ~60% of budget → first" first-card))
-        ;; t1/i1 was already collapsed by `first-card`; only t1/i2 + t1/i3 are new.
-        (expect (= "folded through t1/i3 · saved ~110k tokens · ~55% of budget → broader"
-                   broader-card))
-        (expect (= {:reclaimed-tokens 230000 :pending? true} @rebase))))
+      (expect (= "folded t1/i1 · estimated removal ~120k tokens · operating budget 200k → first"
+                 first-card))
+      ;; t1/i1 was already collapsed by `first-card`; only t1/i2 + t1/i3 are new.
+      (expect
+        (= "folded through t1/i3 · estimated removal ~110k tokens · operating budget 200k → broader"
+           broader-card))
+      (expect (= {:reclaimed-tokens 230000 :pending? true} @rebase))))
   (it "a broader whole-turn re-fold does not recharge an already removed Q/A recap"
       (let [ca
             (atom {"session_turn" 3
@@ -1194,28 +1362,20 @@
             sf
             (get (compaction-verbs ca rebase) 'fold-session)]
 
-        (expect (= "folded t1 · saved ~80k tokens · ~80% of budget → first" (sf ["t1"] "first")))
-        (expect (= "folded through t1/i2 · saved ~0 tokens → broader" (sf "-t1/i2" "broader")))
+        (expect (= "folded t1 · estimated removal ~80k tokens · operating budget 100k → first"
+                   (sf ["t1"] "first")))
+        (expect
+          (= "folded through t1/i2 · estimated removal ~0 tokens · operating budget 100k → broader"
+             (sf "-t1/i2" "broader")))
         (expect (= {:reclaimed-tokens 80000 :pending? false} @rebase))))
-  ;; The verb RETURN string is the tool card the human sees. It is enriched with
-  ;; how much wire the fold reclaims — in ~tokens (summed from `engine_iter_weights`)
-  ;; AND as a fraction of the OPERATING ceiling (`auto_compress_above`, grown to the
-  ;; handled context on a bigger task). This is the fold's OWN reduction, NOT an
-  ;; absolute level: a projected level baselines on the growing
-  ;; (issue #27's scary regression). A per-fold reduction can never mislead that way.
-  ;; Alongside it the card ALSO surfaces the live window fullness as `context <U>%`,
-  ;; taken straight from the provider's authoritative `saturation` — a separate,
-  ;; absolute reading, omitted when no `saturation` is stamped. That stamp is the
-  ;; PRE-fold one (nothing has been sent since), so whenever the fold reclaims wire
-  ;; the clause renders the transition `<U>%→~<U'>%` with `U'` projected by
-  ;; SUBTRACTING this fold's own reclaim from `last_request_tokens` — never the
-  ;; frozen pre-fold number alone beside `saved ~Nk`.
+  ;; Blockether/vis#174: tokenizer removals are estimates, not provider usage.
+  ;; Keep the measured input and both named limits separate; no projected floor.
   (it
-    "an explicit scope card prices its ~tokens + the reduction as % of budget"
+    "a scope card separates estimated removal, measured input and both limits"
     (let [sf (get (compaction-verbs (priced-ctx)) 'fold-session)]
       (expect
         (=
-          "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44%→~31% (42k→30k tokens) → big cat dump"
+          "folded t1/i1 · estimated removal ~12k tokens · last input 42k measured tokens · operating budget 70k · model limit 96k → big cat dump"
           (sf ["t1/i1"] "big cat dump")))))
   (it
     "a `through` selector sums the weight of EVERY scope it resolves"
@@ -1223,23 +1383,23 @@
       ;; through t1/i2 folds t1/i1 (12k) + t1/i2 (3.4k) = ~15k
       (expect
         (=
-          "folded through t1/i2 · saved ~15k tokens · ~22% of budget · context 44%→~28% (42k→27k tokens) → traced"
+          "folded through t1/i2 · estimated removal ~15k tokens · last input 42k measured tokens · operating budget 70k · model limit 96k → traced"
           (sf "-t1/i2" "traced")))))
-  (it "a gist-less fold still shows the tokens + reduction suffix"
-      (let [sf (get (compaction-verbs (priced-ctx)) 'fold-session)]
-        (expect
-          (= "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44%→~31% (42k→30k tokens)"
-             (sf ["t1/i1"])))))
   (it
-    "a scope with NO stamped weight reclaims nothing, so the card reads an explicit saved ~0 alongside the live window fullness"
+    "a gist-less fold still shows the tokens + reduction suffix"
     (let [sf (get (compaction-verbs (priced-ctx)) 'fold-session)]
-      ;; t2/i9 is ON the wire but absent from the weights map (created this
-      ;; iteration, not yet priced) — a fold that frees no measured wire honestly
-      ;; reports `saved ~0 tokens`, never a silently dropped clause, and the
-      ;; absolute `context <U>%` (provider saturation) still tells the human where
-      ;; the window stands.
-      (expect (= "folded t2/i9 · saved ~0 tokens · context 44% (42k/96k tokens) → fresh"
-                 (sf ["t2/i9"] "fresh")))))
+      (expect
+        (=
+          "folded t1/i1 · estimated removal ~12k tokens · last input 42k measured tokens · operating budget 70k · model limit 96k"
+          (sf ["t1/i1"])))))
+  (it
+    "a scope with NO stamped weight reclaims nothing, so the card reads an explicit estimated removal ~0 alongside the live window fullness"
+    (let [sf (get (compaction-verbs (priced-ctx)) 'fold-session)]
+      ;; An unpriced scope must not fabricate a provider-measured reduction.
+      (expect
+        (=
+          "folded t2/i9 · estimated removal ~0 tokens · last input 42k measured tokens · operating budget 70k · model limit 96k → fresh"
+          (sf ["t2/i9"] "fresh")))))
   (it
     "a fold reaching over off-wire scopes says so and names the whole-turn shape that reclaims them"
     ;; Issue #88: every iteration of a NORMALLY COMPLETED turn is priced 0 by
@@ -1260,23 +1420,32 @@
                                             "model_input_limit" 100000}}))]
       ;; The #88 shape: 3 enumerated iteration ids, 2 of them weightless.
       (expect
-        (= (str "folded t1/i1, t1/i2, t2/i1 · saved ~8k tokens · ~13% of budget"
-                " · context 30%→~22% (30k→22k tokens)"
+        (= (str "folded t1/i1, t1/i2, t2/i1 · estimated removal ~8k tokens"
+                " · last input 30k measured tokens · operating budget 60k · model limit 100k"
                 " · 2/3 scopes already off-wire — fold t1 to drop their recaps → enumerated")
            ((get (compaction-verbs (mk)) 'fold-session) ["t1/i1" "t1/i2" "t2/i1"] "enumerated")))
       ;; A fold that frees nothing at all still names the shape that would.
-      (expect (= (str "folded t1/i1, t1/i2 · saved ~0 tokens · context 30% (30k/100k tokens)"
-                      " · 2/2 scopes already off-wire — fold t1 to drop their recaps → nothing")
-                 ((get (compaction-verbs (mk)) 'fold-session) ["t1/i1" "t1/i2"] "nothing")))
+      (expect
+        (=
+          (str
+            "folded t1/i1, t1/i2 · estimated removal ~0 tokens · last input 30k measured tokens · operating budget 60k · model limit 100k"
+            " · 2/2 scopes already off-wire — fold t1 to drop their recaps → nothing")
+          ((get (compaction-verbs (mk)) 'fold-session) ["t1/i1" "t1/i2"] "nothing")))
       ;; The whole-turn shape DOES charge and remove the recap, so it needs no nudge.
-      (expect (= (str "folded t1 · saved ~5k tokens · ~8% of budget"
-                      " · context 30%→~25% (30k→25k tokens) → whole turn")
-                 ((get (compaction-verbs (mk)) 'fold-session) ["t1"] "whole turn")))
+      (expect
+        (=
+          (str
+            "folded t1 · estimated removal ~5k tokens"
+            " · last input 30k measured tokens · operating budget 60k · model limit 100k → whole turn")
+          ((get (compaction-verbs (mk)) 'fold-session) ["t1"] "whole turn")))
       ;; A `through` selector that fully covers a turn is promoted to that turn
       ;; (recap charged), so it is already the reclaiming shape — also no nudge.
-      (expect (= (str "folded through t2/i1 · saved ~13k tokens · ~22% of budget"
-                      " · context 30%→~17% (30k→17k tokens) → spanned")
-                 ((get (compaction-verbs (mk)) 'fold-session) "-t2/i1" "spanned")))))
+      (expect
+        (=
+          (str
+            "folded through t2/i1 · estimated removal ~13k tokens"
+            " · last input 30k measured tokens · operating budget 60k · model limit 100k → spanned")
+          ((get (compaction-verbs (mk)) 'fold-session) "-t2/i1" "spanned")))))
   (it
     "a later, bigger request can't inflate the card — the reduction is the fold's own"
     ;; The scary regression (fold → tool call → fold → % climbs): a projected
@@ -1305,16 +1474,15 @@
 
       (expect
         (=
-          "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44%→~31% (42k→30k tokens) → first"
+          "folded t1/i1 · estimated removal ~12k tokens · last input 42k measured tokens · operating budget 70k · model limit 96k → first"
           card1))
       ;; second fold reclaims only its own 3.4k regardless of the 90k request
-      (expect (= "folded t1/i2 · saved ~3k tokens · ~4% of budget → second" card2))))
+      (expect
+        (=
+          "folded t1/i2 · estimated removal ~3k tokens · last input 90k measured tokens · operating budget 70k · model limit 96k → second"
+          card2))))
   (it
-    "a bigger task prices against the GROWN operating ceiling (handled context), not the fixed budget"
-    ;; auto-compress is a SOFT guardrail: `last_request_tokens` can float above it
-    ;; before compaction fires. The `% of budget` denominator is
-    ;; max(auto_compress_above, last_request_tokens), so it grows with the real
-    ;; handled context and the fraction never overflows a ceiling already breached.
+    "a request above the operating budget does not silently enlarge that budget"
     (let [ca
           (priced-ctx)
 
@@ -1329,14 +1497,14 @@
           sf
           (get (compaction-verbs ca) 'fold-session)]
 
-      ;; ceiling = max(70000, 90000) = 90000; 60000/90000 = 67%
+      ;; The request grew to 90k, but the operating budget is still 70k.
       (expect
         (=
-          "folded t1/i1 · saved ~60k tokens · ~67% of budget · context 94%→~31% (90k→30k tokens) → bigger task"
+          "folded t1/i1 · estimated removal ~60k tokens · last input 90k measured tokens · operating budget 70k · model limit 96k → bigger task"
           (sf ["t1/i1"] "bigger task")))))
   (it
     "the note ALSO lands in the persistent breadcrumb, not just the tool card"
-    ;; regression: the saved-tokens + projected suffix must ride the durable
+    ;; Regression: the estimated removal and measured baseline must remain in history.
     ;; `# ⋯ folded …` label the human reads on scroll-back, NOT only the
     ;; transient tool-return confirmation.
     (let [ctx
@@ -1359,7 +1527,7 @@
 
       (expect
         (=
-          "# ⋯ folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44%→~31% (42k→30k tokens) · big cat dump"
+          "# ⋯ folded t1/i1 · estimated removal ~12k tokens · last input 42k measured tokens · operating budget 70k · model limit 96k · big cat dump"
           line))))
   (it "a fold breadcrumb carries no recovery coordinate"
       ;; Regression guard for the `ntr` removal: `python_execution` PRINTS, so

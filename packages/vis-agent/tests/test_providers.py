@@ -44,6 +44,26 @@ def test_provider_values_are_frozen_and_preserve_opaque_payloads():
     assert preset.extra_body["nested"]["keep_this_key"] == (1, 2)
 
 
+@pytest.mark.parametrize("api_style", ["openai-responses", "openai_responses"])
+def test_responses_path_defaults_to_inheritance(api_style):
+    for record in (
+        vis.ProviderPreset(api_style=api_style),
+        vis.ProviderCredential("fixture"),
+        vis.ProviderCredential("fixture", api_style=api_style),
+    ):
+        assert record.responses_path is None
+        assert "responses_path" not in record.to_wire()
+
+
+@pytest.mark.parametrize("responses_path", ["responses", "/custom/responses"])
+def test_explicit_responses_path_is_preserved(responses_path):
+    for record in (
+        vis.ProviderPreset(api_style="openai-responses", responses_path=responses_path),
+        vis.ProviderCredential("fixture", responses_path=responses_path),
+    ):
+        assert record.to_wire()["responses_path"] == responses_path
+
+
 def test_provider_vocabulary_is_the_canonical_vocabulary():
     for name, vocabulary in (
         ("ProviderLimitStatus", "statuses"),

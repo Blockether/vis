@@ -901,3 +901,84 @@
                  (System/setProperty "user.home" old-home)
                  (runtime/use-library! nil)
                  (delete-tree! dir))))))
+
+(defdescribe
+  native-editable-source-test
+  ;; #175: the shipped CLI must install source links, not a copied wheel.
+  (it
+    "imports edited source after one locked sync in the native image"
+    (let [dir
+          (temp-dir "vis-native-editable")
+
+          project
+          (doto (io/file dir "project") .mkdirs)
+
+          source
+          (doto (io/file project "src") .mkdirs)
+
+          module
+          (io/file source "vis_editable_fixture.py")
+
+          entries
+          (doto (io/file dir ".vis/extensions") .mkdirs)
+
+          packages
+          (io/file dir ".vis/python/packages")
+
+          bin
+          (require-binary)
+
+          run
+          (fn [args]
+            (run-binary dir
+                        (into [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir))]
+                              args)
+                        120))]
+
+      (try
+        (spit
+          (io/file project "pyproject.toml")
+          "[project]\nname = 'vis-editable-fixture'\nversion = '0.0.1'\nrequires-python = '>=3.12'\n[build-system]\nrequires = []\nbuild-backend = 'backend'\nbackend-path = ['.']\n")
+        (io/copy (io/file "test/com/blockether/vis/internal/python/fixtures/editable_backend.py")
+                 (io/file project "backend.py"))
+        (spit module "VALUE = 41\n")
+        (spit (io/file entries "editable.py")
+              (str "import blockether.vis.extension as vis\n"
+                   "from vis_editable_fixture import VALUE\n"
+                   "vis.register(vis.Extension(name='native-editable-' + str(VALUE), "
+                   "description='Native editable source fixture'))\n"))
+        (let [locked (run-binary dir
+                                 ["uv" "lock" "--project" (str project) "--offline" "--python"
+                                  (com.blockether.vispython.Locations/pythonExecutable
+                                    (str (io/file (.getParentFile (python-library bin)) "python")))
+                                  "--no-python-downloads"]
+                                 60)]
+          (expect (= 0 (:exit locked)) (:output locked)))
+        (let [synced (run ["python" "uv" "sync" "--project" (str project) "--locked" "--offline"])]
+          (expect (= 0 (:exit synced)) (:output synced)))
+        (expect (.isFile (io/file packages "fixture.pth")))
+        (expect (not (.exists (io/file packages "vis_editable_fixture.py"))))
+        (let [lock-before
+              (slurp (io/file project "uv.lock"))
+
+              mtime
+              (.lastModified module)]
+
+          (doseq [value [41 42]]
+            (spit module (str "VALUE = " value "\n"))
+            (.setLastModified module mtime)
+            (let
+              [imported
+               (run
+                 ["python" "-c"
+                  "import vis_editable_fixture as fixture; print(fixture.VALUE, fixture.__file__)"])
+               registered (run ["extension" "list"])]
+
+              (expect (= 0 (:exit imported)) (:output imported))
+              (expect (str/includes? (:output imported) (str value " " module)) (:output imported))
+              (expect (= 0 (:exit registered)) (:output registered))
+              (expect (str/includes? (:output registered) (str "native-editable-" value))
+                      (:output registered))))
+          (expect (= lock-before (slurp (io/file project "uv.lock"))))
+          (expect (not (.exists (io/file project ".venv")))))
+        (finally (delete-tree! dir))))))
