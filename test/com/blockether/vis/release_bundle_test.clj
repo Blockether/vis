@@ -1370,6 +1370,11 @@
         (expect (str/includes? mobile "security list-keychain -d user -s \"${keychains[@]}\""))
         (doseq [needle ["-ios.ipa" "-android.aab"]]
           (expect (str/includes? mobile needle) needle))))
+  (it "delegates job-list read access to the native workflow's runner pickup check"
+      (let [native-call (second (re-find #"(?s)  native:\n(.*?)\n  mobile:"
+                                         (slurp ".github/workflows/release.yml")))]
+        (expect (str/includes? native-call "actions: read"))
+        (expect (str/includes? native-call "contents: write"))))
   (it "refreshes the bootstrap only from a complete published stable release without moving tags"
       (let [workflow (slurp ".github/workflows/installer-assets.yml")]
         (expect (str/includes? workflow "workflow_call:"))

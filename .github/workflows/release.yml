@@ -48,6 +48,9 @@ jobs:
 
   native:
     needs: prepare
+    permissions:
+      contents: write
+      actions: read
     uses: ./.github/workflows/native-release.yml
     with:
       tag: ${{ github.ref_name }}
