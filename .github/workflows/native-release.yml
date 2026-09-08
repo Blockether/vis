@@ -236,6 +236,10 @@ jobs:
           target/release-bundle/vis-agent gateway stop >/dev/null 2>&1 || true
       # The engine binary's own suite. Terminal rendering belongs to the standalone
       # client suite and artifact smoke below, not to this image.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.2"
+          enable-cache: false
       - name: Test the native binary
         shell: bash
         env:
@@ -386,6 +390,10 @@ jobs:
             exit 1
           fi
           target/release-bundle/vis-agent gateway stop >/dev/null 2>&1 || true
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.2"
+          enable-cache: false
       - name: Test the native binary
         shell: bash
         env:

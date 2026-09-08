@@ -117,6 +117,10 @@ jobs:
         run: |
           clojure -J-Duser.home="$HOME" -X:deps prep
           clojure -J-Duser.home="$HOME" -M -e "(require '[com.blockether.vis.internal.speech.sherpa :as sherpa]) (prn (sherpa/ensure-native!))"
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.2"
+          enable-cache: false
       - name: Run test suite
         env:
           # These are hard CI contracts, not best-effort coverage: macOS must

@@ -19,12 +19,15 @@
   (:require [babashka.http-client :as http]
             [clojure.java.io :as io]
             [com.blockether.vis-python-runtime :as runtime]
+            [com.blockether.vis.contract.config :as contract-config]
+            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
-  (:import [com.blockether.vispython Locations]
+  (:import [com.blockether.vispython Interpreter Locations]
            [java.io File]
            [java.lang ProcessHandle]
-           [java.nio.file CopyOption Files StandardCopyOption]))
+           [java.nio.file CopyOption Files StandardCopyOption]
+           [java.util.concurrent TimeUnit]))
 
 (set! *warn-on-reflection* true)
 
@@ -140,19 +143,85 @@
         (runtime/use-library! (str home))
         (.getAbsolutePath library))))
 
+(defn- index-args
+  [flag]
+  (let [python (get (config/load-config-raw) "python")]
+    (if (contains? python "index_url")
+      (let [index (get python "index_url")]
+        (when-not (contract-config/definition-valid? "python" {"index_url" index})
+          (throw (ex-info
+                   "python.index_url must be an HTTP(S) URL without credentials, query or fragment"
+                   {:type ::invalid-index-url})))
+        [flag index])
+      [])))
+
+(defn uv-sync!
+  "Sync a locked uv project into a private snapshot using the embedded Python.
+   Uses uv's project sources and noneditable installs, never the project's .venv.
+   Builds are allowed for explicitly selected trusted projects. Output is discarded
+   because registry diagnostics may contain credentials. Requires uv on PATH."
+  [^File project ^File snapshot]
+  (let [python
+        (Interpreter/pythonExecutable)
+
+        environment
+        (io/file snapshot ".vis-uv")
+
+        command
+        (into ["uv" "sync" "--locked" "--no-editable" "--no-default-groups" "--no-python-downloads"
+               "--python" python "--project" (str project)]
+              (index-args "--default-index"))
+
+        builder
+        (doto (ProcessBuilder. ^java.util.List command)
+          (.redirectErrorStream true)
+          (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD))]
+
+    (when-not python (throw (ex-info "uv requires the embedded Python executable" {})))
+    (.put (.environment builder) "UV_PROJECT_ENVIRONMENT" (str environment))
+    (let [process (.start builder)]
+      (try
+        (when-not (.waitFor process 180 TimeUnit/SECONDS)
+          (throw (ex-info "Extension uv sync timed out" {})))
+        (when-not (zero? (.exitValue process))
+          (throw
+            (ex-info
+              "Extension uv sync failed; check uv.lock, project sources, python.index_url and Python compatibility"
+              {:exit (.exitValue process)})))
+        (finally (when (.isAlive process)
+                   (with-open [children (.descendants process)]
+                     (.forEach children
+                               (reify
+                                 java.util.function.Consumer
+                                   (accept [_ child] (.destroyForcibly ^ProcessHandle child)))))
+                   (.destroyForcibly process)))))
+    (let [candidates (distinct (map #(.getCanonicalFile ^File %)
+                                    (filter #(and (.isDirectory ^File %)
+                                                  (= "site-packages" (.getName ^File %)))
+                                            (file-seq environment))))]
+      (when-not (= 1 (count candidates))
+        (throw (ex-info "uv environment must have one site-packages directory" {})))
+      (Files/move (.toPath ^File (first candidates))
+                  (.toPath (io/file snapshot ".vis-packages"))
+                  (make-array CopyOption 0)))
+    {:exit 0}))
+
 (defn pip-install!
   "Install `specs` with pip and make what landed importable in THIS process,
    answering pip's own `{:exit … :out … :command …}`.
+   `python.index_url` from the merged vis.yml overrides pip's primary index;
+   when absent, pip's inherited environment and configuration remain unchanged.
 
    pip runs as a host process writing into a directory this interpreter already
    has on `sys.path`, and a path entry remembers the listing it saw when it was
    first read. Without the invalidation the install succeeds and the very next
    import still raises `ModuleNotFoundError` — for the life of the process.
    Measured on a machine that had never installed pytest."
-  [specs]
-  (let [result (runtime/pip-install! {} specs)]
-    (when (zero? (long (or (:exit result) 1)))
-      (try (runtime/exec! runtime/default-session "import importlib; importlib.invalidate_caches()")
-           (catch Throwable t
-             (tel/log! {:level :warn :id ::import-caches-not-refreshed :error t}))))
-    result))
+  ([specs] (pip-install! {} specs))
+  ([opts specs]
+   (let [result (runtime/pip-install! opts (into (index-args "--index-url") specs))]
+     (when (zero? (long (or (:exit result) 1)))
+       (try
+         (runtime/exec! runtime/default-session "import importlib; importlib.invalidate_caches()")
+         (catch Throwable t (tel/log! {:level :warn :id ::import-caches-not-refreshed :error t}))))
+     result)))

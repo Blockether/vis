@@ -365,17 +365,18 @@ python:
   index_url: https://gateway.example.com/simple
 ```
 
-This setting applies to Vis-managed pip installs, including automatic imports
-and installing the extension test runner's pytest dependency. It is read from
-merged configuration for each install; project overlays use normal precedence.
-It does not configure a project's separate uv/Poetry environment or interpret
-`uv.lock` or `[tool.uv.sources]`.
+This setting applies to Vis-managed pip installs (automatic imports, extension
+script dependencies and pytest) and to extension projects selected with
+[`tool.vis.project`](extending.md#uv-projects). Vis passes it as uv's
+`--default-index`; named indexes and `[tool.uv.sources]` retain uv semantics.
+It is read from merged configuration for each install. It does not change a
+project's own `.venv` or configure uv commands run outside Vis.
 
 `index_url` overrides pip's primary index from `PIP_INDEX_URL` or `pip.conf`.
-When absent, pip keeps its inherited settings. Other pip settings, including
-extra indexes, proxies and certificates, remain unchanged. Prefer one company
-virtual index serving both private and public packages; extra indexes are not
-ordered fallback sources and can introduce dependency confusion.
+When absent, each installer keeps its inherited settings. Other pip settings,
+including extra indexes, proxies and certificates, remain unchanged. Prefer one
+company virtual index serving both private and public packages; extra indexes
+are not ordered fallback sources and can introduce dependency confusion.
 
 Use a literal HTTP(S) URL without credentials, a query string or a fragment.
 Keep authentication outside committed YAML, for example in the gateway user's

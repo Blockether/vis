@@ -57,6 +57,7 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.python.worker :as pyext]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.nio.file Files]
@@ -748,10 +749,14 @@
                   "__vis_frozen_home__ = "
                   (python-string-literal frozen-home)
                   "\n"
-                  "__file__ = " (python-string-literal entry-path)
-                  "\n" "__cached__ = None\n"
-                  "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
+                  "__file__ = "
+                  (python-string-literal entry-path)
+                  "\n"
+                  "__cached__ = None\n" "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
                   "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
+                  "__vis_packages__ = __vis_pathos__.path.join(__vis_ext_dir__, '.vis-packages')\n"
+                  "if __vis_pathos__.path.isdir(__vis_packages__):\n"
+                  "    __vis_pathsys__.path.insert(1, __vis_packages__)\n"
                   "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
                   "                          if not __vis_p__.startswith(__vis_frozen_home__)\n"
                   "                          or __vis_pathos__.path.isdir(__vis_p__)]\n"
@@ -1708,6 +1713,54 @@
   ^File [^File f]
   (.getParentFile (.getCanonicalFile f)))
 
+(defn- extension-plan
+  [^File f]
+  (let [source
+        (slurp f)
+
+        metadata
+        (if (str/includes? source "# /// script")
+          (let [ctx (build-context "extension-metadata")]
+            (try (exec-in! ctx (classpath-src "vis-guest/extension_metadata.py"))
+                 (run-in ctx (str "extension_metadata(" (python-string-literal source) ")"))
+                 (finally (discard-context! ctx))))
+          {})
+
+        root
+        (import-root f)
+
+        extras
+        (mapv (fn [path]
+                (let [raw
+                      (io/file path)
+
+                      dir
+                      (.getCanonicalFile (if (.isAbsolute raw) raw (io/file root path)))]
+
+                  (when-not (.isDirectory dir)
+                    (throw (ex-info "Extension source_paths must name existing directories"
+                                    {:type ::invalid-source-path})))
+                  (when (.startsWith (.toPath root) (.toPath dir))
+                    (throw (ex-info "Extension source_paths cannot contain the extension directory"
+                                    {:type ::invalid-source-path})))
+                  dir))
+              (get metadata "source_paths" []))
+
+        project
+        (when-let [path (get metadata "project")]
+          (let [raw (io/file path)
+                dir (.getCanonicalFile (if (.isAbsolute raw) raw (io/file root path)))]
+
+            (when-not (and (.isFile (io/file dir "pyproject.toml"))
+                           (.isFile (io/file dir "uv.lock")))
+              (throw (ex-info "tool.vis.project requires pyproject.toml and uv.lock"
+                              {:type ::invalid-project})))
+            dir))]
+
+    {:roots (into [root] (distinct extras))
+     :dependencies (get metadata "dependencies" [])
+     :project project}))
+
 (defn- import-root-files
   "Every regular file under an extension's import root as `[rel-path file]`,
    sorted, `__pycache__` aside. The root is the directory `load-file!` puts on
@@ -1746,17 +1799,38 @@
                                                            (.toPath (.getAbsoluteFile f)))) f])))
                            children)))))))))
 
+(defn- source-files
+  "Merge import roots without silently replacing a module or data file."
+  [roots]
+  (let [roots
+        (if (instance? File roots) [roots] roots)
+
+        files
+        (mapcat import-root-files roots)]
+
+    (when (some (fn [[rel _]]
+                  (or (= rel ".vis-packages") (str/starts-with? rel ".vis-packages/")))
+                files)
+      (throw (ex-info "The extension import root reserves .vis-packages for installed dependencies"
+                      {:type ::source-collision})))
+    (when (some (fn [[_ entries]]
+                  (> (count entries) 1))
+                (group-by first files))
+      (throw (ex-info "Extension source_paths contain conflicting relative file names"
+                      {:type ::source-collision})))
+    (vec (sort-by first files))))
+
 (defn- code-sha
   "One digest over every `.py` under the import root. An extension's identity is
    its WHOLE tree, never its entry file alone: `def run(): import helper` reads
    `helper.py` at CALL time, so entry-only identity let a module edited after the
    load execute in the trusted context with no `/reload` behind it."
-  [^File root]
+  [root]
   (util/sha256-hex (str/join "\n"
                              (keep (fn [[^String rel ^File f]]
                                      (when (str/ends-with? rel ".py")
                                        (str rel " " (util/sha256-hex (slurp f)))))
-                                   (import-root-files root)))))
+                                   (source-files root)))))
 
 (defn- delete-tree!
   [^File dir]
@@ -1766,7 +1840,12 @@
 
 (defonce ^:private snapshot-home
   ;; ONE temp tree per process for every frozen import root, removed at exit.
-  (delay (let [d (.toFile (Files/createTempDirectory "vis-ext-code" (make-array FileAttribute 0)))]
+  ;; Workers already admit the staged guest-module directory as boot-time read-only
+  ;; code. Keep snapshots there too, not in an unrelated system temp directory
+  ;; that a session worker's OS jail cannot read.
+  (delay (let [d (.toFile (Files/createTempDirectory (.toPath (io/file (pyext/guest-source-dir)))
+                                                     "vis-ext-code"
+                                                     (make-array FileAttribute 0)))]
            (.addShutdownHook (Runtime/getRuntime)
                              (Thread. ^Runnable
                                       (fn []
@@ -1781,14 +1860,46 @@
 
    Returns `{:dir <frozen dir> :code-sha <digest>}`; the digest is taken over the
    COPY, so an entry's `:code-sha` describes the bytes that actually ran."
-  [^File root]
-  (let [dest (io/file @snapshot-home (str (java.util.UUID/randomUUID)))]
-    (.mkdirs dest)
-    (doseq [[rel ^File f] (import-root-files root)]
-      (let [t (io/file dest rel)]
-        (io/make-parents t)
-        (io/copy f t)))
-    {:dir dest :code-sha (code-sha dest)}))
+  [roots]
+  (let [files
+        (source-files roots)
+
+        dest
+        (io/file @snapshot-home (str (java.util.UUID/randomUUID)))]
+
+    (try (.mkdirs dest)
+         (doseq [[rel ^File f] files]
+           (let [t (io/file dest rel)]
+             (io/make-parents t)
+             (io/copy f t)))
+         {:dir dest :code-sha (code-sha dest)}
+         (catch Throwable t (delete-tree! dest) (throw t)))))
+
+(defn- prepare-root!
+  "Snapshot source roots and prepare declared dependencies before evaluating any entry."
+  [{:keys [roots dependencies project]}]
+  (let [frozen (freeze-root! roots)]
+    (try
+      (when (or project (seq dependencies))
+        (let
+          [result
+           (try
+             (if project
+               (python-runtime/uv-sync! project (:dir frozen))
+               (python-runtime/pip-install! {:target (str (io/file (:dir frozen) ".vis-packages"))}
+                                            dependencies))
+             (catch Throwable _
+               (throw
+                 (ex-info
+                   "Extension dependency preparation failed; check index, uv.lock, project sources and Python compatibility"
+                   {:type ::dependency-install-failed}))))]
+          (when-not (zero? (long (or (:exit result) 1)))
+            (throw
+              (ex-info
+                "Extension dependency installation failed; check python.index_url and wheel availability"
+                {:type ::dependency-install-failed :exit (:exit result)})))))
+      (assoc frozen :roots roots)
+      (catch Throwable t (delete-tree! (:dir frozen)) (throw t)))))
 
 (defn ^:no-doc close-context!
   "Tear down an extension session this namespace owns: its host bindings go, then
@@ -1846,7 +1957,7 @@
          (.getCanonicalPath f)
 
          frozen
-         (or frozen (freeze-root! (import-root f)))
+         (or frozen (prepare-root! (extension-plan f)))
 
          ^File snap
          (:dir frozen)
@@ -1877,6 +1988,7 @@
               {:path path
                :sha sha
                :code-sha (:code-sha frozen)
+               :roots (:roots frozen)
                :snapshot (.getCanonicalPath snap)
                :source source
                :ext-name (:ext/name spec)
@@ -1917,7 +2029,7 @@
               ;; start or the last `/reload` loaded, so a changed tree heals into
               ;; nothing and the caller reports the original failure until the next
               ;; `/reload`.
-              (if-not (= (:code-sha entry) (code-sha (import-root (io/file path))))
+              (if-not (= (:code-sha entry) (code-sha (:roots entry)))
                 (do (tel/log! {:level :warn
                                :id ::heal-refused
                                :data {:extension ext-name :file path}
@@ -1928,7 +2040,9 @@
                 (let [rebuilt (load-file! (io/file path)
                                           (let [snap (io/file (:snapshot entry))]
                                             (when (.isDirectory snap)
-                                              {:dir snap :code-sha (:code-sha entry)})))]
+                                              {:dir snap
+                                               :code-sha (:code-sha entry)
+                                               :roots (:roots entry)})))]
                   (swap! loaded assoc path (dissoc rebuilt :path))
                   (close-context! dead-ctx)
                   (tel/log! {:level :info
@@ -1976,21 +2090,30 @@
          files
          (scan dirs)
 
+         plans
+         (into {}
+               (map (fn [f]
+                      [f (try (extension-plan f) (catch Throwable t {:error t}))])
+                    files))
+
          roots
          (atom {})
 
          per-root
-         (fn [k ^File root f]
-           (let [rk (.getCanonicalPath root)]
+         (fn [k plan f]
+           (when-let [error (:error plan)]
+             (throw error))
+           (let [rk [(:roots plan) (:dependencies plan) (:project plan)]]
              (or (get-in @roots [rk k])
-                 (let [v (f root)]
+                 (let [v (f plan)]
                    (swap! roots assoc-in [rk k] v)
                    v))))
 
          fp
          (mapv (fn [^File f]
                  [(.getCanonicalPath f) (util/sha256-hex (slurp f))
-                  (per-root :code-sha (import-root f) code-sha)])
+                  (try (per-root :code-sha (get plans f) #(code-sha (:roots %)))
+                       (catch Throwable _ ::invalid-sources))])
                files)]
 
      (if (= fp @last-fingerprint)
@@ -2022,7 +2145,7 @@
                  prev-ctx (get-in @loaded [path :context])]
 
              (try (let [{:keys [ext-name] :as entry}
-                        (load-file! f (per-root :frozen (import-root f) freeze-root!))]
+                        (load-file! f (per-root :frozen (get plans f) prepare-root!))]
                     ;; A later file (project dir) registering the same extension
                     ;; name supersedes an earlier one at a DIFFERENT path — the
                     ;; registry already swapped the registration; close the

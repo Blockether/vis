@@ -44,6 +44,112 @@ Treat a project's `.vis/extensions/` like its build scripts: the files run with
 your permissions when Vis starts in that checkout. Review them before opening
 an untrusted repository.
 
+## Separate implementation and dependencies
+
+Keep a thin entry file under `.vis/extensions/` and the implementation in its
+own source tree. Declare both import roots and dependencies in a
+[PEP 723 script metadata block](https://peps.python.org/pep-0723/), before imports:
+
+```text
+project/
+  vis.yml
+  einmal/src/einmal/__init__.py
+  .vis/extensions/einmal.py
+```
+
+```python
+# .vis/extensions/einmal.py
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["httpx==0.28.1"]
+# [tool.vis]
+# source_paths = ["../../einmal/src"]
+# ///
+import blockether.vis.extension as vis
+from einmal import status
+
+vis.register(vis.Extension(
+    name="einmal",
+    description="Company tools.",
+    alias="einmal",
+    symbols=[vis.Symbol(status)],
+))
+```
+
+`status` must have a docstring, like any exported tool. The metadata is parsed
+without executing the entry. Vis validates it, snapshots the source files,
+installs dependencies, then evaluates the entry and registers its tools.
+
+- `source_paths` names **import roots**: directories containing the packages or
+  modules you import, not the package directories themselves. Relative paths are
+  resolved against the extension entry's directory, not the current working
+  directory. Absolute paths are also accepted.
+- Each declared root's contents are merged into the frozen extension directory.
+  Missing directories, duplicate relative file names and roots containing the
+  extension directory are rejected. Use narrow source roots such as `src`, not
+  the whole checkout or a virtual environment. `.vis-packages` is reserved.
+- `dependencies` accepts standard package requirements, including version pins,
+  extras and environment markers. Vis uses its bundled **pip**, installing only
+  wheels into the snapshot's private `.vis-packages` directory. It does not
+  modify the project's `.venv` or the shared sandbox package cache.
+- Set the index with [`python.index_url` in `vis.yml`](configuration.md#python-package-index).
+  Normal pip authentication and certificate settings still apply. A missing
+  wheel or failed install is a load failure, not a fallback to source builds.
+- `requires-python` checks the embedded interpreter. Vis does not download
+  another Python version to satisfy it.
+- `/reload` takes new source snapshots and resolves declared dependencies again;
+  an unchanged loader scan does neither. Source edits are not used by existing
+  tools until reload. A failed reload retains the last working extension.
+
+The installed dependencies travel with that snapshot into session workers;
+calling a tool does not install them again. A snapshot is not a separate virtual
+environment: extensions in the same worker still share its interpreter and
+module cache, so incompatible dependency versions are not isolated.
+
+### uv projects
+
+For an implementation managed by uv, select its project directory instead of
+repeating its dependencies in the script:
+
+```python
+# /// script
+# dependencies = []
+# [tool.vis]
+# project = "../../einmal"
+# source_paths = ["../../einmal/src"]
+# ///
+```
+
+`project` is relative to the entry file (absolute paths also work). It must
+contain both `pyproject.toml` and an existing `uv.lock`. Install **uv on the
+gateway's PATH** before loading the extension. Put uv settings, including
+`[tool.uv.sources]`, in that project's `pyproject.toml`, not the script block.
+Project mode rejects nonempty script dependencies to avoid ignoring them.
+
+Vis runs `uv sync --locked --no-editable --no-default-groups` using the embedded
+Python executable and a private environment under the extension snapshot. It
+respects the lockfile, project dependencies and uv sources, including local
+packages and named indexes. It neither updates the lockfile nor touches the
+project's `.venv`. Default dependency groups (including dev) and optional extras
+are not installed. Generate or update the lockfile with uv outside Vis first.
+An incompatible Python requirement or stale lockfile is a load failure.
+
+Unlike the pip-only script mode, uv project mode allows package builds. Build
+backends execute with the gateway user's permissions; select only trusted
+projects and dependencies. Editable project/source declarations are installed
+noneditably so tools keep using their snapshot, not a live checkout. Sources
+without a packaged project can still use `source_paths` for their implementation.
+The installed packages are made available to session workers without another sync.
+
+`python.index_url` supplies uv's default index; explicit named source indexes
+are not replaced. Keep authentication in uv's supported credential configuration
+or the gateway environment, not committed URLs. Installer output is not exposed
+in load errors because it can contain credentials. `/reload` prepares a fresh
+snapshot; a failure retains the last working extension.
+
+Outside Vis, provide the implementation's import roots in your test or
+packaging configuration; `tool.vis.source_paths` is a Vis loader setting.
+
 ## Developing outside Vis
 
 The engine's `blockether.vis.extension` module is also published on PyPI as

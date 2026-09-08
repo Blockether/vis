@@ -620,3 +620,65 @@
            (expect (some #{"/simple/vis-cli-fixture/"} @requests))
            (expect (some #{(str "/" filename)} @requests))
            (finally (.stop server 0) (delete-tree! dir))))))
+
+(defdescribe
+  native-registers-locked-uv-extension-test
+  (it
+    "registers a split implementation using a locked uv source in the native image"
+    (let [dir
+          (temp-dir "vis-native-uv-extension")
+
+          project
+          (doto (io/file dir "implementation") .mkdirs)
+
+          entries
+          (doto (io/file dir ".vis/extensions") .mkdirs)
+
+          source
+          (doto (io/file project "src") .mkdirs)
+
+          wheel-name
+          "vis_cli_fixture-1.0-py3-none-any.whl"
+
+          bin
+          (require-binary)]
+
+      (try (with-open [out (io/output-stream (io/file dir wheel-name))]
+             (.write out ^bytes (pip-wheel)))
+           (spit (io/file dir "vis.yml") "python:\n  index_url: http://127.0.0.1:9/simple\n")
+           (spit (io/file project "pyproject.toml")
+                 (str "[project]\nname = 'native-extension-project'\nversion = '1.0'\n"
+                      "requires-python = '>=3.12'\ndependencies = ['vis-cli-fixture==1.0']\n"
+                      "[tool.uv.sources]\nvis-cli-fixture = {path = '../"
+                      wheel-name
+                      "'}\n"))
+           (spit (io/file source "fixture_value.py")
+                 "from vis_cli_fixture import VALUE\ndef answer():\n    return VALUE\n")
+           (spit (io/file entries "fixture.py")
+                 (str "# /// script\n# dependencies = []\n# [tool.vis]\n"
+                      "# project = '../../implementation'\n"
+                      "# source_paths = ['../../implementation/src']\n# ///\n"
+                      "import blockether.vis.extension as vis\nfrom fixture_value import answer\n"
+                      "vis.register(vis.Extension(name='native-uv-value-' + str(answer()), "
+                      "description='Native locked project fixture'))\n"))
+           (let [locked (run-binary dir
+                                    ["uv" "lock" "--project" (str project) "--offline" "--python"
+                                     (com.blockether.vispython.Locations/pythonExecutable
+                                       (str (io/file (.getParentFile (python-library bin))
+                                                     "python"))) "--no-python-downloads"]
+                                    60)]
+             (expect (= 0 (:exit locked)) (:output locked)))
+           (let [lock-before
+                 (slurp (io/file project "uv.lock"))
+
+                 result
+                 (run-binary dir
+                             [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir))
+                              "extension" "list"]
+                             120)]
+
+             (expect (= 0 (:exit result)) (:output result))
+             (expect (str/includes? (:output result) "native-uv-value-42") (:output result))
+             (expect (= lock-before (slurp (io/file project "uv.lock"))))
+             (expect (not (.exists (io/file project ".venv")))))
+           (finally (delete-tree! dir))))))
