@@ -497,6 +497,16 @@
     {
       "audience": "sdk",
       "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/providers/:provider-id/reset-credits/consume"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "get": {
           "request": "none",
           "response": "json"

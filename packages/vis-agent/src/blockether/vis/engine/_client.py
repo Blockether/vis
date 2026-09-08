@@ -905,6 +905,25 @@ class GatewayClient:
         )
         return response.json()
 
+    def post_provider_reset_credits_consume(
+        self,
+        provider_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/providers/:provider-id/reset-credits/consume — json response."""
+        response = self._request(
+            "POST",
+            "/v1/providers/:provider-id/reset-credits/consume",
+            path={"provider-id": provider_id},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def post_provider_logout(
         self,
         provider_id: str,
