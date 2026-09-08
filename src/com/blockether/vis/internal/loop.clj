@@ -2052,7 +2052,7 @@
    are excluded. Cancelled/error/interrupted turns remain even without an answer
    so settled work and the unfinished boundary survive; nil when no
    provider-visible representation remains."
-  [environment current-turn-id]
+  [environment current-turn-id & [model]]
   (try
     (when-let [session-id (:session-id environment)]
       (let [d (:db-info environment)
@@ -2114,21 +2114,25 @@
                              :forms forms
                              :iter-scopes (into #{} (keep #(iter-of-scope (:scope %))) forms)})))))
                   turns)
-            ;; Q/A recap weight per turn (~tokens at 4 chars/token — a recap is PROSE,
-            ;; where that rule of thumb holds; the ITERATION weights below are measured
-            ;; by the tokenizer instead): stamped on the ctx so `fold_session`'s ack and
-            ;; the `now` budget can price the recap a whole-turn fold removes. Built
-            ;; from the DB turn rows (not the fold ledger), so an already-folded
-            ;; turn keeps a stable weight instead of dropping to zero.
+            ;; Blockether/vis#174: user requests can be dense code, not prose.
+            ;; Price the rendered recap in the same tokenizer units as iteration weights.
             _ (when-let [ca (:ctx-atom environment)]
-                (try (swap! ca assoc
-                       "engine_turn_weights"
-                       (into {}
-                             (map (fn [{:keys [turn user-request answer]}]
-                                    [turn
-                                     (quot (+ (count (str user-request)) (count (str answer))) 4)]))
-                             turn-data))
-                     (catch Throwable _ nil)))
+                (try (let [model (or model "unknown")
+                           priming (svar-router/count-messages model [])]
+
+                       (swap! ca assoc
+                         "engine_turn_weights"
+                         (into {}
+                               (map (fn [{:keys [turn] :as entry}]
+                                      [turn
+                                       (- (svar-router/count-messages
+                                            model
+                                            [{:role "user"
+                                              :content (prompt/previous-turn-context-block
+                                                         [entry])}])
+                                          priming)]))
+                               turn-data)))
+                     (catch Exception _ nil)))
             universe (into [] (comp (mapcat :iter-scopes) (distinct)) turn-data)
             resolved (ctx-engine/supersede-summaries
                        (ctx-engine/expand-through (or summaries []) universe (map :turn turn-data)))
@@ -2909,8 +2913,8 @@
                   (>= t 1000) (str (long (Math/round (/ (double t) 1000.0))) "k")
                   :else (str t))))
 
-        ;; Report this fold's reclaimed tokens and budget share beside the provider's absolute
-        ;; saturation. Enrichment is best-effort and must not break the receipt.
+        ;; Keep tokenizer removal estimates separate from provider-measured input.
+        ;; Diagnostic enrichment must not break the fold receipt.
         priced
         (fn [base]
           (try
@@ -2962,32 +2966,6 @@
                   toks
                   (+ (long (reduce + 0 (keep #(get weights %) scopes))) (long qa-toks))
 
-                  lim
-                  (get util "model_input_limit")
-
-                  ;; Denominator for `% of budget` is the OPERATING ceiling, NOT the
-                  ;; hard per-call max. `auto_compress_above` (the 200k soft
-                  ;; guardrail = the budget we actually work within) is what a fold's
-                  ;; reclaim is relevant against; dividing by the 1M ceiling read every
-                  ;; fold ~7x smaller than its real weight, so compaction looked like
-                  ;; noise exactly when it worked. On a BIGGER task the handled context
-                  ;; (`last_request_tokens`) floats ABOVE that soft guardrail before
-                  ;; auto-compress fires, so `max` lets the ceiling grow with what
-                  ;; truly resides — the fraction stays honest instead of pinning to a
-                  ;; budget already breached. `toks` is residence-bounded (expand-through
-                  ;; resolves only against the live universe), so it can't exceed the
-                  ;; grown ceiling: no >100% category error survives, no cap needed.
-                  ceiling
-                  (max (long (or (get util "auto_compress_above") 0))
-                       (long (or (get util "last_request_tokens") 0)))
-
-                  pct
-                  (when (and (pos? (long toks)) (pos? (long ceiling)))
-                    (long (Math/round (/ (* 100.0 (double toks)) (double ceiling)))))
-
-                  sat
-                  (get util "saturation")
-
                   ;; A fold can legitimately cover scopes that already left the wire:
                   ;; iterations of a turn that COMPLETED normally replay no results at
                   ;; all (`off-wire-seed?` above), so only that turn's Q/A recap still
@@ -3032,53 +3010,29 @@
                          (str/join ", " (map #(str "t" %) recap-turns))
                          " to drop their recaps"))
 
-                  saved
-                  (cond (pos? (long toks)) (str " · saved ~" (fmt-tok toks)
-                                                " tokens" (when pct (str " · ~" pct "% of budget")))
-                        ;; Utilization IS stamped but this fold reclaims no NEW wire — a re-fold
-                        ;; of scopes already collapsed on a prior turn, or a fresh scope not yet
-                        ;; sent. Either way it freed 0 tokens; stay explicit rather than silently
-                        ;; dropping the clause, so the human sees a no-op, not a display bug.
-                        (some? util) " · saved ~0 tokens"
-                        ;; NO stamped utilization at all: nothing to price, so the card degrades
-                        ;; to the bare confirmation and the recorded intent carries no `note`.
+                  removed
+                  (cond (pos? (long toks)) (str " · estimated removal ~" (fmt-tok toks) " tokens")
+                        (some? util) " · estimated removal ~0 tokens"
                         :else "")
 
-                  ;; Show the provider's authoritative pre-fold saturation and project a post-fold
-                  ;; value only when this fold reclaims wire. The unspaced arrow avoids the receipt
-                  ;; parser's gist delimiter.
-                  ctx-pct
-                  (when (and sat (pos? (long sat)))
-                    (let [lrt
-                          (long (or (get util "last_request_tokens") 0))
+                  ;; Removal uses a local tokenizer; input is provider usage. Subtracting
+                  ;; them cannot establish the remaining context or a non-foldable floor.
+                  ;; The next provider request measures the actual post-fold total.
+                  input
+                  (long (or (get util "last_request_tokens") 0))
 
-                          lim
-                          (long (or lim 0))
+                  budget
+                  (long (or (get util "auto_compress_above") 0))
 
-                          measurable?
-                          (and (pos? lrt) (pos? lim))
+                  limit
+                  (long (or (get util "model_input_limit") 0))
 
-                          left
-                          (max 0 (- lrt (long toks)))
+                  measured
+                  (str (when (pos? input) (str " · last input " (fmt-tok input) " measured tokens"))
+                       (when (pos? budget) (str " · operating budget " (fmt-tok budget)))
+                       (when (pos? limit) (str " · model limit " (fmt-tok limit))))]
 
-                          left-pct
-                          (when measurable?
-                            (long (Math/round (/ (* 100.0 (double left)) (double lim)))))]
-
-                      (cond (and measurable? (pos? (long toks))) (str " · context "
-                                                                      sat
-                                                                      "%→~"
-                                                                      left-pct
-                                                                      "% ("
-                                                                      (fmt-tok lrt)
-                                                                      "→"
-                                                                      (fmt-tok left)
-                                                                      " tokens)")
-                            measurable?
-                            (str " · context " sat "% (" (fmt-tok lrt) "/" (fmt-tok lim) " tokens)")
-                            :else (str " · context " sat "%"))))]
-
-              {:note (str saved ctx-pct off-wire-note) :reclaimed-tokens toks})
+              {:note (str removed measured off-wire-note) :reclaimed-tokens toks})
             (catch Throwable _ {:note "" :reclaimed-tokens 0})))]
 
     {'fold-session
@@ -4971,7 +4925,7 @@
    Returns map with :thinking :blocks :final-result :api-usage etc."
   [environment messages &
    [{:keys [routing iteration reasoning-level reasoning-effort resolved-model on-chunk extra-body
-            llm-headers active-extensions answer-validation-context request-context]}]]
+            llm-headers active-extensions answer-validation-context request-context on-response]}]]
   (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
@@ -5120,7 +5074,6 @@
           ;; surfaced on the routing trace, same as an empty-reply resend.
           refusal-fallback-events (atom [])
           provider-tools (model-facing-tools (:sandbox-caps environment))
-          request-health (prompt/request-health environment messages provider-tools)
           ask-opts
           (rt/with-default-ask-code-idle-timeout
             (cond-> {;; ONE tool on the wire: the model takes every action
@@ -5251,6 +5204,11 @@
           api-usage (:api-usage ask-result)
           actual-provider (actual-llm-provider resolved-model ask-result)
           actual-model (actual-llm-model resolved-model ask-result)
+          request-health (prompt/request-health environment messages provider-tools actual-model)
+          ;; Blockether/vis#174: publish measured input before Python can fold this request.
+          _ (when on-response
+              (on-response
+                {:api-usage api-usage :llm-provider actual-provider :llm-model actual-model}))
           _ (log-context-token-counts! messages
                                        actual-provider
                                        actual-model
@@ -7958,15 +7916,16 @@
 
         canonical-messages
         (fn []
-          (prompt/assemble-initial-messages {:stable-prompt-messages stable-prompt-messages
-                                             :initial-user-content user-request
-                                             :turn-context turn-context
-                                             :user-images (:attached user-attachments)
-                                             :skipped-images (:skipped user-attachments)
-                                             :vision? initial-target-vision?
-                                             :image-descriptions initial-image-descriptions
-                                             :previous-turn-context
-                                             (previous-turn-context environment session-turn-id)}))
+          (prompt/assemble-initial-messages
+            {:stable-prompt-messages stable-prompt-messages
+             :initial-user-content user-request
+             :turn-context turn-context
+             :user-images (:attached user-attachments)
+             :skipped-images (:skipped user-attachments)
+             :vision? initial-target-vision?
+             :image-descriptions initial-image-descriptions
+             :previous-turn-context
+             (previous-turn-context environment session-turn-id (:name initial-resolved-model))}))
 
         summaries-at-turn-start
         (current-session-summaries environment)
@@ -8483,6 +8442,20 @@
                            :reasoning-effort reasoning-effort
                            :routing @iteration-routing
                            :resolved-model resolved-model
+                           :on-response
+                           (fn [response]
+                             (stamp-served-route! environment response)
+                             (when-let [input (get-in response [:api-usage :input-tokens])]
+                               (let [window (iteration-context-limit max-context-tokens
+                                                                     (turn-served-model environment)
+                                                                     pre-resolved-model)]
+                                 (stamp-utilization! (:ctx-atom environment)
+                                                     (ctx-engine/utilization
+                                                       input
+                                                       window
+                                                       (+ (long (:input-tokens @usage-atom))
+                                                          (long input))
+                                                       (context-fold-budget window))))))
                            :on-chunk (fn [chunk]
                                        (when (provider-output-chunk? chunk)
                                          (reset! provider-output-started? true))

@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.context.prompt-test
   (:require [clojure.string :as str]
+            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.python.env :as env-python]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -10,6 +11,55 @@
 
 (defdescribe
   request-health-test
+  ;; Regression: Blockether/vis#174 omitted nested tool payloads from the breakdown.
+  (it "uses the shared tokenizer for dense text, tool calls and nested results"
+      (let [payload
+            (apply str (repeat 1000 "ą中42={x:17};\n"))
+
+            messages
+            [{:role "user" :content "question"}
+             {:role "assistant"
+              :content
+              [{:type "tool_use" :id "call-1" :name "python_execution" :input {"code" payload}}]}
+             {:role "user"
+              :content [{:type "tool_result"
+                         :tool_use_id "call-1"
+                         :content [{:type "text" :text payload}]}]}]
+
+            health
+            (prompt/request-health {} messages [])]
+
+        (expect (= (svar-router/count-messages "gpt-4o" messages)
+                   (reduce + (map :tokens (:breakdown health)))))
+        (expect (not (str/includes? (pr-str health) payload)))))
+  (it "names foldable prior-turn recaps separately from user requests"
+      (let [messages
+            (prompt/assemble-initial-messages
+              {:previous-turn-context
+               [{:turn 1 :user-request "prior dense input" :interrupted? true}]
+               :initial-user-content "current input"})
+
+            health
+            (prompt/request-health {} messages [] "gpt-4")
+
+            labels
+            (set (map :label (:breakdown health)))]
+
+        (expect (contains? labels "Turn t1 recap (fold t1)"))
+        (expect (contains? labels "User requests"))
+        (expect (= :svar-estimate (:token-count-source health)))
+        (expect (= "gpt-4" (:token-count-model health)))
+        (expect (= (svar-router/count-messages "gpt-4" messages)
+                   (reduce + (map :tokens (:breakdown health)))))))
+  (it "keeps unavailable token counts diagnostic-only and never exposes the failing content"
+      (with-redefs [svar-router/count-messages (fn [_ _]
+                                                 (throw (ex-info "private request content" {})))]
+        (expect
+          (= {:token-count-source :unavailable :token-count-model "gpt-4" :breakdown [] :roots []}
+             (prompt/request-health {}
+                                    [{:role "user" :content "private request content"}]
+                                    []
+                                    "gpt-4")))))
   (it "attributes sent primary guidance once without rereading it"
       (with-redefs [agents/primary-instructions
                     (constantly {:files [{:scope :project
@@ -32,7 +82,7 @@
           (expect (= {:label "Main AGENTS.md" :tokens 2 :path "/work/AGENTS.md"}
                      (first (filter #(= "Main AGENTS.md" (:label %)) rows))))
           (expect
-            (= 2 (:tokens (first (filter #(= "Conversation and tool results" (:label %)) rows)))))
+            (= 6 (:tokens (first (filter #(= "Conversation and tool results" (:label %)) rows)))))
           (expect (not (contains? health :last-request-tokens)))
           (expect (every? #(not (contains? % :content)) rows)))))
   (it "ignores image bytes and keeps unknown guidance status unknown"
@@ -42,9 +92,11 @@
                      [{:role "user"
                        :content [{:type "text" :text "abcd"}
                                  {:type "image_url"
-                                  :image_url {:url "data:image/png;base64,AAAA"}}]}]
+                                  :image_url {:url "data:image/png;base64,AAAA" :detail "low"}}]}]
                      [])]
-        (expect (= [{:label "Conversation and tool results" :tokens 1}] (:breakdown health)))
+        (expect (= [{:label "Conversation and tool results" :tokens 91}
+                    {:label "Message framing" :tokens 3}]
+                   (:breakdown health)))
         (expect (every? #(not (contains? % :instructions-loaded)) (:roots health))))))
 
 (defdescribe
@@ -62,9 +114,13 @@
                                              [{:trunk "/linked" :clone "/linked" :draft :shared}]}
                                             [{:role "user" :content "abcd"}]
                                             [])]
-          (expect (= [{:label "Conversation and tool results" :tokens 1}] (:breakdown health)))
+          (expect (= [{:label "Conversation and tool results" :tokens 6}
+                      {:label "Message framing" :tokens 3}]
+                     (:breakdown health)))
           (expect (= [{:path "/linked"
-                       :guidance {:status "available" :path "/linked/AGENTS.md" :tokens 2}}]
+                       :guidance {:status "available"
+                                  :path "/linked/AGENTS.md"
+                                  :tokens (svar-router/count-tokens "unknown" "ąbcde")}}]
                      (:roots health))))))
   (it "distinguishes missing guidance from read failures and never scans denied roots"
       (doseq [[scan status] [[{:result {:found? false}} "missing"]

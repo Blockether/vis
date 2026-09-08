@@ -5,9 +5,11 @@
    project instructions (AGENTS.md / CLAUDE.md when present), extension
    fragments, current user message. Per-iteration user-role context is the
    engine snapshot rendered as a Python dict (`session`) by the loop."
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.config.core :as config]
@@ -251,7 +253,13 @@
         (into []
               (keep (fn [entry]
                       (when-let [block (previous-turn-context-block [entry])]
-                        {:role "user" :content block})))
+                        (with-meta {:role "user" :content block}
+                          {::parts
+                           [{:label
+                             (if (:checkpoint? entry)
+                               "Fold checkpoints"
+                               (str "Turn t" (:turn entry) " recap (fold t" (:turn entry) ")"))
+                             :content block}]}))))
               previous-turn-context)
 
         turn-block
@@ -286,11 +294,13 @@
     (vec (concat (or stable-prompt-messages [])
                  prior-messages
                  (when (or turn-block user-block)
-                   [(if (seq attached-images)
-                      (apply svar/user
-                        text
-                        (map #(svar/image (:base64 %) (:media-type %)) attached-images))
-                      {:role "user" :content text})])))))
+                   [(with-meta (if (seq attached-images)
+                                 (apply svar/user
+                                   text
+                                   (map #(svar/image (:base64 %) (:media-type %)) attached-images))
+                                 {:role "user" :content text})
+                      {::parts (when user-block
+                                 [{:label "User requests" :content user-block}])})])))))
 
 (def ^:private CORE_SYSTEM_PROMPT
   "Cross-tool contract for an autonomous agent. `python_execution` is the only
@@ -475,15 +485,6 @@
 
     (str/join "\n\n" (into [base] extras))))
 
-(defn- text-chars
-  ^long [content]
-  (if (string? content)
-    (count content)
-    (reduce (fn [^long n part]
-              (+ n (count (or (:text part) ""))))
-            0
-            content)))
-
 (defn- project-instructions-block
   "Inline primary-workspace guidance and a metadata-only index of added-root
    guidance. Added-root file contents enter the conversation only when the model
@@ -542,7 +543,7 @@
                             {:label (str (if (= :project (:scope f)) "Main " "Workspace ")
                                          (if (= :claude-md (:source f)) "CLAUDE.md" "AGENTS.md"))
                              :path (paths/abbreviate-home (:path f))
-                             :chars (count (:content f))})
+                             :content (:content f)})
                           files)}))))
     (catch Throwable t
       (tel/log! {:level :warn :id ::project-instructions-error :data {:error (ex-message t)}}
@@ -836,72 +837,97 @@
                   (with-meta m {::parts (:parts project-block)}))
                 (when-let [m (stable-prompt-message turn-system-block)]
                   (with-meta m
-                    {::parts [{:label "Tools, skills and runtime"
-                               :chars (text-chars turn-system-block)}]}))
+                    {::parts [{:label "Tools, skills and runtime" :content turn-system-block}]}))
                 (stable-prompt-message session-context-block)]))))
 
 (defn- root-guidance-estimate
   "Disk-only estimate; never contributes to sent-message totals or model read status."
-  [{:keys [trunk clone]}]
+  [model {:keys [trunk clone]}]
   (let [row {:path (paths/abbreviate-home clone)}]
     (assoc row
       :guidance (try (let [{:keys [result warnings]} (agents/scan-in (io/file (or trunk clone)))]
                        (cond (seq warnings) {:status "error"}
                              (:found? result) {:status "available"
                                                :path (paths/abbreviate-home (:path result))
-                                               :tokens (quot (+ 3 (count (:content result))) 4)}
+                                               :tokens (svar-router/count-tokens model
+                                                                                 (:content result))}
                              :else {:status "missing"}))
                      (catch Exception _ {:status "error"})))))
 
 (defn request-health
-  "Compact, content-free provenance for the logical request sent to Svar.
+  "Content-free provenance for the logical request sent to Svar.
 
-   Part estimates use four text characters per token, not a provider tokenizer.
-   Images, native reasoning and protocol overhead are excluded, so parts need not
-   sum to provider input. Message metadata attributes primary guidance without
-   rescanning files or counting it again as system text. Tool-result guidance stays
-   in conversation: no read receipt means UNKNOWN, never 'not loaded'."
-  [environment messages tools]
-  (let [parts
-        (mapcat (fn [message]
-                  (let [known
-                        (::parts (meta message))
+   Counts canonical content with Svar's tokenizer, including nested tool payloads,
+   images, reasoning and estimated message framing. Provider usage remains the
+   authoritative total: model tokenizers and wire framing may differ. Metadata
+   attributes guidance from the sent message without rereading or double-counting it.
+   An absent model uses Svar's fallback encoding. Root guidance is disk-only."
+  [environment messages tools & [model]]
+  (try
+    (let [model
+          (or model "unknown")
 
-                        chars
-                        (+ (long (text-chars (:content message)))
-                           (long (if-let [calls (:tool_calls message)]
-                                   (count (pr-str calls))
-                                   0)))
+          priming
+          (svar-router/count-messages model [])
 
-                        remainder
-                        (max 0 (- chars (long (reduce + 0 (map :chars known)))))]
+          parts
+          (mapcat
+            (fn [message]
+              (let [total
+                    (- (svar-router/count-messages model [message]) priming)
 
-                    (cond-> (vec known)
-                      (pos? remainder)
-                      (conj {:label (if (#{"system" "developer"} (:role message))
-                                      "System instructions"
-                                      "Conversation and tool results")
-                             :chars remainder}))))
-                messages)
+                    overhead
+                    (- (svar-router/count-messages model [(assoc message :content "")]) priming)
 
-        parts
-        (cond-> (vec parts)
-          (seq tools)
-          (conj {:label "Tool declarations" :chars (count (pr-str tools))}))
+                    [known remainder]
+                    (reduce
+                      (fn [[rows left] part]
+                        (let [tokens (min (long left)
+                                          (max 0
+                                               (- (svar-router/count-messages
+                                                    model
+                                                    [(assoc message :content (:content part))])
+                                                  priming
+                                                  overhead)))]
+                          [(conj rows (assoc (select-keys part [:label :path]) :tokens tokens))
+                           (- (long left) tokens)]))
+                      [[] total]
+                      (::parts (meta message)))]
 
-        groups
-        (group-by (juxt :label :path) parts)
+                (cond-> known
+                  (pos? remainder)
+                  (conj {:label (if (#{"system" "developer"} (:role message))
+                                  "System instructions"
+                                  "Conversation and tool results")
+                         :tokens remainder}))))
+            messages)
 
-        own
-        (get-in environment [:workspace :root])]
+          parts
+          (cond-> (conj (vec parts) {:label "Message framing" :tokens priming})
+            (seq tools)
+            (conj {:label "Tool declarations"
+                   :tokens (svar-router/count-tokens model (json/write-json-str tools))}))
 
-    {:breakdown (mapv (fn [key]
-                        (let [rows (get groups key)]
-                          (assoc (select-keys (first rows) [:label :path])
-                            :tokens (quot (+ 3 (reduce + 0 (map :chars rows))) 4))))
-                      (distinct (map (juxt :label :path) parts)))
-     :roots (into []
-                  (comp (remove #(or (:denied? %) (= own (:clone %)) (= own (:trunk %))))
-                        (map root-guidance-estimate)
-                        (distinct))
-                  (workspace/env-filesystem-roots environment))}))
+          groups
+          (group-by (juxt :label :path) parts)
+
+          own
+          (get-in environment [:workspace :root])]
+
+      {:token-count-source :svar-estimate
+       :token-count-model model
+       :breakdown (mapv (fn [key]
+                          (let [rows (get groups key)]
+                            (assoc (select-keys (first rows) [:label :path])
+                              :tokens (reduce + 0 (map :tokens rows)))))
+                        (distinct (map (juxt :label :path) parts)))
+       :roots (into []
+                    (comp (remove #(or (:denied? %) (= own (:clone %)) (= own (:trunk %))))
+                          (map (partial root-guidance-estimate model))
+                          (distinct))
+                    (workspace/env-filesystem-roots environment))})
+    (catch Exception _
+      {:token-count-source :unavailable
+       :token-count-model (or model "unknown")
+       :breakdown []
+       :roots []})))
