@@ -930,9 +930,12 @@ Simplification follow-up, based on `92928501b`:
 - Verification: 278 focused Council/host/gateway/store cases and the real Python/model case pass.
   The broader 764-case run has only the previously reproduced permission-snapshot baseline failure.
   SDK units: 331 passed; real Council/LocalEngine HTTP/stdio: five passed on JVM and five on native.
-  GraalVM CE 25.3.4.1 built the current source in 4m1s with 23 warnings; 13 native binary cases pass.
+  GraalVM CE 25.3.4.1 built the simplification source in 4m1s with 23 warnings; 13 native cases pass.
   Scoped Clojure lint/reflection, Python lint and both formatters pass. No gateway was restarted.
-
+- Main advanced to `e71f28c9e` during verification; its recap-only folding fix merged without conflicts.
+  The merged Council/context/loop run has 732 cases and only the same permission-snapshot failure.
+  The Python/model regression and five real JVM SDK cases pass again; merged Clojure formatting and
+  lint/reflection pass. Native results above precede this pure-Clojure main merge.
 Reference performance before this follow-up (milliseconds; informational, not timing assertions):
 macOS/aarch64, 14 logical processors, JVM 25.0.3, bundled SQLite 3.53.2. The fixture uses 10 active
 sessions, one root plus 100,000 short continuations, explicit sparse/dense recipients and broadcasts.
