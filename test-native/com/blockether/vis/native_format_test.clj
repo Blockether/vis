@@ -20,7 +20,11 @@
             source "(defn f [x]\n(+ x 1))"
             calls (atom 0)
             code (str "print(format_code('clojure', {'path': 'default.clj'}))\n"
-                      "print(format_code('clojure', {'path': 'configured/example.clj'}))")
+                      "print(format_code('clojure', {'path': 'configured/example.clj'}))\n"
+                      "try:\n" "    result = run_tests('clojure', {'path': 'missing_test.clj'})\n"
+                      "except Exception as error:\n" "    result = str(error)\n"
+                      "assert 'no such path' in str(result), str(result)\n"
+                      "print('NATIVE_TEST_HANDLER_READY')")
             tool {:id "format-native"
                   :type "function"
                   :function {:name "python_execution"
@@ -91,31 +95,33 @@
                     (.putAll env (#'native/native-environment))
                     (.put env "HOME" (.getAbsolutePath dir))
                     (let [process (.start builder)]
-                      (try (expect (.waitFor process 180 TimeUnit/SECONDS)
-                                   "native formatting timed out")
-                           (let [tool-results
-                                 (for [request @asked
-                                       message (:messages
-                                                 (json/read-json (:body request) :key-fn keyword))
-                                       :when (= "tool" (:role message))]
+                      (try
+                        (expect (.waitFor process 180 TimeUnit/SECONDS)
+                                "native formatting timed out")
+                        (let [tool-results (for [request @asked
+                                                 message (:messages (json/read-json (:body request)
+                                                                                    :key-fn
+                                                                                    keyword))
+                                                 :when (= "tool" (:role message))]
 
-                                   (:content message))
-                                 output (str (slurp log) "\n" (pr-str tool-results))]
+                                             (:content message))
+                              output (str (slurp log) "\n" (pr-str tool-results))]
 
-                             (expect (= 0 (.exitValue process)) output)
-                             (expect (>= @calls 2) output)
-                             (expect (.isDirectory (io/file dir ".vis/native/sqlite")) output)
-                             (expect (every? #(= model
-                                                 (:model
-                                                   (json/read-json (:body %) :key-fn keyword)))
-                                             @asked)
-                                     output)
-                             (expect (= "(defn f [x]\n  (+ x 1))\n"
-                                        (slurp (io/file dir "default.clj")))
-                                     output)
-                             (expect (= "(defn f [x] (+ x 1))\n"
-                                        (slurp (io/file dir "configured/example.clj")))
-                                     output))
-                           (finally (when (.isAlive process) (#'native/kill-tree! process))))))
+                          (expect (= 0 (.exitValue process)) output)
+                          (expect (>= @calls 2) output)
+                          (expect (str/includes? (pr-str tool-results) "NATIVE_TEST_HANDLER_READY")
+                                  output)
+                          (expect (.isDirectory (io/file dir ".vis/native/sqlite")) output)
+                          (expect (every? #(= model
+                                              (:model (json/read-json (:body %) :key-fn keyword)))
+                                          @asked)
+                                  output)
+                          (expect (= "(defn f [x]\n  (+ x 1))\n"
+                                     (slurp (io/file dir "default.clj")))
+                                  output)
+                          (expect (= "(defn f [x] (+ x 1))\n"
+                                     (slurp (io/file dir "configured/example.clj")))
+                                  output))
+                        (finally (when (.isAlive process) (#'native/kill-tree! process))))))
                   (finally (.stop ^com.sun.net.httpserver.HttpServer server 0))))))
           (finally (#'native/delete-tree! dir)))))))

@@ -22,7 +22,6 @@
             [com.blockether.vis.internal.language.clojure.reflection :as reflection]
             [com.blockether.vis.internal.language.clojure.nrepl-ctx :as nrepl-ctx]
             [com.blockether.vis.internal.language.clojure.repl-manager :as repl-manager]
-            [com.blockether.vis.internal.language.clojure.test-runner :as test-runner]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.contract.surface :as contract]))
 
@@ -944,21 +943,26 @@
      :ext/license "Apache-2.0"
      :ext/activation-fn activation-fn
      :ext/ctx-fn nrepl-ctx/contribute
-     :ext/language-tools [{:language "clojure"
-                           :format-fn (fn [env arg]
-                                        (clj-format-fn env arg))
-                           :lint-fn clj-lint-fn
-                           :test-fn test-runner/clj-test-fn
-                           :repl-eval-fn clj-eval-fn
-                           ;; The foundation's `patch` gate hands this
-                           ;; the whole spliced FILE — never a lone replacement —
-                           ;; and keep the result only when the repair is confined
-                           ;; to the edited lines. Repairing a fragment on its own
-                           ;; balanced a partial form into a complete one and wrote
-                           ;; code the caller never asked for.
-                           :balance-fn repair/fix-delimiters
-                           :start-repl-fn (fn [env op opts]
-                                            (repl-start-fn env op opts))}]
+     :ext/language-tools
+     [{:language "clojure"
+       :format-fn (fn [env arg]
+                    (clj-format-fn env arg))
+       :lint-fn clj-lint-fn
+       :test-fn (fn [env arg]
+                  ((requiring-resolve
+                     'com.blockether.vis.internal.language.clojure.test-runner/clj-test-fn)
+                    env
+                    arg))
+       :repl-eval-fn clj-eval-fn
+       ;; The foundation's `patch` gate hands this
+       ;; the whole spliced FILE — never a lone replacement —
+       ;; and keep the result only when the repair is confined
+       ;; to the edited lines. Repairing a fragment on its own
+       ;; balanced a partial form into a complete one and wrote
+       ;; code the caller never asked for.
+       :balance-fn repair/fix-delimiters
+       :start-repl-fn (fn [env op opts]
+                        (repl-start-fn env op opts))}]
      :ext/kind "language"}))
 
 (defn register! [] (vis/register-extension! vis-extension))

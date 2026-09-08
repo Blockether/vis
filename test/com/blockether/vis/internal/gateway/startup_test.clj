@@ -78,6 +78,28 @@
             assoc
             :configured-format
             (timed :first-zprint-format #(format-source source (str home "/example.clj")))))
+          (let
+           [extensions
+            ((requiring-resolve 'com.blockether.vis.internal.extension.core/registered-extensions))
+            test-fn
+            (->>
+             extensions
+             (mapcat :ext/language-tools)
+             (filter #(= "clojure" (:language %)))
+             first
+             :test-fn)]
+           (swap!
+            result
+            assoc
+            :first-test-error
+            (timed
+             :first-test-handler
+             #(try
+               (test-fn
+                {:workspace/root (System/getProperty "user.home")}
+                {"path" "missing_test.clj"})
+               nil
+               (catch clojure.lang.ExceptionInfo e (.getMessage e))))))
           (binding
            [*out* output]
            (println "VIS_STARTUP" (pr-str (assoc @result :timings @timings)))
@@ -188,8 +210,10 @@
                   ["foundation-core" "language-clojure" "language-python"]))
       ;; Registration must keep callable handlers, not eagerly compile both formatters.
       ;; A fresh JVM is essential: other tests may already have used either backend.
-      (doseq [ns-sym '[zprint.core zprint.config cljfmt.core cljfmt.config]]
+      (doseq [ns-sym '[zprint.core zprint.config cljfmt.core cljfmt.config
+                       com.blockether.vis.internal.language.clojure.test-runner]]
         (is (not (contains? (:loaded-namespaces result) ns-sym)) (str ns-sym)))
       (is (= "(defn f [x]\n  (+ x 1))\n" (:default-format result)))
+      (is (str/includes? (:first-test-error result) "no such path"))
       (is (= "(defn f [x] (+ x 1))\n" (:configured-format result)))
       (is (some #(= :database (first %)) (:timings result))))))
