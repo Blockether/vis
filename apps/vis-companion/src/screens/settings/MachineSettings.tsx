@@ -1,6 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { clientCallbackMode, watchAuth, type AuthWatch } from "../../lib/oauth";
-import { McpAuth } from "../../components/McpAuth";
+import { watchAuth, type AuthWatch } from "../../lib/oauth";
 import { SwipeActions, type SwipeAction } from "../../components/SwipeActions";
 
 import {
@@ -364,7 +363,6 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   const authFlow = auth?.client === client ? auth.flow : null;
   const authEpoch = useRef(0);
   const stopAuth = useRef<AuthWatch | null>(null);
-  const [authInput, setAuthInput] = useState("");
   // The server being edited, or null while adding. Editing keys the save by the
   // ORIGINAL name: `POST /v1/mcp/servers` replaces by name, so a renamed field
   // would fork a second server instead of updating this one.
@@ -416,7 +414,6 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
     }, verdict => {
       authEpoch.current += 1;
       setAuth(null); setBusy(null);
-      setAuthInput("");
       if (verdict.status === "ok") void load();
       else setError(verdict.message ?? "Authorization failed. Start sign-in again.");
     });
@@ -553,6 +550,9 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
 
   // Bind every flow to the paired client that initiated it, never the currently
   // selected machine after a switch. A late start is cancelled without opening a URL.
+  // The gateway always issues a loopback callback: on a phone the native receiver
+  // binds that port and opens the system browser itself, with no browser-gesture
+  // rule to lose between the tap and the fetch that produced the URL.
   async function authorize(server: McpServer) {
     const epoch = ++authEpoch.current;
     stopAuth.current?.stop();
@@ -560,12 +560,11 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
     setBusy(server.name);
     setError(null);
     try {
-      const flow = await client.mcpAuthStart(server.name, clientCallbackMode());
+      const flow = await client.mcpAuthStart(server.name);
       if (authEpoch.current !== epoch) {
         await client.mcpAuthCancel(flow.server, flow.flow_id).catch(() => {});
         return;
       }
-      setAuthInput("");
       setAuth({ flow, client });
     } catch (error) {
       if (authEpoch.current === epoch) setError(error instanceof GatewayOAuthError ? error.message
@@ -575,24 +574,10 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
     }
   }
 
-  async function finishAuth() {
-    if (!authFlow) return;
-    const epoch = authEpoch.current;
-    setBusy(authFlow.server);
-    try {
-      await stopAuth.current?.complete(authInput.trim());
-    } catch {
-      if (authEpoch.current === epoch) setError("Cannot finish sign-in. Check the callback and try again.");
-    } finally {
-      if (authEpoch.current === epoch) setBusy(null);
-    }
-  }
-
   function cancelAuth() {
     authEpoch.current += 1;
     stopAuth.current?.stop();
     setAuth(null);
-    setAuthInput("");
     setBusy(null);
   }
 
@@ -790,7 +775,8 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
           </div>
         )}
         {servers?.map((server) => {
-          const state = mcpServerMark(server);
+          const isSigningIn = authFlow?.server === server.name;
+          const state = mcpServerMark(server, isSigningIn);
           const isOpen = expanded.has(server.name);
           const panelId = `mcp-server-${server.name}`;
           const idle = busy === null;
@@ -830,19 +816,30 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
           // would rewrite somebody's `vis.yml` are missing from it.
           const actions: SwipeAction[] = [];
           if (server.url)
-            actions.push({
-              key: "auth",
-              label: server.is_authorized ? "Re-auth" : "Sign in",
-              name: server.is_authorized
-                ? `Sign in to ${server.name} again`
-                : `Sign in to ${server.name}`,
-              icon: <ArrowOutIcon className="size-4" />,
-              // The one verb a server cannot work without wears the accent.
-              tone: server.is_authorized ? "neutral" : "accent",
-              onSelect: () => {
-                if (idle) void authorize(server);
-              },
-            });
+            actions.push(
+              // While the browser holds the sign-in, the same slot takes it back.
+              isSigningIn
+                ? {
+                    key: "auth",
+                    label: "Cancel",
+                    name: `Cancel signing in to ${server.name}`,
+                    icon: <CircleSlashIcon className="size-4" />,
+                    onSelect: cancelAuth,
+                  }
+                : {
+                    key: "auth",
+                    label: server.is_authorized ? "Re-auth" : "Sign in",
+                    name: server.is_authorized
+                      ? `Sign in to ${server.name} again`
+                      : `Sign in to ${server.name}`,
+                    icon: <ArrowOutIcon className="size-4" />,
+                    // The one verb a server cannot work without wears the accent.
+                    tone: server.is_authorized ? "neutral" : "accent",
+                    onSelect: () => {
+                      if (idle) void authorize(server);
+                    },
+                  },
+            );
           if (server.url && server.is_authorized)
             actions.push({
               key: "signout",
@@ -962,12 +959,6 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
                 <McpServerDetails id={panelId} server={server} />
               )}
               {showForm && editing?.name === server.name && form}
-              {authFlow?.server === server.name && (
-                <div className="px-3 pb-3 sm:px-4">
-                  <McpAuth flow={authFlow} input={authInput} busy={busy !== null}
-                    onInput={setAuthInput} onFinish={() => void finishAuth()} onCancel={cancelAuth} onOpen={() => stopAuth.current?.open()} />
-                </div>
-              )}
             </div>
           );
         })}
@@ -993,7 +984,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
  * trailing chip — the count of what a connected server offers, the state of one
  * that is not — so the row never says the same thing twice.
  */
-function mcpServerMark(server: McpServer): {
+function mcpServerMark(server: McpServer, isSigningIn = false): {
   Mark: typeof CircleCheckIcon;
   tone: string;
   label: string;
@@ -1001,6 +992,15 @@ function mcpServerMark(server: McpServer): {
   isSettling?: boolean;
 } {
   const tools = `${server.tools} ${server.tools === 1 ? "tool" : "tools"}`;
+  // The browser has the sign-in; the row says so in the ring, not in a panel.
+  if (isSigningIn)
+    return {
+      Mark: CircleDotIcon,
+      tone: "text-warn",
+      label: "Waiting for the browser to finish sign-in",
+      word: "signing in",
+      isSettling: true,
+    };
   if (server.is_killed)
     return {
       Mark: CircleSlashIcon,

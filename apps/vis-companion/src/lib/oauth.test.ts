@@ -1,90 +1,64 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { SignInFlow } from './types';
-import { clientCallbackMode, watchAuth } from './oauth';
+import { watchAuth } from './oauth';
 
-const native = vi.hoisted(() => ({ on: true, handler: (_: { url: string }) => {}, remove: vi.fn() }));
-vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => native.on, isPluginAvailable: () => false } }));
-vi.mock('@capacitor/app', () => ({ App: { addListener: vi.fn(async (_event, callback) => {
-  native.handler = callback; return { remove: native.remove };
-}) } }));
-const flow: SignInFlow = { flow_id: 'test-flow', kind: 'pkce',
-  callback_mode: 'app', redirect_uri: 'com.blockether.viscompanion://oauth/callback',
-  url: 'https://gateway.example.com/authorize?state=test-state&redirect_uri=com.blockether.viscompanion%3A%2F%2Foauth%2Fcallback' };
-const callback = `${flow.redirect_uri}?state=test-state&code=test-code`;
+// A web host: no native receiver, so the browser opens by URL and the gateway's own
+// loopback listener settles the flow through polling. The native receiver is
+// covered by oauth.native.test.ts.
+vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => false, isPluginAvailable: () => false } }));
+const redirect = 'http://127.0.0.1:53692/mcp-callback';
+const flow: SignInFlow = { flow_id: 'test-flow', kind: 'pkce', callback_mode: 'loopback', redirect_uri: redirect,
+  url: `https://gateway.example.com/authorize?state=test-state&redirect_uri=${encodeURIComponent(redirect)}` };
+const callback = `${redirect}?state=test-state&code=test-code`;
 function gateway() {
   return { poll: vi.fn().mockResolvedValue({ status: 'pending' }), complete: vi.fn().mockResolvedValue({ status: 'ok' }),
     cancel: vi.fn().mockResolvedValue(undefined) };
 }
-beforeEach(() => { vi.useFakeTimers(); native.on = true; native.remove.mockReset(); vi.spyOn(window, 'open').mockReturnValue(null); });
+beforeEach(() => { vi.useFakeTimers(); vi.spyOn(window, 'open').mockReturnValue(null); });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
-it('selects a local app callback only on a native host', () => {
-  expect(clientCallbackMode()).toBe('app'); native.on = false; expect(clientCallbackMode()).toBe('loopback');
-});
-it('opens after subscribing and forwards only to the initiating paired gateway, once', async () => {
+it('opens the browser at once and settles through polling', async () => {
   const client = gateway(); const verdict = vi.fn(); const { stop } = watchAuth(flow, client, verdict);
   await vi.advanceTimersByTimeAsync(0);
   expect(window.open).toHaveBeenCalledWith(flow.url, '_blank', 'noopener,noreferrer');
-  native.handler({ url: callback }); native.handler({ url: callback });
-  await vi.advanceTimersByTimeAsync(0);
-  expect(client.complete).toHaveBeenCalledExactlyOnceWith(callback);
-  expect(verdict).toHaveBeenCalledWith(expect.objectContaining({ status: 'ok' }));
-  expect(native.remove).toHaveBeenCalledOnce(); stop();
-});
-it('ignores wrong state, destination, ambiguous queries and non-callback links', async () => {
-  const client = gateway(); const { stop } = watchAuth(flow, client, vi.fn());
-  await vi.advanceTimersByTimeAsync(0);
-  for (const url of [callback.replace('test-state', 'wrong'), callback.replace('oauth/callback', 'gateway/callback'),
-    callback.replace('com.blockether.viscompanion:', 'https:'), `${callback}&state=test-state`,
-    `${callback}&error=`, `${callback}#fragment`, `${callback}&code=other`, 'vis://gateway?url=https://gateway.example.com']) native.handler({ url });
-  await vi.advanceTimersByTimeAsync(0);
+  client.poll.mockResolvedValue({ status: 'ok' });
+  await vi.advanceTimersByTimeAsync(2100);
+  expect(client.poll).toHaveBeenCalledOnce();
+  expect(verdict).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: 'ok' }));
   expect(client.complete).not.toHaveBeenCalled(); stop();
+});
+it('reopens the same browser page on request, never a second flow', async () => {
+  const client = gateway(); const watcher = watchAuth(flow, client, vi.fn());
+  await vi.advanceTimersByTimeAsync(0); watcher.open();
+  expect(window.open).toHaveBeenCalledTimes(2);
+  expect(window.open).toHaveBeenLastCalledWith(flow.url, '_blank', 'noopener,noreferrer'); watcher.stop();
 });
 it('recovers a lost completion response through polling, without another exchange', async () => {
   const client = gateway(); const verdict = vi.fn();
   client.complete.mockRejectedValue(new Error('connection lost'));
-  const { stop } = watchAuth(flow, client, verdict); await vi.advanceTimersByTimeAsync(0);
+  const watcher = watchAuth(flow, client, verdict); await vi.advanceTimersByTimeAsync(0);
   client.poll.mockResolvedValue({ status: 'ok' });
-  native.handler({ url: callback }); await vi.advanceTimersByTimeAsync(0);
+  await expect(watcher.complete(callback)).rejects.toThrow('connection lost');
+  await vi.advanceTimersByTimeAsync(2100);
   expect(verdict).toHaveBeenCalledWith(expect.objectContaining({ status: 'ok' }));
-  expect(client.complete).toHaveBeenCalledOnce(); stop();
+  expect(client.complete).toHaveBeenCalledOnce(); watcher.stop();
 });
-it('retries a callback after a transient disconnect, never via another endpoint', async () => {
-  const client = gateway(); const verdict = vi.fn(); client.complete.mockRejectedValueOnce(new Error('offline'));
-  const { stop } = watchAuth(flow, client, verdict); await vi.advanceTimersByTimeAsync(0);
-  native.handler({ url: callback }); await vi.advanceTimersByTimeAsync(2100);
-  expect(client.complete).toHaveBeenCalledTimes(2);
-  expect(verdict).toHaveBeenCalledWith(expect.objectContaining({ status: 'ok' })); stop();
-});
-it('drops late returns on cancellation and cancels the gateway flow', async () => {
+it('drops late polls on cancellation and cancels the gateway flow', async () => {
   const client = gateway(); const verdict = vi.fn(); const { stop } = watchAuth(flow, client, verdict);
-  await vi.advanceTimersByTimeAsync(0); stop(); native.handler({ url: callback });
+  await vi.advanceTimersByTimeAsync(0); stop();
+  client.poll.mockResolvedValue({ status: 'ok' });
   await vi.advanceTimersByTimeAsync(5000);
-  expect(client.complete).not.toHaveBeenCalled(); expect(verdict).not.toHaveBeenCalled();
+  expect(client.poll).not.toHaveBeenCalled(); expect(verdict).not.toHaveBeenCalled();
   expect(client.cancel).toHaveBeenCalledOnce();
 });
-it('expires without another callback exchange and reports a sanitized error', async () => {
+it('expires without another exchange and reports a sanitized error', async () => {
   const client = gateway(); const verdict = vi.fn();
-  const { stop } = watchAuth({ ...flow, expires_at: Date.now() + 100 }, client, verdict);
-  await vi.advanceTimersByTimeAsync(101); native.handler({ url: callback }); await vi.advanceTimersByTimeAsync(2100);
+  const watcher = watchAuth({ ...flow, expires_at: Date.now() + 100 }, client, verdict);
+  await vi.advanceTimersByTimeAsync(101); await watcher.complete(callback); await vi.advanceTimersByTimeAsync(2100);
   expect(client.complete).not.toHaveBeenCalled();
-  expect(verdict).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' })); stop();
+  expect(verdict).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: 'error' })); watcher.stop();
 });
-it('fails closed if a gateway substitutes an HTTPS callback for the app scheme', async () => {
-  const client = gateway(); const verdict = vi.fn();
-  const { stop } = watchAuth({ ...flow, redirect_uri: 'https://gateway.example.com/callback' }, client, verdict);
-  await vi.advanceTimersByTimeAsync(0);
-  expect(window.open).not.toHaveBeenCalled(); expect(verdict).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' })); stop();
-});
-it('refuses a different callback hidden inside the authorization URL', async () => {
-  const client = gateway(); const verdict = vi.fn();
-  const url = new URL(flow.url!); url.searchParams.set('redirect_uri', 'https://gateway.example.com/callback');
-  const { stop } = watchAuth({ ...flow, url: url.toString() }, client, verdict);
-  await vi.advanceTimersByTimeAsync(0);
-  expect(window.open).not.toHaveBeenCalled();
-  expect(verdict).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' })); stop();
- });
 
 it('expires independently of a hung gateway poll and ignores its late verdict', async () => {
   const client = gateway(); const verdict = vi.fn();

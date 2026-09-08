@@ -10,7 +10,7 @@ it.each(['https://gateway.example.com', 'http://10.0.0.5:7890', 'http://100.64.0
   const fetch = vi.fn().mockImplementation(async () => new Response('{}')); vi.stubGlobal('fetch', fetch);
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
   const client = new GatewayClient({ url: base, token: 'test-paired-token' });
-  await client.mcpAuthStart('work', 'app');
+  await client.mcpAuthStart('work');
   await client.mcpAuthComplete('work', 'test-flow', 'test-code');
   await client.mcpAuthPoll('work', 'test-flow');
   await client.mcpAuthCancel('work', 'test-flow');
@@ -25,7 +25,7 @@ it.each(['https://gateway.example.com', 'http://10.0.0.5:7890', 'http://100.64.0
     expect(options.redirect).toBe('error');
     expect(options.cache).toBe('no-store');
   }
-  expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({ callback_mode: 'app' });
+  expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({ callback_mode: 'loopback' });
   expect(confirm).not.toHaveBeenCalled();
 });
 

@@ -4,12 +4,8 @@
  * retries, expiry and disposal are identical. Tokens and PKCE remain on the gateway.
  * No relay, hosted fallback, callback persistence or unbound cold-start return.
  */
-import { App } from '@capacitor/app';
-import { Capacitor } from '@capacitor/core';
 import type { AuthVerdict, SignInFlow } from './types';
 import { hasNativeLoopback, nativeOAuth } from './oauth-native';
-const APP_CALLBACK = 'com.blockether.viscompanion://oauth/callback';
-export const clientCallbackMode = (): 'app' | 'loopback' => Capacitor.isNativePlatform() ? 'app' : 'loopback';
 export const openAuthUrl = (url: string): void => { window.open(url, '_blank', 'noopener,noreferrer'); };
 
 /** A browser on this device cannot reach loopback on a remote gateway. */
@@ -142,21 +138,6 @@ export function watchAuth(flow: SignInFlow, transport: AuthTransport,
           claimed = true; pendingInput = input; void step();
         }).catch(() => { if (!stopped) fail('Sign-in was closed or could not receive its callback. Start sign-in again.'); });
         schedule(); return;
-      }
-      if (flow.callback_mode === 'app') {
-        const state = authorizationState(url, APP_CALLBACK);
-        if (flow.kind !== 'pkce' || !Capacitor.isNativePlatform() || flow.redirect_uri !== APP_CALLBACK || !state) {
-          fail('This host cannot receive the requested callback. Start sign-in again.'); return;
-        }
-        const listener = await App.addListener('appUrlOpen', ({ url: inputUrl }) => {
-          if (stopped || claimed || expired()) return;
-          const input = verifiedReturn(inputUrl, state);
-          if (!input) return;
-          claimed = true; pendingInput = input;
-          void step();
-        });
-        removeListener = () => { void listener.remove(); };
-        if (stopped) { removeListener(); return; }
       }
       if (url) openAuthUrl(url);
       schedule();

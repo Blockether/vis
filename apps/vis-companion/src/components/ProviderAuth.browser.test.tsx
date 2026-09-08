@@ -5,11 +5,7 @@ import { GatewayClient } from '../lib/gateway';
 import type { AuthFlow, RouterProvider } from '../lib/types';
 import { useProviderAuth } from './ProviderAuth';
 
-const native = vi.hoisted(() => ({ handler: (_: { url: string }) => {}, remove: vi.fn() }));
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => true, isPluginAvailable: () => false } }));
-vi.mock('@capacitor/app', () => ({ App: { addListener: vi.fn(async (_event, callback) => {
-  native.handler = callback; return { remove: native.remove };
-}) } }));
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 const provider = { id: 'openai-codex' } as RouterProvider;
@@ -158,22 +154,5 @@ describe('browser-flow lifecycle in the shared Companion UI', () => {
     expect(result.current.flow).toBeNull();
     expect(client.router).toHaveBeenCalledWith(undefined, { force: true });
     expect(client.completeProviderAuth).not.toHaveBeenCalled();
-  });
-  it('accepts an app callback for a protocol adapter, without a provider-specific return path', async () => {
-    vi.useFakeTimers(); vi.spyOn(window, 'open').mockReturnValue(null);
-    const redirect = 'com.blockether.viscompanion://oauth/callback';
-    const started = { ...flow, provider_id: 'example-oauth', callback_mode: 'app', redirect_uri: redirect,
-      url: `https://gateway.example.com/authorize?state=test-state&redirect_uri=${encodeURIComponent(redirect)}` } as AuthFlow;
-    const client = clientFor(started); client.base = 'https://gateway.example.com';
-    client.pollProviderAuth.mockResolvedValue({ status: 'pending' });
-    const { result } = renderHook(() => useProviderAuth(client as unknown as GatewayClient));
-    await act(async () => result.current.signIn({ id: started.provider_id } as RouterProvider));
-    await act(async () => { native.handler({ url: `${redirect}?code=test-code&state=wrong` }); });
-    expect(client.completeProviderAuth).not.toHaveBeenCalled();
-    await act(async () => { native.handler({ url: `${redirect}?code=test-code&state=test-state` }); });
-    expect(client.completeProviderAuth).toHaveBeenCalledExactlyOnceWith(started.provider_id, started.flow_id,
-      `${redirect}?state=test-state&code=test-code`);
-    expect(result.current.flow).toBeNull();
-    expect(client.router).toHaveBeenCalledWith(undefined, { force: true });
   });
 });

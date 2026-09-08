@@ -2065,13 +2065,14 @@ export class GatewayClient {
     );
   }
 
-  // Tokens and PKCE stay here on the paired gateway. Native apps request their
-  // registered private-use callback; web/TUI clients use loopback. No relay option.
-  async mcpAuthStart(name: string, callbackMode: "loopback" | "app" = "loopback"): Promise<McpAuthFlow> {
+  // Tokens and PKCE stay here on the paired gateway. Every client takes the
+  // loopback callback: a phone's native receiver binds that port and opens the
+  // browser itself; web/TUI clients use it directly. No relay option.
+  async mcpAuthStart(name: string): Promise<McpAuthFlow> {
     return this.request<McpAuthFlow>(
       "POST",
       `/v1/mcp/servers/${encodeURIComponent(name)}/auth/start`,
-      { callback_mode: callbackMode },
+      { callback_mode: "loopback" },
     );
   }
 

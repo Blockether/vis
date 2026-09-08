@@ -33,7 +33,6 @@ import type {
   ContentBlock,
   FileSuggestion,
   GatewayConn,
-  McpAuthFlow,
   QueuedTurn,
   QueuePausedInfo,
   RouterProvider,
@@ -840,19 +839,14 @@ export const STORY_DEVICE_AUTH: ProviderAuth = {
       'Return to Vis after approval; sign-in finishes automatically.'],
   },
 };
-/** Direct native MCP callback fixture; no real authorization server or code. */
-export const STORY_MCP_AUTH: McpAuthFlow = {
-  server: 'Company tools', flow_id: 'story-mcp-return', kind: 'pkce', status: 'pending',
-  callback_mode: 'app', redirect_uri: 'com.blockether.viscompanion://oauth/callback',
-  url: 'https://gateway.example.com/authorize?state=story-state',
- };
 
 /** An adapter that registers Vis' app callback, not a claim about Claude's fixed redirect. */
 export const STORY_APP_AUTH: ProviderAuth = {
   ...storyProviderAuth([{ ...STORY_PROVIDERS[0], id: 'example-oauth', label: 'Company model',
     status: { is_authenticated: false, auth_state: 'unverified' } }]),
   flow: {
-    ...STORY_MCP_AUTH, provider_id: 'example-oauth',
+    flow_id: 'story-app-return', kind: 'pkce', status: 'pending', provider_id: 'example-oauth',
+    callback_mode: 'app', redirect_uri: 'com.blockether.viscompanion://oauth/callback',
     url: 'https://gateway.example.com/authorize?state=story-state&redirect_uri=com.blockether.viscompanion%3A%2F%2Foauth%2Fcallback',
     instructions: ['Approve sign-in in the browser. The callback opens Vis and sign-in finishes automatically.'],
   },
