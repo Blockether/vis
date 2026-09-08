@@ -48,6 +48,29 @@ it('opens the browser at once, without a panel, and finishes when the callback r
   expect(gateway.mcpAuthComplete).toHaveBeenCalledExactlyOnceWith('work', 'test-flow', callback);
   expect(gateway.mcpServers).toHaveBeenCalledTimes(2);
 });
+// Regression: after a Linear sign-in the row said `connecting` until the settings
+// were closed and opened again — the gateway reconnects AFTER answering the
+// verdict, so the one refresh it paid for saw the handshake still in flight.
+it('keeps asking while the signed-in server is still connecting, until it lands', async () => {
+  vi.spyOn(window, 'open').mockReturnValue(null);
+  const { returns } = browser();
+  const gateway = client();
+  const [base] = gateway.cachedMcpServers();
+  const connecting = { ...base, is_authorized: true, is_connected: false };
+  const connected = { ...connecting, is_connected: true, tools: 3 };
+  gateway.mcpServers.mockResolvedValueOnce([base]).mockResolvedValueOnce([connecting])
+    .mockResolvedValueOnce([connecting]).mockResolvedValue([connected]);
+  render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
+  await waitFor(() => expect(host.authorize).toHaveBeenCalled());
+  await returns();
+  await waitFor(() => expect(screen.getByText('connecting')).toBeVisible());
+  await waitFor(() => expect(screen.getByText('3 tools')).toBeVisible(), { timeout: 6000 });
+  expect(gateway.mcpServers).toHaveBeenCalledTimes(4);
+  // Settled rows stop the asking.
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  expect(gateway.mcpServers).toHaveBeenCalledTimes(4);
+}, 12_000);
 it('takes the sign-in back from the same slot it started in', async () => {
   browser();
   const gateway = client(); render(<McpServersPanel client={gateway as unknown as GatewayClient} />);

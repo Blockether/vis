@@ -338,6 +338,19 @@ export function MachineSettings({
   );
 }
 
+/**
+ * A server that answers "connecting" is the gateway still mid-handshake: it
+ * settles a sign-in, a kill or a start AFTER answering the verb that asked for
+ * it. Reported after a Linear sign-in: the row said `connecting` until the
+ * settings were closed and opened again, because the one refresh the verdict
+ * paid for ran before the reconnect landed. So while any row is settling the
+ * list asks again, for at most `MCP_SETTLE_WINDOW_MS` after the last verb — a
+ * server that never comes up must not keep a phone polling for as long as the
+ * sheet stays open.
+ */
+const MCP_SETTLE_POLL_MS = 1500;
+const MCP_SETTLE_WINDOW_MS = 30_000;
+
 export function McpServersPanel({ client }: { client: GatewayClient }) {
   // The rows this machine gave last time are the first frame; `load` below
   // revalidates them underneath. Opening on `null` flashed an empty band and
@@ -367,8 +380,8 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   // ORIGINAL name: `POST /v1/mcp/servers` replaces by name, so a renamed field
   // would fork a second server instead of updating this one.
   const [editing, setEditing] = useState<McpServer | null>(null);
-  // Rows standing open to show the whole spec: the arguments, working directory
-  // and timeout the one-line meta cannot carry.
+  // Rows standing open to show the whole spec: the arguments and working
+  // directory the one-line meta cannot carry.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   // The one destructive question open at a time, asked in the row itself.
   const [confirming, setConfirming] = useState<{
@@ -388,7 +401,11 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [confirming]);
 
-  const load = useCallback(async () => {
+  // When the current settling episode began, or null while every row is settled.
+  const settlingSince = useRef<number | null>(null);
+  const load = useCallback(async (isPoll = false) => {
+    // A verb opens a fresh settle window; a poll only spends the open one.
+    if (!isPoll) settlingSince.current = null;
     try {
       setServers(await client.mcpServers());
       setError(null);
@@ -400,6 +417,17 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!servers?.some((server) => mcpServerMark(server).isSettling)) {
+      settlingSince.current = null;
+      return;
+    }
+    settlingSince.current ??= Date.now();
+    if (Date.now() - settlingSince.current > MCP_SETTLE_WINDOW_MS) return;
+    const timer = window.setTimeout(() => void load(true), MCP_SETTLE_POLL_MS);
+    return () => window.clearTimeout(timer);
+  }, [servers, load]);
 
   useEffect(() => () => { authEpoch.current += 1; }, [client]);
 
@@ -1040,7 +1068,6 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
     rows.push(["Sign-in", server.is_authorized ? "Signed in" : "Not signed in"]);
   }
   rows.push(["Tools", String(server.tools)]);
-  if (server.timeout_ms) rows.push(["Timeout", `${Math.round(server.timeout_ms / 1000)}s`]);
   return (
     <div
       id={id}

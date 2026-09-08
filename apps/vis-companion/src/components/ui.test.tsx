@@ -1313,6 +1313,10 @@ describe("settings is ONE dialog with two columns", () => {
     expect(mcp).toContain("<SwipeActions");
     expect(mcp).toContain("<ConfirmRow");
     expect(mcp).not.toContain("window.confirm");
+    // The request timeout is the gateway's own default; the app neither shows
+    // nor sets it, and an edit carries back whatever the row already had.
+    expect(mcp).not.toContain('"Timeout"');
+    expect(mcp).not.toContain("setTimeoutMs");
   });
 
   it("keeps speech engines and voices unboxed under the machine", () => {

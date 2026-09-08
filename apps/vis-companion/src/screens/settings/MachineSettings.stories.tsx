@@ -49,7 +49,6 @@ const SERVERS: McpServer[] = [
     is_authorized: true,
     tools: 1,
     url: 'https://gateway.example.com/mcp',
-    timeout_ms: 30_000,
   },
   {
     name: 'scratch',
@@ -144,6 +143,8 @@ export const Details: Story = {
     const details = canvas.getByRole('region', { name: 'filesystem details' });
     await expect(details).toHaveTextContent('/workspace');
     await expect(details).toHaveTextContent('server-filesystem');
+    // The request timeout is the gateway's own 30 s and is neither shown nor edited here.
+    await expect(details).not.toHaveTextContent('Timeout');
   },
 };
 
