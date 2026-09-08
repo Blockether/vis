@@ -1302,17 +1302,14 @@
   #{"query" "paths" "limit" "offset" "include" "exclude" "context" "is_hidden" "is_regex"})
 
 (def ^:private find-spec-aliases
-  "Near-miss spellings that FOLD onto the canonical key they meant. A model
-   types `glob=`, `globs=`, `context_lines=`, `max_results=`, `max_count=`, `path=` — and each
-   one used to cost the whole search (\"find spec has unknown keys: glob\") over
-   a word nobody could have guessed differently. Naming ONE idea twice — alias
-   and canonical in the same call — is still refused: that is two answers to one
-   question, not a slip."
+  "Accepted aliases for canonical grep options. Supplying multiple names for
+   the same option is rejected."
   {"path" "paths"
    "dir" "paths"
    "dirs" "paths"
    "max_results" "limit"
    "max_count" "limit"
+   "max_matches" "limit"
    "glob" "include"
    "globs" "include"
    "includes" "include"
@@ -1322,19 +1319,14 @@
    "hidden" "is_hidden"})
 
 (defn- fold-find-aliases
-  "`spec` with every accepted alias renamed to the canonical key it means, or a
-   throw naming the idea that was answered twice. An UNKNOWN key is left alone —
-   [[coerce-find-spec]] refuses it by name, with the vocabulary."
+  "Normalizes aliases and rejects multiple keys for one option.
+   Unknown keys are validated by [[coerce-find-spec]]."
   [spec]
   (reduce-kv (fn [m alias canonical]
                (if-not (contains? m alias)
                  m
                  (if (contains? m canonical)
-                   (throw (ex-info (str "find spec must use only one of canonical \""
-                                        canonical
-                                        "\" or alias \""
-                                        alias
-                                        "\".")
+                   (throw (ex-info (str "grep: use only one key for \"" canonical "\".")
                                    {:type :ext.foundation.editing/invalid-find-args :spec spec}))
                    (-> m
                        (assoc canonical (get m alias))
@@ -1359,9 +1351,8 @@
         (when-not (and (= 1 (count args)) (map? spec))
           (throw
             (ex-info
-              (str "grep takes ONE options map: grep({\"query\": q, \"paths\": [\"src\"]}) "
-                   "— kwargs are that same map, grep(query=q, paths=[\"src\"]). "
-                   "A positional query or paths argument is not accepted.")
+              (str "grep: pass one options map, e.g. grep({\"query\": q, \"paths\": [\"src\"]}), "
+                   "or use kwargs.")
               {:type :ext.foundation.editing/invalid-find-args :expected '([spec-map]) :got args})))
 
         spec
@@ -1371,87 +1362,75 @@
         (seq (remove find-spec-canonical-keys (keys spec)))]
 
     (when unknown-keys
-      (throw
-        (ex-info
-          (str
-            "find spec has unknown keys: "
-            (str/join ", " (map str unknown-keys))
-            ". Allowed: query, paths, limit, offset, include, exclude, context, is_hidden, "
-            "is_regex — a near-miss spelling (path, max_results, max_count, glob, globs, context_lines) "
-            "folds onto the one it means.")
-          {:type :ext.foundation.editing/invalid-find-args
-           :unknown (vec unknown-keys)
-           :allowed (vec (sort find-spec-canonical-keys))})))
-    (let
-      [raw-query
-       (get spec "query")
+      (throw (ex-info (str "grep: unknown keys: "
+                           (str/join ", " (map str unknown-keys))
+                           ". See doc(\"grep\").")
+                      {:type :ext.foundation.editing/invalid-find-args
+                       :unknown (vec unknown-keys)
+                       :allowed (vec (sort find-spec-canonical-keys))})))
+    (let [raw-query
+          (get spec "query")
 
-       ls?
-       (or (nil? raw-query)
-           (and (string? raw-query) (str/blank? raw-query))
-           (and (sequential? raw-query) (empty? raw-query)))
+          ls?
+          (or (nil? raw-query)
+              (and (string? raw-query) (str/blank? raw-query))
+              (and (sequential? raw-query) (empty? raw-query)))
 
-       _
-       (when-not (or ls?
-                     (util/non-blank-string? raw-query)
-                     (and (sequential? raw-query)
-                          (seq raw-query)
-                          (every? util/non-blank-string? raw-query)))
-         (throw
-           (ex-info
-             "find \"query\" must be a non-blank string or a non-empty vector of non-blank strings"
-             {:type :ext.foundation.editing/invalid-find-args :query raw-query})))
+          _
+          (when-not (or ls?
+                        (util/non-blank-string? raw-query)
+                        (and (sequential? raw-query)
+                             (seq raw-query)
+                             (every? util/non-blank-string? raw-query)))
+            (throw (ex-info "grep: \"query\" must be a string or a list of non-blank strings."
+                            {:type :ext.foundation.editing/invalid-find-args :query raw-query})))
 
-       query
-       (cond ls? ""
-             (sequential? raw-query) (str/join " " raw-query)
-             :else raw-query)
+          query
+          (cond ls? ""
+                (sequential? raw-query) (str/join " " raw-query)
+                :else raw-query)
 
-       raw-paths
-       (get spec "paths" ["."])
+          raw-paths
+          (get spec "paths" ["."])
 
-       paths
-       (cond (or (nil? raw-paths) (and (sequential? raw-paths) (empty? raw-paths))) ["."]
-             (string? raw-paths) [raw-paths]
-             (sequential? raw-paths) (vec raw-paths)
-             :else raw-paths)
+          paths
+          (cond (or (nil? raw-paths) (and (sequential? raw-paths) (empty? raw-paths))) ["."]
+                (string? raw-paths) [raw-paths]
+                (sequential? raw-paths) (vec raw-paths)
+                :else raw-paths)
 
-       _
-       (when-not (and (vector? paths) (seq paths) (every? string? paths))
-         (throw
-           (ex-info
-             "find \"paths\" must be a string or vector of file or directory strings (empty defaults to current directory)"
-             {:type :ext.foundation.editing/invalid-find-args :paths raw-paths})))
+          _
+          (when-not (and (vector? paths) (seq paths) (every? string? paths))
+            (throw (ex-info "grep: \"paths\" must be a path string or a list of path strings."
+                            {:type :ext.foundation.editing/invalid-find-args :paths raw-paths})))
 
-       paths
-       (into [] (distinct) paths)
+          paths
+          (into [] (distinct) paths)
 
-       context
-       (let [c (get spec "context" default-grep-context-lines)]
-         (when-not (and (integer? c) (not (neg? (long c))))
-           (throw (ex-info "find \"context\" must be a non-negative integer"
-                           {:type :ext.foundation.editing/invalid-find-args :context c})))
-         (long c))
+          context
+          (let [c (get spec "context" default-grep-context-lines)]
+            (when-not (and (integer? c) (not (neg? (long c))))
+              (throw (ex-info "grep: \"context\" must be a non-negative integer."
+                              {:type :ext.foundation.editing/invalid-find-args :context c})))
+            (long c))
 
-       limit
-       (get spec "limit" default-find-limit)
+          limit
+          (get spec "limit" default-find-limit)
 
-       _
-       (when-not (and (integer? limit) (pos? (long limit)))
-         (throw
-           (ex-info
-             "find \"limit\" (aliases \"max_results\", \"max_count\") must be a positive integer"
-             {:type :ext.foundation.editing/invalid-find-args :limit limit})))
+          _
+          (when-not (and (integer? limit) (pos? (long limit)))
+            (throw (ex-info "grep: \"limit\" must be a positive integer."
+                            {:type :ext.foundation.editing/invalid-find-args :limit limit})))
 
-       ;; PAGING. `offset` is where this page STARTS on both grep axes — the
-       ;; ranked NAME list and the CONTENT hits. A caller never guesses it: the
-       ;; previous result's `next_offset` IS the value to pass back.
-       offset
-       (let [o (get spec "offset" 0)]
-         (when-not (and (integer? o) (not (neg? (long o))))
-           (throw (ex-info "find \"offset\" must be a non-negative integer"
-                           {:type :ext.foundation.editing/invalid-find-args :offset o})))
-         (long o))]
+          ;; PAGING. `offset` is where this page STARTS on both grep axes — the
+          ;; ranked NAME list and the CONTENT hits. A caller never guesses it: the
+          ;; previous result's `next_offset` IS the value to pass back.
+          offset
+          (let [o (get spec "offset" 0)]
+            (when-not (and (integer? o) (not (neg? (long o))))
+              (throw (ex-info "grep: \"offset\" must be a non-negative integer."
+                              {:type :ext.foundation.editing/invalid-find-args :offset o})))
+            (long o))]
 
       {:query query
        :paths paths
@@ -2113,8 +2092,8 @@
    (`grep(query=…, paths=[…])`) fold into that same map. There is no positional
    query and no second positional argument.
 
-   `limit` (aliases `max_results`, `max_count`) is a positive integer that caps
-   the total results per page, not matches per file; the default is 50.
+   `limit` (aliases `max_results`, `max_count`, `max_matches`) caps the total
+   results per page, not matches per file. It must be a positive integer; the default is 50.
 
    CONTENT matching is smart-case literal substring; a query list is OR.
    `include` and `exclude` bound WHICH FILES the CONTENT sweep reads — globs
@@ -3911,15 +3890,16 @@
        "`is_regex: True` runs the query as a REGEX over CONTENT instead (names are not matched). "
        "Hits come back ANCHORED, so a hit is already a `patch` argument. "
        "`include`/`exclude` globs bound which files the content sweep reads (exclude wins). "
-       "`limit` (or `max_results` / `max_count`) caps total results per page, not per file: a positive integer, default 50. "
+       "`limit` (or `max_results` / `max_count` / `max_matches`) caps total results per page, not per file: "
+       "a positive integer, default 50. "
        "`query: \"\"` lists files. Capped is never silent: line 1 names the next call, and the "
        "result pages itself — `next(r)` / `r.pages()` / `r.all()`, or pass `offset` by hand. "
        "A near-miss key folds onto the one it means — `glob`/`globs`→`include`, `context_lines`→"
-       "`context`, `max_results`/`max_count`→`limit`, `path`→`paths` — so no search dies over a word.")
+       "`context`, `max_results`/`max_count`/`max_matches`→`limit`, `path`→`paths` — so no search dies over a word.")
      :params [{:name "query"} {:name "paths" :note "or `path`"} {:name "include" :note "or `glob`"}
               {:name "exclude"} {:name "is_regex"} {:name "context" :note "or `context_lines`"}
-              {:name "limit" :note "or `max_results` / `max_count`"} {:name "offset"}
-              {:name "is_hidden"}]
+              {:name "limit" :note "or `max_results` / `max_count` / `max_matches`"}
+              {:name "offset"} {:name "is_hidden"}]
      :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)
      :tag :observation

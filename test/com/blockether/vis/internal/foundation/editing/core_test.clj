@@ -276,13 +276,14 @@
           (expect (string/includes? (ex-message err) "does not compile"))
           ;; the same broken pattern is a perfectly good LITERAL search
           (expect (= ["foo("] (:needles (coerce-rg {"query" "foo("}))))))
-    (it "coerce-find-spec takes is_regex as a first-class key, and still names it when misspelled"
+    (it "accepts is_regex and retains it in structured unknown-key diagnostics"
         (expect (true? (:is_regex (coerce-find [{"query" "x" "is_regex" true}]))))
         (expect (false? (:is_regex (coerce-find [{"query" "x"}]))))
-        (expect (string/includes? (ex-message (try (coerce-find [{"query" "x" "is_rgex" true}])
-                                                   nil
-                                                   (catch clojure.lang.ExceptionInfo e e)))
-                                  "is_regex")))
+        (let [err (try (coerce-find [{"query" "x" "is_rgex" true}])
+                       nil
+                       (catch clojure.lang.ExceptionInfo e e))]
+          (expect (= "grep: unknown keys: is_rgex. See doc(\"grep\")." (ex-message err)))
+          (expect (some #{"is_regex"} (:allowed (ex-data err))))))
     (it "make-line-matcher regex mode ORs patterns and keeps the smart-case rule"
         (let [m (matcher ["defn-? +grep" "^ns\\b"] true)]
           (expect (m "(defn grep [x] x)"))
@@ -2906,12 +2907,12 @@
         (fn [f & args]
           (try (apply f args) nil (catch clojure.lang.ExceptionInfo e e)))]
 
-    (it "accepts max_results and max_count as aliases for the page limit"
-        (doseq [key ["limit" "max_results" "max_count"]]
+    (it "accepts max_results, max_count and max_matches as aliases for the page limit"
+        (doseq [key ["limit" "max_results" "max_count" "max_matches"]]
           (expect (= 7 (:limit (coerce-find [{"query" "needle" key 7}]))))))
-    (it "requires a positive integer for either alias"
+    (it "requires a positive integer for every alias"
         (doseq [alias
-                ["max_results" "max_count"]
+                ["max_results" "max_count" "max_matches"]
 
                 value
                 [0 -1 1.5 "3" nil false]]
@@ -2920,17 +2921,19 @@
             (expect (some? e))
             (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
             (expect (contains? (ex-data e) :limit))
-            (expect (string/includes? (ex-message e) alias)))))
-    (it "refuses two names for the same limit, including both aliases"
-        (doseq [[a b] [["limit" "max_results"] ["limit" "max_count"] ["max_results" "max_count"]]]
+            (expect (= "grep: \"limit\" must be a positive integer." (ex-message e))))))
+    (it "refuses two names for the same limit, including pairs of aliases"
+        (doseq [[a b] [["limit" "max_results"] ["limit" "max_count"] ["limit" "max_matches"]
+                       ["max_results" "max_count"] ["max_results" "max_matches"]
+                       ["max_count" "max_matches"]]]
           (let [e (caught coerce-find [{"query" "needle" a 2 b 2}])]
             (expect (some? e))
             (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
-            (expect (string/includes? (ex-message e) "only one of canonical")))))
-    (it "caps the whole content page and preserves paging with the limit or either alias"
+            (expect (= "grep: use only one key for \"limit\"." (ex-message e))))))
+    (it "caps the whole content page and preserves paging with the limit or any alias"
         (write-temp! "limit-alias/a.clj" "needle first\nneedle second\n")
         (write-temp! "limit-alias/b.clj" "needle third\n")
-        (doseq [alias ["limit" "max_results" "max_count"]]
+        (doseq [alias ["limit" "max_results" "max_count" "max_matches"]]
           (let [spec {"query" "needle" "paths" [(temp-dir-path "limit-alias")] "context" 0 alias 2}
                 first-page (:result (grep spec))
                 next-page (:result (grep (assoc spec "offset" (get first-page "next_offset"))))]
@@ -2942,26 +2945,31 @@
             (expect (= 2 (get next-page "offset"))))))))
 
 (defdescribe
-  grep-max-count-python-test
-  (it "honors max_count in maps and kwargs, including automatic pagination"
-      (write-temp! "max-count-python/a.clj" "needle first\nneedle second\n")
-      (write-temp! "max-count-python/b.clj" "needle third\n")
-      (tpc/with-own
-        [ctx (extension/builtin-sandbox-bindings (constantly nil))]
-        (let [result
-              (ep/run-python-block
-                ctx
-                (str
-                  "spec = {\"query\": \"needle\", \"paths\": ["
-                  (pr-str (temp-dir-path "max-count-python"))
-                  "], \"context\": 0, \"max_count\": 2}\n"
-                  "for page in (await grep(spec), await grep(**spec)):\n"
-                  "    print(sum(\"│ needle \" in line for line in str(page).splitlines()))\n"
-                  "    print(sum(\"│ needle \" in line for line in str(next(page)).splitlines()))\n"
-                  "print(\"max_count\" in str(await doc(\"grep\")))")
-                "t1/i1")]
-          (expect (nil? (:error result)))
-          (expect (= "2\n1\n2\n1\nTrue\n" (:stdout result)))))))
+  grep-limit-aliases-python-test
+  ;; Regression: max_matches must behave like the other limit aliases at the Python boundary.
+  (it
+    "honors all limit names in maps and kwargs, including automatic pagination"
+    (write-temp! "limit-alias-python/a.clj" "needle first\nneedle second\n")
+    (write-temp! "limit-alias-python/b.clj" "needle third\n")
+    (tpc/with-own
+      [ctx (extension/builtin-sandbox-bindings (constantly nil))]
+      (let
+        [result
+         (ep/run-python-block
+           ctx
+           (str
+             "for alias in ('limit', 'max_results', 'max_count', 'max_matches'):\n"
+             "    spec = {\"query\": \"needle\", \"paths\": [" (pr-str (temp-dir-path
+                                                                         "limit-alias-python"))
+             "], \"context\": 0, alias: 2}\n"
+             "    for page in (await grep(spec), await grep(**spec)):\n"
+             "        print(sum(\"│ needle \" in line for line in str(page).splitlines()))\n"
+             "        print(sum(\"│ needle \" in line for line in str(next(page)).splitlines()))\n"
+             "grep_doc = str(await doc(\"grep\"))\n"
+             "print(all(alias in grep_doc for alias in ('max_results', 'max_count', 'max_matches')))")
+           "t1/i1")]
+        (expect (nil? (:error result)))
+        (expect (= (str (apply str (repeat 4 "2\n1\n2\n1\n")) "True\n") (:stdout result)))))))
 
 ;; Regression: a near-miss key used to cost the WHOLE search — `grep({"query" "x" "glob"
 ;; "*.clj"})` died on "find spec has unknown keys: glob" over a word nobody could have
@@ -2987,12 +2995,23 @@
         (expect (= 2 (:context (coerce-find [{"query" "needle" "context_lines" 2}]))))
         (expect (true? (:is_regex (coerce-find [{"query" "needle" "regex" true}]))))
         (expect (true? (:is_hidden (coerce-find [{"query" "needle" "hidden" true}])))))
-    (it "an unknown key is still refused, and the refusal names the vocabulary"
+    (it "names grep in short validation errors"
+        (doseq [[spec key] [[{"query" [nil]} "query"] [{"paths" 1} "paths"]
+                            [{"context" -1} "context"] [{"limit" 0} "limit"]
+                            [{"offset" -1} "offset"]]]
+          (let [e (caught coerce-find [spec])]
+            (expect (some? e))
+            (expect (string/starts-with? (ex-message e) (str "grep: \"" key "\" ")))
+            (expect (< (count (ex-message e)) 100)))))
+    (it "refuses unknown keys with a short grep error and retains the vocabulary in data"
         (let [e (caught coerce-find [{"query" "needle" "reggex" true}])]
           (expect (some? e))
           (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
-          (expect (string/includes? (ex-message e) "reggex"))
-          (expect (string/includes? (ex-message e) "Allowed: query, paths"))))
+          (expect (= "grep: unknown keys: reggex. See doc(\"grep\")." (ex-message e)))
+          (expect (= ["reggex"] (:unknown (ex-data e))))
+          (expect (= ["context" "exclude" "include" "is_hidden" "is_regex" "limit" "offset" "paths"
+                      "query"]
+                     (:allowed (ex-data e))))))
     (it "a glob grep filters exactly like include, and excludes folds onto exclude"
         (write-temp! "aliasglob/a.clj" "needle here\n")
         (write-temp! "aliasglob/b.txt" "needle here\n")
@@ -3015,11 +3034,10 @@
           (expect (= by-exclude by-excludes))
           (expect (< (get by-exclude "hit_count")
                      (get (:result (grep {"query" "needle" "paths" [dir]})) "hit_count")))))
-    (it "one idea named twice — include and glob — is refused, naming both"
+    (it "refuses include and glob together, naming the canonical key"
         (let [e (caught coerce-find [{"query" "needle" "include" ["*.clj"] "glob" ["*.clj"]}])]
           (expect (some? e))
-          (expect (string/includes? (ex-message e) "only one of canonical"))
-          (expect (string/includes? (ex-message e) "glob"))))))
+          (expect (= "grep: use only one key for \"include\"." (ex-message e)))))))
 
  ;; Regression: `grep(["a", "b"], ["src", "tools"])` — needles, then scopes, the
 ;; obvious reading of a two-argument search — died on ARGUMENT SHAPE instead of
@@ -3040,6 +3058,8 @@
                    (let [e (caught grep-tool ["a" "b"] ["src" "tools"])]
                      (expect (some? e))
                      (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
+                     (expect (string/starts-with? (ex-message e) "grep:"))
+                     (expect (< (count (ex-message e)) 100))
                      (expect (string/includes? (ex-message e)
                                                "grep({\"query\": q, \"paths\": [\"src\"]})")))
                    (expect (some? (caught grep-tool "needle")))
@@ -3443,12 +3463,13 @@
     (it "a non-string exclude is refused, like a non-string include"
         (let [err (try (coerce-rg {"query" ["x"] "exclude" [42]}) (catch Exception e e))]
           (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err))))))
-    (it "coerce-find-spec takes exclude as a first-class key, and names it when misspelled"
+    (it "accepts exclude and retains it in structured unknown-key diagnostics"
         (expect (map? (coerce-find [{"query" "x" "exclude" ["**/*_test.clj"]}])))
-        (expect (string/includes? (ex-message (try (coerce-find [{"query" "x" "exlude" ["a"]}])
-                                                   nil
-                                                   (catch clojure.lang.ExceptionInfo e e)))
-                                  "exclude")))
+        (let [err (try (coerce-find [{"query" "x" "exlude" ["a"]}])
+                       nil
+                       (catch clojure.lang.ExceptionInfo e e))]
+          (expect (= "grep: unknown keys: exlude. See doc(\"grep\")." (ex-message err)))
+          (expect (some #{"exclude"} (:allowed (ex-data err))))))
     (it "rg-search skips every file an exclude glob matches"
         (let [_
               (write-temp! "rgexclude/a.clj" "needle in source\n")
