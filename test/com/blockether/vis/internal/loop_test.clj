@@ -2059,7 +2059,12 @@
             (.getCanonicalPath (java.io.File. (System/getProperty "user.home") ".vis"))
 
             snapshot
-            (with-redefs [config/load-config-raw
+            ;; The synthetic snapshot must not become the fallback for later
+            ;; environments when their ambient configuration is unavailable.
+            (with-redefs [lp/last-good-security-snapshot
+                          (atom nil)
+
+                          config/load-config-raw
                           #(deref cfg)
 
                           com.blockether.vis.internal.sandbox.policy/java-read-roots
@@ -9794,6 +9799,9 @@
                   (expect (= (if (= request "receive") 3 2) (count operations))
                           (pr-str {:request request
                                    :loop-result @loop-result
+                                   :worker-policy (select-keys ((:jail-policy-fn environment))
+                                                               [:disabled? :inbound-ports
+                                                                :loopback-port])
                                    :forms (mapv #(select-keys % [:error :stdout :activity])
                                                 (mapcat :forms iterations))}))
                   (doseq [row operations]
