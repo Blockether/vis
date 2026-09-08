@@ -19,7 +19,8 @@
             [com.blockether.vis.internal.speech.assets :as assets]
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
             [com.blockether.vis.internal.speech.voices :as voices]
-            [com.blockether.vis.internal.paths :as paths])
+            [com.blockether.vis.internal.paths :as paths]
+            [taoensso.telemere :as tel])
   (:import [com.k2fsa.sherpa.onnx GeneratedAudio GenerationConfig OfflineTts OfflineTtsCallback
             OfflineTtsConfig OfflineTtsModelConfig OfflineTtsPocketModelConfig
             OfflineTtsVitsModelConfig WaveReader]
@@ -329,14 +330,29 @@
 ;; old model. sherpa frees the dropped instance in its own finalizer.
 (defonce ^:private loaded* (atom nil))
 
+(def ^:dynamic *synthesis-id* nil)
+
 (defn- loaded-tts
   ^OfflineTts [cache-key build-config]
   (locking loaded*
     (let [current @loaded*]
+      (tel/log! {:level :info
+                 :id ::model-cache
+                 :data {:synthesis-id *synthesis-id*
+                        :family (first cache-key)
+                        :previous-family (first (:key current))
+                        :hit (= cache-key (:key current))}})
       (if (= cache-key (:key current))
         (:tts current)
-        (let [tts (OfflineTts. ^OfflineTtsConfig (build-config))]
+        (let [started (System/nanoTime)
+              tts (OfflineTts. ^OfflineTtsConfig (build-config))]
+
           (reset! loaded* {:key cache-key :tts tts})
+          (tel/log! {:level :info
+                     :id ::model-loaded
+                     :data {:synthesis-id *synthesis-id*
+                            :family (first cache-key)
+                            :elapsed-ms (/ (- (System/nanoTime) started) 1e6)}})
           tts)))))
 
 (def ^:const chars-per-second
@@ -437,7 +453,7 @@
              %)
         (required-assets family voice-id)))
 
-(defn synthesize!
+(defn- synthesize-impl!
   "Speak `text` and return the WAV that was written, plus the facts a player
    needs. `family` is `:piper` or `:pocket-tts`; `voice-id` names a voice from
    that family's catalogue and defaults to the first one.
@@ -500,6 +516,34 @@
                      (pocket-generation-config (str clip) (:clip-text voice))
                      spoken
                      report))))))
+
+(defn synthesize!
+  "Synthesize audio with correlated, content-free lifecycle diagnostics."
+  [family request]
+  (binding [*synthesis-id* (str (java.util.UUID/randomUUID))]
+    (let [started (System/nanoTime)
+          data {:synthesis-id *synthesis-id*
+                :family family
+                :characters (count (str (:text request)))
+                :thread (.getName (Thread/currentThread))}]
+
+      (tel/log! {:level :info
+                 :id ::synthesis-start
+                 :data (assoc data
+                         :caller-stack (mapv str
+                                             (take 32 (.getStackTrace (Thread/currentThread)))))})
+      (try (let [result (synthesize-impl! family request)]
+             (tel/log! {:level :info
+                        :id ::synthesis-done
+                        :data (assoc data :elapsed-ms (/ (- (System/nanoTime) started) 1e6))})
+             result)
+           (catch Throwable t
+             (tel/log! {:level :warn
+                        :id ::synthesis-failed
+                        :data (assoc data
+                                :error-class (.getName (class t))
+                                :elapsed-ms (/ (- (System/nanoTime) started) 1e6))})
+             (throw t))))))
 
 ;; Samples - the one thing a list of names cannot say
 

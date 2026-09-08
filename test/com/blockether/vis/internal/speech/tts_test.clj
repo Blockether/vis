@@ -5,9 +5,40 @@
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
             [com.blockether.vis.internal.speech.tts :as tts]
             [com.blockether.vis.internal.speech.voices :as voices]
-            [lazytest.core :refer [defdescribe it expect]]))
+            [lazytest.core :refer [defdescribe it expect]]
+            [taoensso.telemere :as tel]))
 
 (defn- ex-data-of [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
+
+(defdescribe synthesis-diagnostics-test
+             (it "correlates start and completion without logging spoken content"
+                 (let [{:keys [signals value]}
+                       (tel/with-signals (with-redefs-fn {#'tts/synthesize-impl! (fn [_ _]
+                                                                                   :audio)}
+                                           #(tts/synthesize! :piper {:text "private speech"})))
+
+                       data
+                       (mapv :data signals)]
+
+                   (expect (= :audio value))
+                   (expect (= [::tts/synthesis-start ::tts/synthesis-done] (mapv :id signals)))
+                   (expect (apply = (map :synthesis-id data)))
+                   (expect (seq (:caller-stack (first data))))
+                   (expect (not (str/includes? (pr-str data) "private speech")))))
+             (it "logs failure type without exception content and preserves the exception"
+                 (let [failure
+                       (ex-info "private speech" {})
+
+                       {:keys [signals value]}
+                       (tel/with-signals (try (with-redefs-fn {#'tts/synthesize-impl! (fn [_ _]
+                                                                                        (throw
+                                                                                          failure))}
+                                                #(tts/synthesize! :piper {:text "private speech"}))
+                                              (catch Throwable t t)))]
+
+                   (expect (identical? failure value))
+                   (expect (= [::tts/synthesis-start ::tts/synthesis-failed] (mapv :id signals)))
+                   (expect (not (str/includes? (pr-str (map :data signals)) "private speech"))))))
 
 (defdescribe
   catalogue-test
