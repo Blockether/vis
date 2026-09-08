@@ -51,6 +51,38 @@ const announcedStates = (root: HTMLElement) =>
 const count = (html: string, pattern: RegExp) =>
   (html.match(pattern) ?? []).length;
 
+// Regression, user screenshot: code blocks used a wide Copy label instead of an icon.
+describe("code block copy controls", () => {
+  it.each([
+    ["bash", "vis-agent python uv sync --project ./einmal --locked"],
+    ["diff", "--- a/config.txt\n+++ b/config.txt\n@@ -1 +1 @@\n-before\n+after"],
+  ])(
+    "copies a %s block with an icon and accessible feedback",
+    async (language, source) => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+      const view = render(
+        <Markdown>{`\`\`\`${language}\n${source}\n\`\`\``}</Markdown>,
+      );
+      try {
+        const button = view.getByRole("button", { name: "Copy code" });
+        expect(button.textContent).toBe("");
+        expect(button.querySelector("svg")).not.toBeNull();
+        expect(button.title).toBe("Copy code");
+        fireEvent.click(button);
+        await waitFor(() => expect(writeText).toHaveBeenCalledWith(source));
+        await waitFor(() =>
+          expect(button.getAttribute("aria-label")).toBe("Copied"),
+        );
+        expect(button.textContent).toBe("");
+        expect(button.querySelector("svg.lucide-check")).not.toBeNull();
+      } finally {
+        view.unmount();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+});
 
 describe("provider failure card", () => {
   // Regression, issue #167: the gateway preserved HTTP 429 on the content block,

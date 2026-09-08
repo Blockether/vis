@@ -2190,6 +2190,19 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(html()).not.toContain("#");
     });
 
+    it("uses the shared quiet icon button when no visible value is supplied", () => {
+      const iconOnly = renderToStaticMarkup(
+        <CopyChip value="abc" label="Copy code" />,
+      );
+      const iconButton = renderToStaticMarkup(
+        <IconButton label="Copy code" variant="quiet" />,
+      );
+      expect(first(iconOnly)).toStrictEqual(first(iconButton));
+      expect(iconOnly).toContain('aria-label="Copy code"');
+      expect(iconOnly).toContain("<svg");
+      expect(iconOnly).not.toContain("<span");
+      expect(html()).toContain("abc12345");
+    });
     it("carries a name and, when there is more to say, a title", () => {
       expect(html()).toContain('aria-label="Copy session id"');
       const titled = renderToStaticMarkup(

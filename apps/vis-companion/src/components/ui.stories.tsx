@@ -3,6 +3,7 @@ import { expect, userEvent } from 'storybook/test';
 import { useState, type ReactNode } from 'react';
 import { STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
 import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
+import { Markdown } from './ChatContent';
 import {
   CheckIcon,
   CopyIcon,
@@ -183,6 +184,46 @@ export const Marks: Story = {
   ),
 };
 
+export const CodeCopy: Story = {
+  render: () => (
+    <Sheet>
+      <Markdown>{[
+        'After starting the new version, retry:',
+        '',
+        '```bash',
+        'vis-agent python uv sync --project ./einmal --locked',
+        '```',
+        '',
+        'Then run `/reload`. The gateway was not restarted.',
+        '',
+        '```diff',
+        '--- a/config.txt',
+        '+++ b/config.txt',
+        '@@ -1 +1 @@',
+        '-before',
+        '+after',
+        '```',
+      ].join('\n')}</Markdown>
+    </Sheet>
+  ),
+  play: async ({ canvas }) => {
+    // Storybook supplies a clipboard stub; native clipboard behavior is not exercised here.
+    const user = userEvent.setup();
+    const buttons = canvas.getAllByRole('button', { name: 'Copy code' });
+    for (const button of buttons) {
+      await expect(button.textContent).toBe('');
+      const box = button.getBoundingClientRect();
+      const block = button.closest('.bg-code')!.getBoundingClientRect();
+      await expect(box.left).toBeGreaterThan(block.left + block.width / 2);
+      await expect(box.right).toBeLessThanOrEqual(block.right);
+      await expect(box.top).toBeGreaterThanOrEqual(block.top);
+      await expect(box.bottom).toBeLessThanOrEqual(block.bottom);
+    }
+    await user.click(buttons[0]);
+    await expect(canvas.getByRole('button', { name: 'Copied' })).toHaveAttribute('title', 'Copied');
+  },
+};
+
 export const Chips: Story = {
   render: () => (
     <Sheet>
@@ -190,7 +231,8 @@ export const Chips: Story = {
         <Chip>All</Chip>
         <Chip isOn>Running</Chip>
       </Group>
-      <Group of="CopyChip, two densities">
+      <Group of="CopyChip, icon-only and labeled">
+        <CopyChip value="vis-agent python uv sync --project ./einmal --locked" label="Copy code" />
         <CopyChip value="fd3c03f9" label="Copy session id">
           fd3c03f9
         </CopyChip>

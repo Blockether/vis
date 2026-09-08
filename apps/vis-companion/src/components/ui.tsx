@@ -442,17 +442,9 @@ export function LoadMore({
 }
 
 /**
- * COPY THIS, and there is only one of it.
- *
- * A code block's `Copy` chip and the session id beside the title are the same
- * control: press, the clipboard takes it, the chip says so for a moment and goes
- * back. Both used to own that state, that timeout, that `catch` for a webview
- * with no clipboard, and two different faces around it — and both had to keep
- * their own width so "Copied" would not shove the row.
- *
- * The chip also lives inside pressable things (a `<summary>`, a header), so it
- * ALWAYS stops the click it consumed: copying a snippet must never also toggle
- * the disclosure it sits in.
+ * Copies a value without activating the surrounding header or disclosure.
+ * Without children, uses the app's quiet icon button and a checkmark on success.
+ * Children retain a visible value, such as a session id.
  */
 export function CopyChip({
   value,
@@ -478,8 +470,8 @@ export function CopyChip({
   density?: 'default' | 'compact';
   /** Placement only; the chip's own face is fixed. */
   className?: string;
-  /** What it reads at rest. */
-  children: ReactNode;
+  /** Visible value at rest; omit for an icon-only copy action. */
+  children?: ReactNode;
 }) {
   const [isCopied, setIsCopied] = useState(false);
   async function copy(event: MouseEvent<HTMLButtonElement>) {
@@ -492,6 +484,24 @@ export function CopyChip({
     } catch {
       // Clipboard access can be unavailable in an untrusted mobile webview.
     }
+  }
+  if (children === undefined) {
+    return (
+      <IconButton
+        label={isCopied ? 'Copied' : label}
+        title={isCopied ? 'Copied' : title ?? label}
+        variant="quiet"
+        density={density}
+        onClick={copy}
+        className={className}
+      >
+        {isCopied ? (
+          <CheckIcon className="size-3 text-ok" />
+        ) : (
+          <CopyIcon className="size-3" />
+        )}
+      </IconButton>
+    );
   }
   // ONE control, two rhythms. On a card's band it keeps its own paper, because that band
   // is content and the chip is the only control on it. A SCREEN's band is CHROME: the

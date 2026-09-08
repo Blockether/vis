@@ -239,13 +239,11 @@ const DiffBlock = memo(function DiffBlock({
       aria-label="Unified diff"
     >
       {!frameless && (
-        <CopyChip
-          value={value}
-          label="Copy code"
-          className="absolute right-2 top-2 z-10"
+        <div
+          className={`absolute right-2 z-10 ${compact ? "top-0 mouse:top-0.5" : "top-0.5 mouse:top-1"}`}
         >
-          Copy
-        </CopyChip>
+          <CopyChip value={value} label="Copy code" />
+        </div>
       )}
       <div
         className={`${compact ? "text-meta" : "text-ui"} max-w-full overflow-x-auto overscroll-x-contain py-2 font-mono`}
@@ -460,13 +458,11 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
       {/* An enclosing card (a tool result) owns ONE copy control for the whole
           body, so a frameless block does not add a second, third, … chip. */}
       {!frameless && (
-        <CopyChip
-          value={copyValue ?? source}
-          label="Copy code"
-          className="absolute right-2 top-2 z-10"
+        <div
+          className={`absolute right-2 z-10 ${compact ? "top-0 mouse:top-0.5" : "top-0.5 mouse:top-1"}`}
         >
-          Copy
-        </CopyChip>
+          <CopyChip value={copyValue ?? source} label="Copy code" />
+        </div>
       )}
       <pre
         className={`${compact ? "py-2 text-meta " : "py-2.5 text-ui "} m-0 max-w-full overflow-x-auto overscroll-x-contain text-left font-mono text-code-foreground`}
@@ -1272,9 +1268,7 @@ const ToolCard = memo(function ToolCard({
         />
         {headline}
         {isCopyable && (
-          <CopyChip value={body} label="Copy result" className="shrink-0">
-            Copy
-          </CopyChip>
+          <CopyChip value={body} label="Copy result" className="shrink-0" />
         )}
       </summary>
       {/* A tool result is SUBORDINATE to the answer it feeds: its body is `text-meta`
@@ -1376,9 +1370,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
             label="Copy code"
             density="compact"
             className="shrink-0"
-          >
-            Copy
-          </CopyChip>
+          />
         )}
       </div>
       {expanded && showCode && (
