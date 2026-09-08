@@ -3914,6 +3914,37 @@
                        "NEEDLE_TOKEN here\n")
           (temp-dir-path dir))]
 
+    (it "default excludes prune dependency, build and tool directories at every depth"
+        (let [dir
+              "search-overlay-default-excludes"
+
+              path
+              (fixture! dir)
+
+              excluded-dirs
+              [".git" "node_modules" "target" "build" "dist" "out" ".gradle" ".m2" "__pycache__"
+               ".venv" ".shadow-cljs" "cljs-runtime" "vendor" ".next" ".cpcache" ".clj-kondo"
+               ".calva" ".lsp" ".rift"]]
+
+          (doseq [prefix
+                  ["repositories/corp/" "repositories/corp/nested/"]
+
+                  excluded-dir
+                  excluded-dirs]
+
+            (write-temp! (str dir "/" prefix excluded-dir "/secret_excluded.txt")
+                         "NEEDLE_TOKEN here\n"))
+          (write-temp! (str dir "/repositories/corp/cljs-runtime-source/secret.txt")
+                       "NEEDLE_TOKEN here\n")
+          (doseq [include-pattern ["repositories/" "repositories/**"]]
+            (overlay! {:include-gitignored-paths [include-pattern]}
+                      (fn []
+                        (doseq [search [rg-files find-paths]]
+                          (let [files (search path)]
+                            (expect (has? files "repositories/corp/secret.txt"))
+                            (expect (has? files "cljs-runtime-source/secret.txt"))
+                            (doseq [excluded-dir excluded-dirs]
+                              (expect (not (has? files (str "/" excluded-dir "/"))))))))))))
     (it
       "re-includes the configured subtree for rg AND find_files; default :always-exclude still prunes"
       (let [path (fixture! "search-overlay-basic")]
