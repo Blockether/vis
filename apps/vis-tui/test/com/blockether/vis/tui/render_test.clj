@@ -301,7 +301,7 @@
                               :detail-expansions {:vis.channel-tui/expand-execution-details?
                                                   true}})))]
 
-        (expect (str/includes? txt "CODE  +"))
+        (expect (str/includes? txt "CODE ▸  +"))
         (expect (re-find #"CODE[^\n]*▸" txt))
         (expect (not (str/includes? txt "first = 1")))
         (expect (not (str/includes? txt "sixth = 6")))
@@ -1137,10 +1137,9 @@
         (expect (= 2 (count lines)))
         (expect (= "" (first lines)))
         (expect (str/includes? (second lines) "Vis is calling the provider"))))
-  ;; Regression, T143: the live ticker carried TWO empty rows whenever the trace
-  ;; closed on an activity axis, because the margin blank was appended to the
-  ;; axis rail and iteration pad, which are margin themselves.
-  (it "the live ticker keeps exactly one empty row above it when the trace closes on an axis"
+  ;; Regression, T143: keep one outer margin above the ticker, separately from
+  ;; the filled Activity band's own bottom padding.
+  (it "the live ticker keeps one outer margin after the Activity bottom padding"
       (render/invalidate-cache!)
       (let [iter
             {:forms [{:code "r = 1"
@@ -1156,12 +1155,8 @@
                        :omitted {:rows 0 :by-classification {}}}}]
              :activity :tool-call}
 
-            ;; What the EYE reads as margin: the iteration pad and the axis rail
-            ;; ride columns the bubble already owns. A BAND edge paints, so it is
-            ;; not stripped here - it belongs to the block above.
             lines
-            (mapv (fn [l]
-                    (str/replace (strip-ansi (str l)) #"[\u206c\ue015│]" ""))
+            (mapv (comp strip-ansi str)
                   (:lines (render/progress->lines-data
                             {:iterations [iter]}
                             80
@@ -1177,7 +1172,7 @@
 
         (expect (< ticker (count lines)))
         (expect (str/blank? (nth lines (dec ticker))))
-        (expect (not (str/blank? (nth lines (- ticker 2)))))))
+        (expect (= p/MARKER_ACTIVITY (nth lines (- ticker 2))))))
   ;; Regression, T144: a live THINKING block lost its closing band edge - the
   ;; ticker's margin trim ate the thinking pad, so the dim band ended flush
   ;; against its last word and the row only reappeared once the iteration settled.
@@ -4310,7 +4305,7 @@
             text
             (str/join "\n" (map (comp strip-sentinels body-of strip-ansi :line) entries))]
 
-        (expect (str/includes? text "CODE  +"))
+        (expect (str/includes? text "CODE ▸  +"))
         (expect (re-find #"CODE[^\n]*▸" text))
         (expect (not (str/includes? text "</>")))
         (expect (not (str/includes? text "[0, 2, 4, 6]")))))
@@ -4386,7 +4381,7 @@
           text-of
           #(str/join "\n" (map (comp strip-sentinels strip-ansi :line) %))]
 
-      (expect (str/includes? (text-of closed) "CODE  +"))
+      (expect (str/includes? (text-of closed) "CODE ▸  +"))
       (expect (re-find #"CODE[^\n]*▸" (text-of closed)))
       (expect (not (str/includes? (text-of closed) "</>")))
       (expect (not (str/includes? (text-of closed) "Execution")))
@@ -6660,8 +6655,8 @@ print(paths)"
       ;; One row of air under the bubble's name, then the band's own top pad.
       (expect (str/blank? (nth lines (inc (row-of "Vis")))))
       (expect (str/blank? (str/replace (nth lines (dec code-row)) "│" "")))
-      ;; Names start at the text edge; disclosure state follows at the trailing edge.
-      (expect (re-find #"CODE[^\n]*▾" code))
+      ;; CODE keeps its disclosure beside the name; RESULT retains its own layout.
+      (expect (str/includes? code "CODE ▾"))
       (expect (re-find #"RESULT  \+2 more\s+▸" result))
       (expect (not-any? #(= "43" (str/trim (str/replace % "│" ""))) lines))
       ;; CODE, its source and RESULT share one left column.

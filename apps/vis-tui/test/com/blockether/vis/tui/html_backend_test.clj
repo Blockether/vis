@@ -218,6 +218,96 @@
               (is (= (column "Vis") (str/index-of line "│"))))
             (when (seq expansions) (is (= (column "CODE") (column "inspect_files()"))))))))))
 
+(deftest joined-execution-background-and-disclosure-test
+  ;; The execution inset left one terminal-background cell beside the rail.
+  (doseq [cols
+          [40 80 160]
+
+          expanded?
+          [false true]]
+
+    (with-open [terminal
+                (DefaultVirtualTerminal. (TerminalSize. cols 50))
+
+                screen
+                (doto (TerminalScreen. terminal) (.startScreen))]
+
+      (paint-activity-review! screen
+                              (activity-review-rows "succeeded")
+                              {:vis.channel-tui/expand-all-details? expanded?})
+      (let [grid
+            (cell-grid terminal cols 50)
+
+            lines
+            (mapv (fn [row]
+                    (apply str
+                      (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) row)))
+                  grid)
+
+            rail-rows
+            (keep-indexed #(when (str/starts-with? %2 " │") %1) lines)
+
+            bottom
+            (last rail-rows)
+
+            chevron
+            (if expanded? "▾" "▸")]
+
+        (is (seq rail-rows))
+        (is (= #{theme/code-block-bg}
+               (set (for [row
+                          rail-rows
+
+                          col
+                          (range 1 4)]
+
+                      (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
+                                           (get-in grid [row col])))))
+            "All three inset cells use the execution background")
+        (doseq [label ["CODE" "ACTIVITY"]]
+          (let [row (first (keep-indexed #(when (str/includes? %2 label) %1) lines))
+                line (nth lines row)
+                col (+ (str/index-of line label) (count label) 1)
+                hit (.lookup interactions/hit-map (TerminalPosition. (int col) (int row)))]
+
+            (is (str/includes? line (str label " " chevron)))
+            (is (= :toggle-details (:kind hit)))
+            (is (= (not expanded?) (:collapsed? hit)))))
+        (is (str/blank? (subs (nth lines bottom) 2))
+            "One empty execution row remains below the last content row")
+        (is (= #{theme/code-block-bg}
+               (set (map #(.getBackgroundColor ^com.googlecode.lanterna.TextCharacter %)
+                         (subvec (nth grid bottom) 1 (- cols 3))))))))))
+
+(deftest live-execution-bottom-padding-test
+  ;; Live margin trimming must not remove the filled Activity bottom edge.
+  (doseq [status
+          ["running" "succeeded" "failed"]
+
+          expanded?
+          [false true]]
+
+    (let [payload
+          (render/progress->lines-data
+            {:iterations [{:forms [{:code "inspect_files()"
+                                    :activity {:state status
+                                               :rows (activity-review-rows status)}}]}]}
+            80
+            {:show-iterations true}
+            {:session-id "live-padding"
+             :now-ms 1000
+             :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}})
+
+          lines
+          (:lines payload)
+
+          last-band-row
+          (last (keep-indexed #(when (:execution-rail? %2) %1) (:line-meta payload)))]
+
+      (is (= @#'render/activity-marker (nth lines last-band-row)))
+      (is (= "" (nth lines (inc last-band-row))))
+      (is (str/includes? (nth lines (+ last-band-row 2)) "Esc to cancel")))))
+
 (deftest screen-accepts-a-transport-neutral-html-terminal-test
   (with-open [terminal (-> (HtmlTerminal/builder)
                            (.build))]

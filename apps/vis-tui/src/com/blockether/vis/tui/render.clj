@@ -2063,7 +2063,8 @@
                     (p/fill-rect! g bx y bubble-w 1))
                   (when execution-rail?
                     (p/set-colors! g t/code-block-fg t/code-block-bg)
-                    (p/put-str! g bx y "│ "))
+                    (p/fill-rect! g bx y rail-inset 1)
+                    (p/put-str! g bx y "│"))
                   ;; Record exact screen coordinates for the post-refresh image pass.
                   (when (and *image-placements* (contains? #{:image :image-pad} (:kind meta)))
                     (swap! *image-placements* conj
@@ -6059,10 +6060,10 @@
                            (str activity-omitted " omitted"))]))
 
             prefix
-            (band-label "ACTIVITY")
+            (str (band-label "ACTIVITY") " " (if band-open? "▾" "▸"))
 
             suffix
-            (str (ellipsize-cols suffix (max 0 (- (long width) 12))) "  " (if band-open? "▾" "▸"))
+            (ellipsize-cols suffix (max 0 (- (long width) 12)))
 
             header
             {:line (str activity-marker (first (with-right-suffix [prefix] suffix width)))
@@ -6604,7 +6605,7 @@
                         code-rows
                         (vec (mapcat identity code-line-groups))
 
-                        ;; Like the THINKING head: a flush name, tally and trailing chevron. A
+                        ;; Keep the disclosure beside the name, before the hidden-line tally. A
                         ;; failed call turns the NAME red instead of dragging its error headline
                         ;; onto the control row: the band stays the program, and the message
                         ;; keeps its own red row under the code (`inline-error-message-lines`).
@@ -6612,15 +6613,15 @@
                         (str (if error
                                (str p/INLINE_ERR_ON (band-label "CODE") p/INLINE_ERR_OFF)
                                (band-label "CODE"))
+                             " "
+                             (if code-expanded? "▾" "▸")
                              (when-not code-expanded? (str "  +" (count code-rows) " more")))
 
                         copy?
                         (and code-node-id (>= header-width 20))
 
                         suffix
-                        (str (if code-expanded? "▾" "▸")
-                             (when duration (str "  " duration))
-                             (when copy? "  ❐"))
+                        (str/join "  " (keep identity [duration (when copy? "❐")]))
 
                         headline-prefix
                         header
@@ -7448,23 +7449,11 @@
                      (when paused-line [paused-line])
                      [hint]))))))
 
-(def ^:private margin-only-glyphs
-  ;; MARKER_ITERATION_PAD, the Activity axis marker, and the rail glyph the axis
-  ;; continues down the column the bubble already draws for itself.
-  (re-pattern (str "[" p/MARKER_ITERATION_PAD p/MARKER_ACTIVITY "│]")))
-
 (defn- margin-row?
-  "True when a bubble row is pure MARGIN: the empty string, an iteration pad,
-   or an Activity axis's rail continuation, whose only glyph rides the rail
-   column the bubble draws anyway. Two of those in a row read as two lines of
-   margin, not one.
-
-   A band EDGE is not margin. The thinking pad (`MARKER_THINKING`) and the
-   code-block pads paint their zone's background across the bubble, so such a
-   row IS the band's own bottom edge — trimming it lets the live ticker eat the
-   closing line of the block above and the band ends flush against its text."
+  "True for outer spacing: whitespace or an iteration pad. Filled Code, Activity
+   and Thinking padding belongs to its block and must survive live ticker trimming."
   [{:keys [line]}]
-  (str/blank? (str/replace (str line) margin-only-glyphs "")))
+  (or (str/blank? line) (= iteration-pad-marker line)))
 
 (defn progress->lines-data
   "Build prewrapped lines for the live progress placeholder bubble.
