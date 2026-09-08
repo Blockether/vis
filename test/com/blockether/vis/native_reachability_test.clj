@@ -274,6 +274,24 @@
                            (mapv str))]
         (expect (empty? requiring)
                 (str "nothing may require the preload namespace: " (pr-str requiring)))))
+  (it "preloads formatter dependencies that JVM startup defers"
+      (let [source
+            (slurp (io/file "src/com/blockether/vis/internal/extension/native_preload.clj"))
+
+            ns-form
+            (edn/read-string source)
+
+            required
+            (->> ns-form
+                 (filter seq?)
+                 (filter #(= :require (first %)))
+                 (mapcat rest)
+                 (map first)
+                 set)]
+
+        (doseq [backend '[cljfmt.config cljfmt.core zprint.config zprint.core]]
+          (expect (contains? required backend)
+                  (str backend " must remain reachable in the native image")))))
   (it "derives what it loads instead of carrying a list"
       ;; A written-down list is the failure mode this replaced: it goes stale on the
       ;; next entrypoint and the binary loses a whole extension in silence.
@@ -295,3 +313,18 @@
                 "native-classpath must distinguish source git deps from local projects")
         (expect (str/includes? src "(mapcat :paths)")
                 "every declared root of a prepared git dependency must reach native-image"))))
+
+(defdescribe
+  native-contract-json-resources-test
+  ;; A native format_code call completed its file edit, then failed to validate
+  ;; the tool result because surface.json was absent from the linked image.
+  (it "ships contract documents and schemas in the contract package's own metadata"
+      (let [resource
+            (io/resource
+              "META-INF/native-image/com.blockether/vis-contract/reachability-metadata.json")]
+        (expect resource "vis-contract must publish its runtime JSON resource metadata")
+        (let [metadata (charred/read-json (slurp resource))
+              globs (set (map #(get % "glob") (get metadata "resources")))]
+
+          (expect (contains? globs "vis-contract/*.json"))
+          (expect (contains? globs "vis-contract/schema/*.json"))))))

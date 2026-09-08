@@ -16,19 +16,20 @@
    otherwise create a cycle. A JVM run never
    loads this file, so manifest registration stays lazy.
 
-   The list is DERIVED, never written down: the manifest's own entrypoints
-   first, then every namespace this distribution compiled. Anything else is a
-   dependency's build-time preload chain reaching them by accident - dropping
-   one jar from the native classpath then silently unbinds a whole extension
-   (see `native-classpath` in build.clj)."
+   The engine namespace list is derived from the manifest's entrypoints and the
+   compiled namespace tree. Formatter dependencies are explicitly required here:
+   JVM registration defers them, but the native image must retain their code."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.extension.manifest :as manifest]))
+            [cljfmt.config]
+            [cljfmt.core]
+            [com.blockether.vis.internal.extension.manifest :as manifest]
+            [zprint.config]
+            [zprint.core]))
 
 (def ^:private compiled-package
-  "The one package tree this distribution compiles: core and every internal
-   namespace. A dependency's namespaces are reachable through their own code and
-   are none of our business."
+  "The package tree this distribution compiles: core and every internal namespace.
+   Dependencies used only through dynamic resolution are required above."
   ["com" "blockether" "vis"])
 
 (defn- path->namespace

@@ -15,20 +15,18 @@
                  normalizes indentation + whitespace of MULTI-LINE forms but does
                  NOT reflow a one-liner into multiple lines.
 
-   When BOTH configs are present, zprint WINS.
+   When BOTH configs are present, zprint WINS. Backends and their config loaders
+   are resolved on first use, not while registering the language pack at gateway
+   startup. Registering formatting handlers does not need either implementation.
 
    Failure mode: if a backend refuses (parse error, unfamiliar reader macro,
    anything that throws), the formatter returns the original source unchanged.
    We never silently corrupt a file because the formatter choked."
   (:require [com.blockether.vis.internal.util :as util]
-            [cljfmt.config :as cljfmt-config]
-            [cljfmt.core :as cljfmt]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [rewrite-clj.node :as node]
-            [rewrite-clj.parser :as parser]
-            [zprint.config :as zprint-config]
-            [zprint.core :as zprint]))
+            [rewrite-clj.parser :as parser]))
 
 (def ^:private config-cache
   "config-file canonical path -> {:mtime <long> :opts <map>}. Keeps the edit
@@ -66,7 +64,8 @@
   ([^String source opts]
    (if-not (and (string? source) (seq source))
      source
-     (try (if (seq opts) (cljfmt/reformat-string source opts) (cljfmt/reformat-string source))
+     (try (let [reformat (requiring-resolve 'cljfmt.core/reformat-string)]
+            (if (seq opts) (reformat source opts) (reformat source)))
           (catch Throwable _ source)))))
 
 (defn- cljfmt-config-file
@@ -75,7 +74,7 @@
    with the config that actually governs this path."
   ^java.io.File [path]
   (when (seq (str path))
-    (try (when-let [cf (cljfmt-config/find-config-file (str path))]
+    (try (when-let [cf ((requiring-resolve 'cljfmt.config/find-config-file) (str path))]
            (io/file cf))
          (catch Throwable _ nil))))
 
@@ -87,7 +86,7 @@
    callers then fall back to plain defaults. Cached per config-file + mtime."
   [path]
   (try (when-let [cf (cljfmt-config-file path)]
-         (cached-opts cf cljfmt-config/read-config))
+         (cached-opts cf (requiring-resolve 'cljfmt.config/read-config)))
        (catch Throwable _ nil)))
 
 ;; ── zprint backend ───────────────────────────────────────────────────────────
@@ -124,8 +123,9 @@
   (try (when-let [f (zprint-config-file path)]
          (cached-opts f
                       (fn [^java.io.File cf]
-                        (let [[opts err] (zprint-config/get-config-from-file (.getCanonicalPath cf)
-                                                                             true)]
+                        (let [[opts err] ((requiring-resolve 'zprint.config/get-config-from-file)
+                                           (.getCanonicalPath cf)
+                                           true)]
                           (when err (throw (ex-info (str err) {:file (str cf)})))
                           opts))))
        (catch Throwable _ nil)))
@@ -138,7 +138,8 @@
   ([^String source opts]
    (if-not (and (string? source) (seq source))
      source
-     (try (zprint/zprint-file-str source "vis" (or opts {})) (catch Throwable _ source)))))
+     (try ((requiring-resolve 'zprint.core/zprint-file-str) source "vis" (or opts {}))
+          (catch Throwable _ source)))))
 
 ;; ── top-level spacing ────────────────────────────────────────────────────────
 
