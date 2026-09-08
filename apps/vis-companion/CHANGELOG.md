@@ -2,6 +2,17 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.44 (5564) — 2026-09-08
+<!-- commit: a549750cb51be2d7d427a2bf77d8b1bb7d424138 -->
+
+- Add grep max_count and streamline results and themes
+- Retry unreachable machines without expanding
+- Ignore foreground focus wake signals
+- Reduce the activity operation count size
+- Prevent removal of extension-managed providers
+- Center the assistant fork action
+- Move provider refresh into row actions
+- Record companion build 5528
 
 ## 0.1.44 (5528) — 2026-09-08
 <!-- commit: 39cba5db14213b15d20173d43ac0f3e158d68067 -->
