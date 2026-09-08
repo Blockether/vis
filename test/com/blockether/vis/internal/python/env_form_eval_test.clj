@@ -30,42 +30,44 @@
        :parsed
        (catch Exception e (ep/map-python-error (py-ctx) (ex-message e) code))))
 
-(defn- prose-leading? [code] (boolean (get-in (classify code) [:data :prose-leading?])))
-
 (defdescribe
-  prose-leading-guard-test
-  ;; --- positives: real failing replies seen live (sessions 2e98be97 / 4c0eff03)
-  (it "flags markdown heading + prose (apostrophe -> unterminated string)"
-      (expect (prose-leading?
-                "## Root cause found\n\nRift clones via copy-on-write.\ndone(\"x\")")))
-  (it "flags a prose sentence with a unicode char (invalid character ×)"
-      (expect (prose-leading?
-                "Both dialogs now resolve to an identical box at 120×40.\ndone(\"\"\"ok\"\"\")")))
-  (it "flags a prose sentence whose apostrophes orphan a paren (unmatched ')')"
-      (expect (prose-leading? "I've spent enough (removing them didn't help).\ngit_status()")))
-  ;; --- negatives: valid code or genuine code typos must NOT be flagged
-  (it "does NOT flag valid code" (expect (= :parsed (classify "git_status()"))))
-  (it "does NOT flag a real code typo whose first line is valid code"
-      (expect (not (prose-leading? "git_status()\nx = (1 + 2"))))
-  (it "does NOT flag a multiline call cut mid-construct (no prose signature)"
-      (expect (not (prose-leading? "cat(\"a.clj\"\nfoo"))))
-  (it "does NOT flag a comment followed by a code typo"
-      (expect (not (prose-leading? "# read the file\nx = (1 + 2"))))
-  ;; --- the message must name PROSE (not unicode/typo) to break the misdiagnosis loop
-  (it "actionable message names prose, not the character that tripped"
-      (let [msg (:message (classify "Both dialogs resolve at 120×40 now.\ndone(\"\"\"ok\"\"\")"))]
-        (expect (str/includes? msg "PROSE"))))
-  ;; --- a stray non-ASCII char in code position ANYWHERE (not just line 1) — the
-  ;;     em-dash-at-line-71 gap the prose-leading detector (first line only) missed
-  (it "flags a non-ASCII char in code position even mid-reply, with its line"
-      (let [r (classify "x = 5\n# a note\ny = 3 — 1")]
-        (expect (true? (get-in r [:data :non-ascii-in-code?])))
-        (expect (= 3 (get-in r [:data :line])))
-        (expect (str/includes? (:message r) "non-ASCII"))))
-  (it "a leading-prose failure stays tagged prose-leading, not non-ascii"
-      (let [r (classify "I've spent enough (removing them didn't help).\ngit_status()")]
-        (expect (nil? (get-in r [:data :non-ascii-in-code?])))
-        (expect (true? (get-in r [:data :prose-leading?]))))))
+  python-syntax-diagnostics-test
+  ;; Regression: a multiline fold summary was misclassified as a prose reply.
+  (it "reports the parser error for an unterminated fold summary"
+      (let [code
+            (str "print(fold_session(\"-t2/i34\", \"Summary with several ordinary words.\n"
+                 "Next line\"))")
+
+            error
+            (:error (ep/run-python-block (py-ctx) code "t1/i1"))]
+
+        (expect (= :python/syntax (get-in error [:data :phase])))
+        (expect (= 1 (get-in error [:data :line])))
+        (expect (str/includes? (:message error) "unterminated string literal"))
+        (expect (nil? (get-in error [:data :prose-leading?])))
+        (expect (not (str/includes? (:message error) "Your reply")))))
+  (it "does not classify text inside a multiline Python string as narration"
+      (let [error (classify
+                    "summary = \"\"\"Several ordinary words here.\nMore words.\"\"\"\nprint(")]
+        (expect (= :python/syntax (get-in error [:data :phase])))
+        (expect (nil? (get-in error [:data :prose-leading?])))
+        (expect (not (str/includes? (:message error) "Your reply")))))
+  (it "accepts a correctly quoted multiline fold summary"
+      (expect (=
+                :parsed
+                (classify
+                  "print(fold_session('key', \"\"\"Several ordinary words.\nMore words.\"\"\"))"))))
+  (it "does not impose a Python-only reply format after invalid tool code"
+      (let [error (classify "I've spent enough (removing them didn't help).")]
+        (expect (= :python/syntax (get-in error [:data :phase])))
+        (expect (str/includes? (:message error) "SyntaxError"))
+        (expect (nil? (get-in error [:data :prose-leading?])))
+        (expect (not (str/includes? (:message error) "Your reply")))))
+  (it "keeps non-ASCII code diagnostics and the offending line"
+      (let [error (classify "x = 5\n# a note\ny = 3 — 1")]
+        (expect (true? (get-in error [:data :non-ascii-in-code?])))
+        (expect (= 3 (get-in error [:data :line])))
+        (expect (str/includes? (:message error) "non-ASCII")))))
 
 (defdescribe facade-verb-name-guard-test
              ;; Drift guard: the language facade verbs must NEVER regress to the bare

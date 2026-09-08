@@ -1353,42 +1353,6 @@
   [session]
   (boolean (when session (py-interrupt! session))))
 
-(defn- prose-leading-syntax-hint
-  "When a `:python/syntax` failure came from a reply that OPENED with PROSE — the
-   recurring 'the model answered in Markdown' bug — return an actionable directive
-   to prepend to the raw CPython message; else nil.
-
-   The whole reply is run as one Python program, so a leading sentence/heading is
-   itself a SyntaxError. CPython's message points at whatever mangled token trips
-   first — an apostrophe (`I've` → unterminated string), a `×`/em-dash (invalid
-   character), or an orphaned `)` (the matching `(` got swallowed by a quote-pair).
-   Those messages read like unicode/typo bugs, so they get MISDIAGNOSED (and svar
-   gets blamed). This converts them into one clear cause.
-
-   Detection is high-precision: take the first non-blank, non-`#`-comment line; if
-   it does NOT parse as Python on its own AND reads like a sentence (markdown
-   marker, or 3+ space-separated word runs), it's prose. A genuine code line with a
-   typo elsewhere parses fine alone → no hint, raw error preserved."
-  [python-context code]
-  (let [first-real (->> (str/split-lines code)
-                        (map str/trim)
-                        (remove str/blank?)
-                        (remove #(str/starts-with? % "#"))
-                        first)]
-    (when (and (seq first-real)
-               (try (count-top-level-forms python-context first-real)
-                    false ; parses alone → real code
-                    (catch Throwable _
-                      (boolean (or (re-find #"^(#{1,6}\s|[-*]\s|>\s)" first-real) ; heading/bullet/quote
-                                   (re-find #"\*\*" first-real)                   ; **bold**
-                                   (re-find #"[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}"
-                                            first-real)))))) ; sentence
-      (str "Your reply opened with PROSE, not Python. The engine runs your ENTIRE "
-           "reply as one Python program, so the narration itself is the syntax error "
-           "(this is NOT a unicode, typo, or svar problem). Put ALL narration in `#` "
-           "comments above the code; the reply must START "
-           "with runnable Python. Original parser error: "))))
-
 (def ^:dynamic *auto-repair-brackets?*
   "When true, a bracket-balance syntax hint ALSO appends `repair-bracket-balance`'s
    single-candidate suggested fix. OFF by default: the walker only DIAGNOSES; the
@@ -1548,9 +1512,8 @@
 
    `:phase` is `:python/syntax` for a parse failure, `:python/host` when a host
    tool is what failed, else `:python/runtime`; `:line`/`:column` come from the
-   guest position when there is one. The recurring syntax classes keep their
-   actionable hint: a non-ASCII character in code position, a prose-leading
-   reply, and — through `parse-diagnose` — an unbalanced quote or bracket."
+   guest position when there is one. Syntax hints identify invalid non-ASCII
+   characters and — through `parse-diagnose` — unbalanced quotes or brackets."
   [session ^String raised code]
   (let [base
         (-> (str raised)
@@ -1585,21 +1548,16 @@
         pos
         (or (when (or syntax? indent?) (syntax-error-position base)) (guest-error-position session))
 
-        prose-hint
-        (when syntax? (prose-leading-syntax-hint session code))
-
-        ;; Prose is the ROOT cause when the reply OPENS with narration, so a
-        ;; leading sentence is reported as PROSE and never as "a stray glyph".
         non-ascii?
-        (boolean (and syntax? (not prose-hint) (re-find #"invalid character" base)))
+        (boolean (and syntax? (re-find #"invalid character" base)))
 
         quote-hint
-        (when (and syntax? (not prose-hint) (not non-ascii?))
+        (when (and syntax? (not non-ascii?))
           (diagnosis-hint (try (parse-diagnose/diagnose-quote-balance code)
                                (catch Throwable _ nil))))
 
         bracket-hint
-        (when (and syntax? (not prose-hint) (not non-ascii?) (not quote-hint))
+        (when (and syntax? (not non-ascii?) (not quote-hint))
           (diagnosis-hint (try (parse-diagnose/diagnose-bracket-balance code)
                                (catch Throwable _ nil))))
 
@@ -1619,8 +1577,7 @@
           (second (re-find #"name '([^']+)' is not defined" base)))
 
         hint
-        (cond prose-hint prose-hint
-              non-ascii? (str
+        (cond non-ascii? (str
                            "A non-ASCII character leaked into CODE position - it is only "
                            "legal inside a \"...\" string or a `#` comment. This is almost always "
                            "a smart em-dash, en-dash, curly quote, or multiplication sign that you "
@@ -1697,9 +1654,6 @@
 
              non-ascii?
              (assoc :non-ascii-in-code? true)
-
-             prose-hint
-             (assoc :prose-leading? true)
 
              quote-hint
              (assoc :unbalanced-quote? true)
