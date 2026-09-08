@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, act } from '@testing-library/react';
+import { render, act, fireEvent, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GatewayConn } from '../lib/types';
@@ -16,8 +16,8 @@ import { MachineRows, useFleetHealth } from './Machines';
 
 /** One gateway's health, rendered exactly as the settings column renders it. */
 function Fleet({ conns, watch }: { conns: GatewayConn[]; watch?: { url?: string | null; onRecovered?: () => void } }) {
-  const health = useFleetHealth(conns, watch);
-  return <MachineRows conns={conns} health={health} onPick={() => {}} />;
+  const { health, retry } = useFleetHealth(conns, watch);
+  return <MachineRows conns={conns} health={health} onPick={() => {}} onRetry={retry} />;
 }
 
 /** What the dot says about a machine right now: its `title` is the verdict. */
@@ -150,5 +150,66 @@ describe('a machine that stopped answering while nobody was looking', () => {
     isAwake = true;
     await settle(30_000);
     expect(onRecovered).toHaveBeenCalled();
+  });
+  it('retries one machine immediately while another probe is pending, without duplicates', async () => {
+    const conn: GatewayConn = { url: 'http://10.0.0.5:7891', label: 'retry target' };
+    const slow: GatewayConn = { url: 'http://10.0.0.5:7892', label: 'slow machine' };
+    const onRecovered = vi.fn();
+    let attempts = 0;
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      if (url.startsWith(slow.url)) return blackhole(init);
+      attempts += 1;
+      return attempts === 1 ? Promise.reject(new TypeError('Load failed')) : answers();
+    }));
+    render(<Fleet conns={[conn, slow]} watch={{ url: conn.url, onRecovered }} />);
+    await settle();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry connection to retry target' }));
+    const checking = screen.getByRole('button', { name: 'Checking connection to retry target' });
+    expect(checking).toHaveAttribute('aria-busy', 'true');
+    expect(checking).toHaveAttribute('aria-disabled', 'true');
+    expect(checking.querySelector('.lucide-refresh-cw')).toHaveClass('animate-spin');
+    fireEvent.click(checking);
+    fireEvent.click(checking);
+    expect(attempts).toBe(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(onRecovered).not.toHaveBeenCalled();
+
+    await settle();
+    expect(screen.getByRole('button', { name: /retry target/ })).not.toHaveAttribute('aria-busy');
+    expect(screen.getByRole('button', { name: 'Checking connection to slow machine' })).toHaveAttribute('aria-busy', 'true');
+    expect(onRecovered).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns to retry after a failed check', async () => {
+    const conn: GatewayConn = { url: 'http://10.0.0.5:7893', label: 'unavailable' };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Load failed'))));
+    render(<Fleet conns={[conn]} />);
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry connection to unavailable' }));
+    expect(screen.getByRole('button', { name: 'Checking connection to unavailable' })).toHaveAttribute('aria-busy', 'true');
+    await settle();
+    const retry = screen.getByRole('button', { name: 'Retry connection to unavailable' });
+    expect(retry).not.toHaveAttribute('aria-disabled');
+    expect(retry).not.toHaveAttribute('aria-expanded');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses a background check already in flight when the same row is retried', async () => {
+    const conn: GatewayConn = { url: 'http://10.0.0.5:7894', label: 'pending retry' };
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError('Load failed'));
+    fetcher.mockImplementation((_url, init) => blackhole(init));
+    vi.stubGlobal('fetch', fetcher);
+    render(<Fleet conns={[conn]} />);
+    await settle();
+    await settle(6_000);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry connection to pending retry' }));
+    expect(screen.getByRole('button', { name: 'Checking connection to pending retry' })).toHaveAttribute('aria-busy', 'true');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await settle(9_000);
+    expect(screen.getByRole('button', { name: 'Retry connection to pending retry' })).not.toHaveAttribute('aria-busy');
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });

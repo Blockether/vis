@@ -59,7 +59,7 @@ export function ConnectScreen({
   onRetry,
   onClose,
 }: Props) {
-  const health = useFleetHealth(conns, {
+  const { health, retry } = useFleetHealth(conns, {
     url: active?.url ?? null,
     onRecovered: offlineError ? onRetry : undefined,
   });
@@ -78,6 +78,7 @@ export function ConnectScreen({
               primaryUrl={primary?.url}
               health={health}
               onPick={() => onSettings()}
+              onRetry={retry}
               actionLabel="Settings"
             />
           </div>

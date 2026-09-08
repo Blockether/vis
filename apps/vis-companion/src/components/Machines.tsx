@@ -34,6 +34,7 @@ import {
   CircleDashedIcon,
   CircleXIcon,
   PencilIcon,
+  RefreshIcon,
   SortIcon,
   StarIcon,
   TrashIcon,
@@ -70,13 +71,8 @@ function prefetchScanner() {
 }
 
 /**
- * How long ONE reachability probe gets before the address counts as unreachable.
- *
- * Without an explicit deadline the probe inherits the platform's TCP timeout —
- * over a minute on iOS — and because the sweep below is serialised behind
- * `probeInFlight`, a single dead address freezes EVERY other gateway's dot at
- * its last verdict for that whole minute. A tailnet address that needs a
- * handshake or a DERP fallback is exactly the address that gets stuck red.
+ * Deadline for one reachability check. The platform's TCP timeout can exceed a
+ * minute on iOS; the row should offer retry sooner, including when a tunnel stalls.
  */
 const PROBE_TIMEOUT_MS = 9000;
 
@@ -168,9 +164,9 @@ async function probeOnce(conn: GatewayConn): Promise<{ state: GwState; why?: str
 export function useFleetHealth(
   conns: GatewayConn[],
   watch?: { url?: string | null; onRecovered?: () => void },
-): Record<string, GwHealth> {
+): { health: Record<string, GwHealth>; retry: (conn: GatewayConn) => Promise<void> } {
   const [health, setHealth] = useState<Record<string, GwHealth>>(() => ({ ...lastHealth }));
-  const probeInFlight = useRef(false);
+  const probeInFlight = useRef(new Set<string>());
 
   // The live probe is the ONLY truth about reachability. Refs (not deps) so the
   // 6s sweep below never closes over a stale watched gateway or handler.
@@ -179,28 +175,24 @@ export function useFleetHealth(
   watchedUrlRef.current = watch?.url ?? null;
   recoverRef.current = watch?.onRecovered;
 
-  // One sweep at a time: a probe fans out to EVERY saved gateway, and an
-  // unreachable one only settles when its request times out — well past the 6s
-  // tick. Without this guard those sweeps overlap and multiply.
-  const probe = useCallback(async (list: GatewayConn[]) => {
-    if (probeInFlight.current) return;
-    probeInFlight.current = true;
+  // Deduplicate per machine: a slow address must not block retrying another row.
+  const probe = useCallback(async (list: GatewayConn[], forceChecking = false) => {
     // One writer for both the rendered state and the cross-mount cache, so the
     // dots survive leaving and re-entering the surface.
     const remember = (url: string, entry: GwHealth) => {
       lastHealth[url] = entry;
       setHealth((h) => ({ ...h, [url]: entry }));
     };
-    try {
-      await Promise.all(
-        list.map(async (conn) => {
-          // While this probe is in flight the row keeps the previous verdict only
-          // while that verdict is still evidence; an expired one becomes
-          // "Checking…", because the honest answer to "is it up?" during the
-          // first probe after a wake is that nobody knows yet.
-          const known = lastHealth[conn.url];
-          if (!isFresh(known)) remember(conn.url, { state: 'checking', at: Date.now() });
-          const started = Date.now();
+    await Promise.all(
+      list.map(async (conn) => {
+        const known = lastHealth[conn.url];
+        if (forceChecking || !isFresh(known)) {
+          remember(conn.url, { state: 'checking', at: Date.now() });
+        }
+        if (probeInFlight.current.has(conn.url)) return;
+        probeInFlight.current.add(conn.url);
+        const started = Date.now();
+        try {
           const { state, why } = await probeOnce(conn);
           remember(conn.url, {
             state,
@@ -212,11 +204,11 @@ export function useFleetHealth(
           // offline gate lifts on this call, and lifting it on a remembered
           // "online" put the shell in a mount/fail/gate loop.
           if (state === 'online' && conn.url === watchedUrlRef.current) recoverRef.current?.();
-        }),
-      );
-    } finally {
-      probeInFlight.current = false;
-    }
+        } finally {
+          probeInFlight.current.delete(conn.url);
+        }
+      }),
+    );
   }, []);
 
   // `conns` is a fresh array on every parent refresh, and the parent refreshes
@@ -245,7 +237,8 @@ export function useFleetHealth(
     };
   }, [connsKey, probe]);
 
-  return health;
+  const retry = useCallback((conn: GatewayConn) => probe([conn], true), [probe]);
+  return { health, retry };
 }
 
 interface GwHealthView {
@@ -459,9 +452,9 @@ function AddressMenu({
   );
 }
 /**
- * Paired machines render as one-line rows. Optional settings disclose beneath only the
- * owning row; management verbs live in that row's `SwipeActions` and mount only when
- * handlers exist. Selection paint is reserved for navigational lists.
+ * Paired machines render as one-line rows. Only online rows disclose settings;
+ * unavailable rows retry their connection instead, showing progress while checking.
+ * Management verbs remain available through each row's `SwipeActions`.
  */
 export function MachineRows({
   conns,
@@ -471,6 +464,7 @@ export function MachineRows({
   primaryUrl,
   health,
   onPick,
+  onRetry,
   actionLabel,
   onMakePrimary,
   onRename,
@@ -486,13 +480,14 @@ export function MachineRows({
    */
   openUrls?: ReadonlySet<string>;
   /**
-   * THIS machine's settings, rendered under THIS machine's row while it is open.
-   * Passing it turns every row into a disclosure; it is called for the open row only.
+   * This machine's settings, mounted only while its row is open and online.
    */
   renderPanel?: (conn: GatewayConn) => ReactNode;
   primaryUrl?: string | null;
   health: Record<string, GwHealth>;
   onPick: (conn: GatewayConn) => void;
+  /** Recheck only this machine without selecting it or opening settings. */
+  onRetry?: (conn: GatewayConn) => void | Promise<void>;
   /** The word on the trailing edge when the row LEAVES for somewhere else. */
   actionLabel?: string;
   /** Rank this machine first: the app opens on it, and the row wears `PRIMARY`. */
@@ -611,7 +606,9 @@ export function MachineRows({
         // reached by sliding it. A verb exists only when its handler does, so
         // `ConnectScreen`'s list carries none and never slides; the rank verb is
         // missing from the machine that already holds the rank.
-        const isOpen = Boolean(renderPanel) && (openUrls?.has(conn.url) ?? false);
+        const isOnline = hv.state === 'online';
+        const isChecking = hv.state === 'checking';
+        const isOpen = isOnline && Boolean(renderPanel) && (openUrls?.has(conn.url) ?? false);
         // The open row and the "you are here" row wear one paper: a list does one of
         // the two, and a machine standing out of it looks the same either way.
         const isMarked = isOpen || conn.url === selectedUrl;
@@ -664,10 +661,16 @@ export function MachineRows({
               <div className={`min-w-0 ${isMarked ? 'bg-panel-2' : ''}`}>
                 <ListRow
                   isSelected={isMarked}
-                  onClick={() => onPick(conn)}
+                  onClick={() => {
+                    if (isOnline) onPick(conn);
+                    else if (!isChecking) void onRetry?.(conn);
+                  }}
                   className="min-w-0 gap-3"
-                  aria-expanded={renderPanel ? isOpen : undefined}
-                  aria-controls={renderPanel && isOpen ? panelId : undefined}
+                  aria-label={!isOnline ? `${isChecking ? 'Checking' : 'Retry'} connection to ${name}` : undefined}
+                  aria-disabled={isChecking || (!isOnline && !onRetry) || undefined}
+                  aria-busy={isChecking || undefined}
+                  aria-expanded={isOnline && renderPanel ? isOpen : undefined}
+                  aria-controls={isOpen ? panelId : undefined}
                 >
                   {/* One rule with the provider rows: the state is the RING's
                       interior, never the ink alone, and this row is one line — so
@@ -702,7 +705,7 @@ export function MachineRows({
                       ? (hv.ms != null ? `${hv.ms}ms` : '')
                       : hv.label}
                   </span>
-                  {actionLabel && (
+                  {isOnline && actionLabel && (
                     <span
                       className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint"
                       aria-hidden="true"
@@ -710,9 +713,9 @@ export function MachineRows({
                       {actionLabel}
                     </span>
                   )}
-                  {/* ONE MARK FOR "THERE IS MORE HERE": it turns down on the machine
-                      whose settings are open, and points on where the row LEAVES. */}
-                  {(renderPanel || actionLabel) && (
+                  {!isOnline ? (
+                    <RefreshIcon isBusy={isChecking} className="size-3 shrink-0 text-dialog-hint" />
+                  ) : (renderPanel || actionLabel) && (
                     <ChevronIcon open={isOpen} className="size-3 shrink-0 text-dialog-hint" />
                   )}
                 </ListRow>

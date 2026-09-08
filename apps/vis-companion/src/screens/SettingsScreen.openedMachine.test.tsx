@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SettingsDialog } from "./SettingsScreen";
@@ -44,9 +44,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   globalThis.fetch = previousFetch;
   globalThis.localStorage?.clear();
-  document.body.innerHTML = "";
   vi.restoreAllMocks();
 });
 
@@ -60,6 +60,13 @@ const open = (gateways: GatewayConn[], providerMachineUrl?: string) =>
     />,
   );
 
+/** A row becomes a disclosure only once its health check answers. */
+const onlineRows = (count = 1) => waitFor(() => {
+  const rows = screen.getAllByRole("button").filter((row) => row.querySelector('[title="Online"]'));
+  expect(rows).toHaveLength(count);
+  return rows;
+});
+
 describe("machine settings disclosures", () => {
   it("starts every machine closed and opens one only after its row is pressed", async () => {
     const view = open([
@@ -67,9 +74,7 @@ describe("machine settings disclosures", () => {
       { url: URL_B, token: "t", id: "cad6247b600f9bbc" },
     ]);
 
-    const [first, second] = screen
-      .getAllByRole("button")
-      .filter((button) => button.hasAttribute("aria-expanded"));
+    const [first, second] = await onlineRows(2);
     expect(first).toHaveAttribute("aria-expanded", "false");
     expect(second).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("MCP servers")).toBeNull();
@@ -91,9 +96,7 @@ describe("machine settings disclosures", () => {
       URL_B,
     );
 
-    const [first, second] = screen
-      .getAllByRole("button")
-      .filter((button) => button.hasAttribute("aria-expanded"));
+    const [first, second] = await onlineRows(2);
     expect(first).toHaveAttribute("aria-expanded", "false");
     expect(second).toHaveAttribute("aria-expanded", "true");
     await waitFor(() => expect(screen.getByText("Providers")).toBeTruthy());
@@ -105,10 +108,7 @@ describe("machine settings disclosures", () => {
     globalThis.fetch = vi.fn(incompatibleSettings) as unknown as typeof fetch;
     const view = open([{ url: URL_A, token: "t", id: "be2c15686eaef0f4" }]);
 
-    const row = screen
-      .getAllByRole("button")
-      .find((button) => button.hasAttribute("aria-expanded"));
-    if (!row) throw new Error("Machine disclosure not found");
+    const [row] = await onlineRows();
     fireEvent.click(row);
 
     await waitFor(() =>
@@ -116,6 +116,36 @@ describe("machine settings disclosures", () => {
     );
     expect(screen.queryByText("Machine unreachable")).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    view.unmount();
+  });
+  it("retries an offline machine without fetching or expanding its settings", async () => {
+    const conn = { url: "http://10.0.0.5:7891", label: "laptop" };
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("Load failed"));
+    globalThis.fetch = fetcher;
+    const view = open([conn]);
+    const retry = await screen.findByRole("button", { name: "Retry connection to laptop" });
+    expect(retry).not.toHaveAttribute("aria-expanded");
+    expect(screen.queryByText("Machine unreachable")).toBeNull();
+    expect(screen.queryByText(/Can't load settings/)).toBeNull();
+    expect(screen.queryByText("MCP servers")).toBeNull();
+
+    let answer!: (response: Response) => void;
+    fetcher.mockImplementationOnce(() => new Promise<Response>((resolve) => { answer = resolve; }));
+    fireEvent.click(retry);
+    const checking = screen.getByRole("button", { name: "Checking connection to laptop" });
+    expect(checking).toHaveAttribute("aria-busy", "true");
+    fireEvent.click(checking);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("MCP servers")).toBeNull();
+
+    await act(async () => answer(await quiet()));
+    const [row] = await onlineRows();
+    expect(row).toHaveAttribute("aria-expanded", "false");
+    expect(row).not.toHaveAttribute("aria-busy");
+    expect(fetcher.mock.calls.every(([input]) => new URL(String(input)).pathname === "/healthz")).toBe(true);
+    fetcher.mockImplementation(quiet);
+    fireEvent.click(row);
+    await waitFor(() => expect(screen.getByText("MCP servers")).toBeTruthy());
     view.unmount();
   });
 });

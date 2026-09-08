@@ -56,14 +56,9 @@ function machineId(conn: GatewayConn): string {
  * Machines leads, because the cog is opened to reach a machine far more often than to
  * repaint the app, and below `sm:` the columns stack in that same order.
  *
- * A MACHINE'S SETTINGS ARE HIDDEN UNDER THAT MACHINE. Every row is a disclosure and
- * its panels stand under its own row, opened by the chevron the rest of this app
- * opens things with. They used to be ONE column body under the whole list, showing
- * whichever machine was pressed last: pressing a machine opened nothing, it swapped
- * the settings already on screen for another machine's — reported as a press that
- * changes the view instead of opening the row — and the machine that column happened
- * to be reading wore the word `CURRENT`, which named no choice the reader had made.
- * Opening one machine leaves every other machine exactly as it was.
+ * A machine's settings are hidden under its online row. Unavailable rows retry
+ * the connection instead of disclosing settings. Opening one machine leaves every
+ * other machine as it was.
  */
 export function SettingsDialog({
   gateways,
@@ -201,7 +196,7 @@ export function SettingsDialog({
   // material this device reads a few times a year, not a setting it changes.
   const [diagOpen, setDiagOpen] = useState(false);
 
-  const health = useFleetHealth(gateways);
+  const { health, retry } = useFleetHealth(gateways);
 
   return (
     // The app's ONE dialog: `Modal` + `DialogFrame`, the same outer component
@@ -248,6 +243,7 @@ export function SettingsDialog({
                 primaryUrl={primaryUrl}
                 health={health}
                 onPick={toggleMachine}
+                onRetry={retry}
                 onMakePrimary={onMakePrimary}
                 onRename={onRename}
                 onForget={onRemove}

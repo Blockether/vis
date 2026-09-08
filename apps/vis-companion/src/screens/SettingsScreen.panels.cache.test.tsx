@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Machine panels are warmed before their disclosure opens. Once they have answered,
 // reopening that machine must paint the cached answer immediately instead of flickering.
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SettingsDialog } from "./SettingsScreen";
@@ -52,9 +52,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   globalThis.fetch = previousFetch;
   globalThis.localStorage?.clear();
-  document.body.innerHTML = "";
   vi.restoreAllMocks();
 });
 
@@ -68,9 +68,7 @@ const open = () =>
   );
 
 const openMachine = () => {
-  const row = screen
-    .getAllByRole("button")
-    .find((button) => button.hasAttribute("aria-expanded"));
+  const row = screen.getAllByTitle("Online")[0].closest("button");
   if (!row) throw new Error("Machine disclosure not found");
   fireEvent.click(row);
 };
@@ -79,11 +77,12 @@ describe("opening settings for a machine that already answered", () => {
   it("paints the MCP servers and providers in the first open frame", async () => {
     globalThis.fetch = machine() as unknown as typeof fetch;
     const first = open();
+    await waitFor(() => expect(screen.getAllByTitle("Online").length).toBeGreaterThan(0));
     openMachine();
     await waitFor(() => expect(screen.getByText("files")).toBeTruthy());
     first.unmount();
 
-    // Same machine, now unreachable: its disclosure paints what the cache holds.
+    // A recheck is pending, but the last online verdict and panels are still fresh.
     globalThis.fetch = silent() as unknown as typeof fetch;
     const second = open();
     openMachine();
