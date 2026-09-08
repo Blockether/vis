@@ -174,23 +174,24 @@
 
     (cond (or (nil? db) (nil? state-id)) (failure "Drafts need a persisted session.")
           (not (workspace/draft? ws)) (not-in-draft "draft_discard()")
-          :else
-          (try (let [{:keys [branch ahead]}
-                     (drafts/status ws)
+          :else (try (let [{:keys [branch ahead]}
+                           (drafts/status ws)
 
-                     trunk
-                     (workspace/exit-to-trunk! db state-id (:repo-root ws))]
+                           [_discarded trunk]
+                           (drafts/discard! (boundary-env env)
+                                            {:workspace-id (:id ws)
+                                             :reason "discarded with draft_discard()"
+                                             :session-state-id state-id})]
 
-                 (drafts/discard! (boundary-env env)
-                                  {:workspace-id (:id ws) :reason "discarded with draft_discard()"})
-                 (sync-confinement! env trunk)
-                 (extension/success {:op :draft-discard
-                                     :result (wire/canonical {:status :discarded
-                                                              :label (:label ws)
-                                                              :root (:root trunk)
-                                                              :branch branch
-                                                              :approved-ahead (or ahead 0)})}))
-               (catch clojure.lang.ExceptionInfo e (refusal e))))))
+                       (sync-confinement! env trunk)
+                       (extension/success {:op :draft-discard
+                                           :result (wire/canonical {:status :discarded
+                                                                    :label (:label ws)
+                                                                    :root (:root trunk)
+                                                                    :branch branch
+                                                                    :approved-ahead (or ahead
+                                                                                        0)})}))
+                     (catch clojure.lang.ExceptionInfo e (refusal e))))))
 
 (def draft-status-symbol
   (vis/symbol

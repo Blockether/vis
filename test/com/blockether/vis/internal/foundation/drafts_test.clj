@@ -209,6 +209,43 @@
                                          (drafts/draft-create env "three")))))))))
 
 (defdescribe
+  draft-discard-veto-test
+  (it
+    "a vetoed discard keeps the persisted session pinned to its draft"
+    (with-session
+      "vis-fdrafts-discard-veto"
+      (fn [_base env]
+        (let [opened
+              (drafts/draft-create env "guarded-discard")
+
+              draft-id
+              (get-in opened [:result "workspace_id"])
+
+              draft-root
+              (get-in opened [:result "root"])]
+
+          (expect (true? (extension/envelope-success? opened)))
+          (expect (= draft-id (str (:id (ws/for-session (:db-info env) (:session/state-id env))))))
+          (try (extension/register-op-hook!
+                 {:op :draft/discard
+                  :phase :around
+                  :owner :ext/draft-discard-veto-test
+                  :fn (fn [_env _op _args _next]
+                        (extension/failure {:error {:message "discard vetoed for test"}}))})
+               (let [refused
+                     (drafts/draft-discard env)
+
+                     persisted
+                     (ws/for-session (:db-info env) (:session/state-id env))]
+
+                 (expect (false? (extension/envelope-success? refused)))
+                 (expect (= draft-root (ctx-root env)))
+                 (expect (.exists (io/file draft-root)))
+                 (expect (= draft-id (str (:id persisted)))))
+               (finally (extension/unregister-op-hooks-for-owner!
+                          :ext/draft-discard-veto-test))))))))
+
+(defdescribe
   draft-symbols-test
   (it
     "the sandbox names draft_create, draft_status, draft_approve and draft_discard, and nothing else manages drafts"

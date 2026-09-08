@@ -127,16 +127,21 @@
                  #(workspace/create! (:db-info env) opts)))
 
 (defn discard!
-  "Discard `workspace-id` through the `:draft/discard` boundary — `workspace/abandon!`
-   plus the hook round-trip. The caller has already moved the session off it."
-  [env {:keys [workspace-id reason]}]
+  "Discard `workspace-id` through the `:draft/discard` boundary. With
+   `:session-state-id`, the session is repointed to the trunk inside the
+   boundary — a veto leaves it pinned to its draft — and `workspace/abandon!`
+   then removes the draft. Returns `[abandon-result trunk]`."
+  [env {:keys [workspace-id reason session-state-id]}]
   (let [ws (require-draft (:db-info env) workspace-id)]
-    (through-hooks :draft/discard
-                   env
-                   (hook-ctx ws {:reason reason})
-                   #(dissoc (workspace/abandon! (:db-info env)
-                                                {:workspace-id workspace-id :reason reason})
-                      :discard-future))))
+    (through-hooks
+      :draft/discard
+      env
+      (hook-ctx ws {:reason reason})
+      (fn []
+        (let [trunk (when session-state-id
+                      (workspace/exit-to-trunk! (:db-info env) session-state-id (:repo-root ws)))]
+          [(dissoc (workspace/abandon! (:db-info env) {:workspace-id workspace-id :reason reason})
+             :discard-future) trunk])))))
 
 (defn- ensure-draft-branch!
   "Put the draft at `root` on a `vis/…` branch: a worktree already is; a Rift clone
