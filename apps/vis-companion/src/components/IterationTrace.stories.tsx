@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import {
   STORY_JOINED_ACTIVITY,
   STORY_COMPACT_EXECUTIONS,
@@ -60,6 +60,63 @@ export const Settled: Story = {
 /** One step alone — the shortest turn there is, and the case the line must not look broken in. */
 export const SingleStep: Story = {
   args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED.slice(0, 1) },
+};
+
+/** Opening narration uses the role label's gap, without an extra block inset. */
+export const OpeningProse: Story = {
+  args: {
+    live: true,
+    iterations: STORY_THINKING_AND_CODE.flatMap((iteration) =>
+      [
+        "I will check what caused this turn to stop.",
+        "The stop event is recorded. I will check its source next.",
+      ].map((assistant_prose, index) => ({
+        ...iteration,
+        id: `${iteration.id}-prose-${index}`,
+        thinking: "",
+        assistant_prose,
+      })),
+    ),
+  },
+  render: (args) => (
+    <AssistantMessage
+      whole
+      streaming
+      turn={{
+        ...STORY_EXCHANGE_TURN,
+        status: "running",
+        iterations: args.iterations,
+        content: [],
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const role = canvas.getByText("Vis", { exact: true });
+    const header = role.parentElement!;
+    const prose = await canvas.findByText(
+      "I will check what caused this turn to stop.",
+    );
+    const later = canvas.getByText(
+      "The stop event is recorded. I will check its source next.",
+    );
+    const code = canvasElement.querySelector("[data-execution-code]")!;
+    // Regression: opening prose added its own top padding to the role's margin.
+    // Wait for the live segment's entrance animation before measuring its boxes.
+    await waitFor(() => {
+      expect(
+        prose.getBoundingClientRect().top -
+          header.getBoundingClientRect().bottom,
+      ).toBeCloseTo(parseFloat(getComputedStyle(header).marginBottom), 0);
+      const bottomInset =
+        code.getBoundingClientRect().top - prose.getBoundingClientRect().bottom;
+      expect(bottomInset).toBeCloseTo(10, 0);
+      expect(
+        later.getBoundingClientRect().top -
+          later.closest("section")!.getBoundingClientRect().top,
+      ).toBeCloseTo(bottomInset, 0);
+    });
+  },
 };
 
 /** Reasoning and its program read as one step, with the same vertical inset. */

@@ -2524,14 +2524,14 @@ const TraceSegment = memo(function TraceSegment({
 
   return (
     <section
-      className={`relative min-w-0 pb-2.5 ${live ? transcriptEnterClass : ""}`}
+      className={`group/trace-segment relative min-w-0 pb-2.5 ${live ? transcriptEnterClass : ""}`}
     >
       {segment.head.thinking && (
         <ThinkingBand railed>{segment.head.thinking}</ThinkingBand>
       )}
       {segment.head.prose && (
-        // Narration owns equal space above and below; adjacent execution bands still touch.
-        <div className="py-2.5 pr-3 text-ui text-vis-message">
+        // The role owns the opening gap; narration between bands keeps both insets.
+        <div className="py-2.5 pr-3 text-ui text-vis-message first:group-first/trace-segment:pt-0">
           <Markdown>{segment.head.prose}</Markdown>
         </div>
       )}
