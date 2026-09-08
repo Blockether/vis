@@ -153,6 +153,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
+      - name: Provision and verify Linux isolation
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap passt
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --unshare-all --ro-bind / / /bin/true
       # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — the SAME pinned
       # graalvm-ce-builds asset CI installs. Keeps Oracle GraalVM (GFTC) OUT of
       # the distributed binary, so the redistribution/license story stays FOSS.

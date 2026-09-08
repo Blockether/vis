@@ -302,12 +302,12 @@
    descriptor and a few KiB."
   (max 8 (min 16 (* 2 (.availableProcessors (Runtime/getRuntime))))))
 
-(def ^:private ^long leak-detection-ms
-  "Hikari's leak-detection threshold in ms, 0 = off. Read once per process from
+(def ^:private leak-detection-ms
+  "Hikari's leak-detection threshold in ms, 0 = off. Read once at runtime from
    `vis.db.leak-detection-ms`; Hikari itself rejects anything under 2000."
-  (try (let [v (Long/parseLong (System/getProperty "vis.db.leak-detection-ms" "0"))]
-         (if (pos? v) (max 2000 v) 0))
-       (catch Exception _ 0)))
+  (delay (try (let [v (Long/parseLong (System/getProperty "vis.db.leak-detection-ms" "0"))]
+                (if (pos? v) (max 2000 v) 0))
+              (catch Exception _ 0))))
 
 (defn- pooled-datasource
   "Wrap `raw-ds` in a HikariCP pool. `pool-name` is the JMX name and
@@ -345,7 +345,7 @@
               (.setConnectionTimeout 30000)
               (.setIdleTimeout 0)
               (.setMaxLifetime 0)
-              (.setLeakDetectionThreshold leak-detection-ms))]
+              (.setLeakDetectionThreshold (long @leak-detection-ms)))]
     (HikariDataSource. cfg)))
 
 (def ^:private ^String DB_FILENAME "vis.db")

@@ -2,7 +2,8 @@
   "The Vis-owned Python network stack: the runtime enforces the binary capability,
    while a session worker receives the host proxy and CA environment before CPython
    starts. A real urllib request proves the worker can reach only that proxy door."
-  (:require [charred.api :as json]
+  (:require [babashka.fs :as fs]
+            [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
@@ -66,6 +67,17 @@
               (.close server)
               (future-cancel serve))}))
 
+(defn- with-http-packages
+  "Provision all exercised HTTP stacks without using the operator's packages."
+  [f]
+  (let [packages (fs/create-temp-dir {:prefix "vis-network-packages-"})]
+    (try (let [{:keys [exit out]} (runtime/pip-install! {:target (str packages)}
+                                                        ["aiohttp" "httpx" "requests" "pip"])]
+           (expect (zero? exit) out)
+           (with-redefs [runtime/packages-dir (constantly (str packages))]
+             (f)))
+         (finally (fs/delete-tree packages)))))
+
 (defdescribe
   network-runtime-configuration-test
   (it "passes the disabled network capability to the runtime"
@@ -97,66 +109,68 @@
              (finally (dispose! sandbox)))))
   (it
     "routes every Python HTTP stack through one attributed policy door"
-    (let [origin
-          (start-origin!)
+    (with-http-packages
+      (fn []
+        (let [origin
+              (start-origin!)
 
-          token
-          "python-session"
+              token
+              "python-session"
 
-          logs
-          (atom [])
+              logs
+              (atom [])
 
-          policy
-          (egress/compile-policy {:allowed-domains ["localhost"]
-                                  :rules [{:host "localhost" :access "read-only"}]})
+              policy
+              (egress/compile-policy {:allowed-domains ["localhost"]
+                                      :rules [{:host "localhost" :access "read-only"}]})
 
-          proxy
-          (egress/start! {:policy-fn (fn [_]
-                                       policy)
-                          :on-log #(swap! logs conj (assoc % :token token))})
+              proxy
+              (egress/start! {:policy-fn (fn [_]
+                                           policy)
+                              :on-log #(swap! logs conj (assoc % :token token))})
 
-          sandbox
-          (sandbox {:enabled? true :proxy-port (:port proxy) :proxy-token token})
+              sandbox
+              (sandbox {:enabled? true :proxy-port (:port proxy) :proxy-token token})
 
-          url
-          (str "http://localhost:" (:port origin) "/probe")]
+              url
+              (str "http://localhost:" (:port origin) "/probe")]
 
-      (try (expect
-             (= ["ok" "ok" "ok" "ok" "ok"]
-                (python-json
-                  sandbox
-                  (str "import json, urllib.request\n"
-                       "import aiohttp, httpx, requests\n"
-                       "from pip._internal.network.session import PipSession\n"
-                       "url = " (pr-str url)
-                       "\n" "async def aio():\n"
-                       "    async with aiohttp.ClientSession(trust_env=True) as session:\n"
-                       "        async with session.get(url) as response:\n"
-                       "            return await response.text()\n" "aio_result = await aio()\n"
-                       "with PipSession() as pip_session:\n"
-                       "    pip_result = pip_session.get(url, timeout=5).text\n"
-                       "print(json.dumps([\n"
-                       "    urllib.request.urlopen(url, timeout=5).read().decode(),\n"
-                       "    requests.get(url, timeout=5).text,\n"
-                       "    httpx.get(url, timeout=5).text,\n"
-                       "    aio_result,\n" "    pip_result]))"))))
-           ;; Regression: closing with an unread POST body discarded the 403 response.
-           (expect (= 403
-                      (python-json sandbox
-                                   (str "import json, urllib.error, urllib.request\n"
-                                        "try:\n"
-                                        "    urllib.request.urlopen(urllib.request.Request("
-                                        (pr-str url)
-                                        ", data=b'x', method='POST'), timeout=5)\n"
-                                        "    result = 200\n"
-                                        "except urllib.error.HTTPError as error:\n"
-                                        "    result = error.code\n" "print(json.dumps(result))"))))
-           (expect (= 5 (count @(:requests origin))))
-           (expect (some #(and (= token (:token %))
-                               (= "localhost" (:host %))
-                               (= "GET" (:method %))
-                               (:allow? %))
-                         @logs))
-           (expect (some #(and (= token (:token %)) (= "POST" (:method %)) (false? (:allow? %)))
-                         @logs))
-           (finally (dispose! sandbox) ((:stop! proxy)) ((:stop! origin)))))))
+          (try (expect
+                 (= ["ok" "ok" "ok" "ok" "ok"]
+                    (python-json
+                      sandbox
+                      (str "import json, urllib.request\n"
+                           "import aiohttp, httpx, requests\n"
+                           "from pip._internal.network.session import PipSession\n"
+                           "url = " (pr-str url)
+                           "\n" "async def aio():\n"
+                           "    async with aiohttp.ClientSession(trust_env=True) as session:\n"
+                           "        async with session.get(url) as response:\n"
+                           "            return await response.text()\n" "aio_result = await aio()\n"
+                           "with PipSession() as pip_session:\n"
+                           "    pip_result = pip_session.get(url, timeout=5).text\n"
+                           "print(json.dumps([\n"
+                           "    urllib.request.urlopen(url, timeout=5).read().decode(),\n"
+                           "    requests.get(url, timeout=5).text,\n"
+                           "    httpx.get(url, timeout=5).text,\n"
+                           "    aio_result,\n" "    pip_result]))"))))
+               ;; Regression: closing with an unread POST body discarded the 403 response.
+               (expect (= 403
+                          (python-json
+                            sandbox
+                            (str "import json, urllib.error, urllib.request\n"
+                                 "try:\n"
+                                 "    urllib.request.urlopen(urllib.request.Request("
+                                 (pr-str url)
+                                 ", data=b'x', method='POST'), timeout=5)\n"
+                                 "    result = 200\n" "except urllib.error.HTTPError as error:\n"
+                                 "    result = error.code\n" "print(json.dumps(result))"))))
+               (expect (= 5 (count @(:requests origin))))
+               (expect (some #(and (= token (:token %))
+                                   (= "localhost" (:host %))
+                                   (= "GET" (:method %))
+                                   (:allow? %))
+                             @logs))
+               (expect (some #(and (= token (:token %)) (= "POST" (:method %)) (false? (:allow? %)))
+                             @logs))
+               (finally (dispose! sandbox) ((:stop! proxy)) ((:stop! origin)))))))))

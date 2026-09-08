@@ -1195,3 +1195,21 @@
 
                    (expect (= 0 exit))
                    (expect (= "/custom.pem" output)))))
+
+(defdescribe native-sdk-isolation-test
+             (it "installs SDK dependencies without assuming the hosted runner Python directory"
+                 (let [action (slurp ".github/actions/test-native-python-sdk/action.yml")]
+                   (expect (not (str/includes? action "actions/setup-python")))
+                   (expect (str/includes? action "uv venv --python 3.11"))
+                   (expect (str/includes? action "uv pip install --python"))
+                   (expect (str/includes? action "RUNNER_TEMP/vis-native-sdk-venv/bin/python"))
+                   (expect (str/includes? action "subprocess.run([sys.executable")))))
+
+(defdescribe
+  native-linux-isolation-test
+  (it "provisions and exercises user namespaces before native tests"
+      (let [workflow (slurp ".github/workflows/native-release.yml")]
+        (expect (str/includes? workflow "sudo apt-get install -y bubblewrap passt"))
+        (expect (str/includes? workflow
+                               "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"))
+        (expect (str/includes? workflow "bwrap --unshare-all --ro-bind / / /bin/true")))))

@@ -154,7 +154,13 @@
 (defn- py-interrupt!
   [session]
   (if-let [k (worker-of session)]
-    (pyext/interrupt! k session)
+    ;; A trusted extension can be parked in a host input view while the sandbox
+    ;; waits for that extension. Unwind the inner worker before releasing its caller.
+    (let [extension-error
+          (try (pyext/interrupt! (pyext/extension-worker-key k) session) nil (catch Throwable t t))
+          interrupted? (pyext/interrupt! k session)]
+
+      (if extension-error (throw extension-error) interrupted?))
     (runtime/interrupt!)))
 
 (defn- py-close-session!

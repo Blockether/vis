@@ -340,6 +340,17 @@ print(worker_value)"))))
 
 (defdescribe
   worker-control-plane-test
+  (it "interrupts trusted extension waits before releasing the session sandbox"
+      ;; SDK cancellation must close an extension's input view before ending the turn.
+      (with-worker-context (fn [session]
+                             (let [calls (atom [])]
+                               (with-redefs [worker/interrupt! (fn [key caller]
+                                                                 (swap! calls conj [key caller])
+                                                                 true)]
+                                 (expect (true? (env/interrupt-guest! session))))
+                               (expect (= [[(worker/extension-worker-key session) session]
+                                           [session session]]
+                                          @calls))))))
   (it "bounds an interrupt whose child never replies"
       (let [pending
             (atom {})

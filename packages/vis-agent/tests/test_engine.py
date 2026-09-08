@@ -352,7 +352,10 @@ def test_real_agent_tool_view_activity_and_cancellation(
             closed_views = {
                 e.view.kind: e.view.result for e in seen if e.type == "view.close"
             }
-            assert set(closed_views) == {"input", "live"}
+            assert set(closed_views) == {"input", "live"}, (
+                mode,
+                [(e.type, e.view.kind if e.view else None) for e in seen],
+            )
             # Public close receipts must not disclose the form answer. HTTP
             # omits the live picture already delivered by open/patch; stdio
             # polling reads the durable receipt, which retains that picture.

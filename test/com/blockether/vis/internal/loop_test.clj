@@ -20,6 +20,7 @@
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.python.worker :as python-worker]
+            [com.blockether.vis.internal.sandbox.policy]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.context.engine :as eng]
             [com.blockether.vis.internal.session.titling :as titling]
@@ -2058,7 +2059,12 @@
             (.getCanonicalPath (java.io.File. (System/getProperty "user.home") ".vis"))
 
             snapshot
-            (with-redefs [config/load-config-raw #(deref cfg)]
+            (with-redefs [config/load-config-raw
+                          #(deref cfg)
+
+                          com.blockether.vis.internal.sandbox.policy/java-read-roots
+                          (constantly [])]
+
               ((ns-resolve 'com.blockether.vis.internal.loop 'security-config-snapshot)))]
 
         ;; This models a tool editing writable vis.yml after environment creation.

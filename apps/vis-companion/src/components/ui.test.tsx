@@ -172,7 +172,6 @@ describe("split button", () => {
   });
 });
 
-
 // A project FOLDS, and the fold is the naming half of its own header.
 describe("ProjectCrumb", () => {
   it("is a disclosure that names its project and its state", () => {
@@ -421,7 +420,12 @@ describe("IconButton", () => {
       <NewSessionButton machine="tower" onPress={() => {}} />,
     );
 
-    for (const rhythm of ["size-8", "rounded-full", "self-center", "mouse:size-7"]) {
+    for (const rhythm of [
+      "size-8",
+      "rounded-full",
+      "self-center",
+      "mouse:size-7",
+    ]) {
       expect(html()).toContain(rhythm);
       expect(primary).toContain(rhythm);
     }
@@ -624,7 +628,9 @@ describe("BandButton", () => {
   // whether or not there was anything to save, so the band never said which of the two it was.
   it("wears the accent while — and only while — it has something to commit", () => {
     // Nothing to commit: the COLOUR LEAVES, it does not merely fade.
-    expect(html({ isPrimary: true, disabled: true })).not.toContain("bg-accent");
+    expect(html({ isPrimary: true, disabled: true })).not.toContain(
+      "bg-accent",
+    );
     expect(html()).not.toContain("bg-accent");
   });
 
@@ -633,14 +639,17 @@ describe("BandButton", () => {
   it("keeps a document verb in its band and a tool verb in its tool slot", () => {
     expect(markdownArtifactSource).toContain("<BandButton");
     expect(markdownArtifactSource.match(/onClick={save}/g)).toHaveLength(1);
-    expect(markdownArtifactSource).not.toContain("border-t border-dialog-edge px-3 py-3 pb-[max(");
+    expect(markdownArtifactSource).not.toContain(
+      "border-t border-dialog-edge px-3 py-3 pb-[max(",
+    );
     expect(markdownArtifactSource).toContain("isPrimary");
     expect(imageViewerSource).not.toContain("<BandButton");
     expect(artifactsSheetSource).toContain("actions={actions}");
-    expect(docSource).toMatch(/actions=\{\s*<>\s*\{versionCell\}\s*\{actions\}/);
+    expect(docSource).toMatch(
+      /actions=\{\s*<>\s*\{versionCell\}\s*\{actions\}/,
+    );
   });
 });
-
 
 // Regression, user report ("MARGIN RIGHT DIFFERS AND ALSO WHY THERE IS NO MARGIN
 // BEFORE NEW SESSION"): the machine header padded its own right edge while the project
@@ -673,7 +682,6 @@ describe("HeaderActions", () => {
     );
   });
 });
-
 
 // Regression, user report (paraphrased: project status values ran together and only
 // LIVE was summarized): live, human demand and finished unread work are separate states.
@@ -819,12 +827,16 @@ describe("Pager", () => {
 // under the band for the whole of a project, and it is gone: the pager is a cluster
 // in the band's own trailing column and the count rides on the name's second line.
 describe("a project band carries its own count and its own pager", () => {
-  const band = /<SwipeActions\s+label=\{project\}[\s\S]*?<\/SectionHeader>/.exec(sessionsListSource)?.[0] ?? "";
+  const band =
+    /<SwipeActions\s+label=\{project\}[\s\S]*?<\/SectionHeader>/.exec(
+      sessionsListSource,
+    )?.[0] ?? "";
   const qualifier = band.slice(
     band.indexOf("qualifier={"),
     band.indexOf("qualifierTitle="),
   );
-  const cluster = /<HeaderActions[^>]*>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? "";
+  const cluster =
+    /<HeaderActions[^>]*>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? "";
 
   it("walks the project from the band's own trailing cluster", () => {
     expect(cluster).toMatch(/<Pager\s+page=\{shownPage\}/);
@@ -841,7 +853,9 @@ describe("a project band carries its own count and its own pager", () => {
   });
 
   it("counts the project under its name, never in that cluster", () => {
-    expect(qualifier).toContain('<HeaderTally count={tally.count} unit="session" />');
+    expect(qualifier).toContain(
+      '<HeaderTally count={tally.count} unit="session" />',
+    );
     expect(qualifier).toContain("<ProjectStatusCounts");
     // Measured at 320px: the count, the live pulse and the amber verb take the
     // cluster's width first and leave the project NAME 24px — which is the reason
@@ -857,9 +871,10 @@ describe("a project band carries its own count and its own pager", () => {
   // ARE the line — they say what the reader can act on — and the path rides on the
   // `title`, as it does for a machine whose address is its name.
   it("gives the phone's qualifier line to the counts, and takes the path with its dot", () => {
-    const path = /<span className="([^"]*)">\s*\{qualifierPath\}\s*<span aria-hidden> ·<\/span>\s*<\/span>/.exec(
-      qualifier,
-    )?.[1] ?? "";
+    const path =
+      /<span className="([^"]*)">\s*\{qualifierPath\}\s*<span aria-hidden> ·<\/span>\s*<\/span>/.exec(
+        qualifier,
+      )?.[1] ?? "";
     expect(path).toContain("@max-md:hidden");
     expect(path).toContain("truncate");
     // No separator of its own beside the path any more: it left with the path.
@@ -892,7 +907,12 @@ describe("a project band carries its own count and its own pager", () => {
     const face = (page: number) =>
       /<nav [^>]*>([\s\S]*?)<\/nav>/.exec(
         renderToStaticMarkup(
-          <Pager page={page} pageCount={100} onPage={() => {}} label="vis sessions" />,
+          <Pager
+            page={page}
+            pageCount={100}
+            onPage={() => {}}
+            label="vis sessions"
+          />,
         ),
       )?.[0] ?? "";
     // The window that opens on page 4 is the DESKTOP form only; the phone form says
@@ -914,7 +934,9 @@ describe("MachineGap", () => {
   });
 
   it("opens every machine but the first, and nothing opens a project", () => {
-    expect(sessionsListSource).toContain("{sectionIndex > 0 && <MachineGap />}");
+    expect(sessionsListSource).toContain(
+      "{sectionIndex > 0 && <MachineGap />}",
+    );
     expect(sessionsListSource).not.toMatch(/SectionGap/);
   });
 });
@@ -1040,7 +1062,9 @@ describe("the list grid", () => {
     expect(html).toContain('title="/Users/dev/vis/apps/vis-companion"');
     // The loading band stands in for the SAME two lines, through the same two
     // slots: a one-line skeleton grows by a line the moment data lands.
-    expect(sessionsListSource).toMatch(/name=\{\s*<SkeletonBar\s+type="text-title"/);
+    expect(sessionsListSource).toMatch(
+      /name=\{\s*<SkeletonBar\s+type="text-title"/,
+    );
     expect(sessionsListSource).toMatch(
       /qualifier=\{\s*<SkeletonBar\s+type="text-chip"/,
     );
@@ -1129,7 +1153,9 @@ describe("Modal and DialogFrame as a phone sheet", () => {
       "DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]'",
     );
     expect(source).toContain("'sm:max-w-4xl' : 'sm:max-w-xl'");
-    expect(source).toContain("'max-h-[calc(100%-env(safe-area-inset-top))] sm:h-auto' : DIALOG_DESKTOP_HEIGHT");
+    expect(source).toContain(
+      "'max-h-[calc(100%-env(safe-area-inset-top))] sm:h-auto' : DIALOG_DESKTOP_HEIGHT",
+    );
     // One width for every dialog that asks ONE question, so a question and a file
     // browser are the same rectangle. `wide` is the settings box and nothing else:
     // two columns side by side is a LAYOUT, and it is the only one in the app.
@@ -1195,11 +1221,10 @@ describe("settings is ONE dialog with two columns", () => {
   it("puts the columns side by side with room, and stacks them on a phone", () => {
     expect(settings).toContain("grid-cols-1");
     expect(settings).toContain("sm:grid-cols-2");
-    // One rule between the columns on desktop. On a phone the rule between the
-    // stacked halves is the upper column's OWN closing border, so the grid never
-    // divides as well — see "closes the last group of a column" below.
+    // Separate stacked columns on phones; keep only the vertical rule on desktop.
+    expect(settings).toContain("divide-y divide-dialog-edge");
     expect(settings).toContain("sm:divide-x");
-    expect(settings).not.toContain("sm:divide-y-0");
+    expect(settings).toContain("sm:divide-y-0");
   });
 
   // Regression, Vis session 57dfea5e-0c2d-4190-a82c-0e1992e352c3: the three
@@ -1223,7 +1248,9 @@ describe("settings is ONE dialog with two columns", () => {
     expect(band).toContain('<PlusIcon className="size-4" />');
     // A mark has no word to be wide for, so it takes no density either.
     expect(band).not.toContain('density="compact"');
-    expect(band).not.toContain(">\n                Add a machine\n              </Button>");
+    expect(band).not.toContain(
+      ">\n                Add a machine\n              </Button>",
+    );
     const sheet = settings.slice(settings.indexOf('<Modal size="fit"'));
     expect(sheet).toContain('title="Add a machine"');
     expect(sheet).toContain("<AddMachine");
@@ -1231,14 +1258,9 @@ describe("settings is ONE dialog with two columns", () => {
     expect(settings).not.toContain("onPair");
   });
 
-  it("welds a machine's opened panels to its row with a rule, and closes the last group of a column", () => {
-    // Reported over the same dialog on a phone: the last group simply STOPPED.
-    // A full-bleed frame carries no bottom edge, so the amber cell of the last
-    // choice ran out into paper with no hairline under it — measured at 390px,
-    // the column body ended at the cell's own 2655px. The body closes itself; on
-    // `sm:` the frame's own 1px border is that edge, so the rule is dropped there
-    // rather than doubled.
-    expect(settings).toContain(
+  it("joins opened panels to the machine row without a trailing column rule", () => {
+    expect(machineSettingsSource).toContain("border-t border-dialog-edge");
+    expect(settingsLayoutSource).not.toContain(
       "divide-y divide-dialog-edge border-b border-dialog-edge",
     );
   });
@@ -1307,7 +1329,9 @@ describe("settings is ONE dialog with two columns", () => {
     // NEW server is the list's last row; an edit hangs under the row it edits.
     expect(mcp).toContain("showForm ? null : (");
     expect(mcp).toContain("{showForm && !editing && form}");
-    expect(mcp).toContain("{showForm && editing?.name === server.name && form}");
+    expect(mcp).toContain(
+      "{showForm && editing?.name === server.name && form}",
+    );
     // One row-verb surface in this app: the verbs slide out from under the row,
     // and the destructive ones ask in the row itself instead of `window.confirm`.
     expect(mcp).toContain("<SwipeActions");
@@ -1357,7 +1381,9 @@ describe("settings is ONE dialog with two columns", () => {
     expect(notify).toContain("title={action}");
     expect(notify).toContain("label={`Notifications from ${machine}`}");
     expect(notify).not.toContain("w-full justify-center sm:w-auto");
-    expect(notify).not.toContain('className="flex items-center justify-end px-3 py-2"');
+    expect(notify).not.toContain(
+      'className="flex items-center justify-end px-3 py-2"',
+    );
     // One full-width verb is left in the dialog and it is not a band's: importing a
     // voice is a file picker inside a nested group, which has no trailing cell.
     expect(settings.match(/w-full justify-center/g)).toHaveLength(1);
@@ -1370,7 +1396,9 @@ describe("settings is ONE dialog with two columns", () => {
     // spelled once as `MARK_NUDGE` (`scripts/touch-density.test.mjs`).
     expect(machinesSource).toContain("Mark: CircleCheckIcon");
     expect(machinesSource).not.toContain("\\u25cf");
-    expect(providerAuthSource).toContain('className="shrink-0 self-start" title={status.label}');
+    expect(providerAuthSource).toContain(
+      'className="shrink-0 self-start" title={status.label}',
+    );
     expect(providerAuthSource).toContain(
       "<status.Mark className={`${MARK_NUDGE} ${status.tone}`} />",
     );
@@ -1396,7 +1424,9 @@ describe("settings is ONE dialog with two columns", () => {
     expect(rows).not.toContain("CircleDashedIcon");
     expect(rows).not.toContain("CircleDotIcon");
     expect(rows).not.toContain("MARK_NUDGE");
-    expect(mcp).toContain("<state.Mark className={`${MARK_NUDGE} ${state.tone}`} />");
+    expect(mcp).toContain(
+      "<state.Mark className={`${MARK_NUDGE} ${state.tone}`} />",
+    );
     // Label then control: the name starts on the same left edge as the band
     // title above it, and the description gets the glyph column's width back.
     expect(settings).toContain(
@@ -1555,7 +1585,9 @@ describe("a row-ending icon button fills its row", () => {
 describe("a row's pressable slab", () => {
   it("pads its trailing inside edge exactly as LIST_EDGE pads the leading one", () => {
     expect(uiSource).toContain("export const LIST_EDGE = 'pl-3 sm:pl-4';");
-    expect(navigatorSource).toContain("export const LIST_EDGE_END = 'pr-3 sm:pr-4';");
+    expect(navigatorSource).toContain(
+      "export const LIST_EDGE_END = 'pr-3 sm:pr-4';",
+    );
   });
 
   it("never lets a row spell that padding itself", () => {
@@ -1620,7 +1652,9 @@ describe("NewSessionButton, one action", () => {
       <NewSessionButton machine="visgw" where="vis" onPress={() => {}} />,
     );
     expect(html.match(/<button/g)).toHaveLength(1);
-    expect(html).toContain(renderToStaticMarkup(<PlusIcon className="size-4 text-accent-ink" />));
+    expect(html).toContain(
+      renderToStaticMarkup(<PlusIcon className="size-4 text-accent-ink" />),
+    );
     expect(html).not.toContain("border-r-0");
   });
 
@@ -1913,8 +1947,12 @@ describe("project verbs use distinct marks", () => {
     const glyph = (markup: string) => markup.match(/<svg[\s\S]*?<\/svg>/g)?.[0];
     const start = glyph(session);
     const inventory = glyph(projects);
-    expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-4 text-accent-ink" />));
-    expect(inventory).toBe(renderToStaticMarkup(<ProjectsIcon className="size-4" />));
+    expect(start).toBe(
+      renderToStaticMarkup(<PlusIcon className="size-4 text-accent-ink" />),
+    );
+    expect(inventory).toBe(
+      renderToStaticMarkup(<ProjectsIcon className="size-4" />),
+    );
     expect(start).not.toBe(inventory);
   });
 });
@@ -1925,11 +1963,7 @@ describe("project verbs use distinct marks", () => {
 // progress inside a graphical button must be the familiar turning ring, not terminal type.
 describe("NewSessionButton, busy", () => {
   const busy = renderToStaticMarkup(
-    <NewSessionButton
-      machine="tower"
-      isBusy
-      onPress={() => {}}
-    />,
+    <NewSessionButton machine="tower" isBusy onPress={() => {}} />,
   );
 
   it("turns its mark into circular progress without growing a word", () => {
@@ -1986,7 +2020,6 @@ describe("Modal, fit", () => {
     expect(uiSource).not.toContain("'max-h-full sm:h-auto'");
   });
 
-
   // Regression, user report (rename field hidden under the iOS keyboard, then the
   // note annotator's composer under it): the native keyboard pins only the app
   // shell to its visible height. A body portal remains as tall as the glass and
@@ -1997,10 +2030,10 @@ describe("Modal, fit", () => {
     expect(uiSource).toContain(
       "document.querySelector<HTMLElement>('[data-viewport-shell]')",
     );
+    expect(uiSource).toContain("host === document.body ? 'fixed' : 'absolute'");
     expect(uiSource).toContain(
-      "host === document.body ? 'fixed' : 'absolute'",
+      "const { host: portalHost, position } = overlayLayer();",
     );
-    expect(uiSource).toContain("const { host: portalHost, position } = overlayLayer();");
     expect(uiSource).toContain("portalHost,\n  );");
     // The opened document is the app's other full-screen layer, and it asks the
     // same question instead of hanging off the body at `100dvh`.
@@ -2128,7 +2161,6 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
     });
   });
 
-
   // Regression, user report ("every show-more must be the same `—— show more ——`
   // rule on both surfaces, not a bigger chevron and a `+2 more read files`"): this
   // was a boxed bar wearing an arrow while the activity band spelled the same
@@ -2237,7 +2269,9 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
     it("keeps compact paper and restores its touch reach outside it", () => {
       const compact = first(html({ density: "compact" }));
       expect(compact).toContain("after:absolute");
-      expect(compact.some((token) => token.startsWith("after:content-"))).toBe(true);
+      expect(compact.some((token) => token.startsWith("after:content-"))).toBe(
+        true,
+      );
       expect(compact).toContain("mouse:after:content-none");
     });
 
@@ -2275,7 +2309,9 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
     // A step of a run is a SENTENCE — `Searched · 18 matches` — not the name of a
     // band, so it must not wear the weight a tool header wears above a block.
     it("reads a chronology step as a sentence, not a band name", () => {
-      expect(first(html({ tone: "chronology" }))).not.toContain("font-extrabold");
+      expect(first(html({ tone: "chronology" }))).not.toContain(
+        "font-extrabold",
+      );
       expect(first(html({ tone: "step" }))).toContain("font-extrabold");
     });
   });
@@ -2697,7 +2733,11 @@ describe("a setting is picked and switched by one control each", () => {
         sub="en-US"
         isSelected={false}
         isLeaf
-        leadingAction={{ label: "Play Albert", icon: <span>▶</span>, onClick: () => {} }}
+        leadingAction={{
+          label: "Play Albert",
+          icon: <span>▶</span>,
+          onClick: () => {},
+        }}
       />,
     );
     const wrapper = /<div[^>]*class="([^"]*)"/.exec(html)?.[1].split(" ") ?? [];
@@ -2708,7 +2748,9 @@ describe("a setting is picked and switched by one control each", () => {
     expect(buttons).toHaveLength(2);
     expect(wrapper).toContain("grid-cols-[2.5rem_minmax(0,1fr)]");
     expect(wrapper).not.toContain("gap-1");
-    expect(buttons[0]).toEqual(expect.arrayContaining(["border-r", "border-dialog-edge"]));
+    expect(buttons[0]).toEqual(
+      expect.arrayContaining(["border-r", "border-dialog-edge"]),
+    );
   });
 
   // Regression, user report over the open TTS panel ("that full-width stack of things still
@@ -2717,7 +2759,12 @@ describe("a setting is picked and switched by one control each", () => {
   // than the voices themselves.
   it("spends one line on a leaf and keeps two for the choice that owns a list", () => {
     const leaf = renderToStaticMarkup(
-      <ChoiceCell title="Albert" sub="en-US · device default" isSelected={false} isLeaf />,
+      <ChoiceCell
+        title="Albert"
+        sub="en-US · device default"
+        isSelected={false}
+        isLeaf
+      />,
     );
     expect(leaf).not.toContain("uppercase tracking-wider");
 
@@ -2772,7 +2819,11 @@ describe("a setting is picked and switched by one control each", () => {
 
   it("opens a settings direction with one full-row chevron control", () => {
     const closed = renderToStaticMarkup(
-      <SettingsDisclosure label="ASR" value="Parakeet (local)" isOpen={false} />,
+      <SettingsDisclosure
+        label="ASR"
+        value="Parakeet (local)"
+        isOpen={false}
+      />,
     );
     expect(closed).toContain('aria-expanded="false"');
     expect(closed).toContain("ASR");
@@ -2801,12 +2852,16 @@ describe("a setting is picked and switched by one control each", () => {
     expect(on).toContain('aria-checked="true"');
     expect(on).toContain('aria-label="Web search: on"');
     expect(on).not.toContain(">ON<");
-    const off = renderToStaticMarkup(<Switch label="Web search" isOn={false} />);
+    const off = renderToStaticMarkup(
+      <Switch label="Web search" isOn={false} />,
+    );
     expect(off).toContain('aria-checked="false"');
     expect(off).toContain('aria-label="Web search: off"');
     expect(off).not.toContain(">OFF<");
     // A round trip to a gateway pulses the knob instead of printing dots at it.
-    const busy = renderToStaticMarkup(<Switch label="Web search" isOn isBusy />);
+    const busy = renderToStaticMarkup(
+      <Switch label="Web search" isOn isBusy />,
+    );
     expect(busy).toContain('aria-busy="true"');
     expect(busy).not.toContain("··");
   });
@@ -2824,7 +2879,9 @@ describe("a setting is picked and switched by one control each", () => {
   // is set to. Resting is the hint ink the label beside it already wears: 4.87:1
   // on the dialog's paper, 4.2:1 on a machine's own.
   it("wears the resting frame when it is off, over no paper of its own", () => {
-    const resting = renderToStaticMarkup(<Switch label="Web search" isOn={false} />);
+    const resting = renderToStaticMarkup(
+      <Switch label="Web search" isOn={false} />,
+    );
     const off = classes(resting);
     expect(off).not.toContain("border-transparent");
     expect(off).not.toContain("bg-panel-2");
@@ -2910,7 +2967,9 @@ describe("the notifications control answers one question", () => {
     const busy = control({ isBusy: true });
     expect(busy).toContain('aria-busy="true"');
     expect(busy).not.toContain("Connecting…");
-    expect(control({ isOn: true, isBusy: true })).not.toContain("Disconnecting…");
+    expect(control({ isOn: true, isBusy: true })).not.toContain(
+      "Disconnecting…",
+    );
 
     const checking = control({ isChecking: true });
     expect(checking).toContain('aria-busy="true"');
@@ -2929,7 +2988,9 @@ describe("the notifications control answers one question", () => {
   // it in the header, as a circle. Then: make it the same toggle as the rest.
   it("is the control and nothing else — no verdict line, no sentence, no row", () => {
     const markup = control({ machine: "gateway.example.com" });
-    expect(markup).not.toContain("gateway.example.com will not alert this device.");
+    expect(markup).not.toContain(
+      "gateway.example.com will not alert this device.",
+    );
     expect(markup).not.toContain(">Not connected<");
     expect(markup).toContain(
       'title="Connect notifications from gateway.example.com"',
@@ -2998,7 +3059,6 @@ describe("the session screen and the settings dialog spell no control out", () =
       "content: terminalBlocks?.length ? terminalBlocks : turn.content",
     );
   });
-
 
   it("holds one Android audio route for the whole voice conversation", () => {
     expect(sessionScreenSource).toContain("await beginVoiceAudioSession()");
@@ -3099,9 +3159,7 @@ describe("the session screen and the settings dialog spell no control out", () =
     // is the band's trailing CELL, centred against the title's own cell, and that
     // cell is what wraps — never the line the verb stands on.
     const band =
-      /<div className="(flex min-h-9[^"]*)"/.exec(
-        settingsSource,
-      )?.[1] ?? "";
+      /<div className="(flex min-h-9[^"]*)"/.exec(settingsSource)?.[1] ?? "";
     const nestedBand =
       /<header className="(flex min-h-9[^"]*)"/.exec(settingsSource)?.[1] ?? "";
     expect(band.length).toBeGreaterThan(0);
@@ -3175,11 +3233,15 @@ describe("the session screen and the settings dialog spell no control out", () =
       )
       .map(([, source]) => source)
       .join("\n");
-    const controls = [...uiSource.matchAll(/^export (?:function|const) ([A-Z]\w+)/gm)]
+    const controls = [
+      ...uiSource.matchAll(/^export (?:function|const) ([A-Z]\w+)/gm),
+    ]
       .map(([, name]) => name)
       .filter((name) => name !== name.toUpperCase());
     const privateOrDead = controls.filter(
-      (name) => [...production.matchAll(new RegExp(`<${name}(?=[\\s/>])`, "g"))].length < 2,
+      (name) =>
+        [...production.matchAll(new RegExp(`<${name}(?=[\\s/>])`, "g"))]
+          .length < 2,
     );
 
     expect(privateOrDead).toEqual([]);
@@ -3583,7 +3645,10 @@ describe("iOS voice downloads", () => {
   );
   const guidance = panel.slice(
     panel.indexOf("{voiceDownloadGuidance && ("),
-    panel.indexOf("</SettingsChoiceGroup>", panel.indexOf("{voiceDownloadGuidance && (")),
+    panel.indexOf(
+      "</SettingsChoiceGroup>",
+      panel.indexOf("{voiceDownloadGuidance && ("),
+    ),
   );
 
   it("keeps Apple's voice download path as manual guidance", () => {
@@ -3652,12 +3717,14 @@ describe("the machine's voices", () => {
 describe("a panel band sits UNDER its column band, never beside it", () => {
   const band = (marker: string) => {
     const start = settingsSource.indexOf(marker);
-    return settingsSource.slice(start, settingsSource.indexOf("</header>", start));
+    return settingsSource.slice(
+      start,
+      settingsSource.indexOf("</header>", start),
+    );
   };
   const panel = band("export function SettingsPanel");
 
   it("keeps the paper, the size and the white for the column alone", () => {
-
     expect(panel).not.toContain("bg-level-machine");
     expect(panel).not.toContain("bg-panel-2");
     expect(panel).not.toContain("text-white");
@@ -3681,7 +3748,6 @@ describe("Input", () => {
     expect(mark({})).not.toContain("tracking-[0.15em]");
   });
 });
-
 
 // Regression, user report ("there is some white down one side, and at the bottom there is
 // not"): a nested cluster indented its whole body, so its rows stood a step in from the left
@@ -3709,13 +3775,17 @@ describe("SettingsChoiceGroup", () => {
 
   it("draws every structural boundary of a nested cluster with the hairline pen", () => {
     const nested = group(true);
-    const frame = /<section[^>]*class="([^"]*)"/.exec(nested)?.[1].split(" ") ?? [];
-    const heading = /<header[^>]*class="([^"]*)"/.exec(nested)?.[1].split(" ") ?? [];
+    const frame =
+      /<section[^>]*class="([^"]*)"/.exec(nested)?.[1].split(" ") ?? [];
+    const heading =
+      /<header[^>]*class="([^"]*)"/.exec(nested)?.[1].split(" ") ?? [];
 
     expect(frame).toEqual(
       expect.arrayContaining(["border-l-2", "border-t", "border-dialog-edge"]),
     );
-    expect(heading).toEqual(expect.arrayContaining(["border-b", "border-dialog-edge"]));
+    expect(heading).toEqual(
+      expect.arrayContaining(["border-b", "border-dialog-edge"]),
+    );
     expect(nested).not.toContain("border-accent");
     expect(nested).not.toContain("ml-3");
     expect(group(false)).not.toContain("border-accent");
@@ -3738,8 +3808,12 @@ describe("SettingsChoiceGroup", () => {
   });
 
   it("keeps the clusters of one engine on one edge", () => {
-    expect(settingsSource).toContain('<SettingsChoiceGroup label="Voices" isNested>');
-    expect(settingsSource).toContain('<SettingsChoiceGroup label="Speech rate" isNested>');
+    expect(settingsSource).toContain(
+      '<SettingsChoiceGroup label="Voices" isNested>',
+    );
+    expect(settingsSource).toContain(
+      '<SettingsChoiceGroup label="Speech rate" isNested>',
+    );
   });
 });
 
@@ -3766,7 +3840,14 @@ describe("Corners", () => {
     // `rounded-2xl` would be a class that paints nothing. Vitest hands a
     // stylesheet back as an empty module (`?raw` included), so what is pinned
     // here is every corner the app actually writes: a rung, a dot, or a square.
-    const rungs = new Set(["chip", "control", "field", "panel", "none", "full"]);
+    const rungs = new Set([
+      "chip",
+      "control",
+      "field",
+      "panel",
+      "none",
+      "full",
+    ]);
     for (const [path, source] of Object.entries(everything)) {
       for (const [, rung] of source.matchAll(
         /\brounded-(?:[tbrlse]-|[tb][lr]-)?([a-z0-9]+)\b/g,
@@ -3781,7 +3862,9 @@ describe("Corners", () => {
     // made it square still holds. The machine tab left that list: it is a segmented
     // control standing beside a disc, so it is a capsule.
     expect(
-      corners(renderToStaticMarkup(<ListRow onClick={() => {}}>anthropic</ListRow>)),
+      corners(
+        renderToStaticMarkup(<ListRow onClick={() => {}}>anthropic</ListRow>),
+      ),
     ).toEqual([]);
   });
 
@@ -3813,7 +3896,6 @@ describe("Corners", () => {
   });
 });
 
-
 // The gallery is the ONE place a design is looked at, so a control no story draws is a
 // control nobody has seen since the commit that added it. Six of them had never been
 // drawn at all — the activity panel, the data table, the menu, media, the swipe drawer,
@@ -3843,7 +3925,9 @@ describe("every control is drawn in the gallery", () => {
     SessionNavigator: "./ui.stories.tsx",
   };
   it("draws every component ui.tsx exports", () => {
-    const undrawn = [...uiSource.matchAll(/export (?:function|const) ([A-Z]\w+)/g)]
+    const undrawn = [
+      ...uiSource.matchAll(/export (?:function|const) ([A-Z]\w+)/g),
+    ]
       .map(([, name]) => name)
       // A SCREAMING_CASE export is a shared class string, not a control.
       .filter((name) => name !== name.toUpperCase())
@@ -3865,9 +3949,10 @@ describe("every control is drawn in the gallery", () => {
 
     expect(missing).toEqual([]);
     for (const owner of Object.values(indirectStoryOwner)) {
-      expect(stories[owner], `${owner} is named as a component's gallery owner`).toBeTypeOf(
-        "string",
-      );
+      expect(
+        stories[owner],
+        `${owner} is named as a component's gallery owner`,
+      ).toBeTypeOf("string");
     }
   });
   // A story is a FIXTURE. Anything that fetches, ticks or rolls a die draws a

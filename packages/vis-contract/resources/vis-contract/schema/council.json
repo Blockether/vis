@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vis.blockether.com/schema/council.json",
+  "$id": "https://contract.blockether.com/vis/schema/council.json",
   "type": "object",
   "properties": {
     "version": {

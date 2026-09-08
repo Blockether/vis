@@ -115,7 +115,7 @@
                             (atom {id (#'loop/new-cache-entry {:python-context first-context})})
 
                             loop/policy-reload-epoch
-                            (atom 0)]
+                            (atom @loop/policy-reload-epoch)]
 
                 (is (= {:loaded 1 :failed 0 :changed? true} (reload!)))
                 ((get @@#'extension/reload-hooks

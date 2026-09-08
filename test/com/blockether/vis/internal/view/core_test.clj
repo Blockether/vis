@@ -588,6 +588,24 @@
 
 (defdescribe
   request-lifecycle-test
+  (it
+    "publishes the input close before releasing its waiter"
+    ;; Regression: SDK consumers could receive turn.completed before view.close.
+    (doseq [action [:submit :cancel]]
+      (let [{:keys [future request-id detach!]} (start-request! (spec {:id "name"}))
+            answer (:promise (get @(var-get #'hi/pending) request-id))
+            delivered (atom [])
+            publish ce/publish-channel-event!]
+
+        (try
+          (with-redefs [ce/publish-channel-event! (fn [channel event]
+                                                    (when (= :view/close (:op event))
+                                                      (swap! delivered conj (realized? answer)))
+                                                    (publish channel event))]
+            (if (= :submit action) (hi/submit! request-id {"name" "Ada"}) (hi/cancel! request-id)))
+          (expect (= [false] @delivered))
+          (expect (map? (deref future 5000 ::blocked)))
+          (finally (detach!))))))
   (it "publishes a dialog event, blocks, and returns the submitted values"
       (let [{:keys [future events request-id detach!]}
             (start-request!

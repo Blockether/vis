@@ -29,7 +29,7 @@
 
 (defn- check-enabled! [] (when-not (enabled?) (fail! :disabled "Council is disabled")))
 
-(defn utf8-size ^long [^String s] (alength (.getBytes s StandardCharsets/UTF_8)))
+(defn utf8-size ^long [^String s] (alength (util/utf8 s)))
 
 (defn- clip
   [^String s n]
@@ -173,7 +173,7 @@
                                                  :source source
                                                  :thread_id thread
                                                  :content content
-                                                 :created_at (System/currentTimeMillis)
+                                                 :created_at (util/now-ms)
                                                  :idempotency_key key
                                                  :fingerprint fingerprint}
                                           (not thread)

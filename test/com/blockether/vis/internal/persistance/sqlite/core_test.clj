@@ -3965,7 +3965,7 @@
              ;; always on, and a JFR profile of a live gateway showed it as the single largest
              ;; allocation site: 17 checkouts a second paying for a leak that never happens.
              (it "leaves Hikari's leak detector off unless a property arms it"
-                 (expect (zero? (long (var-get #'sqlite-core/leak-detection-ms))))
+                 (expect (zero? (long @(var-get #'sqlite-core/leak-detection-ms))))
                  (let [raw
                        (doto (org.sqlite.SQLiteDataSource.) (.setUrl "jdbc:sqlite::memory:"))
 

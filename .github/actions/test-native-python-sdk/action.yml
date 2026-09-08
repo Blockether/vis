@@ -3,17 +3,20 @@ description: Exercise installed SDK packages against the staged native release a
 runs:
   using: composite
   steps:
-    - uses: actions/setup-python@v6
+    - uses: astral-sh/setup-uv@v7
       with:
-        python-version: '3.11'
-    - name: Install SDK wheels and test runner
+        version: "0.9.2"
+        enable-cache: false
+    - name: Install SDK wheels and test runner in an isolated environment
       shell: bash
-      run: python -m pip install pytest ./packages/vis-agent
+      run: |
+        uv venv --python 3.11 "$RUNNER_TEMP/vis-native-sdk-venv"
+        uv pip install --python "$RUNNER_TEMP/vis-native-sdk-venv/bin/python" pytest ./packages/vis-agent
     - name: Exercise native HTTP and stdio outside the checkout
       shell: bash
       run: |
-        python - <<'PY'
-        import os, shlex, subprocess
+        "$RUNNER_TEMP/vis-native-sdk-venv/bin/python" - <<'PY'
+        import os, shlex, subprocess, sys
         from pathlib import Path
         root = Path.cwd()
         binary = root / 'target/release-bundle/vis-agent'
@@ -21,7 +24,7 @@ runs:
         env = {**os.environ, 'VIS_TEST_INSTALLED': '1',
                'VIS_TEST_LOCAL_COMMAND': shlex.join([str(binary)]), 'VIS_JVM': '0'}
         env.pop('VIS_PYTHON_NATIVE_PATH', None)  # exercise the bundled worker, not an override
-        subprocess.run(['python', '-m', 'pytest', str(root / 'packages/vis-agent/tests/test_engine.py'),
+        subprocess.run([sys.executable, '-m', 'pytest', str(root / 'packages/vis-agent/tests/test_engine.py'),
                         str(root / 'packages/vis-agent/tests/test_local.py'), '-q'],
                        cwd=os.environ['RUNNER_TEMP'], env=env, check=True)
         PY

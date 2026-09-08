@@ -2252,11 +2252,11 @@
   (checked-answer request-id (:fields (get @pending request-id)) result)
   (let [[old _] (swap-vals! pending dissoc request-id)]
     (when-let [entry (get old request-id)]
-      (deliver (:promise entry) result)
-      ;; The lifecycle envelope carries `:session-id` from the removed entry;
-      ;; listeners never have to recover routing data from the registry.
-      (publish! (:channel-ids entry)
-                (lifecycle-event :view/close entry {:result {:reason (:reason result)}}))
+      ;; Close reaches every channel before the resumed caller can finish its turn.
+      ;; Routing comes from the removed entry, not the pending registry.
+      (try (publish! (:channel-ids entry)
+                     (lifecycle-event :view/close entry {:result {:reason (:reason result)}}))
+           (finally (deliver (:promise entry) result)))
       entry)))
 
 (defn submit!

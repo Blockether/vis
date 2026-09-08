@@ -88,7 +88,10 @@
             @fixture
 
             cacerts
-            (io/file jdk-home "lib" "security" "cacerts")
+            (io/file (str/trim (:out (script [] (dissoc env "VIS_CA_CERT"))))
+                     "lib"
+                     "security"
+                     "cacerts")
 
             before
             (sha256 cacerts)

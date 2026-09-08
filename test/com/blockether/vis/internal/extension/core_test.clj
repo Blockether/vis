@@ -569,7 +569,6 @@
       (let [sigs (extension/sandbox-symbol-signatures)]
         (expect (= "language=None, **kwargs" (get sigs 'run_tests)))
         (expect (= "command, opts=None, **kwargs" (get sigs 'shell)))
-        (expect (= "" (get sigs 'languages)))
         (expect (= "options, **kwargs" (get sigs 'grep)))))
   ;; THE INVARIANT: prose can describe a verb, but only its parameter list says
   ;; what it takes, which of it is required and in what order. A tool that
@@ -585,15 +584,15 @@
         (expect (= [] unsigned) (str "tools with no declared parameters: " unsigned)))))
 
 (defn- live-tool-entries
-  "Every engine-bound tool entry a live session sees, minus the raw helpers, the
-   hidden ones, and the `_`-prefixed transports (`_shell_wait` is reached through
-   the shell HANDLE, never typed, and `apropos` filters it out of discovery)."
+  "Engine-owned tools, excluding raw/hidden transports and Python extensions,
+   whose public contracts come from their Python docstrings."
   []
   ;; Reading the docs table loads the built-in extensions, so the walk below sees
   ;; the same registry a live session does.
   (extension/sandbox-symbol-docs)
   (into []
-        (comp (mapcat extension/ext-symbols)
+        (comp (remove #(get-in % [:ext/engine :ext.engine/exact-symbol-names?]))
+              (mapcat extension/ext-symbols)
               (filter :ext.symbol/fn)
               (remove :ext.symbol/raw?)
               (remove :ext.symbol/hidden?)

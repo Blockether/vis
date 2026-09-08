@@ -969,3 +969,57 @@ by 100,000 unrelated continuations.
 
 The user explicitly authorized commit and push to `main` for this feature. No release, deployment
 or live gateway restart is included. Existing main-worktree changes are preserved separately.
+
+## Native production release and deployment
+
+Phrase: publish a complete, tested native production release and verify its installed processes.
+
+Context: `deps.edn` pins runtime 0.5.5 at the current runtime main. Native delivery is
+manual-only in `.github/workflows/native-release.yml`; `.github/workflows/release.yml`
+publishes bootstrap assets before native artifacts exist. `bin/install-vis-agent`,
+`bin/vis-agent`, native integration tests, and companion workflows define the delivery
+boundary. Published version tags must remain immutable; production follows complete
+stable releases rather than a force-moved tag or an implicit JVM fallback.
+
+1. Verify runtime and reproduce delivery gaps.
+   Rationale: an archive or a successful compilation does not prove native execution.
+   Data: runtime pin/release assets, CI runs, affected release tests, native test fixtures.
+   Acceptance criteria: current runtime checked; failing delivery contracts recorded;
+   native worker archive contents and execution verified on supported platforms.
+   Unknowns: outstanding platform build/test failures and available signing credentials.
+2. Repair production installation and complete-release publication.
+   Rationale: installers must not select incomplete releases or silently require a JVM.
+   Data: installer, release workflows, bundle and launcher regression tests.
+   Acceptance criteria: production is the default; explicit development/beta opt-ins;
+   complete artifact gate before stable promotion; affected tests, formatting and lint pass.
+   Unknowns: existing workflow boundaries and mobile distribution requirements.
+3. Build and test all release artifacts.
+   Rationale: engine, TUI, gateway, worker and companion packages must match the release.
+   Data: clean JVM/runtime tests, native binary tests, SDK boundary checks, platform CI.
+   Acceptance criteria: required checks green and all supported release artifacts present;
+   failures fixed rather than bypassed; immutable version/tag/main agree.
+   Unknowns: build resource limits and signing/toolchain availability.
+4. Install and verify on the administered server.
+   Rationale: native build results alone do not establish end-to-end operation.
+   Data: effective private deployment configuration, process identity, canonical gateway
+   client requests, native worker and TUI integration checks.
+   Acceptance criteria: production installation runs without a JVM; native gateway, TUI
+   and worker exercised end to end; healthy requested services left running.
+   Unknowns: current server state and safe deployment/rollback boundary.
+5. Record evidence and deliver.
+   Rationale: release completeness and deployment health must be independently inspectable.
+   Data: scoped commits, immutable release, CI outcomes and runtime observations.
+   Acceptance criteria: scoped changes committed/pushed, complete published assets,
+   explicit verification results and any concrete unresolved blockers reported.
+   Unknowns: none beyond the preceding phases.
+
+Plan state: phase 1 verified locally; phase 2 in progress. Runtime release is green on
+all published architectures. Native dry-run 34265004719 built all three engine images;
+Linux failed namespace setup and macOS failed SDK Python setup, both now corrected.
+Clean JVM suite: 5032 tests passed before the final worker-cancellation regression.
+Final full run: 5034 tests, with two unrelated draft/worktree failures during concurrent
+workspace edits; affected release/runtime suites pass. SDK: all 343 tests passed,
+including HTTP and stdio. Companion: 2401 tests passed, 2 skipped; compiler lint,
+typecheck and formatting passed. Scoped Clojure lint and reflection checks are clean.
+A new native dry run, complete release promotion and deployment remain.
+Preserve unrelated infrastructure, council-default/docs and draft-test work.

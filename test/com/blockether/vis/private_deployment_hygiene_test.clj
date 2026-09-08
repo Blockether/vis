@@ -14,9 +14,9 @@
 (def ^:private pruned-dirs
   "Directory names never scanned: VCS, build output, vendored deps, generated
    mobile projects, caches."
-  #{".git" ".cpcache" ".clj-kondo" ".lsp" ".idea" ".vscode" ".gradle" ".vis" "target" "classes"
-    "node_modules" "dist" "build" "out" "coverage" "ios" "android" "browsers" "venv" ".venv"
-    "__pycache__" ".pytest_cache"})
+  #{".git" ".gitworktrees" ".cpcache" ".clj-kondo" ".lsp" ".idea" ".vscode" ".gradle" ".vis"
+    "target" "classes" "node_modules" "dist" "build" "out" "coverage" "ios" "android" "browsers"
+    "venv" ".venv" "__pycache__" ".pytest_cache"})
 
 (def ^:private scanned-extensions
   #{"md" "mdx" "txt" "clj" "cljc" "cljs" "cljd" "edn" "bb" "yml" "yaml" "json" "ts" "tsx" "js" "jsx"
