@@ -16,7 +16,7 @@ import { AssistantMessage, IterationTrace, UserMessage } from "./ChatContent";
 /**
  * A TURN, DRAWN AS JOINED EXECUTION BANDS.
  *
- * Prose keeps the transcript edge. Code and Activity share an inset rail.
+ * Code, Result and Activity are ordered bands without a left rail.
  * Activity starts shut; its count and status remain visible until expanded.
  * Adjacent bands touch; a new step keeps its own spacing, facts and disclosure state.
  *
@@ -257,8 +257,15 @@ export const CodeWithResult: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.queryByText(/RESULT/)).toBeNull();
+    await expect(canvas.getByRole("button", { name: "Expand result" })).toBeVisible();
     const code = canvasElement.querySelector("[data-execution-code]")!;
+    const result = canvasElement.querySelector("[data-code-result]")!;
+    const activity = canvasElement.querySelector("[data-execution-activity]")!;
+    for (const surface of [code, result, activity]) {
+      await expect(getComputedStyle(surface).borderLeftWidth).toBe("0px");
+    }
+    await expect(result.getBoundingClientRect().top).toBeGreaterThan(code.getBoundingClientRect().top);
+    await expect(activity.getBoundingClientRect().top).toBeGreaterThan(result.getBoundingClientRect().top);
     const copy = canvas.getByRole("button", { name: "Copy code" });
     const duration = within(code as HTMLElement).getByText("57ms");
     await expect(duration.getBoundingClientRect().right).toBeLessThanOrEqual(
@@ -288,6 +295,12 @@ export const CodeWithResult: Story = {
     ).not.toBeNull();
     await expect(band.textContent).toContain("57ms");
     await expect(canvas.getByText("42ms")).toBeTruthy();
+    await userEvent.click(canvas.getByRole("button", { name: "Collapse code" }));
+    await expect(canvas.getByText("Listed 5 entries.")).toBeVisible();
+    await expect(code.querySelector("[data-code-body]")).toBeNull();
+    await userEvent.click(canvas.getByRole("button", { name: "Collapse result" }));
+    await expect(canvas.queryByText("Listed 5 entries.")).toBeNull();
+    await expect(canvas.getByRole("button", { name: "Expand code" })).toBeVisible();
   },
 };
 
@@ -321,7 +334,7 @@ export const JoinedActivity: Story = {
       code.getBoundingClientRect().right,
       0,
     );
-    // The execution rail aligns with prose and role headings, with a consistent text gutter.
+    // Execution bands keep a consistent text gutter without a left border.
     const trace = thought.parentElement!;
     const edge = trace.parentElement!.getBoundingClientRect().left;
     const textEdge = (element: Element) => {
@@ -335,8 +348,9 @@ export const JoinedActivity: Story = {
     await expect(textEdge(thought)).toBeCloseTo(edge, 0);
     const executionEdge = textEdge(code);
     await expect(code.getBoundingClientRect().left - edge).toBeCloseTo(0, 0);
-    await expect(getComputedStyle(code).borderLeftWidth).toBe("2px");
-    await expect(executionEdge - edge).toBeCloseTo(14, 0);
+    await expect(getComputedStyle(code).borderLeftWidth).toBe("0px");
+    await expect(getComputedStyle(activity).borderLeftWidth).toBe("0px");
+    await expect(executionEdge - edge).toBeCloseTo(12, 0);
     const band = canvas.getByRole("button", { name: "Expand Activity" });
     await expect(band).toHaveTextContent("ACTIVITY");
     await expect(band).toHaveTextContent("13 operations");

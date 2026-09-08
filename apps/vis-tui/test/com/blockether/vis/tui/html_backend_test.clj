@@ -125,8 +125,8 @@
                                  [:toggle-detail (:session-id region) (:node-id region)
                                   (:collapsed? region)]))))
 
-(deftest result-before-independent-execution-disclosures-test
-  ;; Regression: Result followed Activity and disappeared when Code was closed.
+(deftest ordered-independent-execution-disclosures-test
+  ;; Code, Result and Activity remain ordered and rail-free through every fold state.
   (doseq [cols
           [40 80 160]
 
@@ -155,7 +155,7 @@
             (mapv (fn [suffix]
                     (first (filter #(str/ends-with? (str (:node-id %)) suffix)
                                    (.current interactions/hit-map))))
-                  [":result" ":code" ":#band"])]
+                  [":code" ":result" ":#band"])]
 
         (is (every? some? regions))
         (doseq [result-open?
@@ -168,7 +168,7 @@
                 [false true]]
 
           (let [open-states
-                [result-open? code-open? activity-open?]
+                [code-open? result-open? activity-open?]
 
                 expansions
                 (reduce (fn [folds [region open?]]
@@ -197,7 +197,7 @@
                   (first (keep-indexed #(when (str/includes? %2 label) %1) lines)))
 
                 labels
-                ["RESULT" "CODE" "ACTIVITY"]
+                ["CODE" "RESULT" "ACTIVITY"]
 
                 positions
                 (mapv row-of labels)
@@ -208,6 +208,7 @@
             (is (= (cell-grid html cols 50) grid))
             (is (every? some? positions))
             (is (apply < positions))
+            (is (not-any? #(str/starts-with? % " │") lines))
             (is (= result-open? (str/includes? text "Read 3 files.")))
             (is (= code-open? (str/includes? text "inspect_files()")))
             (is (= activity-open? (str/includes? text "Read ×3")))
@@ -281,7 +282,7 @@
             (is (some #(str/includes? % "src/file-0.clj") (:lines replacement)))))))))
 
 (deftest joined-execution-text-left-edge-test
-  ;; Code and Activity share a rail and inset; prose keeps the transcript edge.
+  ;; Code, Result and Activity share the transcript edge without a rail.
   (doseq [cols [40 80 120]]
     (with-open [terminal (DefaultVirtualTerminal. (TerminalSize. cols 50))
                 screen (doto (TerminalScreen. terminal) (.startScreen))]
@@ -304,16 +305,15 @@
                          (some #(when (str/includes? % text) (str/index-of % text)) lines))]
 
             (is (= (column "Vis") (column "Inspect files")))
-            (doseq [label ["CODE" "ACTIVITY"]]
-              (is (= (+ 3 (column "Vis")) (column label))))
+            (doseq [label ["CODE" "RESULT" "ACTIVITY"]]
+              (is (= (column "Vis") (column label))))
             (is (nil? (column "Read ×3")))
             (is (nil? (column "Command failed")))
-            (doseq [line (filter #(str/includes? % "│") lines)]
-              (is (= (column "Vis") (str/index-of line "│"))))
+            (is (not-any? #(str/includes? % "│") lines))
             (when (seq expansions) (is (= (column "CODE") (column "inspect_files()"))))))))))
 
 (deftest joined-execution-background-and-disclosure-test
-  ;; The execution inset left one terminal-background cell beside the rail.
+  ;; Removing the rail preserves filled execution bands and their disclosures.
   (doseq [cols
           [40 80 160]
 
@@ -338,26 +338,31 @@
                       (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %) row)))
                   grid)
 
-            rail-rows
-            (keep-indexed #(when (str/starts-with? %2 " │") %1) lines)
+            band-rows
+            (keep-indexed (fn [row cells]
+                            (when (= theme/code-block-bg
+                                     (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
+                                                          (nth cells 1)))
+                              row))
+                          grid)
 
             bottom
-            (last rail-rows)
+            (last band-rows)
 
             chevron
             (if expanded? "▾" "▸")]
 
-        (is (seq rail-rows))
+        (is (seq band-rows))
         (is (= #{theme/code-block-bg}
                (set (for [row
-                          rail-rows
+                          band-rows
 
                           col
                           (range 1 4)]
 
                       (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter
                                            (get-in grid [row col])))))
-            "All three inset cells use the execution background")
+            "Execution fills reach the left text edge")
         (doseq [label ["CODE" "ACTIVITY"]]
           (let [row (first (keep-indexed #(when (str/includes? %2 label) %1) lines))
                 line (nth lines row)
@@ -396,7 +401,7 @@
           (:lines payload)
 
           last-band-row
-          (last (keep-indexed #(when (:execution-rail? %2) %1) (:line-meta payload)))]
+          (last (keep-indexed #(when (str/starts-with? %2 @#'render/activity-marker) %1) lines))]
 
       (is (= @#'render/activity-marker (nth lines last-band-row)))
       (is (= "" (nth lines (inc last-band-row))))

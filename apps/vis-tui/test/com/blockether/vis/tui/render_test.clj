@@ -234,7 +234,7 @@
       (expect (not (str/includes? txt "java.util.concurrent.ExecutionException")))
       (expect (not (str/includes? txt "{:type :clj/bad-args")))))
   (it
-    "keeps failed source compact while its error remains visible before CODE"
+    "keeps failed source compact while its error remains visible below CODE"
     (let [code
           (str "first = 1\n"
                "second = 2\n" "third = 3\n"
@@ -275,7 +275,7 @@
       (expect (not (str/includes? shut "x = 1/0")))
       (expect (not (str/includes? shut "PYCODEMARKER")))
       (expect (= 1 (count (re-seq #"ZeroDivisionError" shut))))
-      (expect (< (.indexOf ^String shut "ZeroDivisionError") (.indexOf ^String shut "CODE")))
+      (expect (< (.indexOf ^String shut "CODE") (.indexOf ^String shut "ZeroDivisionError")))
       (expect (not (str/includes? open "RUNTIME_EXCERPT_ONLY")))
       (expect (str/includes? open "PYCODEMARKER"))
       (expect (= 1 (count (re-seq #"ZeroDivisionError" open))))))
@@ -340,9 +340,9 @@
         (expect (str/includes? header (str p/INLINE_ERR_ON p/INLINE_BOLD_ON "CODE")))
         (expect (not (str/includes? header "NameError")))
         (expect (not (str/includes? header " · ")))
-        ;; The error remains visible before the independent source disclosure.
+        ;; The error stays visible below the independent source disclosure.
         (expect (str/includes? txt "NameError"))
-        (expect (< (.indexOf ^String txt "NameError") (.indexOf ^String txt "CODE")))))
+        (expect (< (.indexOf ^String txt "CODE") (.indexOf ^String txt "NameError")))))
   (it "keeps the CODE name plain when the form succeeded"
       (let [header
             (some #(when (str/includes? (str %) "CODE") (str %))
@@ -5128,8 +5128,8 @@ h = 8"
       (expect (not (str/includes? collapsed "18 matches")))
       (expect (str/includes? collapsed "ACTIVITY"))
       (expect (str/includes? expanded "test evidence companion suite"))
-      (expect (< (.indexOf ^String expanded "18 matches")
-                 (.indexOf ^String expanded "grep({...})")
+      (expect (< (.indexOf ^String expanded "grep({...})")
+                 (.indexOf ^String expanded "18 matches")
                  (.indexOf ^String expanded "test evidence companion suite")
                  (.indexOf ^String expanded "Done.")))
       (expect (str/includes? expanded "ACTIVITY"))
@@ -5230,16 +5230,16 @@ h = 8"
       (expect (str/includes? collapsed "4.8s"))
       (expect (str/includes? collapsed "ACTIVITY"))
       (expect (some? collapsed-status-row))
-      (expect (< (.indexOf ^String collapsed "RESULT")
-                 (.indexOf ^String collapsed "CODE")
+      (expect (< (.indexOf ^String collapsed "CODE")
+                 (.indexOf ^String collapsed "RESULT")
                  (.indexOf ^String collapsed "ACTIVITY"))
-              "the result disclosure precedes source and Activity")
+              "the result disclosure follows source and precedes Activity")
       (expect (some? status-row))
       (expect (not (str/includes? expanded "line shown")))
       (expect (not (str/includes? expanded "PYTHON")))
-      (expect (< (.indexOf ^String expanded "RESULT")
+      (expect (< (.indexOf ^String expanded "print(result")
+                 (.indexOf ^String expanded "RESULT")
                  (.indexOf ^String expanded "## main...origin/main")
-                 (.indexOf ^String expanded "print(result")
                  (.indexOf ^String expanded "operation 6")))
       (expect (str/includes? expanded "ACTIVITY"))))
   ;; Regression, issue td-9c41a7: the TUI receipt named the calls but never what they
@@ -5284,7 +5284,7 @@ h = 8"
       (expect (str/includes? receipt "ACTIVITY"))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
-  (it "keeps combined results before their program and attached Activity"
+  (it "keeps combined results between their program and attached Activity"
       (render/invalidate-cache!)
       (let [activity
             (fn [label]
@@ -5313,10 +5313,10 @@ h = 8"
                 strip-ansi
                 strip-sentinels)]
 
-        (expect (< (.indexOf ^String body "FIRST RESULT")
-                   (.indexOf ^String body "SECOND RESULT")
-                   (.indexOf ^String body "first()")
+        (expect (< (.indexOf ^String body "first()")
                    (.indexOf ^String body "second()")
+                   (.indexOf ^String body "FIRST RESULT")
+                   (.indexOf ^String body "SECOND RESULT")
                    (.indexOf ^String body "FIRST OPERATION")
                    (.indexOf ^String body "Done.")))
         (expect (= 1 (count (re-seq #" ❐" body))))
@@ -5416,7 +5416,7 @@ h = 8"
               strip-ansi
               strip-sentinels)
 
-          ;; RESULT remains an independent disclosure in front of the execution rail.
+          ;; RESULT remains an independent disclosure between Code and Activity.
           ;; Regression td-794deb: its header must retain the toggle metadata.
           result-toggle-meta
           (some (fn [[line meta]]
@@ -5473,7 +5473,7 @@ h = 8"
       (expect (str/includes? collapsed-text "ACTIVITY")
               "Activity stays visible while source and result are collapsed")
       (expect (= :toggle-details (:kind result-toggle-meta))
-              "RESULT is its own fold before CODE, collapsed by default")
+              "RESULT is its own fold after CODE, collapsed by default")
       (expect (not (str/includes? collapsed-text "result-value")) "RESULT is collapsed by default")
       (expect (re-find #"RESULT[^\n]*▾" expanded-text))
       (expect (str/includes? expanded-text "result-value") "expand-all opens the result body")
@@ -5481,10 +5481,10 @@ h = 8"
       (expect (= (get-in frame [python-row 1 :bg])
                  (get-in frame [first-row 1 :bg])
                  (get-in frame [tests-row 1 :bg]))
-              "Code and Activity share one uninterrupted surface")
+              "Code and Activity retain the same background")
       (expect
-        (< (long result-row) (long python-row) (long first-row) (long second-row) (long tests-row))
-        "the result precedes the execution bands")
+        (< (long python-row) (long result-row) (long first-row) (long second-row) (long tests-row))
+        "the result follows Code and precedes Activity")
       (expect (= (get-in frame [first-row 1 :bg])
                  (get-in frame [second-row 1 :bg])
                  (get-in frame [tests-row 1 :bg]))
@@ -5905,11 +5905,7 @@ h = 8"
                (it "keeps a failure's own words whole on both surfaces"
                    (expect (not (str/includes? (str source) "ERROR_PREVIEW_LINES"))))))
 
-;; Regression, T127: the line lived INSIDE the Activity band only. The companion runs one
-;; `RAIL_LINE` down a whole segment - thinking, the program, its result and the chronology
-;; all hang off it - so the terminal's receipt read as four unrelated blocks stacked on
-;; each other, and the Python band in particular stood alone with nothing joining it to
-;; the steps below it.
+;; Execution bands share a text edge without a vertical rail.
 (defdescribe
   turn-rail-paint-test
   (let [activity
@@ -5975,7 +5971,7 @@ h = 8"
         rail-col
         2
 
-        ;; A step's mark stands ON the line, so its own row wears the tick's `├`.
+        ;; No execution band paints a rail at the message edge.
         rail-at?
         (fn [^long r]
           (contains? #{"│" "├"} (:ch (nth (nth grid r) rail-col))))
@@ -5986,7 +5982,7 @@ h = 8"
                                  (when (str/includes? l needle) i))
                                rows)))]
 
-    (it "aligns execution rails with the role heading"
+    (it "keeps execution bands and prose free of left rails"
         (let [head
               (row-with "Read the app first")
 
@@ -5998,14 +5994,8 @@ h = 8"
 
           (expect (and head prose tail)
                   "the receipt paints the thinking, the prose and the chronology")
-          ;; One blank of air on each side of the prose is off the line too; the band
-          ;; edges beyond that air stay on it, so each receipt keeps its own top and bottom.
-          (expect (not-any? rail-at? (range (long head) (dec (long prose))))
-                  "the line runs from the first band to the edge above the prose")
-          (expect (not-any? rail-at? [(dec (long prose)) prose (inc (long prose))])
-                  "the prose and its air are off the line")
-          (expect (some rail-at? (range (+ (long prose) 2) (inc (long tail))))
-                  "the line resumes below the prose and runs to the last band")))
+          (expect (not-any? rail-at? (range (long head) (inc (long tail))))
+                  "the entire execution stays free of left rails")))
     ;; Regression, issue photo-2026-09-02: the receipt rail overwrote the first character
     ;; of model prose between tool blocks, so `Balanced` was painted as `│alanced`. The
     ;; prose was then inset two columns to dodge the line; now the line breaks for it and
@@ -6022,7 +6012,7 @@ h = 8"
                      (.indexOf ^String (nth rows prose) "Balanced")
                      (.indexOf ^String (nth rows answer) "Done."))
                   "prose and answer share the column the line stands in")))
-    (it "crosses the program's own paper instead of stopping at its edge"
+    (it "leaves both the program and its result free of rails"
         (let [python
               (row-with "print(1)")
 
@@ -6030,7 +6020,7 @@ h = 8"
               (row-with "RESULT")]
 
           (expect (and python result) "the receipt paints a program and its result")
-          (expect (rail-at? python) "Code carries the execution rail")
+          (expect (not (rail-at? python)) "Code stays free of rails")
           (expect (not (rail-at? result)) "Result stays free of rails")))
     (it "leaves the answer off the line"
         (let [answer (row-with "Done.")]
@@ -6196,9 +6186,9 @@ h = 8"
         marks
         (vec (ink-of "●"))]
 
-    (it "removes status dots but keeps the shared execution rail"
+    (it "removes status dots and execution rails"
         (expect (empty? marks))
-        (expect (seq (ink-of "│"))))
+        (expect (empty? (ink-of "│"))))
     (it "retains a readable failure state in the operation text"
         (let [line (first (filter #(str/includes? (apply str (map :ch %)) "failed") grid))]
           (expect (some? line))
@@ -6545,7 +6535,7 @@ print(paths)"
 (defdescribe
   result-header-alignment-test
   (it
-    "keeps Result before Code and Activity in live and restored views, open or closed"
+    "keeps Code, Result and Activity ordered without rails in live and restored views, open or closed"
     (doseq [cols
             [40 80 160]
 
@@ -6617,11 +6607,14 @@ print(paths)"
         (expect (some? result))
         (expect (some? code))
         (expect (some? activity))
-        (expect (< (.indexOf lines result) (.indexOf lines code) (.indexOf lines activity)))
-        (expect (= (.indexOf ^String code "CODE") (.indexOf ^String activity "ACTIVITY")))
+        (expect (< (.indexOf lines code) (.indexOf lines result) (.indexOf lines activity)))
+        (expect (not-any? #(str/includes? % "│") lines))
+        (expect (= (.indexOf ^String code "CODE")
+                   (.indexOf ^String result "RESULT")
+                   (.indexOf ^String activity "ACTIVITY")))
         (when expanded?
           (expect (str/includes? result "▾"))
-          (expect (= (+ 3 (.indexOf ^String result "RESULT"))
+          (expect (= (.indexOf ^String result "RESULT")
                      (.indexOf ^String (first (filter #(str/includes? % "print(42)") lines))
                                "print(42)"))))
         (expect (not (str/includes? (str/join "\n" lines) "</>"))))))
@@ -6682,7 +6675,7 @@ print(paths)"
       ;; CODE, its source and RESULT share one left column.
       (expect (= (.indexOf ^String code "CODE")
                  (.indexOf ^String source "print(42)")
-                 (+ 3 (.indexOf ^String result "RESULT"))))))
+                 (.indexOf ^String result "RESULT")))))
   (it
     "keeps syntax colour on every wrapped row of a long code line"
     (let

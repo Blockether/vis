@@ -1108,10 +1108,24 @@ describe("Activity follows the combined Python source", () => {
       ).toBeNull();
       expect(painted.container.textContent).toContain("CODE");
       expect(painted.container.textContent).not.toContain("line_2()");
-      expect(painted.container.textContent).not.toContain("RESULT");
+      expect(painted.container.textContent).toContain("RESULT");
+      for (const band of painted.container.querySelectorAll(
+        "[data-execution-code], [data-code-result], [data-execution-activity]",
+      )) {
+        expect(band.className).not.toMatch(/\bborder-l(?:-|\b)/);
+      }
+      const closed = painted.container.innerHTML;
+      expect(closed.indexOf("data-execution-code")).toBeLessThan(
+        closed.indexOf("data-code-result"),
+      );
+      expect(closed.indexOf("data-code-result")).toBeLessThan(
+        closed.indexOf("data-execution-activity"),
+      );
+      fireEvent.click(painted.getByRole("button", { name: "Expand result" }));
+      expect(painted.container.textContent).toContain("result body");
+      expect(painted.container.textContent).not.toContain("line_2()");
       expect(painted.container.textContent).toContain("18 matches");
       expect(painted.container.textContent).not.toContain("PYTHON");
-      expect(painted.container.textContent).not.toContain("line_2()");
       fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
       expect(painted.container.textContent).toContain("line_6()");
       expect(
@@ -1119,12 +1133,17 @@ describe("Activity follows the combined Python source", () => {
       ).toHaveLength(1);
       expect(painted.container.textContent).toContain("RESULT");
       expect(painted.container.textContent).toContain("18 matches");
-      // The program is what produced every row under it, so it stands at the top
-      // of the box the chevron opened, and the chronology hangs beneath it.
+      // Source, result and chronology retain their order after either fold changes.
       const opened = painted.container.innerHTML;
       expect(opened.indexOf("data-execution-code")).toBeLessThan(
         opened.indexOf("data-activity-chronology"),
       );
+      fireEvent.click(painted.getByRole("button", { name: "Collapse code" }));
+      expect(painted.container.textContent).toContain("result body");
+      expect(painted.container.textContent).not.toContain("line_6()");
+      fireEvent.click(painted.getByRole("button", { name: "Collapse result" }));
+      expect(painted.container.textContent).not.toContain("result body");
+      expect(painted.container.textContent).toContain("18 matches");
     },
   );
 

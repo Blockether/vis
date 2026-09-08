@@ -2021,18 +2021,16 @@
                       ;; everything Vis says, whether it lands before a call or after it.
                       bg-color (if (:activity-content? meta) t/code-block-bg bg-color)
                       fg-color (if (:activity-content? meta) t/code-block-fg fg-color)
-                      execution-rail? (:execution-rail? meta)
-                      rail-inset (if execution-rail? 3 0)
-                      content-col (+ (long (or (:activity-content-col meta) 0)) (long rail-inset))
+                      content-col (long (or (:activity-content-col meta) 0))
                       x (+ (long bx)
                            (long (if (:activity-content? meta)
                                    content-col
-                                   (+ (long (if (or user? error?) h-pad 0)) (long rail-inset)))))
+                                   (if (or user? error?) h-pad 0))))
                       y (+ (long btop) (long i))
                       iw (if (:activity-content? meta)
                            (max 0 (- (long bubble-w) content-col))
-                           (max 0 (- (long bubble-w) (long rail-inset))))
-                      fbx (+ (long bx) (if (:activity-content? meta) content-col (long rail-inset)))
+                           (long bubble-w))
+                      fbx (+ (long bx) (if (:activity-content? meta) content-col 0))
                       meta (if (:copy-width meta)
                              (assoc meta
                                :click-width (max 0 (- (long iw) (long (:copy-width meta)))))
@@ -2061,10 +2059,6 @@
                   (when (:activity-content? meta)
                     (p/set-bg! g t/code-block-bg)
                     (p/fill-rect! g bx y bubble-w 1))
-                  (when execution-rail?
-                    (p/set-colors! g t/code-block-fg t/code-block-bg)
-                    (p/fill-rect! g bx y rail-inset 1)
-                    (p/put-str! g bx y "│"))
                   ;; Record exact screen coordinates for the post-refresh image pass.
                   (when (and *image-placements* (contains? #{:image :image-pad} (:kind meta)))
                     (swap! *image-placements* conj
@@ -6574,7 +6568,7 @@
                 (or (some->> inline-error-code-lines
                              (mapv vector))
                     (mapv (fn [plain colored]
-                            (let [width (max 1 (- (long fill-w) 5))]
+                            (let [width (max 1 (- (long fill-w) 2))]
                               (if colored
                                 (p/ansi-fold-cols colored width)
                                 (p/fold-cols plain width))))
@@ -6835,13 +6829,13 @@
 
                 activity-surface
                 (when activity-run
-                  (activity-detail-entries activity-run (max 1 (- (long fill-w) 3)) session-id))]
+                  (activity-detail-entries activity-run (max 1 (long fill-w)) session-id))]
 
-            ;; Results precede the execution rail and never depend on the Code fold.
+            ;; Each disclosure is independent, in Code, Result, Activity order.
             (vec (concat comment-block
+                         code-block
                          execution-details
-                         (map #(update % :meta assoc :execution-rail? true)
-                              (concat code-block activity-surface))
+                         activity-surface
                          artifact-block
                          generic-run-entries))))
 

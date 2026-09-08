@@ -1212,7 +1212,7 @@ const ToolCard = memo(function ToolCard({
       : running
         ? "text-code-result"
         : "text-accent-ink";
-  // Under a CODE fold the RESULT is its own fold and starts closed, like THINKING:
+  // RESULT has its own disclosure, independent of the source above it.
   // the name is the control, the tally says how much it holds. A failure stays
   // open — its message is the one thing the reader must not have to dig for.
   const [resultOpen, setResultOpen] = useState(false);
@@ -1252,7 +1252,7 @@ const ToolCard = memo(function ToolCard({
   if (!body) {
     return (
       <div
-        className={`${CARD_BAND} ${isCopyable ? "px-2" : "pl-[33px] sm:pl-[35px] pr-0"} ${isCopyable ? `border-l-2 ${failed ? "border-err" : "border-accent"}` : ""} bg-result`}
+        className={`${CARD_BAND} ${isCopyable ? "px-2" : "pl-[33px] sm:pl-[35px] pr-0"} bg-result`}
       >
         {headline}
       </div>
@@ -1261,7 +1261,7 @@ const ToolCard = memo(function ToolCard({
 
   return (
     <details
-      className={`group min-w-0 ${isCopyable ? `border-l-2 ${failed ? "border-err" : "border-accent"}` : ""} bg-result`}
+      className="group min-w-0 bg-result"
       onToggle={(event) => {
         if (event.currentTarget.open) setWasOpened(true);
       }}
@@ -1322,7 +1322,7 @@ function showFormCode(form: TranscriptForm, code: string): boolean {
   return Boolean(code) && !hiddenForm(form);
 }
 
-/** One Thinking-style fold owns the submitted source and its output. */
+/** Independent source and result disclosures, in that order. */
 const CollapsibleFormCode = memo(function CollapsibleFormCode({
   value,
   language = "python",
@@ -1342,7 +1342,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   const lineCount = value ? value.split("\n").length : 0;
   return (
     <section
-      className="relative z-0 min-w-0 border-l-2 border-code-foreground/60 bg-code px-3"
+      className="relative z-0 min-w-0 bg-code px-3"
       data-execution-code
     >
       <div className="flex min-h-8 min-w-0 items-center gap-2">
@@ -1382,20 +1382,12 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
           </CopyChip>
         )}
       </div>
-      {(expanded || !showCode) && (
+      {expanded && showCode && (
         <div className="py-3" data-code-body>
-          {showCode && (
-            <SyntaxCodeBlock
-              value={value}
-              language={language}
-              compact
-              bare
-              frameless
-            />
-          )}
-          {children}
+          <SyntaxCodeBlock value={value} language={language} compact bare frameless />
         </div>
       )}
+      {children}
     </section>
   );
 });
@@ -1646,7 +1638,7 @@ const FormTrace = memo(function FormTrace({
       <div
         className={
           detectedActivity
-            ? "relative z-0 min-w-0 border-l-2 border-code-foreground/60 bg-code px-3"
+            ? "relative z-0 min-w-0 bg-code px-3"
             : "min-w-0"
         }
         data-execution-activity={detectedActivity || undefined}
