@@ -27,5 +27,5 @@
         com.blockether/tree-sitter-language-pack {:exclusions
                                                   [org.clojure/tools.deps.maven-s3-transporter]
                                                   :mvn/version "1.12.3-blockether.39"}
-        com.blockether/lanterna {:mvn/version "3.1.5-vis.49"}}
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.50"}}
  :paths ["src" "resources"]}
