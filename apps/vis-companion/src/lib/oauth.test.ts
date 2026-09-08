@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { SignInFlow } from './types';
-import { watchAuth } from './oauth';
+import { reserveAuthTab, watchAuth } from './oauth';
 
 // A web host: no native receiver, so the browser opens by URL and the gateway's own
 // loopback listener settles the flow through polling. The native receiver is
@@ -81,4 +81,36 @@ it('serializes manual submissions with polling and with each other', async () =>
   const first = watcher.complete('manual'); const second = watcher.complete('manual');
   release({ status: 'pending' }); await vi.advanceTimersByTimeAsync(20); await Promise.all([first, second]);
   expect(client.complete).toHaveBeenCalledOnce(); watcher.stop();
+});
+
+// Regression: on WKWebView and behind desktop popup blockers the open that followed the
+// flow fetch was silently dropped, so tapping Sign in showed no browser at all.
+it('navigates a tab reserved inside the tap instead of opening a new one later', async () => {
+  const reserved = { location: { href: '' }, opener: {}, close: vi.fn() };
+  vi.mocked(window.open).mockReturnValueOnce(reserved as unknown as Window);
+  const tab = reserveAuthTab();
+  expect(window.open).toHaveBeenCalledExactlyOnceWith('', '_blank');
+  expect(reserved.opener).toBeNull();
+  const client = gateway(); const watcher = watchAuth(flow, client, vi.fn(), undefined, tab);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reserved.location.href).toBe(flow.url);
+  expect(window.open).toHaveBeenCalledOnce();
+  expect(reserved.close).not.toHaveBeenCalled();
+  watcher.stop();
+});
+
+it('closes a reserved tab the flow can never use', async () => {
+  const reserved = { location: { href: '' }, opener: {}, close: vi.fn() };
+  vi.mocked(window.open).mockReturnValueOnce(reserved as unknown as Window);
+  const tab = reserveAuthTab();
+  const verdict = vi.fn();
+  watchAuth({ ...flow, expires_at: Date.now() - 1 }, gateway(), verdict, undefined, tab);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reserved.close).toHaveBeenCalledOnce();
+  expect(reserved.location.href).toBe('');
+  expect(verdict).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' }));
+});
+
+it('reserves nothing when the browser refuses the popup', () => {
+  expect(reserveAuthTab()).toBeUndefined();
 });

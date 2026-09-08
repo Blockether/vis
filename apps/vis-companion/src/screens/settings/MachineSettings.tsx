@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { watchAuth, type AuthWatch } from "../../lib/oauth";
+import { reserveAuthTab, watchAuth, type AuthTab, type AuthWatch } from "../../lib/oauth";
 import { SwipeActions, type SwipeAction } from "../../components/SwipeActions";
 
 import {
@@ -372,7 +372,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [test, setTest] = useState<McpTestResult | null>(null);
-  const [auth, setAuth] = useState<{ flow: McpAuthFlow; client: GatewayClient } | null>(null);
+  const [auth, setAuth] = useState<{ flow: McpAuthFlow; client: GatewayClient; tab?: AuthTab } | null>(null);
   const authFlow = auth?.client === client ? auth.flow : null;
   const authEpoch = useRef(0);
   const stopAuth = useRef<AuthWatch | null>(null);
@@ -433,7 +433,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
 
   useEffect(() => {
     if (!auth || auth.client !== client) return;
-    const { client: paired, flow } = auth;
+    const { client: paired, flow, tab } = auth;
     const verdictOf = (value: McpAuthFlow) => ({ status: value.status, message: value.error });
     const watcher = watchAuth({ ...flow, expires_at: flow.expires_at_ms }, {
       complete: input => paired.mcpAuthComplete(flow.server, flow.flow_id, input).then(verdictOf),
@@ -444,7 +444,7 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
       setAuth(null); setBusy(null);
       if (verdict.status === "ok") void load();
       else setError(verdict.message ?? "Authorization failed. Start sign-in again.");
-    });
+    }, undefined, tab);
     stopAuth.current = watcher;
     return () => { watcher.stop(); if (stopAuth.current === watcher) stopAuth.current = null; };
   }, [auth, client, load]);
@@ -579,22 +579,26 @@ export function McpServersPanel({ client }: { client: GatewayClient }) {
   // Bind every flow to the paired client that initiated it, never the currently
   // selected machine after a switch. A late start is cancelled without opening a URL.
   // The gateway always issues a loopback callback: on a phone the native receiver
-  // binds that port and opens the system browser itself, with no browser-gesture
-  // rule to lose between the tap and the fetch that produced the URL.
+  // binds that port and opens the system browser itself. Elsewhere the browser only
+  // honours an open made inside the tap, so the tab is claimed before the fetch that
+  // produces the URL and navigated once it arrives.
   async function authorize(server: McpServer) {
     const epoch = ++authEpoch.current;
     stopAuth.current?.stop();
     setAuth(null);
     setBusy(server.name);
     setError(null);
+    const tab = reserveAuthTab();
     try {
       const flow = await client.mcpAuthStart(server.name);
       if (authEpoch.current !== epoch) {
+        tab?.close();
         await client.mcpAuthCancel(flow.server, flow.flow_id).catch(() => {});
         return;
       }
-      setAuth({ flow, client });
+      setAuth({ flow, client, tab });
     } catch (error) {
+      tab?.close();
       if (authEpoch.current === epoch) setError(error instanceof GatewayOAuthError ? error.message
         : "Cannot start sign-in. Check the gateway and MCP server settings, then try again.");
     } finally {

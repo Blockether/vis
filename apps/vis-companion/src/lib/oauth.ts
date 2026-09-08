@@ -5,8 +5,27 @@
  * No relay, hosted fallback, callback persistence or unbound cold-start return.
  */
 import type { AuthVerdict, SignInFlow } from './types';
+import { Capacitor } from '@capacitor/core';
 import { hasNativeLoopback, nativeOAuth } from './oauth-native';
 export const openAuthUrl = (url: string): void => { window.open(url, '_blank', 'noopener,noreferrer'); };
+/** A browser tab claimed inside the user's tap, navigated once the gateway has issued the URL. */
+export interface AuthTab { navigate(url: string): void; close(): void }
+/**
+ * WKWebView and desktop popup blockers drop a `window.open` that runs after an `await`;
+ * only a synchronous open inside the gesture survives. Native hosts hand the URL to the
+ * loopback receiver instead and get nothing here.
+ */
+export function reserveAuthTab(): AuthTab | undefined {
+  if (typeof window === 'undefined' || Capacitor.isNativePlatform()) return;
+  let tab: Window | null = null;
+  try { tab = window.open('', '_blank'); } catch { return; }
+  if (!tab) return;
+  try { tab.opener = null; } catch { /* Same-origin blank tab; opener is advisory here. */ }
+  return {
+    navigate: url => { try { tab.location.href = url; } catch { openAuthUrl(url); } },
+    close: () => { try { tab.close(); } catch { /* Already closed by the user. */ } },
+  };
+}
 
 /** A browser on this device cannot reach loopback on a remote gateway. */
 export function clientAuthFlow<T extends SignInFlow>(flow: T, gatewayBase: string): T {
@@ -52,7 +71,7 @@ function verifiedReturn(input: string, state: string, redirect = APP_CALLBACK): 
 }
 
 export function watchAuth(flow: SignInFlow, transport: AuthTransport,
-  onVerdict: (verdict: AuthVerdict) => void, onConnection?: (message: string | null) => void): AuthWatch {
+  onVerdict: (verdict: AuthVerdict) => void, onConnection?: (message: string | null) => void, tab?: AuthTab): AuthWatch {
   const deadline = Math.min(flow.expires_at ?? Infinity, Date.now() + 900_000);
   const every = Math.max(2000, Math.min(flow.interval_ms ?? 2000, 900_000));
   let stopped = false;
@@ -122,12 +141,12 @@ export function watchAuth(flow: SignInFlow, transport: AuthTransport,
   };
   const start = async () => {
     try {
-      if (expired()) { fail('Authorization timed out. Start sign-in again.'); return; }
+      if (expired()) { tab?.close(); fail('Authorization timed out. Start sign-in again.'); return; }
       expiry = setTimeout(() => fail('Authorization timed out. Start sign-in again.'), deadline - Date.now());
       if (local && url) {
         const state = authorizationState(url, flow.redirect_uri);
         if (!state) {
-          fail('This host cannot receive the requested callback. Start sign-in again.'); return;
+          tab?.close(); fail('This host cannot receive the requested callback. Start sign-in again.'); return;
         }
         removeListener = () => { void local.cancel({ flowId: flow.flow_id }).catch(() => {}); };
         void local.authorize({ flowId: flow.flow_id, authorizationUrl: url, redirectUri: flow.redirect_uri!,
@@ -139,9 +158,10 @@ export function watchAuth(flow: SignInFlow, transport: AuthTransport,
         }).catch(() => { if (!stopped) fail('Sign-in was closed or could not receive its callback. Start sign-in again.'); });
         schedule(); return;
       }
-      if (url) openAuthUrl(url);
+      if (url) { if (tab) tab.navigate(url); else openAuthUrl(url); }
+      else tab?.close();
       schedule();
-    } catch { fail('Cannot open secure sign-in. Start sign-in again.'); }
+    } catch { tab?.close(); fail('Cannot open secure sign-in. Start sign-in again.'); }
   };
   void start();
   return { stop, open, complete };
