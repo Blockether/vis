@@ -89,16 +89,9 @@ export function SettingsColumn({
   const isWide = useWideColumns();
   const fold = disclosure && !isWide ? disclosure : null;
   const body = (
-    /* A COLUMN CLOSES ITS OWN LAST GROUP. Reported over this screenshot: the
-       dialog's last panel simply stopped. On a phone the frame is full-bleed
-       and carries no bottom edge, so the selected amber cell of the last
-       choice ran out into paper with no hairline under it — measured at 390px,
-       the column body ended at the cell's own 2655px — and the two stacked
-       halves were told apart by the GRID rather than by the column that ends.
-       The body draws the rule it owes below itself; on `sm:` the columns stand
-       side by side and the frame's own 1px bottom border is that edge, so it
-       is dropped there rather than doubled. */
-    <div className="min-w-0 divide-y divide-dialog-edge border-b border-dialog-edge sm:min-h-0 sm:flex-1 sm:overflow-y-auto sm:overscroll-contain sm:border-b-0">
+    // Separate panels inside the column; the settings grid separates columns.
+    // No trailing rule above the dialog's bottom safe area.
+    <div className="min-w-0 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:overflow-y-auto sm:overscroll-contain">
       {children}
     </div>
   );

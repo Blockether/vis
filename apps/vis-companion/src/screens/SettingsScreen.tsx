@@ -208,7 +208,7 @@ export function SettingsDialog({
             column a 1500px empty gutter: scrolling to a machine's Sandbox panel dragged
             Theme off the top of the screen for no reason. Below `sm:` the halves stack
             and the dialog body is the one scroller again. */}
-        <div className="grid min-w-0 grid-cols-1 divide-dialog-edge sm:min-h-0 sm:flex-1 sm:grid-cols-2 sm:divide-x sm:overflow-hidden">
+        <div className="grid min-w-0 grid-cols-1 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:grid-cols-2 sm:divide-x sm:divide-y-0 sm:overflow-hidden">
           <SettingsColumn
             title="Machines"
             action={

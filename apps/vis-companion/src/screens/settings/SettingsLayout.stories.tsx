@@ -1,6 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
+import { expect } from 'storybook/test';
 import { ChoiceCell } from '../../components/ui';
+import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { SettingsColumn, SettingsPanel } from './SettingsLayout';
 
 /**
@@ -83,4 +85,25 @@ export const StandingOpen: Story = {
     children: body,
   },
   parameters: { viewport: { defaultViewport: 'desktop' } },
+};
+
+/** The last settings panel ends without a rule above the phone's safe area. */
+export const DiagnosticsFooter: Story = {
+  args: {
+    title: 'Application',
+    children: (
+      <>
+        {body}
+        <DiagnosticsPanel isOpen onToggle={() => {}} />
+      </>
+    ),
+  },
+  play: async ({ canvas }) => {
+    const diagnostics = canvas.getByRole('heading', { name: 'Diagnostics' }).closest('section')!;
+    const columnBody = diagnostics.parentElement!;
+    // Regression: the column's bottom border drew a full-width line below Export app logs.
+    await expect(getComputedStyle(columnBody).borderBottomWidth).toBe('0px');
+    await expect(getComputedStyle(diagnostics.previousElementSibling!).borderBottomWidth).toBe('1px');
+    await expect(canvas.getByRole('button', { name: 'Export app logs' })).toBeVisible();
+  },
 };
