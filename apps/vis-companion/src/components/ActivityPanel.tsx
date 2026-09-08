@@ -1078,7 +1078,7 @@ export function ActivityPanel({ activity }: { activity?: ActivityProjection }) {
       >
         <span className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <BandLabel>ACTIVITY</BandLabel>
-          <span className="min-w-0 break-words text-meta text-dialog-hint">
+          <span className="min-w-0 break-words text-chip text-dialog-hint">
             {[
               summary,
               ...states,

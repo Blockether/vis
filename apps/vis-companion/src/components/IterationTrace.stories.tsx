@@ -428,13 +428,19 @@ export const JoinedActivity: Story = {
       0,
     );
     const codeSize = getComputedStyle(code.querySelector("pre")!).fontSize;
-    for (const element of [
-      reads,
-      canvas.getByText("6 files"),
-      canvas.getByText(/13 operations/),
-    ]) {
+    for (const element of [reads, canvas.getByText("6 files")]) {
       await expect(getComputedStyle(element).fontSize).toBe(codeSize);
     }
+    // The operation tally is compact header metadata, not activity body copy.
+    const countSize = getComputedStyle(
+      canvas.getByText(/13 operations/),
+    ).fontSize;
+    await expect(countSize).toBe(
+      getComputedStyle(canvas.getByText("ACTIVITY")).fontSize,
+    );
+    await expect(Number.parseFloat(countSize)).toBeLessThan(
+      Number.parseFloat(codeSize),
+    );
     await expect(getComputedStyle(canvas.getByText("ACTIVITY")).fontSize).toBe(
       getComputedStyle(canvas.getByText("CODE")).fontSize,
     );
