@@ -7204,24 +7204,6 @@
             :serving-provider sp
             :serving-model (when sp (provider-root-model router sp))}))))))
 
-;; System var helpers
-;;
-;; There is no cross-turn var snapshotting: the engine does not parse the
-;; iteration's block source for `(def NAME …)` shapes to materialize and
-;; persist sandbox locals. Sandbox state is intra-turn scratch only.
-;; Auto-archive was retired together with the `definition_*` sidecar
-;; tables: there is no cross-turn var registry to drive eviction off,
-;; and the Python sandbox is fresh every turn anyway. `auto-archive-hot-
-;; symbols!` is a no-op stub kept so call sites compile while we sweep
-;; them out.
-
-(defn auto-archive-hot-symbols!
-  "Deprecated NOOP. Cross-turn def survival was removed when the
-   `definition_*` sidecar tables were dropped; the Python sandbox starts
-   fresh each turn, so there is nothing to archive."
-  [_environment]
-  nil)
-
 ;; Iteration loop + run-turn! (inlined from former base)
 
 ;; Forward reference: defined in the environment lifecycle section
@@ -9007,34 +8989,30 @@
                                        ;; context dialog updates DURING the turn,
                                        ;; not only after it ends.
                                        :done? true}))
-                          (let [result
-                                (-> (merge {:answer (:answer final-result)
-                                            :trace (conj trace trace-entry)
-                                            :iteration-count (inc (long iteration))
-                                            :utilization
-                                            (let [u @usage-atom
-                                                  req (if (pos? (long (:iter-count u)))
-                                                        (long (:last-iter-input u))
-                                                        (long (:previous-request-input u)))]
+                          (-> (merge {:answer (:answer final-result)
+                                      :trace (conj trace trace-entry)
+                                      :iteration-count (inc (long iteration))
+                                      :utilization (let [u @usage-atom
+                                                         req (if (pos? (long (:iter-count u)))
+                                                               (long (:last-iter-input u))
+                                                               (long (:previous-request-input u)))]
 
-                                              (ctx-engine/with-prompt-cache-status
-                                                (ctx-engine/utilization req
-                                                                        effective-context-limit
-                                                                        (:input-tokens u)
-                                                                        effective-fold-budget)
-                                                @prompt-cache-status-atom))}
-                                           (finalize-cost))
-                                    (attach-llm-routing-summary pre-resolved-model iteration-result)
-                                    (assoc :prompt-cache-completion
-                                           {:provider (:llm-provider iteration-result)
-                                            :model (:llm-model iteration-result)
-                                            :turn-position (or turn-position 1)
-                                            :summaries (current-session-summaries environment)
-                                            :stable-message-count (count stable-prompt-messages)
-                                            :assistant-message (:assistant-message
-                                                                 iteration-result)}))]
-                            (auto-archive-hot-symbols! environment)
-                            result))
+                                                     (ctx-engine/with-prompt-cache-status
+                                                       (ctx-engine/utilization
+                                                         req
+                                                         effective-context-limit
+                                                         (:input-tokens u)
+                                                         effective-fold-budget)
+                                                       @prompt-cache-status-atom))}
+                                     (finalize-cost))
+                              (attach-llm-routing-summary pre-resolved-model iteration-result)
+                              (assoc :prompt-cache-completion
+                                     {:provider (:llm-provider iteration-result)
+                                      :model (:llm-model iteration-result)
+                                      :turn-position (or turn-position 1)
+                                      :summaries (current-session-summaries environment)
+                                      :stable-message-count (count stable-prompt-messages)
+                                      :assistant-message (:assistant-message iteration-result)})))
                       :else
                       (if (empty? blocks)
                         (let [empty-streak (inc (long (or (:empty-iteration-streak loop-state) 0)))]

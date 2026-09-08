@@ -1249,48 +1249,38 @@
              (is (nil? (:future @@mux-var)))))
          (finally (reset! @mux-var previous-mux) (reset! @finalizing-var previous-finalizing)))))
 
-(deftest shutdown-subscriptions-closes-all-streams-without-reconnect
-  (let [mux-var
-        (rv 'mux)
-
-        subscriptions-var
-        (rv 'subscriptions)
-
-        finalizing-var
-        (rv 'client-finalizing?)
-
-        previous-mux
-        @@mux-var
-
-        previous-subscriptions
-        @@subscriptions-var
-
-        previous-finalizing
-        @@finalizing-var
-
-        closes
+(deftest shutdown-subscriptions-closes-the-mux-without-reconnect
+  (let [closes
         (atom 0)
 
-        closeable
+        pending
+        (java.util.concurrent.FutureTask. ^java.util.concurrent.Callable
+                                          (fn []
+                                            nil))
+
+        stream
         (reify
           java.io.Closeable
-            (close [_] (swap! closes inc)))]
+            (close [_] (swap! closes inc)))
 
-    (try (reset! @finalizing-var false)
-         (reset! @subscriptions-var {"legacy" {:future nil :stream (atom closeable)}})
-         (reset! @mux-var {:subs {"sid" {:cursor-atom (atom 0)
-                                         :sinks {"sub" (fn [_])}}}
-                           :epoch 0
-                           :future nil
-                           :stream closeable})
-         ((rv 'shutdown-subscriptions!))
-         (is (true? @@finalizing-var))
-         (is (empty? @@subscriptions-var))
-         (is (empty? (:subs @@mux-var)))
-         (is (= 2 @closes))
-         (finally (reset! @mux-var previous-mux)
-                  (reset! @subscriptions-var previous-subscriptions)
-                  (reset! @finalizing-var previous-finalizing)))))
+        state
+        (atom {:subs {"sid" {:cursor-atom (atom 0)
+                             :sinks {"sub" (fn [_])}}}
+               :epoch 0
+               :future pending
+               :stream stream})
+
+        finalizing
+        (atom false)]
+
+    (with-redefs-fn {(rv 'mux) state (rv 'client-finalizing?) finalizing}
+      (fn []
+        ((rv 'shutdown-subscriptions!))
+        (is (true? @finalizing))
+        (is (= {:subs {} :epoch 1 :future nil :stream nil} @state))
+        (is (.isCancelled pending))
+        ((rv 'shutdown-subscriptions!))
+        (is (= 1 @closes))))))
 
 (deftest list-resources-cached-never-blocks-the-caller
   ;; REGRESSION: the footer calls this on the render thread every frame. The

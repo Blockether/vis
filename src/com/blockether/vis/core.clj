@@ -149,8 +149,6 @@
              [gateway-turn-trace gateway-client/turn-trace]
              [gateway-reconcile-running-turns! gateway-client/reconcile-running-turns!]
              [gateway-context-snapshot gateway-client/context-snapshot]
-             [gateway-subscribe! gateway-client/subscribe!]
-             [gateway-unsubscribe! gateway-client/unsubscribe!]
              [gateway-current-seq gateway-client/current-seq]
              [gateway-mux-subscribe! gateway-client/mux-subscribe!]
              [gateway-mux-unsubscribe! gateway-client/mux-unsubscribe!]
@@ -759,8 +757,6 @@
              [dispose-environment! lp/dispose-environment!]
              [install-extension! lp/install-extension!]
              [sync-active-extension-symbols! lp/sync-active-extension-symbols!])
-
-(import-vars [auto-archive-hot-symbols! lp/auto-archive-hot-symbols!])
 
 ;; Sessions
 (import-vars [db-info lp/db-info]

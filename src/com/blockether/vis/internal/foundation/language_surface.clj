@@ -23,26 +23,6 @@
           str
           str/lower-case))
 
-(defn- language-scan
-  "Embedded scan data in tests/legacy callers, otherwise the cached scan for the
-   dynamically bound workspace root. The production tool env does not carry the
-   model-facing session digest, so dispatch must consult the environment source."
-  [env]
-  (or (:env/languages env)
-      (:languages env)
-      (try (:languages (environment/snapshot)) (catch Throwable _ nil))))
-
-(defn- env-language
-  [env]
-  (let [scan (language-scan env)]
-    (or (normalize-language (get-in env [:env/project :primary_language]))
-        (normalize-language (get-in env [:project :primary_language]))
-        (normalize-language (:primary scan))
-        (some->> (:languages scan)
-                 (map #(normalize-language (or (:language %) (:name %) %)))
-                 (remove nil?)
-                 first))))
-
 (defn- active-extensions
   [env]
   (or (some-> env
@@ -225,13 +205,6 @@
 
 (defn- alias-of [lang] (get language-aliases lang))
 
-(defn- scanned-languages
-  "The workspace scan's languages in FILE-COUNT order (most files first),
-   normalized to lowercase strings, nil-free."
-  [env]
-  (->> (:languages (language-scan env))
-       (keep #(normalize-language (or (:language %) (:name %) %)))))
-
 (defn- candidate-languages
   "Ordered, DISTINCT languages to try when resolving a handler, each followed by
    its family alias so a variant (`tsx`) can fall back to its base (`typescript`):
@@ -246,13 +219,15 @@
    work in a repo whose top language is DATA (a json/yaml-heavy TS app, or vis
    itself): the dominant data language has no pack, so we fall through to the
    first REAL code language a pack can actually handle."
-  [env explicit]
-  (->> (if explicit [explicit] (cons (env-language env) (scanned-languages env)))
-       (mapcat (fn [l]
-                 [l (alias-of l)]))
-       (remove nil?)
-       distinct
-       vec))
+  [explicit]
+  (let [scan (when-not explicit (try (:languages (environment/snapshot)) (catch Throwable _ nil)))]
+    (->> (if explicit [explicit] (cons (:primary scan) (map :language (:languages scan))))
+         (keep normalize-language)
+         (mapcat (fn [language]
+                   [language (alias-of language)]))
+         (remove nil?)
+         distinct
+         vec)))
 
 (defn- choose-handler
   [env capability opts]
@@ -272,7 +247,7 @@
                 (let [ms (get by-lang l)]
                   (cond (= 1 (count ms)) {:handler (first ms)}
                         (seq ms) {:ambiguous l :matches ms})))
-              (candidate-languages env explicit))]
+              (candidate-languages explicit))]
 
     (cond (empty? handlers) (throw (ex-info
                                      (str "No language extension registered for " (name capability))

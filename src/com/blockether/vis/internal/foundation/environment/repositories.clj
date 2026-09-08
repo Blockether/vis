@@ -25,8 +25,6 @@
 
 (def ^:const default-deadline-ms 1000)
 
-(def ^:const default-status-timeout-ms 500)
-
 (def ^:private skip-directories
   "Directory names the scan never descends: VCS metadata, dependency caches and
    build output. Xcode's `DerivedData`, SwiftPM's `.build` and CocoaPods' `Pods`
@@ -219,9 +217,6 @@
          truncated?
          (or (:truncated? root-inventory) (> (long (:count root-inventory 0)) max-repos))
 
-         status-timeout-ms
-         (long (or (:status-timeout-ms opts) default-status-timeout-ms))
-
          repos
          (->> repository-rows
               (mapv (fn [{:keys [path root]}]
@@ -229,8 +224,7 @@
                             (file-of root)
 
                             summary
-                            (try (git/snapshot repo-file {:status-timeout-ms status-timeout-ms})
-                                 (catch Throwable _ nil))]
+                            (try (git/snapshot repo-file) (catch Throwable _ nil))]
 
                         (cond-> {:path path :root root}
                           summary

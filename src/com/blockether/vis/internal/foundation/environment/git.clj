@@ -15,12 +15,6 @@
             [com.blockether.vis.internal.workspace.git :as vis-git])
   (:import (java.io File)))
 
-(def ^:const default-status-timeout-ms
-  "Retained for call-site compatibility. Native `git status` is fast, so this
-   is no longer a hard walk deadline — `run-git` applies its own subprocess
-   timeout."
-  2000)
-
 (defn- git-line
   "Trimmed stdout of `git <args>` in `dir` when it exits 0, else nil."
   [^File dir args]

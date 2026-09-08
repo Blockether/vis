@@ -28,34 +28,18 @@
 ;; Activation
 
 (defn- workspace-has-clojure?
-  "Cheap activation check. Strategy, in order of preference:
-
-   1. `:env/languages` already on the env — the engine MAY pre-populate
-      it from a higher-level digest. Free win.
-   2. Project-file probe — single `File.exists?` for `deps.edn`,
-      `project.clj`, `shadow-cljs.edn`, `bb.edn`, `.nrepl-port`.
-      This is the fast path: 1-5 syscalls, no walk.
-   3. Bounded language scan (`languages/scan`). Only runs when the
-      probe missed; some Clojure repos have no manifest at the
-      workspace root (e.g. polylith sub-project pinned via channels)."
+  "Activate from workspace files: probe root manifests first, then run a bounded
+   language scan for projects with Clojure sources but no root manifest."
   [env]
   (let [root (some-> (:workspace/root env)
                      io/file)]
     (when (and root (.isDirectory root))
-      (or
-        ;; (1) pre-populated env hint
-        (boolean (some #(= "clojure" (:language %))
-                       (some-> env
-                               :env/languages
-                               :languages)))
-        ;; (2) project-file probe
-        (some (fn [n]
-                (.exists (io/file root n)))
-              ["deps.edn" "project.clj" "shadow-cljs.edn" "bb.edn"])
-        ;; (3) bounded fallback scan
-        (try (let [scan (languages/scan root {:max-files 2000 :deadline-ms 250})]
-               (boolean (some #(= "clojure" (:language %)) (:languages scan))))
-             (catch Throwable _ false))))))
+      (or (some (fn [name]
+                  (.exists (io/file root name)))
+                ["deps.edn" "project.clj" "shadow-cljs.edn" "bb.edn"])
+          (try (let [scan (languages/scan root {:max-files 2000 :deadline-ms 250})]
+                 (boolean (some #(= "clojure" (:language %)) (:languages scan))))
+               (catch Throwable _ false))))))
 
 (defn- activation-fn [env] (boolean (workspace-has-clojure? env)))
 

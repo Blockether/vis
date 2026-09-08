@@ -6,6 +6,57 @@
             [taoensso.telemere :as tel]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
+(deftest multiplexed-listeners-share-the-session-subscription
+  (let [state
+        (atom {:subs {} :epoch 0 :future nil :stream nil})
+
+        restarts
+        (atom 0)]
+
+    (with-redefs-fn {#'client/mux state
+                     #'client/client-finalizing? (atom false)
+                     #'client/ensure-release-hook! (fn []
+                                                     nil)
+                     #'client/restart-mux! #(swap! restarts inc)}
+      (fn []
+        (let [stop-a
+              (client/mux-subscribe! "sid"
+                                     (fn [_])
+                                     10)
+
+              stop-b
+              (client/mux-subscribe! "sid"
+                                     (fn [_])
+                                     10)]
+
+          (is (= 1 @restarts))
+          (is (= 2 (count (get-in @state [:subs "sid" :sinks]))))
+          (stop-a)
+          (is (= 1 @restarts))
+          (stop-b)
+          (is (= 2 @restarts))
+          (is (empty? (:subs @state))))))))
+
+(deftest shutdown-stops-the-multiplexed-reader
+  (let [closed
+        (atom false)
+
+        pending
+        (java.util.concurrent.FutureTask. ^java.util.concurrent.Callable
+                                          (fn []
+                                            nil))
+
+        stream
+        (reify
+          java.io.Closeable
+            (close [_] (reset! closed true)))]
+
+    (with-redefs-fn {#'client/mux (atom {:subs {} :epoch 0 :future pending :stream stream})}
+      (fn []
+        (#'client/shutdown-subscriptions!)
+        (is @closed)
+        (is (.isCancelled pending))))))
+
 (deftest default-gateway-infers-local-bearer-token
   ;; Regression: bare `vis-agent tui` must authenticate to a local --pair gateway.
   (let [token-file

@@ -67,6 +67,49 @@ afterEach(() => {
   vi.resetModules();
 });
 
+describe("multiplexed session subscriptions", () => {
+  it("shares the stream across views and keeps replay when a view remounts", async () => {
+    const { SessionSubscriptionHub } = await import("./subscriptions");
+    const { state, client } = fakeClient();
+    const stream = vi.spyOn(client, "streamSessionEvents");
+    const hub = new SessionSubscriptionHub(client);
+    try {
+      hub.watchSessions(["session-1", "session-2"]);
+      const first = vi.fn();
+      const second = vi.fn();
+      const stopFirst = hub.subscribeSession("session-1", first);
+      const stopSecond = hub.subscribeSession("session-2", second);
+      expect(stream).toHaveBeenCalledTimes(1);
+      const [cursors, emit] = stream.mock.calls[0]!;
+      expect([...cursors]).toEqual([
+        ["session-1", -1],
+        ["session-2", -1],
+      ]);
+      const event: SseEvent = {
+        type: "turn.started",
+        session_id: "session-1",
+        seq: 10,
+      };
+      emit(event);
+      expect(first).toHaveBeenCalledExactlyOnceWith(event);
+      expect(second).not.toHaveBeenCalled();
+      stopFirst();
+      const remounted = vi.fn();
+      const stopRemounted = hub.subscribeSession("session-1", remounted);
+      expect(remounted).toHaveBeenCalledExactlyOnceWith(event);
+      stopRemounted();
+      stopSecond();
+      expect(state.sessionStopped).toBe(0);
+      expect(stream).toHaveBeenCalledTimes(1);
+    } finally {
+      hub.dispose();
+    }
+    expect(state.sessionStopped).toBe(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(stream).toHaveBeenCalledTimes(1);
+  });
+});
+
 // Regression, Vis session 1bd4284d-861b-48e6-8639-ef8eafb22f0a: killing the gateway
 // while the app was backgrounded left WebKit holding both fetch streams; after resume,
 // opening or creating another session waited behind those parked sockets until restart.

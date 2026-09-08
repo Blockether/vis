@@ -5,15 +5,20 @@
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.gateway.resources :as resources]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
+
+(set-ns-context! [(around-each [f]
+                               (with-redefs [environment/snapshot
+                                             (constantly {:languages {:primary "clojure"
+                                                                      :languages [{:language
+                                                                                   "clojure"}]}})]
+                                 (f)))])
 
 (defn- fake-env
   [handlers]
   {:session-id (str "ls-test-" (random-uuid))
    :jail-policy-fn (constantly {:roots-fn (constantly [(System/getProperty "java.io.tmpdir")])
                                 :net-enabled? false})
-   :env/project {:primary_language "clojure"}
-   :env/languages {:languages []}
    :extensions (atom [{:ext/name "fake-clj" :ext/language-tools handlers}])})
 
 (defdescribe
@@ -469,19 +474,6 @@
                               ex-data
                               :type))))))))
 
-(defn- scan-env
-  "fake-env variant carrying an explicit workspace primary + a scanned language
-   roll-up (file-count order), for exercising handler-resolution heuristics."
-  [primary scanned handlers]
-  {:session-id (str "ls-test-" (random-uuid))
-   :jail-policy-fn (constantly {:roots-fn (constantly [(System/getProperty "java.io.tmpdir")])
-                                :net-enabled? false})
-   :env/project {:primary_language primary}
-   :env/languages {:languages (mapv (fn [l]
-                                      {:language l})
-                                    scanned)}
-   :extensions (atom [{:ext/name "fake" :ext/language-tools handlers}])})
-
 (defn- echo-lang-handler
   [language]
   {:language language
@@ -489,53 +481,53 @@
                    {:success? true :result {:language language}})})
 
 (defn- resolved-language
-  [env & args]
-  (get-in (apply language-surface/repl-eval env (concat args ["1"])) [:result :language]))
+  [primary scanned handlers & args]
+  (with-redefs [environment/snapshot
+                (constantly {:languages {:primary primary
+                                         :languages (mapv #(hash-map :language %) scanned)}})]
+    (get-in (apply language-surface/repl-eval
+              (fake-env (mapv echo-lang-handler handlers))
+              (concat args ["1"]))
+            [:result :language])))
 
 (defn- error-type [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
 
 (defdescribe
   language-resolution-heuristics-test
-  (it "falls through a data primary to the first REAL code language a pack handles"
-      ;; json dominates by file count but has no pack; the ts pack still resolves
-      ;; a BARE repl_eval — this is the 'couldn't use it' fix.
-      (let [env (scan-env "json"
-                          ["json" "typescript" "clojure"]
-                          [(echo-lang-handler "typescript") (echo-lang-handler "clojure")])]
-        (expect (= "typescript" (resolved-language env)))))
-  (it "prefers the workspace primary over other scanned languages"
-      (let [env (scan-env "clojure"
-                          ["clojure" "typescript"]
-                          [(echo-lang-handler "typescript") (echo-lang-handler "clojure")])]
-        (expect (= "clojure" (resolved-language env)))))
-  (it "uses the file-count primary from the workspace snapshot when tool env metadata is absent"
-      (let [env
-            (dissoc (scan-env nil [] [(echo-lang-handler "python") (echo-lang-handler "clojure")])
-              :env/project
-              :env/languages)]
-        (with-redefs [environment/snapshot
-                      (constantly {:languages {:primary "clojure"
-                                               :languages [{:language "clojure" :files 260}
+  (it "falls through a data primary to the first code language a pack handles"
+      (expect
+        (= "typescript"
+           (resolved-language "json" ["json" "typescript" "clojure"] ["typescript" "clojure"]))))
+  (it "prefers the snapshot primary over the scanned language order"
+      (expect (= "clojure"
+                 (resolved-language "clojure" ["typescript" "clojure"] ["typescript" "clojure"]))))
+  (it "reads the workspace snapshot once for an implicit dispatch"
+      (let [reads
+            (atom 0)
+
+            env
+            (fake-env (mapv echo-lang-handler ["python" "clojure"]))]
+
+        (with-redefs [environment/snapshot (fn []
+                                             (swap! reads inc)
+                                             {:languages {:primary "clojure"
+                                                          :languages
+                                                          [{:language "clojure" :files 260}
                                                            {:language "python" :files 47}]}})]
-          (expect (= "clojure" (resolved-language env))))))
-  (it "resolves a grammar variant to its base family handler via the alias map"
-      ;; a pack registering only 'typescript'/'javascript' still serves tsx/jsx.
-      (let [env (scan-env "json"
-                          ["json"]
-                          [(echo-lang-handler "typescript") (echo-lang-handler "javascript")])]
-        (expect (= "typescript" (resolved-language env "tsx")))
-        (expect (= "javascript" (resolved-language env "jsx")))
-        (expect (= "typescript" (resolved-language env "mts")))))
-  (it "still errors on an EXPLICIT unsupported language (no silent fallback)"
-      (let [env (scan-env "json" ["json" "typescript"] [(echo-lang-handler "typescript")])]
-        (expect (= :language-surface/no-language-handler
-                   (error-type #(language-surface/repl-eval env {"language" "rust" "code" "1"}))))))
+          (expect (= "clojure"
+                     (get-in (language-surface/repl-eval env {"code" "1"}) [:result :language])))
+          (expect (= 1 @reads)))))
+  (it "resolves a grammar variant to its base family handler"
+      (doseq [[variant language] [["tsx" "typescript"] ["jsx" "javascript"] ["mts" "typescript"]]]
+        (expect (= language
+                   (resolved-language "json" ["json"] ["typescript" "javascript"] variant)))))
+  (it "still errors on an explicit unsupported language"
+      (expect (= :language-surface/no-language-handler
+                 (error-type
+                   #(resolved-language "json" ["json" "typescript"] ["typescript"] "rust")))))
   (it "asks for a language when several packs match and none can be inferred"
-      (let [env (scan-env "json"
-                          ["json"]
-                          [(echo-lang-handler "typescript") (echo-lang-handler "clojure")])]
-        (expect (= :language-surface/ambiguous-language
-                   (error-type #(language-surface/repl-eval env {"code" "1"})))))))
+      (expect (= :language-surface/ambiguous-language
+                 (error-type #(resolved-language "json" ["json"] ["typescript" "clojure"]))))))
 
 (defdescribe
   capability-matrix-test

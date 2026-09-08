@@ -1813,69 +1813,67 @@
    first hit, echoed needles, and
    breadth flags when more files match than are shown. With `context` N each hit
    also carries `before`/`after` — vectors of `{\"line\" n \"text\" line}` — so the
-   surrounding lines arrive in the same call. The compatibility arity takes the
-   context count positionally; the hits already carry it."
-  ([out needles]
-   (let [hits
-         (vec (:hits out))
+   surrounding lines arrive in the same call."
+  [out needles]
+  (let [hits
+        (vec (:hits out))
 
-         ordered-paths
-         (distinct (map :path hits))
+        ordered-paths
+        (distinct (map :path hits))
 
-         by-path
-         (group-by :path hits)
+        by-path
+        (group-by :path hits)
 
-         total-files
-         (:total-file-count out)
+        total-files
+        (:total-file-count out)
 
-         matches
-         (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
-           (doseq [p ordered-paths]
-             (let [^java.util.LinkedHashMap fm (java.util.LinkedHashMap.)]
-               (doseq [{:keys [line text before after]} (get by-path p)]
-                 (.put fm
-                       (str line)
-                       (cond-> {"text" text}
-                         (some? before)
-                         (assoc "before"
-                           (mapv (fn [[ln txt]]
-                                   {"line" ln "text" txt})
-                                 before))
+        matches
+        (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
+          (doseq [p ordered-paths]
+            (let [^java.util.LinkedHashMap fm (java.util.LinkedHashMap.)]
+              (doseq [{:keys [line text before after]} (get by-path p)]
+                (.put fm
+                      (str line)
+                      (cond-> {"text" text}
+                        (some? before)
+                        (assoc "before"
+                          (mapv (fn [[ln txt]]
+                                  {"line" ln "text" txt})
+                                before))
 
-                         (some? after)
-                         (assoc "after"
-                           (mapv (fn [[ln txt]]
-                                   {"line" ln "text" txt})
-                                 after)))))
-               (.put mm p fm)))
-           mm)
+                        (some? after)
+                        (assoc "after"
+                          (mapv (fn [[ln txt]]
+                                  {"line" ln "text" txt})
+                                after)))))
+              (.put mm p fm)))
+          mm)
 
-         file-counts
-         (let [^java.util.LinkedHashMap fc (java.util.LinkedHashMap.)]
-           (doseq [p (sort-by (fn [p]
-                                [(- (count (get by-path p))) p])
-                              ordered-paths)]
-             (.put fc p (count (get by-path p))))
-           fc)]
+        file-counts
+        (let [^java.util.LinkedHashMap fc (java.util.LinkedHashMap.)]
+          (doseq [p (sort-by (fn [p]
+                               [(- (count (get by-path p))) p])
+                             ordered-paths)]
+            (.put fc p (count (get by-path p))))
+          fc)]
 
-     ;; TOTAL result: breadth and truncation keys ALWAYS ship (nil / false when
-     ;; there is nothing to report), so `r["hits_truncated_by"]` is a value test
-     ;; rather than a key test. CONTENT truncation stays its OWN signal: the
-     ;; top-level `truncated_by` is the NAME search's, so a capped content sweep
-     ;; would otherwise read as `end_of_results` and a slice would pass as whole.
-     {"needles" needles
-      "matches" matches
-      "hit_count" (count hits)
-      "file_count" (count ordered-paths)
-      "file_counts" file-counts
-      "total_file_count" total-files
-      "total_file_count_is_exact" (boolean (get out :total-file-count-exact? true))
-      "hits_truncated_by" (when (contains? #{:limit :bytes :time} (:truncated-by out))
-                            (name (:truncated-by out)))
-      "first_hit" (when (pos? (count hits))
-                    (let [{:keys [path line]} (nth hits 0)]
-                      (str path ":" line)))}))
-  ([out needles _former-context] (content-result out needles)))
+    ;; TOTAL result: breadth and truncation keys ALWAYS ship (nil / false when
+    ;; there is nothing to report), so `r["hits_truncated_by"]` is a value test
+    ;; rather than a key test. CONTENT truncation stays its OWN signal: the
+    ;; top-level `truncated_by` is the NAME search's, so a capped content sweep
+    ;; would otherwise read as `end_of_results` and a slice would pass as whole.
+    {"needles" needles
+     "matches" matches
+     "hit_count" (count hits)
+     "file_count" (count ordered-paths)
+     "file_counts" file-counts
+     "total_file_count" total-files
+     "total_file_count_is_exact" (boolean (get out :total-file-count-exact? true))
+     "hits_truncated_by" (when (contains? #{:limit :bytes :time} (:truncated-by out))
+                           (name (:truncated-by out)))
+     "first_hit" (when (pos? (count hits))
+                   (let [{:keys [path line]} (nth hits 0)]
+                     (str path ":" line)))}))
 
 ;; grep's TEXT projection
 ;;

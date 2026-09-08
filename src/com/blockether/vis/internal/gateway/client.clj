@@ -88,8 +88,6 @@
 
 (defonce ^:private release-hook-installed? (atom false))
 
-(defonce ^:private subscriptions (atom {}))
-
 (defonce ^:private client-finalizing? (atom false))
 
 ;; Multiplexed subscription: ONE SSE connection for MANY sessions.
@@ -553,34 +551,21 @@
     (assert-compatible! entry)))
 
 (defn- shutdown-subscriptions!
-  "Close every client-owned SSE stream exactly once without reconnecting.
-
-   Called by the single process shutdown hook after `client-finalizing?` flips.
-   Clearing both registries before closing their streams makes every reader's
-   EOF/reconnect guard observe terminal state, even though JVM hooks and socket
-   callbacks race concurrently."
+  "Close the multiplexed stream and cancel its reader without reconnecting.
+   Clear the registry before closing so EOF and reconnect guards observe the
+   terminal state even when shutdown hooks and socket callbacks race."
   []
   (reset! client-finalizing? true)
-  (let [[legacy _]
-        (swap-vals! subscriptions (constantly {}))
-
-        [mux-before _]
-        (swap-vals! mux
-                    (fn [m]
-                      (-> m
-                          (update :epoch inc)
-                          (assoc :subs {}
-                                 :future nil
-                                 :stream nil))))]
-
-    (doseq [[_ {:keys [future stream]}] legacy]
-      (try (some-> ^java.io.Closeable @stream
-                   .close)
-           (catch Throwable _ nil))
-      (when future (future-cancel future)))
-    (when-let [stream (:stream mux-before)]
+  (let [[before _] (swap-vals! mux
+                               (fn [state]
+                                 (-> state
+                                     (update :epoch inc)
+                                     (assoc :subs {}
+                                            :future nil
+                                            :stream nil))))]
+    (when-let [stream (:stream before)]
       (try (.close ^java.io.Closeable stream) (catch Throwable _ nil)))
-    (when-let [future (:future mux-before)]
+    (when-let [future (:future before)]
       (future-cancel future)))
   nil)
 
@@ -2220,7 +2205,7 @@
    A wedged / half-dead daemon (GC pause, deadlock, dead heartbeat over a
    half-open TCP) otherwise leaves `.readLine` parked FOREVER (OS TCP keepalive
    is ~2h), silently freezing the turn. Closing the body `InputStream` kicks
-   the parked read with an IOException, which `read-events-until!` / `subscribe!`
+   the parked read with an IOException, which `read-events-until!` / `mux-run!`
    already treat as a drop and RECONNECT from the last cursor: a recovered
    daemon resumes losslessly, a truly dead one fails fast and surfaces a real
    disconnect once the reconnect budget is spent. 4× the heartbeat so a couple
@@ -2456,97 +2441,20 @@
   "Open ONE SSE connection for `sid` from `cursor` and read it with
    [[read-sse-frames!]]. For each parsed event: advance `cursor*` (highest `:seq`
    seen) then call `(handle event)`. When `handle` returns a truthy value, stop
-   and return it (a terminal signal); otherwise keep reading. Resets `stream*`
-   (when non-nil) to the live InputStream so `unsubscribe!` can close it. Returns
-   `[:closed]` on EOF; throws `ex-info` with `:http-status` on a non-200
-   response. Shared by `read-sse-stream!` (blocking turns) and `subscribe!` (the
-   live mirror)."
-  [sid cursor cursor* stream* handle & [on-open]]
+   and return it (a terminal signal); otherwise keep reading. Returns `[:closed]`
+   on EOF; throws `ex-info` with `:http-status` on a non-200 response."
+  [sid cursor cursor* handle]
   (let [response (sse-response! sid cursor)]
     (when-not (= 200 (:status response))
       (throw (ex-info (str "gateway SSE HTTP " (:status response))
                       {:http-status (:status response)})))
     (with-open [^InputStream in (:body response)]
-      (when stream* (reset! stream* in))
-      (when on-open (on-open))
       (read-sse-frames! in
                         (fn [event]
                           (when-let [s (get event "seq")]
                             (swap! cursor* max (long s)))
                           (handle event))
                         nil))))
-
-(defn subscribe!
-  "Remote equivalent of gateway.state/subscribe!: start a background SSE reader
-   that replays `cursor` then calls `sink` for every live event. Returns an empty
-  replay vector because the gateway's SSE endpoint itself handles replay before
-   live delivery."
-  [sid sub-id sink cursor]
-  (if @client-finalizing?
-    []
-    (do
-      (ensure-release-hook!)
-      (let [entry
-            (ensure-gateway!)
-
-            _
-            (ensure-client! entry)
-
-            stream*
-            (atom nil)
-
-            cursor*
-            (atom (long (or cursor 0)))
-
-            fut
-            (future
-              ;; Reconnect (resuming from the last-seen cursor) whenever the daemon
-              ;; drops the stream, so a gateway restart / transient blip no longer
-              ;; kills the live mirror silently. Stops only when unsubscribe!
-              ;; removes the sub from the registry (or closes the stream).
-              (loop [attempt 0]
-                ;; A live mirror never terminates on its own: the handler always
-                ;; returns nil, so open-sse-events! only comes back on EOF ([:closed])
-                ;; or throws (non-200 / IO) — either way `dropped?` is true and we
-                ;; reconnect. `on-open` fires once the stream is live, and a drop
-                ;; before we (maybe) reconnect fires the inverse — both delivered
-                ;; through `sink` as synthetic `gateway.connected`/`.disconnected`
-                ;; events so the channel can paint a live connection indicator.
-                (let [dropped? (try (open-sse-events! sid
-                                                      @cursor*
-                                                      cursor*
-                                                      stream*
-                                                      (fn [event]
-                                                        (sink event)
-                                                        nil)
-                                                      (fn []
-                                                        (try (sink {:type "gateway.connected"})
-                                                             (catch Throwable _ nil))))
-                                    true
-                                    (catch Throwable _ true))]
-                  (when (and dropped? (not @client-finalizing?) (contains? @subscriptions sub-id))
-                    (try (sink {:type "gateway.disconnected"}) (catch Throwable _ nil))
-                    (let [delay-ms
-                          (long (min 5000 (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
-                          interrupted?
-                          (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
-
-                      (when (and (not interrupted?) (not @client-finalizing?))
-                        (recur (inc attempt)))))))
-              (swap! subscriptions dissoc sub-id))]
-
-        (swap! subscriptions assoc sub-id {:future fut :stream stream*})
-        []))))
-
-(defn unsubscribe!
-  [_sid sub-id]
-  (when-let [{:keys [future stream]} (get @subscriptions sub-id)]
-    (try (some-> ^java.io.Closeable @stream
-                 .close)
-         (catch Throwable _ nil))
-    (future-cancel future)
-    (swap! subscriptions dissoc sub-id))
-  nil)
 
 (defn- mux-sids-param
   "Comma list of `sid:cursor` for the current session set (UUIDs are URL-safe,
@@ -2699,7 +2607,7 @@
    (re)opened only when the session set changes; multiple local listeners for
    the SAME session share one cursor and one remote subscription. Returns a
    zero-arg cleanup fn. Every sink sees gateway.connected / gateway.disconnected
-   on connection changes, exactly like the per-session [[subscribe!]]."
+   on connection changes."
   [sid sink cursor]
   (if @client-finalizing?
     (fn [])
@@ -2827,7 +2735,6 @@
   (open-sse-events! sid
                     cursor
                     cursor*
-                    nil
                     (fn [event]
                       (let [[action event'] (sse-event-action event wanted-turn-id)]
                         (case action

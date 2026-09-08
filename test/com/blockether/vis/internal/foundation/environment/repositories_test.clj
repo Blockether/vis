@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.foundation.environment.repositories-test
   (:require [clojure.java.io :as io]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.foundation.environment.git :as git]
             [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Files)
@@ -32,7 +33,28 @@
                         (let [snap (repositories/snapshot root)]
                           (expect (= 0 (:count snap)))
                           (expect (empty? (:repositories snap))))
-                        (finally (cleanup root))))))
+                        (finally (cleanup root)))))
+             (it "uses default Git snapshots for discovered repository summaries"
+                 (let [root
+                       (make-tmp-dir)
+
+                       repo
+                       (io/file root "service")
+
+                       calls
+                       (atom [])]
+
+                   (try (mark-repo! repo)
+                        (repositories/refresh-inventory!)
+                        (with-redefs [git/snapshot (fn [dir]
+                                                     (swap! calls conj
+                                                       (.getCanonicalPath ^java.io.File dir))
+                                                     {:branch "main"})]
+                          (let [snap (repositories/snapshot root)]
+                            (expect (= 1 (:count snap)))
+                            (expect (= "main" (get-in snap [:repositories 0 :branch])))
+                            (expect (= [(.getCanonicalPath repo)] @calls))))
+                        (finally (repositories/refresh-inventory!) (cleanup root))))))
 
 (defdescribe
   repository-inventory-test
