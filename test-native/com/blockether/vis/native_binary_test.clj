@@ -668,6 +668,12 @@
                                                      "python"))) "--no-python-downloads"]
                                     60)]
              (expect (= 0 (:exit locked)) (:output locked)))
+           (let [synced (run-binary dir
+                                    [(.getAbsolutePath bin)
+                                     (str "-Duser.home=" (.getAbsolutePath dir)) "python" "uv"
+                                     "sync" "--project" (str project) "--locked" "--offline"]
+                                    120)]
+             (expect (= 0 (:exit synced)) (:output synced)))
            (let [lock-before
                  (slurp (io/file project "uv.lock"))
 

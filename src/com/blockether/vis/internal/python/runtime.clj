@@ -160,51 +160,162 @@
    Uses uv's project sources and noneditable installs, never the project's .venv.
    Builds are allowed for explicitly selected trusted projects. Output is discarded
    because registry diagnostics may contain credentials. Requires uv on PATH."
-  [^File project ^File snapshot]
-  (let [python
-        (Interpreter/pythonExecutable)
+  ([project snapshot] (uv-sync! project snapshot []))
+  ([^File project ^File snapshot options]
+   (let [python
+         (Interpreter/pythonExecutable)
 
-        environment
-        (io/file snapshot ".vis-uv")
+         environment
+         (io/file snapshot ".vis-uv")
 
-        command
-        (into ["uv" "sync" "--locked" "--no-editable" "--no-default-groups" "--no-python-downloads"
-               "--python" python "--project" (str project)]
-              (index-args "--default-index"))
+         command
+         (into ["uv" "sync" "--locked" "--no-editable" "--no-default-groups" "--no-python-downloads"
+                "--python" python "--project" (str project)]
+               (concat (index-args "--default-index") options))
 
-        builder
-        (doto (ProcessBuilder. ^java.util.List command)
-          (.redirectErrorStream true)
-          (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD))]
+         builder
+         (doto (ProcessBuilder. ^java.util.List command)
+           (.redirectErrorStream true)
+           (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD))]
 
-    (when-not python (throw (ex-info "uv requires the embedded Python executable" {})))
-    (.put (.environment builder) "UV_PROJECT_ENVIRONMENT" (str environment))
-    (let [process (.start builder)]
-      (try
-        (when-not (.waitFor process 180 TimeUnit/SECONDS)
-          (throw (ex-info "Extension uv sync timed out" {})))
-        (when-not (zero? (.exitValue process))
-          (throw
-            (ex-info
-              "Extension uv sync failed; check uv.lock, project sources, python.index_url and Python compatibility"
-              {:exit (.exitValue process)})))
-        (finally (when (.isAlive process)
-                   (with-open [children (.descendants process)]
-                     (.forEach children
-                               (reify
-                                 java.util.function.Consumer
-                                   (accept [_ child] (.destroyForcibly ^ProcessHandle child)))))
-                   (.destroyForcibly process)))))
-    (let [candidates (distinct (map #(.getCanonicalFile ^File %)
-                                    (filter #(and (.isDirectory ^File %)
-                                                  (= "site-packages" (.getName ^File %)))
-                                            (file-seq environment))))]
-      (when-not (= 1 (count candidates))
-        (throw (ex-info "uv environment must have one site-packages directory" {})))
-      (Files/move (.toPath ^File (first candidates))
-                  (.toPath (io/file snapshot ".vis-packages"))
-                  (make-array CopyOption 0)))
-    {:exit 0}))
+     (when-not python (throw (ex-info "uv requires the embedded Python executable" {})))
+     (.put (.environment builder) "UV_PROJECT_ENVIRONMENT" (str environment))
+     (let [process (.start builder)]
+       (try
+         (when-not (.waitFor process 180 TimeUnit/SECONDS)
+           (throw (ex-info "Extension uv sync timed out" {})))
+         (when-not (zero? (.exitValue process))
+           (throw
+             (ex-info
+               "Extension uv sync failed; check uv.lock, project sources, python.index_url and Python compatibility"
+               {:exit (.exitValue process)})))
+         (finally (when (.isAlive process)
+                    (with-open [children (.descendants process)]
+                      (.forEach children
+                                (reify
+                                  java.util.function.Consumer
+                                    (accept [_ child] (.destroyForcibly ^ProcessHandle child)))))
+                    (.destroyForcibly process)))))
+     (let [candidates (distinct (map #(.getCanonicalFile ^File %)
+                                     (filter #(and (.isDirectory ^File %)
+                                                   (= "site-packages" (.getName ^File %)))
+                                             (file-seq environment))))]
+       (when-not (= 1 (count candidates))
+         (throw (ex-info "uv environment must have one site-packages directory" {})))
+       (Files/move (.toPath ^File (first candidates))
+                   (.toPath (io/file snapshot ".vis-packages"))
+                   (make-array CopyOption 0)))
+     {:exit 0})))
+
+(defn- project-key
+  [^File project]
+  (util/sha256-hex (pr-str [(.getCanonicalPath project) runtime/version
+                            (Interpreter/pythonExecutable)
+                            (slurp (io/file project "pyproject.toml"))
+                            (slurp (io/file project "uv.lock")) (index-args "--default-index")])))
+
+(defn- project-home
+  ^File [^File project]
+  (io/file (System/getProperty "user.home")
+           ".vis" "python"
+           "projects" (util/sha256-hex (.getCanonicalPath project))))
+
+(defn prepared-project
+  "Read a manually prepared project. Never runs an installer. A changed lock or
+   project manifest requires another explicit sync. Published generations are immutable."
+  ^File [^File project]
+  (let [home
+        (project-home project)
+
+        pointer
+        (io/file home (str (project-key project) ".ready"))
+
+        generation
+        (when (.isFile pointer) (slurp pointer))
+
+        dir
+        (when (and generation (re-matches #"[0-9a-f-]{36}" generation))
+          (io/file home generation ".vis-packages"))]
+
+    (when-not (and dir (.isDirectory ^File dir))
+      (throw (ex-info (str
+                        "Missing or stale Vis environment; run: vis-agent python uv sync --project "
+                        (pr-str (.getCanonicalPath project))
+                        " --locked")
+                      {:type ::project-sync-required})))
+    dir))
+
+(defn sync-project!
+  "Explicitly sync a trusted uv project and atomically publish its installed packages.
+   Does not modify the project .venv. Old generations remain usable by existing loaders."
+  [^File project options]
+  (when-not (every? #{"--offline" "--no-cache"} options)
+    (throw (ex-info "Supported uv sync options: --project PATH, --locked, --offline, --no-cache"
+                    {})))
+  (let [project
+        (.getCanonicalFile project)
+
+        key
+        (project-key project)
+
+        home
+        (project-home project)
+
+        generation
+        (str (java.util.UUID/randomUUID))
+
+        staging
+        (io/file home generation)
+
+        pointer
+        (io/file home (str generation ".ready"))]
+
+    (.mkdirs staging)
+    (try (uv-sync! project staging options)
+         (when-not (= key (project-key project))
+           (throw (ex-info "Project changed during sync; run sync again" {})))
+         (spit pointer generation)
+         (Files/move (.toPath pointer)
+                     (.toPath (io/file home (str key ".ready")))
+                     (into-array CopyOption
+                                 [StandardCopyOption/ATOMIC_MOVE
+                                  StandardCopyOption/REPLACE_EXISTING]))
+         {:exit 0 :packages (str (io/file staging ".vis-packages"))}
+         (catch Throwable t (delete-tree! staging) (throw t))
+         (finally (.delete pointer)))))
+
+(defn uv-command!
+  "Handle the explicit `python uv sync` command; refuse environment/interpreter overrides."
+  [args]
+  (when-not (= "sync" (first args))
+    (throw (ex-info
+             "Usage: vis-agent python uv sync --project PATH --locked [--offline] [--no-cache]"
+             {})))
+  (loop [args
+         (next args)
+
+         project
+         (io/file (System/getProperty "user.dir"))
+
+         options
+         []]
+
+    (case (first args)
+      nil
+      (sync-project! project options)
+
+      "--project"
+      (if-let [path (second args)]
+        (recur (nnext args) (io/file path) options)
+        (throw (ex-info "--project requires a directory" {})))
+
+      "--locked"
+      (recur (next args) project options)
+
+      (if (#{"--offline" "--no-cache"} (first args))
+        (recur (next args) project (conj options (first args)))
+        (throw (ex-info "Unsupported uv sync option; Vis owns the interpreter and environment"
+                        {}))))))
 
 (defn pip-install!
   "Install `specs` with pip and make what landed importable in THIS process,

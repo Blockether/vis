@@ -121,34 +121,96 @@ repeating its dependencies in the script:
 ```
 
 `project` is relative to the entry file (absolute paths also work). It must
-contain both `pyproject.toml` and an existing `uv.lock`. Install **uv on the
-gateway's PATH** before loading the extension. Put uv settings, including
+contain both `pyproject.toml` and an existing `uv.lock`. Put uv settings, including
 `[tool.uv.sources]`, in that project's `pyproject.toml`, not the script block.
 Project mode rejects nonempty script dependencies to avoid ignoring them.
 
-Vis runs `uv sync --locked --no-editable --no-default-groups` using the embedded
-Python executable and a private environment under the extension snapshot. It
-respects the lockfile, project dependencies and uv sources, including local
-packages and named indexes. It neither updates the lockfile nor touches the
-project's `.venv`. Default dependency groups (including dev) and optional extras
-are not installed. Generate or update the lockfile with uv outside Vis first.
-An incompatible Python requirement or stale lockfile is a load failure.
+Install uv on the **sync command's PATH**, then explicitly prepare dependencies:
 
-Unlike the pip-only script mode, uv project mode allows package builds. Build
-backends execute with the gateway user's permissions; select only trusted
-projects and dependencies. Editable project/source declarations are installed
-noneditably so tools keep using their snapshot, not a live checkout. Sources
-without a packaged project can still use `source_paths` for their implementation.
-The installed packages are made available to session workers without another sync.
+```bash
+vis-agent python uv sync --project ./einmal --locked
+```
 
-`python.index_url` supplies uv's default index; explicit named source indexes
-are not replaced. Keep authentication in uv's supported credential configuration
-or the gateway environment, not committed URLs. Installer output is not exposed
-in load errors because it can contain credentials. `/reload` prepares a fresh
-snapshot; a failure retains the last working extension.
+Run this as the same OS user and with the same Vis runtime as the gateway.
+The command uses the embedded Python and runs real
+`uv sync --locked --no-editable --no-default-groups --no-python-downloads`.
+It respects uv sources and named indexes. It does not update `uv.lock` or touch
+the project's `.venv`. Default groups and optional extras are not installed.
+`--offline` and `--no-cache` are supported; other uv options are rejected so they
+cannot redirect the environment or interpreter. Generate the lockfile separately.
+
+Vis publishes dependencies under `~/.vis/python/projects/<project-hash>/<generation>/`.
+The command prints the prepared `.vis-packages` directory. Start and `/reload`
+**do not run an installer for uv projects**: they copy those prepared packages
+into the extension's private snapshot, then import and register its tools.
+A missing environment or changed `pyproject.toml`, `uv.lock`, runtime or default
+index is a load error with the sync command to run. A failed reload retains the
+last working extension. Sync failures do not replace the last prepared generation.
+
+Package builds run only during the explicit command, with the invoking user's
+permissions; select trusted projects and dependencies. Local packages are installed
+noneditably. After changing an installed local package, run sync again. Code in
+`source_paths` only needs `/reload`. Once a manual project is loaded, missing-import
+autoinstall is disabled in that interpreter, including its session worker.
+Extensions still share the worker's module cache; conflicting versions are not isolated.
+
+`python.index_url` supplies uv's default index; named source indexes are not replaced.
+Keep credentials in uv's supported credential configuration or the sync process's
+environment, not committed URLs. Installer diagnostics are suppressed because they
+may contain credentials. The gateway no longer needs uv on its PATH just to load
+a prepared project.
 
 Outside Vis, provide the implementation's import roots in your test or
 packaging configuration; `tool.vis.source_paths` is a Vis loader setting.
+
+### Explicit installation workflow
+
+1. Update `uv.lock` with uv when dependencies change.
+2. Run `vis-agent python uv sync --project ./einmal --locked`.
+3. Run `/reload` in Vis, then call the registered tool.
+
+This manual workflow is selected by `tool.vis.project`. Script-only PEP 723
+`dependencies` above still use the automatic pip loader; use project mode when
+installation must be explicit. A plain external `uv sync` prepares a different
+project environment and does not publish dependencies for Vis.
+
+### Keep business logic outside the entry file
+
+The entry file above only imports and registers tools. Put their implementation
+in the ordinary Python package, for example `einmal/src/einmal/__init__.py`:
+
+```python
+def status() -> str:
+    """Return the company integration status."""
+    return "ready"
+```
+
+Test that package independently in `einmal/tests/test_status.py`:
+
+```python
+from einmal import status
+
+
+def test_status():
+    assert status() == "ready"
+```
+
+From the repository root, run the tests with an explicit import root:
+
+```bash
+PYTHONPATH=einmal/src vis-agent python -m pytest einmal/tests/ -q
+```
+
+The spelling is `vis-agent python -m pytest`, not `vis-agent python pytest`.
+The explicit `PYTHONPATH` makes this example independent of package-layout
+inference. This command does not select the extension's private uv environment
+or prove that locked dependencies are prepared. The current embedded runtime can
+automatically install missing imports; this is not an install-free test workflow.
+
+After unit tests pass, verify extension registration and a tool call in a Vis
+session: explicit sync, `/reload`, then call the tool. `vis-agent extension list`
+checks registration only. A passing package test alone does not prove that the
+prepared dependencies can be imported and called in the session worker.
 
 ## Developing outside Vis
 

@@ -42,6 +42,7 @@
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis-python-runtime :as pyrt]
             [com.blockether.vis.internal.python.env :as env]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.error :as error]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.contract.wire :as wire]
@@ -3181,6 +3182,7 @@
   (cond (= "-c" (first prog)) {:mode :code :code (second prog) :argv (into ["-c"] (drop 2 prog))}
         (= "-m" (first prog))
         {:mode :module :module (second prog) :argv (into [(or (second prog) "-m")] (drop 2 prog))}
+        (= "uv" (first prog)) {:mode :uv :argv (vec (rest prog))}
         (= "-" (first prog)) {:mode :stdin :argv (vec prog)}
         :else {:mode :file :file (first prog) :argv (vec prog)}))
 
@@ -3275,10 +3277,21 @@
                (python-cli-env-overrides->map env-overrides))
 
         ctx
-        (python-cli-context {:network? network? :argv argv :env env})
+        (when-not (= :uv mode) (python-cli-context {:network? network? :argv argv :env env}))
 
         exit
         (case mode
+          :uv
+          (try (when (or (not network?) (not inherit-env?) (seq env-overrides))
+                 (throw (ex-info
+                          "Python sandbox options do not apply to uv sync; use --offline after sync"
+                          {})))
+               (env/ensure-interpreter!)
+               (let [result (python-runtime/uv-command! argv)]
+                 (stdout! (str "Prepared Vis packages: " (:packages result)))
+                 (:exit result))
+               (catch Throwable t (stderr! (.getMessage t)) 1))
+
           :code
           (if code
             (run-python-source! ctx code)
@@ -3375,10 +3388,11 @@
      "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] gateway <start|status|stop|pair> [--db PATH]"
      :cmd/subcommands #(registry/registered-under ["gateway"])}
     {:cmd/name "python"
-     :cmd/doc "Run code in the embedded Python sandbox (no tool bindings)."
+     :cmd/doc "Run embedded Python, or explicitly prepare extension dependencies with uv sync."
      :cmd/usage "vis-agent python [OPTS] [-c CODE | -m MODULE | FILE.py | -] [ARG...]"
      :cmd/examples
      ["vis-agent python -c \"import requests; print(requests.__version__)\""
+      "vis-agent python uv sync --project ./einmal --locked   # prepare extension dependencies"
       "vis-agent python -m pytest tests/ -q   # module run as __main__"
       "vis-agent python -m pytest tests/   # src layout inferred from project metadata"
       "PYTHONPATH=extra vis-agent python -m pytest tests/   # merged with inferred roots"

@@ -183,3 +183,71 @@
          (finally (.stop server 0)
                   (doseq [f (reverse (file-seq dir))]
                     (io/delete-file f true))))))
+
+(deftest manual-uv-publication-test
+  (let [dir
+        (temp-dir "vis-manual-uv")
+
+        project
+        (doto (io/file dir "project") .mkdirs)
+
+        home
+        (io/file dir "prepared")
+
+        failed?
+        (atom false)
+
+        calls
+        (atom [])]
+
+    (spit (io/file project "pyproject.toml") "[project]\nname='fixture'\nversion='1'\n")
+    (spit (io/file project "uv.lock") "version = 1\n")
+    (try
+      (with-redefs-fn {#'python-runtime/project-home (fn [_]
+                                                       home)
+                       #'config/load-config-raw (constantly {})
+                       #'python-runtime/uv-sync!
+                       (fn [p snapshot options]
+                         (swap! calls conj [p options])
+                         (when @failed? (throw (ex-info "simulated sync failure" {})))
+                         (.mkdirs (io/file snapshot ".vis-packages"))
+                         (spit (io/file snapshot ".vis-packages/value.py") "VALUE = 42"))}
+        (fn []
+          (is (= :com.blockether.vis.internal.python.runtime/project-sync-required
+                 (try (python-runtime/prepared-project project)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+          (let [args
+                ["sync" "--project" (str project) "--locked" "--offline"]
+
+                result
+                (python-runtime/uv-command! args)
+
+                first-dir
+                (python-runtime/prepared-project project)]
+
+            (is (= (:packages result) (str first-dir)))
+            (is (= [[(.getCanonicalFile project) ["--offline"]]] @calls))
+            (is (not (.exists (io/file project ".venv"))))
+            (reset! failed? true)
+            (is (= "simulated sync failure"
+                   (try (python-runtime/uv-command! args) nil (catch Exception e (.getMessage e)))))
+            (is (= first-dir (python-runtime/prepared-project project)))
+            (reset! failed? false)
+            (python-runtime/uv-command! args)
+            (is (not= first-dir (python-runtime/prepared-project project)))
+            (is (.isFile (io/file first-dir "value.py"))))
+          (spit (io/file project "uv.lock") "version = 2\n")
+          (is (= :com.blockether.vis.internal.python.runtime/project-sync-required
+                 (try (python-runtime/prepared-project project)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+          (let [before @calls]
+            (doseq [args [["pip" "install" "x"] ["sync" "--python" "other"] ["sync" "--active"]
+                          ["sync" "--project"]]]
+              (is (try (python-runtime/uv-command! args)
+                       false
+                       (catch clojure.lang.ExceptionInfo _ true))))
+            (is (= before @calls)))))
+      (finally (doseq [f (reverse (file-seq dir))]
+                 (io/delete-file f true))))))

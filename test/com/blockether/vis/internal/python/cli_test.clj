@@ -127,6 +127,12 @@
 (def ^:private python-cli-env-overrides->map
   #'com.blockether.vis.internal.main/python-cli-env-overrides->map)
 
+(defdescribe explicit-uv-command-test
+             (it "routes uv sync separately from Python scripts"
+                 (expect (= :uv
+                            (:mode (parse-python-cli-args ["uv" "sync" "--project" "einmal"
+                                                           "--locked"]))))))
+
 (defdescribe parse-python-cli-args-test
              (it "-c forwards trailing args as sys.argv after the '-c' marker"
                  (let [p (parse-python-cli-args ["-c" "code" "a" "b"])]

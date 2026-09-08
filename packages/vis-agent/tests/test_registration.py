@@ -53,6 +53,37 @@ def test_importable_extension_exposes_typed_tools(tmp_path):
         )
 
 
+def test_thin_entry_registers_tool_from_separate_package(tmp_path, monkeypatch):
+    """The guide's thin entry registers and calls an ordinary package function."""
+    import sys
+
+    package = tmp_path / "einmal" / "src" / "einmal"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        'def status() -> str:\n    """Return the company integration status."""\n    return "ready"\n',
+        encoding="utf-8",
+    )
+    entry = tmp_path / ".vis" / "extensions" / "einmal.py"
+    entry.parent.mkdir(parents=True)
+    entry.write_text(
+        'import blockether.vis.extension as vis\nfrom einmal import status\nvis.register(vis.Extension(name="einmal", description="Company tools.", alias="einmal", symbols=[vis.Symbol(status)]))\n',
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(package.parent))
+    monkeypatch.delitem(sys.modules, "einmal", raising=False)
+    try:
+        module = runpy.run_path(str(entry))
+        assert module["status"]() == "ready"
+        declaration = vis._registration["spec"]
+        assert declaration["name"] == "einmal"
+        tool = declaration["symbols"][0]
+        assert tool["name"] == "status"
+        assert tool["doc"] == "Return the company integration status."
+        assert tool["fn"]() == "ready"
+    finally:
+        sys.modules.pop("einmal", None)
+
+
 def test_object_tools_keep_method_metadata_and_raise_normally():
     class Tools:
         @vis.method(tag="mutation", is_hidden=True)

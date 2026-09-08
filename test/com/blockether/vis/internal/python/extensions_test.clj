@@ -1785,9 +1785,18 @@ vis.register(vis.Extension(
                           output (slurp (.getInputStream p))]
 
                       (expect (= 0 (.waitFor p)) output)))
+                  (when uv?
+                    (expect (= {:loaded 0 :failed 1 :changed? true}
+                               (pyx/reload-python-extensions!
+                                 {:dirs [(str (io/file ext-dir ".vis/extensions"))]})))
+                    (python-runtime/uv-command! ["sync" "--project" (str (io/file ext-dir "einmal"))
+                                                 "--locked"]))
                   (expect (= {:loaded 1 :failed 0 :changed? true}
-                             (pyx/reload-python-extensions!
-                               {:dirs [(str (io/file ext-dir ".vis/extensions"))]})))
+                             (with-redefs [python-runtime/uv-sync!
+                                           (fn [& _]
+                                             (throw (ex-info "Loader must not sync" {})))]
+                               (pyx/reload-python-extensions!
+                                 {:dirs [(str (io/file ext-dir ".vis/extensions"))]}))))
                   (when-not local?
                     (expect (some #{"/simple/vis-einmal-dependency-fixture/"} @requests))
                     (expect (some #{(str "/files/" wheel-name)} @requests)))
@@ -1809,27 +1818,37 @@ vis.register(vis.Extension(
                              :extensions (atom [ext])
                              :active-extensions (atom [])}]
 
-                    (try (lp/sync-active-extension-symbols! env [ext])
-                         (let [result (ep/run-python-block ctx "print(await einmal_answer())")]
-                           (expect (nil? (:error result)))
-                           (expect (= "42" (str/trim (:stdout result)))))
-                         (expect (= (if uv? 0 1) @installs))
-                         (when uv?
-                           (let [lock-file (io/file ext-dir "einmal/uv.lock")
-                                 lock-before (slurp lock-file)]
+                    (try
+                      (lp/sync-active-extension-symbols! env [ext])
+                      (let [result (ep/run-python-block ctx "print(await einmal_answer())")]
+                        (expect (nil? (:error result)))
+                        (expect (= "42" (str/trim (:stdout result)))))
+                      (expect (= (if uv? 0 1) @installs))
+                      (when uv?
+                        (let
+                          [probe
+                           (ep/run-python-block
+                             ctx
+                             (str
+                               "import vis_autoinstall\n"
+                               "def forbid_install(name):\n    raise AssertionError('unexpected install')\n"
+                               "finder = vis_autoinstall._VisAutoInstall(forbid_install)\n"
+                               "assert finder._wanted('absent_manual_fixture', None) is None\n"))]
+                          (expect (nil? (:error probe))))
+                        (let [lock-file (io/file ext-dir "einmal/uv.lock")
+                              lock-before (slurp lock-file)]
 
-                             (spit
-                               (io/file ext-dir "einmal/pyproject.toml")
-                               "\n[project.optional-dependencies]\nstale = ['absent-fixture==1']\n"
-                               :append
-                               true)
-                             (expect (= {:loaded 1 :failed 1 :changed? true}
-                                        (pyx/reload-python-extensions!
-                                          {:dirs [(str (io/file ext-dir ".vis/extensions"))]})))
-                             (expect (= lock-before (slurp lock-file)))
-                             (expect (identical? ext (registered "einmal-declared")))
-                             (expect (= 42 (:result ((symbol-fn ext 'einmal_answer)))))))
-                         (finally (ep/dispose-python-context! ctx))))))))
+                          (spit (io/file ext-dir "einmal/pyproject.toml")
+                                "\n[project.optional-dependencies]\nstale = ['absent-fixture==1']\n"
+                                :append
+                                true)
+                          (expect (= {:loaded 1 :failed 1 :changed? true}
+                                     (pyx/reload-python-extensions!
+                                       {:dirs [(str (io/file ext-dir ".vis/extensions"))]})))
+                          (expect (= lock-before (slurp lock-file)))
+                          (expect (identical? ext (registered "einmal-declared")))
+                          (expect (= 42 (:result ((symbol-fn ext 'einmal_answer)))))))
+                      (finally (ep/dispose-python-context! ctx))))))))
           (finally (.stop server 0)))))))
 
 ;; Package-extension convention — a subdir holding extension.py = ONE extension

@@ -743,6 +743,8 @@
              ctx
              (str "import sys as __vis_pathsys__\n"
                   "import os as __vis_pathos__\n"
+                  (when (.isFile (io/file snap ".vis-manual"))
+                    "__vis_pathsys__._vis_manual_dependencies = True\n")
                   "__vis_ext_dir__ = "
                   (python-string-literal (.getCanonicalPath snap))
                   "\n"
@@ -1885,14 +1887,22 @@
           [result
            (try
              (if project
-               (python-runtime/uv-sync! project (:dir frozen))
+               (let [packages (python-runtime/prepared-project project)]
+                 (doseq [[rel file] (import-root-files packages)]
+                   (let [target (io/file (:dir frozen) ".vis-packages" rel)]
+                     (io/make-parents target)
+                     (io/copy file target)))
+                 (spit (io/file (:dir frozen) ".vis-manual") "")
+                 {:exit 0})
                (python-runtime/pip-install! {:target (str (io/file (:dir frozen) ".vis-packages"))}
                                             dependencies))
-             (catch Throwable _
-               (throw
-                 (ex-info
-                   "Extension dependency preparation failed; check index, uv.lock, project sources and Python compatibility"
-                   {:type ::dependency-install-failed}))))]
+             (catch Throwable t
+               (if project
+                 (throw t)
+                 (throw
+                   (ex-info
+                     "Extension dependency preparation failed; check index and Python compatibility"
+                     {:type ::dependency-install-failed})))))]
           (when-not (zero? (long (or (:exit result) 1)))
             (throw
               (ex-info

@@ -52,6 +52,8 @@ class _VisAutoInstall:
         self.busy = set()
 
     def _wanted(self, fullname, path):
+        if getattr(sys, "_vis_manual_dependencies", False):
+            return None
         if path is not None or "." in fullname:
             return None
         if fullname.startswith("_") or fullname in self.tried or fullname in self.busy:
