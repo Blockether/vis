@@ -336,6 +336,13 @@ export interface ProviderLimitRow {
   note?: string;
 }
 
+/** Reset allowance belongs to the authenticated ChatGPT account, not a device. */
+export type ProviderResetCredits =
+  | { status: "ok"; account_id: string; available_count: number }
+  | { status: "error" | "unsupported"; account_id?: string; message?: string };
+
+export type ProviderResetOutcome = "reset" | "nothing_to_reset" | "no_credit" | "already_redeemed";
+
 /**
  * The gateway's limits report for one provider, exactly as `/v1/router` and
  * `/v1/providers/:id/limits` emit it. Rows live under `dynamic.limits`.
@@ -345,7 +352,7 @@ export interface ProviderLimits {
   status?: "ok" | "loading" | "error" | string;
   fetched_at_ms?: number;
   static?: Record<string, unknown>;
-  dynamic?: { limits?: ProviderLimitRow[]; note?: string };
+  dynamic?: { limits?: ProviderLimitRow[]; note?: string; reset_credits?: ProviderResetCredits };
   error?: { message?: string };
 }
 

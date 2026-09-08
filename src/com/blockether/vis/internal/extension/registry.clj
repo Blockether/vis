@@ -87,7 +87,7 @@
   #{:provider/status-fn :provider/logout-fn :provider/detect-fn :provider/auth-fn
     :provider/auth-start-fn :provider/auth-complete-fn :provider/auth-await-fn
     :provider/get-token-fn :provider/refresh-token-fn :provider/limits-fn :provider/enrich-models-fn
-    :provider/on-selected-fn})
+    :provider/consume-reset-credit-fn :provider/on-selected-fn})
 
 (defn provider?
   [x]

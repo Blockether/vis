@@ -259,3 +259,31 @@
   []
   (->> (registry/registered-providers)
        (mapv (comp provider-limits :provider/id))))
+
+(defn consume-reset-credit!
+  "Consume one provider reset after human confirmation. The provider callback
+   accepts `{:account-id string :idempotency-key string}` and returns an outcome
+   (`reset`, `nothing_to_reset`, `no_credit`, `already_redeemed`) or a sanitized
+   `{:error keyword :message string}`. Invalidate limits even on uncertain IO:
+   a reset may have succeeded before its response was lost."
+  [provider-id {:keys [account-id idempotency-key] :as attempt}]
+  (let [provider
+        (registry/provider-by-id provider-id)
+
+        consume
+        (:provider/consume-reset-credit-fn provider)]
+
+    (cond (nil? provider) {:error :unknown-provider :message "Provider is not registered."}
+          (nil? consume) {:error :reset-unsupported
+                          :message "This provider does not support limit resets."}
+          (not (and (util/non-blank-string? account-id)
+                    (<= (count account-id) 512)
+                    (util/non-blank-string? idempotency-key)
+                    (<= (count idempotency-key) 128)))
+          {:error :invalid-reset-request :message "Account and idempotency key are required."}
+          :else (try (consume (select-keys attempt [:account-id :idempotency-key]))
+                     (catch Exception _
+                       {:error :reset-unconfirmed
+                        :message
+                        "Could not confirm the reset. Retry the same attempt to check its result."})
+                     (finally (flush-limits-cache! provider-id))))))

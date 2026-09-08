@@ -800,6 +800,8 @@ export function storyProviderAuth(
     reload: nothing,
     refresh: nothing,
     recheck: nothing,
+    resetLimits: async () => 'reset',
+    hasPendingReset: () => false,
     signIn: nothing,
     finishPkce: nothing,
     finishApiKey: nothing,

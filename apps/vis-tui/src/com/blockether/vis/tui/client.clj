@@ -1213,6 +1213,37 @@
       (some? (get error "data"))
       (assoc :data (get error "data")))))
 
+(defn- provider-reset-credits<-wire
+  [credits]
+  (when (map? credits)
+    (cond-> {:status (wire-enum (get credits "status"))}
+      (some? (get credits "available_count"))
+      (assoc :available-count (get credits "available_count"))
+
+      (some? (get credits "account_id"))
+      (assoc :account-id (get credits "account_id"))
+
+      (some? (get credits "message"))
+      (assoc :message (get credits "message")))))
+
+(defn consume-provider-reset-credit!
+  "Consume the reset confirmed for this account. The caller keeps the same
+   idempotency key until a recognized outcome is received. No route probing or
+   daemon restart is appropriate for a mutation."
+  [provider-id account-id idempotency-key]
+  (let [entry (target!)]
+    (ensure-client! entry)
+    (let [result (send-json-with-entry!
+                   entry
+                   "POST"
+                   (str "/v1/providers/" (enc (name provider-id)) "/reset-credits/consume")
+                   {:account_id account-id :idempotency_key idempotency-key})
+          outcome (get result "outcome")]
+
+      (if (contains? #{"reset" "nothing_to_reset" "no_credit" "already_redeemed"} outcome)
+        {:outcome outcome}
+        (throw (ex-info "Could not confirm the reset. Retry the same attempt." {}))))))
+
 (defn- provider-limits<-wire
   "Restore the gateway provider-limits report to the engine/TUI shape using the
   explicit provider-limits schema only. Do not generic-walk gateway data here:
@@ -1242,6 +1273,10 @@
                          (some? (get static "tpm"))
                          (assoc :tpm (get static "tpm")))
                :dynamic (cond-> {:limits (mapv provider-limit-row<-wire (or limits []))}
+                          (some? (get dynamic "reset_credits"))
+                          (assoc :reset-credits
+                            (provider-reset-credits<-wire (get dynamic "reset_credits")))
+
                           (some? (get dynamic "note"))
                           (assoc :note (get dynamic "note")))}
         (some? error)
@@ -2105,6 +2140,8 @@
 
 (def gateway-provider-limits provider-limits)
 
+(def gateway-consume-provider-reset-credit! consume-provider-reset-credit!)
+
 (def gateway-provider-model-options provider-models)
 
 (def gateway-provider-remove! provider-remove!)
@@ -2170,6 +2207,48 @@
   []
   ;; Keep the displayed rows, but revoke any in-flight refresh's publication rights.
   (swap! router-cache* dissoc :at))
+
+(defonce ^:private reset-inflight* (atom {}))
+
+(defn- reset-attempt-path
+  [provider-id account-id]
+  ["provider_reset_attempts" (:base-url (or @target* (configure! {}))) (name provider-id)
+   account-id])
+
+(defn pending-provider-reset?
+  "An uncertain reset retains its non-secret attempt ID across TUI restarts."
+  [provider-id account-id]
+  (boolean (get-in (config/load-raw) (reset-attempt-path provider-id account-id))))
+
+(defn reset-provider-limits!
+  "Submit a confirmed reset, or retry the same durable account/gateway-scoped attempt.
+   Concurrent callers share one result. A failed local save never sends a mutation."
+  [provider-id account-id]
+  (let [path
+        (reset-attempt-path provider-id account-id)
+
+        [pending owner?]
+        (locking reset-inflight*
+          (if-let [pending (get @reset-inflight* path)]
+            [pending false]
+            (let [pending (promise)]
+              (swap! reset-inflight* assoc path pending)
+              [pending true])))]
+
+    (when owner?
+      (try (let [saved
+                 (config/update! #(if (get-in % path) % (assoc-in % path (str (random-uuid)))))
+
+                 result
+                 (consume-provider-reset-credit! provider-id account-id (get-in saved path))]
+
+             (config/update! #(update-in % (pop path) dissoc (peek path)))
+             (deliver pending {:result result}))
+           (catch Exception e (deliver pending {:error e}))
+           (finally (invalidate-router-cache!)
+                    (locking reset-inflight* (swap! reset-inflight* dissoc path)))))
+    (let [{:keys [result error]} @pending]
+      (if error (throw error) result))))
 
 (defn- router-cached
   "Render-frequency read: return the last snapshot immediately, even when cold.
@@ -2420,6 +2499,19 @@
       (str/replace #"[-_]" " ")
       str/capitalize))
 
+(defn provider-reset-summary
+  "Human-readable reset allowance. Missing or failed reads never mean zero."
+  [credits]
+  (case (:status credits)
+    :ok
+    (str (:available-count credits)
+         (if (= 1 (:available-count credits)) " limit reset available" " limit resets available"))
+
+    :unsupported
+    "Limit resets are not available for this account."
+
+    "Available resets could not be checked."))
+
 (defn provider-status-md
   [provider status limits]
   (str "# "
@@ -2428,6 +2520,8 @@
 
 "
        (if (get status "is_authenticated") "Authenticated" "Not authenticated")
+       (when (= "openai-codex" (name (:id provider)))
+         (str "\n\n" (provider-reset-summary (get-in limits [:dynamic :reset-credits]))))
        (when-let [message (or (get status "error") (:message (:error limits)))]
          (str "
 

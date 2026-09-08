@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
-import type { AuthFlow, ProviderAuthState, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
+import type { AuthFlow, ProviderAuthState, ProviderLimitRow, ProviderPreset, ProviderResetOutcome, RouterProvider } from '../lib/types';
+import { ProviderLimitReset } from './ProviderLimitReset';
 import { clientAuthFlow, openAuthUrl, watchAuth, type AuthWatch } from '../lib/oauth';
 import { Banner, Button, ConfirmRow, DialogFrame, IconButton, Input, ListRow, Modal } from './ui';
 import {
@@ -276,6 +277,8 @@ export interface ProviderAuth extends ProviderFleet {
   setApiKey: (value: string) => void;
   signIn: (provider: RouterProvider) => Promise<void>;
   recheck: (providerId: string) => Promise<void>;
+  resetLimits: (providerId: string, accountId: string) => Promise<ProviderResetOutcome>;
+  hasPendingReset: (providerId: string, accountId: string) => boolean;
   finishPkce: () => Promise<void>;
   finishApiKey: () => Promise<void>;
   cancelFlow: () => Promise<void>;
@@ -470,6 +473,24 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     [client, setErr, setPending, setProviders],
   );
 
+  const resetLimits = useCallback(async (providerId: string, accountId: string) => {
+    try {
+      return await client.consumeProviderResetCredit(providerId, accountId);
+    } finally {
+      // Do not keep an old allowance actionable if the following live read fails.
+      setProviders(rows => rows?.map(row => row.id === providerId ? {
+        ...row,
+        limits: { ...row.limits, dynamic: { ...row.limits?.dynamic, reset_credits: {
+          status: 'error' as const, account_id: accountId, message: 'Refresh to check available resets.',
+        } } },
+      } : row) ?? rows);
+      await recheck(providerId);
+    }
+  }, [client, recheck, setProviders]);
+
+  const hasPendingReset = useCallback((providerId: string, accountId: string) =>
+    client.hasPendingProviderReset(providerId, accountId), [client]);
+
   const finishInput = useCallback(async (input: string) => {
     if (!flow || !input.trim() || !watchRef.current) return;
     const generation = startGeneration.current;
@@ -623,6 +644,8 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     setApiKey,
     signIn,
     recheck,
+    resetLimits,
+    hasPendingReset,
     finishPkce,
     finishApiKey,
     cancelFlow,
@@ -1228,6 +1251,15 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                     No limits reported by this provider.
                   </p>
                 ) : null}
+                {authed && provider.id === 'openai-codex' && (
+                  <ProviderLimitReset
+                    credits={provider.limits?.dynamic?.reset_credits}
+                    isChecking={isProbing}
+                    hasPending={!!provider.limits?.dynamic?.reset_credits?.account_id && auth.hasPendingReset(provider.id, provider.limits.dynamic.reset_credits.account_id)}
+                    onConsume={accountId => auth.resetLimits(provider.id, accountId)}
+                    onRefresh={() => auth.recheck(provider.id)}
+                  />
+                )}
               </div>
             )}
             <ProviderNotice auth={auth} provider={provider} />

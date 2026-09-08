@@ -1332,6 +1332,39 @@
                             keyword)]
     (json-response {:report (provider-limits/provider-limits provider-id)})))
 
+(defn- provider-consume-reset-credit-handler
+  "POST /v1/providers/:provider-id/reset-credits/consume.
+   Account identity and a stable idempotency key are required; credentials never
+   leave the daemon. Unknown results are errors, not optimistic quota updates."
+  [request]
+  (let [body
+        (try (body-json request) (catch Exception _ nil))
+
+        provider-id
+        (some-> (get-in request [:path-params :provider-id])
+                keyword)
+
+        {:keys [error message] :as result}
+        (provider-limits/consume-reset-credit! provider-id
+                                               {:account-id (get body "account_id")
+                                                :idempotency-key (get body "idempotency_key")})]
+
+    (if error
+      (error-response (case error
+                        :unknown-provider
+                        404
+
+                        (:reset-unsupported :invalid-reset-request)
+                        400
+
+                        :account-changed
+                        409
+
+                        502)
+                      error
+                      message)
+      (json-response result))))
+
 (defn- provider-models-handler
   "GET /v1/providers/:provider-id/models[?show_all=true] — the LIVE model
    catalog for ONE provider, fetched DAEMON-side so the gateway stays the SOLE
@@ -4230,6 +4263,8 @@
         ["/providers/:provider-id" {:delete remove-provider-handler}]
         ["/providers/:provider-id/status" {:get provider-status-handler}]
         ["/providers/:provider-id/limits" {:get provider-limits-handler}]
+        ["/providers/:provider-id/reset-credits/consume"
+         {:post provider-consume-reset-credit-handler}]
         ["/providers/:provider-id/models" {:get provider-models-handler}]
         ["/providers/:provider-id/auth/start" {:post provider-auth-start-handler}]
         ["/providers/:provider-id/auth/complete" {:post provider-auth-complete-handler}]

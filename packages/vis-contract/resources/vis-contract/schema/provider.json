@@ -171,6 +171,53 @@
         "is_unlimited"
       ]
     },
+    "reset_credits": {
+      "description": "Account-scoped allowance for explicitly confirmed limit resets. Missing availability is never zero. Credentials must not appear here.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "error",
+            "ok",
+            "unsupported"
+          ]
+        },
+        "available_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "account_id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ok"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "available_count",
+          "account_id"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "available_count"
+          ]
+        }
+      }
+    },
     "report": {
       "type": "object",
       "additionalProperties": true,
@@ -213,6 +260,9 @@
               "items": {
                 "$ref": "#/$defs/limit_row"
               }
+            },
+            "reset_credits": {
+              "$ref": "#/$defs/reset_credits"
             },
             "note": {
               "type": "string"

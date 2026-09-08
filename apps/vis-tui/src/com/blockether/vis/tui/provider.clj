@@ -261,6 +261,8 @@
   ([provider status] (provider-action-items provider status false))
   ([provider status is-fallback] (provider-action-items provider status is-fallback false))
   ([provider status is-fallback is-default]
+   (provider-action-items provider status is-fallback is-default nil))
+  ([provider status is-fallback is-default reset-credits]
    (let [is-authenticated
          (provider-authenticated? provider status)
 
@@ -278,7 +280,14 @@
            (conj {:id :authenticate :label auth-label :key \a :force? is-authenticated})
 
            true
-           (conj {:id :status :label "Show Status + Limits" :key \s}))
+           (conj {:id :status :label "Show Status + Limits" :key \s})
+
+           (and is-authenticated (same-id? (:id provider) :openai-codex))
+           (conj {:id :reset-limits
+                  :key \r
+                  :label (if (= :ok (:status reset-credits))
+                           (str "Reset limits... (" (:available-count reset-credits) " available)")
+                           "Reset limits... (check availability)")}))
          ;; Removal is the ONE teardown a provider has, the same verb the companion
          ;; offers: the daemon runs the extension's own logout AND drops the config
          ;; entry, so nothing survives to resurrect the row as an authenticated
@@ -682,6 +691,86 @@
                (or (ex-message e) (str e)))
              ::rejected)))))
 
+(defn- await-provider-operation!
+  [q title line f]
+  (let [result (future (try {:value (f)} (catch Exception e {:error e})))]
+    (if ((:wait! q) title (constantly line) #(realized? result))
+      (let [{:keys [value error]} @result]
+        (if error (throw error) value))
+      ::dismissed)))
+
+(defn reset-provider-limits!
+  "Read allowance, explicitly confirm the account-wide cost, then refresh from the
+   provider. Dismissing a pending mutation does not cancel it or lose its attempt ID."
+  [screen g region provider]
+  (let [q
+        (dlg/band-questions screen g region)
+
+        pid
+        (:id provider)]
+
+    (try
+      (let [report
+            (await-provider-operation! q
+                                       "Codex limit resets"
+                                       "Checking available resets..."
+                                       #(vis/gateway-provider-limits pid))
+
+            credits
+            (get-in report [:dynamic :reset-credits])
+
+            account
+            (:account-id credits)
+
+            pending?
+            (and account (vis/pending-provider-reset? pid account))]
+
+        (cond (= ::dismissed report) false
+              (not (and account
+                        (or pending?
+                            (and (= :ok (:status credits))
+                                 (pos? (long (:available-count credits)))))))
+              (do ((:note! q) "Codex limit resets" (vis/provider-reset-summary credits)) false)
+              (not ((:confirm! q)
+                     (str
+                       (if pending? "Retry Codex reset? Account: " "Reset Codex limits? Account: ")
+                       account)
+                     {:cost (if pending?
+                              "Retries the same request; no second reset is spent."
+                              "Uses 1 reset for all devices and sessions; cannot be undone.")
+                      :yes-label (if pending? "Retry same request" "Use 1 reset")
+                      :no-label "Cancel"}))
+              false
+              :else (let [result (await-provider-operation!
+                                   q
+                                   "Codex limit reset pending"
+                                   "Esc closes this view, not the reset request."
+                                   #(vis/reset-provider-limits! pid account))]
+                      (when-not (= ::dismissed result)
+                        (let [fresh (try (vis/gateway-provider-limits pid) (catch Exception _ nil))
+                              text (case (:outcome result)
+                                     "reset"
+                                     "Limits reset; task not resent."
+
+                                     "nothing_to_reset"
+                                     "Nothing to reset; no reset used."
+
+                                     "no_credit"
+                                     "No resets available; none used."
+
+                                     "already_redeemed"
+                                     "Already processed; no additional reset used.")]
+
+                          ((:note! q)
+                            text
+                            (vis/provider-reset-summary (get-in fresh [:dynamic :reset-credits])))))
+                      true)))
+      (catch Exception _
+        ;; Invalidate/read even after an uncertain POST; never paint full quota locally.
+        (try (vis/gateway-provider-limits pid) (catch Exception _ nil))
+        ((:note! q) "Reset not confirmed" "Reopen Reset limits to retry the same request.")
+        false))))
+
 (defn provider-transient!
   "Run ONE provider's transient inside the CALLER's frame — the same
    commands a provider row offers on Enter, reachable straight from a
@@ -720,11 +809,21 @@
           {:provider-id (keyword (name pid)) :model (:fallback-model config)})]
 
     (when provider
-      (let [actions
+      (let [status
+            (gateway-provider-status-safe provider)
+
+            credits
+            (when (and (same-id? (:id provider) :openai-codex)
+                       (provider-authenticated? provider status))
+              (try (get-in (vis/gateway-provider-limits (:id provider)) [:dynamic :reset-credits])
+                   (catch Exception _ nil)))
+
+            actions
             (provider-action-items provider
-                                   (gateway-provider-status-safe provider)
+                                   status
                                    (tagged? provider fallback-selection)
-                                   (tagged? provider default-selection))
+                                   (tagged? provider default-selection)
+                                   credits)
 
             picked
             (:action (dlg/embed-transient! screen
@@ -761,6 +860,9 @@
 
           :status
           (do (show-provider-status! screen provider) false)
+
+          :reset-limits
+          (boolean (reset-provider-limits! screen g region provider))
 
           :remove
           (boolean (remove-provider! screen g region provider))

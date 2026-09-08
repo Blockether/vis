@@ -22,6 +22,7 @@ import type {
   QueuedTurn,
   QueuePausedInfo,
   ProviderLimits,
+  ProviderResetOutcome,
   ProviderPreset,
   ProviderStatus,
   RouterProvider,
@@ -345,7 +346,8 @@ function withEngine(path: string, engine?: string | null): string {
 
 /** Router rows per gateway base URL, shared by every screen and client instance. */
 const routerCache = new Map<string, { at: number; rows: RouterProvider[] }>();
-
+// A retry on another screen/client still represents the same account operation.
+const providerResetInflight = new Map<string, Promise<ProviderResetOutcome>>();
 /** In-flight router reads per base URL, so concurrent opens cost one request. */
 const routerInflight = new Map<string, Promise<RouterProvider[]>>();
 
@@ -2529,6 +2531,52 @@ export class GatewayClient {
     const limits = response.report ?? {};
     this.mergeCachedProvider(providerId, { limits });
     return limits;
+  }
+
+  private providerResetKey(providerId: string, accountId: string): string {
+    return `vis.provider-reset:${JSON.stringify([this.base, providerId, accountId])}`;
+  }
+
+  hasPendingProviderReset(providerId: string, accountId: string): boolean {
+    try {
+      return !!localStorage.getItem(this.providerResetKey(providerId, accountId));
+    } catch {
+      return false;
+    }
+  }
+
+  /** Persist BEFORE sending: an uncertain response must never become another spend. */
+  async consumeProviderResetCredit(providerId: string, accountId: string): Promise<ProviderResetOutcome> {
+    if (!providerId.trim() || !accountId.trim()) throw new Error("Select an authenticated account first.");
+    const key = this.providerResetKey(providerId, accountId);
+    const pending = providerResetInflight.get(key);
+    if (pending) return pending;
+    let idempotencyKey: string;
+    try {
+      idempotencyKey = localStorage.getItem(key) || crypto.randomUUID();
+      localStorage.setItem(key, idempotencyKey);
+    } catch {
+      throw new Error("Cannot safely save a reset attempt on this device. No reset was requested.");
+    }
+    const attempt = (async () => {
+      try {
+        const result = await this.request<{ outcome?: ProviderResetOutcome }>(
+          "POST",
+          `/v1/providers/${encodeURIComponent(providerId)}/reset-credits/consume`,
+          { account_id: accountId, idempotency_key: idempotencyKey },
+        );
+        if (!result.outcome || !["reset", "nothing_to_reset", "no_credit", "already_redeemed"].includes(result.outcome)) {
+          throw new Error("Reset could not be confirmed. Retry the same request to check its result.");
+        }
+        localStorage.removeItem(key);
+        return result.outcome;
+      } finally {
+        this.invalidateRouter();
+        providerResetInflight.delete(key);
+      }
+    })();
+    providerResetInflight.set(key, attempt);
+    return attempt;
   }
 
   /** Keep the shared router cache honest after a single-provider re-probe. */

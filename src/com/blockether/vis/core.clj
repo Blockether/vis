@@ -182,6 +182,7 @@
              [gateway-router-fleet gateway-client/router]
              [gateway-router-diagnostics gateway-client/router-diagnostics]
              [gateway-provider-limits gateway-client/provider-limits]
+             [gateway-consume-provider-reset-credit! gateway-client/consume-provider-reset-credit!]
              [gateway-provider-model-options gateway-client/provider-models]
              [gateway-set-router-default! gateway-client/set-router-default!]
              [gateway-set-router-fallback! gateway-client/set-router-fallback!])
