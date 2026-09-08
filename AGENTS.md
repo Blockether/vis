@@ -19,7 +19,11 @@ For simple, unambiguous bug-fix requests, the user expects the complete workflow
 verify, then commit the scoped changes and push to `main` without another permission round, unless
 that request says otherwise. Treat such requests as authorization for that commit and push, not for
 unrelated changes, releases, deployments or service restarts. Never include unrelated working-tree
-changes; if verification or a safe push is blocked, report the blocker instead of bypassing checks.
+changes. Do not finish a verified bug fix as local-only: commit and push before reporting completion.
+An unrelated full-build failure does not by itself block delivery when affected tests and checks pass
+and the failure is demonstrably outside the scoped diff; report that failure separately. If affected
+verification, hooks or a safe push are blocked, report the exact blocker and the remaining action;
+never bypass checks or hooks.
 For other work, commit, push, publish, close issues or mutate external systems only when requested.
 Permission for local work is not permission to restart a live gateway or deploy. Confirm destructive
 actions and history rewrites; never bypass hooks. When committing, use the configured human identity,

@@ -34,6 +34,43 @@ vi.mock("@capacitor/keyboard", async (importOriginal) => {
 });
 
 describe("sending from the native composer", () => {
+  // Regression: native text can arrive before React's change event. The old
+  // empty-state disabled button prevented send() from reading the live value.
+  it.each(["click", "touch"])("sends native text via %s without an extra change event", async (press) => {
+    const submitTurn = vi.fn(() => new Promise(() => {}));
+    renderSessionScreen({ client: { submitTurn } });
+    const composer = await screen.findByLabelText("Message Vis");
+    const send = screen.getByRole("button", { name: "Send message" });
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+      composer, "Native keyboard text",
+    );
+
+    if (press === "touch") {
+      fireEvent(send, new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+      fireEvent(send, new MouseEvent("pointerup", { bubbles: true, button: 0 }));
+      expect(submitTurn).toHaveBeenCalledTimes(1);
+    }
+    fireEvent.click(send);
+
+    await waitFor(() => expect(submitTurn).toHaveBeenCalledTimes(1));
+    expect(submitTurn.mock.calls[0]).toEqual([
+      "s1", "Native keyboard text", expect.any(Object),
+    ]);
+  });
+
+  it("does not submit an empty or whitespace-only native value", async () => {
+    const submitTurn = vi.fn(() => new Promise(() => {}));
+    renderSessionScreen({ client: { submitTurn } });
+    const composer = await screen.findByLabelText("Message Vis");
+    const send = screen.getByRole("button", { name: "Send message" });
+    fireEvent.click(send);
+    fireEvent.change(composer, { target: { value: "Visible before native deletion" } });
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+      composer, "   ",
+    );
+    fireEvent.click(send);
+    expect(submitTurn).not.toHaveBeenCalled();
+  });
   it("keeps the keyboard and focused composer stable", async () => {
     renderSessionScreen();
     const composer = await screen.findByLabelText("Message Vis");

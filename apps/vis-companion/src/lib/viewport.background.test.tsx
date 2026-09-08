@@ -3,7 +3,7 @@ import { act, useRef } from "react";
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useVisualViewportShell } from "./viewport";
+import { isAppForeground, useVisualViewportShell } from "./viewport";
 
 const native = vi.hoisted(() => ({
   keyboard: new Map<string, (info: { keyboardHeight: number }) => void>(),
@@ -69,6 +69,30 @@ afterEach(() => {
 });
 
 describe("the native shell after backgrounding", () => {
+  // Regression: TestFlight builds 5358 and 5468 blocked in
+  // didProgrammaticallyClearFocusedElement / UIKeyboardTaskQueue. Capacitor's
+  // iOS resume is willEnterForeground, not didBecomeActive: it must not blur.
+  it("waits for didBecomeActive before restoring focus, once per transition", () => {
+    render(<ViewportProbe />);
+    const composer = screen.getByRole("textbox", { name: "Message" });
+    composer.focus();
+    act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 300 }));
+    act(() => native.app.get("appStateChange")?.({ isActive: false }));
+    const blur = vi.spyOn(composer, "blur");
+    const focus = vi.spyOn(composer, "focus");
+
+    act(() => native.app.get("resume")?.());
+    act(() => vi.advanceTimersByTime(500));
+    expect(isAppForeground()).toBe(false);
+    expect(blur).not.toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
+
+    act(() => native.app.get("appStateChange")?.({ isActive: true }));
+    act(() => vi.advanceTimersByTime(500));
+    expect(isAppForeground()).toBe(true);
+    expect(blur).toHaveBeenCalledTimes(1);
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
   // Regression, Vis session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: iOS ended
   // keyboard editing while the WebView was suspended, but stale DOM focus and the
   // old keyboard-height pin returned as an empty band where the keyboard had been.
@@ -81,7 +105,7 @@ describe("the native shell after backgrounding", () => {
     act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 300 }));
     expect(shell).toHaveStyle({ height: "544px" });
 
-    act(() => native.app.get("resume")?.());
+    act(() => native.app.get("appStateChange")?.({ isActive: true }));
 
     expect(shell.style.height).toBe("");
     expect(document.activeElement).not.toBe(composer);

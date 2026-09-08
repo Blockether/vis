@@ -4954,10 +4954,10 @@ export function SessionScreen({
                     // viewport while the answer starts streaming.
                     void send();
                   }}
-                  disabled={
-                    (!prompt.trim() && !attachments.length) ||
-                    voicePhase !== "idle"
-                  }
+                  // Native keyboard edits can precede React's change event. An
+                  // empty React snapshot must not block the press that reads the
+                  // live textarea; send() already rejects genuinely empty input.
+                  disabled={voicePhase !== "idle"}
                   label={running ? "Queue message" : "Send message"}
                   title={running ? "Queue behind the running turn" : "Send"}
                 >

@@ -1022,10 +1022,10 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       releasedForBackground = keyboardPinned || isSoftKeyboardUp() ? active : null;
     };
 
-    // Native resume: Capacitor fires this on iOS/Android even when the webview
-    // emits no viewport event at all. Clear whatever pin survived the suspension in
-    // the first foreground frame, then make one real focus change so the keyboard
-    // returns instead of leaving a keyboard-sized empty band.
+    // Restore only after appStateChange reports active (didBecomeActive on iOS).
+    // Capacitor's resume is willEnterForeground: touching DOM focus there can
+    // block UIKit's keyboard queue before the app is active (builds 5358/5468).
+    // Clear the stale keyboard pin and restore the editor after activation.
     const onNativeResume = () => {
       nativeForeground = true;
       const active = document.activeElement;
@@ -1065,7 +1065,6 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         if (removed) sub.remove();
         else handles.push(sub);
       };
-      void App.addListener('resume', onNativeResume).then(track).catch(() => undefined);
       void App.addListener('appStateChange', ({ isActive }) => {
         if (isActive) onNativeResume();
         else onNativeBackground();
