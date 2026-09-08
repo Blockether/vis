@@ -1595,6 +1595,13 @@ const FormTrace = memo(function FormTrace({
   const cards = forms
     .flatMap(toolCards)
     .filter((member) => member.error != null || resultBody(member) !== "");
+  // One result disclosure per execution group, matching the TUI. Keep errors
+  // separate so they remain visible even while source and stdout are folded.
+  const stdout = cards
+    .filter((card) => card.error == null)
+    .map((card) => card.stdout?.trimEnd())
+    .filter(Boolean)
+    .join("\n");
   const {
     activity,
     detected: detectedActivity,
@@ -1622,9 +1629,7 @@ const FormTrace = memo(function FormTrace({
               : undefined
           }
         >
-          {cards.filter((card) => card.error == null).map((card, index) => (
-            <ToolCard key={index} form={card} embedded />
-          ))}
+          {stdout && <ToolCard form={{ stdout }} embedded />}
         </CollapsibleFormCode>
       )}
       <div
@@ -1634,7 +1639,7 @@ const FormTrace = memo(function FormTrace({
             : "min-w-0"
         }
         data-execution-activity={detectedActivity || undefined}
-        role={running ? "status" : undefined}
+        role={running ? "status" : "group"}
         aria-live={running ? "polite" : undefined}
         aria-label="Execution trace"
       >

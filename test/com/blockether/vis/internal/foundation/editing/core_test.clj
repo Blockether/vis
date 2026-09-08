@@ -2894,44 +2894,74 @@
                    (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
                      (expect (= ["."] (:paths (coerce-rg spec))))))))
 
-(defdescribe grep-max-results-alias-test
-             ;; Models sometimes write `max_results` where grep's knob is `limit`; the call
-             ;; used to die on "find spec has unknown keys: max_results", so `max_results`
-             ;; is now an accepted ALIAS — one of the two, never both (the `paths`/`path`
-             ;; rule).
-             (let [coerce-find
-                   (private-fn "coerce-find-spec")
+(defdescribe
+  grep-limit-aliases-test
+  (let [coerce-find
+        (private-fn "coerce-find-spec")
 
-                   grep
-                   (grep-data-fn)
+        grep
+        (grep-data-fn)
 
-                   caught
-                   (fn [f & args]
-                     (try (apply f args) nil (catch clojure.lang.ExceptionInfo e e)))]
+        caught
+        (fn [f & args]
+          (try (apply f args) nil (catch clojure.lang.ExceptionInfo e e)))]
 
-               (it "max_results is read as limit, and still must be a positive integer"
-                   (expect (= 7 (:limit (coerce-find [{"query" "needle" "max_results" 7}]))))
-                   (expect (= 7 (:limit (coerce-find [{"query" "needle" "limit" 7}]))))
-                   (let [e (caught coerce-find [{"query" "needle" "max_results" 0}])]
-                     (expect (some? e))
-                     (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
-                     (expect (string/includes? (ex-message e) "max_results"))))
-               (it "limit and max_results together are refused, naming both"
-                   (let [e (caught coerce-find [{"query" "needle" "limit" 5 "max_results" 5}])]
-                     (expect (some? e))
-                     (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
-                     (expect (string/includes? (ex-message e) "only one of canonical"))))
-               (it "a max_results grep runs and the coerced limit is echoed"
-                   (let [_
-                         (write-temp! "maxres/a.clj" "needle here\n")
+    (it "accepts max_results and max_count as aliases for the page limit"
+        (doseq [key ["limit" "max_results" "max_count"]]
+          (expect (= 7 (:limit (coerce-find [{"query" "needle" key 7}]))))))
+    (it "requires a positive integer for either alias"
+        (doseq [alias
+                ["max_results" "max_count"]
 
-                         out
-                         (:result (grep {"query" "needle"
-                                         "paths" [(temp-dir-path "maxres")]
-                                         "max_results" 3}))]
+                value
+                [0 -1 1.5 "3" nil false]]
 
-                     (expect (= 3 (get out "limit")))
-                     (expect (= 1 (get out "hit_count")))))))
+          (let [e (caught coerce-find [{"query" "needle" alias value}])]
+            (expect (some? e))
+            (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
+            (expect (contains? (ex-data e) :limit))
+            (expect (string/includes? (ex-message e) alias)))))
+    (it "refuses two names for the same limit, including both aliases"
+        (doseq [[a b] [["limit" "max_results"] ["limit" "max_count"] ["max_results" "max_count"]]]
+          (let [e (caught coerce-find [{"query" "needle" a 2 b 2}])]
+            (expect (some? e))
+            (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
+            (expect (string/includes? (ex-message e) "only one of canonical")))))
+    (it "caps the whole content page and preserves paging with the limit or either alias"
+        (write-temp! "limit-alias/a.clj" "needle first\nneedle second\n")
+        (write-temp! "limit-alias/b.clj" "needle third\n")
+        (doseq [alias ["limit" "max_results" "max_count"]]
+          (let [spec {"query" "needle" "paths" [(temp-dir-path "limit-alias")] "context" 0 alias 2}
+                first-page (:result (grep spec))
+                next-page (:result (grep (assoc spec "offset" (get first-page "next_offset"))))]
+
+            (expect (= 2 (get first-page "limit")))
+            (expect (= 2 (get first-page "hit_count")))
+            (expect (= 2 (get first-page "next_offset")))
+            (expect (= 1 (get next-page "hit_count")))
+            (expect (= 2 (get next-page "offset"))))))))
+
+(defdescribe
+  grep-max-count-python-test
+  (it "honors max_count in maps and kwargs, including automatic pagination"
+      (write-temp! "max-count-python/a.clj" "needle first\nneedle second\n")
+      (write-temp! "max-count-python/b.clj" "needle third\n")
+      (tpc/with-own
+        [ctx (extension/builtin-sandbox-bindings (constantly nil))]
+        (let [result
+              (ep/run-python-block
+                ctx
+                (str
+                  "spec = {\"query\": \"needle\", \"paths\": ["
+                  (pr-str (temp-dir-path "max-count-python"))
+                  "], \"context\": 0, \"max_count\": 2}\n"
+                  "for page in (await grep(spec), await grep(**spec)):\n"
+                  "    print(sum(\"│ needle \" in line for line in str(page).splitlines()))\n"
+                  "    print(sum(\"│ needle \" in line for line in str(next(page)).splitlines()))\n"
+                  "print(\"max_count\" in str(await doc(\"grep\")))")
+                "t1/i1")]
+          (expect (nil? (:error result)))
+          (expect (= "2\n1\n2\n1\nTrue\n" (:stdout result)))))))
 
 ;; Regression: a near-miss key used to cost the WHOLE search — `grep({"query" "x" "glob"
 ;; "*.clj"})` died on "find spec has unknown keys: glob" over a word nobody could have

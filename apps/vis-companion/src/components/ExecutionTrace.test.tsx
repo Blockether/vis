@@ -45,6 +45,90 @@ afterEach(() => {
 });
 
 describe("execution grouping", () => {
+  it.each([false, true])(
+    "folds consecutive outputs into one RESULT (across iterations: %s)",
+    (split) => {
+      const forms = [
+        { source: "first()", stdout: "first output\nsecond line", duration_ms: 10 },
+        { source: "second()", stdout: "last output", duration_ms: 20 },
+      ];
+      const original = JSON.stringify(forms);
+      const view = render(
+        <IterationTrace
+          whole
+          iterations={split
+            ? forms.map((form, index) => ({
+                id: String(index), position: index + 1, forms: [form],
+              }))
+            : iterations(forms)}
+        />,
+      );
+      fireEvent.click(view.getByRole("button", { name: "Expand code" }));
+      expect(view.getAllByRole("button", { name: "Expand result" })).toHaveLength(1);
+      expect(view.getByRole("button", { name: "Expand result" }).textContent).toBe(
+        "RESULT +3 more",
+      );
+      expect(view.container.textContent).not.toContain("first output");
+      fireEvent.click(view.getByRole("button", { name: "Expand result" }));
+      const body = view.container.querySelector("[data-code-result]")!;
+      expect(body.textContent).toContain("first output");
+      expect(body.textContent).toContain("last output");
+      expect(body.textContent!.indexOf("first output")).toBeLessThan(
+        body.textContent!.indexOf("last output"),
+      );
+      fireEvent.click(view.getByRole("button", { name: "Collapse result" }));
+      expect(body.textContent).not.toContain("last output");
+      expect(JSON.stringify(forms)).toBe(original);
+    },
+  );
+
+  it("keeps one result open as more stdout arrives, including with source hidden", () => {
+    const first = { source: "first()", stdout: "first output\n", duration_ms: 10 };
+    const second = { source: "second()" };
+    const view = render(
+      <IterationTrace whole live showCode={false} iterations={iterations([first, second])} />,
+    );
+    fireEvent.click(view.getByRole("button", { name: "Expand result" }));
+    view.rerender(
+      <IterationTrace
+        whole live showCode={false}
+        iterations={iterations([
+          first, { ...second, stdout: "last output\n", duration_ms: 20 },
+        ])}
+      />,
+    );
+    expect(view.getAllByRole("button", { name: "Collapse result" })).toHaveLength(1);
+    expect(view.container.textContent).toContain("first output");
+    expect(view.container.textContent).toContain("last output");
+    fireEvent.click(view.getByRole("button", { name: "Collapse result" }));
+    expect(view.getByRole("button", { name: "Expand result" }).textContent).toBe(
+      "RESULT +2 more",
+    );
+  });
+
+  it("merges stdout without hiding errors or creating cards for empty output", () => {
+    const view = render(
+      <IterationTrace whole iterations={iterations([
+        { source: "first()", stdout: "first output", duration_ms: 10 },
+        { source: "empty()", stdout: "\n", duration_ms: 10 },
+        { source: "fail()", error: { message: "Operation failed" } },
+        { source: "last()", stdout: "last output", duration_ms: 10 },
+      ])} />,
+    );
+    expect(view.container.textContent).toContain("Operation failed");
+    expect(view.container.textContent).not.toContain("first output");
+    fireEvent.click(view.getByRole("button", { name: "Expand code" }));
+    expect(view.getAllByRole("button", { name: "Expand result" })).toHaveLength(1);
+    expect(view.getByRole("button", { name: "Expand result" }).textContent).toBe(
+      "RESULT +2 more",
+    );
+    fireEvent.click(view.getByRole("button", { name: "Expand result" }));
+    expect(view.container.textContent).toContain("first output");
+    expect(view.container.textContent).toContain("last output");
+    fireEvent.click(view.getByRole("button", { name: "Collapse code" }));
+    expect(view.container.textContent).toContain("Operation failed");
+  });
+
   it("owns source and result in one CODE disclosure before Activity", () => {
     const view = render(
       <IterationTrace
@@ -153,7 +237,7 @@ describe("execution grouping", () => {
         '[aria-label="Execution trace"]',
       )!;
       expect(trace.getAttribute("role")).toBe(
-        state === "running" ? "status" : null,
+        state === "running" ? "status" : "group",
       );
       if (state === "failed") expect(trace.textContent).toContain("Failed");
       fireEvent.click(view.getByRole("button", { name: "Expand Activity" }));

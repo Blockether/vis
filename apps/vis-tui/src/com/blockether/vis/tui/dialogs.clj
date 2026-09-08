@@ -3145,11 +3145,11 @@
         choices))
 
 (defn- theme-picker!
-  "Preview themes on single keys in Settings' own transient band. * applies;
-   Esc cancels. Long catalogs page with n/p without opening another window.
-   preview! repaints the host; capture that fresh frame before the next band
+  "Apply themes immediately on single keys in Settings' own transient band.
+   Esc closes without reverting the choice. Long catalogs page with n/p.
+   apply! repaints the host; capture that fresh frame before the next band
    restores exposed rows, never resurrecting cells from the previous theme."
-  [screen g region choices current preview!]
+  [screen g region choices current apply!]
   (let [restore
         (atom (:restore! (host-band-region screen region)))
 
@@ -3189,57 +3189,48 @@
 
               spec
               {:title "Theme"
+               :escape-label "close"
                :groups
-               (conj
-                 (let [cell-w
-                       (+ 9 (long (reduce max 0 (map #(p/display-width (:label %)) items))))
+               (cond-> (let [cell-w
+                             (+ 9 (long (reduce max 0 (map #(p/display-width (:label %)) items))))
 
-                       columns
-                       (max 1 (quot (max 1 (- (long (:inner-w region)) 24)) cell-w))
+                             columns
+                             (max 1 (quot (max 1 (- (long (:inner-w region)) 24)) cell-w))
 
-                       per-column
-                       (max 1 (quot (+ (count items) (dec columns)) columns))]
+                             per-column
+                             (max 1 (quot (+ (count items) (dec columns)) columns))]
 
-                   (mapv (fn [i column]
-                           {:title
-                            (if (zero? (long i)) (str "Preview  " (inc (long page)) "/" pages) "")
-                            :items (vec column)})
-                         (range)
-                         (partition-all per-column items)))
-                 {:title "Commands"
-                  :items (cond-> [{:key "*" :type :action :id ::apply-theme :label "Apply theme"}]
-                           (> pages 1)
-                           (into [{:key "n" :type :action :id ::next-theme-page :label "Next page"}
-                                  {:key "p"
-                                   :type :action
-                                   :id ::previous-theme-page
-                                   :label "Previous page"}]))})}
+                         (mapv (fn [i column]
+                                 {:title (if (zero? (long i))
+                                           (str "Themes  " (inc (long page)) "/" pages)
+                                           "")
+                                  :items (vec column)})
+                               (range)
+                               (partition-all per-column items)))
+                 (> pages 1)
+                 (conj
+                   {:title "Commands"
+                    :items
+                    [{:key "n" :type :action :id ::next-theme-page :label "Next page"}
+                     {:key "p" :type :action :id ::previous-theme-page :label "Previous page"}]}))}
 
               action
               (:action (embed-transient! screen g region spec))]
 
           (cond (nil? action) nil
-                (= action ::apply-theme) selected
                 (= action ::next-theme-page) (recur (mod (inc (long page)) pages) selected)
                 (= action ::previous-theme-page) (recur (mod (dec (long page)) pages) selected)
-                :else (do (preview! action)
+                :else (do (apply! action)
                           (reset! restore (frame-restorer screen))
                           (recur page action))))))))
 
 (defn- activate-theme-row!
   [screen g region values callbacks {:keys [choices key]}]
-  (let [original
-        (get @values key)
-
-        preview!
-        (fn [theme-id]
-          (let [next-values (assoc @values key theme-id)]
-            (reset! values next-values)
-            (notify-settings-change! callbacks next-values)))]
-
-    (if-let [selected (theme-picker! screen g region choices original preview!)]
-      (preview! selected)
-      (preview! original))))
+  (let [apply! (fn [theme-id]
+                 (let [next-values (assoc @values key theme-id)]
+                   (reset! values next-values)
+                   (notify-settings-change! callbacks next-values)))]
+    (theme-picker! screen g region choices (get @values key) apply!)))
 
 (defn- activate-settings-row!
   [^TerminalScreen screen g region values callbacks row]

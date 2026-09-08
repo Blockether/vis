@@ -4292,6 +4292,77 @@
                                 (str/includes? l p/INLINE_BOLD_OFF))
                              (str "unbalanced sentinels on line " (pr-str l)))))))
 
+(defdescribe
+  grouped-result-disclosure-test
+  (it
+    "folds consecutive outputs under one RESULT and preserves their order"
+    (let [forms
+          [{:code "first()" :stdout "first output\nsecond line" :success? true}
+           {:code "second()" :stdout "last output" :success? true}]
+
+          render-entries
+          (fn [expansions]
+            (format-iteration-entry-entries
+              (iteration/canonicalize {:forms forms})
+              60
+              1
+              {:session-id "s1" :session-turn-id "t1" :detail-expansions expansions}))
+
+          code-head
+          (first (filter #(str/ends-with? (get-in % [:meta :node-id] "") ":code")
+                         (render-entries {})))
+
+          code-open
+          {["s1" (get-in code-head [:meta :node-id])] true}
+
+          closed
+          (render-entries code-open)
+
+          result-head
+          (first (filter #(str/ends-with? (get-in % [:meta :node-id] "") ":result") closed))
+
+          entries
+          (render-entries (assoc code-open ["s1" (get-in result-head [:meta :node-id])] true))
+
+          heads
+          (filter #(and (= :toggle-details (get-in % [:meta :kind]))
+                        (str/ends-with? (get-in % [:meta :node-id] "") ":result"))
+                  entries)
+
+          text
+          (str/join "\n" (map (comp strip-sentinels strip-ansi :line) entries))
+
+          frame
+          (first (:frames (cap/capture!
+                            {:cols 70
+                             :rows 24
+                             :paint!
+                             (fn [{:keys [screen]}]
+                               (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                                 (render/draw-chat-bubble! (.newTextGraphics s)
+                                                           {:role :assistant
+                                                            :text ""
+                                                            :prewrapped-lines (mapv :line entries)
+                                                            :line-meta (mapv :meta entries)}
+                                                           1 1
+                                                           64 {:viewport-h 24})
+                                 (.refresh s)))})))
+
+          grid
+          (mapv #(apply str (map :ch %)) frame)]
+
+      (expect (= 1 (count heads)))
+      (expect (some? result-head))
+      (expect (get-in result-head [:meta :collapsed?]))
+      (expect (not (get-in (first heads) [:meta :collapsed?])))
+      (expect (not-any? #(str/includes? (:line %) "first output") closed))
+      (expect (= 1 (count (filter #(str/includes? % "RESULT") grid))))
+      (doseq [body [text (str/join "\n" grid)]]
+        (expect (str/includes? body "first output"))
+        (expect (str/includes? body "second line"))
+        (expect (str/includes? body "last output"))
+        (expect (< (str/index-of body "first output") (str/index-of body "last output")))))))
+
 ;; Regression, issue #164: the source-visible default for plain Python leaked the
 ;; Python body from an Activity receipt even while that receipt was collapsed.
 (defdescribe

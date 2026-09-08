@@ -434,6 +434,12 @@
         ;; every group for each keystroke.
         (expect (= (tr/item-by-key commit-transient-spec \c) (get (:by-key lay) "c")))
         (expect (nil? (get (:by-key lay) "z")))))
+  (it "lets immediate-choice menus label Escape as close"
+      (let [spec (assoc commit-transient-spec :escape-label "close")]
+        (expect (nil? (tr/check spec)))
+        (expect (= ["Esc" "close"] (last (tr/hint-pairs spec))))
+        (doseq [label [nil false 42 "" " "]]
+          (expect (some? (tr/check (assoc spec :escape-label label)))))))
   (it "a band of pure commands never advertises a flag key nothing responds to"
       (expect (= [["key" "run command"] ["Esc" "cancel"]]
                  (:hint-pairs

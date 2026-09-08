@@ -1303,7 +1303,7 @@
 
 (def ^:private find-spec-aliases
   "Near-miss spellings that FOLD onto the canonical key they meant. A model
-   types `glob=`, `globs=`, `context_lines=`, `max_results=`, `path=` — and each
+   types `glob=`, `globs=`, `context_lines=`, `max_results=`, `max_count=`, `path=` — and each
    one used to cost the whole search (\"find spec has unknown keys: glob\") over
    a word nobody could have guessed differently. Naming ONE idea twice — alias
    and canonical in the same call — is still refused: that is two answers to one
@@ -1312,6 +1312,7 @@
    "dir" "paths"
    "dirs" "paths"
    "max_results" "limit"
+   "max_count" "limit"
    "glob" "include"
    "globs" "include"
    "includes" "include"
@@ -1370,16 +1371,17 @@
         (seq (remove find-spec-canonical-keys (keys spec)))]
 
     (when unknown-keys
-      (throw (ex-info
-               (str
-                 "find spec has unknown keys: "
-                 (str/join ", " (map str unknown-keys))
-                 ". Allowed: query, paths, limit, offset, include, exclude, context, is_hidden, "
-                 "is_regex — a near-miss spelling (path, max_results, glob, globs, context_lines) "
-                 "folds onto the one it means.")
-               {:type :ext.foundation.editing/invalid-find-args
-                :unknown (vec unknown-keys)
-                :allowed (vec (sort find-spec-canonical-keys))})))
+      (throw
+        (ex-info
+          (str
+            "find spec has unknown keys: "
+            (str/join ", " (map str unknown-keys))
+            ". Allowed: query, paths, limit, offset, include, exclude, context, is_hidden, "
+            "is_regex — a near-miss spelling (path, max_results, max_count, glob, globs, context_lines) "
+            "folds onto the one it means.")
+          {:type :ext.foundation.editing/invalid-find-args
+           :unknown (vec unknown-keys)
+           :allowed (vec (sort find-spec-canonical-keys))})))
     (let
       [raw-query
        (get spec "query")
@@ -1436,8 +1438,10 @@
 
        _
        (when-not (and (integer? limit) (pos? (long limit)))
-         (throw (ex-info "find \"limit\" (alias \"max_results\") must be a positive integer"
-                         {:type :ext.foundation.editing/invalid-find-args :limit limit})))
+         (throw
+           (ex-info
+             "find \"limit\" (aliases \"max_results\", \"max_count\") must be a positive integer"
+             {:type :ext.foundation.editing/invalid-find-args :limit limit})))
 
        ;; PAGING. `offset` is where this page STARTS on both grep axes — the
        ;; ranked NAME list and the CONTENT hits. A caller never guesses it: the
@@ -1791,10 +1795,14 @@
                                  (= 1 (count args)) {"query" a}
                                  :else {}))
 
-        {:keys [paths context offset]}
+        {:keys [paths context offset limit]}
         (coerce-find-spec args)]
 
-    (cond-> {"query" (get spec "query") "paths" paths "offset" offset "context" context}
+    (cond-> {"query" (get spec "query")
+             "paths" paths
+             "offset" offset
+             "context" context
+             "limit" limit}
       (contains? spec "include")
       (assoc "include" (get spec "include"))
 
@@ -2104,6 +2112,9 @@
    ONE options map is the WHOLE call surface — kwargs
    (`grep(query=…, paths=[…])`) fold into that same map. There is no positional
    query and no second positional argument.
+
+   `limit` (aliases `max_results`, `max_count`) is a positive integer that caps
+   the total results per page, not matches per file; the default is 50.
 
    CONTENT matching is smart-case literal substring; a query list is OR.
    `include` and `exclude` bound WHICH FILES the CONTENT sweep reads — globs
@@ -3900,13 +3911,15 @@
        "`is_regex: True` runs the query as a REGEX over CONTENT instead (names are not matched). "
        "Hits come back ANCHORED, so a hit is already a `patch` argument. "
        "`include`/`exclude` globs bound which files the content sweep reads (exclude wins). "
+       "`limit` (or `max_results` / `max_count`) caps total results per page, not per file: a positive integer, default 50. "
        "`query: \"\"` lists files. Capped is never silent: line 1 names the next call, and the "
        "result pages itself — `next(r)` / `r.pages()` / `r.all()`, or pass `offset` by hand. "
        "A near-miss key folds onto the one it means — `glob`/`globs`→`include`, `context_lines`→"
-       "`context`, `max_results`→`limit`, `path`→`paths` — so no search dies over a word.")
+       "`context`, `max_results`/`max_count`→`limit`, `path`→`paths` — so no search dies over a word.")
      :params [{:name "query"} {:name "paths" :note "or `path`"} {:name "include" :note "or `glob`"}
               {:name "exclude"} {:name "is_regex"} {:name "context" :note "or `context_lines`"}
-              {:name "limit" :note "or `max_results`"} {:name "offset"} {:name "is_hidden"}]
+              {:name "limit" :note "or `max_results` / `max_count`"} {:name "offset"}
+              {:name "is_hidden"}]
      :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)
      :tag :observation

@@ -1707,7 +1707,7 @@ describe("a turn drawn as one thread", () => {
       container.querySelectorAll('[aria-label="Execution trace"]'),
     );
     expect(rows).toHaveLength(2);
-    expect(rows[0].getAttribute("role")).toBeNull();
+    expect(rows[0].getAttribute("role")).toBe("group");
     expect(rows[1].getAttribute("role")).toBe("status");
   });
   it("gives a multi-step trace no repeated landmark", () => {

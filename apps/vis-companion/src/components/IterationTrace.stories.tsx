@@ -227,6 +227,53 @@ export const Forking: Story = {
   },
 };
 
+/** Consecutive verification outputs share one result disclosure. */
+export const MergedResults: Story = {
+  args: {
+    live: false,
+    showCode: true,
+    iterations: [{
+      id: "verification",
+      position: 1,
+      forms: [
+        {
+          source: "print(await run_tests({'language': 'clojure'}))",
+          stdout: "run_tests: PASS\n98 tests\n0 failures",
+          duration_ms: 1200,
+        },
+        {
+          source: "print(await format_code({'language': 'clojure'}))",
+          stdout: "format_code: PASS\n2 files checked",
+          duration_ms: 40,
+        },
+        {
+          source: "print(await lint_code({'language': 'clojure'}))",
+          stdout: "lint_code: PASS\n0 warnings",
+          duration_ms: 80,
+        },
+      ],
+    }],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
+    await expect(
+      canvas.getAllByRole("button", { name: "Expand result" }),
+    ).toHaveLength(1);
+    const result = canvas.getByRole("button", { name: "Expand result" });
+    await expect(result).toHaveTextContent("RESULT +7 more");
+    await expect(
+      canvas.queryByText("run_tests: PASS", { exact: false }),
+    ).toBeNull();
+    await userEvent.click(result);
+    const body = canvasElement.querySelector("[data-code-result]")!;
+    await expect(body).toHaveTextContent("run_tests: PASS");
+    await expect(body).toHaveTextContent("lint_code: PASS");
+    await userEvent.click(canvas.getByRole("button", { name: "Collapse result" }));
+    await expect(body).not.toHaveTextContent("run_tests: PASS");
+  },
+};
+
 export const CompactGroup: Story = {
   args: { live: true, showCode: true, iterations: STORY_COMPACT_EXECUTIONS },
 };

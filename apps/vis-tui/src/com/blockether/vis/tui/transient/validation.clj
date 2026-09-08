@@ -54,7 +54,9 @@
 
 (def group-keys "Every key one group may carry." #{:title :items})
 
-(def spec-keys "Every key one transient declaration may carry." #{:title :groups :read-option})
+(def spec-keys
+  "Every key one transient declaration may carry."
+  #{:title :groups :read-option :escape-label})
 
 (def state-keys "Every key in a transient run state." #{:switches :options})
 
@@ -123,6 +125,8 @@
           (not (sequential? groups)) "transient :groups must be sequential"
           (not (seq groups)) "transient :groups must not be empty"
           (not (optional-valid? spec :title string?)) "transient :title must be a string"
+          (not (optional-valid? spec :escape-label non-blank-string?))
+          "transient :escape-label must be non-blank text"
           (not (optional-valid? spec :read-option ifn?)) "transient :read-option must be callable"
           :else
           (or (child-error "group" group-error groups)

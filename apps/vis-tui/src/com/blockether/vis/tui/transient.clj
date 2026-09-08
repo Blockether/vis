@@ -656,14 +656,15 @@
 (defn hint-pairs
   "The footer THIS transient shows: what a command key does, the way out, and
    what a flag key does ONLY when the spec actually has a flag. A command-only
-   band must not advertise a `-key` nothing responds to."
+   band must not advertise a `-key` nothing responds to. Optional `:escape-label`
+   replaces the default Escape action text, `cancel`, for menus that only close."
   [spec]
   (cond-> []
     (some (comp sp/flag-types :type) (mapcat :items (:groups spec)))
     (conj ["-key" "toggle flag"])
 
     :always
-    (into [["key" "run command"] ["Esc" "cancel"]])))
+    (into [["key" "run command"] ["Esc" (or (:escape-label spec) "cancel")]])))
 
 (defn layout
   "PURE: everything ONE frame needs from `spec`, computed ONCE — the display

@@ -842,7 +842,7 @@
                     {:theme-id :vis-light :label "Vis Light"}]
                    (theme-picker-items [:vis-dark :vis-light])))))
   (it
-    "theme preview repaints Settings after the chat callback replaces the frame"
+    "theme changes repaint Settings after the chat callback replaces the frame"
     (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
           (term/virtual-screen)
 
@@ -855,29 +855,34 @@
           frames
           (atom [])]
 
-      (try (doseq [k [(KeyStroke. KeyType/Enter) (term/keystroke \b) (term/keystroke \*)
-                      (term/keystroke :esc)]]
-             (.addInput terminal k))
-           (with-redefs-fn {#'dlg/load-inventories! (constantly nil)
-                            #'dlg/settings-rows (constantly [{:type :choice
-                                                              :key :theme-name
-                                                              :label "Theme setting"
-                                                              :choices [:vis-light :vis-dark]}])
-                            read-key (fn [s]
-                                       (swap! frames conj
-                                         (str/join "\n" (map :text (term/painted-rows terminal))))
-                                       (original-read s))}
-             #(dlg/settings-dialog! screen
-                                    {:theme-name :vis-light}
-                                    {:on-change
-                                     (fn [_]
-                                       (.clear screen)
-                                       (.putString (.newTextGraphics screen) 0 0 "Chat repaint"))}))
-           ;; The third input is read AFTER preview, while the band still owns input.
-           (expect (str/includes? (nth @frames 2) "Settings"))
-           (expect (str/includes? (nth @frames 2) "Theme setting: vis-dark"))
-           (expect (str/includes? (nth @frames 2) "Apply theme"))
-           (finally (.stopScreen screen)))))
+      (try
+        (doseq [k [(KeyStroke. KeyType/Enter) (term/keystroke \b) (term/keystroke :esc)
+                   (term/keystroke :esc)]]
+          (.addInput terminal k))
+        (expect
+          (= :vis-dark
+             (:theme-name
+               (with-redefs-fn {#'dlg/load-inventories! (constantly nil)
+                                #'dlg/settings-rows (constantly [{:type :choice
+                                                                  :key :theme-name
+                                                                  :label "Theme setting"
+                                                                  :choices [:vis-light :vis-dark]}])
+                                read-key (fn [s]
+                                           (swap! frames conj
+                                             (str/join "\n"
+                                                       (map :text (term/painted-rows terminal))))
+                                           (original-read s))}
+                 #(dlg/settings-dialog!
+                    screen
+                    {:theme-name :vis-light}
+                    {:on-change (fn [_]
+                                  (.clear screen)
+                                  (.putString (.newTextGraphics screen) 0 0 "Chat repaint"))})))))
+        ;; The third input is read after the change, while the band still owns input.
+        (expect (str/includes? (nth @frames 2) "Settings"))
+        (expect (str/includes? (nth @frames 2) "Theme setting: vis-dark"))
+        (expect (not (str/includes? (nth @frames 2) "Apply theme")))
+        (finally (.stopScreen screen)))))
   (it "theme choices share a grid row when wide and stack when narrow"
       (doseq [width [40 134]]
         (let [terminal (DefaultVirtualTerminal. (TerminalSize. (+ width 6) 25))
@@ -903,13 +908,18 @@
 
               (expect (= (if (= width 134) 1 3) (count choice-lines)))
               (expect (every? #(str/includes? (str/join "\n" lines) %)
-                              ["Vis Light" "Vis Dark" "Blockether Dark" "Apply theme"
-                               "● current"])))
+                              ["Vis Light" "Vis Dark" "Blockether Dark" "● current"]))
+              (expect (not (str/includes? (str/join "\n" lines) "Apply theme")))
+              (expect (re-find #"Esc\s+close" (str/join "\n" lines))))
             (finally (.stopScreen screen))))))
   (it
-    "theme selection previews, applies, cancels and pages in Settings' own band"
-    (doseq [[keys expected] [[[\b \*] :vis-dark] [[\b :esc] :vis-light]
-                             [[\n \a \*] :blockether-dark] [[\n \p \b \*] :vis-dark]]]
+    "theme changes apply immediately and persist when the Settings band closes"
+    (doseq [[keys expected expected-changes]
+            [[[\b :esc] :vis-dark [:vis-dark]] [[:esc] :vis-light []]
+             [[\b \a :esc] :vis-light [:vis-dark :vis-light]]
+             [[\b \* \a :esc] :vis-light [:vis-dark :vis-light]]
+             [[\n \a :esc] :blockether-dark [:blockether-dark]]
+             [[\n \p \b :esc] :vis-dark [:vis-dark]] [[\b \n \p :esc] :vis-dark [:vis-dark]]]]
       (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)
             values (atom {:theme-name :vis-light})
             region {:left 2 :inner-w 60 :text-w 58 :hint-row 14 :min-row 2}
@@ -928,10 +938,9 @@
                 {:on-change #(swap! changes conj %)}
                 {:key :theme-name :type :choice :choices [:vis-light :vis-dark :blockether-dark]}))
              (expect (= expected (:theme-name @values)))
-             (expect (= expected (:theme-name (last @changes))))
+             (expect (= expected-changes (mapv :theme-name @changes)))
              (expect (str/includes? (str/join "\n" (map :text (term/painted-rows terminal)))
                                     "Settings stays"))
-             (expect (some #(not= :vis-light (:theme-name %)) @changes))
              (finally (.stopScreen screen))))))
   (it
     "Settings is ONE flat list (no tabs): Terminal UI + grouped toggles + Models"
