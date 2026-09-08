@@ -2,6 +2,14 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.44 (5572) — 2026-09-08
+<!-- commit: 26a2d184ac95e4dba105abc7bafb18e4860ca2a6 -->
+
+- Gate complete native production delivery
+- Restore native verification and worker cancellation
+- Remove extra spacing above opening prose
+- Remove trailing settings divider
+- Record companion build 5564
 ## 0.1.44 (5564) — 2026-09-08
 <!-- commit: a549750cb51be2d7d427a2bf77d8b1bb7d424138 -->
 
