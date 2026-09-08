@@ -570,6 +570,18 @@
                       {:type :clj/bad-args}))))
   (assoc index ns-str (or file (get index ns-str))))
 
+(defn- test-source-tree
+  "Walk source directories without descending into generated target copies.
+   An explicitly selected root inside target is still accepted."
+  [root]
+  (tree-seq (fn [^java.io.File f]
+              (.isDirectory f))
+            (fn [^java.io.File dir]
+              (remove (fn [^java.io.File f]
+                        (and (.isDirectory f) (= "target" (.getName f))))
+                (.listFiles dir)))
+            (io/file root)))
+
 (defn- all-test-files
   "Index every test file under root by its declared ns string, built once per
    run so SOURCE paths can be resolved to their corresponding test namespace —
@@ -581,7 +593,7 @@
               (index-test-file index ns-str f)
               index))
           {}
-          (file-seq (io/file root))))
+          (test-source-tree root)))
 
 (defn- path->nses
   "Resolve ONE file/dir to `{:ns :file}` entries. A test file -> its own ns. A
@@ -609,10 +621,10 @@
 
     (cond (test-file? f) (keep identity [(entry f)])
           (clj-source-file? f) (keep identity [(test-entry f)])
-          (.isDirectory f) (let [test-files (filter test-file? (file-seq f))]
+          (.isDirectory f) (let [test-files (filter test-file? (test-source-tree f))]
                              (if (seq test-files)
                                (keep entry test-files)
-                               (->> (file-seq f)
+                               (->> (test-source-tree f)
                                     (filter clj-source-file?)
                                     (keep test-entry))))
           :else [])))
@@ -900,7 +912,7 @@
                          (str/includes? p
                                         (str java.io.File/separator "test" java.io.File/separator)))
                 (.getAbsolutePath f))))
-          (file-seq root-file))))
+          (test-source-tree root-file))))
 
 (defn- test-files-for
   [root ns-strs]

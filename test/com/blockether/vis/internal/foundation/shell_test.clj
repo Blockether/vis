@@ -16,7 +16,17 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.test-python-context :as tpc]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
+
+;; Direct shell calls need the op registration normally supplied by the manifest.
+(set-ns-context! [(around-each [f]
+                               (let [registered? (some #(= "foundation-core" (:ext/name %))
+                                                       (extension/registered-extensions))]
+                                 (when-not registered? (foundation/register!))
+                                 (try (f)
+                                      (finally (when-not registered?
+                                                 (extension/deregister-extension!
+                                                   "foundation-core"))))))])
 
 ;; The impls are private (named for clarity inside the ns); reach them by var
 ;; so tests drive the real gate/render contract without the Python wrapper.

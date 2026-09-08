@@ -1004,6 +1004,31 @@
             (expect (some #{"com.example.thing-test"} (first @calls)))))))))
 
 (defdescribe
+  generated-test-copy-selection-test
+  (it "ignores target copies for file, directory, source and namespace selectors"
+      (with-project
+        {"deps.edn"
+         "{:aliases {:test {:extra-paths [\"test\"] :main-opts [\"-m\" \"lazytest.main\"]}}}"
+         "src/sample/core.clj" "(ns sample.core)"
+         "test/sample/core_test.clj" "(ns sample.core-test)"
+         "target/copy/test/sample/core_test.clj" "(ns sample.core-test)"}
+        (fn [root]
+          (doseq [selector [{"path" "test/sample/core_test.clj"}
+                            {"path" "target/copy/test/sample/core_test.clj"} {"path" "target/copy"}
+                            {"path" "."} {"path" "src/sample/core.clj"} {"ns" "sample.core-test"}
+                            {"ns" "sample.core-test/adds-test"}]]
+            (let [calls (atom [])]
+              (with-redefs [repl-manager/live-repl-for-dir (constantly nil)
+                            shell/sh (sh-answering calls 0 "Ran 1 test cases.\n0 failures.\n")]
+
+                (let [result (:result (tr/clj-test-fn {:workspace/root root} selector))]
+                  (expect (= {"is_pass" true} (select-keys result ["is_pass" "error"])))
+                  (expect (= 1 (count @calls)))
+                  (expect (some
+                            #{(if (contains? selector "ns") (get selector "ns") "sample.core-test")}
+                            (first @calls)))))))))))
+
+(defdescribe
   cljs-configuration-selection-test
   (it
     "uses configured namespace patterns instead of requiring a _test filename"
