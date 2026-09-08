@@ -283,7 +283,8 @@
       ;; needs" read as advice about cost; with that channel deleted an unprinted value is simply
       ;; GONE, and the shape rule in §2 is where a model reads what a block gives back. It lands
       ;; at 6 687.
-      (expect (< (count text) 6700))
+      ;; 6.7k → 6.8k to state that project_root_path is always available and root is not prebound.
+      (expect (< (count text) 6800))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -972,7 +973,9 @@
              (it "uses the advertised prebound paths instead of defining or guessing aliases"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "Write a PROGRAM, not a transcript"))
-                   (expect (str/includes? text "`project_root_path`"))
+                   ;; User report: the runtime always binds project_root_path, never a root alias.
+                   (expect (str/includes? text "`project_root_path` (workspace, always available)"))
+                   (expect (str/includes? text "`root` is not prebound; do not create that alias"))
                    (expect (str/includes? text "`session[\"workspace\"][\"filesystem_roots\"]`"))
                    (expect (str/includes? text "`python_name`"))
                    (expect (str/includes? text "`cwd`"))
