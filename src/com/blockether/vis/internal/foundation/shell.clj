@@ -595,27 +595,32 @@
              (try (.orElse (ProcessHandle/of pid) nil) (catch Throwable _ nil))
 
              descendants
-             (fn []
-               (if ph
-                 (-> ph
-                     .descendants
-                     .iterator
-                     iterator-seq)
-                 []))]
+             (if ph
+               (with-open [stream (.descendants ph)]
+                 (vec (iterator-seq (.iterator stream))))
+               [])
 
+             alive?
+             (fn []
+               (or (and ph (.isAlive ph))
+                   (some (fn [^ProcessHandle d]
+                           (.isAlive d))
+                         descendants)))]
+
+         ;; Retain handles before TERM: children can be reparented when the launcher exits.
          (run! (fn [^ProcessHandle d]
                  (try (.destroy d) (catch Throwable _ nil)))
-               (descendants))
+               descendants)
          (destroy false)
          (let [deadline (+ (util/now-ms) 2000)]
            (loop []
 
-             (when (and ph (.isAlive ph) (< (util/now-ms) deadline)) (Thread/sleep 50) (recur))))
-         (when (and ph (.isAlive ph))
-           (run! (fn [^ProcessHandle d]
-                   (try (.destroyForcibly d) (catch Throwable _ nil)))
-                 (descendants))
-           (destroy true)))
+             (when (and (alive?) (< (util/now-ms) deadline)) (Thread/sleep 50) (recur))))
+         ;; A dead launcher does not imply that its children honored TERM.
+         (run! (fn [^ProcessHandle d]
+                 (try (when (.isAlive d) (.destroyForcibly d)) (catch Throwable _ nil)))
+               descendants)
+         (when (and ph (.isAlive ph)) (destroy true)))
        ;; A cancel landing mid-kill still has a session to unwind: keep the
        ;; interrupt, never let the tree teardown swallow it.
        (catch Throwable t (cancellation/preserve-interrupt! t) nil))

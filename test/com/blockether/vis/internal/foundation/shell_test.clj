@@ -2369,6 +2369,41 @@
                                   (expect (= before (poll shell-thread-count #(= before %) 60))))
                                 (finally (resources/stop-all! sid)))))))))
 
+(defdescribe
+  shell-stop-stubborn-child-test
+  (it
+    "kills a TERM-resistant child even when its parent exits first"
+    (doseq [pty? [false true]]
+      (let
+        [p
+         (.start
+           (ProcessBuilder.
+             ^java.util.List
+             ["bash" "-c"
+              "trap 'exit 0' TERM; bash -c 'trap \"\" TERM HUP; echo $$; exec sleep 300' & wait"]))
+         child (atom nil)]
+
+        (try (with-open [reader (io/reader (.getInputStream p))]
+               (let [line (future (.readLine ^java.io.BufferedReader reader))]
+                 (reset! child (parse-long (deref line 5000 "")))))
+             (expect (some? @child))
+             (#'shell/kill-tree!
+              (if pty?
+                {:pid (.pid p)
+                 :destroy (fn [force?]
+                            (if force? (.destroyForcibly p) (.destroy p)))}
+                p))
+             (expect (not (.isAlive p)))
+             ;; Escalation must follow the child, not the parent's lifetime.
+             (expect (nil? (poll #(when (alive-pid? @child) :alive) nil? 30)))
+             (finally
+               ;; Clean up even against the broken implementation.
+               (when-let [pid @child]
+                 (when-let [h (.orElse (java.lang.ProcessHandle/of (long pid)) nil)]
+                   (.destroyForcibly ^java.lang.ProcessHandle h)))
+               (.destroyForcibly p)
+               (.waitFor p)))))))
+
 ;; Regression, issue #139: shells started at the SAME MOMENT for the same program
 ;; all derived the one id `sleep` — a single registry entry, log file and attach
 ;; socket for several children — so a gathered batch came back holding another
