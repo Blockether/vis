@@ -1,3 +1,10 @@
+## 0.1.44 (5579) — 2026-09-08
+<!-- commit: 6190dedbd3da348a245b74e1d3d901604ac4aa65 -->
+
+- Scan jump-to-latest hover for contrast
+- Enable council and add enum selectors
+- Separate companion 5572 changelog entry
+- Record companion build 5572
 # Vis Companion — release notes
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
