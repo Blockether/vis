@@ -1715,62 +1715,6 @@
     (get (send-json! "PATCH" (str "/v1/sessions/" (enc sid) "/workspace/root") {:path path})
          "workspace")))
 
-(defn list-drafts
-  "Active/stashed DRAFTS for `sid`'s repo IN THE DAEMON, newest first, in the
-   canonical wire shape `[{\"workspace_id\" \"label\" \"root\" \"repo_root\"
-   \"fork_ms\" \"is_current\"}]`. The gateway is the source of truth for parked
-   drafts, so every channel reads the SAME list here (web picker, TUI drafts view)."
-  [sid]
-  (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/workspace/drafts")) "drafts"))
-
-(defn stash-draft!
-  "Park `sid`'s current draft IN THE DAEMON (non-destructive), returning the
-   refreshed `session-workspace-info` — now back on trunk."
-  [sid]
-  (decode-workspace (get (send-json! "POST" (str "/v1/sessions/" (enc sid) "/workspace/stash") {})
-                         "workspace")))
-
-(defn resume-draft!
-  "Switch `sid` INTO the stashed draft `workspace-id` IN THE DAEMON (stashing any
-   current draft first), returning the refreshed `session-workspace-info`."
-  [sid workspace-id]
-  (decode-workspace (get (send-json! "POST"
-                                     (str "/v1/sessions/" (enc sid) "/workspace/resume")
-                                     {:workspace_id workspace-id})
-                         "workspace")))
-
-(defn create-draft!
-  "Create and enter a named draft for `sid` IN THE DAEMON. Any current draft is
-   stashed first. Pass `clean?` to seed from the committed HEAD without the
-   user's uncommitted files."
-  [sid label clean?]
-  (decode-workspace (get (send-json! "POST"
-                                     (str "/v1/sessions/" (enc sid) "/workspace/drafts")
-                                     {:label label :clean (boolean clean?)})
-                         "workspace")))
-
-(defn abandon-draft!
-  "Permanently abandon `workspace-id` IN THE DAEMON. The target may be current or
-   parked, but not pinned to another session."
-  [sid workspace-id reason]
-  (decode-workspace (get (send-json! "DELETE"
-                                     (str "/v1/sessions/" (enc sid)
-                                          "/workspace/drafts/" (enc workspace-id))
-                                     {:reason reason})
-                         "workspace")))
-
-(defn approve-draft!
-  "Land `workspace-id` IN THE DAEMON as one commit on its `vis/<label>` branch;
-   `message` is the optional subject line. Returns the string-keyed
-   `{\"approval\" \"workspace\"}` response: the approval carries `status`
-   (`approved` | `nothing_to_approve`), `branch`, `commit` and `files`."
-  [sid workspace-id message]
-  (let [res (send-json!
-              "POST"
-              (str "/v1/sessions/" (enc sid) "/workspace/drafts/" (enc workspace-id) "/approve")
-              {:message message})]
-    {"approval" (get res "approval") "workspace" (decode-workspace (get res "workspace"))}))
-
 (defn submit-turn!
   [sid opts]
   (let [res (send-json! "POST" (str "/v1/sessions/" (enc sid) "/turns") opts)]

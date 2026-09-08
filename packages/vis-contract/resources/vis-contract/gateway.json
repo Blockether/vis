@@ -971,66 +971,12 @@
     {
       "audience": "sdk",
       "operations": {
-        "get": {
-          "request": "none",
-          "response": "json"
-        },
-        "post": {
-          "request": "json",
-          "response": "json"
-        }
-      },
-      "path": "/v1/sessions/:sid/workspace/drafts"
-    },
-    {
-      "audience": "sdk",
-      "operations": {
-        "delete": {
-          "request": "json",
-          "response": "json"
-        }
-      },
-      "path": "/v1/sessions/:sid/workspace/drafts/:workspace-id"
-    },
-    {
-      "audience": "sdk",
-      "operations": {
-        "post": {
-          "request": "json",
-          "response": "json"
-        }
-      },
-      "path": "/v1/sessions/:sid/workspace/drafts/:workspace-id/approve"
-    },
-    {
-      "audience": "sdk",
-      "operations": {
-        "post": {
-          "request": "json",
-          "response": "json"
-        }
-      },
-      "path": "/v1/sessions/:sid/workspace/resume"
-    },
-    {
-      "audience": "sdk",
-      "operations": {
         "patch": {
           "request": "json",
           "response": "json"
         }
       },
       "path": "/v1/sessions/:sid/workspace/root"
-    },
-    {
-      "audience": "sdk",
-      "operations": {
-        "post": {
-          "request": "none",
-          "response": "json"
-        }
-      },
-      "path": "/v1/sessions/:sid/workspace/stash"
     },
     {
       "audience": "sdk",

@@ -66,15 +66,6 @@ or observe them with `vis.OpHook`. A `before` hook that returns `vis.block(reaso
 stops the operation; the agent sees the reason. See
 [Extending Vis](extending.md#op-hooks).
 
-## HTTP
-
-`POST /v1/sessions/:sid/workspace/drafts/:workspace-id/approve` with an optional
-JSON body `{"message": "..."}` approves one draft and answers
-`{"approval": {...}, "workspace": {...}}`. The `vis-agent` Python client exposes
-it as `post_session_workspace_draft_approve`. The workspace routes that list,
-create, stash, resume and abandon drafts serve the same client; no Vis user
-interface calls them.
-
 ## See also
 
 - [Configuration](configuration.md) — the `draft_backend` toggle and the `draft` policy of extra roots.
