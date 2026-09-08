@@ -5,6 +5,7 @@
    Every test redirects the push home (`vis.push.home`) at a temp dir, so the
    real `~/.vis/devices.edn` is never read or written."
   (:require [clojure.java.io :as io]
+            [clojure.java.shell :as sh]
             [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.push :as push]
@@ -382,6 +383,44 @@
            (state/append-event! sid "turn.completed" {:turn_id "t9" :status "completed"})
            (is (= [[sid "turn.completed"]] @seen))
            (finally (state/remove-event-tap! ::boom) (state/remove-event-tap! ::spy))))))
+
+(deftest keychain-cache
+  ;; Regression, gateway CPU audit: `push/config` asks the keychain for five
+  ;; secrets and runs inside `capabilities`, a request every connected client
+  ;; makes, so the daemon forked `security` (~10 ms of CPU each) on a steady
+  ;; cadence to re-read values that change only when a human edits them.
+  (testing "one `security` fork per key per TTL, present or absent, until reset"
+    (let [mac?
+          (str/includes? (str/lower-case (str (System/getProperty "os.name"))) "mac")
+
+          forks
+          (atom [])
+
+          answers
+          (atom {["vis-apns" "topic"] "com.example.app"})]
+
+      (keychain/reset-cache!)
+      (try (with-redefs [sh/sh (fn [& args]
+                                                 (swap! forks conj (vec args))
+                                                 (if-let [v (get @answers
+                                                                 [(nth args 3) (nth args 5)])]
+                                                   {:exit 0 :out (str v "\n") :err ""}
+                                                   {:exit 44 :out "" :err "not found"}))]
+             (let [a (keychain/secret "vis-apns" "topic")
+                   b (keychain/secret "vis-apns" "topic")
+                   c (keychain/secret "vis-apns" "team_id")
+                   d (keychain/secret "vis-apns" "team_id")]
+
+               (if mac?
+                 (do (is (= "com.example.app" a b))
+                     (is (nil? c) "an absent key is nil ...")
+                     (is (nil? d) "... and stays nil from the cache")
+                     (is (= 2 (count @forks)) "two keys, two forks, four reads"))
+                 (do (is (nil? a)) (is (nil? b)) (is (empty? @forks)))))
+             (keychain/reset-cache!)
+             (keychain/secret "vis-apns" "topic")
+             (when mac? (is (= 3 (count @forks)) "a reset asks `security` again")))
+           (finally (keychain/reset-cache!))))))
 
 (deftest keychain-credentials
   (testing "`security -w` hex output is decoded back to the PEM"
