@@ -2,9 +2,7 @@
   "The gateway's fixed local speech engines and their shared asynchronous job lifecycle."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.speech.engine :as builtin-engine]
-            [com.blockether.vis.internal.speech.synthesis :as synthesis])
+            [com.blockether.vis.internal.util :as util])
   (:import [java.io File]
            [java.util UUID]))
 
@@ -83,9 +81,6 @@
   "Optional operator override for each independent direction."
   {:transcribe "VIS_SPEECH_TRANSCRIPTION_ENGINE" :synthesize "VIS_SPEECH_SYNTHESIS_ENGINE"})
 
-(def ^:private engines-by-direction
-  {:transcribe [builtin-engine/descriptor] :synthesize synthesis/descriptors})
-
 (defn env-engine-id
   "The engine id named by the direction's environment variable, or nil."
   [direction]
@@ -94,10 +89,15 @@
           keyword))
 
 (defn engines
-  "The gateway's fixed built-in engines for `direction`."
+  "The fixed engines for `direction`, loaded when speech is first queried or used."
   [direction]
   (check-direction! direction)
-  (get engines-by-direction direction))
+  (case direction
+    :transcribe
+    [@(requiring-resolve 'com.blockether.vis.internal.speech.engine/descriptor)]
+
+    :synthesize
+    @(requiring-resolve 'com.blockether.vis.internal.speech.synthesis/descriptors)))
 
 (defn engine
   "The `direction` engine with `id`, or nil."

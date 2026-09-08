@@ -2,7 +2,8 @@
   "Fresh-JVM gateway startup regression and benchmark. Each child has its own home,
    configuration, database and loopback listener; it never attaches to a user daemon.
    Set -Dvis.startup.runs=3 for repeated measurements, and -Dvis.startup.jfr=/path/startup
-   to record each child from JVM launch (files get a run-number suffix)."
+   to record each child from JVM launch (files get a run-number suffix).
+   Set -Dvis.startup.loads=true for inclusive core dependency-load timings."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -22,7 +23,26 @@
        (try
         (f)
         (finally (swap! timings conj [label (/ (double (- (System/nanoTime) start)) 1e6)])))))]
-    (timed :load-core #(require 'com.blockether.vis.core))
+    (let
+     [loads (atom []) original-load load]
+     (timed
+      :load-core
+      #(if
+        (Boolean/getBoolean "vis.startup.loads")
+        (with-redefs
+         [clojure.core/load
+          (fn
+           [& paths]
+           (let
+            [start (System/nanoTime)]
+            (try
+             (apply original-load paths)
+             (finally
+              (swap! loads conj [(vec paths) (/ (double (- (System/nanoTime) start)) 1e6)])))))]
+         (require 'com.blockether.vis.core))
+        (require 'com.blockether.vis.core)))
+     ;; Inclusive times identify dependency chains; they must not be summed.
+     (when (seq @loads) (swap! result assoc :core-loads (vec (take 25 (sort-by second > @loads))))))
     (let
      [initializer (ns-resolve 'com.blockether.vis.internal.extension.manifest 'run-initializer!)
       original-initializer @initializer warm-db
@@ -47,7 +67,8 @@
              (assoc opts :port port)))
           (reset!
            result
-           {:extensions (mapv
+           {:core-loads (:core-loads @result)
+            :extensions (mapv
                          :ext/name
                          ((requiring-resolve
                            'com.blockether.vis.internal.extension.core/registered-extensions)))
@@ -63,6 +84,21 @@
             ((requiring-resolve 'com.blockether.vis.internal.gateway.client/request!)
              :get
              "/healthz")))
+          (let
+           [caps
+            (timed
+             :first-speech-capabilities
+             #((requiring-resolve 'com.blockether.vis.internal.gateway.client/capabilities)))]
+           (swap!
+            result
+            assoc
+            :speech-features
+            (into
+             {}
+             (for
+              [direction ["voice" "speech"]]
+              [direction
+               (select-keys (get-in caps ["features" direction]) ["selected" "model"])]))))
           (let
            [format-source
             (requiring-resolve 'com.blockether.vis.internal.language.clojure.format/format-source)
@@ -138,7 +174,8 @@
         command
         (into [(str (System/getProperty "java.home") "/bin/java")]
               (concat jvm-opts
-                      [(str "-Duser.home=" home)]
+                      [(str "-Duser.home=" home)
+                       (str "-Dvis.startup.loads=" (Boolean/getBoolean "vis.startup.loads"))]
                       (when jfr
                         ["-XX:FlightRecorderOptions=stackdepth=256"
                          (str "-XX:StartFlightRecording=settings=profile,dumponexit=true,filename="
@@ -211,8 +248,14 @@
       ;; Registration must keep callable handlers, not eagerly compile both formatters.
       ;; A fresh JVM is essential: other tests may already have used either backend.
       (doseq [ns-sym '[zprint.core zprint.config cljfmt.core cljfmt.config
-                       com.blockether.vis.internal.language.clojure.test-runner]]
+                       com.blockether.vis.internal.language.clojure.test-runner
+                       com.blockether.vis.internal.speech.asr com.blockether.vis.internal.speech.tts
+                       com.blockether.vis.internal.speech.sherpa]]
         (is (not (contains? (:loaded-namespaces result) ns-sym)) (str ns-sym)))
+      (is (= "parakeet-local" (get-in result [:speech-features "voice" "selected"])))
+      (is (= "piper-local" (get-in result [:speech-features "speech" "selected"])))
+      (is (= "absent" (get-in result [:speech-features "voice" "model" "status"])))
+      (is (= "absent" (get-in result [:speech-features "speech" "model" "status"])))
       (is (= "(defn f [x]\n  (+ x 1))\n" (:default-format result)))
       (is (str/includes? (:first-test-error result) "no such path"))
       (is (= "(defn f [x] (+ x 1))\n" (:configured-format result)))
