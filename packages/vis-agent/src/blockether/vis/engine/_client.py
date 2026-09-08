@@ -1790,6 +1790,26 @@ class GatewayClient:
         )
         return response.json()
 
+    def post_session_workspace_draft_approve(
+        self,
+        sid: str,
+        workspace_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/sessions/:sid/workspace/drafts/:workspace-id/approve — json response."""
+        response = self._request(
+            "POST",
+            "/v1/sessions/:sid/workspace/drafts/:workspace-id/approve",
+            path={"sid": sid, "workspace-id": workspace_id},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def post_session_workspace_resume(
         self,
         sid: str,

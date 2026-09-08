@@ -4,6 +4,7 @@
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.doctor :as doctor]
+            [com.blockether.vis.internal.foundation.drafts :as drafts]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
@@ -103,10 +104,11 @@
                                                    (editing/available-editing-symbols)
                                                    environment/environment-symbols
                                                    introspection/all-symbols
-                                                   shell/shell-symbols))}
+                                                   shell/shell-symbols
+                                                   drafts/symbols))}
      :ext/kind "foundation"
      :ext/slash-commands
-     (vec (concat workspace-slashes/specs session-slashes/specs rewind/slash-specs))
+     (vec (concat workspace-slashes/specs drafts/specs session-slashes/specs rewind/slash-specs))
      :ext/op-hooks rewind/op-hooks
      :ext/channel-contributions {:gateway.slot/http-routes [{:id :rewind/http
                                                              :fn rewind/routes-contribution}]}

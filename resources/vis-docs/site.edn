@@ -14,6 +14,7 @@
      :page "queue-and-cancel"
      :title "Controlling a session"}
     {:blurb "Save or share a session." :page "exporting-sessions" :title "Exporting sessions"}
+    {:blurb "Work in an isolated copy and land it on a branch." :page "drafts" :title "Drafts"}
     {:blurb "Use Vis from your phone or another machine."
      :page "gateway"
      :title "Remote access and the Companion app"}

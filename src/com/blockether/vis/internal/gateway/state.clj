@@ -34,6 +34,7 @@
             [com.blockether.vis.internal.foundation.shell-log :as shell-log]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.internal.workspace.drafts :as drafts]
             [taoensso.telemere :as tel]))
 
 (def ^:private EVENT_RING_MAX
@@ -1058,23 +1059,29 @@
   "Workspace state for a channel surface (the web footer AND the TUI
    directory picker), in THE canonical string-keyed wire shape:
    `{\"id\" \"draft?\" \"root\" \"repo_root\" \"label\" \"fork_ms\"
-   \"git\"}` for the session pinned to `sid`, or nil. Resolves soul → latest\n   state → workspace; never throws."
+   \"git\"}` for the session pinned to `sid`, plus `\"backend\"` `\"branch\"`
+   `\"ahead\"` for a draft, or nil. Resolves soul → latest state → workspace;
+   never throws."
   [sid]
   (try (when-let [db (lp/db-info)]
          (when-let [ws (resolve-workspace db sid)]
-           (wire/canonical {:id (:id ws)
-                            :draft? (workspace/draft? ws)
-                            :root (:root ws)
-                            :repo-root (:repo-root ws)
-                            :label (:label ws)
-                            :fork-ms (:fork-ms ws)
-                            ;; Git working-tree status resolved HERE, in the gateway/daemon
-                            ;; that owns the repo on disk — streamed to channels as a cached
-                            ;; session fact instead of each client re-walking git locally (a
-                            ;; remote TUI has no access to the repo's filesystem, and even
-                            ;; colocated it stops every tab switch from recomputing). Cached
-                            ;; per repo root, so repeated fetches never re-walk a warm root.
-                            :git (git/workspace-status (:root ws))})))
+           (let [draft? (workspace/draft? ws)]
+             (wire/canonical (cond-> {:id (:id ws)
+                                      :draft? draft?
+                                      :root (:root ws)
+                                      :repo-root (:repo-root ws)
+                                      :label (:label ws)
+                                      :fork-ms (:fork-ms ws)
+                                      ;; Git working-tree status resolved HERE, in the gateway/daemon
+                                      ;; that owns the repo on disk — streamed to channels as a cached
+                                      ;; session fact instead of each client re-walking git locally (a
+                                      ;; remote TUI has no access to the repo's filesystem, and even
+                                      ;; colocated it stops every tab switch from recomputing). Cached
+                                      ;; per repo root, so repeated fetches never re-walk a warm root.
+                                      :git (git/workspace-status (:root ws))}
+                               draft?
+                               (merge (select-keys (drafts/status ws)
+                                                   [:backend :branch :ahead])))))))
        (catch Throwable _ nil)))
 
 (defn- usage-percent
@@ -1206,10 +1213,54 @@
                              :hint (workspace/isolation-unavailable-hint repo-root)})))
           (when (workspace/draft? current) (workspace/stash! db state-id))
           (let [trunk (resolve-workspace db sid)]
-            (workspace/create!
-              db
+            (drafts/create!
+              {:db-info db :session-id sid}
               {:session-state-id state-id :label label :from trunk :clean? (boolean clean?)})))))
     (session-workspace-info sid)))
+
+(defn- owned-active-draft
+  "The draft `workspace-id` as `sid` may act on it: an active draft of the
+   session's current repository that no other session is pinned to. Throws the
+   canonical `:workspace/*` refusal otherwise."
+  [db state-id sid workspace-id]
+  (let [target
+        (workspace/get db workspace-id)
+
+        current
+        (resolve-workspace db sid)]
+
+    (when-not (workspace/draft? target)
+      (throw (ex-info "Not an active draft"
+                      {:type :workspace/not-a-draft :workspace-id workspace-id})))
+    (when (not= :active (:state target))
+      (throw (ex-info "Draft is no longer active"
+                      {:type :workspace/draft-inactive :workspace-id workspace-id})))
+    (when (and current (not= (:repo-id current) (:repo-id target)))
+      (throw (ex-info "Draft belongs to a different repository"
+                      {:type :workspace/draft-repo-mismatch
+                       :workspace-id workspace-id
+                       :repo-id (:repo-id current)
+                       :draft-repo-id (:repo-id target)})))
+    (let [pinned-elsewhere (remove #(= (str state-id) (str (:id %)))
+                             (persistance/db-session-state-list-for-workspace db workspace-id))]
+      (when (seq pinned-elsewhere)
+        (throw (ex-info "Draft is in use by another session"
+                        {:type :workspace/draft-in-use :workspace-id workspace-id}))))
+    {:target target :current current}))
+
+(defn approve-draft!
+  "Land one active draft owned by `sid`'s current repo as a commit on its
+   `vis/<label>` branch (see `drafts/approve!`). The draft stays active, so the
+   session keeps working in it and may approve again. Returns
+   `{:approval <canonical result> :workspace <refreshed canonical info>}`."
+  [sid workspace-id message]
+  (let [result (when-let [db (lp/db-info)]
+                 (when-let [state-id (resolve-state-id db sid)]
+                   (owned-active-draft db state-id sid workspace-id)
+                   (drafts/approve! {:db-info db :session-id sid}
+                                    {:workspace-id workspace-id :message message})))]
+    {:approval (wire/canonical (dissoc result :workspace))
+     :workspace (session-workspace-info sid)}))
 
 (defn abandon-draft!
   "Permanently discard one active draft owned by `sid`'s current repo. A parked
@@ -1220,29 +1271,11 @@
   [sid workspace-id reason]
   (when-let [db (lp/db-info)]
     (when-let [state-id (resolve-state-id db sid)]
-      (let [target (workspace/get db workspace-id)
-            current (resolve-workspace db sid)]
-
-        (when-not (workspace/draft? target)
-          (throw (ex-info "Not an active draft"
-                          {:type :workspace/not-a-draft :workspace-id workspace-id})))
-        (when (not= :active (:state target))
-          (throw (ex-info "Draft is no longer active"
-                          {:type :workspace/draft-inactive :workspace-id workspace-id})))
-        (when (and current (not= (:repo-id current) (:repo-id target)))
-          (throw (ex-info "Draft belongs to a different repository"
-                          {:type :workspace/draft-repo-mismatch
-                           :workspace-id workspace-id
-                           :repo-id (:repo-id current)
-                           :draft-repo-id (:repo-id target)})))
-        (let [pinned-elsewhere (remove #(= (str state-id) (str (:id %)))
-                                 (persistance/db-session-state-list-for-workspace db workspace-id))]
-          (when (seq pinned-elsewhere)
-            (throw (ex-info "Draft is in use by another session"
-                            {:type :workspace/draft-in-use :workspace-id workspace-id}))))
+      (let [{:keys [target current]} (owned-active-draft db state-id sid workspace-id)]
         (when (= (str (:id current)) (str (:id target)))
           (workspace/exit-to-trunk! db state-id (:repo-root target)))
-        (workspace/abandon! db {:workspace-id workspace-id :reason reason}))))
+        (drafts/discard! {:db-info db :session-id sid}
+                         {:workspace-id workspace-id :reason reason}))))
   (session-workspace-info sid))
 
 ;; Chunk -> event translation (§8)

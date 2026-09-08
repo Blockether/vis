@@ -15,7 +15,8 @@
  {:kind "doc" :name "queue-and-cancel" :resource "vis-docs/queue-and-cancel.md"}
  {:kind "doc" :name "gateway" :resource "vis-docs/gateway.md"}
  {:kind "doc" :name "reporting-bugs" :resource "vis-docs/reporting-bugs.md"}
- {:kind "doc" :name "extending" :resource "vis-docs/extending.md"}
+  {:kind "doc" :name "extending" :resource "vis-docs/extending.md"}
+  {:kind "doc" :name "drafts" :resource "vis-docs/drafts.md"}
  {:kind "doc" :name "human-input" :resource "vis-docs/human-input.md"}
  {:kind "doc" :name "live-views" :resource "vis-docs/live-views.md"}
  {:kind "doc" :name "provider-extensions" :resource "vis-docs/provider-extensions.md"}]

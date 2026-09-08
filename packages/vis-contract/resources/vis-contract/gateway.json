@@ -1000,6 +1000,16 @@
           "response": "json"
         }
       },
+      "path": "/v1/sessions/:sid/workspace/drafts/:workspace-id/approve"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
       "path": "/v1/sessions/:sid/workspace/resume"
     },
     {

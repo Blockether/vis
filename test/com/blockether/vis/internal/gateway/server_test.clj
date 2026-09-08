@@ -412,12 +412,17 @@
 
     (with-redefs-fn {#'client/send-json! (fn [method path body]
                                            (swap! sent conj [method path body])
-                                           {"workspace" {"root" "/repo"}})}
+                                           {"approval" {"status" "approved"}
+                                            "workspace" {"root" "/repo"}})}
       (fn []
         (is (= {"root" "/repo"} (client/create-draft! sid "feature-c" false)))
+        (is (= {"approval" {"status" "approved"} "workspace" {"root" "/repo"}}
+               (client/approve-draft! sid wid "feat: land it")))
         (is (= {"root" "/repo"} (client/abandon-draft! sid wid "done")))
         (is (= [["POST" (str "/v1/sessions/" sid "/workspace/drafts")
                  {:label "feature-c" :clean false}]
+                ["POST" (str "/v1/sessions/" sid "/workspace/drafts/" wid "/approve")
+                 {:message "feat: land it"}]
                 ["DELETE" (str "/v1/sessions/" sid "/workspace/drafts/" wid) {:reason "done"}]]
                @sent))))))
 

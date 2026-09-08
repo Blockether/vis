@@ -226,7 +226,8 @@
              [gateway-stash-draft! gateway-client/stash-draft!]
              [gateway-resume-draft! gateway-client/resume-draft!]
              [gateway-create-draft! gateway-client/create-draft!]
-             [gateway-abandon-draft! gateway-client/abandon-draft!])
+             [gateway-abandon-draft! gateway-client/abandon-draft!]
+             [gateway-approve-draft! gateway-client/approve-draft!])
 
 (import-vars [cancellation-token cancellation/cancellation-token]
              [cancellation-atom cancellation/cancellation-atom]

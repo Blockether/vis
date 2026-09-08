@@ -409,6 +409,14 @@ reason as a tool failure. With `phase="after"`, `fn` receives `{"op", "args",
 "result"}` and its return value is ignored. An error inside a tool hook allows
 the call.
 
+`ops` also names the draft lifecycle: `"draft/create"`, `"draft/approve"` and
+`"draft/discard"` run for `/draft`, `/approve`, `/discard`, the sandbox's
+`draft_approve()` and the workspace HTTP routes alike. Their `args` carry the
+draft's `workspace_id`, `label`, `root`, `repo_root`, `backend` and, for an
+approval, `branch`, `files` and `message`. A `before` hook that returns
+`vis.block(reason)` refuses the operation and the user sees the reason. See
+[Drafts](drafts.md).
+
 `"fs_access"` checks paths used by the host file tools (`cat`, `grep`, `patch`,
 `ls`). It is not a tool itself and takes no `phase`. Its callback receives
 `{"operation": "file-read" | "file-write", "path": <absolute path>}`. An error

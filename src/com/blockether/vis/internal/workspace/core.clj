@@ -3,18 +3,20 @@
 
    The user's real cwd is *trunk* — Vis never mutates it, and Vis no
    longer requires it to be a git repo. A session works in trunk by default.
-   Isolation operations are backend primitives reserved for engine-managed work;
-   Rift is the only backend Vis ships. Rift declares concrete capabilities such as
-   isolated fork, rollback, merge-back, retained revisions, and parallel safety;
-   core exposes them as a diagnostics/feature-discovery surface rather than a
-   selection mechanism.
+   Isolation operations are backend primitives reserved for engine-managed work.
+   Vis ships two draft backends: a linked Git worktree (`git worktree add` on a
+   fresh `vis/<label>` branch, sharing the repository's objects and refs) and a
+   Rift copy-on-write clone for projects without Git history. `draft-backend-for`
+   selects between them under the `draft_backend` toggle; the capability matrix is
+   a diagnostics/feature-discovery surface.
 
    'What changed since the fork' is computed git-free: `clonefile`
    preserves source mtimes, so files the agent touches in the clone get
    a fresh mtime greater than the fork timestamp we capture at clone
-   time. `apply!` lands exactly those files back into cwd, uncommitted,
-   and leaves the user to commit with their own tools — Vis owns no
-   git/branch/commit/merge lifecycle whatsoever.
+   time. `apply!` lands exactly those files back into cwd, uncommitted; the
+   `workspace.drafts` namespace owns the alternative landing — `approve!`, one
+   commit on the draft's `vis/<label>` branch that the user merges with their own
+   tools.
 
    Vis never mutates JVM user.dir. Channels rebind *workspace-root* per
    turn from the active workspace; tools resolve paths via
@@ -24,6 +26,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.rift :as rift]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as p]
@@ -86,13 +89,15 @@
             (if (and stop (= d stop)) acc (recur (.getParentFile d) acc))))))
     []))
 
-(defn- backend-id
+(defn backend-id
+  "Normalize a persisted workspace backend (`:rift`, `\"worktree\"`, nil) to a
+   keyword; nil means the shared live root."
   [value]
   (cond (keyword? value) value
         (string? value) (keyword value)
         :else :live))
 
-(defn- mechanism-id
+(defn mechanism-id
   "Normalize a backend-reported clone MECHANISM (`:apfs`, `\"worktree\"`, ...) to a
    keyword, nil when the backend reported none. Unlike the backend id there is
    no default: the mechanism is descriptive, so an unreported one is recorded as
@@ -641,32 +646,6 @@
   (rift/remove! {:at root})
   (rift/gc))
 
-(declare draft-store-root)
-
-(defn workspace-capability-matrix
-  "Rift's availability for `workspace-or-root`, using the real derived
-   workspace storage location rather than assuming source and destination are
-   on the same filesystem. One-entry vector; Rift is the only backend Vis
-   ships, so this is a feature-discovery/diagnostics surface rather than a
-   selection mechanism."
-  [workspace-or-root]
-  (let [source-root
-        (if (map? workspace-or-root) (:root workspace-or-root) workspace-or-root)
-
-        repo-root
-        (if (map? workspace-or-root) (:repo-root workspace-or-root) workspace-or-root)
-
-        availability
-        (rift-available? (file-path source-root) (file-path (draft-store-root repo-root)))]
-
-    [(merge {:backend :rift :available? (boolean (:available? availability))}
-            (select-keys availability [:reason :details]))]))
-
-(defn isolated-workspaces-supported?
-  "True when the current root can create full draft workspaces."
-  ([] (isolated-workspaces-supported? (trunk-root)))
-  ([root] (:available? (first (workspace-capability-matrix root)))))
-
 (defn cow-platform-hint
   "The copy-on-write requirement for `os-name` (a raw `os.name` value), as one
    actionable sentence.
@@ -690,17 +669,6 @@
                "point the store at that same mount with -Dvis.drafts.dir=/path/on/that/mount.")
           :else (str "Drafts need a copy-on-write filesystem (APFS on macOS, btrfs on Linux/WSL2); "
                      "this platform has no copy-on-write workspace backend."))))
-
-(defn isolation-unavailable-hint
-  "One actionable sentence explaining why Rift cannot fork `workspace-or-root`
-   and what the user must change. Only meaningful when
-   `isolated-workspaces-supported?` is false."
-  ([] (isolation-unavailable-hint (trunk-root)))
-  ([workspace-or-root]
-   (let [reasons (into #{} (keep :reason) (workspace-capability-matrix workspace-or-root))]
-     (if (contains? reasons :linked-git-worktree)
-       "A linked Git worktree cannot be forked — start the session from the main worktree."
-       (cow-platform-hint (System/getProperty "os.name"))))))
 
 (def
   ^{:dynamic true
@@ -737,32 +705,6 @@
   (into-array CopyOption
               [StandardCopyOption/REPLACE_EXISTING StandardCopyOption/COPY_ATTRIBUTES
                LinkOption/NOFOLLOW_LINKS]))
-
-(defn- backend-fork!
-  "Fork `source-root` into a private Rift clone under `store-root`. Returns
-   `{:root <clone path> :backend :rift :mechanism <keyword|nil>}` —
-   `:mechanism` is HOW the clone was physically made (`:btrfs` `:reflink`
-   `:apfs` `:worktree` `:copy`)."
-  [source-root store-root name]
-  (let [store-root
-        (draft-store-root store-root)
-
-        availability
-        (rift-available? (file-path source-root) (file-path store-root))]
-
-    (when-not (:available? availability)
-      (throw (ex-info "Rift cannot fork this workspace"
-                      {:type :workspace/capability-unavailable
-                       :source-root (file-path source-root)
-                       :reason (:reason availability)
-                       :details (:details availability)
-                       :capability-matrix (workspace-capability-matrix source-root)})))
-    (let [forked (rift-fork! {:source-root (file-path source-root)
-                              :store-root (file-path store-root)
-                              :name name})]
-      {:root (file-path (:root forked))
-       :backend :rift
-       :mechanism (mechanism-id (:mechanism forked))})))
 
 (defn- git*
   "Run `git <args>` inside `dir` and return `{:exit :out}` — `:exit` is nil when
@@ -805,9 +747,361 @@
   (let [{:keys [exit out]} (git* dir args)]
     (if (= 0 exit) (into [] (remove str/blank?) (str/split-lines (str out))) [])))
 
+(defn git-managed?
+  "True when `root` is the top of a Git working tree, reading exactly the fact
+   Rift reads: a `.git` directory, or the link file of a linked worktree.
+   Deliberately filesystem-only — `internal.git` requires this namespace, so
+   requiring it back would close a load cycle."
+  [root]
+  (.exists (io/file (file-path root) ".git")))
+
+;; Draft backend selection — linked Git worktree or Rift copy-on-write clone
+
+(def draft-backend-toggle-id
+  "Id of the `draft_backend` toggle (registered by the foundation harness) that
+   selects how drafts are forked: `auto`, `worktree`, `rift` or `off`."
+  "draft_backend")
+
+(def ^:dynamic *draft-backend*
+  "Override for the draft backend selection (`:auto` `:worktree` `:rift` `:off`).
+   nil (production) reads the `draft_backend` toggle; tests bind it."
+  nil)
+
+(defn draft-backend-setting
+  "The configured draft backend selection: `:auto` (default), `:worktree`,
+   `:rift` or `:off`. `*draft-backend*` wins over the `draft_backend` toggle; an
+   unregistered toggle or an unknown value means `:auto`."
+  []
+  (let [raw
+        (or *draft-backend* (toggles/value-of draft-backend-toggle-id))
+
+        k
+        (cond (keyword? raw) raw
+              (string? raw) (keyword (str/trim raw))
+              :else nil)]
+
+    (if (contains? #{:auto :worktree :rift :off} k) k :auto)))
+
+(defn- git-worktree-availability
+  "Whether `source-root` can seed a linked Git worktree: the top of a Git working
+   tree (main or linked) with at least one commit, and a `git` that runs."
+  [source-root]
+  (let [src (io/file (file-path source-root))]
+    (if-not (git-managed? src)
+      {:available? false :reason :not-git-managed}
+      (let [{:keys [exit out]} (git* src ["rev-parse" "--verify" "--quiet" "HEAD"])]
+        (cond (nil? exit) {:available? false :reason :git-unavailable :details (str/trim (str out))}
+              (not= 0 exit) {:available? false :reason :no-commits}
+              :else {:available? true})))))
+
+(defn workspace-capability-matrix
+  "Availability of each draft backend for `workspace-or-root`, checked against
+   the real derived storage location rather than assuming source and store share
+   a filesystem: `[{:backend :worktree …} {:backend :rift …}]`, each with
+   `:available?` and, when unavailable, `:reason`/`:details`. A diagnostics
+   surface — `draft-backend-for` is the selection."
+  [workspace-or-root]
+  (let [source-root
+        (if (map? workspace-or-root) (:root workspace-or-root) workspace-or-root)
+
+        repo-root
+        (if (map? workspace-or-root) (:repo-root workspace-or-root) workspace-or-root)
+
+        rift
+        (rift-available? (file-path source-root) (file-path (draft-store-root repo-root)))]
+
+    [(merge {:backend :worktree} (git-worktree-availability source-root))
+     (merge {:backend :rift :available? (boolean (:available? rift))}
+            (select-keys rift [:reason :details]))]))
+
+(defn draft-backend-for
+  "The backend `create!` forks `workspace-or-root` with under the current
+   `draft_backend` setting, or nil when drafts are off or nothing can fork it.
+   `:auto` prefers a linked Git worktree — a checkout sharing the repository's
+   objects and refs, so an approved draft is a branch the user already has — and
+   falls back to a Rift copy-on-write clone for projects without Git history."
+  [workspace-or-root]
+  (let [setting
+        (draft-backend-setting)
+
+        available?
+        (when-not (= :off setting)
+          (into #{}
+                (comp (filter :available?) (map :backend))
+                (workspace-capability-matrix workspace-or-root)))]
+
+    (case setting
+      :off
+      nil
+
+      :worktree
+      (available? :worktree)
+
+      :rift
+      (available? :rift)
+
+      (or (available? :worktree) (available? :rift)))))
+
+(defn isolated-workspaces-supported?
+  "True when the current root can create full draft workspaces under the
+   current `draft_backend` setting."
+  ([] (isolated-workspaces-supported? (trunk-root)))
+  ([root] (some? (draft-backend-for root))))
+
+(defn- worktree-unavailable-hint
+  [reason]
+  (case reason
+    :not-git-managed
+    (str "A worktree draft needs a Git-managed project: initialize a repository, or set "
+         "draft_backend to auto or rift for a copy-on-write clone.")
+
+    :no-commits
+    (str "A worktree draft needs a first commit: commit the project, or set draft_backend "
+         "to auto or rift for a copy-on-write clone.")
+
+    (str "A worktree draft needs a working `git` on PATH; set draft_backend to auto or rift "
+         "for a copy-on-write clone.")))
+
+(defn isolation-unavailable-hint
+  "One actionable sentence explaining why no draft backend can fork
+   `workspace-or-root` and what the user must change. Only meaningful when
+   `isolated-workspaces-supported?` is false."
+  ([] (isolation-unavailable-hint (trunk-root)))
+  ([workspace-or-root]
+   (let [setting
+         (draft-backend-setting)
+
+         matrix
+         (workspace-capability-matrix workspace-or-root)
+
+         reason-of
+         (fn [backend]
+           (some #(when (= backend (:backend %)) (:reason %)) matrix))]
+
+     (cond
+       (= :off setting)
+       "Drafts are switched off: set the draft_backend toggle to auto, worktree or rift to use them."
+       (= :worktree setting) (worktree-unavailable-hint (reason-of :worktree))
+       (and (not= :rift setting) (= :no-commits (reason-of :worktree))) (worktree-unavailable-hint
+                                                                          :no-commits)
+       (= :linked-git-worktree (reason-of :rift))
+       "A linked Git worktree cannot be forked — start the session from the main worktree."
+       :else (cow-platform-hint (System/getProperty "os.name"))))))
+
+(defn- rift-fork-into-store!
+  "Fork `source-root` into a private Rift clone under `store-root`'s draft store.
+   Returns `{:root <clone path> :backend :rift :mechanism <keyword|nil>}` —
+   `:mechanism` is HOW the clone was physically made (`:btrfs` `:reflink`
+   `:apfs` `:copy`)."
+  [source-root store-root name]
+  (let [store
+        (draft-store-root store-root)
+
+        availability
+        (rift-available? (file-path source-root) (file-path store))]
+
+    (when-not (:available? availability)
+      (throw (ex-info "Rift cannot fork this workspace"
+                      {:type :workspace/capability-unavailable
+                       :source-root (file-path source-root)
+                       :reason (:reason availability)
+                       :details (:details availability)
+                       :capability-matrix (workspace-capability-matrix source-root)})))
+    (let [forked (rift-fork!
+                   {:source-root (file-path source-root) :store-root (file-path store) :name name})]
+      {:root (file-path (:root forked))
+       :backend :rift
+       :mechanism (mechanism-id (:mechanism forked))})))
+
+(def draft-branch-prefix
+  "Prefix of the branches drafts are checked out on and approved into: `vis/<label>`."
+  "vis/")
+
+(defn- git!
+  "Run `git <args>` in `dir`; throw a `:workspace/git-failed` ex-info unless it
+   exits 0. Returns the `{:exit :out}` of the run."
+  [^File dir args]
+  (let [{:keys [exit out] :as result} (git* dir args)]
+    (when-not (= 0 exit)
+      (throw (ex-info (str "git " (str/join " " args)
+                           " failed in " (.getPath dir)
+                           ": " (str/trim (str out)))
+                      {:type :workspace/git-failed
+                       :dir (.getPath dir)
+                       :args (mapv str args)
+                       :details (str/trim (str out))})))
+    result))
+
+(defn- free-branch-name
+  "`vis/<name>`, numerically suffixed while that branch already exists in `repo`."
+  [^File repo name]
+  (let [base
+        (str draft-branch-prefix name)
+
+        taken?
+        (fn [branch]
+          (= 0 (:exit (git* repo ["rev-parse" "--verify" "--quiet" (str "refs/heads/" branch)]))))]
+
+    (loop [branch
+           base
+
+           i
+           2]
+
+      (if (taken? branch) (recur (str base "-" i) (inc i)) branch))))
+
+(defn- git-worktree-fork!
+  "Check `source-root` out as a linked Git worktree under `store-root`'s draft
+   store, on a fresh `vis/<name>` branch at its HEAD. Returns
+   `{:root :backend :worktree :mechanism :worktree :branch}`."
+  [source-root store-root name]
+  (let [src
+        (io/file (file-path source-root))
+
+        store
+        (doto (draft-store-root store-root) .mkdirs)
+
+        path
+        (io/file (file-path (io/file store name)))
+
+        branch
+        (free-branch-name src name)]
+
+    ;; A draft folder the user deleted by hand leaves a registered-but-missing
+    ;; worktree behind, and `add` refuses to reuse its path until it is pruned.
+    (git* src ["worktree" "prune"])
+    (git! src ["worktree" "add" "-b" branch (.getPath path) "HEAD"])
+    {:root (file-path path) :backend :worktree :mechanism :worktree :branch branch}))
+
+(defn- carry-pending-changes!
+  "Replay `source`'s uncommitted work into the fresh worktree `target`: the
+   tracked diff against HEAD — staged and unstaged, binary included — applied as
+   one patch, then every untracked, non-ignored file copied over. `source` is
+   only read."
+  [^File source ^File target]
+  (let [patch (File/createTempFile "vis-draft-" ".patch")]
+    (try (git! source
+               ["diff" "--binary" "--no-color" "--no-ext-diff" (str "--output=" (.getPath patch))
+                "HEAD" "--"])
+         (when (pos? (.length patch))
+           (git! target ["apply" "--whitespace=nowarn" (.getPath patch)]))
+         (finally (.delete patch))))
+  (let [{:keys [exit out]}
+        (git* source ["ls-files" "--others" "--exclude-standard" "-z"])
+
+        nofollow
+        (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])]
+
+    (when (= 0 exit)
+      (doseq [rel (remove str/blank? (str/split (str out) #"\u0000"))]
+        (let [from (.toPath (io/file source rel))
+              to (.toPath (io/file target rel))]
+
+          (when (Files/isRegularFile from nofollow)
+            (Files/createDirectories (.getParent to) (make-array FileAttribute 0))
+            (Files/copy from to copy-opts)))))))
+
+(def ^:private worktree-omitted-marker
+  "File in a linked worktree's private Git directory listing the repo-relative
+   paths its clean checkout left out of the draft — trunk's untracked and
+   index-only files at the fork. The counterpart of Rift's workspace marker."
+  "vis-draft-omitted")
+
+(defn- worktree-git-dir
+  "The private Git directory of the linked worktree at `root`
+   (`<repo>/.git/worktrees/<name>`), nil unless `root` is a linked worktree."
+  ^File [root]
+  (let [wt (io/file (file-path root))]
+    (when (.isFile (io/file wt ".git"))
+      (some-> (first (git-lines wt ["rev-parse" "--git-dir"]))
+              (as-> dir (let [f (io/file dir)]
+                          (if (.isAbsolute f) f (io/file wt dir))))
+              .getCanonicalFile))))
+
+(defn- record-worktree-omissions!
+  "Note in `target`'s Git directory which of `source`'s files its clean checkout
+   left out: untracked files and paths staged but absent from HEAD. `apply!`
+   reads them back so their absence is never taken for an agent deletion."
+  [^File source ^File target]
+  (let [omitted (into (git-lines source
+                                 ["-c" "core.quotePath=false" "ls-files" "--others"
+                                  "--exclude-standard"])
+                      (git-lines source
+                                 ["-c" "core.quotePath=false" "diff" "--cached" "--name-only"
+                                  "--diff-filter=A" "HEAD" "--"]))]
+    (when-let [dir (worktree-git-dir target)]
+      (spit (io/file dir worktree-omitted-marker) (str/join "\n" omitted)))))
+
+(defn- worktree-omitted-paths
+  "Repo-relative paths a clean worktree checkout left out of the draft at `clone`
+   (see `record-worktree-omissions!`); `#{}` when none were recorded."
+  [clone]
+  (let [f (some-> (worktree-git-dir clone)
+                  (io/file worktree-omitted-marker))]
+    (if (and f (.isFile f)) (into #{} (remove str/blank?) (str/split-lines (slurp f))) #{})))
+
+(defn- git-worktree-discard!
+  "Detach the linked worktree at `root` from its repository and delete its
+   `vis/…` branch when that branch carries no commit of its own — an approved
+   branch outlives the draft."
+  [root]
+  (let [wt
+        (io/file (file-path root))
+
+        branch
+        (first (git-lines wt ["symbolic-ref" "--short" "--quiet" "HEAD"]))
+
+        common-dir
+        (some-> (first (git-lines wt ["rev-parse" "--git-common-dir"]))
+                (as-> dir (let [f (io/file dir)]
+                            (if (.isAbsolute f) f (io/file wt dir))))
+                .getCanonicalFile)
+
+        repo
+        (some-> common-dir
+                .getParentFile)]
+
+    (if repo
+      (do (git* repo ["worktree" "remove" "--force" (.getPath wt)])
+          (git* repo ["worktree" "prune"])
+          (when (and branch (str/starts-with? branch draft-branch-prefix))
+            ;; `-d` refuses a branch holding commits HEAD lacks: an approved draft
+            ;; keeps its branch, an untouched one is cleaned up.
+            (git* repo ["branch" "-d" branch])))
+      (tel/log! :warn
+                ["workspace: worktree draft has no repository; left in place" (.getPath wt)]))))
+
+(defn- backend-fork!
+  "Fork `source-root` into a private draft root under `store-root`'s draft store
+   on `backend` — `:worktree` or `:rift`, as `draft-backend-for` selects. Returns
+   `{:root :backend :mechanism}` plus `:branch` for a worktree."
+  [source-root store-root name backend]
+  (case backend
+    :worktree
+    (git-worktree-fork! source-root store-root name)
+
+    :rift
+    (rift-fork-into-store! source-root store-root name)
+
+    (let [off? (= :off (draft-backend-setting))]
+      (throw (ex-info (if off?
+                        "Drafts are switched off (draft_backend = off)"
+                        "No draft backend can fork this workspace")
+                      {:type (if off? :workspace/drafts-disabled :workspace/capability-unavailable)
+                       :source-root (file-path source-root)
+                       :capability-matrix (workspace-capability-matrix source-root)})))))
+
 (defn- discard-root!
-  [backend-id root]
-  (when (and root (not= :live backend-id)) (rift-discard! {:root (file-path root)})))
+  [backend root]
+  (when root
+    (case (backend-id backend)
+      :live
+      nil
+
+      :worktree
+      (git-worktree-discard! root)
+
+      (rift-discard! {:root (file-path root)}))))
 
 (defonce ^:private discard-executor
   ;; Single daemon thread: serializes physical clone reclamation OFF the request
@@ -893,13 +1187,22 @@
    untouched."
   [dir]
   (let [dir (io/file dir)]
-    (if-not (.isDirectory (io/file dir ".git"))
+    (if-not (git-managed? dir)
       #{}
       (into #{}
             (comp (map #(str/replace % #"/+$" "")) (remove str/blank?))
             (git-lines dir
                        ["-c" "core.quotePath=false" "ls-files" "--others" "--ignored"
                         "--exclude-standard" "--directory"])))))
+
+(defn- fork-omitted-paths
+  "Repo-relative paths the fork left out of `clone` by construction: Rift's
+   workspace marker for a clone; for a linked worktree, whatever `trunk` ignores
+   (never checked out nor replayed) plus what its clean checkout skipped."
+  [clone trunk]
+  (if (.isFile (io/file clone ".git"))
+    (into (fork-ignored-paths trunk) (worktree-omitted-paths clone))
+    (rift-excluded-paths clone)))
 
 (defn changed-paths
   "Repo-relative paths of files under `clone` whose mtime is newer than
@@ -968,10 +1271,12 @@
    trunk mtimes (epoch/pre-epoch, e.g. unpacked from a tarball) from ever
    comparing below the baseline into a real `.delete` of the user's files.
 
-   Paths Rift left out are excluded on the same principle. Filtered forks omit
-   regenerable or ignored trees, and clean restores omit uncommitted paths. Rift
-   records both in its workspace marker (`rift-excluded-paths`). Reading an
-   omitted path as an agent deletion would let `apply!` erase a user's files."
+   Paths the fork left out are excluded on the same principle. Filtered Rift
+   forks omit regenerable or ignored trees and clean restores omit uncommitted
+   paths, both recorded in Rift's workspace marker; a linked worktree never
+   receives what trunk ignores, and a clean checkout records what it skipped
+   (`fork-omitted-paths`). Reading an omitted path as an agent deletion would
+   let `apply!` erase a user's files."
   [clone trunk fork-ms]
   (if-not (pos? (long fork-ms))
     []
@@ -985,7 +1290,7 @@
           (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])
 
           omitted
-          (rift-excluded-paths clone)
+          (fork-omitted-paths clone trunk)
 
           fork-omitted?
           (fn [^Path rel]
@@ -1019,13 +1324,13 @@
 (defonce ^:private hooks (atom {:on-spawn [] :on-apply [] :on-discard []}))
 
 (defn register-hook!
-  "Register `hook-fn` for `hook-id` ∈ {:on-spawn :on-apply :on-discard}.
+  "Register `hook-fn` for `hook-id` ∈ {:on-spawn :on-apply :on-approve :on-discard}.
    Synchronous; exceptions swallowed."
   [hook-id hook-fn]
   (swap! hooks update hook-id (fnil conj []) hook-fn)
   hook-id)
 
-(defn- fire-hook!
+(defn fire-hook!
   [hook-id & args]
   (doseq [f (clojure.core/get @hooks hook-id)]
     (try (apply f args) (catch Throwable _ nil))))
@@ -1317,7 +1622,8 @@
   [plan name]
   (into []
         (keep (fn [{:keys [trunk policy]}]
-                (try (let [{:keys [root backend mechanism]} (backend-fork! trunk trunk name)]
+                (try (let [{:keys [root backend mechanism]}
+                           (backend-fork! trunk trunk name (draft-backend-for trunk))]
                        (cond-> {:trunk trunk
                                 :clone (file-path root)
                                 :fork-ms (util/now-ms)
@@ -1328,30 +1634,27 @@
                      (catch Throwable _ nil))))
         plan))
 
-(defn git-managed?
-  "True when `root` is the top of a Git working tree, reading exactly the fact
-   Rift reads: a `.git` directory, or the link file of a linked worktree.
-   Deliberately filesystem-only — `internal.git` requires this namespace, so
-   requiring it back would close a load cycle."
-  [root]
-  (.exists (io/file (file-path root) ".git")))
-
 (defn create!
-  "Create an isolated DRAFT using the strongest available backend and pin it
-   to `:session-state-id`. The backend must provide the full draft capability
-   set; core never silently falls back to a shared root.
+  "Create an isolated DRAFT with the backend `draft-backend-for` selects for the
+   fork parent — a linked Git worktree on a fresh `vis/<label>` branch, or a Rift
+   copy-on-write clone — and pin it to `:session-state-id`. Core never silently
+   falls back to a shared root: with drafts switched off this throws
+   `:workspace/drafts-disabled`, with no capable backend
+   `:workspace/capability-unavailable`.
 
-   The fork PARENT is chosen so `apply!` lands back where it forked from:
-   pass `:from <parent-workspace>` to clone that workspace's `:root` and
-   inherit its `:repo-root` (apply target); otherwise the parent is the
+   The fork PARENT is chosen so `apply!` and `approve!` land back where it forked
+   from: pass `:from <parent-workspace>` to clone that workspace's `:root` and
+   inherit its `:repo-root` (landing target); otherwise the parent is the
    user's real cwd (trunk).
 
-   `:clean? true` forks the REAL tree and asks Rift to hand the clone back
-   WITHOUT the changes that were pending in it. Rift owns the Git index/worktree
-   reset, removes uncommitted paths, and records those omissions in its marker.
-   The baseline is captured after that operation so the reset is not read as an
-   agent edit. A project that is not Git-managed has no committed state to seed
-   from, so a clean draft is refused there before anything is cloned."
+   By default the draft carries the parent's pending work: a Rift clone copies
+   it, a worktree checks HEAD out and replays the uncommitted diff plus untracked
+   files into it. `:clean? true` hands back the committed state instead — Rift
+   resets the clone (recording the omissions in its marker), a worktree simply
+   skips the replay. The baseline is captured after that seeding so it is not
+   read as an agent edit. A project that is not Git-managed has no committed
+   state to seed from, so a clean draft is refused there before anything is
+   cloned."
   [db-info {:keys [session-state-id label from clean? filesystem-roots]}]
   (let [trunk
         (or (:repo-root from) (trunk-root))
@@ -1377,17 +1680,25 @@
         nm
         (free-workspace-name trunk label)
 
-        {:keys [root backend mechanism]}
-        (backend-fork! parent trunk nm)
+        chosen
+        (draft-backend-for parent)
 
-        ;; BEFORE the baseline below: Rift's clean rewrites mtimes, and a clone
-        ;; that cannot be cleaned must never survive as a half-seeded draft.
+        {:keys [root backend mechanism]}
+        (backend-fork! parent trunk nm chosen)
+
+        ;; BEFORE the baseline below: Rift's clean and the worktree replay both
+        ;; rewrite mtimes, and a clone that cannot be seeded must never survive
+        ;; as a half-seeded draft.
         _
-        (when clean?
-          (try (rift/clean! {:at root :commit "HEAD"})
-               (catch Throwable t
-                 (try (discard-root! backend root) (catch Throwable _ nil))
-                 (throw t))))
+        (try
+          (case backend
+            :worktree
+            (if clean?
+              (record-worktree-omissions! (io/file (file-path parent)) (io/file root))
+              (carry-pending-changes! (io/file (file-path parent)) (io/file root)))
+
+            (when clean? (rift/clean! {:at root :commit "HEAD"})))
+          (catch Throwable t (try (discard-root! backend root) (catch Throwable _ nil)) (throw t)))
 
         ;; Capture AFTER the clone returns: cloned files keep their (older)
         ;; source mtime, so only post-fork agent edits exceed this baseline.

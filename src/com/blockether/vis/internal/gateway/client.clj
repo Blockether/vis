@@ -1759,6 +1759,18 @@
                                      {:reason reason})
                          "workspace")))
 
+(defn approve-draft!
+  "Land `workspace-id` IN THE DAEMON as one commit on its `vis/<label>` branch;
+   `message` is the optional subject line. Returns the string-keyed
+   `{\"approval\" \"workspace\"}` response: the approval carries `status`
+   (`approved` | `nothing_to_approve`), `branch`, `commit` and `files`."
+  [sid workspace-id message]
+  (let [res (send-json!
+              "POST"
+              (str "/v1/sessions/" (enc sid) "/workspace/drafts/" (enc workspace-id) "/approve")
+              {:message message})]
+    {"approval" (get res "approval") "workspace" (decode-workspace (get res "workspace"))}))
+
 (defn submit-turn!
   [sid opts]
   (let [res (send-json! "POST" (str "/v1/sessions/" (enc sid) "/turns") opts)]

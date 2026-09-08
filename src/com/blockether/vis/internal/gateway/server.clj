@@ -3116,6 +3116,17 @@
              (error-response 409 (:type (ex-data e) :draft-create-failed) (ex-message e)))))
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- approve-draft-handler
+  [request]
+  (if-let [sid (path-sid request)]
+    (let [workspace-id (get-in request [:path-params :workspace-id])
+          {message "message"} (body-json request)]
+
+      (try (json-response (state/approve-draft! sid workspace-id message))
+           (catch clojure.lang.ExceptionInfo e
+             (error-response 409 (:type (ex-data e) :draft-approve-failed) (ex-message e)))))
+    (session-404 (get-in request [:path-params :sid]))))
+
 (defn- abandon-draft-handler
   [request]
   (if-let [sid (path-sid request)]
@@ -4305,6 +4316,7 @@
         [(sid-route "/workspace/root") {:patch change-root-handler}]
         [(sid-route "/workspace/drafts") {:get drafts-handler :post create-draft-handler}]
         [(sid-route "/workspace/drafts/:workspace-id") {:delete abandon-draft-handler}]
+        [(sid-route "/workspace/drafts/:workspace-id/approve") {:post approve-draft-handler}]
         [(sid-route "/workspace/stash") {:post stash-draft-handler}]
         [(sid-route "/workspace/resume") {:post resume-draft-handler}]
         [(sid-route "/forks") {:get fork-points-handler :post fork-session-handler}]

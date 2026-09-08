@@ -12,8 +12,31 @@
    changed since the fork. The block is stamped once per turn at engine
    start; ctx_renderer serialises it verbatim."
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.internal.workspace.git :as git-core]
-            [com.blockether.vis.internal.workspace.core :as workspace]))
+            [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.internal.workspace.drafts :as drafts]
+            [com.blockether.vis.internal.workspace.git :as git-core]))
+
+(defn- draft-block
+  "`\"draft\"` — the landing facts of the draft the session works in: its
+   backend, the `vis/<label>` branch approvals commit to, how many approved
+   commits the trunk lacks and how many paths still differ from that branch.
+   Git facts are omitted when they cannot be read; the block never fails the
+   turn."
+  [workspace]
+  (let [{:keys [backend branch ahead pending]} (try (drafts/status workspace)
+                                                    (catch Throwable _ nil))]
+    (cond-> {"label" (:label workspace)}
+      backend
+      (assoc "backend" backend)
+
+      branch
+      (assoc "branch" branch)
+
+      ahead
+      (assoc "approved_ahead" ahead)
+
+      pending
+      (assoc "pending_paths" pending))))
 
 (defn- canonical-path
   [dir]
@@ -119,6 +142,9 @@
 
       (:label workspace)
       (assoc "label" (:label workspace))
+
+      (and isolated? (workspace/draft? workspace))
+      (assoc "draft" (draft-block workspace))
 
       (seq roots)
       (assoc "filesystem_roots" roots)
