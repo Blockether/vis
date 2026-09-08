@@ -240,7 +240,7 @@ const DiffBlock = memo(function DiffBlock({
     >
       {!frameless && (
         <div
-          className={`absolute right-2 z-10 ${compact ? "top-0 mouse:top-0.5" : "top-0.5 mouse:top-1"}`}
+          className={`absolute right-0 z-10 bg-code pr-2 ${compact ? "top-0 mouse:top-0.5" : "top-0.5 mouse:top-1"}`}
         >
           <CopyChip value={value} label="Copy code" />
         </div>
@@ -459,7 +459,7 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
           body, so a frameless block does not add a second, third, … chip. */}
       {!frameless && (
         <div
-          className={`absolute right-2 z-10 ${compact ? "top-0 mouse:top-0.5" : "top-0.5 mouse:top-1"}`}
+          className={`absolute right-0 z-10 bg-code pr-2 ${compact ? "top-0 mouse:top-0.5" : "top-0.5 mouse:top-1"}`}
         >
           <CopyChip value={copyValue ?? source} label="Copy code" />
         </div>

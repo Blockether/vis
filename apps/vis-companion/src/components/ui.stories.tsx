@@ -213,7 +213,12 @@ export const CodeCopy: Story = {
     for (const button of buttons) {
       await expect(button.textContent).toBe('');
       const box = button.getBoundingClientRect();
-      const block = button.closest('.bg-code')!.getBoundingClientRect();
+      const blockElement = button.closest('.relative.bg-code')!;
+      const block = blockElement.getBoundingClientRect();
+      // Long, horizontally scrolling code must not show through the copy icon.
+      await expect(getComputedStyle(button.parentElement!).backgroundColor).toBe(
+        getComputedStyle(blockElement).backgroundColor,
+      );
       await expect(box.left).toBeGreaterThan(block.left + block.width / 2);
       await expect(box.right).toBeLessThanOrEqual(block.right);
       await expect(box.top).toBeGreaterThanOrEqual(block.top);
