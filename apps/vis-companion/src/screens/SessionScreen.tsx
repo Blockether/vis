@@ -1177,38 +1177,43 @@ export function SessionScreen({
   // The level the user just asked for, shown until the gateway confirms it.
   const [pendingLevel, setPendingLevel] = useState<string | null>(null);
 
+  // A failed read is not a model capability. Retry the control data on reconnect,
+  // wake and session/picker changes, without clearing the last successful values.
   useEffect(() => {
-    const controller = new AbortController();
-    void client
-      .setting("reasoning_level", controller.signal)
-      .then((toggle) => setReasoning(toggle))
-      .catch(() => {
-        // Optional knob: a gateway without it simply paints no chip.
-      });
-    return () => controller.abort();
-  }, [client]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void client
-      .setting("verbosity", controller.signal)
-      .then((toggle) => setVerbosity(toggle))
-      .catch(() => {
-        // Older gateways may not have the answer-length knob yet.
-      });
-    return () => controller.abort();
-  }, [client]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void client
-      .setting("codex_fast_mode", controller.signal)
-      .then((toggle) => setCodexFast(toggle))
-      .catch(() => {
-        // Provider extension may be absent; then there is no Fast switch.
-      });
-    return () => controller.abort();
-  }, [client]);
+    let controller: AbortController | undefined;
+    const refresh = () => {
+      controller?.abort();
+      controller = new AbortController();
+      const { signal } = controller;
+      for (const [id, receive] of [
+        ["reasoning_level", setReasoning],
+        ["verbosity", setVerbosity],
+        ["codex_fast_mode", setCodexFast],
+      ] as const) {
+        void client
+          .setting(id, signal)
+          .then((toggle) => {
+            if (!signal.aborted) receive(toggle);
+          })
+          .catch(() => { /* Keep cached controls during a failed read. */ });
+      }
+      // Both reads share the same router request and cache.
+      void Promise.all([client.defaultModel(signal), client.router(signal)])
+        .then(([pref, fleet]) => {
+          if (!signal.aborted) {
+            setDefaultPref(pref);
+            setModelFleet(fleet);
+          }
+        })
+        .catch(() => { /* The next recovery event retries the capability lookup. */ });
+    };
+    refresh();
+    const stopWake = onWake(refresh);
+    return () => {
+      stopWake();
+      controller?.abort();
+    };
+  }, [client, connected, routerOpen, sid]);
 
   async function toggleCodexFast() {
     if (!codexFast || codexFastBusy) return;
@@ -1309,28 +1314,6 @@ export function SessionScreen({
       live = false;
     };
   }, [client, sid]);
-
-  // An unpinned session runs on the gateway default, so the chip names THAT
-  // model rather than the placeholder word. Re-read when the picker closes: the
-  // default may have just been changed from it.
-  useEffect(() => {
-    let live = true;
-    // defaultModel() shares router()'s in-flight read and cache; this is one probe.
-    void Promise.all([client.defaultModel(), client.router()])
-      .then(([pref, fleet]) => {
-        if (live) {
-          setDefaultPref(pref);
-          setModelFleet(fleet);
-        }
-      })
-      .catch(() => {
-        /* Without a readable default the chip simply falls back to the pin. */
-      });
-    return () => {
-      live = false;
-    };
-  }, [client, routerOpen]);
-
 
   // "↓ Latest" is a MEASUREMENT of the scroller, never a memory of the last
   // gesture: the offer stands only while there is something below the fold AND

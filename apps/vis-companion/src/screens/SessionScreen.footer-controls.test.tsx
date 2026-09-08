@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { GatewayClient } from "../lib/gateway";
 import type { RouterProvider } from "../lib/types";
 import { renderSessionScreen, subscriptionHub } from "./session-screen-harness";
 
@@ -40,6 +41,7 @@ const toggle = (id: string, label: string, value: string, choices: string[]) => 
   choices,
 });
 
+afterEach(() => vi.unstubAllGlobals());
 describe("composer response controls", () => {
   it("keeps the footer compact while preserving the native safe area", () => {
     const { container } = renderSessionScreen();
@@ -273,6 +275,88 @@ describe("composer response controls", () => {
       await waitFor(() => expect(submitTurn).toHaveBeenCalledTimes(index + 1));
       expect(submitTurn.mock.calls[index]?.[2]?.extraBody).toEqual(expected);
     }
+  });
+
+  // Regression, session 75371ea8-06af-4853-9d13-1056672df5db: a failed
+  // initial read left Astra's verbosity absent after the connection recovered.
+  it.each([
+    ["/v1/settings/verbosity", "reconnect"],
+    ["/v1/router", "reconnect"],
+    ["/v1/settings/verbosity", "wake"],
+    ["/v1/router", "wake"],
+    ["/v1/settings/verbosity", "session switch"],
+    ["/v1/router", "session switch"],
+  ])("recovers %s on %s through the real gateway client", async (failedPath, recovery) => {
+    const user = userEvent.setup();
+    const pref = { provider: "github-copilot-enterprise", model: "gpt-6-astra" };
+    const fleet = [routerProvider(pref.provider)];
+    let verbosity = toggle("verbosity", "Verbosity", "low", ["low", "medium", "high"]);
+    let offline = true;
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(url).pathname;
+      if (offline && path.endsWith(failedPath)) throw new TypeError("Network unavailable");
+      if (path.endsWith("/v1/router")) return Response.json({ providers: fleet });
+      if (path.endsWith("/v1/settings") && init?.method === "POST") {
+        expect(JSON.parse(String(init.body))).toMatchObject({ id: "verbosity", action: "cycle" });
+        verbosity = { ...verbosity, value: "medium" };
+      }
+      return Response.json(path.endsWith("verbosity") || init?.method === "POST" ? verbosity : null);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const gateway = new GatewayClient({ url: `http://gateway.example.com/${recovery}${failedPath}` });
+    const submitTurn = turnSubmitter();
+    let connectionState = false;
+    const connectionListeners = new Set<(connected: boolean) => void>();
+    const view = renderSessionScreen({
+      client: {
+        cachedSessionModel: () => pref,
+        sessionModel: () => Promise.resolve(pref),
+        cachedRouter: gateway.cachedRouter.bind(gateway),
+        router: gateway.router.bind(gateway),
+        defaultModel: gateway.defaultModel.bind(gateway),
+        cachedSetting: gateway.cachedSetting.bind(gateway),
+        setting: gateway.setting.bind(gateway),
+        setSetting: gateway.setSetting.bind(gateway),
+        submitTurn,
+      },
+      subscriptions: {
+        subscribeConnection: (listener: (connected: boolean) => void) => {
+          connectionListeners.add(listener);
+          listener(connectionState);
+          return () => connectionListeners.delete(listener);
+        },
+      },
+    });
+    await act(async () => {});
+    expect(fetcher.mock.calls.some(([url]) => url.endsWith(failedPath))).toBe(true);
+    expect(screen.queryByRole("button", { name: /verbosity/i })).not.toBeInTheDocument();
+    offline = false;
+    act(() => {
+      if (recovery === "reconnect") {
+        connectionState = true;
+        for (const listener of [...connectionListeners]) listener(true);
+      } else if (recovery === "session switch") {
+        view.rerenderSession("s2");
+      } else {
+        window.dispatchEvent(new Event("online"));
+      }
+    });
+    const chip = await screen.findByRole("button", { name: /verbosity — low/i });
+    await user.click(chip);
+    await screen.findByRole("button", { name: /verbosity — medium/i });
+    // A later failed refresh must retain the recovered, chosen value.
+    gateway.invalidateRouter();
+    offline = true;
+    const attempts = fetcher.mock.calls.filter(([url]) => url.endsWith(failedPath)).length;
+    act(() => window.dispatchEvent(new Event("online")));
+    await waitFor(() => expect(
+      fetcher.mock.calls.filter(([url]) => url.endsWith(failedPath)).length,
+    ).toBeGreaterThan(attempts));
+    expect(screen.getByRole("button", { name: /verbosity — medium/i })).toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "Message Vis" }), "hello");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(submitTurn).toHaveBeenCalledOnce());
+    expect(submitTurn.mock.calls[0]?.[2]?.extraBody).toEqual({ text: { verbosity: "medium" } });
   });
 
   it("enables verbosity when an uncached fleet arrives for the default model", async () => {
