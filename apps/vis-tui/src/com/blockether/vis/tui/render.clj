@@ -1641,11 +1641,12 @@
                    (or seg-start-col col-pos))))))))
 
 (defn- result-row-bg
-  "Result rows (collapsible headline + expanded body) all share the quiet
-   result band — no persistent summary tint on the collapsible label, it
-   reads cleaner flush on the band. Hover still wins for interactive rows."
-  [_meta hovered?]
-  (if hovered? t/link-chrome-hover-bg t/result-bg))
+  "Nested Result rows share the Code background, including their padding.
+   Standalone results retain their own band; interactive hover takes precedence."
+  [meta hovered?]
+  (cond hovered? t/link-chrome-hover-bg
+        (:code-result? meta) t/code-block-bg
+        :else t/result-bg))
 
 (defn- code-row-bg
   "Keep Python disclosure rows inside their execution-status band. Hover remains
@@ -2498,9 +2499,8 @@
                       (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)
-                    ;; Body rows stay on the quiet RESULT band; a card's headline
-                    ;; gets the stronger summary tint so the op and its inline
-                    ;; path chip remain immediately scannable.
+                    ;; Nested results continue the Code fill through the body and padding.
+                    ;; Inline path chips retain their own contrasting background.
                     (let [abs-row (+ (long viewport-top) (long y))
                           hovered? (and (= :toggle-details (:kind meta))
                                         (= abs-row
@@ -6811,7 +6811,9 @@
                 (vec c-lines)
 
                 result-block
-                (vec result-lines)
+                (if (seq code-block)
+                  (mapv #(update % :meta assoc :code-result? true) result-lines)
+                  (vec result-lines))
 
                 artifact-block
                 (artifact-disclosure-entries form-artifacts session-id)
