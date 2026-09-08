@@ -1,9 +1,8 @@
 (ns com.blockether.vis.internal.workspace.drafts-test
-  "The draft lifecycle boundary: `create!` picks the backend, `approve!` lands a
-   draft on its `vis/<label>` branch without touching the trunk checkout,
-   `discard!` keeps that branch, and every step runs through the `:draft/*`
-   op hooks. Real git repositories under a temp dir; the drafts store is
-   rebound so ~/.vis is never touched."
+  "Draft lifecycle and op hooks, with real Git repositories and an in-memory
+   store. Approval commits and merges into the default branch; discard removes
+   the working copy without losing approved work. The drafts home is rebound
+   so ~/.vis is never touched."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -107,7 +106,11 @@
         (and (= "x\npending\n" (slurp (io/file droot "a.txt"))) (.exists (io/file droot "new.txt")))
 
         _
-        (spit (io/file droot "b.txt") "added in the draft\n")
+        (do (spit (io/file droot "b.txt") "added in the draft\n")
+            ;; The copied pending work now belongs to the draft. Clear only the
+            ;; fixture's duplicate files so the landing checkout is clean.
+            (spit (io/file base "a.txt") "x\n")
+            (.delete (io/file base "new.txt")))
 
         first-pass
         (drafts/approve! env {:workspace-id (:id draft) :message "feat: land b"})
@@ -168,89 +171,86 @@
   (expect (str/includes? body "Vis-Draft: feature-x"))
   (expect (= #{"a.txt" "new.txt" "b.txt"} landed))
   (expect (= :nothing-to-approve (:status second)))
-  ;; the trunk checkout is untouched: same HEAD, same pending edit
-  (expect (= "init" trunk-head-subject))
+  ;; Approval updates the default branch and its checkout, not just vis/<label>.
+  (expect (= "main" (:target-branch first)))
+  (expect (= "feat: land b" trunk-head-subject))
   (expect (= "x\npending\n" trunk-pending))
-  (expect (= 1 (:ahead status)))
+  (expect (= 0 (:ahead status)))
   (expect (= 0 (:pending status)))
   (expect (= :discarded discarded-state))
-  ;; discarding keeps the approved branch and removes the working copy
-  (expect (str/includes? branch-after-discard "vis/feature-x"))
+  ;; The merged draft branch may be cleaned up; the approved work stays on main.
+  (expect (or (str/blank? branch-after-discard)
+              (str/includes? branch-after-discard "vis/feature-x")))
   (expect (false? root-after-discard)))
 
 (defdescribe
   approve-roundtrip-test
-  (it
-    "worktree: creates a vis/<label> worktree carrying pending work, lands one commit per approve, keeps the branch after discard"
-    (with-repo "vis-drafts-wt"
-               (fn [store base env]
-                 (binding [ws/*draft-backend* :worktree]
-                   (let [out (approve-roundtrip! store base env)]
-                     (expect (= :worktree (:workspace-backend (:draft out))))
-                     (expect (:worktree-listed? out))
-                     (expect-roundtrip! out)))))))
-
-(it "rift: the clone commits on vis/<label> and the trunk repository fetches the branch"
-    (with-repo "vis-drafts-rift"
-               (fn [store base env]
-                 ;; Rift needs its native library; a host without it cannot exercise this backend.
-                 (if (rift-available? base)
-                   (binding [ws/*draft-backend* :rift]
+  (it "worktree approval merges carried changes into main and discard keeps the approved work"
+      (with-repo "vis-drafts-wt"
+                 (fn [store base env]
+                   (binding [ws/*draft-backend* :worktree]
                      (let [out (approve-roundtrip! store base env)]
-                       (expect (= :rift (:workspace-backend (:draft out))))
-                       (expect-roundtrip! out)))
-                   (expect (not (rift-available? base)))))))
-
-(it "auto prefers the worktree backend inside a committed git repository"
-    (with-repo "vis-drafts-auto"
-               (fn [_store base _env]
-                 (binding [ws/*draft-backend* :auto]
-                   (expect (= :worktree (ws/draft-backend-for base)))
-                   (expect (ws/isolated-workspaces-supported? base))))))
-
-(it "clean drafts seed from HEAD and leave pending trunk work behind"
-    (with-repo "vis-drafts-clean"
-               (fn [store base env]
-                 (binding [ws/*draft-backend* :worktree]
-                   (let [draft (drafts/create! env
-                                               {:session-state-id (str (random-uuid))
-                                                :label "clean"
-                                                :from (seed-trunk! store base)
-                                                :clean? true})]
-                     (expect (= "x\n" (slurp (io/file (:root draft) "a.txt"))))
-                     (expect (false? (.exists (io/file (:root draft) "new.txt"))))
-                     (expect (= :nothing-to-approve
-                                (:status (drafts/approve! env {:workspace-id (:id draft)}))))
-                     ;; what the checkout left out is not an agent deletion: apply! keeps
-                     ;; trunk's untracked file and its pending edit
-                     (spit (io/file (:root draft) "c.txt") "made\n")
-                     (let [{:keys [changed]} (ws/apply! store {:workspace-id (:id draft)})]
-                       (expect (= [["c.txt" :add]] (mapv (juxt :path :status) changed)))
-                       (expect (= "untracked\n" (slurp (io/file base "new.txt"))))
-                       (expect (= "x\npending\n" (slurp (io/file base "a.txt"))))))))))
-
-;; Regression: a worktree never receives what trunk ignores, and reading that
+                       (expect (= :worktree (:workspace-backend (:draft out))))
+                       (expect (:worktree-listed? out))
+                       (expect-roundtrip! out))))))
+  (it "rift approval fetches and merges the clone commit into the default branch"
+      (with-repo "vis-drafts-rift"
+                 (fn [store base env]
+                   ;; Rift needs its native library; a host without it cannot exercise this backend.
+                   (if (rift-available? base)
+                     (binding [ws/*draft-backend* :rift]
+                       (let [out (approve-roundtrip! store base env)]
+                         (expect (= :rift (:workspace-backend (:draft out))))
+                         (expect-roundtrip! out)))
+                     (expect (not (rift-available? base)))))))
+  (it "auto prefers the worktree backend inside a committed git repository"
+      (with-repo "vis-drafts-auto"
+                 (fn [_store base _env]
+                   (binding [ws/*draft-backend* :auto]
+                     (expect (= :worktree (ws/draft-backend-for base)))
+                     (expect (ws/isolated-workspaces-supported? base))))))
+  (it "clean drafts seed from HEAD and leave pending trunk work behind"
+      (with-repo "vis-drafts-clean"
+                 (fn [store base env]
+                   (binding [ws/*draft-backend* :worktree]
+                     (let [draft (drafts/create! env
+                                                 {:session-state-id (str (random-uuid))
+                                                  :label "clean"
+                                                  :from (seed-trunk! store base)
+                                                  :clean? true})]
+                       (expect (= "x\n" (slurp (io/file (:root draft) "a.txt"))))
+                       (expect (false? (.exists (io/file (:root draft) "new.txt"))))
+                       (expect (= :nothing-to-approve
+                                  (:status (drafts/approve! env {:workspace-id (:id draft)}))))
+                       ;; what the checkout left out is not an agent deletion: apply! keeps
+                       ;; trunk's untracked file and its pending edit
+                       (spit (io/file (:root draft) "c.txt") "made\n")
+                       (let [{:keys [changed]} (ws/apply! store {:workspace-id (:id draft)})]
+                         (expect (= [["c.txt" :add]] (mapv (juxt :path :status) changed)))
+                         (expect (= "untracked\n" (slurp (io/file base "new.txt"))))
+                         (expect (= "x\npending\n" (slurp (io/file base "a.txt"))))))))))
+  ;; Regression: a worktree never receives what trunk ignores, and reading that
   ;; absence as a deletion would erase the user's local files on apply.
-(it "apply! never deletes trunk's ignored files, which no worktree draft receives"
-    (with-repo "vis-drafts-ignored"
-               (fn [store base env]
-                 (spit (io/file base ".gitignore") "secret.env\n")
-                 (spit (io/file base "secret.env") "TOKEN=1\n")
-                 (git! base "add" ".gitignore")
-                 (git! base "commit" "-q" "-m" "ignore")
-                 (binding [ws/*draft-backend* :worktree]
-                   (let [draft (drafts/create! env
-                                               {:session-state-id (str (random-uuid))
-                                                :label "ignored"
-                                                :from (seed-trunk! store base)})]
-                     (expect (false? (.exists (io/file (:root draft) "secret.env"))))
-                     (spit (io/file (:root draft) "new.txt") "edited in the draft\n")
-                     (.delete (io/file (:root draft) "a.txt"))
-                     (let [{:keys [changed]} (ws/apply! store {:workspace-id (:id draft)})]
-                       (expect (= {"new.txt" :modify "a.txt" :delete}
-                                  (into {} (map (juxt :path :status)) changed)))
-                       (expect (= "TOKEN=1\n" (slurp (io/file base "secret.env"))))
-                       (expect (false? (.exists (io/file base "a.txt"))))))))))
+  (it "apply! never deletes trunk's ignored files, which no worktree draft receives"
+      (with-repo "vis-drafts-ignored"
+                 (fn [store base env]
+                   (spit (io/file base ".gitignore") "secret.env\n")
+                   (spit (io/file base "secret.env") "TOKEN=1\n")
+                   (git! base "add" ".gitignore")
+                   (git! base "commit" "-q" "-m" "ignore")
+                   (binding [ws/*draft-backend* :worktree]
+                     (let [draft (drafts/create! env
+                                                 {:session-state-id (str (random-uuid))
+                                                  :label "ignored"
+                                                  :from (seed-trunk! store base)})]
+                       (expect (false? (.exists (io/file (:root draft) "secret.env"))))
+                       (spit (io/file (:root draft) "new.txt") "edited in the draft\n")
+                       (.delete (io/file (:root draft) "a.txt"))
+                       (let [{:keys [changed]} (ws/apply! store {:workspace-id (:id draft)})]
+                         (expect (= {"new.txt" :modify "a.txt" :delete}
+                                    (into {} (map (juxt :path :status)) changed)))
+                         (expect (= "TOKEN=1\n" (slurp (io/file base "secret.env"))))
+                         (expect (false? (.exists (io/file base "a.txt")))))))))))
 
 (defdescribe
   draft-op-hooks-test
@@ -279,6 +279,7 @@
                                              {:session-state-id (str (random-uuid))
                                               :label "guarded"
                                               :from (seed-trunk! store base)})
+                       _ (do (spit (io/file base "a.txt") "x\n") (.delete (io/file base "new.txt")))
                        vetoed (try (drafts/approve! env
                                                     {:workspace-id (:id draft) :message "veto me"})
                                    nil
@@ -291,7 +292,7 @@
                    ;; nothing landed while vetoed: the first real commit is the allowed one
                    (expect (= :approved (:status allowed)))
                    (expect (= "fine" (git! base "log" "-1" "--format=%s" (:branch allowed))))
-                   (expect (= 1
+                   (expect (= 0
                               (parse-long
                                 (git! base "rev-list" "--count" (str "HEAD.." (:branch allowed))))))
                    ;; after hooks observe every outcome, the refused one included
@@ -314,3 +315,199 @@
                                          nil
                                          (catch clojure.lang.ExceptionInfo e (ex-data e)))]
                          (expect (= :workspace/drafts-disabled (:type thrown)))))))))
+
+(defn- with-clean-draft
+  "Run f with a clean target checkout and a worktree draft."
+  [f]
+  (with-repo "vis-drafts-target"
+             (fn [store base env]
+               (git! base "add" "-A")
+               (git! base "commit" "-q" "-m" "pending work")
+               (binding [ws/*draft-backend* :worktree]
+                 (let [draft (drafts/create! env
+                                             {:session-state-id (str (random-uuid))
+                                              :label "land"
+                                              :from (seed-trunk! store base)})]
+                   (f base env draft))))))
+
+(defn- approval-error
+  [env draft]
+  (try (drafts/approve! env {:workspace-id (:id draft)})
+       nil
+       (catch clojure.lang.ExceptionInfo e (ex-data e))))
+
+(defdescribe
+  approve-target-test
+  (it "approve commits and merges into main or master without a separate manual merge"
+      (doseq [target ["main" "master"]]
+        (with-clean-draft
+          (fn [base env draft]
+            (git! base "branch" "-m" target)
+            (spit (io/file (:root draft) "b.txt") "approved\n")
+            (let [result (drafts/approve! env
+                                          {:workspace-id (:id draft) :message "feat: approve b"})]
+              (expect (= :approved (:status result)))
+              (expect (= (:commit result) (git! base "rev-parse" target)))
+              (expect (= target (:target-branch result)))
+              (expect (= "feat: approve b" (git! base "log" "-1" "--format=%s" target)))
+              (expect (= "approved\n" (slurp (io/file base "b.txt")))))))))
+  (it "origin/HEAD wins over main, including a custom default that is not checked out"
+      (doseq [target ["master" "trunk"]]
+        (with-clean-draft
+          (fn [base env draft]
+            (let [head (git! base "rev-parse" "HEAD")]
+              (git! base "branch" target)
+              (git! base "update-ref" (str "refs/remotes/origin/" target) head)
+              (git! base
+                    "symbolic-ref"
+                    "refs/remotes/origin/HEAD"
+                    (str "refs/remotes/origin/" target))
+              (spit (io/file (:root draft) "b.txt") "approved\n")
+              (let [result (drafts/approve! env {:workspace-id (:id draft)})]
+                (expect (= target (:target-branch result)))
+                (expect (= (:commit result) (git! base "rev-parse" target)))
+                (expect (= head (git! base "rev-parse" "HEAD")))
+                (expect (= "main" (git! base "branch" "--show-current")))
+                (expect (= head (git! base "rev-parse" (str "refs/remotes/origin/" target))))
+                (expect (= 0 (:ahead (drafts/status draft))))))))))
+  (it "updates the target's linked checkout without switching the source feature branch"
+      (with-clean-draft (fn [base env draft]
+                          (let [head
+                                (git! base "rev-parse" "HEAD")
+
+                                checkout
+                                (str ws/*drafts-home* "/main-checkout")]
+
+                            (git! base "switch" "-q" "-c" "feature")
+                            (git! base "worktree" "add" "-q" checkout "main")
+                            (spit (io/file (:root draft) "b.txt") "approved\n")
+                            (let [result (drafts/approve! env {:workspace-id (:id draft)})]
+                              (expect (= (:commit result) (git! checkout "rev-parse" "HEAD")))
+                              (expect (= "approved\n" (slurp (io/file checkout "b.txt"))))
+                              (expect (= head (git! base "rev-parse" "HEAD")))
+                              (expect (= "feature" (git! base "branch" "--show-current"))))))))
+  (it "merges a diverged target inside the draft and supports later approvals"
+      (with-clean-draft
+        (fn [base env draft]
+          (spit (io/file base "main-only.txt") "main work\n")
+          (git! base "add" "main-only.txt")
+          (git! base "commit" "-q" "-m" "advance main")
+          (spit (io/file (:root draft) "b.txt") "first\n")
+          (let [first-pass (drafts/approve! env {:workspace-id (:id draft)})]
+            (expect (= (:commit first-pass) (git! base "rev-parse" "main")))
+            (expect (= 3 (count (str/split (git! base "rev-list" "--parents" "-1" "HEAD") #" "))))
+            (expect (= "main work\n" (slurp (io/file (:root draft) "main-only.txt"))))
+            (spit (io/file (:root draft) "b.txt") "second\n")
+            (let [second-pass (drafts/approve! env {:workspace-id (:id draft)})]
+              (expect (= (:commit second-pass) (git! base "rev-parse" "main")))
+              (expect (= "second\n" (slurp (io/file base "b.txt"))))
+              (expect (= 0 (:ahead (drafts/status draft)))))))))
+  (it "lands an already committed draft instead of incorrectly reporting nothing to approve"
+      (with-clean-draft (fn [base env draft]
+                          (spit (io/file (:root draft) "b.txt") "committed\n")
+                          (git! (:root draft) "add" "b.txt")
+                          (git! (:root draft) "commit" "-q" "-m" "existing draft commit")
+                          (let [head
+                                (git! (:root draft) "rev-parse" "HEAD")
+
+                                result
+                                (drafts/approve! env {:workspace-id (:id draft)})]
+
+                            (expect (= :approved (:status result)))
+                            (expect (= head (:commit result) (git! base "rev-parse" "main")))
+                            (expect (= ["b.txt"] (:files result)))
+                            (expect (= :nothing-to-approve
+                                       (:status (drafts/approve! env
+                                                                 {:workspace-id (:id draft)}))))))))
+  (it "refuses a repository with no default branch instead of committing onto an arbitrary branch"
+      (with-clean-draft (fn [base env draft]
+                          (git! base "branch" "-m" "feature")
+                          (spit (io/file (:root draft) "b.txt") "pending\n")
+                          (expect (= :draft/no-target-branch
+                                     (:type (approval-error env draft))))))))
+
+(defdescribe
+  approve-safety-test
+  (it
+    "preserves staged, unstaged and untracked target changes, and can retry after they are committed"
+    (doseq [kind [:staged :unstaged :untracked]]
+      (with-clean-draft
+        (fn [base env draft]
+          (spit (io/file base (if (= :untracked kind) "local.txt" "a.txt")) "local work\n")
+          (when (= :staged kind) (git! base "add" "a.txt"))
+          (spit (io/file (:root draft) "b.txt") "draft work\n")
+          (let [head (git! base "rev-parse" "HEAD")
+                index (git! base "write-tree")
+                status (git! base "status" "--porcelain")
+                draft-head (git! (:root draft) "rev-parse" "HEAD")]
+
+            (expect (= :draft/dirty-target (:type (approval-error env draft))))
+            (expect (= head (git! base "rev-parse" "HEAD")))
+            (expect (= index (git! base "write-tree")))
+            (expect (= status (git! base "status" "--porcelain")))
+            (expect (= draft-head (git! (:root draft) "rev-parse" "HEAD")))
+            (git! base "add" "-A")
+            (git! base "commit" "-q" "-m" "keep local work")
+            (expect (= :approved (:status (drafts/approve! env {:workspace-id (:id draft)})))))))))
+  (it
+    "conflicts leave the target untouched and retain a clean draft commit for resolution and retry"
+    (with-clean-draft
+      (fn [base env draft]
+        (spit (io/file base "a.txt") "target version\n")
+        (git! base "add" "a.txt")
+        (git! base "commit" "-q" "-m" "target change")
+        (spit (io/file (:root draft) "a.txt") "draft version\n")
+        (let [head (git! base "rev-parse" "HEAD")]
+          (expect (= :draft/git-failed (:type (approval-error env draft))))
+          (expect (= head (git! base "rev-parse" "HEAD")))
+          (expect (= "target version\n" (slurp (io/file base "a.txt"))))
+          (expect (= "draft version\n" (slurp (io/file (:root draft) "a.txt"))))
+          (expect (= "" (git! (:root draft) "status" "--porcelain")))
+          (expect (= "" (git! (:root draft) "ls-files" "--unmerged")))
+          (spit (io/file (:root draft) "a.txt") "target version\n")
+          (expect (= :approved (:status (drafts/approve! env {:workspace-id (:id draft)}))))))))
+  (it "refuses to finish a merge already in progress in the draft"
+      (with-clean-draft
+        (fn [base env draft]
+          (spit (io/file base "main-only.txt") "main work\n")
+          (git! base "add" "main-only.txt")
+          (git! base "commit" "-q" "-m" "advance main")
+          (git! (:root draft) "merge" "--no-ff" "--no-commit" "main")
+          (let [head
+                (git! (:root draft) "rev-parse" "HEAD")
+
+                index
+                (git! (:root draft) "write-tree")
+
+                merge-head
+                (git! (:root draft) "rev-parse" "MERGE_HEAD")]
+
+            (expect (= :draft/in-progress (:type (approval-error env draft))))
+            (expect (= head (git! (:root draft) "rev-parse" "HEAD")))
+            (expect (= index (git! (:root draft) "write-tree")))
+            (expect (= merge-head (git! (:root draft) "rev-parse" "MERGE_HEAD")))))))
+  (it "git/commit hooks can veto both the draft commit and the divergent merge commit"
+      (doseq [blocked-call [1 2]]
+        (with-clean-draft
+          (fn [base env draft]
+            (spit (io/file base "main-only.txt") "main\n")
+            (git! base "add" "main-only.txt")
+            (git! base "commit" "-q" "-m" "advance main")
+            (spit (io/file (:root draft) "b.txt") "draft\n")
+            (let [head (git! base "rev-parse" "HEAD")
+                  calls (atom 0)]
+
+              (try (extension/register-op-hook! {:op :git/commit
+                                                 :phase :around
+                                                 :owner :ext/draft-commit-test
+                                                 :fn (fn [_env _op args next]
+                                                       (if (= blocked-call (swap! calls inc))
+                                                         {:exit 1 :out "" :err "commit blocked"}
+                                                         (next args)))})
+                   (expect (= :draft/git-failed (:type (approval-error env draft))))
+                   (expect (= blocked-call @calls))
+                   (expect (= head (git! base "rev-parse" "HEAD")))
+                   (expect (= "" (git! base "status" "--porcelain")))
+                   (expect (= "draft\n" (slurp (io/file (:root draft) "b.txt"))))
+                   (finally (extension/unregister-op-hooks-for-owner!
+                              :ext/draft-commit-test)))))))))

@@ -146,7 +146,7 @@
                (catch clojure.lang.ExceptionInfo e (refusal e))))))
 
 (defn draft-approve
-  "Land the session's current draft on its `vis/<label>` branch."
+  "Commit the session draft and merge it into the repository's local default branch."
   [env & [message]]
   (let [ws (current-workspace env)]
     (if-not (workspace/draft? ws)
@@ -201,12 +201,12 @@
      (str
        "Where this session's work lands — `draft_status()` says whether the session is inside a "
        "draft (an isolated working copy opened with `draft_create`) and, if so, which backend "
-       "holds it, the `vis/<name>` branch approvals commit to, how many approved commits the trunk "
-       "lacks (`ahead`) and how many paths still differ from that branch (`pending`). Outside a "
+       "holds it, its `vis/<name>` branch and the default `target_branch`, how many draft commits "
+       "the target lacks (`ahead`) and how many paths still differ from the draft branch (`pending`). "
        "draft it reports the trunk root and the `draft_backend` setting.")
      :result
      (str "String-keyed `{in_draft, root, ...}`; in a draft also `{workspace_id, label, repo_root, "
-          "backend, mechanism, branch, ahead, pending}`.")}))
+          "backend, mechanism, branch, target_branch, ahead, pending}`.")}))
 
 (def draft-create-symbol
   (vis/symbol
@@ -216,10 +216,10 @@
      :description
      (str
        "Open a draft — an isolated working copy of this repository — and move the session into it. "
-       "The trunk checkout is left alone until `draft_approve()` lands the work on the `vis/<name>` "
-       "branch; `draft_discard()` throws the working copy away. Pending trunk changes come along; "
-       "`clean=True` seeds from `HEAD` and leaves them behind. One draft at a time: approve and "
-       "discard the current one first. Only the agent manages drafts; the user reviews the branch. "
+       "The trunk checkout is left alone until `draft_approve()` commits and merges the work into "
+       "the default branch; `draft_discard()` removes the working copy. Pending trunk changes come "
+       "along; `clean=True` seeds from `HEAD` and leaves them behind. Approval requires a clean "
+       "target checkout. One draft at a time: discard the current one before opening another. "
        "Extension hooks on `draft/create` may refuse.")
      :params [{:name "label" :note "draft name; also the `vis/<label>` branch"}
               {:name "clean" :note "`True` excludes pending trunk changes"}]
@@ -227,7 +227,7 @@
      :result
      (str
        "String-keyed `{in_draft: true, workspace_id, label, root, repo_root, backend, mechanism, "
-       "branch, ahead, pending, clean}`. Work under `root`: the sandbox is confined to it at once, "
+       "branch, target_branch, ahead, pending, clean}`. Work under `root`: the sandbox is confined to it at once, "
        "and `session[\"workspace\"]` / `project_root_path` follow from the next block on.")}))
 
 (def draft-approve-symbol
@@ -237,17 +237,20 @@
      :tag :mutation
      :description
      (str
-       "Land the session's current draft as ONE commit on its `vis/<name>` branch — every changed "
-       "and untracked path is staged, the commit carries `Vis-Session`/`Vis-Draft` trailers, and "
-       "the trunk checkout is left untouched (the branch is reachable from it). "
-       "`draft_approve()` uses the default subject, `draft_approve(\"subject\")` yours. The draft "
-       "stays open, so later work can be approved again. Only meaningful inside a draft opened with "
-       "`draft_create`; the user reviews the branch afterwards. Extension hooks on `draft/approve` "
-       "may veto the landing.")
+       "Commit the session's draft and merge it into the local default branch: `origin/HEAD`, "
+       "otherwise `main` or `master`. Stage every changed and non-ignored untracked path; new "
+       "commits carry Vis-Session/Vis-Draft trailers. A diverged target is merged inside the draft, "
+       "then fast-forwarded. Dirty target checkouts refuse; conflicts retain the draft commit for "
+       "resolution and retry. No automatic stash, forced update or remote push. "
+       "`draft_approve()` uses the default subject, `draft_approve(\"subject\")` yours. Existing "
+       "draft commits are merged even when no paths are pending. The draft stays open. "
+       "Extension hooks on `draft/approve` and `git/commit` may veto the operation.")
      :params [{:name "message" :note "commit subject; default `draft(<name>): approve`"}]
      :call {:lead-opt "message" :rest :never}
-     :result (str "String-keyed `{status: approved|nothing_to_approve, branch, commit, files}`; "
-                  "`files` lists the paths that landed.")}))
+     :result
+     (str
+       "String-keyed `{status: approved|nothing-to-approve, branch, target_branch, commit, files}`; "
+       "`files` lists the paths that landed.")}))
 
 (def draft-discard-symbol
   (vis/symbol
@@ -257,8 +260,8 @@
      :description
      (str
        "Leave the session's current draft and remove its working copy; the session is back on the "
-       "trunk at once. Approved commits stay on the `vis/<name>` branch — `draft_approve()` first "
-       "when the work should survive. Unapproved changes in the draft are lost. Only meaningful "
+       "trunk at once. Approved work stays on the default branch; the merged draft branch may be "
+       "removed. Call `draft_approve()` first to keep the work. Unapproved changes are lost. Only meaningful "
        "inside a draft. Extension hooks on `draft/discard` may refuse.")
      :result (str
                "String-keyed `{status: discarded, label, root, branch, approved_ahead}`; `root` is "
