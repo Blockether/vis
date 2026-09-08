@@ -69,6 +69,7 @@
             (io/file entries "editable.py")
             "import blockether.vis.extension as vis\nfrom vis_editable_fixture.value import answer\ndef editable_value():\n    \"Return the editable source value.\"\n    return answer()\nvis.register(vis.Extension(name='editable-fixture', alias='editable', description='Editable fixture', symbols=[vis.Symbol(editable_value)]))\n")
           (try
+            (python-runtime/ensure-library!)
             (#'fixtures/run-fixture-uv!
              project
              ["uv" "lock" "--project" (str project) "--offline" "--no-python-downloads" "--python"
