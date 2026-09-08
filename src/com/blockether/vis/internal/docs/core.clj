@@ -293,20 +293,38 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 .content h2 .anchor,.content h3 .anchor{color:inherit}
 .content h2 .anchor:hover::after,.content h3 .anchor:hover::after{content:' #';color:var(--faint);font-weight:400}
 .content p,.content li{color:var(--fg-soft)}
-.content p{text-align:left}
+.content p{text-align:justify;text-align-last:start;hyphens:auto}
+.content li{text-align:start}
+.content li>p{text-align:inherit}
 .content strong{color:var(--fg);font-weight:650}
 .content blockquote{margin:1.6rem 0;padding:.9rem 1.3rem;background:var(--bg-soft);
   border:1px solid var(--line);border-radius:var(--r-sm);
   color:var(--fg-soft)}
 .content blockquote p{margin:.2rem 0}
-.content code{font:inherit;font-size:var(--text-small);background:var(--code-bg);color:var(--code-fg);
+.content code{font:inherit;font-size:var(--text-small);hyphens:none;background:var(--code-bg);color:var(--code-fg);
   padding:.13em .42em;border-radius:0;border:1px solid var(--line-soft)}
 .content pre{font-family:inherit;position:relative;background:var(--code-bg);border:1px solid var(--line);
   border-radius:0;padding:1.25rem 1.4rem;overflow:auto;margin:1.4rem 0;box-shadow:var(--shadow)}
 .content pre code{display:block;background:none;border:none;padding:0;font-size:var(--text-small);line-height:1.65;color:var(--code-fg)}
-.content ul,.content ol{padding-left:1.3rem}
-.content li{margin:.3rem 0}
-.content li::marker{color:var(--gold-deep)}
+/* Wrap shell examples visually; preserve their text for selection and copying. */
+.content pre:has(>code.language-bash){white-space:pre-wrap;overflow-wrap:anywhere}
+.content ul,.content ol{padding-inline-start:3ch;list-style-position:outside}
+.content li{margin:.5rem 0;padding-inline-start:.5ch}
+.content li>p{margin:.5rem 0}
+.content li::marker{color:var(--gold-deep);font-variant-numeric:tabular-nums}
+.store-links{display:flex;flex-wrap:wrap;gap:.75rem;margin:1rem 0}
+.store-links a{display:flex;flex:1 1 14rem;align-items:center;gap:.75rem;min-width:0;min-height:3.5rem;
+  padding:.625rem .875rem;border:1px solid var(--fg);background:var(--fg);color:var(--bg);text-decoration:none;text-align:start}
+.store-links a:hover{background:var(--dim);border-color:var(--dim);color:var(--bg)}
+.store-links a:focus-visible{outline:2px solid var(--primary);outline-offset:3px}
+/* Brand icons: Simple Icons (CC0), https://simpleicons.org/ */
+.store-links a::before{content:'';flex:none;width:26px;height:26px;background:currentColor;
+  mask:var(--store-icon) center/contain no-repeat;-webkit-mask:var(--store-icon) center/contain no-repeat}
+.store-links .store-apple{--store-icon:url('data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+QXBwbGU8L3RpdGxlPjxwYXRoIGQ9Ik0xMi4xNTIgNi44OTZjLS45NDggMC0yLjQxNS0xLjA3OC0zLjk2LTEuMDQtMi4wNC4wMjctMy45MSAxLjE4My00Ljk2MSAzLjAxNC0yLjExNyAzLjY3NS0uNTQ2IDkuMTAzIDEuNTE5IDEyLjA5IDEuMDEzIDEuNDU0IDIuMjA4IDMuMDkgMy43OTIgMy4wMzkgMS41Mi0uMDY1IDIuMDktLjk4NyAzLjkzNS0uOTg3IDEuODMxIDAgMi4zNS45ODcgMy45Ni45NDggMS42MzctLjAyNiAyLjY3Ni0xLjQ4IDMuNjc2LTIuOTQ4IDEuMTU2LTEuNjg4IDEuNjM2LTMuMzI1IDEuNjYyLTMuNDE1LS4wMzktLjAxMy0zLjE4Mi0xLjIyMS0zLjIyLTQuODU3LS4wMjYtMy4wNCAyLjQ4LTQuNDk0IDIuNTk3LTQuNTU5LTEuNDI5LTIuMDktMy42MjMtMi4zMjQtNC4zOS0yLjM3Ni0yLS4xNTYtMy42NzUgMS4wOS00LjYxIDEuMDl6TTE1LjUzIDMuODNjLjg0My0xLjAxMiAxLjQtMi40MjcgMS4yNDUtMy44My0xLjIwNy4wNTItMi42NjIuODA1LTMuNTMyIDEuODE4LS43OC44OTYtMS40NTQgMi4zMzgtMS4yNzMgMy43MTQgMS4zMzguMTA0IDIuNzE1LS42ODggMy41NTktMS43MDEiLz48L3N2Zz4=')}
+.store-links .store-android{--store-icon:url('data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+QW5kcm9pZDwvdGl0bGU+PHBhdGggZD0iTTE4LjQzOTUgNS41NTg2Yy0uNjc1IDEuMTY2NC0xLjM1MiAyLjMzMTgtMi4wMjc0IDMuNDk4LS4wMzY2LS4wMTU1LS4wNzQyLS4wMjg2LS4xMTEzLS4wNDMtMS44MjQ5LS42OTU3LTMuNDg0LS44LTQuNDItLjc4Ny0xLjg1NTEuMDE4NS0zLjM1NDQuNDY0My00LjI1OTcuODIwMy0uMDg0LS4xNDk0LTEuNzUyNi0zLjAyMS0yLjAyMTUtMy40ODY0YTEuMTQ1MSAxLjE0NTEgMCAwIDAtLjE0MDYtLjE5MTRjLS4zMzEyLS4zNjQtLjkwNTQtLjQ4NTktMS4zNzktLjIwMy0uNDc1LjI4Mi0uNzEzNi45MzYxLS4zODg2IDEuNTAxOSAxLjk0NjYgMy4zNjk2LS4wOTY2LS4yMTU4IDEuOTQ3MyAzLjM1OTMuMDE3Mi4wMzEtLjQ5NDYuMjY0Mi0xLjM5MjYgMS4wMTc3QzIuODk4NyAxMi4xNzYuNDUyIDE0Ljc3MiAwIDE4Ljk5MDJoMjRjLS4xMTktMS4xMTA4LS4zNjg2LTIuMDk5LS43NDYxLTMuMDY4My0uNzQzOC0xLjkxMTgtMS44NDM1LTMuMjkyOC0yLjc0MDItNC4xODM2YTEyLjEwNDggMTIuMTA0OCAwIDAgMC0yLjEzMDktMS42ODc1Yy42NTk0LTEuMTIyIDEuMzEyLTIuMjU1OSAxLjk2NDktMy4zODQ4LjIwNzctLjM2MTUuMTg4Ni0uNzk1Ni0uMDA3OS0xLjExOTFhMS4xMDAxIDEuMTAwMSAwIDAgMC0uODUxNS0uNTMzMmMtLjUyMjUtLjA1MzYtLjkzOTIuMzEyOC0xLjA0ODguNTQ0OXptLS4wMzkxIDguNDYxYy4zOTQ0LjU5MjYuMzI0IDEuMzMwNi0uMTU2MyAxLjY1MDMtLjQ3OTkuMzE5Ny0xLjE4OC4wOTg1LTEuNTgyLS40OTQxLS4zOTQ0LS41OTI3LS4zMjQtMS4zMzA3LjE1NjMtMS42NTA0LjQ3MjctLjMxNSAxLjE4MTItLjEwODYgMS41ODIuNDk0MXpNNy4yMDcgMTMuNTI3M2MuNDgwMy4zMTk3LjU1MDYgMS4wNTc3LjE1NjMgMS42NTA0LS4zOTQuNTkyNi0xLjEwMzguODEzOC0xLjU4NC40OTQxLS40OC0uMzE5Ny0uNTUwMy0xLjA1NzctLjE1NjMtMS42NTA0LjQwMDgtLjYwMjEgMS4xMDg3LS44MTA2IDEuNTg0LS40OTQxeiIvPjwvc3ZnPg==')}
+.store-links span{display:flex;flex-direction:column;min-width:0}
+.store-links small{font-size:var(--text-small)}
+.store-links strong{font-size:var(--text-body);color:inherit}
 .content table{table-layout:fixed;border-collapse:collapse;width:100%;margin:1.4rem 0;font-size:var(--text-small);line-height:1.5;
   border:1px solid var(--line)}
 .content table:has(th:nth-child(2):last-child) th:first-child{width:38%}

@@ -12,6 +12,13 @@ On macOS or Linux, run:
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash
 ```
 
+<div class="store-links" aria-label="Install the Companion app">
+<a class="store-apple" href="https://testflight.apple.com/join/4anYT4Wk"><span><small>iOS / iPadOS</small><strong>TestFlight</strong></span></a>
+<a class="store-android" href="https://play.google.com/apps/testing/com.blockether.viscompanion"><span><small>Android</small><strong>Google Play beta</strong></span></a>
+</div>
+
+Public beta apps. Connect them to your Vis gateway: [pairing instructions](gateway.md).
+
 You can [read the installer](https://github.com/Blockether/vis/releases/download/installer/install-vis-agent)
 before running it. It installs `vis-agent` in `~/.local/bin` and downloads its runtime.
 Git is required; Java and the Clojure CLI are installed automatically when needed.

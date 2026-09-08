@@ -110,6 +110,39 @@
                    (expect (< (.indexOf slugs "queue-and-cancel")
                               (.indexOf slugs "python-sandbox"))))))
 
+(defdescribe
+  reading-layout-test
+  (it
+    "justifies prose, aligns list markers, wraps shell commands and links mobile installs"
+    (let [{:keys [pages] :as site}
+          (docs/collect)
+
+          home
+          (first (filter #(= "index" (:slug %)) pages))]
+
+      (doseq [mode
+              [:static :live]
+
+              :let [html
+                    (docs/page-html site home mode)]]
+
+        (doseq [needle ["text-align:justify" "text-align-last:start" "padding-inline-start:3ch"
+                        "pre:has(>code.language-bash)" "white-space:pre-wrap"
+                        "class=\"store-links\"" "https://testflight.apple.com/join/4anYT4Wk"
+                        "https://play.google.com/apps/testing/com.blockether.viscompanion"
+                        "TestFlight" "Google Play beta" "hyphens:none" "list-style-position:outside"
+                        ".store-links a:focus-visible" "class=\"store-apple\""
+                        "class=\"store-android\""]]
+          (expect (str/includes? html needle) needle))
+        (let [command (second (re-find #"(?s)<pre><code class=\"language-bash\">(.*?)</code></pre>"
+                                       html))]
+          (expect
+            (=
+              "curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash"
+              (some-> command
+                      (str/replace #"<[^>]+>" "")
+                      str/trim))))))))
+
 (defdescribe handle-md-redirect-test
              (it "GET /docs/<slug>.md permanent-redirects to /docs/<slug>"
                  (let [resp (docs/handle {:uri "/docs/skills.md" :headers {}})]
