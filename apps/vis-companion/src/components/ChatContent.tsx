@@ -3607,6 +3607,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   sid,
   liveViewPanel,
   onOpenAttachment,
+  onFork,
+  isForking = false,
 }: {
   turn: TranscriptTurn;
   streaming?: boolean;
@@ -3631,6 +3633,9 @@ export const AssistantMessage = memo(function AssistantMessage({
   liveViewPanel?: ReactNode;
   /** Opens the artifact named by a safe `attachment://<uuid>` answer link. */
   onOpenAttachment?: OpenAttachment;
+  /** Fork through this persisted turn, including its answer. Absent before persistence. */
+  onFork?: () => void;
+  isForking?: boolean;
 }) {
   const blocks = turn.content ?? [];
   const fallback = blocks.length ? "" : fallbackAnswer(turn);
@@ -3663,14 +3668,27 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   return (
     <article
-      className="flow-root mt-4 w-full"
+      className="group/assistant flow-root mt-4 w-full"
       aria-busy={streaming}
       ref={paintSkip}
     >
       <div
-        className={`mb-4 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
+        className={`mb-4 flex items-baseline justify-between gap-2 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
       >
-        Vis
+        <span>Vis</span>
+        {onFork && (
+          // Reserve the action's space; reveal it on answer hover or keyboard focus.
+          <span className="-my-1 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/assistant:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
+            <MetaButton
+              onClick={onFork}
+              disabled={isForking}
+              aria-label="Fork from here"
+            >
+              <ForkIcon className="size-3" aria-hidden />
+              {isForking ? "Forking..." : "Fork from here"}
+            </MetaButton>
+          </span>
+        )}
       </div>
       <div className="min-w-0">
         <IterationTrace
@@ -3769,19 +3787,9 @@ function attachmentKey(att: GatewayAttachment, index: number): string {
 export const UserMessage = memo(function UserMessage({
   children,
   attachments,
-  onFork,
-  isForking = false,
 }: {
   children: string;
   attachments?: GatewayAttachment[];
-  /**
-   * Fork the conversation THROUGH this turn. The verb lives on the turn because
-   * that is where the reader can see what they are forking; a list of forty
-   * truncated first lines in a popover could not say the same. Absent on a turn
-   * that is not persisted yet.
-   */
-  onFork?: () => void;
-  isForking?: boolean;
 }) {
   const parts = parseUserMessage(children);
   // Persisted user images re-render from DB-owned base64 (survives a restart even
@@ -3831,23 +3839,9 @@ export const UserMessage = memo(function UserMessage({
   // paths and URLs that the renderer cannot scope separately, so `break-words` remains
   // the last-resort overflow guard while hyphenation moderates ordinary word spacing.
   return (
-    <article className="group mt-4 w-full">
-      <div className="mb-1 flex items-baseline justify-between gap-2 font-mono text-meta font-bold text-you-role">
-        <span>You</span>
-        {onFork && (
-          // A reserved slot on the role line, so the transcript never reflows: on a
-          // pointer it surfaces with the turn under it, on touch it is simply there.
-          <span className="-my-1 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover:opacity-100 mouse:focus-within:opacity-100 motion-reduce:transition-none">
-            <MetaButton
-              onClick={onFork}
-              disabled={isForking}
-              aria-label="Fork from here"
-            >
-              <ForkIcon className="size-3" aria-hidden />
-              {isForking ? "Forking..." : "Fork from here"}
-            </MetaButton>
-          </span>
-        )}
+    <article className="mt-4 w-full">
+      <div className="mb-1 font-mono text-meta font-bold text-you-role">
+        You
       </div>
       <div
         className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground ${PROSE}`}

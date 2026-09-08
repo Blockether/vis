@@ -142,7 +142,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/parinferish` | `0.1.2` | MIT | 34 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.163` | Apache-2.0 | 617 KB | Blockether (in-house) |
+| `com.blockether/svar` | `0.7.164` | Apache-2.0 | 617 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.39` | MIT | 175 KB | Blockether (in-house) |
 | `com.blockether/vis-python-runtime` | `git:fefc006bb8f3fcacfbf7edd48a85c4556573aa5a` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |

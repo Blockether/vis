@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, within } from "storybook/test";
 import {
   STORY_JOINED_ACTIVITY,
   STORY_COMPACT_EXECUTIONS,
@@ -130,6 +130,8 @@ export const ActivityAxis: Story = {
   args: { live: true, iterations: STORY_TURN_ITERATIONS_ACTIVITY },
 };
 
+const forkFromAnswer = fn();
+
 /**
  * THE EXCHANGE — your message and the turn it started, on ONE line.
  *
@@ -147,12 +149,11 @@ export const Exchange: Story = {
   args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED },
   render: (args) => (
     <>
-      <UserMessage onFork={() => {}}>
-        {STORY_EXCHANGE_TURN.request ?? ""}
-      </UserMessage>
+      <UserMessage>{STORY_EXCHANGE_TURN.request ?? ""}</UserMessage>
       <AssistantMessage
         turn={{ ...STORY_EXCHANGE_TURN, iterations: args.iterations }}
         whole={args.whole}
+        onFork={forkFromAnswer}
       />
     </>
   ),
@@ -172,28 +173,43 @@ export const Exchange: Story = {
     await expect(getComputedStyle(bubble).paddingLeft).toBe(
       getComputedStyle(code).paddingLeft,
     );
+    const answer = canvas.getByText("Vis", { exact: true }).closest("article")!;
+    const fork = within(answer).getByRole("button", { name: "Fork from here" });
+    await expect(
+      within(heading.closest("article")!).queryByRole("button", {
+        name: "Fork from here",
+      }),
+    ).toBeNull();
+    await userEvent.hover(answer);
+    await expect(fork).toBeVisible();
+    forkFromAnswer.mockClear();
+    await userEvent.click(fork);
+    await expect(forkFromAnswer).toHaveBeenCalledOnce();
   },
 };
 
-/**
- * THE TURN'S OWN VERB, mid-act. A fork is cut AT a turn, on the turn's role line,
- * because that is where the reader can see what they are forking. On a pointer the
- * verb surfaces with the turn under it; while the gateway copies, it says so and
- * takes no second press.
- */
+/** The answer's fork action reports progress and prevents a second press. */
 export const Forking: Story = {
   args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED },
   render: (args) => (
     <>
-      <UserMessage onFork={() => {}} isForking>
-        {STORY_EXCHANGE_TURN.request ?? ""}
-      </UserMessage>
+      <UserMessage>{STORY_EXCHANGE_TURN.request ?? ""}</UserMessage>
       <AssistantMessage
         turn={{ ...STORY_EXCHANGE_TURN, iterations: args.iterations }}
         whole={args.whole}
+        onFork={() => {}}
+        isForking
       />
     </>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const answer = canvas.getByText("Vis", { exact: true }).closest("article")!;
+    const fork = within(answer).getByRole("button", { name: "Fork from here" });
+    await userEvent.hover(answer);
+    await expect(fork).toBeDisabled();
+    await expect(fork).toHaveTextContent("Forking...");
+  },
 };
 
 export const CompactGroup: Story = {

@@ -1,5 +1,7 @@
 (ns com.blockether.vis.internal.loop-test
-  (:require [com.blockether.vis-python-runtime :as python-runtime]
+  (:require [babashka.http-client :as http]
+            [charred.api :as json]
+            [com.blockether.vis-python-runtime :as python-runtime]
             [com.blockether.vis.test-python-context :as tpc]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
@@ -2533,6 +2535,68 @@
                       (finally (lp/dispose-environment! env))))))
 
 (defdescribe
+  responses-execution-boundary-test
+  ;; Issue #173: cross the SSE parser, Vis normalization, actual Python execution
+  ;; and Responses replay. Streamed items are the only items; a terminal snapshot
+  ;; that repeats them under new ids adds no calls, results or replay entries.
+  (doseq [echo? [true false]]
+    (it
+      (str "executes and replays each streamed call once; snapshot echo=" echo?)
+      (let [environment (lp/create-environment ::router {:db :memory})
+            code "execution_count = globals().get('execution_count', 0) + 1\nprint(execution_count)"
+            call (fn [n]
+                   {"type" "function_call"
+                    "id" (str "fc_" n)
+                    "call_id" (str "call_" n)
+                    "name" "python_execution"
+                    "arguments" (json/write-json-str {"code" code})})
+            calls [(call "one") (call "two")]
+            events (conj (vec (map-indexed (fn [idx item]
+                                             {"type" "response.output_item.done"
+                                              "output_index" idx
+                                              "item" item})
+                                           calls))
+                         {"type" "response.completed"
+                          "response"
+                          {"output"
+                           (if echo? (mapv #(assoc % "id" (str (get % "id") "_final")) calls) [])}})
+            stream (apply str (map #(str "data: " (json/write-json-str %) "\n\n") events))]
+
+        (try (with-redefs [http/post (fn [_ _]
+                                       {:status 200
+                                        :body (java.io.ByteArrayInputStream. (.getBytes stream
+                                                                                        "UTF-8"))})
+                           svar/ask-code! (fn [_ _]
+                                            (assoc (svar-llm/openai-responses-completion
+                                                     {:model "test-model" :input []}
+                                                     {:api-key "test"
+                                                      :base-url "https://gateway.example.com/v1"
+                                                      :on-chunk (constantly nil)})
+                                              :stop-reason :tool-calls
+                                              :tokens {}))]
+
+               (let [result (lp/run-iteration environment
+                                              []
+                                              {:iteration 0
+                                               :resolved-model {:provider :openai :name "gpt-4o"}})
+                     forms (eng/blocks->forms (:blocks result) {:turn 1 :iter 1})
+                     replay (#'lp/conversation-suffix
+                             [[1 (assoc result :forms-vec forms)]]
+                             {:provider :openai :model "gpt-4o"})
+                     wire (mapcat #'svar-llm/responses-message-input-entries replay)
+                     wire-calls (filter #(= "function_call" (:type %)) wire)
+                     results (filter #(= "function_call_output" (:type %)) wire)]
+
+                 (expect (= 2 (count forms)))
+                 (expect (not-any? :error forms))
+                 (expect
+                   (= ["call_one" "call_two"] (mapv :call_id wire-calls) (mapv :call_id results)))
+                 (expect (= ["fc_one" "fc_two"] (mapv :id wire-calls)))
+                 (expect (= ["1" "2"] (mapv #(str/trim (str (:stdout %))) forms)))
+                 (expect (not-any? #(str/includes? (:output %) "printed nothing") results))))
+             (finally (lp/dispose-environment! environment)))))))
+
+(defdescribe
   activity-ownership-boundary-test
   (it
     "emits the persisted final Activity as its own settled chunk before the result"
@@ -4825,6 +4889,60 @@
           (expect (= 1 (count entries)))))))
 
 (defdescribe
+  tool-call-identity-regression-test
+  ;; Issue #173: source equality is not call identity, a repeated call id is
+  ;; reported rather than merged, and a missing execution is not evidence that
+  ;; Python printed nothing.
+  (let [call
+        (fn [id]
+          {:id id :name "python_execution" :input {"code" "print(123)"}})
+
+        blocks
+        (fn [calls]
+          (mapv (fn [tc]
+                  {:lang "python" :source (get-in tc [:input "code"]) :svar/tool-call-id (:id tc)})
+                calls))]
+
+    (it "executes distinct logical calls even when their programs are identical"
+        (let [calls
+              (mapv call ["call_one|fc_one" "call_two|fc_two"])
+
+              entries
+              (:code-entries (#'lp/code-entries-preflight 1 (blocks calls)))
+
+              forms
+              (mapv #(assoc %1 :stdout %2) entries ["FIRST" "SECOND"])
+
+              result
+              (#'lp/iteration-results-message {:tool-calls calls :forms-vec forms})]
+
+          (expect (= 2 (count entries)))
+          (expect (= ["FIRST" "SECOND"] (mapv :content (:content result))))))
+    (it "passes a repeated call id through and reports it"
+        (let [calls
+              (mapv call ["call_one|fc_old" "call_one|fc_old"])
+
+              {:keys [signals]}
+              (tel/with-signals (#'lp/normalize-tool-calls calls))
+
+              warning
+              (first (filter #(= ::lp/duplicate-tool-call-ids (:id %)) signals))]
+
+          (expect (= ["call_one|fc_old" "call_one|fc_old"]
+                     (mapv :id (#'lp/normalize-tool-calls calls))))
+          (expect (= :warn (:level warning)))
+          (expect (= ["call_one|fc_old"] (get-in warning [:data :ids])))))
+    (it "reports missing execution as an error rather than a successful empty print"
+        (let [result
+              (#'lp/iteration-results-message {:tool-calls [(call "missing")] :forms-vec []})
+
+              block
+              (first (:content result))]
+
+          (expect (true? (:is_error block)))
+          (expect (not (str/includes? (:content block) "printed nothing")))))))
+
+(defdescribe
   csv-attachment-wire-test
   "A `attach`ed CSV is DATA for the HUMAN. The ````vis-table` fence reaches
    the TRANSCRIPT whole — the channel paints it as a live grid — while the model
@@ -5488,13 +5606,13 @@
                                                [{:source "rg(1)" :lang "python"}]))]
                    (expect (= 1 (count entries)))
                    (expect (= "rg(1)" (:expr (first entries))))))
-             (it "dedups identical stutter-fences first (one survivor, not merged with itself)"
+             (it "joins identical id-less blocks as written instead of guessing a stutter"
                  (let [entries (:code-entries (@#'lp/code-entries-preflight
                                                2
                                                [{:source "rg(1)" :lang "python"}
                                                 {:source "rg(1)" :lang "python"}]))]
                    (expect (= 1 (count entries)))
-                   (expect (= "rg(1)" (:expr (first entries)))))))
+                   (expect (= "rg(1)\n\nrg(1)" (:expr (first entries)))))))
 
 ;; The model-facing disclosure: a trimmed iteration tells the model what dropped.
 (defdescribe
@@ -7678,7 +7796,7 @@
                  [:openai "gpt-4o" context [{:role "user" :content "folded recap"}]]]]
           (expect (= (svar-router/count-messages model messages)
                      ((#'lp/request-context-estimator history provider model ctx) messages))))))
-  (it "keeps the typed full-request estimate as a floor and ignores missing or invalid usage"
+  (it "ignores missing or invalid usage"
       (let [messages
             [{:role "user" :content (apply str (repeat 1000 "reasoning "))}]
 
@@ -7688,7 +7806,7 @@
             local
             (svar-router/count-messages "gpt-4o" messages)]
 
-        (doseq [input [nil 0 -1 1]]
+        (doseq [input [nil 0 -1]]
           (expect (= local
                      ((#'lp/request-context-estimator
                        {[:openai "gpt-4o"]
@@ -7697,6 +7815,65 @@
                        "gpt-4o"
                        context)
                        messages)))))))
+
+(defdescribe
+  provider-usage-calibration-regression-test
+  ;; Issue #173: an accepted prefix must not be estimated a second time at 2.2x.
+  (it "uses measured input for the exact prefix and counts only the new tail locally"
+      (let [prior
+            [{:role "user" :content (apply str (repeat 10000 "evidence "))}]
+
+            tail
+            [{:role "assistant" :content "new evidence"}]
+
+            context
+            {:id "same-route" :fixed-prefix-weight 20}
+
+            estimate
+            (#'lp/request-context-estimator
+             {[:openai "gpt-4o"] {:messages prior :input-tokens 4500 :prompt-cache-context context}}
+             :openai
+             "gpt-4o"
+             context)]
+
+        (expect (> (svar-router/count-messages "gpt-4o" prior) 9000))
+        (expect (= 4500 (estimate prior)))
+        (expect (= (+ 4500
+                      (- (svar-router/count-messages "gpt-4o" tail)
+                         (svar-router/count-messages "gpt-4o" [])))
+                   (estimate (into prior tail))))
+        (expect (nil? (#'lp/pre-request-context-projection
+                       {:request-messages (into prior tail)
+                        :model "gpt-4o"
+                        :budget-tokens 6000
+                        :count-messages-fn estimate
+                        :canonical-base-messages-fn (fn []
+                                                      (throw (ex-info "Unexpected lossy fold"
+                                                                      {})))})))))
+  (it "counts only the tail when provider usage already priced the prefix"
+      (let [prior
+            [{:role "user" :content "accepted input"}]
+
+            tail
+            [{:role "assistant" :content "new output"}]
+
+            context
+            {:id "same-route" :fixed-prefix-weight 20}
+
+            counted
+            (atom [])]
+
+        (with-redefs [svar-router/count-messages (fn ^long [_ messages]
+                                                   (swap! counted conj (vec messages))
+                                                   (+ 3 (count messages)))]
+          (let [estimate (#'lp/request-context-estimator
+                          {[:openai "gpt-4o"]
+                           {:messages prior :input-tokens 500 :prompt-cache-context context}}
+                          :openai
+                          "gpt-4o"
+                          context)]
+            (expect (= 501 (estimate (into prior tail))))
+            (expect (= [[] tail] @counted)))))))
 
 (defdescribe
   pre-request-context-projection-test

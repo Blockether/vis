@@ -432,3 +432,427 @@ These are representation-size measurements, not task-success or provider-billing
 model benchmark or native-image build was run. A final cross-check reran the eight affected test
 namespaces (341 cases) against the current tree before commit. No gateway restart, deployment or
 release; unrelated working-tree changes are preserved.
+
+# Council: active-session communication
+
+Shared conversation log with explicit pings; prepare executable tests before production code.
+
+## Context
+
+Council lets active sessions coordinate in both directions, independently of parent/child
+relationships. This revision records cross-validation fixes, the public API/session contract and
+history/Activity correlations, with a tests-first implementation sequence. This remains a plan and
+test specification, not a claim that executable Council tests exist. Preserve all unrelated work.
+
+Current owners and constraints:
+- `src/com/blockether/vis/internal/gateway/state.clj` owns live turns, queues and per-session
+  idempotency. Its registry can also mirror foreign turns: a visible row alone is not proof that
+  this engine owns execution. Council initially supports participants in one execution authority.
+- `src/com/blockether/vis/internal/persistance/sqlite/core.clj` owns SQLite access. A session's
+  `workspace` is not the shared project identity; the default group uses the owning `project`.
+  `db-get-project-by-root` resolves a canonical root, not an arbitrary worktree or current directory.
+- DDL belongs to `resources/db/sqlite/migration/V1__schema.sql` and the existing migration runner.
+  SQLite uses WAL, IMMEDIATE write transactions and `synchronous=NORMAL`.
+- `src/com/blockether/vis/internal/context/prompt.clj` builds the stable system prefix.
+  `turn-system-context-block` is NOT the place for peer messages. The iteration loop in
+  `src/com/blockether/vis/internal/loop.clj` assembles conversation suffixes; `render-ctx-delta` in
+  `src/com/blockether/vis/internal/context/renderer.clj` renders session-state changes, not an inbox.
+- `packages/vis-agent/src/blockether/vis/engine/_local.py` gives `LocalEngine` a private process AND
+  temporary database. It does not join the daemon's Council; closing it removes that private store.
+- `packages/vis-agent/src/blockether/vis/engine/_client.py` creates turns through `Session.send`.
+  Council publication is a separate operation and must never submit a turn.
+
+Cross-validation evidence: a sandbox SQLite probe of the old JSON-filtered pending query executed
+approximately 9,000 VM instructions for 1,000 unrelated entries and 900,000 for 100,000, repeating
+that work when no ping advanced the cursor despite using an index. Executable models also exposed
+late publication reaching a new activation, retry failure after a recipient stopped, and global
+idempotency-key collisions between authors. These are design counterexamples, not passing Vis tests
+or measurements of the bundled JVM driver. Phase 1 must turn them into repository regressions.
+
+Rejected alternatives: a JSON-recipient scan on every iteration; one global idempotency key;
+`max(entry_id)` as activation identity; treating index selection as a latency benchmark; putting peer
+text in a system message; persistent delivery/approval state; notifications and a second broker;
+automatic wakeups, blocking waits or runtime reply gates. A recipient lookup table is not a delivery
+state machine. Session termination does not remove the durability requirements of the conversation log.
+
+### Agreed behavior and scope
+
+- Every project has a default Council. Missing `group_id` selects that default; every stored entry
+  has a concrete group. Custom groups and parent/subagent membership remain future work, but cursor
+  keys and API selectors include `group_id` from the start.
+- Members may read the entire group log on demand. There are no private entries. Addressing controls
+  pings, not visibility; entries without pings never enter another agent's context automatically.
+- A publication may ping selected active participants or all active members. Broadcast excludes its
+  author. Resolve and deduplicate recipients from one authoritative registry snapshot. An explicitly
+  inactive, foreign-owned or out-of-group recipient rejects a NEW publication without partial writes.
+  An empty broadcast is a valid entry with no recipients. Explicit self-pings are rejected in v1.
+- Active means running or queued work, not an open UI view. A held queue is visible as held, not as a
+  promise of execution. No Council operation resumes it. Presence comes from the runtime, not agents.
+- A ping carries author, group, entry and thread identifiers and useful text. Short content arrives
+  whole; longer content has a deterministic preview marked `truncated` and a full-entry fetch target.
+  Preserve the original preview-and-fetch behavior: a 4,000-character rejection is not its substitute.
+  No model generates previews. Larger source material can be a path or session/turn/iteration reference.
+- Offer pending pings before the next model invocation if one occurs, within a bounded context budget.
+  Do not interrupt a model/tool, wake a session, create a turn or force an extra iteration. Overflow
+  stays pending for that activation and is signalled with `has_more`, not silently marked delivered.
+- Requests are soft conversation. No tool/completion gates, synchronous waits or required agreement.
+  Replies are ordinary entries in the same `thread_id`; they notify nobody without an explicit ping.
+  The log records replies and recipient snapshots, not proof that a model read or understood a message.
+- Peer text is attributed data, not a user instruction or an authority upgrade. A finished activation
+  never receives another ping, and its undelivered pings cannot enter a later activation of the session.
+- Provide the same members, publish, threads, read and single-entry fetch operations through the host
+  namespace and a session-bound SDK handle. `threads()` lists summaries; `read(thread_id=...)` reads
+  their entries through the ordinary paginated read. There is no separate `thread()` content-fetch
+  operation. SDK read-only access is not an implicit scope reduction.
+  The gateway credential is trusted daemon-level authority, not per-session isolation. Host calls
+  derive identity from trusted execution context; the SDK handle internally binds the active generation
+  and never silently rebinds after inactivity. New publication by an inactive author fails. Authenticated
+  replay of an existing publication does not require the old author or recipients to remain active.
+
+### Groups, threads and public session context
+
+- A group defines membership and one shared log. A thread is a conversation inside exactly one group,
+  identified by its root entry. It has no separate membership, permissions, activation or delivery cursor.
+  Every group member can read and reply to every thread in that group; a ping does not subscribe a
+  participant to later replies. Custom group membership remains future work, not a thread feature.
+- Publishing without `thread_id` creates a root entry and thus a new thread; no separate create-thread
+  call is needed. Publishing with `thread_id` appends to that existing thread. The selector must identify
+  a root in the selected group, not an arbitrary entry. Every returned entry exposes `thread_id`,
+  including a root whose thread id is its own entry id. A thread cannot span groups.
+- Conversation inside a thread is flat. `thread_id` is the only conversation selector for publication;
+  remove message-parent fields from requests, results, storage, history and Activity. `parent_id` is
+  unsupported, not a compatibility alias. There are no nested replies or automatic reply-target inference.
+- A new thread accepts an optional single-line `title`. Trim and validate an explicit title; reject
+  blank, control-containing or over-limit titles. If omitted, derive a bounded title from the first
+  non-empty trimmed content line, without a model call or changing the stored content. Reject content
+  with no usable line when a fallback is required. Store the title only on the root. A continuation
+  with `thread_id` must not supply `title`, even an unchanged one; titles are immutable in v1.
+- One group may have zero or many threads; v1 adds no fixed total thread count or lifecycle manager.
+  A thread is not a session, subagent or execution thread and never schedules work. Page/content limits
+  still apply; reading a thread does not mean fetching an unbounded conversation.
+- In `python_execution`, the host supplies `council` directly: no HTTP client, token handling or
+  `Session.send()` is needed. Publication commits even when the caller does not `print` its result.
+- Keep the existing `session["id"]` as session identity. Add only
+  `session["council"]["default_group_id"]` to the host-rebuilt session dictionary. Do not duplicate the
+  session id or expose activation ids, cursors, message content or a live member list there. Membership
+  is fetched with `council.members(group_id=...)`; omitted group selects the project default.
+- A session id survives inactivity; an internal activation id identifies one uninterrupted period of
+  running/queued work. Keep it across continuously queued turns, replace it after inactivity, and bind
+  stale SDK handles to their original activation. Agents neither choose nor maintain this identity.
+  Mutating the Python session dictionary cannot change author, group authorization or activation.
+
+Public forms (planned API, not an existing implementation):
+```python
+root = await council.publish(
+    "Does the new response format affect your work?", title="API contract"
+)
+await council.publish(
+    "The tests pass with that format.", thread_id=root.thread_id, ping=[other_sid]
+)
+await council.threads(limit=20)
+await council.threads(group_id=group_id, after=142, limit=20)
+await council.read()
+await council.read(thread_id=root.thread_id)
+await council.read(thread_id=root.thread_id, after=150)
+await council.read(group_id=group_id, thread_id=thread_id)
+```
+`threads()` discovers conversations; `read(thread_id=...)` reads one; `publish(thread_id=...)`
+continues it using exactly the same identifier. Read/list operations share the page envelope: `entries`,
+a continuation cursor and `has_more`. Thread-list entries are summaries containing `thread_id`, `title`,
+`author_session_id` and `created_at`, not message bodies. Omitting `group_id` always selects the default
+in publish, threads and read; a thread in another group requires that group's explicit selector and
+authorization. Continuation preserves the group and, for a filtered read, the thread selector.
+### Storage and publication
+
+Use the existing database, short transactions and two tables. Content is stored once.
+
+| Owner | Required data and indexes |
+|---|---|
+| `council_entry` | Server-assigned `INTEGER PRIMARY KEY` id; group; author session and internal activation; source kind (host/SDK) and turn/iteration/block/operation provenance where available; nullable stored `thread_id`; root-only title; content; creation time; non-null idempotency key; normalized request fingerprint. Unique `(author_sid, idempotency_key)` and `(group_id, id)`; indexes `(group_id, thread_id, id)` and `(author_sid, id)` for thread/source-history lookup; partial index `(group_id, id) WHERE thread_id IS NULL` for root-only listing. |
+| `council_ping` | Immutable `group_id`, `entry_id`, `recipient_sid`, `activation_id`. Primary lookup key `(recipient_sid, activation_id, group_id, entry_id)`; index `(entry_id, recipient_sid)` for displaying the frozen recipient list. No pending/delivered/replied column. |
+
+A ping row references an entry in the same group. A stored thread reference must also stay inside the
+group and identify a root; validate this in the shared publication operation. Roots have a null stored
+`thread_id` and a non-null title, and expose their own id as the public thread identity. Continuations
+store the validated root id as `thread_id` and have no stored title. There is no separate thread table
+or message-parent column. Entries and recipient rows are append-only in v1; no retention/deletion or
+caller-supplied entry ids. SQLite serializes writers, so committed generated ids are safe forward
+cursors under these restrictions; gaps are valid.
+
+Publication order:
+1. Bind and authorize the caller, session and group. Normalize the original request: content, optional
+   thread selector and supplied title, group, author activation and ping selector (including sorted/
+   deduplicated explicit recipients). A new-thread request keeps an absent thread selector in its
+   fingerprint; never replace it with the generated id on replay. Generate one non-empty idempotency
+   key per logical call; retries preserve that key and request, including whether a title was supplied.
+2. Look up `(author_sid, idempotency_key)` BEFORE checking transient activity. An identical replay
+   returns the original entry and original recipient activations. A different normalized request
+   returns an explicit idempotency conflict, never another author's result or a fresh broadcast.
+3. For a new key, validate payload and capture author/recipient activations from one registry snapshot.
+   Do not hold a registry lock while waiting for the database, a tool, a model or an agent response.
+4. In one IMMEDIATE transaction, recheck the key to handle concurrent retries, validate the selected
+   thread root and title rules, and insert the entry plus all recipient rows. A uniqueness race follows
+   the same replay/conflict rules. Any failure rolls back the whole publication, not just its recipients.
+5. Return success after commit. A recipient can finish after the snapshot but before commit; the
+   immutable old activation target then remains log data, not a ping for its next activation.
+
+Retain `synchronous=NORMAL` initially and state its guarantee precisely: process restart does not
+reconstruct active deliveries, while power/OS failure may lose recent acknowledged log commits.
+`FULL` remains an explicit durability/performance decision, not a requirement removed by inactivity.
+Reopen tests cover the chosen supported behavior; they do not prove power-loss durability.
+
+### Presence, lookup and context insertion
+
+- On inactive-to-active transition, allocate a fresh opaque `activation_id` and initialize empty
+  per-group cursor/batch state in the SAME registry transition that exposes the participant. New
+  activation cursors start at zero: no old ping can contain their fresh identity. No `MAX(id)` read.
+- Keep the activation while running/queued work remains continuously active. Clear it on inactivity,
+  cancellation of the remaining work or owner termination. A later turn or engine boot gets a new
+  identity. Ignore mirrored foreign turns without authoritative activation ownership.
+- `members(group_id=...)` returns a snapshot: session id, title and running/queued/held state, not a
+  public activation id. Runtime ownership/generation metadata stays internal. Parent session ids can be added
+  with actual subagent support; agents need not maintain task descriptions.
+- Pending lookup seeks the `council_ping` primary index by recipient, activation and group, then
+  `entry_id > cursor ORDER BY entry_id LIMIT batch_limit + 1`, joining entries by key. Filtering
+  unrelated log entries is not part of the algorithm. An empty inbox is cheap even if the group log
+  grows; a stationary delivery cursor no longer causes repeated scans of other people's messages.
+- Freeze a selected batch as an attributed conversation-data block in the recipient's iteration state.
+  Publish that block and advance the corresponding `(session, activation, group)` cursor together;
+  advance only through entries actually retained in context, never through a lookahead/deferred entry.
+  Preserve the block on provider retry, fallback and prompt reconstruction. Do not perform destructive
+  inbox reads from a pure renderer, token estimator or repeated prompt-building call.
+- Verify the block on the actual model-input assembly path, including the first invocation of a queued
+  turn and iterations without prior tool results. Do not insert it into the stable system/developer
+  prefix or mutate previously sent messages. Existing conversation compaction may later fold it normally.
+- The guarantee is one context append per entry during an uninterrupted activation, NOT exactly-once
+  model consumption. Stateless requests can resend history. Ending the activation drops its live cursor
+  and unfinished batch, never the persisted log; it does not schedule further work.
+- A pending lookup has a short end-to-end deadline, including SQLite busy waits. On timeout or DB
+  failure, leave cursors/batches unchanged, record an observable delivery warning and continue ordinary
+  session execution. Retry only at a later naturally occurring invocation; no forced iteration, tight
+  retry loop or indefinite wait. This is deferred delivery, not an acknowledgement.
+
+`read(group_id=..., thread_id=..., after=...)` uses group-scoped keyset pages with entry and
+serialized-byte limits, a continuation cursor and `has_more`. Without a thread filter it reads the
+group log; with one it reads that root and its continuations in entry-id order. Include the root when
+it is after the cursor, never repeat it on later pages, and do not require a separate root fetch. Stored
+null thread references must not make roots disappear from this filter. Apply the same group/root checks
+to publication and filtered read, and group checks to single-entry fetch. No `OFFSET`, separate
+`thread()` content-fetch operation or unbounded thread result. Single-entry fetch may return the
+bounded full publication content.
+
+`threads(group_id=..., after=..., limit=20)` lists roots in ascending root-entry-id order, using the
+partial root index and keyset pagination with count/serialized-byte limits. Return the stored title
+and root author/time; do not fetch content, scan/group continuations or compute reply counts/latest
+activity. A new continuation neither reorders the list nor changes its title. Empty groups return an
+empty page; `has_more` and the continuation cursor follow the same bounded lookahead rules as read.
+The cursor is the last returned root id, not a timestamp. New roots after that cursor can appear on
+later pages; listing is not a frozen multi-page snapshot. Listing never subscribes, consumes a ping
+or schedules work. No additional thread lifecycle, subscription or title-generation service is needed.
+
+Provisional starting limits, to freeze in the canonical contract during phase 1: 64 KiB UTF-8 content
+per publication; 256 UTF-8 bytes per title, clipping only a derived fallback title; at most 256 resolved
+ping recipients; 1 KiB UTF-8 preview per entry; at most 20 entries and 8 KiB serialized bytes per injected
+batch; history/thread-content/thread-list pages at most 50 entries and 256 KiB.
+Start with a 100 ms pending-lookup deadline, without changing the shared datasource's default policy.
+Also respect remaining model-context capacity using the existing budget machinery. Headers and
+metadata count toward a batch budget. Never split a Unicode scalar. Reject invalid/control payloads
+consistently; use byte-based validation across Clojure, Python and SQLite, not differing character counts.
+A batch that cannot fit remains pending; even its overflow notice must fit. Test exact limits and
+continuation without truncating the stored entry or silently dropping an oversized first item.
+
+### Session history and Activity correlations
+
+- The committed entry is authoritative for publication provenance: author, source kind, session and
+  available turn/iteration/block/operation identifiers. Source coordinates come from the host, never
+  caller-supplied Python metadata. An external SDK publication is marked SDK-originated and cannot
+  fabricate a Python block or claim model authorship; unavailable source coordinates remain absent.
+- Persist each frozen incoming batch with the recipient iteration's input history: group/entry/thread
+  references, attribution, the exact preview included in model input and its `truncated` marker.
+  This is a bounded historical input snapshot, not a second log or a delivered/read status table.
+  Retry/fallback reuses that snapshot and must not create a second context append.
+- The shared history projection exposes outgoing entry references at their real source coordinates
+  and incoming snapshots at the recipient iteration, including folded iterations. Do not inject
+  later replies or fetch the full Council log into historical sessions. Full content remains an
+  explicit Council read. `read_session()` and SDK `Session.transcript()` use this projection;
+  `Session.read()` remains the session-record operation, not a transcript API.
+- Reading history, a log page, a thread list, a thread or a single entry never acknowledges a ping, advances its
+  delivery cursor, mutates a retained batch or schedules an iteration. Compaction may remove content
+  from the live model context but must preserve these correlations in persisted history.
+- Activity describes actual host operations such as publish, members, threads and read. Give its existing
+  rows bounded summaries and group/entry/thread references; the enclosing block already supplies
+  execution coordinates. Preserve existing redaction and event-replay rules. A presentation failure
+  does not roll back a committed publication or create another entry on retry.
+- An automatically injected ping belongs to iteration input history, not a fictitious receive tool
+  call. It adds no Activity operation count. SDK publication creates no fictitious Python Activity
+  row. No new Activity stream, delivery state machine or UI redesign is part of this work.
+### Required test inventory
+
+The following cases are specifications, NOT completed tests. Add executable tests in the existing
+suites before implementing the corresponding production behavior. Use the real bundled SQLite and
+actual query/operation paths; mocks may control time, scheduling and provider IO, not implement Council.
+
+| ID | Case | Required observable result |
+|---|---|---|
+| C01 | 1,000 then 100,000 unrelated entries; repeated empty pending reads | Recipient-index lookup; no repeated scan proportional to the group log. Measure real query work/latency as well as its plan. |
+| C02 | Sparse and dense pings; more than one batch; independent group cursors | Ordered, bounded continuation without misses or duplicate context appends; correct `has_more`; no cross-group skipping. |
+| C03 | Pause publication after membership snapshot; recipient stops and reactivates; then commit | Old activation target stays in the log and never enters the new activation. |
+| C04 | Race activation initialization with publication and first model invocation | No half-initialized visible participant and no accepted ping skipped by a late cursor initialization. |
+| C05 | Authoritative running, queued and held work; UI-only and foreign mirrored sessions | Accurate member states; explicit unsupported/inactive errors; no waking or resuming work. |
+| C06 | Publication succeeds, response is lost, then author/recipients finish; retry | Original entry and original recipient snapshot returned with no new write. |
+| C07 | Same key concurrently; changed content/title/thread selector; same key from two authors | One row for identical retries, including a new thread with a derived title; explicit conflict for changed input; independent rows across authors. |
+| C08 | One invalid explicit recipient; duplicate targets; empty/all broadcast; self-ping | Atomic rejection where required; deduplication; exact frozen recipients; no implicit partial delivery. |
+| C09 | Failure between entry and ping insertion; concurrent commit/rollback; reopen store | No orphan/partial publication; forward pagination loses no committed entry; supported persistence survives reopen. |
+| C10 | Cross-group single-entry and publish/read thread references; missing/non-root thread ids; paginated thread | Access/group/root validation; bounded ordered pages including the root exactly once; no cross-group inference, silent thread creation or unbounded thread result. |
+| C11 | Exact byte limits, multibyte text, long entry preview and full fetch | Consistent validation; explicit truncation only in preview; full stored content remains retrievable. |
+| C12 | Many full-size previews; exhausted context capacity; count/byte boundary lookahead | Total injected budget respected; deferred entries keep their cursor position and report overflow when space permits. |
+| C13 | Pending lookup timeout/failure; selected batch followed by render failure, provider retry/fallback or repeated rendering | Bounded failure leaves cursor unchanged and warns; retained batches survive retries without a lost ping, duplicate append or renderer-side consumption. |
+| C14 | First model invocation, ordinary next iteration and tool-free continuation | Actual provider-input capture contains the ping at the eligible boundary, with author and ids. |
+| C15 | Peer content resembling instructions; unpinged entries and unpinged replies | Attribution and data trust preserved; stable system prefix unchanged; unpinged text never auto-injected. |
+| C16 | Finish/cancel before delivery; simultaneous mutual pings; ordinary final answer | No extra turn/iteration, wait, completion gate, approval requirement or automatic reply ping. |
+| C17 | Restart and two isolated LocalEngines using the same project directory | Fresh activation identities; no stale delivery; independent private stores and no false daemon membership. |
+| C18 | Host, authenticated gateway and SDK publish/threads/read roundtrip; missing auth/spoofed identity | One contract and same semantics; no author override through host payload; inactive new publication rejected. |
+| C19 | Ordinary session writes under concurrent Council publication and reads | Report latency percentiles, writer contention, busy failures and baseline impact; no unbounded retry layer. |
+| C20 | Default group across shared/isolated workspaces and supported launch surfaces | Same owning project resolves to the same group; unresolved/projectless identity has an explicit tested policy. |
+| C21 | Two new threads in one group; flat continuations via `publish(thread_id=...)`; filtered/unfiltered reads | Distinct root ids; continuations retain the selected root; same page envelope and exact `after`/`has_more` behavior; visibility remains group-wide and continuations never imply a subscription or ping. No reply tree or separate `thread()` content-fetch operation. |
+| C22 | Host-supplied Council in Python; rebuilt session dictionary; tampering; publication without `print` | `session["id"]` remains unchanged; Council metadata exposes only `default_group_id`, not activation, cursors, inbox or duplicate identity. Trusted author/group binding survives dictionary edits; publication and source reference exist without stdout. |
+| C23 | Several continuously queued turns, then inactivity/reactivation; old SDK handle publishes/retries | Public session id stays stable; activation stays internal and changes only at the activity boundary. Old handle cannot publish into the new activation; identical replay returns its original entry. Members expose ids/titles/states, not generations. |
+| C24 | Outgoing source and incoming preview through `read_session()`/SDK transcript, before/after fold and provider retry | Stable source references and exact attributed input snapshots survive; no invented SDK block/model authorship or later-thread hydration. Repeated reads leave cursors/batches untouched and schedule nothing. |
+| C25 | Publish/members/threads/read Activity, no stdout, presentation failure, replay and automatic incoming ping | Real operations have bounded/redacted summaries and stable Council references. Failure cannot undo/duplicate publication; incoming delivery and external SDK publication create no fake Python operation or extra Activity count. |
+| C26 | Real Python A publish -> SQLite -> ping in B's captured model input -> both histories and Activity, plus SDK roundtrip | Correlations agree across actual boundaries, including a truncated preview and paginated thread fetch; one entry and one retained append on retry. No mocked Council implementation, implicit acknowledgement, turn submission or wakeup. |
+| C27 | Root with explicit/omitted title; blank lines, multibyte fallback boundary and invalid title/content | Deterministic bounded first-nonempty-line fallback without a model call; explicit titles trimmed/validated, never silently truncated; full content unchanged; title persisted only on the root and immutable. |
+| C28 | Empty/multiple groups; sparse roots among 1,000 then 100,000 continuations; concurrent roots/replies and paginated `threads()` | Root-index seek with measured bounded query work, not a scan/group of continuations; exact summary fields with no bodies; stable ascending root-id order; count/byte limits, cursor and `has_more`; no duplicate roots or reordering on reply. |
+| C29 | Thread-selector-only contract; unsupported `parent_id`; title on a continuation, including an unchanged title | Host/SDK/wire reject unsupported fields and invalid combinations before writing. Entry schemas, storage and history/Activity correlations contain no message-parent field or compatibility path. Thread/root errors use C10; no selector implicitly creates a root only for a valid new-thread request. |
+| C30 | Host and SDK discover via `threads()`, read and publish using the returned `thread_id`, then retry | Same id reused without translating it to another selector; no new root or title change on continuation; no implicit ping. Explicit nondefault group stays scoped; original result survives retry; changed title/thread with the same key conflicts. Real boundary coverage includes thread-list Activity and read-only cursor behavior. |
+
+Test locations to extend, not a second bespoke harness:
+- Storage: `test/com/blockether/vis/internal/persistance/sqlite/core_test.clj` and its existing
+  migration fixtures/helpers. Exercise the production schema and queries, not copied test DDL.
+- Runtime: `test/com/blockether/vis/internal/gateway/state_test.clj` and
+  `test/com/blockether/vis/internal/loop_test.clj`. Use controlled barriers/events rather than sleeps
+  for C03/C04/C13 and a stub provider that captures the actual sent message vector. Cover retained
+  input history/folding, internal activation lifetime and C22-C24/C26 on these real paths.
+- Host/wire: `test/com/blockether/vis/internal/extension/core_test.clj`,
+  `test/com/blockether/vis/internal/gateway/server_test.clj` and the existing Python-host boundary suite
+  `test/com/blockether/vis/internal/python/extensions_test.clj`. Exercise C22/C25/C26 through real
+  Python host calls and the existing Activity observation/presentation fixtures, not fabricated events.
+- SDK: `packages/vis-agent/tests/test_contracts.py`, `packages/vis-agent/tests/test_client.py`,
+  `packages/vis-agent/tests/test_local.py` and `packages/vis-agent/tests/test_engine.py`.
+  Enable the real LocalEngine test path explicitly; a skipped integration test is not verification.
+  Use the client/transcript fixtures for C23/C24/C26 and the existing Activity/contract fixtures for
+  wire replay and correlation fields. Canonical session-context/history/Activity shapes are required.
+  Extend the same storage, host/wire and SDK fixtures for C27-C30; cover titles, indexed root listing,
+  thread-only selectors and the discover/read/publish workflow without a new test harness.
+- Add a mirrored test namespace if the Council domain gains a new production namespace; do not
+  centralize every layer's assertions in a new test-only simulation of Council.
+
+## 1. Contract and executable tests FIRST
+
+- Rationale: fix observable behavior and capture the cross-validation defects before implementation.
+- Data: inventory C01-C30; canonical documents/schemas under
+  `packages/vis-contract/resources/vis-contract/`; existing Lazytest, SDK and host boundary fixtures.
+- Acceptance criteria: first run the affected existing suites and record their baseline. Freeze
+  remaining field/error/route names, request normalization, limit values, execution-owner selection
+  and projectless-session policy. Include `publish(thread_id=...)`, `threads()` summaries/titles and
+  filtered `read`, the absence of message-parent fields, minimal public Council session metadata, hidden
+  activation and provenance/history/Activity contracts. Add executable cases for ALL inventory rows,
+  with boundary helpers and deterministic scheduling ready. Record test paths/names and RED results
+  for the missing behavior.
+  Tests must load and be discovered; an import, fixture or environment failure is not an acceptable
+  RED result. Exercise stable public dispatch/route boundaries to assert a missing feature without
+  requiring nonexistent production namespaces. No skipped tests, unconditional expected-failure
+  markers or fake Council implementation may satisfy this gate.
+- Unknowns: remaining public field/route names; default-project resolution and execution-owner predicate;
+  available query-work instrumentation in the bundled driver and reference benchmark hardware.
+  Resolve these while preparing tests, before declaring this phase complete.
+
+No Council production implementation starts until phase 1 is complete. Before each later production
+slice, rerun its relevant RED tests; after the change make them GREEN. Tests added after a working
+implementation do not satisfy this sequence. The planning-only probes above are not a substitute.
+
+## 2. Schema and log operations
+
+- Rationale: make entry/recipient persistence atomic, replay-safe and efficiently addressable.
+- Data: the existing SQLite/migration owners and canonical contract; prepared C01/C02/C06-C12/C20/C21,
+  C27-C29 and the persistence assertions in C24/C26/C30.
+- Acceptance criteria: those tests fail first for the intended missing behavior, then pass against
+  the real migrated database. Implement shared publish/threads/read/single-entry functions and the two
+  indexed tables, with a root-only title/index and no message-parent column. Use `publish(thread_id=...)`
+  and `read(thread_id=...)`; `threads()` returns only paginated summaries, not content. Cover identical
+  and conflicting concurrent retries, rollback, immutable recipient activations, source references,
+  title/byte limits and group-scoped thread pagination. Record actual pending-query and thread-list
+  work at 1,000 and 100,000 rows for empty/sparse/dense inboxes and sparse roots among continuations,
+  not just `EXPLAIN QUERY PLAN` output.
+- Unknowns: none in the first-version retention policy (no deletion); revisit stronger durability
+  only with an explicit requirement and measurements, without claiming NORMAL is power-loss safe.
+
+## 3. Authoritative presence and iteration delivery
+
+- Rationale: prevent stale activation delivery and preserve selected batches across model retries.
+- Data: registry lifecycle, session-bound execution context, the loop's actual provider-input path;
+  prepared C02-C05/C12-C17, relevant C20 launch cases and runtime assertions in C22-C24/C26.
+- Acceptance criteria: fresh activation and per-group cursor state become visible atomically;
+  indexed pending batches enter attributed conversation context without changing the system prefix.
+  Retry/fallback preserves the frozen batch and its persisted iteration-input snapshot; folding keeps
+  the historical correlation. Cancellation cannot leak it to a new activation. Public session metadata
+  stays minimal; runtime owns activation identity across continuously queued turns. Tests prove no
+  wakeups, reply gates, blocking waits or extra turns. A pending fetch must not consume the ordinary
+  session's entire SQLite busy timeout without an explicit bounded policy.
+- Unknowns: exact loop-state field/owner for a retained batch; settle placement against the prepared
+  failure-injection tests without changing the specified timeout or retry semantics.
+
+## 4. Host, gateway, SDK, history and Activity roundtrip
+
+- Rationale: one operation implementation must serve agents and authenticated session-bound clients.
+- Data: `packages/vis-agent/src/blockether/vis/extension.py`, host shims under
+  `resources/vis-shims/`, `packages/vis-contract/src/com/blockether/vis/contract/wire.clj` and SDK clients;
+  prepared C06/C07/C11/C17/C18/C21-C30. Do not mirror the canonical host API in another file.
+- Acceptance criteria: members/publish/threads/read/single-entry fetch work through host and SDK,
+  including titled creation, thread-only continuation, discovery, filtered read and authenticated
+  gateway publication. Bind author/internal activation
+  rather than accepting an arbitrary author field; retain a call's identity/key across transport
+  retries. Host callers need no client initialization; session-bound SDK handles cannot silently
+  rebind to later activity. HTTP and LocalEngine share semantics within their own engine/store scope.
+  Correlations survive the shared history projection, SDK transcript and Activity replay; only real
+  host operations contribute Activity rows. Canonical schemas and real boundary tests pass; mocked
+  HTTP alone is insufficient. Namespace docs and `resources/vis-docs/` explain groups vs threads,
+  titled creation, thread discovery and `threads()` -> `read(thread_id=...)` -> `publish(thread_id=...)`,
+  public session metadata, internal activation expiry, previews, history correlations, budgets, replay
+  conflicts and the existing daemon-level trust model. Descriptions/examples must not teach a message-
+  parent selector or suggest automatic pings.
+- Unknowns: remaining handle/route and correlation-field spelling, frozen in phase 1. No new per-session
+  ACL system, cross-engine presence service or thread create/rename/subscription API is implied.
+
+## 5. Performance, failure verification and completion
+
+- Rationale: test correctness under load and measure effect on normal Vis work before claiming speed.
+- Data: prepared C01/C02/C09/C13/C17/C19/C24-C28/C30, the bundled SQLite/JVM, real query paths and existing
+  session write fixtures. No paid model calls, live gateway restart, deployment or production-state mutation.
+- Acceptance criteria: run the matrix against the integrated implementation. Report fixture sizes,
+  entry/recipient distribution, hardware, engine/SQLite versions, concurrency and warm/cold conditions.
+  Measure publish, history/thread-content/thread-list pages and pending lookups separately, with p50/p95/p99 and writer
+  contention alongside a no-Council baseline. Initial reference profile: 10 active sessions and up to
+  100,000 entries, including empty/rare/dense recipient distributions and burst broadcasts. Provisional
+  targets are p95 publish below 50 ms and bounded page read below 20 ms on the declared reference
+  profile; agree/freeze the reference and budgets before the acceptance run. These are not measured
+  results or flaky wall-clock assertions for every developer's unit suite. Index evidence alone cannot
+  pass performance acceptance. Document unmet targets or blocked measurements rather than claiming fast.
+  All affected Lazytest/Python suites, formatting and lint/reflection pass; reload changed production
+  namespaces or use clean JVMs. Run relevant native/boundary coverage if interop or native entrypoints
+  change. Inspect actual integration counts, including the explicitly enabled LocalEngine path.
+- Unknowns: measured latency and contention; they stay unknown until this phase runs.
+
+## Plan state
+
+- [x] Cross-validation findings incorporated; tests-first order and C01-C30 acceptance cases specified.
+- [x] Thread-only publication, titled thread discovery, filtered read and group/thread semantics planned.
+- [x] Minimal session metadata and history/Activity correlations retained, without message-parent fields.
+- [ ] Phase 1: executable tests prepared, discovered and observed RED; API/limits/policies frozen.
+- [ ] Phase 2: schema and log operations pass their prepared tests.
+- [ ] Phase 3: presence and delivery pass deterministic lifecycle/model-input tests.
+- [ ] Phase 4: host, gateway, SDK, history and Activity pass real boundary/roundtrip tests.
+- [ ] Phase 5: integrated tests, measured performance and affected checks verified.
+
+Planning only: no executable Council tests have been added or run by this plan edit. The first next
+implementation activity is test preparation, not production code. No commit, push, deployment or
+service restart is authorized by this planning revision.

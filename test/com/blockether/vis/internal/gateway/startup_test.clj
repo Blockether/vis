@@ -3,7 +3,9 @@
    configuration, database and loopback listener; it never attaches to a user daemon.
    Set -Dvis.startup.runs=3 for repeated measurements, and -Dvis.startup.jfr=/path/startup
    to record each child from JVM launch (files get a run-number suffix).
-   Set -Dvis.startup.loads=true for inclusive core dependency-load timings."
+   Set -Dvis.startup.loads=true for inclusive core dependency-load timings.
+   After clojure -T:build uber, -Dvis.startup.jar=target/vis.jar tests only that AOT
+   artifact, without source/classpath fallbacks or changing the active gateway."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -67,7 +69,10 @@
              (assoc opts :port port)))
           (reset!
            result
-           {:core-loads (:core-loads @result)
+           {:aot?
+            (some?
+             (.getResource (clojure.lang.RT/baseLoader) "com/blockether/vis/core__init.class"))
+            :core-loads (:core-loads @result)
             :extensions (mapv
                          :ext/name
                          ((requiring-resolve
@@ -157,10 +162,12 @@
         (io/file home "child.log")
 
         classpath
-        (str/join File/pathSeparator
-                  (map #(.getCanonicalPath (io/file %))
-                       (str/split (System/getProperty "java.class.path")
-                                  (re-pattern File/pathSeparator))))
+        (if-let [jar (System/getProperty "vis.startup.jar")]
+          (.getCanonicalPath (io/file jar))
+          (str/join File/pathSeparator
+                    (map #(.getCanonicalPath (io/file %))
+                         (str/split (System/getProperty "java.class.path")
+                                    (re-pattern File/pathSeparator)))))
 
         jfr
         (some-> (System/getProperty "vis.startup.jfr")
@@ -242,6 +249,7 @@
     (let [result (cold-start! (inc n))]
       (println "Gateway startup" (pr-str (dissoc result :loaded-namespaces)))
       (is (= 200 (:health-status result)))
+      (when (System/getProperty "vis.startup.jar") (is (:aot? result)))
       (is (= (str (:home result) "/.vis/native/sqlite") (:sqlite-tmpdir result)))
       (is (every? (set (:extensions result))
                   ["foundation-core" "language-clojure" "language-python"]))

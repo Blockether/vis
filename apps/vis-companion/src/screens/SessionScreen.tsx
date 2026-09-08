@@ -4178,16 +4178,16 @@ export function SessionScreen({
             key={turn.turn_id}
           >
             {(request || (turn.attachments?.length ?? 0) > 0) && (
-              <UserMessage
-                attachments={turn.attachments}
-                onFork={turn.turn_id ? () => void forkThrough(turn.turn_id) : undefined}
-                isForking={forkingTurnId === turn.turn_id}
-              >
+              <UserMessage attachments={turn.attachments}>
                 {request}
               </UserMessage>
             )}
             <AssistantMessage
               turn={turn}
+              onFork={
+                turn.turn_id ? () => void forkThrough(turn.turn_id) : undefined
+              }
+              isForking={forkingTurnId === turn.turn_id}
               settled={
                 turnsSettled || hasRunningTurn || index < visibleTurns.length - 1
               }

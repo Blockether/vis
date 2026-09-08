@@ -1861,33 +1861,15 @@
    block's `:source` is the entry's `:expr` verbatim. The Python engine runs
    each entry as one whole-block coroutine during execution.
 
-   Gate retained:
-     - Duplicate-block dedup. Some providers stutter and emit the same
-       block twice; we keep the first copy and drop the rest."
+   Every non-blank block becomes one entry, in order. Identical programs under
+   distinct calls are distinct calls; nothing here merges or drops them."
   [_iteration-position blocks]
   (let
     [blocks
      (vec (or blocks []))
 
-     ;; Dedupe duplicate (stuttered) blocks by source: the same program arriving
-     ;; twice is the provider repeating itself, so keep the first copy.
-     block-key
-     (fn [b]
-       (:source b))
-
-     unique-blocks
-     (->> blocks
-          (remove #(str/blank? (:source %)))
-          (reduce (fn [{:keys [seen acc]} b]
-                    (let [k (block-key b)]
-                      (if (contains? seen k)
-                        {:seen seen :acc acc}
-                        {:seen (conj seen k) :acc (conj acc b)})))
-                  {:seen #{} :acc []})
-          :acc)
-
-     duplicate-blocks-normalized?
-     (< (count unique-blocks) (count blocks))
+     source-blocks
+     (vec (remove #(str/blank? (:source %)) blocks))
 
      ;; Each block becomes one code-entry. The entry carries:
      ;;   :expr             — verbatim block source (fed to the engine as-is)
@@ -1912,7 +1894,7 @@
 
                  (:vis/tool-name b)
                  (assoc :vis/tool-name (:vis/tool-name b)))))
-           unique-blocks)
+           source-blocks)
 
      raw-fence-error
      (some :vis/preflight-error raw-entries)
@@ -1961,7 +1943,6 @@
      (if empty-code-error [{:expr "" :vis/preflight-error empty-code-error}] merged-entries)
      :empty-code-preflight-error empty-code-error
      :raw-fence-preflight-error raw-fence-error
-     :duplicate-blocks-normalized? duplicate-blocks-normalized?
      :normalized-code normalized-code
      :code-hash code-hash
      :original-total-blocks parsed-total-blocks}))
@@ -3737,8 +3718,11 @@
                    ;; svar passes it to Anthropic as `is_error: true`;
                    ;; on OpenAI/Gemini (no structured flag) the error TEXT
                    ;; in :content carries the signal.
+                   missing-execution?
+                   (not-any? (complement :summary?) own)
+
                    errored?
-                   (boolean (some :error own))
+                   (or missing-execution? (boolean (some :error own)))
 
                    c
                    (call-content idx tc)]
@@ -3747,12 +3731,13 @@
                  {:type "tool_result"
                   :tool_use_id (:id tc)
                   :content
-                  (if (str/blank? c)
-                    ;; Empty body: `python_execution` is the only call there is, and its
-                    ;; result is what the block PRINTED — so an empty body means it
-                    ;; printed nothing.
+                  (cond
+                    missing-execution? (str
+                                         "Tool call was not executed or its result is unavailable."
+                                         (when-not (str/blank? c) (str "\n" c)))
+                    (str/blank? c)
                     "(no return — python_execution returns what it print()s; this call printed nothing. print() what you want to see.)"
-                    c)}
+                    :else c)}
                  errored?
                  (assoc :is_error true))))
            tool-calls))}
@@ -4404,9 +4389,26 @@
    persistence and the wire all speak snake_case strings — so the whole
    tool-call vector is normalized ONCE. Everything downstream — call synthesis,
    replay elision, receipts and iteration records — reads plain
-   string keys and must NOT re-check a keyword variant."
+   string keys and must NOT re-check a keyword variant.
+
+   A repeated call id is a provider defect: report it and pass every call
+   through. Nothing here merges or drops calls."
   [tool-calls]
-  (mapv #(update % :input normalize-tool-input) (vec tool-calls)))
+  (let [calls
+        (vec tool-calls)
+
+        repeated
+        (->> calls
+             (keep :id)
+             frequencies
+             (keep (fn [[id n]]
+                     (when (> (long n) 1) id)))
+             vec)]
+
+    (when (seq repeated)
+      (tel/log! {:level :warn :id ::duplicate-tool-call-ids :data {:ids repeated}}
+                "Provider repeated tool-call ids in one response; every call still runs"))
+    (mapv #(update % :input normalize-tool-input) calls)))
 
 ;; Use Anthropic's four cache breakpoints on the final system message and last three
 ;; transcript messages. This keeps the standing context and prior write anchors reusable;
@@ -7724,8 +7726,8 @@
   "Estimate pending input from this route's exact accepted prefix plus its new tail.
    Usage includes cached tokens and the provider's fixed prefix. Add the assistant
    replay/tool/user tail once, not the previous response's output usage as well.
-   Rewrites or changed tools/account/model invalidate the anchor. A full typed
-   estimate remains a floor; cache age/hit rate never reduces context pressure."
+   Rewrites or changed tools/account/model invalidate the anchor. Measured usage
+   replaces the local prefix estimate; cache hits never discount input tokens."
   [history provider model prompt-cache-context]
   (let [entry
         (get history [provider (str model)])
@@ -7746,15 +7748,9 @@
         (svar-router/count-messages model [])]
 
     (fn [messages]
-      (let [local
-            (svar-router/count-messages model messages)
-
-            tail
-            (when anchored? (session-message-suffix prior messages))]
-
-        (if (some? tail)
-          (max local (+ (long input) (- (svar-router/count-messages model tail) (long priming))))
-          local)))))
+      (if-some [tail (when anchored? (session-message-suffix prior messages))]
+        (+ (long input) (- (svar-router/count-messages model tail) (long priming)))
+        (svar-router/count-messages model messages)))))
 
 (defn- history-fold-projection
   "Return a strictly smaller, fitting projection; never mutate canonical history.

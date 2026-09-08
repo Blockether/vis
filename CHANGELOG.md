@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve one execution and result per native tool call, including repeated programs;
+  use Svar 0.7.164's single-source Responses stream handling (issue #173).
+- Calibrate context pressure from measured provider usage and count only the new
+  message tail. Report unavailable tool results as errors instead of empty successes.
+- Keep successful results nested under code while errors and Activity remain visible
+  in Companion and TUI. Place transcript forks on the assistant answer.
+
+### Changed
+
+- Cover cold gateway startup from the packaged AOT artifact without attaching to a
+  running gateway.
+
 ## [v0.1.43] - 2026-09-07
 
 ### Changed
