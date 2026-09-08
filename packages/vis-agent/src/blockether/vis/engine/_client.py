@@ -1738,77 +1738,6 @@ class GatewayClient:
         )
         return response.json()
 
-    def get_session_workspace_drafts(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
-        """GET /v1/sessions/:sid/workspace/drafts — json response."""
-        response = self._request(
-            "GET",
-            "/v1/sessions/:sid/workspace/drafts",
-            path={"sid": sid},
-            query=query,
-            timeout=timeout,
-        )
-        return response.json()
-
-    def post_session_workspace_drafts(
-        self,
-        sid: str,
-        *,
-        query: Query | None = None,
-        timeout: float | None = None,
-        body: JSONValue = None,
-    ) -> JSONValue:
-        """POST /v1/sessions/:sid/workspace/drafts — json response."""
-        response = self._request(
-            "POST",
-            "/v1/sessions/:sid/workspace/drafts",
-            path={"sid": sid},
-            query=query,
-            timeout=timeout,
-            body=body,
-        )
-        return response.json()
-
-    def delete_session_workspace_draft(
-        self,
-        sid: str,
-        workspace_id: str,
-        *,
-        query: Query | None = None,
-        timeout: float | None = None,
-        body: JSONValue = None,
-    ) -> JSONValue:
-        """DELETE /v1/sessions/:sid/workspace/drafts/:workspace-id — json response."""
-        response = self._request(
-            "DELETE",
-            "/v1/sessions/:sid/workspace/drafts/:workspace-id",
-            path={"sid": sid, "workspace-id": workspace_id},
-            query=query,
-            timeout=timeout,
-            body=body,
-        )
-        return response.json()
-
-    def post_session_workspace_resume(
-        self,
-        sid: str,
-        *,
-        query: Query | None = None,
-        timeout: float | None = None,
-        body: JSONValue = None,
-    ) -> JSONValue:
-        """POST /v1/sessions/:sid/workspace/resume — json response."""
-        response = self._request(
-            "POST",
-            "/v1/sessions/:sid/workspace/resume",
-            path={"sid": sid},
-            query=query,
-            timeout=timeout,
-            body=body,
-        )
-        return response.json()
-
     def patch_session_workspace_root(
         self,
         sid: str,
@@ -1825,19 +1754,6 @@ class GatewayClient:
             query=query,
             timeout=timeout,
             body=body,
-        )
-        return response.json()
-
-    def post_session_workspace_stash(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
-        """POST /v1/sessions/:sid/workspace/stash — json response."""
-        response = self._request(
-            "POST",
-            "/v1/sessions/:sid/workspace/stash",
-            path={"sid": sid},
-            query=query,
-            timeout=timeout,
         )
         return response.json()
 
@@ -2121,6 +2037,18 @@ class Session:
             method, "/v1/sessions/:sid" + suffix, path=path, **kwargs
         )
         return response.json() if response.content else None
+
+    def council(self, *, group_id: str | None = None):
+        """Bind a Council handle to this activation, or a read-only handle when idle."""
+        from ._council import Council
+
+        binding = self._call(
+            "GET",
+            "/council",
+            query={"group_id": group_id} if group_id is not None else {},
+        )
+        validate("council", "binding", binding)
+        return Council(self, binding["default_group_id"], binding["activation_id"])
 
     def read(self):
         return self._call("GET")

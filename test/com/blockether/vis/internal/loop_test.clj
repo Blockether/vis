@@ -3,8 +3,10 @@
             [charred.api :as json]
             [com.blockether.vis-python-runtime :as python-runtime]
             [com.blockether.vis.test-python-context :as tpc]
+            [clojure.java.io]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.vis.core :as vis]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.svar.internal.llm :as svar-llm]
             [com.blockether.vis.internal.activity.core :as activity]
@@ -9551,3 +9553,157 @@
                                       ")"))
                          (expect (some? (first @disposed))
                                  "the disposed value must be the session it built")))))))
+
+(defdescribe
+  council-python-model-history-test
+  (it
+    "C14/C18/C22/C24/C25/C26/C30: real Python publication reaches the next model input and history"
+    (if-not (clojure.java.io/resource "com/blockether/vis/internal/council/core.clj")
+      (expect false "Council has not been implemented")
+      (let [router
+            (helper-router :lmstudio nil)
+
+            a
+            (lp/create-environment router {:db :memory})
+
+            db
+            (:db-info a)
+
+            b
+            (lp/create-environment router {:db db})
+
+            aid
+            (str (:session-id a))
+
+            bid
+            (str (:session-id b))
+
+            gid
+            (str (:id (persistance/db-create-project! db {:name "Council integration"})))
+
+            update!
+            (requiring-resolve 'com.blockether.vis.internal.gateway.state/update-session!)
+
+            drop!
+            (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
+
+            requests
+            (atom [])
+
+            source
+            (str
+              "assert session['id'] == '"
+              aid
+              "'\n"
+              "assert set(session['council']) == {'default_group_id'}\n"
+              "session['council']['default_group_id'] = 'tampered'\n"
+              "await council.publish(content='Boundary message ' + 'é' * 2000, title='API', ping=['"
+              bid
+              "'])\n" "await council.members()")]
+
+        (try
+          (doseq [sid [aid bid]]
+            (persistance/db-set-session-project! db sid gid)
+            (update! sid
+                     (constantly {:current-turn "fixture"
+                                  :turns {"fixture" {:status "running"
+                                                     :cancel-token
+                                                     (cancellation/cancellation-token)}}})))
+          (with-redefs [toggles/enabled?
+                        (fn [id]
+                          (contains? #{"council" "introspection"} id))
+
+                        vis/toggle-enabled?
+                        (fn [id]
+                          (contains? #{"council" "introspection"} id))]
+
+            (doseq
+              [[environment request codes]
+               [[a "publish" [source]]
+                [b "receive"
+                 [:retry :error :empty
+                  "page = await council.threads()\nentries = await council.read(thread_id=page['entries'][0]['thread_id'], limit=1)\nentry = await council.get(entry_id=entries['entries'][0]['id'])\nprint(len(entry['content']))"
+                  "before = await read_session()\nping = before['transcript']['turns'][0]['iterations'][0]['council_input']\nfold_session('-t1/i1', 'Council reviewed')\nafter = await read_session()\nassert ping == after['transcript']['turns'][0]['iterations'][0]['council_input']"]]]]
+              (let [idx (atom -1)
+                    tid (persistance/db-store-session-turn!
+                          db
+                          {:parent-session-id (:session-id environment) :user-request request})]
+
+                (with-redefs [svar/ask-code!
+                              (fn [_ opts]
+                                (swap! requests conj
+                                  {:sid (str (:session-id environment)) :messages (:messages opts)})
+                                (let [code (get codes (swap! idx inc))]
+                                  (cond (= :retry code)
+                                        (throw (ex-info "Retry fixture"
+                                                        {:type :svar.llm/max-tokens-exceeded
+                                                         :output-tokens 8192}))
+                                        (= :error code) (throw (ex-info
+                                                                 "Recoverable model-format fixture"
+                                                                 {:type :fixture/format-error}))
+                                        (= :empty code)
+                                        {:stop-reason :tool-calls :tool-calls [] :tokens {}}
+                                        code {:stop-reason :tool-calls
+                                              :tool-calls [{:id "council-block"
+                                                            :name "python_execution"
+                                                            :input {:code code}}]
+                                              :tokens {}}
+                                        :else {:stop-reason :end
+                                               :content "done"
+                                               :tool-calls []
+                                               :tokens {}})))]
+                  (lp/iteration-loop environment request {:session-turn-id tid}))
+                (let [iterations (persistance/db-list-session-turn-iterations db tid)
+                      rows (mapcat #(tree-seq (comp seq :children) :children %)
+                                   (mapcat #(get-in % [:activity :rows])
+                                           (mapcat :forms iterations)))
+                      operations (filter #(str/starts-with? (:operation %) "council.") rows)]
+
+                  (expect (= (if (= request "receive") 3 2) (count operations)))
+                  (doseq [row operations]
+                    (expect (some #(= "council-group" (:type %)) (:resources row))))
+                  (expect (= (if (= request "receive") 5 2) (count iterations)))
+                  (expect (empty? (remove #(= :vis/preflight (get-in % [:block :phase]))
+                                    (keep :error (mapcat :forms iterations)))))
+                  (if (= request "receive")
+                    (expect (seq (:entries (:council-input (first iterations)))))
+                    (expect (seq (:council-publications (first iterations)))))))))
+          (let [incoming
+                (:messages (first (filter #(= bid (:sid %)) @requests)))
+
+                system-text
+                (pr-str (filter #(contains? #{"system" "developer"} (:role %)) incoming))
+
+                data-text
+                (pr-str (remove #(contains? #{"system" "developer"} (:role %)) incoming))]
+
+            (expect (str/includes? system-text "council.publish"))
+            (expect (not (str/includes? system-text "Boundary message")))
+            (expect (str/includes? data-text "Boundary message"))
+            (expect (str/includes? data-text "truncated"))
+            ;; C13/C14: a transparent retry and a tool-free continuation do not consume
+            ;; or duplicate the first input snapshot.
+            (let [received
+                  (mapv :messages (filter #(= bid (:sid %)) @requests))
+
+                  previews
+                  (mapv #(filterv (fn [message]
+                                    (let [body
+                                          (:content message)
+
+                                          texts
+                                          (if (string? body) [body] (keep :text body))]
+
+                                      (some (fn [text]
+                                              (str/starts-with? text "Council ping —"))
+                                            texts)))
+                           %)
+                        received)]
+
+              (expect (= 6 (count received)))
+              (expect (= [1 1 1 1 1 0] (mapv count previews)))
+              (expect (apply = (take 5 previews)))))
+          (finally (doseq [sid [aid bid]]
+                     (drop! sid))
+                   (lp/dispose-environment! b)
+                   (lp/dispose-environment! a)))))))

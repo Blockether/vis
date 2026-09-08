@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
+            [com.blockether.vis.internal.persistance.core]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
@@ -399,27 +400,6 @@
                              :query-params {"include" "queued"}})]
              (is (= 404 (:status response))))
            (is (empty? @calls))))))
-
-(deftest draft-management-client-builds-canonical-routes
-  (let [sent
-        (atom [])
-
-        sid
-        (str (random-uuid))
-
-        wid
-        (str (random-uuid))]
-
-    (with-redefs-fn {#'client/send-json! (fn [method path body]
-                                           (swap! sent conj [method path body])
-                                           {"workspace" {"root" "/repo"}})}
-      (fn []
-        (is (= {"root" "/repo"} (client/create-draft! sid "feature-c" false)))
-        (is (= {"root" "/repo"} (client/abandon-draft! sid wid "done")))
-        (is (= [["POST" (str "/v1/sessions/" sid "/workspace/drafts")
-                 {:label "feature-c" :clean false}]
-                ["DELETE" (str "/v1/sessions/" sid "/workspace/drafts/" wid) {:reason "done"}]]
-               @sent))))))
 
 (deftest foreground-daemon-does-not-refcount-stop
   (testing "a manually-run `vis-agent gateway start` is user-owned, not client-refcounted"
@@ -3981,3 +3961,130 @@
                    (is (re-find #"v1" out)))
                  (finally (doseq [pump pumps]
                             (future-cancel pump))))))))))
+
+(deftest council-routes-and-auth-test
+  ;; C18/C31: canonical routes stay authenticated, even while the feature is off.
+  (let [paths (set (map :path gateway-contract/route-table))]
+    (is (contains? paths "/v1/sessions/:sid/council")))
+  (with-server-state!
+    {:require-token? true :token "fixture-token"}
+    (fn []
+      (let [gated ((rv 'wrap-auth) (constantly {:status 200}) "fixture-token" [])]
+        (is (= 401 (:status (gated {:uri "/v1/sessions/a/council/entries" :headers {}}))))))))
+
+(deftest council-gateway-roundtrip-test
+  ;; C18/C23/C26/C30/C31: no mocked Council operations, transport authorship or turn scheduling.
+  (let [db
+        (com.blockether.vis.internal.persistance.core/db-create-connection! :memory)
+
+        store-session!
+        (requiring-resolve
+          'com.blockether.vis.internal.persistance.sqlite.test-helpers/store-session!)
+
+        gid
+        (str (:id (com.blockether.vis.internal.persistance.core/db-create-project!
+                    db
+                    {:name "Council wire"})))
+
+        sid
+        (str (store-session! db {:channel :api}))
+
+        update!
+        (ns-resolve 'com.blockether.vis.internal.gateway.state 'update-session!)
+
+        drop!
+        (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
+
+        enabled
+        (atom true)
+
+        handler
+        (rr/ring-handler ((rv 'router) "fixture-token" []))
+
+        call
+        (fn [method suffix body]
+          (handler {:request-method method
+                    :uri (str "/v1/sessions/" sid "/council" suffix)
+                    :headers {}
+                    :query-params {}
+                    :body (when body
+                            (java.io.ByteArrayInputStream. (.getBytes ^String (wire/json-str body)
+                                                                      "UTF-8")))}))]
+
+    (try (com.blockether.vis.internal.persistance.core/db-set-session-project! db sid gid)
+         (update! sid
+                  (constantly {:current-turn "wire"
+                               :turns {"wire" {:status "running" :cancel-token {}}}}))
+         (with-redefs [lp/db-info
+                       (constantly db)
+
+                       toggles/enabled?
+                       (fn [id]
+                         (and @enabled (= id "council")))]
+
+           (let [binding
+                 (wire/parse-json (:body (call :get "" nil)))
+
+                 request
+                 {:content "Wire roundtrip"
+                  :activation_id (get binding "activation_id")
+                  :idempotency_key "wire-retry"}
+
+                 response
+                 (call :post "/entries" request)
+
+                 entry
+                 (wire/parse-json (:body response))
+
+                 id
+                 (get entry "id")]
+
+             (is (= 200 (:status response)))
+             (is (= sid (get entry "author_session_id")))
+             (is (= "sdk" (get entry "source")))
+             (is (= id
+                    (get-in (wire/parse-json (:body (call :get "/threads" nil)))
+                            ["entries" 0 "thread_id"])))
+             (is (= entry (wire/parse-json (:body (call :get (str "/entries/" id) nil)))))
+             (is (= 400
+                    (:status (call :post "/entries" (assoc request :author_session_id "spoof")))))
+             (update! sid #(assoc-in % [:turns "wire" :status] "completed"))
+             (is (= entry (wire/parse-json (:body (call :post "/entries" request)))))
+             (is (= 409 (:status (call :post "/entries" (assoc request :idempotency_key "new")))))
+             (reset! enabled false)
+             (is (= 409 (:status (call :get "/threads" nil))))))
+         (finally (drop! sid)
+                  (com.blockether.vis.internal.persistance.core/db-dispose-connection! db)))))
+
+(deftest council-malformed-body-test
+  (let [calls
+        (atom 0)
+
+        handler
+        ((rv 'council-handler) :publish)]
+
+    (with-redefs [state/council-operation! (fn [& _]
+                                             (swap! calls inc)
+                                             {})]
+      (doseq [raw ["{" "[]" "null" "42" "\"text\""]]
+        (let [response (try (handler {:path-params {:sid "fixture"}
+                                      :body (java.io.ByteArrayInputStream. (.getBytes ^String raw
+                                                                                      "UTF-8"))})
+                            (catch Exception _ {:status 500}))]
+          (is (= 400 (:status response)))))
+      (is (zero? @calls)))))
+
+(deftest council-unexpected-failure-is-not-client-error-test
+  (let [handler ((rv 'council-handler) :members)]
+    (doseq [data [{} {:error :unexpected-storage-failure}]]
+      (let [error (ex-info "fixture persistence unavailable" data)]
+        (with-redefs [state/council-operation! (fn [& _]
+                                                 (throw error))]
+          (is (identical? error
+                          (try (handler {:path-params {:sid "fixture"}})
+                               (catch clojure.lang.ExceptionInfo e e)))))))
+    (doseq [[kind status] [[:invalid-request 400] [:invalid-thread 400] [:group-not-found 404]
+                           [:disabled 409]]]
+      (with-redefs [state/council-operation! (fn [& _]
+                                               (throw (ex-info "fixture" {:error kind})))]
+        (is (= status (:status (handler {:path-params {:sid "fixture"}}))))))))

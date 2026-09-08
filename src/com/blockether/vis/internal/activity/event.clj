@@ -451,13 +451,14 @@
       (when (some? id) (bounded-text id max-summary-bytes)))))
 
 (defn- resource-refs
-  [{:keys [operation presenter args result]}]
+  [{:keys [operation presenter args result result-envelope]}]
   (let [shell-id
         (when (shell-presenter? operation presenter)
           (or (when (map? result) (map-value result :id)) (shell-id-from-args operation args)))
 
         refs
         (concat (declared-resources result)
+                (declared-resources result-envelope)
                 (when shell-id
                   [{:type :shell-handle :id (bounded-text shell-id max-summary-bytes)}]))]
 

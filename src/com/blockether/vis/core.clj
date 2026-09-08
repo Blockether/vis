@@ -222,12 +222,7 @@
              [session-model-of-cached session-model/model-of-cached]
              [set-session-model! session-model/set-model!]
              [gateway-session-workspace gateway-client/session-workspace-info]
-             [gateway-change-root! gateway-client/change-root!]
-             [gateway-list-drafts gateway-client/list-drafts]
-             [gateway-stash-draft! gateway-client/stash-draft!]
-             [gateway-resume-draft! gateway-client/resume-draft!]
-             [gateway-create-draft! gateway-client/create-draft!]
-             [gateway-abandon-draft! gateway-client/abandon-draft!])
+             [gateway-change-root! gateway-client/change-root!])
 
 (import-vars [cancellation-token cancellation/cancellation-token]
              [cancellation-atom cancellation/cancellation-atom]

@@ -1,9 +1,12 @@
 (ns com.blockether.vis.internal.foundation.core
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.council.core :as council]
+            [com.blockether.vis.internal.council.host :as council-host]
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.doctor :as doctor]
+            [com.blockether.vis.internal.foundation.drafts :as drafts]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
@@ -18,7 +21,7 @@
 (defn- combined-prompt
   "Render the dynamic language matrix and toggle-gated core guidance."
   [env]
-  (->> [(language-surface/prompt env) (introspection/prompt env)]
+  (->> [(language-surface/prompt env) (introspection/prompt env) (council/prompt env)]
        (remove str/blank?)
        (str/join "\n\n")))
 
@@ -40,13 +43,18 @@
   {:root (or (workspace/workspace-root env) (workspace/normalize-root (workspace/cwd)))})
 
 (defn- session-workspace-block
-  "Resolve the env's pinned workspace and render the canonical session workspace CTX block."
+  "Resolve the env's workspace and render the canonical session workspace CTX block.
+   The live confinement pointer wins over the turn-start pin, so a draft the agent
+   opens or discards mid-turn shows in the next block's `session[\"workspace\"]`."
   [env]
   (let [db
         (:db-info env)
 
         ws-id
-        (or (:workspace/id env)
+        (or (some-> (:workspace-atom env)
+                    deref
+                    :id)
+            (:workspace/id env)
             (some-> env
                     :workspace
                     :id))
@@ -75,9 +83,15 @@
         ;; Recomputed EVERY turn from active-extensions, so the model sees a
         ;; language pack's verbs (repl_eval/test/format) the turn it activates.
         lang-tools
-        (language-surface/capability-data env)]
+        (language-surface/capability-data env)
+
+        council-context
+        (council-host/context env)]
 
     (cond-> {}
+      council-context
+      (assoc "session_council" council-context)
+
       ws-block
       (assoc "session_workspace" ws-block)
 
@@ -103,7 +117,9 @@
                                                    (editing/available-editing-symbols)
                                                    environment/environment-symbols
                                                    introspection/all-symbols
-                                                   shell/shell-symbols))}
+                                                   council-host/symbols
+                                                   shell/shell-symbols
+                                                   drafts/symbols))}
      :ext/kind "foundation"
      :ext/slash-commands
      (vec (concat workspace-slashes/specs session-slashes/specs rewind/slash-specs))

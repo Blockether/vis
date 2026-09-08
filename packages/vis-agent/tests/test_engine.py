@@ -76,7 +76,7 @@ def activity_rows(projection):
 
 
 @contextmanager
-def model_endpoint():
+def model_endpoint(*, tool_code=None, before_reply=None):
     requests = []
 
     class Model(BaseHTTPRequestHandler):
@@ -94,6 +94,8 @@ def model_endpoint():
                 position = len(requests)
                 if position % 2:
                     mode = "complete" if position == 1 else "cancel"
+                    if before_reply is not None:
+                        before_reply(position)
                     delta = {
                         "tool_calls": [
                             {
@@ -103,7 +105,11 @@ def model_endpoint():
                                 "function": {
                                     "name": "python_execution",
                                     "arguments": json.dumps(
-                                        {"code": f"print(await sdk_flow({mode!r}))"}
+                                        {
+                                            "code": tool_code
+                                            if tool_code is not None
+                                            else f"print(await sdk_flow({mode!r}))"
+                                        }
                                     ),
                                 },
                             }
@@ -212,9 +218,15 @@ def real_client(transport, command, work):
         assert process.poll() is not None
 
 
-@pytest.mark.parametrize("transport", ["stdio", "http"])
-def test_real_agent_tool_view_activity_and_cancellation(
-    tmp_path, monkeypatch, transport
+@contextmanager
+def sdk_fixture(
+    tmp_path,
+    monkeypatch,
+    transport,
+    *,
+    council=False,
+    tool_code=None,
+    before_reply=None,
 ):
     raw = os.environ.get("VIS_TEST_LOCAL_COMMAND")
     if not raw:
@@ -229,6 +241,40 @@ def test_real_agent_tool_view_activity_and_cancellation(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("JAVA_TOOL_OPTIONS", f"-Duser.home={home}")
     monkeypatch.delenv("VIS_GATEWAY_URL", raising=False)
+    with model_endpoint(tool_code=tool_code, before_reply=before_reply) as (
+        model_url,
+        requests,
+    ):
+        managed = transport == "http"
+        (extensions / "provider.py").write_text(
+            PROVIDER_EXTENSION.replace("__MODEL_URL__", repr(model_url))
+            .replace("__MANAGED__", repr(managed))
+            .replace(
+                "__CREDENTIAL_HEADERS__",
+                repr(None if managed else {"X-SDK-Credential": "kept"}),
+            )
+        )
+        (config / "config.yml").write_text(
+            json.dumps(
+                {
+                    "providers": [] if managed else [{"id": "sdk-fixture"}],
+                    "toggles": {"council": council},
+                    "default_provider": "sdk-fixture",
+                    "default_model": "sdk-test",
+                }
+            )
+        )
+        command = shlex.split(raw)
+        if len(command) == 1:
+            command.append(f"-Duser.home={home}")
+        with real_client(transport, command, work) as client:
+            yield client, work, requests
+
+
+@pytest.mark.parametrize("transport", ["stdio", "http"])
+def test_real_agent_tool_view_activity_and_cancellation(
+    tmp_path, monkeypatch, transport
+):
     # This fixture has no user data; diagnose unsolicited stdout without allowing it.
     decode = json.loads
 
@@ -248,142 +294,288 @@ def test_real_agent_tool_view_activity_and_cancellation(
             pytest.fail(f"invalid fixture event: {value!r}")
 
     monkeypatch.setattr(Event, "from_wire", checked_event)
-    with model_endpoint() as (model_url, requests):
-        managed = transport == "http"
-        (extensions / "provider.py").write_text(
-            PROVIDER_EXTENSION.replace("__MODEL_URL__", repr(model_url))
-            .replace("__MANAGED__", repr(managed))
-            .replace(
-                "__CREDENTIAL_HEADERS__",
-                repr(None if managed else {"X-SDK-Credential": "kept"}),
-            )
+    managed = transport == "http"
+    with sdk_fixture(tmp_path, monkeypatch, transport) as (client, work, requests):
+        session = client.create_session(
+            title="SDK fixture", root=str(work), channel="app"
         )
-        (config / "config.yml").write_text(
-            json.dumps(
-                {
-                    "providers": [] if managed else [{"id": "sdk-fixture"}],
-                    "default_provider": "sdk-fixture",
-                    "default_model": "sdk-test",
-                }
-            )
-        )
-        command = shlex.split(raw)
-        if len(command) == 1:
-            # Native images consume system properties before application arguments.
-            command.append(f"-Duser.home={home}")
-        with real_client(transport, command, work) as client:
-            session = client.create_session(
-                title="SDK fixture", root=str(work), channel="app"
-            )
-            for mode in ("complete", "cancel"):
-                turn = session.send(mode)
-                seen = []
-                pending_input = None
-                progress_seen = False
-                with session.events(cursor=turn.cursor, reconnects=0) as events:
-                    for event in events:
-                        seen.append(event)
-                        progress_seen |= any(
-                            row.presentation
-                            and row.presentation["summary"] == "Awaiting answer"
-                            for row in activity_rows(event.activity)
-                        )
-                        if event.type == "iteration.error":
-                            pytest.fail(
-                                f"fixture engine error: {str(event.data)[:1200]}"
-                            )
-                        if event.type == "view.open":
-                            if event.view.kind == "live":
-                                assert any(
-                                    v.id == event.view.view_id
-                                    for v in session.live_views()
-                                )
-                            else:
-                                assert any(
-                                    v.id == event.view.view_id
-                                    for v in session.input_views()
-                                )
-                                pending_input = event.view.view_id
-                        # Activity frames coalesce. Keep the form pending until the
-                        # intermediate presentation has crossed the transport.
-                        if pending_input is not None and progress_seen:
-                            if mode == "complete":
-                                assert session.answer(pending_input, {"name": "Ada"})[
-                                    "is_accepted"
-                                ]
-                            else:
-                                turn.cancel()
-                            pending_input = None
-                        if event.type in {
-                            "turn.completed",
-                            "turn.failed",
-                            "turn.cancelled",
-                        }:
-                            break
-                        assert len(seen) < 200, [e.type for e in seen]
-                if not any(
-                    e.type == "view.open" and e.view.kind == "input" for e in seen
-                ):
-                    pytest.fail(
-                        "missing input View; fixture tool evidence: "
-                        + repr(
-                            [
-                                (e.type, e.data)
-                                for e in seen
-                                if e.type.startswith("block.")
-                            ]
-                        )[:3000]
+        for mode in ("complete", "cancel"):
+            turn = session.send(mode)
+            seen = []
+            pending_input = None
+            progress_seen = False
+            with session.events(cursor=turn.cursor, reconnects=0) as events:
+                for event in events:
+                    seen.append(event)
+                    progress_seen |= any(
+                        row.presentation
+                        and row.presentation["summary"] == "Awaiting answer"
+                        for row in activity_rows(event.activity)
                     )
-                closed_views = {
-                    e.view.kind: e.view.result for e in seen if e.type == "view.close"
-                }
-                assert set(closed_views) == {"input", "live"}
-                # Public close receipts must not disclose the form answer. HTTP
-                # omits the live picture already delivered by open/patch; stdio
-                # polling reads the durable receipt, which retains that picture.
-                assert set(closed_views["input"].to_wire()) == {"reason"}
-                assert (closed_views["live"].view is None) == (transport == "http")
-                rows = [row for event in seen for row in activity_rows(event.activity)]
+                    if event.type == "iteration.error":
+                        pytest.fail(f"fixture engine error: {str(event.data)[:1200]}")
+                    if event.type == "view.open":
+                        if event.view.kind == "live":
+                            assert any(
+                                v.id == event.view.view_id for v in session.live_views()
+                            )
+                        else:
+                            assert any(
+                                v.id == event.view.view_id
+                                for v in session.input_views()
+                            )
+                            pending_input = event.view.view_id
+                    # Activity frames coalesce. Keep the form pending until the
+                    # intermediate presentation has crossed the transport.
+                    if pending_input is not None and progress_seen:
+                        if mode == "complete":
+                            assert session.answer(pending_input, {"name": "Ada"})[
+                                "is_accepted"
+                            ]
+                        else:
+                            turn.cancel()
+                        pending_input = None
+                    if event.type in {
+                        "turn.completed",
+                        "turn.failed",
+                        "turn.cancelled",
+                    }:
+                        break
+                    assert len(seen) < 200, [e.type for e in seen]
+            if not any(e.type == "view.open" and e.view.kind == "input" for e in seen):
+                pytest.fail(
+                    "missing input View; fixture tool evidence: "
+                    + repr(
+                        [(e.type, e.data) for e in seen if e.type.startswith("block.")]
+                    )[:3000]
+                )
+            closed_views = {
+                e.view.kind: e.view.result for e in seen if e.type == "view.close"
+            }
+            assert set(closed_views) == {"input", "live"}
+            # Public close receipts must not disclose the form answer. HTTP
+            # omits the live picture already delivered by open/patch; stdio
+            # polling reads the durable receipt, which retains that picture.
+            assert set(closed_views["input"].to_wire()) == {"reason"}
+            assert (closed_views["live"].view is None) == (transport == "http")
+            rows = [row for event in seen for row in activity_rows(event.activity)]
+            assert any(
+                row.presentation
+                and row.presentation["headline"] == "SDK flow"
+                and row.presentation["summary"] == "Awaiting answer"
+                for row in rows
+            ), [(row.operation, row.state, row.presentation) for row in rows]
+            assert any(
+                row.presentation
+                and row.presentation["content"]
+                and row.presentation["content"][0]["type"] == "progress"
+                for row in rows
+            )
+            result = turn.wait(timeout=30)
+            assert result["status"] == (
+                "completed" if mode == "complete" else "cancelled"
+            ), result
+            assert session.input_views() == []
+            assert session.live_views() == []
+            if mode == "complete":
+                assert any(e.type == "view.patch" for e in seen)
+                assert any(e.activity and e.activity.counts.succeeded for e in seen)
                 assert any(
                     row.presentation
-                    and row.presentation["headline"] == "SDK flow"
-                    and row.presentation["summary"] == "Awaiting answer"
-                    for row in rows
-                ), [(row.operation, row.state, row.presentation) for row in rows]
-                assert any(
-                    row.presentation
-                    and row.presentation["content"]
-                    and row.presentation["content"][0]["type"] == "progress"
+                    and row.presentation["summary"] == "success"
+                    and row.presentation["content"][0]["text"] == "SDK stage: success"
                     for row in rows
                 )
-                result = turn.wait(timeout=30)
-                assert result["status"] == (
-                    "completed" if mode == "complete" else "cancelled"
-                ), result
-                assert session.input_views() == []
-                assert session.live_views() == []
-                if mode == "complete":
-                    assert any(e.type == "view.patch" for e in seen)
-                    assert any(e.activity and e.activity.counts.succeeded for e in seen)
-                    assert any(
-                        row.presentation
-                        and row.presentation["summary"] == "success"
-                        and row.presentation["content"][0]["text"]
-                        == "SDK stage: success"
-                        for row in rows
+        assert len(requests) == 3
+        for request in requests:
+            assert request["_test_path"] == "/v1/chat/completions"
+            headers = {
+                key.lower(): value for key, value in request["_test_headers"].items()
+            }
+            assert headers["authorization"] == "Bearer fixture-provider"
+            # Header maps follow whole-field precedence, not a deep merge.
+            header = "x-sdk-preset" if managed else "x-sdk-credential"
+            assert headers[header] == "kept"
+            assert request["sdk_marker"] == {"keep_this_key": "preserved"}
+        assert session.transcript().content
+        assert len(session.turns()) == 2
+        session.delete()
+
+
+@pytest.mark.parametrize("transport", ["stdio", "http"])
+def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
+    # Real engine, SQLite and transports; the model barrier is the only scheduling double.
+    ready, release = threading.Event(), threading.Event()
+
+    def before_reply(_position):
+        ready.set()
+        assert release.wait(30), "SDK did not release the model fixture"
+
+    with sdk_fixture(
+        tmp_path,
+        monkeypatch,
+        transport,
+        council=True,
+        tool_code=(
+            "threads = await council.threads()\n"
+            "entry = await council.publish('Host continuation', thread_id=threads['entries'][0]['thread_id'])\n"
+            "assert (await council.get(entry['id']))['source'] == 'host'\n"
+            "print(session['council'])"
+        ),
+        before_reply=before_reply,
+    ) as (client, work, requests):
+        session = client.create_session(
+            title="Council SDK", root=str(work), channel="app"
+        )
+        project = client.post_projects(body={"name": "Council SDK"})
+        session.update(project_id=project["id"])
+        readonly = session.council()
+        assert readonly.members() == ()
+        assert readonly.threads().entries == ()
+        bound, entry = None, None
+        for generation in range(2):
+            ready.clear()
+            release.clear()
+            turn = session.send("Continue the fixture")
+            try:
+                assert ready.wait(30), "model request was not observed"
+                active = session.council()
+                assert [member.session_id for member in active.members()] == [
+                    session.id
+                ]
+                with pytest.raises(GatewayError) as inactive:
+                    readonly.publish("Must not bind an idle handle")
+                assert inactive.value.status == 409
+                for invalid in (
+                    {"content": " "},
+                    {"content": "é" * 32769},
+                    {"content": "Valid", "title": "two\nlines"},
+                ):
+                    with pytest.raises(GatewayError) as invalid_request:
+                        active.publish(**invalid)
+                    assert invalid_request.value.status == 400
+                if generation == 0:
+                    bound = active
+                    entry = bound.publish(
+                        "SDK conversation",
+                        title="SDK\n",
+                        ping="all",
+                        idempotency_key="sdk-retry",
                     )
-            assert len(requests) == 3
-            for request in requests:
-                assert request["_test_path"] == "/v1/chat/completions"
-                headers = {
-                    key.lower(): value
-                    for key, value in request["_test_headers"].items()
-                }
-                assert headers["authorization"] == "Bearer fixture-provider"
-                # Header maps follow whole-field precedence, not a deep merge.
-                header = "x-sdk-preset" if managed else "x-sdk-credential"
-                assert headers[header] == "kept"
-                assert request["sdk_marker"] == {"keep_this_key": "preserved"}
-            assert session.transcript().content
-            assert len(session.turns()) == 2
-            session.delete()
+                    assert entry.title == "SDK"
+                    assert (
+                        entry.source == "sdk"
+                        and entry.source_ref is None
+                        and entry.ping == ()
+                    )
+                    thread_id = bound.threads().entries[0].thread_id
+                    assert thread_id == entry.thread_id
+                    continuation = bound.publish(
+                        "SDK continuation", thread_id=thread_id
+                    )
+                    first_page = bound.read(thread_id=thread_id, limit=1)
+                    assert first_page.entries == (entry,) and first_page.has_more
+                    assert bound.read(
+                        thread_id=thread_id, after=first_page.after
+                    ).entries == (continuation,)
+                    assert bound.get(entry.id) == entry
+                else:
+                    with pytest.raises(GatewayError) as stale:
+                        bound.publish("Must not rebind")
+                    assert stale.value.status == 409
+                    assert (
+                        bound.publish(
+                            "SDK conversation",
+                            title="SDK",
+                            ping="all",
+                            idempotency_key="sdk-retry",
+                        )
+                        == entry
+                    )
+                    active.publish("New active generation", thread_id=entry.thread_id)
+            finally:
+                release.set()
+            operations = {}
+            with session.events(cursor=turn.cursor, reconnects=0) as events:
+                for event in events:
+                    for row in activity_rows(event.activity):
+                        if row.operation.startswith("council."):
+                            operations[row.id] = row.operation
+                    if event.type in {
+                        "turn.completed",
+                        "turn.failed",
+                        "turn.cancelled",
+                    }:
+                        break
+            assert sorted(operations.values()) == [
+                "council.get",
+                "council.publish",
+                "council.threads",
+            ]
+            assert turn.wait(timeout=30)["status"] == "completed"
+            assert (
+                bound.publish(
+                    "SDK conversation",
+                    title="SDK",
+                    ping="all",
+                    idempotency_key="sdk-retry",
+                )
+                == entry
+            )
+            assert bound.members() == ()
+        assert (
+            len(requests) == 4
+        )  # No Council request started a turn or extra iteration.
+        for request in requests:
+            assert any(
+                "## Council: active-session conversation"
+                in str(message.get("content", ""))
+                for message in request["messages"]
+                if message["role"] == "system"
+            )
+        transcript = json.loads(session.transcript().content)
+        assert "default_group_id" in str(transcript)
+        assert "council_publications" in str(transcript)
+        host_entries = [
+            row
+            for row in bound.read(thread_id=entry.thread_id).entries
+            if row.source == "host"
+        ]
+        assert len(host_entries) == 2
+        assert all(row.source_ref.session_id == session.id for row in host_entries)
+        assert all(
+            str(row.id) in str(transcript)
+            and row.source_ref.operation_id in str(transcript)
+            for row in host_entries
+        )
+        assert len(session.turns()) == 2
+        session.delete()
+
+
+@pytest.mark.parametrize("transport", ["stdio", "http"])
+def test_real_council_disabled(tmp_path, monkeypatch, transport):
+    with sdk_fixture(
+        tmp_path,
+        monkeypatch,
+        transport,
+        tool_code="assert 'council' not in session; assert 'council' not in globals(); print('disabled')",
+    ) as (client, work, requests):
+        session = client.create_session(
+            title="Council disabled", root=str(work), channel="app"
+        )
+        assert (
+            session.send("Verify the default").wait(timeout=30)["status"] == "completed"
+        )
+        with pytest.raises(GatewayError) as disabled:
+            session.council()
+        assert disabled.value.status == 409
+        assert len(requests) == 2
+        assert all(
+            "## Council: active-session conversation"
+            not in str(message.get("content", ""))
+            for request in requests
+            for message in request["messages"]
+            if message["role"] == "system"
+        )
+        assert "disabled" in str(session.transcript().content)
+        session.delete()

@@ -846,6 +846,12 @@
     (:session/id sctx)
     (assoc :session-id (:session/id sctx))))
 
+(defn- op-name
+  "Python spelling of an op: `\"patch\"` for a tool, `\"draft/approve\"` for a
+   namespaced host operation — the same string an `OpHook` registers with."
+  [op-kw]
+  (subs (str op-kw) 1))
+
 (defn- op-hook-payload
   "STRINGS-ONLY `{'op' 'args' ['result']}` payload for a Python op hook.
 
@@ -856,8 +862,8 @@
    open, but an `:after` hook's throw surfaces on the tool). Every other Python
    callback adapter (render, enrich-models, on-selected) already crosses through
    `stringify-deep`; op hooks now do the same."
-  ([op-kw args] (stringify-deep {"op" (name op-kw) "args" (vec args)}))
-  ([op-kw args result] (stringify-deep {"op" (name op-kw) "args" (vec args) "result" result})))
+  ([op-kw args] (stringify-deep {"op" (op-name op-kw) "args" (vec args)}))
+  ([op-kw args result] (stringify-deep {"op" (op-name op-kw) "args" (vec args) "result" result})))
 
 (def ^:private ^:dynamic *healing-symbol*
   "True while a healed retry is in flight, so one torn-down context triggers at

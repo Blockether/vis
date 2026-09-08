@@ -873,39 +873,57 @@
           s1
           (vis/db-create-connection! dir)]
 
-      (try (expect (contains? (table-columns s1 "session_attachment") "audience"))
-           (expect (contains? (table-columns s1 "session_state") "prompt_cache_state"))
-           ;; Rewind this store to an OLDER shape of the same canonical V1: the
-           ;; table exists, its Flyway history is intact, but it predates the
-           ;; columns V1 has grown since. That is exactly what a `~/.vis` database
-           ;; created before the in-place V1 edit looks like.
-           (jdbc/execute! (:datasource s1) ["DROP TABLE session_attachment"])
-           (jdbc/execute! (:datasource s1)
-                          ["CREATE TABLE session_attachment (id TEXT PRIMARY KEY NOT NULL)"])
-           (jdbc/execute! (:datasource s1)
-                          ["ALTER TABLE session_state DROP COLUMN prompt_cache_state"])
-           (jdbc/execute! (:datasource s1) ["CREATE TABLE topup_probe (id INTEGER)"])
-           (jdbc/execute! (:datasource s1) ["INSERT INTO topup_probe (id) VALUES (7)"])
-           (vis/db-dispose-connection! s1)
-           (let [s2 (vis/db-create-connection! dir)]
-             (try (let [cols (table-columns s2 "session_attachment")]
-                    ;; Defaulted / nullable columns are added back from V1's own DDL.
-                    (expect (contains? cols "audience"))
-                    (expect (contains? cols "kind"))
-                    (expect (contains? cols "tool_call_id"))
-                    (expect (contains? cols "view_id"))
-                    ;; Activity belongs to the form, never to an attachment: the
-                    ;; retired columns must not come back through the top-up.
-                    (expect (not (contains? cols "classification")))
-                    (expect (not (contains? cols "activity_anchor")))
-                    ;; NOT NULL without a DEFAULT is not addable in SQLite: left alone
-                    ;; rather than failing the open.
-                    (expect (not (contains? cols "media_type"))))
-                  (expect (contains? (table-columns s2 "session_state") "prompt_cache_state"))
-                  ;; Purely additive: unrelated tables and rows are untouched.
-                  (expect (= 1 (raw-count s2 :topup_probe)))
-                  (finally (vis/db-dispose-connection! s2))))
-           (finally (fs/delete-tree root))))))
+      (try
+        (expect (contains? (table-columns s1 "session_attachment") "audience"))
+        (expect (contains? (table-columns s1 "session_state") "prompt_cache_state"))
+        ;; Rewind this store to an OLDER shape of the same canonical V1: the
+        ;; table exists, its Flyway history is intact, but it predates the
+        ;; columns V1 has grown since. That is exactly what a `~/.vis` database
+        ;; created before the in-place V1 edit looks like.
+        (jdbc/execute! (:datasource s1) ["DROP TABLE session_attachment"])
+        (jdbc/execute! (:datasource s1)
+                       ["CREATE TABLE session_attachment (id TEXT PRIMARY KEY NOT NULL)"])
+        (jdbc/execute! (:datasource s1)
+                       ["ALTER TABLE session_state DROP COLUMN prompt_cache_state"])
+        (doseq [table ["council_ping" "council_entry"]]
+          (jdbc/execute! (:datasource s1) [(str "DROP TABLE " table)]))
+        (doseq [column ["council_input" "council_publications"]]
+          (jdbc/execute! (:datasource s1)
+                         [(str "ALTER TABLE session_turn_iteration DROP COLUMN " column)]))
+        (jdbc/execute! (:datasource s1) ["CREATE TABLE topup_probe (id INTEGER)"])
+        (jdbc/execute! (:datasource s1) ["INSERT INTO topup_probe (id) VALUES (7)"])
+        (vis/db-dispose-connection! s1)
+        (let [s2 (vis/db-create-connection! dir)]
+          (try
+            (let [cols (table-columns s2 "session_attachment")]
+              ;; Defaulted / nullable columns are added back from V1's own DDL.
+              (expect (contains? cols "audience"))
+              (expect (contains? cols "kind"))
+              (expect (contains? cols "tool_call_id"))
+              (expect (contains? cols "view_id"))
+              ;; Activity belongs to the form, never to an attachment: the
+              ;; retired columns must not come back through the top-up.
+              (expect (not (contains? cols "classification")))
+              (expect (not (contains? cols "activity_anchor")))
+              ;; NOT NULL without a DEFAULT is not addable in SQLite: left alone
+              ;; rather than failing the open.
+              (expect (not (contains? cols "media_type"))))
+            (expect (contains? (table-columns s2 "session_state") "prompt_cache_state"))
+            (expect (every? (table-columns s2 "session_turn_iteration")
+                            ["council_input" "council_publications"]))
+            (expect (contains? (table-columns s2 "council_entry") "thread_id"))
+            (expect (contains? (table-columns s2 "council_ping") "activation_id"))
+            (expect
+              (=
+                3
+                (count
+                  (jdbc/execute!
+                    (:datasource s2)
+                    ["SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_council_%'"]))))
+            ;; Purely additive: unrelated tables and rows are untouched.
+            (expect (= 1 (raw-count s2 :topup_probe)))
+            (finally (vis/db-dispose-connection! s2))))
+        (finally (fs/delete-tree root))))))
 
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])

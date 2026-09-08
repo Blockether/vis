@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.attachment.core :as attachments]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.channel.form :as form]
             [com.blockether.vis.internal.format :as fmt]
@@ -34,6 +35,7 @@
             [com.blockether.vis.internal.foundation.shell-log :as shell-log]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
+            [com.blockether.vis.internal.workspace.drafts :as drafts]
             [taoensso.telemere :as tel]))
 
 (def ^:private EVENT_RING_MAX
@@ -205,35 +207,68 @@
   [sid tid]
   (get-in @registry [(sid-key sid) :turns tid]))
 
+(defn- council-state
+  [entry]
+  (cond (some (fn [[_ turn]]
+                (and (= "running" (:status turn)) (:cancel-token turn)))
+              (:turns entry))
+        "running"
+        (and (or (:council-local? entry) (:council entry))
+             (some #(= "queued" (:status %)) (vals (:turns entry))))
+        (if (:queue-paused entry) "held" "queued")))
+
+(defn- council-transition
+  [old entry fresh]
+  (when entry
+    (let [candidate (cond-> entry
+                      (:council old)
+                      (assoc :council (:council old)))]
+      (if-let [status (council-state candidate)]
+        (assoc candidate :council (assoc (or (:council old) (force fresh)) :state status))
+        (dissoc candidate :council)))))
+
+(defn- fresh-council [] {:activation-id (str (random-uuid)) :input-state (atom {})})
+
 (defn- update-session!
-  "THE write path: apply `f` to `sid`'s entry (nil when it has none yet), so a
-   caller that means to CREATE the entry says so with `(or entry ...)`. `f` runs
-   inside the `swap!` and is retried on contention, so it must be pure."
+  "The atomic registry write boundary also publishes a fully initialized Council activation."
   [sid f]
-  (swap! registry update (sid-key sid) f)
+  (let [fresh (delay (fresh-council))]
+    (swap! registry update
+      (sid-key sid)
+      (fn [old]
+        (council-transition old (f old) fresh))))
   nil)
 
 (defn- update-existing-session!
-  "Apply `f` to `sid`'s entry only when it HAS one. `update-session!` would
-   otherwise leave a nil entry under a live key, and a key is all it takes for
-   the journal tailer to start draining a stranger's session."
+  "Apply f only to an existing registry record."
   [sid f]
-  (swap! registry (fn [reg]
-                    (let [k (sid-key sid)]
-                      (if (contains? reg k) (update reg k f) reg))))
+  (let [fresh (delay (fresh-council))]
+    (swap! registry (fn [reg]
+                      (let [k (sid-key sid)]
+                        (if (contains? reg k)
+                          (update reg
+                                  k
+                                  (fn [old]
+                                    (council-transition old (f old) fresh)))
+                          reg)))))
   nil)
 
-(defn- update-turn!
-  "Apply `f` to one turn record in place."
-  [sid tid f]
-  (swap! registry update-in [(sid-key sid) :turns tid] f)
-  nil)
+(defn- update-turn! [sid tid f] (update-session! sid #(update-in % [:turns tid] f)))
 
-(defn- put-session!
-  "Install `entry` as `sid`'s whole registry record."
-  [sid entry]
-  (swap! registry assoc (sid-key sid) entry)
-  nil)
+(defn- put-session! [sid entry] (update-session! sid (constantly entry)))
+
+(council/install-runtime!
+  (fn [db session-id]
+    (into {}
+          (keep (fn [[sid entry]]
+                  (when-let [active (:council entry)]
+                    (when-let [record (persistance/db-get-session db sid)]
+                      (when-let [gid (:project-id record)]
+                        [sid
+                         (assoc active
+                           :group-id (str gid)
+                           :title (:title record))]))))
+                (if session-id (select-keys @registry [session-id]) @registry)))))
 
 (defn- drop-session!
   "Forget `sid`'s registry record entirely."
@@ -1058,23 +1093,29 @@
   "Workspace state for a channel surface (the web footer AND the TUI
    directory picker), in THE canonical string-keyed wire shape:
    `{\"id\" \"draft?\" \"root\" \"repo_root\" \"label\" \"fork_ms\"
-   \"git\"}` for the session pinned to `sid`, or nil. Resolves soul → latest\n   state → workspace; never throws."
+   \"git\"}` for the session pinned to `sid`, plus `\"backend\"` `\"branch\"`
+   `\"ahead\"` for a draft, or nil. Resolves soul → latest state → workspace;
+   never throws."
   [sid]
   (try (when-let [db (lp/db-info)]
          (when-let [ws (resolve-workspace db sid)]
-           (wire/canonical {:id (:id ws)
-                            :draft? (workspace/draft? ws)
-                            :root (:root ws)
-                            :repo-root (:repo-root ws)
-                            :label (:label ws)
-                            :fork-ms (:fork-ms ws)
-                            ;; Git working-tree status resolved HERE, in the gateway/daemon
-                            ;; that owns the repo on disk — streamed to channels as a cached
-                            ;; session fact instead of each client re-walking git locally (a
-                            ;; remote TUI has no access to the repo's filesystem, and even
-                            ;; colocated it stops every tab switch from recomputing). Cached
-                            ;; per repo root, so repeated fetches never re-walk a warm root.
-                            :git (git/workspace-status (:root ws))})))
+           (let [draft? (workspace/draft? ws)]
+             (wire/canonical (cond-> {:id (:id ws)
+                                      :draft? draft?
+                                      :root (:root ws)
+                                      :repo-root (:repo-root ws)
+                                      :label (:label ws)
+                                      :fork-ms (:fork-ms ws)
+                                      ;; Git working-tree status resolved HERE, in the gateway/daemon
+                                      ;; that owns the repo on disk — streamed to channels as a cached
+                                      ;; session fact instead of each client re-walking git locally (a
+                                      ;; remote TUI has no access to the repo's filesystem, and even
+                                      ;; colocated it stops every tab switch from recomputing). Cached
+                                      ;; per repo root, so repeated fetches never re-walk a warm root.
+                                      :git (git/workspace-status (:root ws))}
+                               draft?
+                               (merge (select-keys (drafts/status ws)
+                                                   [:backend :branch :ahead])))))))
        (catch Throwable _ nil)))
 
 (defn- usage-percent
@@ -1121,128 +1162,6 @@
   (when-let [db (lp/db-info)]
     (when-let [state-id (resolve-state-id db sid)]
       (workspace/change-root! db state-id path)))
-  (session-workspace-info sid))
-
-(defn list-drafts
-  "Active/stashed DRAFTS for the repo the session pinned to `sid` lives in, in
-   THE canonical string-keyed wire shape
-   `[{\"workspace_id\" \"label\" \"root\" \"repo_root\" \"fork_ms\" \"is_current\"}]`,
-   newest first. The session's own current draft (when it is in one) rides
-   `\"is_current\" true`. This is the canonical server-side inventory for future
-   model-managed isolation and gateway callers. Never throws; returns []
-   when the session or its repo is unknown."
-  [sid]
-  (or (try (when-let [db (lp/db-info)]
-             (when-let [ws (resolve-workspace db sid)]
-               (let [current-id (when (workspace/draft? ws) (:id ws))]
-                 (mapv (fn [d]
-                         (wire/canonical {:workspace-id (:id d)
-                                          :label (workspace/display-label db d nil)
-                                          :root (:root d)
-                                          :repo-root (:repo-root d)
-                                          :fork-ms (:fork-ms d)
-                                          :current? (= current-id (:id d))}))
-                       (workspace/list-drafts db (:repo-id ws))))))
-           (catch Throwable _ nil))
-      []))
-
-(defn stash-draft!
-  "Park the session's current draft — leave the draft row `:active` and its clone
-   on disk, repoint the session back to trunk — then return the refreshed
-   `session-workspace-info`. The non-destructive twin of abandoning; a no-op that
-   returns trunk info when the session is already on trunk. Runs SERVER-SIDE in
-   the daemon that owns the DB."
-  [sid]
-  (when-let [db (lp/db-info)]
-    (when-let [state-id (resolve-state-id db sid)]
-      (workspace/stash! db state-id)))
-  (session-workspace-info sid))
-
-(defn resume-draft!
-  "Switch the session pinned to `sid` INTO the stashed draft `workspace-id`, then
-   return the refreshed `session-workspace-info`. The target is validated against
-   the session's current repo BEFORE any current draft is stashed. When the session
-   is currently in another draft it is then stashed non-destructively, so this is a
-   true draft switch, not just an enter-from-trunk. Runs SERVER-SIDE in the daemon.
-   Throws `ex-info` with a `:type` when `workspace-id` is not resumable (see
-   `workspace/resume!`)."
-  [sid workspace-id]
-  (when-let [db (lp/db-info)]
-    (when-let [state-id (resolve-state-id db sid)]
-      (let [current (resolve-workspace db sid)
-            target (workspace/get db workspace-id)]
-
-        (when (and current target (not= (:repo-id current) (:repo-id target)))
-          (throw (ex-info "Draft belongs to a different repository"
-                          {:type :workspace/draft-repo-mismatch
-                           :workspace-id workspace-id
-                           :repo-id (:repo-id current)
-                           :draft-repo-id (:repo-id target)})))
-        (when (workspace/draft? current) (workspace/stash! db state-id))
-        (workspace/resume! db {:session-state-id state-id :workspace-id workspace-id}))))
-  (session-workspace-info sid))
-
-(defn create-draft!
-  "Create and enter a named draft for `sid` in the daemon. If the session is
-   already in a draft, park that draft first; creating from the picker is thus
-   non-destructive and always forks the real repo trunk. `clean?` seeds from the
-   COMMITTED HEAD, leaving the user's uncommitted work behind in their repo.
-   Returns refreshed canonical workspace info."
-  [sid label clean?]
-  (let [label (some-> label
-                      str
-                      str/trim)]
-    (when (str/blank? label)
-      (throw (ex-info "Draft name cannot be blank" {:type :workspace/blank-draft-label})))
-    (when-let [db (lp/db-info)]
-      (when-let [state-id (resolve-state-id db sid)]
-        (let [current (resolve-workspace db sid)
-              repo-root (or (:repo-root current) (:root current) (workspace/trunk-root))]
-
-          (when-not (workspace/isolated-workspaces-supported? repo-root)
-            (throw (ex-info "No workspace backend can create an isolated draft here"
-                            {:type :workspace/isolation-unavailable
-                             :root repo-root
-                             :hint (workspace/isolation-unavailable-hint repo-root)})))
-          (when (workspace/draft? current) (workspace/stash! db state-id))
-          (let [trunk (resolve-workspace db sid)]
-            (workspace/create!
-              db
-              {:session-state-id state-id :label label :from trunk :clean? (boolean clean?)})))))
-    (session-workspace-info sid)))
-
-(defn abandon-draft!
-  "Permanently discard one active draft owned by `sid`'s current repo. A parked
-   draft may be removed directly. If it is the caller's current draft, first
-   repoint the session to that draft's real trunk. Drafts from another repo or
-   pinned to another session are rejected. Returns refreshed canonical workspace
-   info."
-  [sid workspace-id reason]
-  (when-let [db (lp/db-info)]
-    (when-let [state-id (resolve-state-id db sid)]
-      (let [target (workspace/get db workspace-id)
-            current (resolve-workspace db sid)]
-
-        (when-not (workspace/draft? target)
-          (throw (ex-info "Not an active draft"
-                          {:type :workspace/not-a-draft :workspace-id workspace-id})))
-        (when (not= :active (:state target))
-          (throw (ex-info "Draft is no longer active"
-                          {:type :workspace/draft-inactive :workspace-id workspace-id})))
-        (when (and current (not= (:repo-id current) (:repo-id target)))
-          (throw (ex-info "Draft belongs to a different repository"
-                          {:type :workspace/draft-repo-mismatch
-                           :workspace-id workspace-id
-                           :repo-id (:repo-id current)
-                           :draft-repo-id (:repo-id target)})))
-        (let [pinned-elsewhere (remove #(= (str state-id) (str (:id %)))
-                                 (persistance/db-session-state-list-for-workspace db workspace-id))]
-          (when (seq pinned-elsewhere)
-            (throw (ex-info "Draft is in use by another session"
-                            {:type :workspace/draft-in-use :workspace-id workspace-id}))))
-        (when (= (str (:id current)) (str (:id target)))
-          (workspace/exit-to-trunk! db state-id (:repo-root target)))
-        (workspace/abandon! db {:workspace-id workspace-id :reason reason}))))
   (session-workspace-info sid))
 
 ;; Chunk -> event translation (§8)
@@ -3822,7 +3741,7 @@
           ;; a submit is often the FIRST touch of a session after a daemon
           ;; restart, and zero would renumber under every attached client's
           ;; cursor — their streams would go silent for the whole new turn.
-          (let [entry (or entry (fresh-entry sid))]
+          (let [entry (assoc (or entry (fresh-entry sid)) :council-local? true)]
             (cond (and idempotency-key (get-in entry [:idempotency idempotency-key]))
                   (do (vreset! decision [:idempotent (get-in entry [:idempotency idempotency-key])])
                       entry)
@@ -5449,3 +5368,34 @@
   (try (lp/db-info)
        true
        (catch Throwable t (tel/log! :warn ["gateway: db warmup failed" (ex-message t)]) false)))
+
+(defn council-operation!
+  "Transport adapter. A Council request never calls submit-turn! or opens an environment."
+  [sid operation opts]
+  (let [db
+        (lp/db-info)
+
+        sid
+        (str sid)]
+
+    (case operation
+      :binding
+      (council/binding-info db sid opts)
+
+      :members
+      (council/members db #(council/runtime db) sid opts)
+
+      :threads
+      (council/threads db sid opts)
+
+      :read
+      (council/read-entries db sid opts)
+
+      :get
+      (council/get-entry db sid opts)
+
+      :publish
+      (council/publish! db
+                        #(council/runtime db)
+                        {:session-id sid :activation-id (:activation_id opts) :source "sdk"}
+                        opts))))

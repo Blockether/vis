@@ -847,14 +847,125 @@ implementation do not satisfy this sequence. The planning-only probes above are 
 ## Plan state
 
 - [x] Cross-validation findings incorporated; tests-first order and C01-C30 acceptance cases specified.
-- [x] Thread-only publication, titled thread discovery, filtered read and group/thread semantics planned.
+- [x] Thread-only publication, titled discovery, filtered read and group/thread semantics implemented.
 - [x] Minimal session metadata and history/Activity correlations retained, without message-parent fields.
-- [ ] Phase 1: executable tests prepared, discovered and observed RED; API/limits/policies frozen.
-- [ ] Phase 2: schema and log operations pass their prepared tests.
-- [ ] Phase 3: presence and delivery pass deterministic lifecycle/model-input tests.
-- [ ] Phase 4: host, gateway, SDK, history and Activity pass real boundary/roundtrip tests.
-- [ ] Phase 5: integrated tests, measured performance and affected checks verified.
+- [ ] Phase 1: the strict all-inventory RED-before-production gate was not fully met.
+  Contracts, limits and policies were frozen; several integration assertions were added later.
+- [x] Phase 2: canonical storage, atomic publication, replay, pagination and additive schema repair.
+- [x] Phase 3: activation lifecycle, bounded delivery, immutable input batches and recovery paths.
+- [x] Phase 4: real host, authenticated HTTP/stdio SDK, history and Activity roundtrips.
+- [ ] Phase 5: a fully green broad run remains blocked by baseline failures listed below.
+  Scoped Council verification, reference measurements, native checks and lint pass.
 
-Planning only: no executable Council tests have been added or run by this plan edit. The first next
-implementation activity is test preparation, not production code. No commit, push, deployment or
-service restart is authorized by this planning revision.
+Implementation commit `98f92d7bd` reached `origin/main` through `92928501b`.
+The follow-up simplifications were verified in `.gitworktrees/council` on `feat/council`.
+The persisted `council` toggle defaults off. Enabled sessions expose only the default group in
+public Council metadata; activation identity remains host-owned. There is no wakeup, wait, reply
+completion gate, implicit ping, message-parent selector or cross-engine presence service.
+
+Review corrections:
+- Keyword-only `council.publish(content=...)` and `council.get(entry_id=...)` use explicit call shapes.
+  The real Python/model regression exercises both forms.
+- Sparse thread reads seek the root and indexed continuations separately. The regression explains
+  actual production queries with a full-page fixture, checks pagination and rejects group scans.
+  Page recipients use one batched query rather than one query per entry.
+- The closed publication schema includes the SDK activation field. Group-only requests use a closed
+  shared schema. Unknown server exceptions propagate as server failures, not HTTP 400 responses.
+- SDK text normalization and byte validation have one authority: the engine. Real HTTP/stdio tests
+  cover trimmed titles and rejection of blank, oversized and multiline text. POST group addressing
+  is carried only in the body.
+- UTF-8 clipping uses the JDK encoder; page accounting adds encoded row sizes instead of repeatedly
+  encoding the whole page. Unicode boundaries, JSON escaping and final-envelope byte limits are tested.
+- A single-session runtime projection reads only that session; a regression counts the database reads.
+  Duplicate enabled checks and unused descriptive contract fields were removed.
+- The 100 ms lookup deadline remains. The group-change check is not dead: a session can move projects
+  during an outstanding lookup. A regression proves that the old result is discarded without delivery.
+- Provider retry and tool-free continuation regressions remain in the real Python/model boundary test.
+
+Verification checkpoint:
+- Final clean-JVM broad run: 1,633 cases, four failures. Focused Council domain, host, gateway and
+  persistence suites: 276 passed. The real Python/model boundary test passed separately.
+- Three additional baseline failures reproduce on unmodified `main` at `f5a3a27ed`: the gateway
+  route contract omits the existing provider reset-credits route; the jail documentation exceeds
+  the paragraph-length limit; the permission snapshot fixture omits the process toolchain grant.
+  The fourth, the `languages` signature expectation, was already recorded before Council edits.
+  These failures are outside the Council behavior and were not hidden or repaired here.
+- SDK unit suite: 331 passed, eight real-engine cases deselected rather than counted as verified.
+  Separately enabled Council/LocalEngine integration: five passed over HTTP/stdio on both JVM and
+  the final native build. These use isolated stores and a synthetic provider, not paid calls.
+- The wider SDK integration previously reproduced two missing input `view.close` receipts in
+  `test_real_agent_tool_view_activity_and_cancellation[stdio,http]` with both the original test and
+  engine source/resources from `d015ea65c`; those unrelated failures are not repaired here.
+- The real Python/model test checks executed-block errors, not just invocation counts. It covers
+  publication without stdout, a truncated incoming preview, transparent provider retry, a recoverable
+  model-format error, tool-free continuation, full fetch, actual `read_session()`/fold calls,
+  unchanged persisted input and removal of the folded preview from subsequent model input.
+  Input-only iterations have fold scopes without fabricated tools or Activity rows.
+- SDK/host publication provenance and Activity references agree. Incoming pings and external SDK calls
+  do not add fake host-operation counts. Disabled Council has no model guidance, callable surface or
+  public Council dictionary.
+- Clojure formatting and lint/reflection and Python formatting/lint pass for the scoped files.
+  Canonical Council document/schema and served-page links pass; the unrelated broad failures remain
+  reported above. `git diff --check` passes.
+- Before the later main merges, GraalVM CE 25.3.4.1 built the Council engine in 3m52s with 23 warnings.
+  The resulting binary passed 11 native cases and five Council/LocalEngine SDK cases.
+- After integrating main at `e66f83912`, the 276 Council/HTTP/store cases, the Python/model boundary
+  case, five JVM Council/LocalEngine SDK cases and 260 TUI rendering cases passed again.
+- Provider and search commits through `e20c1b4e6` then merged without conflicts. Combined Council,
+  gateway, store, provider and editing suites passed 565 cases; configuration passed 149. The model
+  boundary case and five real JVM SDK cases passed again. Merged gateway formatting and lint/reflection
+  pass. The native results above precede these provider/search changes, not a rebuilt final image.
+
+Simplification follow-up, based on `92928501b`:
+- Reused the shared SHA-256 helper, removed a redundant string guard and simplified JSON-body parsing.
+  Recipient queries alias authorship directly in SQL. SDK publication builds its activation field
+  with the body; tests check the exact optional-field payload, including an empty recipient list.
+- Removed the redundant root index. Production-query EXPLAIN assertions cover thread reads, root
+  listings and empty recipients; schema repair now expects the three remaining Council indexes.
+- Council alone caps input bytes. The caller still reserves 256 tokens of context headroom.
+  A new schema-checked regression covers small and oversized caller budgets, including attribution.
+- Consolidated duplicate query probes into a 50-continuation fixture and removed their timing samples
+  and the 600 ms wall-clock assertion. The single-outstanding-lookup test and the 100,000-row,
+  four-worker memory/WAL contention reference remain executable in the suite.
+- Kept independent input/publication history columns, typed SDK provenance and portable schemas.
+  The local UTF-8 counter avoids an unrelated dependency on Activity solely to replace one line.
+- Verification: 278 focused Council/host/gateway/store cases and the real Python/model case pass.
+  The broader 764-case run has only the previously reproduced permission-snapshot baseline failure.
+  SDK units: 331 passed; real Council/LocalEngine HTTP/stdio: five passed on JVM and five on native.
+  GraalVM CE 25.3.4.1 built the simplification source in 4m1s with 23 warnings; 13 native cases pass.
+  Scoped Clojure lint/reflection, Python lint and both formatters pass. No gateway was restarted.
+- Main advanced to `e71f28c9e` during verification; its recap-only folding fix merged without conflicts.
+  The merged Council/context/loop run has 732 cases and only the same permission-snapshot failure.
+  The Python/model regression and five real JVM SDK cases pass again; merged Clojure formatting and
+  lint/reflection pass. Native results above precede this pure-Clojure main merge.
+Reference performance before this follow-up (milliseconds; informational, not timing assertions):
+macOS/aarch64, 14 logical processors, JVM 25.0.3, bundled SQLite 3.53.2. The fixture uses 10 active
+sessions, one root plus 100,000 short continuations, explicit sparse/dense recipients and broadcasts.
+Each measurement has 10 warmup calls and 100 samples; concurrent publication combines 200 samples
+from two writers. Four mixed-load workers are two broadcast writers, a log reader and an ordinary
+session-title writer. Memory and persistent WAL stores were measured separately. This session ran no
+build or other verification shell concurrently with the reference; no cold-cache or power-loss claim
+is made.
+
+| Operation | Memory p50/p95/p99 | Persistent WAL p50/p95/p99 |
+|---|---|---|
+| Publish | 0.593 / 1.148 / 1.634 | 1.000 / 2.116 / 3.605 |
+| Log page | 0.940 / 4.321 / 15.095 | 0.589 / 1.049 / 3.133 |
+| Thread-content page | 0.730 / 2.381 / 4.389 | 0.690 / 1.634 / 3.671 |
+| Thread-list page | 0.361 / 1.321 / 3.537 | 0.322 / 0.926 / 1.098 |
+| Empty pending | 0.086 / 0.352 / 0.569 | 0.071 / 0.108 / 0.255 |
+| Sparse pending | 0.082 / 0.107 / 0.450 | 0.075 / 0.087 / 0.231 |
+| Dense pending | 0.115 / 0.350 / 0.850 | 0.122 / 0.279 / 0.473 |
+| Session write, baseline | 0.084 / 0.171 / 0.562 | 0.097 / 0.443 / 0.718 |
+| Session write, mixed load | 0.651 / 1.237 / 1.634 | 0.276 / 3.112 / 4.570 |
+| Concurrent publish | 1.869 / 2.717 / 5.103 | 2.064 / 4.891 / 8.631 |
+| Concurrent log read | 2.115 / 3.617 / 5.729 | 0.771 / 2.201 / 3.259 |
+
+Both stores recorded zero busy failures. Provisional p95 publish/page targets are met for this warm
+short-entry profile, not asserted for every payload/distribution. Ordinary writes slow under contention;
+the table reports that impact. The sparse-thread fixture separately measured p50/p95/p99
+0.228 / 0.371 / 0.635 ms in memory, with 10 warmups and 100 samples, for a root and late reply separated
+by 100,000 unrelated continuations.
+
+The user explicitly authorized commit and push to `main` for this feature. No release, deployment
+or live gateway restart is included. Existing main-worktree changes are preserved separately.

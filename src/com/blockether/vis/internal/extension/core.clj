@@ -1723,11 +1723,18 @@
                 gates))))))
 
 (defn invoke-operation
-  "Invoke host operation `f` through the declarative :around hooks for
-   `op-kw`. This is the non-model-tool entry point for operations such as a TUI
-   Git commit; hook lifecycle remains owned by extension registration."
+  "Invoke host operation `f` through the declarative :around hooks for `op-kw`,
+   then thread its result through the :after hooks. This is the non-model-tool
+   entry point for operations such as a TUI Git commit or a draft approval; hook
+   lifecycle remains owned by extension registration."
   [op-kw env f args]
-  (run-op-around (keyword op-kw) env f (vec args)))
+  (let [op
+        (keyword op-kw)
+
+        args
+        (vec args)]
+
+    (run-op-after-hooks op env args (run-op-around op env f args))))
 
 (defn- folded-kwargs->positional
   "Re-expand a folded kwargs dict for the DIRECT-python surface. When the agent

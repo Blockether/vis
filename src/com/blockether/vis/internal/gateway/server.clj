@@ -2806,6 +2806,54 @@
     (json-response snapshot)
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- council-handler
+  [operation]
+  (fn [request]
+    (try (let [raw
+               (if (= operation :publish)
+                 (let [body (try (body-json request) (catch Exception _ nil))]
+                   (when-not (map? body)
+                     (throw (ex-info "Expected a Council JSON object" {:error :invalid-request})))
+                   body)
+                 (:query-params request))
+
+               opts
+               (into {}
+                     (map (fn [[k v]]
+                            [(keyword k)
+                             (if (and (string? v) (contains? #{"thread_id" "after" "limit"} k))
+                               (Long/parseLong v)
+                               v)]))
+                     raw)
+
+               opts
+               (cond-> opts
+                 (= operation :get)
+                 (assoc :entry_id (Long/parseLong (get-in request [:path-params :entry-id]))))]
+
+           (json-response
+             (state/council-operation! (get-in request [:path-params :sid]) operation opts)))
+         (catch NumberFormatException _
+           (error-response 400 :invalid-request "Council identifiers and cursors must be integers"))
+         (catch clojure.lang.ExceptionInfo e
+           (let [kind
+                 (:error (ex-data e))
+
+                 status
+                 (case kind
+                   (:group-not-found :entry-not-found)
+                   404
+
+                   (:disabled :inactive-session :invalid-recipient :idempotency-conflict)
+                   409
+
+                   (:invalid-request :invalid-thread)
+                   400
+
+                   (throw e))]
+
+             (error-response status kind (ex-message e)))))))
+
 (defn- transcript-handler
   "Transcript rows for a session, optionally WINDOWED: `?limit=` (window size,
   defaulting to the NEWEST rows) and `?offset=` (0-based start in the
@@ -3098,47 +3146,6 @@
   (if-let [sid (path-sid request)]
     (let [{:strs [path]} (body-json request)]
       (json-response {:workspace (state/change-root! sid path)}))
-    (session-404 (get-in request [:path-params :sid]))))
-
-(defn- drafts-handler
-  [request]
-  (if-let [sid (path-sid request)]
-    (json-response {:drafts (state/list-drafts sid)})
-    (session-404 (get-in request [:path-params :sid]))))
-
-(defn- stash-draft-handler
-  [request]
-  (if-let [sid (path-sid request)]
-    (json-response {:workspace (state/stash-draft! sid)})
-    (session-404 (get-in request [:path-params :sid]))))
-
-(defn- resume-draft-handler
-  [request]
-  (if-let [sid (path-sid request)]
-    (let [{:strs [workspace_id]} (body-json request)]
-      (try (json-response {:workspace (state/resume-draft! sid workspace_id)})
-           (catch clojure.lang.ExceptionInfo e
-             (error-response 409 (:type (ex-data e) :draft-resume-failed) (ex-message e)))))
-    (session-404 (get-in request [:path-params :sid]))))
-
-(defn- create-draft-handler
-  [request]
-  (if-let [sid (path-sid request)]
-    (let [{:strs [label clean]} (body-json request)]
-      (try (json-response {:workspace (state/create-draft! sid label clean)})
-           (catch clojure.lang.ExceptionInfo e
-             (error-response 409 (:type (ex-data e) :draft-create-failed) (ex-message e)))))
-    (session-404 (get-in request [:path-params :sid]))))
-
-(defn- abandon-draft-handler
-  [request]
-  (if-let [sid (path-sid request)]
-    (let [workspace-id (get-in request [:path-params :workspace-id])
-          {reason "reason"} (body-json request)]
-
-      (try (json-response {:workspace (state/abandon-draft! sid workspace-id reason)})
-           (catch clojure.lang.ExceptionInfo e
-             (error-response 409 (:type (ex-data e) :draft-abandon-failed) (ex-message e)))))
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- fork-points-handler
@@ -4306,6 +4313,12 @@
         [(sid-route "/speech/jobs/:job-id/audio") {:get speech-job-audio-handler}]
         [(sid-route "/events-since") {:get events-since-handler}]
         [(sid-route "/seq") {:get seq-handler}] [(sid-route "/context") {:get context-handler}]
+        [(sid-route "/council") {:get (council-handler :binding)}]
+        [(sid-route "/council/members") {:get (council-handler :members)}]
+        [(sid-route "/council/threads") {:get (council-handler :threads)}]
+        [(sid-route "/council/entries")
+         {:get (council-handler :read) :post (council-handler :publish)}]
+        [(sid-route "/council/entries/:entry-id") {:get (council-handler :get)}]
         [(sid-route "/transcript") {:get transcript-handler}]
         [(sid-route "/artifacts") {:get session-artifacts-handler}]
         [(sid-route "/transcript.md") {:get transcript-md-handler}]
@@ -4319,10 +4332,6 @@
         [(sid-route "/usage") {:get usage-handler}]
         [(sid-route "/workspace") {:get workspace-handler}]
         [(sid-route "/workspace/root") {:patch change-root-handler}]
-        [(sid-route "/workspace/drafts") {:get drafts-handler :post create-draft-handler}]
-        [(sid-route "/workspace/drafts/:workspace-id") {:delete abandon-draft-handler}]
-        [(sid-route "/workspace/stash") {:post stash-draft-handler}]
-        [(sid-route "/workspace/resume") {:post resume-draft-handler}]
         [(sid-route "/forks") {:get fork-points-handler :post fork-session-handler}]
         [(sid-route "/suggest") {:get suggest-handler}]
         [(sid-route "/attachments") {:post upload-attachment-handler}]
@@ -4433,12 +4442,6 @@
     (wrap-errors)
     (wrap-cors)))
 
-(defn local-handler
-  "Build the SDK handler for an owned stdio engine, without opening HTTP listeners.
-   The caller owns process lifetime and must select an isolated database."
-  []
-  (app nil []))
-
 (defonce ^:private live-app
   ;; `{:handler ring-handler :fp routes-fingerprint}` — the handler Jetty
   ;; actually calls, rebuilt whenever the contribution fingerprint moves
@@ -4502,6 +4505,13 @@
        (catch Throwable t
          (tel/log! {:level :warn :id ::toggles-hydrate-failed :data {:error (ex-message t)}}
                    "Toggle hydration from config failed; defaults stand."))))
+
+(defn local-handler
+  "Build the SDK handler for an owned stdio engine, without opening HTTP listeners.
+   The caller owns process lifetime and must select an isolated database."
+  []
+  (install-toggle-persistence!)
+  (app nil []))
 
 (defn- bind-failure?
   "True when `t`'s cause chain carries a port-already-bound `BindException` —
