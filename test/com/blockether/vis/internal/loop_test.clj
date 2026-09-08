@@ -9773,7 +9773,17 @@
                                                :tool-calls []
                                                :tokens {}})))]
                   (let [result (lp/iteration-loop environment request {:session-turn-id tid})]
-                    (reset! loop-result (select-keys result [:status-id :trace :iteration-count]))
+                    (reset! loop-result
+                      (assoc (select-keys result [:status-id :trace :iteration-count])
+                        :worker-errors
+                        (mapv (fn [path]
+                                (with-open [reader (clojure.java.io/reader path)]
+                                  (vec (take-last 30
+                                                  (remove #(str/starts-with?
+                                                             %
+                                                             "Picked up JAVA_TOOL_OPTIONS:")
+                                                    (line-seq reader))))))
+                              (keep #(get-in % [:error :data :log]) (:trace result)))))
                     (expect (pos? @idx) (pr-str result))))
                 (let [iterations (persistance/db-list-session-turn-iterations db tid)
                       rows (mapcat #(tree-seq (comp seq :children) :children %)
