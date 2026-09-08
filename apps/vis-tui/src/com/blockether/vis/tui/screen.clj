@@ -1697,7 +1697,7 @@
 
 (defn- disclosure-copy-regions
   "Copy targets for expanded bodies and the single compact source header.
-   Header targets occupy only the explicit Copy suffix; the rest toggles code.
+   Header targets occupy only the inset COPY label; the rest toggles code.
    These win over whole-bubble copy without affecting drag selection."
   [layout text-top inner-h cols]
   (let [bubble-left
@@ -1748,7 +1748,8 @@
                          (< abs-row bottom-limit))]
 
           {:row abs-row
-           :col (if header? (+ bubble-left (- bubble-w copy-width)) bubble-left)
+           :col
+           (if header? (+ bubble-left (- bubble-w (long (:right-inset m)) copy-width)) bubble-left)
            :width (if header? copy-width bubble-w)
            :height 1
            :text text

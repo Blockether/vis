@@ -1742,6 +1742,8 @@
 
       nil)))
 
+(def ^:private code-copy-label "COPY")
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -2035,12 +2037,14 @@
                                  trace-inset
                                  (if (:activity-content? meta) content-col 0)))
                       fbx (+ (long bx) (if (:activity-content? meta) content-col 0))
+                      right-inset (long (or (:right-inset meta) 1))
                       meta (if (:copy-width meta)
                              (assoc meta
-                               :click-width (max 0 (- (long iw) (long (:copy-width meta)))))
+                               :click-width
+                               (max 0 (- (long iw) right-inset (long (:copy-width meta)))))
                              meta)
                       line (if-let [suffix (not-empty (:right-suffix meta))]
-                             (let [room (max 0 (- (long iw) 1 (p/display-width suffix)))
+                             (let [room (max 0 (- (long iw) right-inset (p/display-width suffix)))
                                    prefix (p/ellipsize (:headline-prefix meta) (max 0 (dec room)))
                                    padding (max 0 (- room (p/display-width prefix)))]
 
@@ -2496,6 +2500,15 @@
                       (p/set-colors! g row-fg row-bg)
                       (p/fill-rect! g fbx y fill-iw 1)
                       (paint-ansi-line! g x y (subs line 1) row-fg row-bg)
+                      (when-let [copy-width (:copy-width meta)]
+                        (p/set-colors! g t/link-chrome-fg row-bg)
+                        (p/styled g
+                                  [p/BOLD]
+                                  (p/put-str! g
+                                              (+ (long x)
+                                                 (- (long iw) right-inset (long copy-width)))
+                                              y
+                                              code-copy-label)))
                       (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)
@@ -6067,6 +6080,7 @@
                           {:kind :activity-header
                            :headline-prefix prefix
                            :right-suffix suffix
+                           :right-inset 2
                            :node-id (str node-id ":#band")
                            :item-id "#band"
                            :collapsed? (not band-open?)
@@ -6628,7 +6642,7 @@
                         (and code-node-id (>= header-width 20))
 
                         suffix
-                        (str/join "  " (keep identity [duration (when copy? "❐")]))
+                        (str/join "  " (keep identity [duration (when copy? code-copy-label)]))
 
                         headline-prefix
                         header
@@ -6642,11 +6656,12 @@
                               :meta {:kind :toggle-details
                                      :headline-prefix headline-prefix
                                      :right-suffix suffix
+                                     :right-inset 2
                                      :node-id code-node-id
                                      :session-id session-id
                                      :collapsed? (not code-expanded?)
                                      :copy-text code-text
-                                     :copy-width (when copy? 2)}}]
+                                     :copy-width (when copy? (p/display-width code-copy-label))}}]
                             [])
                           (if code-expanded?
                             (conj (into [(line-entry (str c-marker ""))]
