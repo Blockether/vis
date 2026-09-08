@@ -2,6 +2,16 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.43 (5487) — 2026-09-08
+<!-- commit: 599dfd9acb5ae2c7ff2524fa45d28bbad3b5e8dd -->
+
+- Allow the MCP rows' own swipe verbs in settings
+- Simplify guides and improve mobile tables
+- Unify client groups and align execution text
+- Match MCP servers panel to provider rows
+- Clear completed project removal state
+- Record companion build 5468
+
 ## 0.1.43 (5468) — 2026-09-07
 <!-- commit: 063f8998138a1888c28a31a347ddb1fda02334ce -->
 
