@@ -140,13 +140,21 @@
                  (:api-key (config/->svar-provider
                              {:id :lmstudio :api-key "user-key" :models [{:name "probe"}]})))))
   (it "merges explicit provider network values over preset defaults"
-      (expect (= {:timeout-ms 1800000
-                  :first-byte-timeout-ms 700000
-                  :idle-timeout-ms 600000
-                  :semantic-timeout-ms 600000}
-                 (:network (config/->svar-provider {:id :lmstudio
-                                                    :models [{:name "probe"}]
-                                                    :network {:first-byte-timeout-ms 700000}})))))
+      ;; The preset belongs to an extension. A focused run must not depend on
+      ;; another test namespace having registered that extension first.
+      (with-redefs [registry/provider-by-id (constantly {:provider/preset
+                                                         {:network {:timeout-ms 1800000
+                                                                    :first-byte-timeout-ms 600000
+                                                                    :idle-timeout-ms 600000
+                                                                    :semantic-timeout-ms 600000}}})]
+        (expect (= {:timeout-ms 1800000
+                    :first-byte-timeout-ms 700000
+                    :idle-timeout-ms 600000
+                    :semantic-timeout-ms 600000}
+                   (:network (config/->svar-provider {:id :lmstudio
+                                                      :models [{:name "probe"}]
+                                                      :network {:first-byte-timeout-ms
+                                                                700000}}))))))
   (it "leaves cloud presets keyless when none is configured (no catalog dummy)"
       ;; Hermetic: a DEVELOPER machine may hold a real OpenRouter credential
       ;; (env/keychain), and the registry token fn would resolve it — the claim
