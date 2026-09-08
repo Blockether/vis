@@ -1128,6 +1128,58 @@
            (f))
          (finally (.delete (io/file env-path)) (.delete (io/file local-path))))))
 
+(defdescribe
+  dotenv-file-cache-test
+  ;; Regression, gateway CPU audit: every variable lookup walked both dotenv
+  ;; files, and a workspace with neither is the common case - the daemon opened
+  ;; the two absent files over and over, each a FileNotFoundException with a full
+  ;; stack trace, to learn again that nothing was there.
+  (it "opens an absent file once and answers from the cache after that"
+      (let [path
+            (str (System/getProperty "java.io.tmpdir") "/vis-no-such-env-" (System/nanoTime))
+
+            opens
+            (atom 0)
+
+            real
+            io/reader]
+
+        (binding [config/*extension-dotenv-path*
+                  path
+
+                  config/*extension-dotenv-local-path*
+                  nil]
+
+          (with-redefs [io/reader (fn [x & more]
+                                    (when (= (str x) path) (swap! opens inc))
+                                    (apply real x more))]
+            (expect (nil? (#'config/dotenv-value "NOPE")))
+            (expect (nil? (#'config/dotenv-value "NOPE")))
+            (expect (nil? (#'config/dotenv-value "STILL_NOPE")))
+            (expect (= 1 @opens))))))
+  (it "re-reads a file that changed and keeps serving one that did not"
+      (with-dotenv "A=one\n"
+                   nil
+                   (fn []
+                     (let [path
+                           config/*extension-dotenv-path*
+
+                           opens
+                           (atom 0)
+
+                           real
+                           io/reader]
+
+                       (with-redefs [io/reader (fn [x & more]
+                                                 (when (= (str x) path) (swap! opens inc))
+                                                 (apply real x more))]
+                         (expect (= "one" (#'config/dotenv-value "A")))
+                         (expect (= "one" (#'config/dotenv-value "A")))
+                         (expect (= 1 @opens))
+                         (spit path "A=two-longer\n")
+                         (expect (= "two-longer" (#'config/dotenv-value "A")))
+                         (expect (= 2 @opens))))))))
+
 (defn- dotenv-status
   "Status for `name` DECLARED as `dotenv:` — the RENAME form of the same file."
   [name]

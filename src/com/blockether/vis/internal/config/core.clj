@@ -840,7 +840,7 @@
                  :denied-domains :exclude-domains :allow-private :rules :host :methods :allow
                  :method :text :is-replace :include-gitignored-paths :always-exclude :backend
                  :theme-name :contributors-disabled :servers :transport :command :args :cwd :env
-                 :url :headers :python :source-paths :titling :mode :provider})
+                 :url :headers :python :source-paths :index-url :titling :mode :provider})
          svar-wire->runtime))
 
 (defn runtime-config
@@ -1867,7 +1867,7 @@
       (some-> (first (str/split value #"\s+#" 2))
               str/trim))))
 
-(defn- dotenv-file-map
+(defn- parse-dotenv-file
   "Every assignment in dotenv file `path` as `{\"NAME\" \"value\"}`, or nil when the
    file is absent or unreadable. A later assignment wins, following shell
    semantics, and an explicitly blank value is PRESERVED so it can mask the same
@@ -1888,6 +1888,34 @@
                    (line-seq reader)))
          (catch java.io.FileNotFoundException _ nil)
          (catch java.io.IOException _ nil))))
+
+(defonce ^:private dotenv-cache
+  ;; path -> {:stamp [lastModified length] :map parsed-or-nil}
+  (atom {}))
+
+(defn- dotenv-file-map
+  "[[parse-dotenv-file]], re-parsed only when the file's mtime or length moved.
+   Every variable lookup walks BOTH dotenv files, and a workspace with neither is
+   the common case: a JFR profile of a live gateway caught it opening the two
+   absent files over and over, each attempt a `FileNotFoundException` with a full
+   stack trace, to learn again that nothing is there. Two stats now answer an
+   unchanged file; an absent one is cached as nil until it appears."
+  [path]
+  (when path
+    (let [f
+          (io/file (str path))
+
+          stamp
+          [(.lastModified f) (.length f)]
+
+          hit
+          (get @dotenv-cache (str path))]
+
+      (if (and hit (= stamp (:stamp hit)))
+        (:map hit)
+        (let [m (parse-dotenv-file path)]
+          (swap! dotenv-cache assoc (str path) {:stamp stamp :map m})
+          m)))))
 
 (defn- dotenv-maps
   "The workspace's `.env` then `.env.local`, in precedence order."
