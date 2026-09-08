@@ -75,6 +75,21 @@ Imports do not install packages. Prepare a locked project explicitly with
 a package that requires refused native operations may work only in an extension.
 After updating installed packages, use `/reload` to rebuild session workers.
 
+A locked uv project can install its own package and local dependencies editably.
+Their `.pth` files or backend import hooks resolve imports to the source checkout.
+After editing Python source, `/reload` refreshes editable imports and extension
+tools without another sync or gateway restart. Dependency or packaging-metadata
+changes require another sync. This requires a Vis build containing
+`vis-python-runtime` 0.5.5 or later; see the complete
+[package-authoring example](extending.md#uv-projects).
+
+Editable source is not a frozen snapshot. Already imported modules can retain old
+code until reload, and an in-flight call can still use old bindings. Native extension
+libraries are not hot-reloaded. Source paths referenced by an editable install must
+remain within the sandbox's allowed filesystem roots; installing a package grants
+no extra access. Use `print(package.__file__)` after importing your package to check
+whether it resolves to the checkout or an installed copy.
+
 Attachment functions are available without an import. `attach(...)` stores a
 file and returns its descriptor. Use `list_attachments()`, `get_attachment(...)`,
 `read_attachment(...)` and `show_attachment(...)` to retrieve attachments by
@@ -103,7 +118,7 @@ through `python.runner`; see [Configuration](configuration.md#python-import-root
 
 | Runtime | Location |
 | --- | --- |
-| JVM | `com.blockether/vis-python-runtime-native-<platform>` on the classpath |
+| JVM | Git-pinned `vis-python-runtime` bridge; platform archive cached under `~/.vis/python/runtime/<version>/<platform>/` |
 | Native binary and release bundle | `vis-agent-python/` beside the executable |
 
 `VIS_PYTHON_NATIVE_PATH` points a run at another copy of the library and

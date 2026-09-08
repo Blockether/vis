@@ -365,9 +365,8 @@ python:
   index_url: https://gateway.example.com/simple
 ```
 
-This setting applies to Vis-managed pip installs (automatic imports, extension
-script dependencies and pytest) and to extension projects selected with
-[`tool.vis.project`](extending.md#uv-projects). Vis passes it as uv's
+This setting applies to Vis-managed pip installs and to extension projects selected
+with [`tool.vis.project`](extending.md#uv-projects). Vis passes it as uv's
 `--default-index`; named indexes and `[tool.uv.sources]` retain uv semantics.
 It is read from merged configuration for each install. It does not change a
 project's own `.venv` or configure uv commands run outside Vis.
@@ -399,6 +398,9 @@ python:
 ```
 
 Configured paths come first, then inferred ones; `PYTHONPATH` precedes both.
+An [editable package install](extending.md#uv-projects) supplies its own import
+roots through `.pth` files or backend hooks; it does not need these layout overrides.
+Import roots do not grant filesystem permissions or install dependencies.
 `runner: project` runs the project's own pytest with its installed
 dependencies; `vispython` runs in the embedded sandbox.
 An explicit `runner` argument on the call

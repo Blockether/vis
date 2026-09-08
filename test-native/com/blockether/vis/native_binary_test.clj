@@ -983,3 +983,130 @@
           (expect (= lock-before (slurp (io/file project "uv.lock"))))
           (expect (not (.exists (io/file project ".venv")))))
         (finally (delete-tree! dir))))))
+
+(defdescribe
+  native-documented-editable-package-test
+  ;; #175: execute the guide's actual files and commands with a real PEP 660 backend.
+  (it
+    "runs the documented setuptools package, source edits and dependency updates"
+    (let [dir
+          (temp-dir "vis-documented-package")
+
+          bin
+          (require-binary)
+
+          guide
+          (-> (slurp (io/resource "vis-docs/extending.md"))
+              (str/split #"### uv projects\n" 2)
+              second
+              (str/split #"\n## " 2)
+              first)
+
+          files
+          (into {}
+                (map (fn [[_ path source]]
+                       [path (str source "\n")]))
+                (re-seq #"(?s)```(?:toml|python)\n# ([^\n]+)\n(.*?)\n```" guide))
+
+          commands
+          (vec (mapcat (comp str/split-lines second)
+                       (take 2 (re-seq #"(?s)```bash\n(.*?)\n```" guide))))
+
+          run
+          (fn [command]
+            (run-binary
+              dir
+              ["bash" "-c"
+               (str/replace
+                 command
+                 #"(?m)^vis-agent "
+                 (str (pr-str (.getAbsolutePath bin)) " " (pr-str (str "-Duser.home=" dir)) " "))]
+              120))
+
+          checked
+          (fn [command]
+            (let [result (run command)]
+              (expect (= 0 (:exit result)) (:output result))
+              (:output result)))
+
+          project
+          (io/file dir "einmal")
+
+          module
+          (io/file project "src/einmal/__init__.py")]
+
+      (try
+        (expect (= #{"einmal/pyproject.toml" "einmal/src/einmal/__init__.py"
+                     "einmal/tests/test_status.py" ".vis/extensions/einmal_tools.py"}
+                   (set (keys files))))
+        (expect (= 6 (count commands)))
+        (doseq [[path source] files]
+          (let [file (io/file dir path)]
+            (io/make-parents file)
+            (spit file source)))
+        (checked (commands 0))
+        (let [lock-before (slurp (io/file project "uv.lock"))]
+          (checked (commands 1))
+          (let [imported (checked (commands 2))]
+            (expect (str/includes? imported (str "ready " (.getCanonicalPath module))) imported))
+          (let [registered (checked (commands 3))]
+            (expect (str/includes? registered "Package example.") registered))
+          (checked (commands 4))
+          (expect (str/includes? (checked (commands 5)) "1 passed"))
+          (let [mtime (.lastModified module)]
+            (spit module (str/replace (slurp module) "ready" "fresh"))
+            (.setLastModified module mtime))
+          ;; Neither the install command nor lock generation is repeated for source edits.
+          (let [imported (checked (commands 2))]
+            (expect (str/includes? imported (str "fresh " (.getCanonicalPath module))) imported))
+          (expect (str/includes? (checked (commands 3)) "Package example."))
+          (let [test-file (io/file project "tests/test_status.py")]
+            (spit test-file (str/replace (slurp test-file) "ready" "fresh")))
+          (expect (str/includes? (checked (commands 5)) "1 passed"))
+          (expect (= lock-before (slurp (io/file project "uv.lock")))))
+        (let [metadata
+              (io/file project "pyproject.toml")
+
+              dependency
+              (io/file dir "shared-tools")
+
+              dep-module
+              (io/file dependency "src/shared_tools/__init__.py")
+
+              local-source
+              (second (first (re-seq #"(?s)```toml\n(\[tool.uv.sources\]\n.*?)\n```" guide)))]
+
+          (expect (some? local-source))
+          (io/make-parents dep-module)
+          (spit dep-module "VALUE = 41\n")
+          (spit (io/file dependency "pyproject.toml")
+                (str/replace (files "einmal/pyproject.toml")
+                             "name = \"einmal\""
+                             "name = \"shared-tools\""))
+          (spit metadata
+                (str (str/replace (slurp metadata)
+                                  "dependencies = []"
+                                  "dependencies = [\"idna==3.10\", \"shared-tools\"]")
+                     "\n"
+                     local-source
+                     "\n"))
+          (expect (not (str/includes? (checked (commands 3)) "Package example.")))
+          (checked (commands 0))
+          (checked (commands 1))
+          (expect (str/includes? (checked
+                                   "vis-agent python -c \"import idna; print(idna.__version__)\"")
+                                 "3.10"))
+          (expect (str/includes? (checked (commands 3)) "Package example."))
+          (let
+            [probe
+             "vis-agent python -c \"import shared_tools; print(shared_tools.VALUE, shared_tools.__file__)\""
+
+             mtime
+             (.lastModified dep-module)]
+
+            (expect (str/includes? (checked probe) (str "41 " (.getCanonicalPath dep-module))))
+            (spit dep-module "VALUE = 42\n")
+            (.setLastModified dep-module mtime)
+            (expect (str/includes? (checked probe) (str "42 " (.getCanonicalPath dep-module))))))
+        (expect (not (.exists (io/file project ".venv"))))
+        (finally (delete-tree! dir))))))

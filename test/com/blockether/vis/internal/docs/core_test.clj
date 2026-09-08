@@ -231,6 +231,17 @@
       (doseq [uri ["/docs/clojure-extensions" "/docs/clojure-extensions.md"]]
         (expect (nil? (docs/handle {:uri uri :headers {}}))))))
 
+(defdescribe editable-package-docs-test
+             ;; #175: the authoring guide must not undo editable installs in its instructions.
+             (it "documents editable package metadata instead of copied local wheels"
+                 (let [md (page-md "extending")]
+                   (expect (not (re-find #"--no-editable|installed\s+noneditably" md)))
+                   (doseq [file ["einmal/pyproject.toml" "einmal/src/einmal/__init__.py"
+                                 ".vis/extensions/einmal_tools.py" "einmal/tests/test_status.py"]]
+                     (expect (str/includes? md (str "# " file "\n"))
+                             (str "Missing executable package example: " file)))
+                   (expect (str/includes? md "editable = true")))))
+
 ;; A live view is the one primitive an author cannot infer from the field builders:
 ;; its verbs differ per node type, and `vis.output` deliberately does not match the
 ;; `log` node it builds (`vis.log` is the engine log line). When that Python surface
