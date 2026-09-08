@@ -441,6 +441,42 @@
 
     (head-of (if (== got n) buf (java.util.Arrays/copyOf buf got)))))
 
+(def ^:private ^:const TAIL_SCAN_BYTES
+  "How much of a journal's END [[terminal-tail?]] reads. A turn's terminal and
+   whatever the producer appends after it (`session.title_updated`, an orphan
+   reap's `turn.failed`) are a few hundred bytes each; measured over 626 real
+   journals, 8 KiB found 75 of 83 finished turns and 64 KiB found all 83."
+  65536)
+
+(def ^:private TERMINAL_TYPES #{"turn.completed" "turn.failed" "turn.cancelled"})
+
+(defn- terminal-tail?
+  "True when a COMPLETE line in the last `TAIL_SCAN_BYTES` of `f` is a terminal
+   event - the cheap answer to the question [[hydrate!]] asks first.
+
+   SOUND by construction: it says yes only for a line the full parse would also
+   read, so it can never skip a turn the full path would mirror; it can only
+   answer no and hand over. A line cut by the window's start is dropped, a
+   trailing partial line fails to parse and is dropped (as [[whole-bytes]] drops
+   it), and any IO trouble is a no.
+
+   The full path reads and JSON-parses the ENTIRE journal to learn that a turn is
+   over - 82 ms for a 7 MB session, under the sid's tail lock, once per
+   subscriber per session - for a fact the last few lines already state."
+  [^File f]
+  (try (with-open [raf (RandomAccessFile. f "r")]
+         (let [len (.length raf)
+               n (long (min len (long TAIL_SCAN_BYTES)))
+               buf (byte-array n)
+               got (read-at! raf (- len n) buf n)
+               lines (str/split-lines (String. buf 0 (int got) StandardCharsets/UTF_8))
+               ;; The window's first line is whole only when the window is the whole file.
+               lines (if (< n len) (rest lines) lines)]
+
+           (boolean (some #(contains? TERMINAL_TYPES (get % "type"))
+                          (keep wire/parse-json (remove str/blank? lines))))))
+       (catch Throwable _ false)))
+
 (defn- journal-head
   "[[read-head!]] for a file the caller has not opened. nil when unreadable."
   ^String [^File f]
@@ -892,7 +928,9 @@
   [sid]
   (try
     (when-let [f (session-file sid)]
-      (when (.exists f)
+      ;; A finished turn is the common case and its answer sits in the last few
+      ;; lines: settle it from the tail before reading megabytes under the lock.
+      (when (and (.exists f) (not (terminal-tail? f)))
         #_{:clj-kondo/ignore [:locking-suspicious-lock]}
         (locking (tail-lock sid)
           (let [raw (Files/readAllBytes (.toPath f))

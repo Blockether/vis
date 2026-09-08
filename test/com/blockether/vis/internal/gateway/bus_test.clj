@@ -713,3 +713,94 @@
                              (expect (bus/session-waiting? sid))
                              (bus/forget! sid)
                              (expect (not (bus/session-waiting? sid))))))))
+
+(defdescribe
+  terminal-tail-test
+  ;; Regression, gateway CPU audit: `hydrate!` read and JSON-parsed a session's
+  ;; WHOLE journal - 82 ms for a 7 MB one, under the sid's tail lock, once per
+  ;; subscriber per session - to learn that the turn had already ended. The
+  ;; answer sits in the last few lines. The tail read must be SOUND: yes only
+  ;; when the full parse would also say yes, so it can never skip a live turn.
+  (let [tail?
+        (var-get #'bus/terminal-tail?)
+
+        line
+        (fn [type]
+          (wire/json-str {:schema 1 :seq 1 :type type}))
+
+        journal!
+        (fn [sid text]
+          (let [f (#'bus/session-file sid)]
+            (spit f text)
+            f))]
+
+    (it "answers yes when the terminal is followed by what the producer appends after it"
+        (with-temp-journal (fn [_ _]
+                             (let [f (journal! "tail-title"
+                                               (str (line "turn.started")
+                                                    "\n"
+                                                    (line "content.delta")
+                                                    "\n"
+                                                    (line "turn.completed")
+                                                    "\n"
+                                                    (line "session.title_updated")
+                                                    "\n"))]
+                               (expect (true? (tail? f)))))))
+    (it "ignores a trailing partial line a producer is still writing"
+        (with-temp-journal (fn [_ _]
+                             (let [f (journal! "tail-partial"
+                                               (str (line "turn.started")
+                                                    "\n" (line "turn.failed")
+                                                    "\n" "{\"schema\":1,\"type\":\"conte"))]
+                               (expect (true? (tail? f)))))))
+    (it "answers no for a turn still in flight, so the full path takes over"
+        (with-temp-journal
+          (fn [_ _]
+            (let [f (journal! "tail-live"
+                              (str (line "turn.started") "\n" (line "content.delta") "\n"))]
+              (expect (false? (tail? f)))))))
+    (it "finds a terminal inside the window of a journal larger than it"
+        (with-temp-journal (fn [_ _]
+                             (let [filler
+                                   (apply str (repeat 2000 (str (line "content.delta") "\n")))
+
+                                   f
+                                   (journal! "tail-big"
+                                             (str (line "turn.started")
+                                                  "\n"
+                                                  filler
+                                                  (line "turn.cancelled")
+                                                  "\n"
+                                                  (line "session.title_updated")
+                                                  "\n"))]
+
+                               (expect (> (.length f) (long (var-get #'bus/TAIL_SCAN_BYTES))))
+                               (expect (true? (tail? f)))))))
+    (it "answers no - never a false yes - when the terminal sits beyond the window"
+        (with-temp-journal
+          (fn [_ _]
+            (let [filler
+                  (apply str (repeat 2000 (str (line "content.delta") "\n")))
+
+                  f
+                  (journal! "tail-buried"
+                            (str (line "turn.started") "\n" (line "turn.completed") "\n" filler))]
+
+              (expect (false? (tail? f)))))))
+    (it "keeps a finished journal out of the full path entirely"
+        (with-temp-journal (fn [capture _]
+                             (let [f
+                                   (journal!
+                                     "tail-skip"
+                                     (str (line "turn.started") "\n" (line "turn.completed") "\n"))
+
+                                   reads
+                                   (atom 0)]
+
+                               (with-redefs [bus/set-tail! (fn [& _]
+                                                             (swap! reads inc)
+                                                             nil)]
+                                 (bus/hydrate! "tail-skip"))
+                               (expect (.isFile f))
+                               (expect (zero? @reads))
+                               (expect (empty? @capture))))))))
