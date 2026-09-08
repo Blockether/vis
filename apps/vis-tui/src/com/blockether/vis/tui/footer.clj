@@ -542,7 +542,7 @@
     (cond-> (vec git-spans)
       ;; Response controls read reasoning → verbosity → fast, matching Companion.
       reasoning?
-      (conj {:text (str "◇ " (name reasoning-level))
+      (conj {:text (str "reasoning: " (name reasoning-level))
              :fg t/footer-fg-muted
              :bold? false
              :region :left
@@ -557,7 +557,7 @@
              :priority 5})
 
       verbosity?
-      (conj {:text (str "≡ " (name verbosity))
+      (conj {:text (str "verbosity: " (name verbosity))
              :fg t/footer-fg-muted
              :bold? false
              :region :left
@@ -572,7 +572,7 @@
              :priority 5})
 
       codex-fast?
-      (conj {:text "» fast" :fg t/footer-fg-strong :bold? true :region :left :priority 2})
+      (conj {:text "speed: fast" :fg t/footer-fg-strong :bold? true :region :left :priority 2})
 
       codex-fast?
       (conj {:text (str "(" (keymap/label-for :toggle-codex-fast) ")")

@@ -517,10 +517,31 @@
             (expect (empty? (->> (build-limits-segments {:messages [] :settings {}} 0)
                                  (filter #(= :right (:region %)))
                                  (mapv :text))))))))
-  (it "shows Fast and its shortcut only for an active Codex session"
+  (it "renders response controls with text labels, values and shortcut hints"
+      (with-redefs-fn {#'footer/session-model-info (constantly {:name "gpt-6-astra"
+                                                                :provider :openai-codex
+                                                                :reasoning-effort? true
+                                                                :verbosity-style :openai-text})
+                       #'vis/toggle-value (fn [id]
+                                            (= "codex_fast_mode" id))}
+        (fn []
+          (doseq [cols [80 120]]
+            (let [db {:messages []
+                      :settings {:reasoning-level "deep" :verbosity "low"}
+                      :workspace {"fork_ms" 1}}
+                  capture (cap/capture! {:cols cols
+                                         :rows 4
+                                         :paint! (fn [{:keys [g]}]
+                                                   (footer/draw-footer! g db 1 cols 0))})]
+
+              (expect (nil? (:error capture)))
+              (expect (= (str "reasoning: deep (C-x r)  /  verbosity: low (C-x l)  /  "
+                              "speed: fast (C-x q)")
+                         (str/trim (cap/frame-text capture)))))))))
+  (it "shows speed and its shortcut only for an active Codex session"
       (let [build-segments @#'footer/build-segments]
         (try (vis/toggle-set-value! "codex_fast_mode" true)
-             (doseq [[provider expected] [[:openai-codex ["» fast" "(C-x q)"]]
+             (doseq [[provider expected] [[:openai-codex ["speed: fast" "(C-x q)"]]
                                           [:github-copilot []]]]
                (with-redefs-fn {#'footer/session-model-info (fn [_]
                                                               {:name "gpt-5.6-sol"
@@ -529,14 +550,15 @@
                    (let [db {:messages [] :settings {}}
                          texts (mapv :text (build-segments db 0))]
 
-                     (expect (= expected (filterv #{"» fast" "(C-x q)"} texts)))
+                     (expect (= expected (filterv #{"speed: fast" "(C-x q)"} texts)))
                      (when (= :openai-codex provider)
                        (let [capture (cap/capture! {:cols 120
                                                     :rows 4
                                                     :paint! (fn [{:keys [g]}]
                                                               (footer/draw-footer! g db 1 120 0))})]
                          (expect (nil? (:error capture)))
-                         (expect (str/includes? (cap/frame-text capture) "» fast (C-x q)"))))))))
+                         (expect (str/includes? (cap/frame-text capture)
+                                                "speed: fast (C-x q)"))))))))
              (finally (vis/toggle-reset-to-default! "codex_fast_mode")))))
   (it "hides the verbosity knob when the session's model rejects the field"
       ;; Regression: the chip was gated on the provider being `:openai-codex`, so a
@@ -553,7 +575,7 @@
                                                                    :model "claude-opus-4-8"}}
                                              0)
                              (mapv :text))]
-              (expect (not-any? #(str/starts-with? % "≡ ") texts)))))))
+              (expect (not-any? #(str/starts-with? % "verbosity: ") texts)))))))
   (it "shows the verbosity knob whenever svar stamped a verbosity style"
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/session-model-info (fn [_]
@@ -567,7 +589,7 @@
                                                                    :model "gpt-5.6-sol"}}
                                              0)
                              (mapv :text))]
-              (expect (some #(= "≡ high" %) texts)))))))
+              (expect (some #(= "verbosity: high" %) texts)))))))
   (it "uses gateway model details to show Astra verbosity only on a supported session"
       ;; Regression, Vis session 95c4a9b0-ba88-4e8d-86ef-252cb522bcf4: exercise
       ;; the real client decoder and resolver rather than stubbing model capabilities.
@@ -587,15 +609,15 @@
                                                            {"name" "claude-opus-5"
                                                             "is_reasoning_effort_configurable" true
                                                             "verbosity_style" nil}]}])]
-        (doseq [[provider model expected] [["openai-codex" "gpt-6-astra" ["≡ high"]]
-                                           ["github-copilot" "gpt-6-astra" ["≡ high"]]
+        (doseq [[provider model expected] [["openai-codex" "gpt-6-astra" ["verbosity: high"]]
+                                           ["github-copilot" "gpt-6-astra" ["verbosity: high"]]
                                            ["github-copilot" "claude-opus-5" []]]]
           (let [db {:messages []
                     :settings {:verbosity "high"}
                     :session-model-pref {:provider provider :model model}}
                 texts (mapv :text (#'footer/build-segments db 0))]
 
-            (expect (= expected (filterv #(str/starts-with? % "≡ ") texts)))))))
+            (expect (= expected (filterv #(str/starts-with? % "verbosity: ") texts)))))))
   (it "reads capability off the SESSION's model, not the global router default"
       ;; Regression: opening a GitHub Copilot session offered no way to change
       ;; reasoning, because the footer asked the router's DEFAULT model instead
@@ -616,7 +638,8 @@
                                                                    :model "gpt-5.6-sol"}}
                                              0)
                              (mapv :text))]
-              (expect (= ["◇ deep" "≡ medium"] (filterv #{"◇ deep" "≡ medium"} texts))))))))
+              (expect (= ["reasoning: deep" "verbosity: medium"]
+                         (filterv #{"reasoning: deep" "verbosity: medium"} texts))))))))
   (it "resolves the SESSION's model, falling back to the router root without a pick"
       ;; The plumbing under the chips: the same GitHub Copilot provider serves an
       ;; Anthropic wire for Claude and a Responses wire for GPT, so asking the
