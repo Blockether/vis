@@ -10,6 +10,7 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Remove extra spacing above opening prose
 - Remove trailing settings divider
 - Record companion build 5564
+
 ## 0.1.44 (5564) — 2026-09-08
 <!-- commit: a549750cb51be2d7d427a2bf77d8b1bb7d424138 -->
 
