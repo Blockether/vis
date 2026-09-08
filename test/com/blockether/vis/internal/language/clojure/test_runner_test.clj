@@ -1028,6 +1028,60 @@
                             #{(if (contains? selector "ns") (get selector "ns") "sample.core-test")}
                             (first @calls)))))))))))
 
+;; Regression: session 633cdc58-89fe-4b3d-88ec-caa624d118ed indexed a hidden
+;; worktree as part of the workspace, blocking even a file plus namespace selector.
+(defdescribe
+  hidden-test-copy-selection-test
+  (it "ignores hidden copies and their extra tests during automatic discovery"
+      (doseq [copy [".gitworktrees/council" ".worktrees/feature" "test/.cache"]]
+        (with-project
+          (assoc thing-test-file
+            "src/com/example/thing.clj" "(ns com.example.thing)\n"
+            (str copy "/test/com/example/thing_test.clj") "(ns com.example.thing-test)\n"
+            (str copy "/test/com/example/hidden_test.clj") "(ns com.example.hidden-test)\n")
+          (fn [root]
+            (doseq [selector [{} {"path" "."} {"path" "test"}
+                              {"path" "test/com/example/thing_test.clj"}
+                              {"path" "src/com/example/thing.clj"} {"ns" "com.example.thing-test"}
+                              {"ns" "com.example.thing-test/adds-test"}
+                              {"path" "test/com/example/thing_test.clj"
+                               "ns" "com.example.thing-test/adds-test"}]]
+              (expect (= ["com.example.thing-test"] (:nses (run-capturing root selector)))
+                      (pr-str selector)))))))
+  (it "accepts an explicitly selected hidden worktree as a project, file or directory"
+      (with-project
+        (assoc thing-test-file
+          "deps.edn" "{}"
+          ".gitworktrees/council/deps.edn" "{}"
+          ".gitworktrees/council/src/com/example/thing.clj" "(ns com.example.thing)\n"
+          ".gitworktrees/council/test/com/example/thing_test.clj" "(ns com.example.thing-test)\n")
+        (fn [root]
+          (doseq [selector [{"cwd" ".gitworktrees/council"}
+                            {"cwd" ".gitworktrees/council" "path" "src/com/example/thing.clj"}
+                            {"path" ".gitworktrees/council"}
+                            {"path" ".gitworktrees/council/test/com/example/thing_test.clj"}]]
+            (let [seen (run-capturing root selector)]
+              (expect (= ["com.example.thing-test"] (:nses seen)))
+              (expect (= (.getPath (io/file root ".gitworktrees/council")) (:root seen))))))))
+  (it "does not load hidden worktree tests through the REPL source fallback"
+      (with-project {".gitworktrees/council/test/com/example/hidden_test.clj"
+                     "(ns com.example.hidden-test)\n"}
+                    (fn [root]
+                      (expect (nil? (#'tr/test-file-for root "com.example.hidden-test")))
+                      (expect (string? (#'tr/test-file-for
+                                        (io/file root ".gitworktrees/council")
+                                        "com.example.hidden-test"))))))
+  (it "still rejects genuinely duplicated test namespaces in selected source trees"
+      (with-project
+        (assoc thing-test-file
+          "other/test/com/example/thing_test.clj" "(ns com.example.thing-test)\n")
+        (fn [root]
+          (doseq [selector [{} {"path" "."} {"ns" "com.example.thing-test"}]]
+            (let [error
+                  (try (run-capturing root selector) nil (catch clojure.lang.ExceptionInfo e e))]
+              (expect (= :clj/bad-args (:type (ex-data error))))
+              (expect (str/includes? (or (ex-message error) "") "ambiguous test namespace"))))))))
+
 (defdescribe
   cljs-configuration-selection-test
   (it

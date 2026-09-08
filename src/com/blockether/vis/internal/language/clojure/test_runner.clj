@@ -571,14 +571,15 @@
   (assoc index ns-str (or file (get index ns-str))))
 
 (defn- test-source-tree
-  "Walk source directories without descending into generated target copies.
-   An explicitly selected root inside target is still accepted."
+  "Walk source directories, pruning hidden directories and generated target copies.
+   An explicitly selected root is still visited, even inside a pruned directory."
   [root]
   (tree-seq (fn [^java.io.File f]
               (.isDirectory f))
             (fn [^java.io.File dir]
               (remove (fn [^java.io.File f]
-                        (and (.isDirectory f) (= "target" (.getName f))))
+                        (and (.isDirectory f)
+                             (or (= "target" (.getName f)) (str/starts-with? (.getName f) "."))))
                 (.listFiles dir)))
             (io/file root)))
 
