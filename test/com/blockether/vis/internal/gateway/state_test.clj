@@ -1837,28 +1837,25 @@
                  (expect (true? (await-cancel token 4000))))
                (expect (true? (:stalled? @stall)))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
-    (it "leaves a turn alone while it runs a legitimately long tool/eval phase"
-        (let [sid
-              (str "stall-" (java.util.UUID/randomUUID))
+    (it "leaves a turn alone during long tool execution or Activity waits"
+        ;; Regression: gh.watch can wait past the stall ceiling after its last
+        ;; Activity snapshot, without the running tool being stalled.
+        (doseq [phase [:tool-start :form-activity]]
+          (let [sid (str "stall-" (java.util.UUID/randomUUID))
+                tid "t1"
+                token (cancellation/cancellation-token)
+                stall (atom (advance {:started? true}
+                                     {:phase phase}
+                                     (- (System/currentTimeMillis) 60000)))]
 
-              tid
-              "t1"
-
-              token
-              (cancellation/cancellation-token)
-
-              stall
-              (atom
-                {:phase :tool-start :started? true :last-ms (- (System/currentTimeMillis) 60000)})]
-
-          (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
-               (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
-                 (watchdog sid tid token stall)
-                 ;; The watchdog polls every 25ms here, so 400ms is a dozen-plus
-                 ;; decisions past the 150ms ceiling — proof, not a longer nap.
-                 (expect (false? (await-cancel token 400))))
-               (expect (nil? (:stalled? @stall)))
-               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+            (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+                 (with-redefs [state/TURN_STALL_TIMEOUT_MS 150]
+                   (watchdog sid tid token stall)
+                   ;; The watchdog polls every 25ms here, so 400ms is a dozen-plus
+                   ;; decisions past the 150ms ceiling — proof, not a longer nap.
+                   (expect (false? (await-cancel token 400))))
+                 (expect (nil? (:stalled? @stall)))
+                 (finally (cancellation/cancel! token) (swap! registry dissoc sid))))))
     (it "leaves a turn alone once it is no longer the current turn"
         (let [sid
               (str "stall-" (java.util.UUID/randomUUID))

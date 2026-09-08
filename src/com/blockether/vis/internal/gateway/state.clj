@@ -2464,12 +2464,12 @@
       (str "Turn stalled before reaching the provider: " (stall-detail-text stall)))))
 
 (def ^:private stall-exempt-phases
-  "Phases where a running turn may legitimately produce no chunk for a long time
-   — a shell run or Python execution. The stall watchdog never
-   (provider-call, reasoning/content streaming, response-parse, and the
-   between-iteration `:iteration-final` gap) is engine/provider-internal and must
-   never sit idle for `TURN_STALL_TIMEOUT_MS`."
-  #{:form-start :form-result :tool-start :shell-run :shell-bg})
+  "Phases where a running turn may legitimately produce no chunk for a long time:
+   shell/Python execution and Activity waits. The stall watchdog never cancels
+   these phases. Other phases (provider-call, reasoning/content streaming,
+   response-parse, and the between-iteration `:iteration-final` gap) are
+   engine/provider-internal and must never sit idle for `TURN_STALL_TIMEOUT_MS`."
+  #{:form-start :form-activity :form-result :tool-start :shell-run :shell-bg})
 
 (def ^:private stall-lifecycle-phases
   "Phases whose chunks are engine LIFECYCLE markers, not model output. `loop`
