@@ -9744,6 +9744,7 @@
                   "page = await council.threads()\nentries = await council.read(thread_id=page['entries'][0]['thread_id'], limit=1)\nentry = await council.get(entry_id=entries['entries'][0]['id'])\nprint(len(entry['content']))"
                   "before = await read_session()\nping = before['transcript']['turns'][0]['iterations'][0]['council_input']\nfold_session('-t1/i1', 'Council reviewed')\nafter = await read_session()\nassert ping == after['transcript']['turns'][0]['iterations'][0]['council_input']"]]]]
               (let [idx (atom -1)
+                    loop-result (atom nil)
                     tid (persistance/db-store-session-turn!
                           db
                           {:parent-session-id (:session-id environment) :user-request request})]
@@ -9772,6 +9773,7 @@
                                                :tool-calls []
                                                :tokens {}})))]
                   (let [result (lp/iteration-loop environment request {:session-turn-id tid})]
+                    (reset! loop-result (select-keys result [:status-id :trace :iteration-count]))
                     (expect (pos? @idx) (pr-str result))))
                 (let [iterations (persistance/db-list-session-turn-iterations db tid)
                       rows (mapcat #(tree-seq (comp seq :children) :children %)
@@ -9781,6 +9783,7 @@
 
                   (expect (= (if (= request "receive") 3 2) (count operations))
                           (pr-str {:request request
+                                   :loop-result @loop-result
                                    :forms (mapv #(select-keys % [:error :stdout :activity])
                                                 (mapcat :forms iterations))}))
                   (doseq [row operations]

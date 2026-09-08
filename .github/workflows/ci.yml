@@ -107,18 +107,18 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
           bwrap --unshare-all --ro-bind / / /bin/true
-      # Speech tests link sherpa-onnx JNI, while the suite-wide network guard
-      # refuses the JitPack download that supplies it. Provision the native once,
-      # before the guarded suite, and cache it for subsequent runs.
+      # The suite-wide network guard refuses native runtime downloads. Provision
+      # Python and sherpa-onnx before the guarded suite, including on a cold home.
       - uses: actions/cache@v6
         with:
           path: ~/.vis/native
           key: vis-native-${{ runner.os }}-${{ hashFiles('src/com/blockether/vis/internal/speech/sherpa.clj') }}
           restore-keys: vis-native-${{ runner.os }}-
-      - name: Prepare git dependencies and provision sherpa-onnx
+      - name: Prepare git dependencies and provision native runtimes
         run: |
           clojure -X:deps prep
           clojure -M -e "(require '[com.blockether.vis.internal.speech.sherpa :as sherpa]) (prn (sherpa/ensure-native!))"
+          clojure -M -e "(require '[com.blockether.vis.internal.python.runtime :as python-runtime]) (prn (python-runtime/ensure-library!))"
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.9.2"

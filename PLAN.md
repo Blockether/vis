@@ -1021,10 +1021,12 @@ The production installer and 15-artifact draft gate have regression coverage. Re
 container, palette and loop suites: 541 tests passed; scoped lint, reflection, workflow
 validation and shell checks passed. Companion: 2408 tests passed, 2 skipped; 184 browser
 stories passed; full theme contrast scan, compiler lint and production build passed.
-Full local JVM run: 5042 cases with a foundation prompt-size failure and an unrelated,
-uncommitted draft-discard-veto regression. Neither failure is marked resolved.
-Main CI 34273001995 passed macOS and all Python jobs but failed Linux council history
-with zero operation rows. Local focused and full loop suites pass; assertion diagnostics
-now include the actual forms rather than treating the failure as resolved.
+Full local JVM run now passes: 5037 cases, zero failures. The foundation prompt-size
+and draft-discard-veto regressions are fixed on main. The cold Linux council failure
+was reproduced: the test network guard prevented downloading the Python runtime.
+Provisioning the pinned runtime before the guarded suite fixes the Linux reproduction;
+CI now does this explicitly, with a regression test. Loop/release tests: 522 passed;
+formatting, lint/reflection and workflow validation passed. Main CI verification remains
+pending. The live server gateway remains untouched.
 No new Vis version/tag, complete stable promotion or server deployment has happened.
 Preserve unrelated infrastructure, settings, council-default/docs, TUI and draft-test work.

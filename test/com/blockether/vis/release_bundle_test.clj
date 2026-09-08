@@ -1333,6 +1333,18 @@
                                "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"))
         (expect (str/includes? workflow "bwrap --unshare-all --ro-bind / / /bin/true")))))
 
+(defdescribe ci-native-runtime-provisioning-test
+             (it "provisions the Python library before the suite disables outbound downloads"
+                 ;; A warm developer runtime hid the cold Linux worker failure.
+                 (let [workflow
+                       (slurp ".github/workflows/ci.yml")
+
+                       preparation
+                       (subs workflow 0 (str/index-of workflow "- name: Run test suite"))]
+
+                   (expect (str/includes? preparation "com.blockether.vis.internal.python.runtime"))
+                   (expect (str/includes? preparation "(python-runtime/ensure-library!)")))))
+
 (defdescribe
   complete-release-gate-test
   (it "keeps stable publication behind native, mobile, desktop and full CI verification"
