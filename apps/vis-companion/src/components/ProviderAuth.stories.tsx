@@ -26,6 +26,25 @@ export const Fleet: Story = {
   args: { auth: storyProviderAuth() },
 };
 
+/** Extension-owned providers keep their routing controls but cannot be removed. */
+export const ManagedProvider: Story = {
+  args: { auth: storyProviderAuth(STORY_PROVIDERS.map((provider, index) => ({
+    ...provider, is_managed: index === 0,
+  }))) },
+  play: async ({ canvas, args }) => {
+    const [managed, ordinary] = args.auth.providers!;
+    await expect(canvas.queryByRole('button', {
+      name: `Sign out of ${managed!.label} and remove it from this machine`, hidden: true,
+    })).not.toBeInTheDocument();
+    await expect(canvas.getByRole('button', {
+      name: `Run every turn on ${managed!.label}`, hidden: true,
+    })).toBeInTheDocument();
+    await expect(canvas.getByRole('button', {
+      name: `Sign out of ${ordinary!.label} and remove it from this machine`, hidden: true,
+    })).toBeInTheDocument();
+  },
+};
+
 /** One provider, with no credential on this machine yet. */
 export const SignedOut: Story = {
   args: { auth: storyProviderAuth(STORY_PROVIDERS.slice(2)) },
@@ -94,7 +113,7 @@ export const NativeLoopbackReturn: Story = {
 export const CodexLimits: Story = {
   args: { auth: {
     ...storyProviderAuth([{
-      id: 'openai-codex', label: 'OpenAI Codex (ChatGPT OAuth)',
+      id: 'openai-codex', label: 'OpenAI Codex (ChatGPT OAuth)', is_managed: false,
       models: ['gpt-5'], is_default: true, default_model: 'gpt-5', is_fallback: false, fallback_model: null,
       status: { is_authenticated: true, auth_state: 'verified', source: 'auth-file' },
       limits: { status: 'ok', dynamic: {

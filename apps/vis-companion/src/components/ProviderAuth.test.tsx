@@ -32,6 +32,7 @@ const preset = (id: string): ProviderPreset => ({
 
 const provider = (id: string): RouterProvider => ({
   id,
+  is_managed: false,
   label: id.toUpperCase(),
   models: ['m1'],
   is_default: false,
@@ -422,14 +423,45 @@ describe('ProviderRows', () => {
     expect(html).not.toContain('Fall back to GITHUB-COPILOT');
   });
 
+  it.each(['verified', 'unverified', 'rejected', 'degraded'] as const)(
+    'hides removal for an extension-managed provider with %s authentication',
+    (auth_state) => {
+      const row = {
+        ...provider('extension-owned'),
+        is_managed: true,
+        status: { is_authenticated: auth_state !== 'rejected', auth_state },
+      };
+      render(<ProviderRows auth={state({ providers: [row] })} />);
+      expect(screen.queryByRole('button', { name: /remove it from this machine/ })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Run every turn on EXTENSION-OWNED' })).toBeTruthy();
+    },
+  );
+
+  it('drops an open removal confirmation when the provider becomes extension-managed', () => {
+    const row = { ...provider('anthropic'), is_managed: false };
+    const view = render(<ProviderRows auth={state({ providers: [row] })} />);
+    fireEvent.click(screen.getByRole('button', { name: /remove it from this machine/ }));
+    expect(screen.getByRole('group', { name: 'Remove ANTHROPIC?' })).toBeTruthy();
+    view.rerender(<ProviderRows auth={state({ providers: [{ ...row, is_managed: true }] })} />);
+    expect(screen.queryByRole('group', { name: 'Remove ANTHROPIC?' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /remove it from this machine/ })).toBeNull();
+  });
+
   it('keeps removal as the row’s last verb, and asks inside the row before it destroys', () => {
-    render(<ProviderRows auth={state({ providers: [provider('anthropic')] })} />);
+    const removed: RouterProvider[] = [];
+    const row = { ...provider('anthropic'), is_managed: false };
+    render(<ProviderRows auth={state({
+      providers: [row],
+      removeProvider: async (provider) => { removed.push(provider); },
+    })} />);
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Sign out of ANTHROPIC and remove it from this machine',
       }),
     );
     expect(screen.getByRole('group', { name: 'Remove ANTHROPIC?' })).toBeTruthy();
-    expect(screen.getByText('Yes, remove')).toBeTruthy();
+    expect(removed).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, remove' }));
+    expect(removed).toEqual([row]);
   });
 });

@@ -73,7 +73,7 @@ function ConnectedRows({ client }: { client: GatewayClient }) {
 it('refreshes missing reset data from the row action without consuming a reset', async () => {
   const client = new GatewayClient({ id: 'reset-refresh', url: 'https://gateway.example.com', token: 'test' } as GatewayConn);
   const provider: RouterProvider = {
-    id: 'openai-codex', label: 'OpenAI Codex', models: ['gpt-5'], is_default: true, default_model: 'gpt-5', is_fallback: false, fallback_model: null,
+    id: 'openai-codex', label: 'OpenAI Codex', models: ['gpt-5'], is_managed: false, is_default: true, default_model: 'gpt-5', is_fallback: false, fallback_model: null,
     status: { is_authenticated: true, auth_state: 'verified' }, limits: { status: 'ok', dynamic: { limits: [] } },
   };
   vi.spyOn(client, 'router').mockResolvedValue([provider]);
@@ -97,7 +97,7 @@ it('crosses the real rows, hook and HTTP client; refreshes quotas and retries a 
   let failRefresh = false;
   const calls: { path: string; body?: { account_id: string; idempotency_key: string } }[] = [];
   const provider: RouterProvider = {
-    id: 'openai-codex', label: 'OpenAI Codex', models: ['gpt-5'], is_default: true, default_model: 'gpt-5', is_fallback: false, fallback_model: null,
+    id: 'openai-codex', label: 'OpenAI Codex', models: ['gpt-5'], is_managed: false, is_default: true, default_model: 'gpt-5', is_fallback: false, fallback_model: null,
     status: { is_authenticated: true, auth_state: 'verified' },
   };
   const limits = () => ({ status: 'ok', dynamic: { reset_credits: { ...credits, available_count: count }, limits: [{ label: 'Weekly', used_percent: 100 }] } });
@@ -143,7 +143,7 @@ it('crosses the real rows, hook and HTTP client; refreshes quotas and retries a 
 it.runIf(!!process.env.VIS_CODEX_RESET_E2E_URL)('end to end through the real gateway and simulated Codex', async () => {
   const client = new GatewayClient({ id: 'reset-e2e', url: process.env.VIS_CODEX_RESET_E2E_URL!, token: 'test' } as GatewayConn);
   vi.spyOn(client, 'router').mockImplementation(async () => [{
-    id: 'openai-codex', label: 'OpenAI Codex', models: ['gpt-5'], is_default: true,
+    id: 'openai-codex', label: 'OpenAI Codex', models: ['gpt-5'], is_managed: false, is_default: true,
     default_model: 'gpt-5', is_fallback: false, fallback_model: null,
     status: await client.providerStatus('openai-codex'), limits: await client.providerLimits('openai-codex'),
   }]);

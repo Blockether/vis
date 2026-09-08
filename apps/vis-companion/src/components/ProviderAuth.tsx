@@ -571,6 +571,7 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
    */
   const removeProvider = useCallback(
     async (provider: RouterProvider) => {
+      if (provider.is_managed) return;
       setPending(`remove:${provider.id}`);
       setErr(null);
       setNote(null);
@@ -1061,9 +1062,9 @@ function ProviderModelMenu({
  * THE PROVIDER ACCOUNTS, one pressable disclosure each — the same slab a
  * machine gets, slid the same way.
  *
- * A provider IS a machine-sized thing: it is signed in or it is not, it holds
- * a rank, and it can be dropped. Its rank and removal verbs stay under the
- * trailing edge, while pressing a signed-in row opens that account's limits.
+ * A provider has sign-in status and routing actions. Only user-owned providers
+ * can be removed. Actions stay under the trailing edge; pressing a signed-in
+ * row opens that account's limits.
  * The collapsed row keeps only the most urgent number so the fleet remains
  * scannable.
  *
@@ -1119,7 +1120,7 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
           .map(limitRowText)
           .filter((line): line is string => line !== null);
 
-        if (removing === provider.id)
+        if (removing === provider.id && !provider.is_managed)
           return (
             // What removing COSTS, inside the frame that asks it: the daemon runs
             // the provider's own logout AND drops its config entry, so this is the
@@ -1170,14 +1171,15 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
             icon: <SortIcon className="size-4" />,
             onSelect: (anchor) => openModels(provider, 'fallback', anchor),
           });
-        actions.push({
-          key: 'remove',
-          label: 'Remove',
-          name: `Sign out of ${provider.label} and remove it from this machine`,
-          icon: <TrashIcon className="size-4" />,
-          tone: 'danger',
-          onSelect: () => setRemoving(provider.id),
-        });
+        if (!provider.is_managed)
+          actions.push({
+            key: 'remove',
+            label: 'Remove',
+            name: `Sign out of ${provider.label} and remove it from this machine`,
+            icon: <TrashIcon className="size-4" />,
+            tone: 'danger',
+            onSelect: () => setRemoving(provider.id),
+          });
 
         return (
           <div key={provider.id}>

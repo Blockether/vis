@@ -3030,6 +3030,29 @@
                   (is (= 409 (:status (post! {:id "lmstudio"}))))
                   (is (nil? @added)))))))))))
 
+(deftest router-handler-reports-extension-ownership
+  (with-redefs [providers/managed? #(= :extension-owned %)]
+    (with-stub-fleet! [{:id :extension-owned :models []} {:id :own-key :models []}]
+                      (fn []
+                        (let [response ((rv 'router-handler) {})
+                              rows (get (wire/parse-json (:body response)) "providers")]
+
+                          (is (= 200 (:status response)))
+                          (is (= [true false] (mapv #(get % "is_managed") rows))))))))
+
+(deftest remove-provider-handler-refuses-extension-owned-providers
+  (with-redefs [providers/remove-provider!
+                (fn [& _]
+                  (throw (ex-info "Provider is managed by its extension and cannot be removed."
+                                  {:type :provider/managed :provider-id :extension-owned})))]
+    (let [response ((rv 'remove-provider-handler) {:path-params {:provider-id "extension-owned"}})
+          payload (wire/parse-json (:body response))]
+
+      (is (= 409 (:status response)))
+      (is (= "provider-managed" (get-in payload ["error" "type"])))
+      (is (= "Provider is managed by its extension and cannot be removed."
+             (get-in payload ["error" "message"]))))))
+
 (deftest remove-provider-handler-drops-the-provider-and-echoes-the-fleet
   (let [removed (atom nil)]
     (with-redefs-fn {#'providers/remove-provider! (fn [pid source]
