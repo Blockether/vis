@@ -884,6 +884,10 @@
             (slurp ".github/workflows/mobile-release.yml")]
 
         (expect (str/includes? ci "HOME=$RUNNER_TEMP/vis-ci-home"))
+        ;; CI 34206989503 prepared the runtime under a different home than classpath resolution.
+        (expect (str/includes? ci "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-ci-home"))
+        (expect (str/includes? ci "JAVA_TOOL_OPTIONS: ${{ env.JAVA_TOOL_OPTIONS }}"))
+        (expect (not (str/includes? ci "-J-Duser.home")))
         (expect (str/includes? native "HOME=$RUNNER_TEMP/vis-native-home"))
         (expect (str/includes? native "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-native-home"))
         (expect (str/includes? ios
