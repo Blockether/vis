@@ -4,7 +4,155 @@
             [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.nio.file Files]))
+  (:import [java.io File]
+           [java.nio.file FileVisitOption Files Path]))
+
+(defn- with-java-installations
+  [f]
+  (let [root
+        (.toRealPath (Files/createTempDirectory "vis-java-policy"
+                                                (make-array java.nio.file.attribute.FileAttribute
+                                                            0))
+                     (make-array java.nio.file.LinkOption 0))
+
+        first-home
+        (.resolve root "jdk-one")
+
+        second-home
+        (.resolve root "jdk-two")
+
+        launcher
+        (.resolve root "launcher")
+
+        current
+        (.resolve root "current")]
+
+    (try (doseq [^Path home [first-home second-home launcher]]
+           (Files/createDirectories (.resolve home "bin")
+                                    (make-array java.nio.file.attribute.FileAttribute 0))
+           (Files/createDirectories (.resolve home "lib")
+                                    (make-array java.nio.file.attribute.FileAttribute 0))
+           (let [executable (.toFile (.resolve home "bin/java"))]
+             (spit executable "# Test installation marker; never executed.\n")
+             (expect (.setExecutable executable true)))
+           (when-not (= home launcher) (spit (.toFile (.resolve home "release")) "test runtime\n")))
+         (Files/createSymbolicLink current
+                                   first-home
+                                   (make-array java.nio.file.attribute.FileAttribute 0))
+         (f {:first-home first-home :second-home second-home :launcher launcher :current current})
+         (finally (with-open [paths (Files/walk root (make-array FileVisitOption 0))]
+                    (doseq [^Path path (reverse (iterator-seq (.iterator paths)))]
+                      (Files/deleteIfExists path)))))))
+
+(defn- java-snapshot
+  [config roots]
+  (with-redefs-fn {#'policy/java-read-roots (constantly roots)} #(policy/snapshot config)))
+
+(defdescribe
+  java-runtime-discovery-test
+  (it "finds exact installations through JAVA_HOME and PATH without a host JVM"
+      (with-java-installations
+        (fn [{:keys [first-home second-home current]}]
+          (let [first-root
+                (str first-home)
+
+                second-root
+                (str second-home)
+
+                environment
+                {"JAVA_HOME" (str current)
+                 "PATH" (str current "/bin" File/pathSeparator second-home "/bin")}]
+
+            (expect (= [first-root] (#'policy/java-read-roots nil environment)))
+            (expect (= [first-root] (#'policy/java-read-roots first-root environment)))
+            (expect (= [first-root]
+                       (#'policy/java-read-roots nil (dissoc environment "JAVA_HOME"))))
+            (expect (= [first-root second-root]
+                       (#'policy/java-read-roots first-root {"JAVA_HOME" second-root})))))))
+  (it "ignores absent or invalid homes and does not infer a runtime behind a launcher"
+      (with-java-installations
+        (fn [{:keys [first-home launcher]}]
+          (expect (= [] (#'policy/java-read-roots nil {})))
+          (expect (= [] (#'policy/java-read-roots "relative" {"JAVA_HOME" "" "PATH" "."})))
+          (expect (= [] (#'policy/java-read-roots (str (char 0)) {"PATH" (str (char 0))})))
+          (expect (= []
+                     (#'policy/java-read-roots
+                      (str launcher)
+                      {"PATH" (str launcher "/bin" File/pathSeparator first-home "/bin")}))))))
+  (it "freezes symlink identity until a new snapshot and hashes a runtime change"
+      (with-java-installations
+        (fn [{:keys [first-home second-home current]}]
+          (let [config
+                {"jail" {"enabled" true}}
+
+                roots
+                #(#'policy/java-read-roots nil {"JAVA_HOME" (str current)})
+
+                before
+                (java-snapshot config (roots))]
+
+            (Files/delete ^Path current)
+            (Files/createSymbolicLink current
+                                      second-home
+                                      (make-array java.nio.file.attribute.FileAttribute 0))
+            (let [after (java-snapshot config (roots))]
+              (expect (= [(str first-home)] (get-in before [:process-jail :allow-read])))
+              (expect (= [(str second-home)] (get-in after [:process-jail :allow-read])))
+              (expect (not= (:generation before) (:generation after)))
+              (expect (= (:generation after) (:generation (java-snapshot config (roots))))))))))
+  (it "preserves explicit modes, descriptions and search settings without duplicate grants"
+      (with-java-installations
+        (fn [{:keys [first-home current]}]
+          (let [root
+                (str first-home)
+
+                config
+                {"workspace" {"filesystem" [{"id" "java"
+                                             "path" (str current)
+                                             "access" "read-only"
+                                             "search" true
+                                             "description" "Selected Java runtime"}]}
+                 "jail" {"enabled" true "filesystem" {"allow" ["java"]}}}
+
+                read-only
+                (java-snapshot config [root])
+
+                writable
+                (java-snapshot (assoc-in config ["workspace" "filesystem" 0 "access"] "read-write")
+                               [root])]
+
+            (expect (= [root] (get-in read-only [:process-jail :allow-read])))
+            (expect (not (some #{root} (policy/no-search-roots read-only))))
+            (expect (= "Selected Java runtime"
+                       (get-in read-only [:process-jail :path-descriptions root])))
+            (expect (some #{root} (policy/read-write-roots writable)))
+            (expect (empty? (get-in writable [:process-jail :allow-read])))
+            (expect (not (some #{root} (policy/no-search-roots writable))))))))
+  (it "does not add process grants when the jail is disabled"
+      (let [snapshot (java-snapshot {"jail" {"enabled" false}} ["/toolchains/java"])]
+        (expect (empty? (get-in snapshot [:process-jail :allow-read])))
+        (expect (not (some #{"/toolchains/java"} (get-in snapshot [:process-jail :no-search])))))))
+
+(defdescribe automatic-java-read-access-test
+             (it "admits the running JVM read-only without a workspace grant"
+                 (let [java-home
+                       (.getCanonicalPath (java.io.File. (System/getProperty "java.home")))
+
+                       snapshot
+                       (policy/snapshot {"jail" {"enabled" true "filesystem" {"allow" []}}})
+
+                       view
+                       (policy/access-view snapshot [])
+
+                       rendered
+                       (policy/home-relative java-home)]
+
+                   (expect (some #{java-home} (get-in snapshot [:process-jail :allow-read])))
+                   (expect (some #{rendered} (get-in view ["filesystem" "process_read_only"])))
+                   (expect (some #{java-home} (policy/no-search-roots snapshot)))
+                   (expect (string? (get-in view ["filesystem" "descriptions" rendered])))
+                   (expect (not (some #{java-home} (policy/read-write-roots snapshot))))
+                   (expect (not (some #{java-home} (vals (:project-paths snapshot))))))))
 
 (defdescribe
   project-path-registry-test
@@ -96,7 +244,8 @@
                    "network" {"allowed_domains" ["example.com"] "inbound_ports" [5273]}}}
 
           snapshot
-          (policy/snapshot cfg {:base-dir (.getPath project) :home (.getPath home)})
+          (with-redefs-fn {#'policy/java-read-roots (constantly [])}
+            #(policy/snapshot cfg {:base-dir (.getPath project) :home (.getPath home)}))
 
           view
           (policy/access-view snapshot [(.getPath project)])]

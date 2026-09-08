@@ -11,7 +11,38 @@
              [deftest is testing thrown? thrown-with-msg?]]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.sandbox.jail :as pj]))
+            [com.blockether.vis.internal.sandbox.jail :as pj]
+            [com.blockether.vis.internal.sandbox.policy :as security-policy]))
+
+(deftest automatic-java-process-boundary
+  (let [snapshot
+        (security-policy/snapshot {"jail" {"enabled" true}})
+
+        java-home
+        (.getCanonicalPath (io/file (System/getProperty "java.home")))
+
+        denied
+        (str java-home "/private")
+
+        base
+        (assoc (:process-jail snapshot)
+          :deny-read [denied]
+          :deny-write [java-home]
+          :net-enabled? false)]
+
+    (with-redefs [runtime/jailed?
+                  (constantly false)
+
+                  runtime/spawn-process!
+                  (fn [_ options]
+                    options)]
+
+      (doseq [policy [base (pj/language-process-policy base nil)]]
+        (let [sent (:policy (pj/spawn! ["/bin/true"] nil policy {:environment {}}))]
+          (is (some #{java-home} (:read-only sent)))
+          (is (not (some #{java-home} (:read-write sent))))
+          (is (= [denied] (:deny-read sent)))
+          (is (= [java-home] (:deny-write sent))))))))
 
 (deftest runtime-policy-value
   (testing "live roots + read-write grants are read-write, read-only stays read-only"

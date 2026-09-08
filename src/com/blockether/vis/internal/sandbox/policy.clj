@@ -8,7 +8,8 @@
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
-  (:import [java.nio.file Files LinkOption Path Paths]))
+  (:import [java.io File]
+           [java.nio.file Files LinkOption Path Paths]))
 
 (def ^:private no-link-options (make-array LinkOption 0))
 
@@ -131,10 +132,56 @@
     (sorted-map)
     (config-validation/admitted-workspace-entries config)))
 
+(defn- java-installation-root
+  "Recognize a real Java installation, never a launcher directory or manager root."
+  [executable]
+  (when-not (str/blank? executable)
+    (try (let [path (Paths/get executable (make-array String 0))]
+           (when (.isAbsolute path)
+             (let [real (.toRealPath path no-link-options)
+                   bin (.getParent real)
+                   root (some-> bin
+                                .getParent)]
+
+               (when (and root
+                          (= "java" (str (.getFileName real)))
+                          (= "bin" (str (.getFileName bin)))
+                          (Files/isExecutable real)
+                          (Files/isRegularFile (.resolve root "release") no-link-options)
+                          (Files/isDirectory (.resolve root "lib") no-link-options))
+                 (str root)))))
+         (catch Exception _ nil))))
+
+(defn- java-read-roots
+  "Snapshot the host JVM and Java selected by the host's JAVA_HOME/PATH.
+   Inspect installation paths only; never execute launchers or scan other versions."
+  ([]
+   (java-read-roots (System/getProperty "java.home")
+                    {"JAVA_HOME" (System/getenv "JAVA_HOME") "PATH" (System/getenv "PATH")}))
+  ([java-home environment]
+   (let [path-java (some (fn [directory]
+                           (when-not (str/blank? directory)
+                             (try (let [path (Paths/get directory (into-array String ["java"]))]
+                                    (when (and (.isAbsolute path)
+                                               (Files/isRegularFile path no-link-options)
+                                               (Files/isExecutable path))
+                                      (str path)))
+                                  (catch Exception _ nil))))
+                         (str/split (or (get environment "PATH") "")
+                                    (re-pattern (java.util.regex.Pattern/quote
+                                                  File/pathSeparator))))]
+     (->> (conj (mapv #(when-not (str/blank? %) (str % "/bin/java"))
+                      [java-home (get environment "JAVA_HOME")])
+                path-java)
+          (keep java-installation-root)
+          distinct
+          vec))))
+
 (defn snapshot
   "Build the immutable canonical security policy from validated string-keyed
    configuration. Relative and home-relative paths become absolute; symlinks are
-   resolved at this boundary."
+   resolved at this boundary. Recognized host Java installations are process-only
+   read grants, excluded from default searches unless already explicitly granted."
   ([config] (snapshot config {}))
   ([config
     {:keys [base-dir home]
@@ -166,6 +213,22 @@
                                  (when-let [rp (nearest-real-path k base-dir home)]
                                    [rp v])))
                          m)))
+
+         jail
+         (let [explicit
+               (set (concat (:allow-read-write jail) (:allow-read jail)))
+
+               roots
+               (when-not (:disabled? jail) (remove explicit (java-read-roots)))]
+
+           (-> jail
+               (update :allow-read into roots)
+               (update :no-search into roots)
+               (update :path-descriptions
+                       merge
+                       (zipmap roots
+                               (repeat
+                                 "Java runtime installation (automatic, process read-only).")))))
 
          ;; Per-root DRAFT isolation policy, keyed by the SAME canonical path the
          ;; filesystem grants use. Independent of `:jail-enabled`: a drafted session
