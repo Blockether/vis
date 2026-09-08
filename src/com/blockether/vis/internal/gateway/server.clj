@@ -2811,13 +2811,10 @@
   (fn [request]
     (try (let [raw
                (if (= operation :publish)
-                 (try
-                   (let [body (body-json request)]
-                     (when-not (map? body)
-                       (throw (ex-info "Expected a Council JSON object" {:error :invalid-request})))
-                     body)
-                   (catch Exception _
-                     (throw (ex-info "Expected a Council JSON object" {:error :invalid-request}))))
+                 (let [body (try (body-json request) (catch Exception _ nil))]
+                   (when-not (map? body)
+                     (throw (ex-info "Expected a Council JSON object" {:error :invalid-request})))
+                   body)
                  (:query-params request))
 
                opts

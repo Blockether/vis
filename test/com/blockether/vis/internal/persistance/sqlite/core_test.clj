@@ -915,7 +915,7 @@
             (expect (contains? (table-columns s2 "council_ping") "activation_id"))
             (expect
               (=
-                4
+                3
                 (count
                   (jdbc/execute!
                     (:datasource s2)

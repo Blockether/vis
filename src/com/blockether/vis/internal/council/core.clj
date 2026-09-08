@@ -5,11 +5,10 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import (java.nio ByteBuffer CharBuffer)
-           (java.nio.charset StandardCharsets)
-           (java.security MessageDigest)
-           (java.util HexFormat)))
+           (java.nio.charset StandardCharsets)))
 
 (set! *warn-on-reflection* true)
 
@@ -44,10 +43,9 @@
   [value limit]
   (when (or (not (string? value))
             (str/blank? value)
-            (and (string? value)
-                 (or (> (utf8-size value) (long limit))
-                     (not (.canEncode (.newEncoder StandardCharsets/UTF_8) ^String value))
-                     (re-find #"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]" value))))
+            (> (utf8-size value) (long limit))
+            (not (.canEncode (.newEncoder StandardCharsets/UTF_8) ^String value))
+            (re-find #"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]" value))
     (fail! :invalid-request
            "Council text is empty, contains controls or exceeds its UTF-8 byte limit"))
   value)
@@ -130,12 +128,8 @@
         normalized
         [gid activation-id content thread title selector]
 
-        digest
-        (.digest (MessageDigest/getInstance "SHA-256")
-                 (.getBytes (pr-str normalized) StandardCharsets/UTF_8))
-
         fingerprint
-        (.formatHex (HexFormat/of) digest)]
+        (util/sha256-hex (pr-str normalized))]
 
     (or
       (replay! fingerprint (ps/db-council-replay db session-id key))

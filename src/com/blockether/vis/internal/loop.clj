@@ -8365,13 +8365,12 @@
                                    [session-turn-id iteration]
                                    ;; Conservative: one UTF-8 byte per spare token, plus headroom.
                                    (max 0
-                                        (min 7936
-                                             (- (long effective-fold-budget)
-                                                (long (svar-router/count-messages
-                                                        (or (:name pre-resolved-model)
-                                                            (:model pre-resolved-model))
-                                                        provider-base))
-                                                256)))))
+                                        (- (long effective-fold-budget)
+                                           (long (svar-router/count-messages
+                                                   (or (:name pre-resolved-model)
+                                                       (:model pre-resolved-model))
+                                                   provider-base))
+                                           256))))
                  council-trailer (cond-> (vec trailer-iters)
                                    (seq (:entries council-input))
                                    (conj [(inc (long iteration))

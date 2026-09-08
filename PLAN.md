@@ -855,8 +855,8 @@ implementation do not satisfy this sequence. The planning-only probes above are 
 - [ ] Phase 5: a fully green broad run remains blocked by baseline failures listed below.
   Scoped Council verification, reference measurements, native checks and lint pass.
 
-Implementation commit `98f92d7bd` was integrated with `main` at `e20c1b4e6` in
-`.gitworktrees/council` on `feat/council`.
+Implementation commit `98f92d7bd` reached `origin/main` through `92928501b`.
+The follow-up simplifications were verified in `.gitworktrees/council` on `feat/council`.
 The persisted `council` toggle defaults off. Enabled sessions expose only the default group in
 public Council metadata; activation identity remains host-owned. There is no wakeup, wait, reply
 completion gate, implicit ping, message-parent selector or cross-engine presence service.
@@ -865,8 +865,8 @@ Review corrections:
 - Keyword-only `council.publish(content=...)` and `council.get(entry_id=...)` use explicit call shapes.
   The real Python/model regression exercises both forms.
 - Sparse thread reads seek the root and indexed continuations separately. The regression explains
-  actual production queries among 100,000 unrelated continuations, checks pagination and rejects
-  a group scan. Page recipients use one batched query rather than one query per entry.
+  actual production queries with a full-page fixture, checks pagination and rejects group scans.
+  Page recipients use one batched query rather than one query per entry.
 - The closed publication schema includes the SDK activation field. Group-only requests use a closed
   shared schema. Unknown server exceptions propagate as server failures, not HTTP 400 responses.
 - SDK text normalization and byte validation have one authority: the engine. Real HTTP/stdio tests
@@ -878,8 +878,7 @@ Review corrections:
   Duplicate enabled checks and unused descriptive contract fields were removed.
 - The 100 ms lookup deadline remains. The group-change check is not dead: a session can move projects
   during an outstanding lookup. A regression proves that the old result is discarded without delivery.
-- Provider retry/tool-free continuation coverage and the 99,000 second seed already existed before
-  this review; they were rechecked rather than duplicated.
+- Provider retry and tool-free continuation regressions remain in the real Python/model boundary test.
 
 Verification checkpoint:
 - Final clean-JVM broad run: 1,633 cases, four failures. Focused Council domain, host, gateway and
@@ -915,7 +914,26 @@ Verification checkpoint:
   boundary case and five real JVM SDK cases passed again. Merged gateway formatting and lint/reflection
   pass. The native results above precede these provider/search changes, not a rebuilt final image.
 
-Reference performance (milliseconds; informational, not wall-clock unit-test assertions):
+Simplification follow-up, based on `92928501b`:
+- Reused the shared SHA-256 helper, removed a redundant string guard and simplified JSON-body parsing.
+  Recipient queries alias authorship directly in SQL. SDK publication builds its activation field
+  with the body; tests check the exact optional-field payload, including an empty recipient list.
+- Removed the redundant root index. Production-query EXPLAIN assertions cover thread reads, root
+  listings and empty recipients; schema repair now expects the three remaining Council indexes.
+- Council alone caps input bytes. The caller still reserves 256 tokens of context headroom.
+  A new schema-checked regression covers small and oversized caller budgets, including attribution.
+- Consolidated duplicate query probes into a 50-continuation fixture and removed their timing samples
+  and the 600 ms wall-clock assertion. The single-outstanding-lookup test and the 100,000-row,
+  four-worker memory/WAL contention reference remain executable in the suite.
+- Kept independent input/publication history columns, typed SDK provenance and portable schemas.
+  The local UTF-8 counter avoids an unrelated dependency on Activity solely to replace one line.
+- Verification: 278 focused Council/host/gateway/store cases and the real Python/model case pass.
+  The broader 764-case run has only the previously reproduced permission-snapshot baseline failure.
+  SDK units: 331 passed; real Council/LocalEngine HTTP/stdio: five passed on JVM and five on native.
+  GraalVM CE 25.3.4.1 built the current source in 4m1s with 23 warnings; 13 native binary cases pass.
+  Scoped Clojure lint/reflection, Python lint and both formatters pass. No gateway was restarted.
+
+Reference performance before this follow-up (milliseconds; informational, not timing assertions):
 macOS/aarch64, 14 logical processors, JVM 25.0.3, bundled SQLite 3.53.2. The fixture uses 10 active
 sessions, one root plus 100,000 short continuations, explicit sparse/dense recipients and broadcasts.
 Each measurement has 10 warmup calls and 100 samples; concurrent publication combines 200 samples
@@ -942,8 +960,7 @@ Both stores recorded zero busy failures. Provisional p95 publish/page targets ar
 short-entry profile, not asserted for every payload/distribution. Ordinary writes slow under contention;
 the table reports that impact. The sparse-thread fixture separately measured p50/p95/p99
 0.228 / 0.371 / 0.635 ms in memory, with 10 warmups and 100 samples, for a root and late reply separated
-by 100,000 unrelated continuations. Indexed empty-recipient/root-list probes still cover 1,000 and
-100,000 continuations; the second seed adds 99,000, not another 100,000.
+by 100,000 unrelated continuations.
 
 The user explicitly authorized commit and push to `main` for this feature. No release, deployment
 or live gateway restart is included. Existing main-worktree changes are preserved separately.

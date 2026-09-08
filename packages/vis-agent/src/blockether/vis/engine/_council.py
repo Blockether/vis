@@ -118,6 +118,7 @@ class Council:
         body = {
             "content": content,
             "group_id": self.group_id,
+            "activation_id": self._activation_id,
             "idempotency_key": str(uuid4())
             if idempotency_key is None
             else idempotency_key,
@@ -125,15 +126,14 @@ class Council:
         body.update(
             {
                 key: value
-                for key, value in (
-                    ("thread_id", thread_id),
-                    ("title", title),
-                    ("ping", ping),
-                )
+                for key, value in {
+                    "thread_id": thread_id,
+                    "title": title,
+                    "ping": ping,
+                }.items()
                 if value is not None
             }
         )
-        body["activation_id"] = self._activation_id
         validate("council", "publish", body)
         return CouncilEntry.from_wire(self._call("POST", "/entries", body=body))
 

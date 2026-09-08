@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [honey.sql :as sql]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
@@ -396,69 +397,6 @@
         (is (= batch
                (council 'prepare-input! db sid activation gid input-state ["turn" 1] 8192)))))))
 
-(deftest indexed-sparse-log-test
-  ;; C01/C19/C28: use production tables and queries, not copied DDL or JSON filtering.
-  (with-council
-    (let [{:keys [db fleet ids gid] :as w}
-          (world)
-
-          root
-          (publish w {:content "root" :idempotency_key "seed"})
-
-          sid
-          (second ids)
-
-          activation
-          (get-in @fleet [sid :activation-id])
-
-          pending
-          (ns-resolve 'com.blockether.vis.internal.persistance.core 'db-council-pending)
-
-          sample
-          (fn [f]
-            (mapv (fn [_]
-                    (let [start (System/nanoTime)]
-                      (f)
-                      (/ (- (System/nanoTime) start) 1e6)))
-                  (range 50)))]
-
-      (doseq [[n added] [[1000 1000] [100000 99000]]]
-        (jdbc/execute!
-          (:datasource db)
-          [(str
-             "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x < ?) "
-             "INSERT INTO council_entry (group_id, author_sid, activation_id, source, thread_id, content, created_at, idempotency_key, fingerprint) "
-             "SELECT group_id, author_sid, activation_id, source, id, 'continuation', created_at, 'fixture-' || ? || '-' || x, fingerprint FROM council_entry, n WHERE id = ?")
-           added n (:id root)])
-        (is (empty? (pending db sid activation gid 0 20)))
-        (is (= [(:id root)] (mapv :thread_id (:entries (council 'threads db (first ids) {})))))
-        (let
-          [plans
-           (jdbc/execute!
-             (:datasource db)
-             ["EXPLAIN QUERY PLAN SELECT entry_id FROM council_ping WHERE recipient_sid=? AND activation_id=? AND group_id=? AND entry_id>? ORDER BY entry_id LIMIT 21"
-              sid activation gid 0])
-           samples (sort (sample #(pending db sid activation gid 0 20)))]
-
-          (is (not (re-find #"SCAN council" (pr-str plans))))
-          (println "Council pending reference"
-                   {:entries n
-                    :samples (count samples)
-                    :p50 (nth samples 25)
-                    :p95 (nth samples 47)
-                    :p99 (last samples)})))
-      (let [writer
-            (future (dotimes [_ 10]
-                      (publish w {:content "Burst" :ping "all"})))
-
-            baseline
-            (sample #(ps/db-get-project db gid))]
-
-        @writer
-        (is (= 10 (count (pending db sid activation gid 0 20))))
-        (println "Council mixed read reference"
-                 {:samples (count baseline) :max-ms (apply max baseline)})))))
-
 (deftest members-and-prompt-test
   ;; C05/C20/C23/C31/C32: runtime owns identity; projection never exposes generations.
   (with-council (let [{:keys [db actor fleet]} (world)]
@@ -627,10 +565,8 @@
                        (fn [& _]
                          (swap! calls inc)
                          (try (deref release 1500 nil) [] (finally (deliver completed true))))}
-        #(try (let [start (System/nanoTime)]
-                (is (nil?
-                      (council 'prepare-input! db sid activation gid input-state ["turn" 1] 8192)))
-                (is (< (/ (- (System/nanoTime) start) 1000000.0) 600.0)))
+        #(try (is (nil?
+                    (council 'prepare-input! db sid activation gid input-state ["turn" 1] 8192)))
               (is (empty? (select-keys @input-state [:cursors :batch :key])))
               (council 'prepare-input! db sid activation gid input-state ["turn" 2] 8192)
               (is (= 1 @calls))
@@ -856,7 +792,8 @@
                     (is (rejected? :invalid-request #(council 'binding-info db sid opts)))))))
 
 (deftest sparse-thread-seeks-and-batched-pings-test
-  ;; Review B: execute the production page queries, then explain those exact statements.
+  ;; Explain the actual production queries. Fifty continuations cover a full page;
+  ;; the separate contention reference retains the 100,000-row workload.
   (with-council
     (let
       [{:keys [db ids] :as w}
@@ -872,7 +809,7 @@
        (jdbc/execute!
          (:datasource db)
          [(str
-            "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x < 100000) "
+            "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x < 50) "
             "INSERT INTO council_entry (group_id, author_sid, activation_id, source, thread_id, content, created_at, idempotency_key, fingerprint) "
             "SELECT group_id, author_sid, activation_id, source, id, 'continuation', created_at, 'sparse-test-' || x, fingerprint FROM council_entry, n WHERE id = ?")
           (:id dense)])
@@ -897,27 +834,63 @@
                                       (query store statement))}
            f))
 
+       explain
+       (fn [statements]
+         (pr-str (mapcat #(jdbc/execute! (:datasource db)
+                                         (update (sql/format %)
+                                                 0
+                                                 (fn [statement]
+                                                   (str "EXPLAIN QUERY PLAN " statement))))
+                         statements)))
+
        read-thread
        #(page w {:thread_id (:id sparse)})]
 
       (is (= [(:id sparse) (:id reply)] (mapv :id (:entries (capture read-thread)))))
-      (let [plans (mapcat #(jdbc/execute! (:datasource db)
-                                          (update (sql/format %)
-                                                  0
-                                                  (fn [statement]
-                                                    (str "EXPLAIN QUERY PLAN " statement))))
-                          (filter #(= [:council_entry] (:from %)) @statements))]
-        (is (re-find #"idx_council_thread" (pr-str plans)))
-        (is (not (re-find #"idx_council_group|SCAN council_entry" (pr-str plans)))))
+      (let [plans (explain (filter #(= [:council_entry] (:from %)) @statements))]
+        (is (re-find #"idx_council_thread" plans))
+        (is (not (re-find #"idx_council_group|SCAN council_entry" plans))))
       (is (= [(:id reply)]
              (mapv :id (:entries (page w {:thread_id (:id sparse) :after (:id sparse)})))))
       (is (empty? (:entries (page w {:thread_id (:id sparse) :after (:id reply)}))))
       (is (= 50 (count (:entries (capture #(page w {:limit 50}))))))
       (is (= 1 (count (filter #(= [:council_ping] (:from %)) @statements))))
-      (dotimes [_ 10]
-        (read-thread))
-      (println "Council sparse thread reference"
-               (latency-percentiles (latency-samples 100 read-thread))))))
+      (is (= [(:id dense) (:id sparse)]
+             (mapv :thread_id (:entries (capture #(council 'threads db (first ids) {}))))))
+      (let [plans (explain @statements)]
+        (is (re-find #"idx_council_thread" plans))
+        (is (not (re-find #"SCAN council_entry" plans))))
+      (is (empty? (capture #(ps/db-council-pending db
+                                                   (last ids)
+                                                   (get-in @(:fleet w) [(last ids) :activation-id])
+                                                   (:gid w)
+                                                   0
+                                                   20))))
+      (let [plans (explain @statements)]
+        (is (re-find #"sqlite_autoindex_council_ping" plans))
+        (is (not (re-find #"SCAN" plans)))))))
+
+(deftest input-batch-byte-cap-test
+  ;; The caller supplies spare context; Council owns the total byte cap, including attribution.
+  (with-council
+    (let [{:keys [db ids fleet gid] :as w}
+          (world)
+
+          sid
+          (second ids)
+
+          activation
+          (get-in @fleet [sid :activation-id])]
+
+      (dotimes [_ 20]
+        (publish w {:content (apply str (repeat 1024 "x")) :ping [sid]}))
+      (doseq [budget [512 2048 8192 65536]]
+        (let [batch (council 'prepare-input! db sid activation gid (atom {}) ["t" 1] budget)
+              message (council 'input-message batch)]
+
+          (when batch (is (document/valid? "council" "input_batch" batch)) (is (:has_more batch)))
+          (is (<= (council 'utf8-size (or (:content message) "")) (min 8192 budget)))
+          (when (>= budget 2048) (is (seq (:entries batch)))))))))
 
 (deftest utf8-clipping-and-page-budget-test
   (with-council

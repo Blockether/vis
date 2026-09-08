@@ -4917,14 +4917,14 @@
 (defn db-council-pending
   "Seek recipient/activation/group before touching the log. This is a pure read."
   [db sid activation gid after limit]
-  (mapv #(assoc (dissoc % :author_sid) :author_session_id (:author_sid %))
-        (query! db
-                {:select [:e.id [[:coalesce :e.thread_id :e.id] :thread_id] :e.group_id
-                          :e.author_sid :e.created_at [[:substr :e.content 1 1025] :content]
-                          [[:raw "length(CAST(e.content AS BLOB))"] :content_bytes]]
-                 :from [[:council_ping :p]]
-                 :join [[:council_entry :e] [:= :e.id :p.entry_id]]
-                 :where [:and [:= :p.recipient_sid sid] [:= :p.activation_id activation]
-                         [:= :p.group_id gid] [:> :p.entry_id after]]
-                 :order-by [:p.entry_id]
-                 :limit limit})))
+  (query! db
+          {:select [:e.id [[:coalesce :e.thread_id :e.id] :thread_id] :e.group_id
+                    [:e.author_sid :author_session_id] :e.created_at
+                    [[:substr :e.content 1 1025] :content]
+                    [[:raw "length(CAST(e.content AS BLOB))"] :content_bytes]]
+           :from [[:council_ping :p]]
+           :join [[:council_entry :e] [:= :e.id :p.entry_id]]
+           :where [:and [:= :p.recipient_sid sid] [:= :p.activation_id activation]
+                   [:= :p.group_id gid] [:> :p.entry_id after]]
+           :order-by [:p.entry_id]
+           :limit limit}))

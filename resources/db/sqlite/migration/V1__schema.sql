@@ -855,7 +855,6 @@ CREATE TABLE council_entry (
 );
 CREATE INDEX idx_council_group ON council_entry(group_id, id);
 CREATE INDEX idx_council_thread ON council_entry(group_id, thread_id, id);
-CREATE INDEX idx_council_roots ON council_entry(group_id, id) WHERE thread_id IS NULL;
 CREATE TABLE council_ping (
   recipient_sid TEXT NOT NULL,
   activation_id TEXT NOT NULL,

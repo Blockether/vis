@@ -9,6 +9,8 @@ from test_client import compatible, endpoint
 
 
 def test_council_session_handle_and_thread_workflow():
+    publications = []
+
     def respond(method, path, body):
         if result := compatible(method, path, body):
             return result
@@ -16,6 +18,7 @@ def test_council_session_handle_and_thread_workflow():
             return 200, {"activation_id": "active-1", "default_group_id": "project-1"}
         if method == "POST":
             request = json.loads(body)
+            publications.append(request)
             validate("council", "publish", request)
             assert "?" not in path
             assert request["activation_id"] == "active-1"
@@ -53,7 +56,25 @@ def test_council_session_handle_and_thread_workflow():
         assert root.id == root.thread_id == 142
         assert council.threads().entries[0].thread_id == root.thread_id
         assert council.read(thread_id=root.thread_id).entries == ()
-        council.publish("Works", thread_id=root.thread_id, idempotency_key="retry")
+        council.publish(
+            "Works", thread_id=root.thread_id, ping=[], idempotency_key="retry"
+        )
+        common = {"group_id": "project-1", "activation_id": "active-1"}
+        assert publications == [
+            {
+                **common,
+                "content": "API change",
+                "title": "API\n",
+                "idempotency_key": publications[0]["idempotency_key"],
+            },
+            {
+                **common,
+                "content": "Works",
+                "thread_id": root.thread_id,
+                "ping": [],
+                "idempotency_key": "retry",
+            },
+        ]
         with pytest.raises(TypeError):
             council.publish("Wrong", parent_id=142)
         assert sum(path == "/v1/sessions/A/council" for _, path, _, _ in calls) == 1
