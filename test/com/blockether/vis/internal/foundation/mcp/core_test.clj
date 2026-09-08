@@ -973,3 +973,51 @@
               ;; rewrite: what a surface returns is exactly what a client receives.
               (expect (= values (mapv wire/->wire values))))
             (finally (mcp/clear-session-servers! "s1") (reset! conns {}) (reset! killed #{}))))))))
+
+(defdescribe auth-backoff-test
+             ;; Regression, gateway CPU audit: a JFR profile of a live gateway caught one
+             ;; unauthorized server being re-asked every couple of seconds - the per-turn
+             ;; reconcile, the handlers' nudges and the health loop each paying an HTTP
+             ;; round trip for the same 401 that only a human sign-in can change.
+             (it
+               "asks a server awaiting sign-in once per window, again on start or a spec change"
+               (let [connects
+                     (atom 0)
+
+                     spec-a
+                     {"transport" "streamable_http" "url" "https://mcp.example.test/mcp"}
+
+                     spec-b
+                     {"transport" "streamable_http" "url" "https://mcp.example.test/v2/mcp"}
+
+                     cfg
+                     (atom {"mcp" {"servers" {"remote" spec-a}}})
+
+                     ensure!
+                     (var-get #'mcp/ensure-connected!)]
+
+                 (reset! (var-get #'mcp/auth-backoff) {})
+                 (try (with-redefs-fn {#'config/load-config-raw (fn []
+                                                                  @cfg)
+                                       #'client/connect (fn [_ _]
+                                                          (swap! connects inc)
+                                                          (throw (ex-info "401"
+                                                                          {:type :mcp/oauth-required
+                                                                           :server "remote"})))}
+                        (fn []
+                          (expect (nil? (ensure! nil "remote")))
+                          (expect (nil? (ensure! nil "remote")))
+                          (expect (nil? (ensure! nil "remote")))
+                          (expect (= 1 @connects) "one refusal, then silence for the window")
+                          ;; A human pressed start: ask now.
+                          ((var-get #'mcp/revive!) "remote")
+                          (expect (nil? (ensure! nil "remote")))
+                          (expect (= 2 @connects))
+                          ;; The server was edited: a new spec is a new question.
+                          (reset! cfg {"mcp" {"servers" {"remote" spec-b}}})
+                          (expect (nil? (ensure! nil "remote")))
+                          (expect (= 3 @connects))
+                          (expect (nil? (ensure! nil "remote")))
+                          (expect (= 3 @connects))))
+                      (finally (reset! (var-get #'mcp/auth-backoff) {})
+                               (reset! (var-get #'mcp/servers-cache) {:hash ::none :value {}}))))))

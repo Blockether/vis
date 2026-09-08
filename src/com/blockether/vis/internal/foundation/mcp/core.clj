@@ -200,11 +200,50 @@
 
 (defn- killed? [server] (contains? @killed server))
 
+(def ^:private ^:const AUTH_BACKOFF_MS
+  "How long a server that answered `oauth-required` is left alone before a
+   connect is tried again on its own. Two health-loop periods: long enough that
+   a turn's reconcile, a handler's nudge and the loop stop stacking round trips
+   against a server that can only be moved by a human, short enough that a
+   sign-in nobody told the gateway about is noticed within a couple of minutes.
+   Every explicit path - start, a completed flow, a spec change - clears it."
+  60000)
+
+(defonce ^:private auth-backoff
+  ;; pool key -> {:until epoch-ms :spec spec-at-refusal}
+  (atom {}))
+
+(defn- oauth-required?
+  "True when `t` or anything in its cause chain is the typed `oauth-required`
+   refusal - the ONE connect failure that no retry can change."
+  [^Throwable t]
+  (loop [c t]
+    (cond (nil? c) false
+          (= :mcp/oauth-required (:type (ex-data c))) true
+          :else (recur (ex-cause c)))))
+
+(defn- auth-backoff?
+  "Whether a connect under `k` should be skipped: a refusal is on record, its
+   window has not passed, and the spec it was refused under is still the spec -
+   an edited server (a token added, a URL changed) is a new question."
+  [k spec]
+  (when-let [{:keys [until] refused-spec :spec} (get @auth-backoff k)]
+    (and (= spec refused-spec) (< (util/now-ms) (long until)))))
+
+(defn- note-auth-refusal!
+  [k spec]
+  (swap! auth-backoff assoc k {:until (+ (util/now-ms) (long AUTH_BACKOFF_MS)) :spec spec})
+  nil)
+
+(defn- clear-auth-backoff! [k] (swap! auth-backoff dissoc k) nil)
+
 (defn- revive!
   "Release the kill brake on `server` — every explicit start path calls this, or
-   the start would be undone by the next reconcile."
+   the start would be undone by the next reconcile. Releases the auth backoff
+   too: a human asked, so the answer is fetched now."
   [server]
   (swap! killed disj server)
+  (clear-auth-backoff! server)
   server)
 
 ;; Session-scoped servers — servers a CLIENT attaches to ONE session when it
@@ -251,25 +290,37 @@
   (let [existing (get @pool k)]
     (cond (and existing (mcp/alive? (:conn existing))) (:conn existing)
           existing (do (close-in-pool! pool k) (recur pool k server spec accept?))
-          :else
-          (try (let [conn (mcp/connect server spec)
-                     [accepted stale]
-                     (locking pool
-                       (let [winner (get @pool k)]
-                         (cond (not (accept?)) [nil [conn]]
-                               (and winner (mcp/alive? (:conn winner))) [(:conn winner) [conn]]
-                               :else (do (swap! pool assoc k {:conn conn :spec spec})
-                                         [conn (when winner [(:conn winner)])]))))]
+          :else (try (let [conn (mcp/connect server spec)
+                           [accepted stale]
+                           (locking pool
+                             (let [winner (get @pool k)]
+                               (cond (not (accept?)) [nil [conn]]
+                                     (and winner (mcp/alive? (:conn winner))) [(:conn winner)
+                                                                               [conn]]
+                                     :else (do (swap! pool assoc k {:conn conn :spec spec})
+                                               [conn (when winner [(:conn winner)])]))))]
 
-                 (run! (fn [c]
-                         (try (mcp/close c) (catch Throwable _ nil)))
-                       stale)
-                 accepted)
-               (catch Throwable t
-                 (tel/log!
-                   {:level :warn :id ::connect-failed :data {:server server :error (ex-message t)}}
-                   "MCP connect failed")
-                 nil)))))
+                       (run! (fn [c]
+                               (try (mcp/close c) (catch Throwable _ nil)))
+                             stale)
+                       accepted)
+                     (catch Throwable t
+                       (if (oauth-required? t)
+                         ;; Not a failure to repair, a sign-in to wait for. A JFR profile of
+                         ;; a live gateway caught one unauthorized server being re-asked every
+                         ;; couple of seconds - the per-turn reconcile, the handlers' nudges
+                         ;; and the health loop each paying an HTTP round trip for the same
+                         ;; 401 - so it is now asked once per `AUTH_BACKOFF_MS`.
+                         (do (note-auth-refusal! k spec)
+                             (tel/log! {:level :info
+                                        :id ::connect-awaits-sign-in
+                                        :data {:server server :retry-in-ms AUTH_BACKOFF_MS}}
+                                       "MCP server awaits sign-in; connect deferred"))
+                         (tel/log! {:level :warn
+                                    :id ::connect-failed
+                                    :data {:server server :error (ex-message t)}}
+                                   "MCP connect failed"))
+                       nil)))))
 
 (defn- session-spec-of [session-id server] (get-in @session-specs [session-id server]))
 
@@ -305,19 +356,21 @@
   ([server] (ensure-connected! nil server))
   ([session-id server]
    (if-let [spec (session-spec-of session-id server)]
-     (ensure-in-pool! session-conns
-                      [session-id server]
-                      server
-                      spec
-                      #(= spec (session-spec-of session-id server)))
+     (when-not (auth-backoff? [session-id server] spec)
+       (ensure-in-pool! session-conns
+                        [session-id server]
+                        server
+                        spec
+                        #(= spec (session-spec-of session-id server))))
      (when-not (killed? server)
        (when-let [spec (get (configured-servers) server)]
-         (ensure-in-pool! conns
-                          server
-                          server
-                          spec
-                          #(and (not (killed? server))
-                                (= spec (get (configured-servers) server)))))))))
+         (when-not (auth-backoff? server spec)
+           (ensure-in-pool! conns
+                            server
+                            server
+                            spec
+                            #(and (not (killed? server))
+                                  (= spec (get (configured-servers) server))))))))))
 
 (defn- visible-servers
   "`{server spec}` visible to `session-id`: the configured (daemon-wide) servers
@@ -801,6 +854,7 @@
   (let [name (server-name name)]
     (mcp-oauth/forget! name)
     (disconnect! name)
+    (clear-auth-backoff! name)
     (mcp-oauth/token-status name)))
 
 (defn test-gateway-server!
