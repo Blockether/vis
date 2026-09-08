@@ -7,7 +7,6 @@ export interface ProviderLimitResetProps {
   isChecking?: boolean;
   hasPending?: boolean;
   onConsume: (accountId: string) => Promise<ProviderResetOutcome>;
-  onRefresh: () => Promise<void>;
 }
 
 const outcomeText: Record<ProviderResetOutcome, string> = {
@@ -18,7 +17,7 @@ const outcomeText: Record<ProviderResetOutcome, string> = {
 };
 
 /** Deliberate account-wide mutation, separate from the read-only quota refresh. */
-export function ProviderLimitReset({ credits, isChecking = false, hasPending = false, onConsume, onRefresh }: ProviderLimitResetProps) {
+export function ProviderLimitReset({ credits, isChecking = false, hasPending = false, onConsume }: ProviderLimitResetProps) {
   const [confirmAccount, setConfirmAccount] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
@@ -30,6 +29,7 @@ export function ProviderLimitReset({ credits, isChecking = false, hasPending = f
   const summary = isChecking ? 'Checking available resets…'
     : available !== null ? `${available} ${available === 1 ? 'reset' : 'resets'} available`
     : credits?.status === 'unsupported' ? 'Limit resets are not available for this account.'
+    : !credits ? 'The gateway did not report reset availability. Check that it is up to date.'
     : 'Available resets could not be checked.';
 
   async function consume() {
@@ -72,12 +72,11 @@ export function ProviderLimitReset({ credits, isChecking = false, hasPending = f
             </Button>
           </div>
         </div>
-      ) : (
+      ) : (available !== null || hasPending) && (
         <div className="flex flex-wrap gap-2">
-          {(available !== null || hasPending) && <Button density="compact" variant="secondary" disabled={!canReset || isChecking || busy} onClick={() => { setNotice(null); setConfirmAccount(accountId!); }}>
+          <Button density="compact" variant="secondary" disabled={!canReset || isChecking || busy} onClick={() => { setNotice(null); setConfirmAccount(accountId!); }}>
             {hasPending ? 'Check reset result…' : 'Reset limits…'}
-          </Button>}
-          <Button density="compact" variant="quiet" disabled={isChecking || busy} onClick={() => void onRefresh()}>Refresh limits</Button>
+          </Button>
         </div>
       )}
     </div>
