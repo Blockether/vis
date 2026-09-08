@@ -212,6 +212,11 @@ session: explicit sync, `/reload`, then call the tool. `vis-agent extension list
 checks registration only. A passing package test alone does not prove that the
 prepared dependencies can be imported and called in the session worker.
 
+**Current limitation:** the confined worker refuses native calls through `ctypes`.
+SciPy's low-level callback initialization requires those calls, so SciPy is not
+currently supported there even when sync and standalone Python tests succeed.
+Do not treat successful installation or registration as a compatibility check.
+
 ## Developing outside Vis
 
 The engine's `blockether.vis.extension` module is also published on PyPI as

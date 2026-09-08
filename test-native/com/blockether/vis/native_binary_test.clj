@@ -34,6 +34,16 @@
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
+            [charred.api :as json]
+            [com.blockether.vis-python-runtime :as runtime]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.python.env :as ep]
+            [com.blockether.vis.internal.python.extensions :as pyx]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
+            [com.blockether.vis.internal.python.worker :as worker]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (com.sun.net.httpserver HttpExchange HttpHandler HttpServer)
            (java.io File)
@@ -688,3 +698,194 @@
              (expect (= lock-before (slurp (io/file project "uv.lock"))))
              (expect (not (.exists (io/file project ".venv")))))
            (finally (delete-tree! dir))))))
+
+(defn- package-check-result
+  [stdout]
+  (let [line (last (filter #(str/starts-with? % "PACKAGE_CHECK ") (str/split-lines stdout)))]
+    (when line (json/read-json (subs line (count "PACKAGE_CHECK ")) :key-fn keyword))))
+
+(defdescribe
+  native-package-worker-compatibility-test
+  ;; Explicit integration run downloads pinned public wheels through uv. A blocked
+  ;; SciPy result is a known compatibility limitation, NOT a successful calculation.
+  (it
+    "checks native wheels in the CLI and records the confined worker's SciPy refusal"
+    (let [dir
+          (temp-dir "vis-native-packages")
+
+          project
+          (doto (io/file dir "implementation") .mkdirs)
+
+          source
+          (doto (io/file project "src") .mkdirs)
+
+          entries
+          (doto (io/file dir ".vis/extensions") .mkdirs)
+
+          bin
+          (require-binary)
+
+          library
+          (python-library bin)
+
+          cli
+          [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir))]
+
+          old-home
+          (System/getProperty "user.home")
+
+          store
+          (ps/db-create-connection! :memory)
+
+          index
+          {"python" {"index_url" "https://pypi.org/simple"}}]
+
+      (try
+        (expect library)
+        (runtime/use-library! (.getAbsolutePath library))
+        (spit (io/file dir "vis.yml") "python:\n  index_url: https://pypi.org/simple\n")
+        (spit (io/file project "pyproject.toml")
+              (str "[project]\nname = 'vis-native-package-check'\nversion = '1.0'\n"
+                   "requires-python = '>=3.14,<3.15'\n"
+                   "dependencies = ['numpy==2.5.3', 'scipy==1.18.1', "
+                   "'pydantic==2.13.5', 'cryptography==49.0.0']\n"))
+        (io/copy (io/file "test-native/com/blockether/vis/fixtures/package_checks.py")
+                 (io/file source "package_checks.py"))
+        (spit
+          (io/file entries "packages.py")
+          (str
+            "# /// script\n# dependencies = []\n# [tool.vis]\n"
+            "# project = '../../implementation'\n"
+            "# source_paths = ['../../implementation/src']\n# ///\n"
+            "import blockether.vis.extension as vis\n" "from package_checks import packages_check\n"
+            "vis.register(vis.Extension(name='package-check', alias='packages', "
+            "description='Native package compatibility', symbols=[vis.Symbol(packages_check)]))\n"))
+        (let [locked (run-binary dir
+                                 ["uv" "lock" "--project" (str project) "--python"
+                                  (com.blockether.vispython.Locations/pythonExecutable
+                                    (str (io/file (.getParentFile library) "python")))
+                                  "--no-python-downloads" "--default-index"
+                                  "https://pypi.org/simple"]
+                                 120)]
+          (expect (= 0 (:exit locked)) (:output locked)))
+        (let [lock-before
+              (slurp (io/file project "uv.lock"))
+
+              synced
+              (run-binary dir
+                          (into cli ["python" "uv" "sync" "--project" (str project) "--locked"])
+                          240)]
+
+          (expect (= 0 (:exit synced)) (:output synced))
+          (System/setProperty "user.home" (.getAbsolutePath dir))
+          (binding [extension/*current-environment* {:db-info store}]
+            (with-redefs [config/load-config-raw (constantly index)
+                          python-runtime/uv-sync! (fn [& _]
+                                                    (throw (ex-info "Unexpected sync" {})))
+                          python-runtime/pip-install! (fn [& _]
+                                                        (throw (ex-info "Unexpected pip" {})))]
+
+              (let [packages (python-runtime/prepared-project project)
+                    baseline (run-binary
+                               dir
+                               (into cli
+                                     ["python" "-c"
+                                      (str
+                                        "import sys, json\nsys.path[:0] = ["
+                                        (pr-str (str source))
+                                        ", "
+                                        (pr-str (str packages))
+                                        "]\n"
+                                        "from package_checks import packages_check\n"
+                                        "print('PACKAGE_CHECK ' + json.dumps(packages_check()))")])
+                               120)
+                    report (package-check-result (:output baseline))]
+
+                (expect (= 0 (:exit baseline)) (:output baseline))
+                (expect (= #{:numpy :scipy :pydantic :cryptography} (set (keys (:packages report))))
+                        (:output baseline))
+                (expect (every? #(and (= "ok" (:status %)) (:prepared %)) (vals (:packages report)))
+                        (pr-str report))
+                (expect (= {:loaded 1 :failed 0 :changed? true}
+                           (pyx/reload-python-extensions! {:dirs [(str entries)]})))
+                (let [jvm-worker @#'worker/child-argv
+                      ext (some #(when (= "package-check" (:ext/name %)) %)
+                                (extension/registered-extensions))]
+
+                  (expect ext)
+                  ;; Compare the development JVM and the packaged native worker under one policy.
+                  (doseq [native? [false true]]
+                    (with-redefs-fn {#'worker/child-argv
+                                     (fn [lib socket guest-dir]
+                                       (if native?
+                                         (let [executable (runtime/resolve-worker {:path lib})]
+                                           (expect executable
+                                                   "The runtime archive must carry its worker")
+                                           [executable (str "-Duser.home=" dir) socket guest-dir])
+                                         (jvm-worker lib socket guest-dir)))}
+                      (fn []
+                        (let [made (ep/create-python-context
+                                     {}
+                                     (constantly [(.getCanonicalPath dir)])
+                                     {:worker? true :jail-enabled? true :enabled? false}
+                                     nil)
+                              ctx (:python-context made)
+                              env {:python-context ctx
+                                   :session-id "native-package-check"
+                                   :extensions (atom [ext])
+                                   :active-extensions (atom [])
+                                   :db-info store}
+                              worker-log (:log (get @@#'worker/workers ctx))]
+
+                          (try
+                            (lp/sync-active-extension-symbols! env [ext])
+                            (let
+                              [answer
+                               (ep/run-python-block
+                                 ctx
+                                 "import json\nprint('PACKAGE_CHECK ' + json.dumps(await packages_check()))")
+                               report (package-check-result (:stdout answer))
+                               statuses (into {}
+                                              (map (fn [[name result]]
+                                                     [name (:status result)]))
+                                              (:packages report))
+                               ^Process process (:process (get @@#'worker/workers ctx))]
+
+                              (expect (nil? (:error answer)) (pr-str answer))
+                              (expect (= (.pid process) (:pid report)))
+                              (expect (true? (:manual report)))
+                              (expect
+                                (= {:numpy "ok" :scipy "error" :pydantic "ok" :cryptography "ok"}
+                                   statuses)
+                                (pr-str report))
+                              (expect (str/includes? (get-in report [:packages :scipy :error] "")
+                                                     "native symbol through ctypes"))
+                              (expect (every? #(get-in report [:packages % :prepared])
+                                              [:numpy :pydantic :cryptography]))
+                              (println "PACKAGE_COMPATIBILITY"
+                                       (if native? :native :jvm)
+                                       (pr-str statuses)))
+                            (catch Exception error
+                              (throw (ex-info "Package worker compatibility check failed"
+                                              {:log worker-log :native? native?}
+                                              error)))
+                            (finally (ep/dispose-python-context! ctx)))))))))))
+          (expect (= lock-before (slurp (io/file project "uv.lock"))))
+          (expect (not (.exists (io/file project ".venv"))))
+          (expect (= 1
+                     (count (filter #(= ".vis-packages" (.getName ^File %))
+                                    (file-seq (io/file dir ".vis/python/projects")))))))
+        (catch Exception error
+          (doseq [log
+                  (distinct (cons (:log (ex-data error)) (map :log (vals @@#'worker/workers))))
+
+                  :when (and log (.isFile (io/file log)))]
+
+            (let [text (slurp log)]
+              (println "PACKAGE_WORKER_STARTUP" (subs text 0 (min 8000 (count text))))))
+          (throw error))
+        (finally (pyx/reload-python-extensions! {:dirs []})
+                 (ps/db-dispose-connection! store)
+                 (System/setProperty "user.home" old-home)
+                 (runtime/use-library! nil)
+                 (delete-tree! dir))))))

@@ -121,43 +121,42 @@
           url
           (str "http://localhost:" (:port origin) "/probe")]
 
-      (try
-        (expect
-          (= ["ok" "ok" "ok" "ok" "ok"]
-             (python-json sandbox
-                          (str "import importlib, json, urllib.request\n"
-                               "import aiohttp, httpx, requests\n"
-                               "from pip._internal.network.session import PipSession\n"
-                               "real_asyncio = importlib.import_module('asyncio')\n"
-                               "url = " (pr-str url)
-                               "\n" "async def aio():\n"
-                               "    async with aiohttp.ClientSession(trust_env=True) as session:\n"
-                               "        async with session.get(url) as response:\n"
-                               "            return await response.text()\n"
-                               "aio_result = real_asyncio.run(aio())\n"
-                               "with PipSession() as pip_session:\n"
-                               "    pip_result = pip_session.get(url, timeout=5).text\n"
-                               "print(json.dumps([\n"
-                               "    urllib.request.urlopen(url, timeout=5).read().decode(),\n"
-                               "    requests.get(url, timeout=5).text,\n"
-                               "    httpx.get(url, timeout=5).text,\n"
-                               "    aio_result,\n" "    pip_result]))"))))
-        ;; Regression: closing with an unread POST body discarded the 403 response.
-        (expect (= 403
-                   (python-json sandbox
-                                (str "import json, urllib.error, urllib.request\n"
-                                     "try:\n"
-                                     "    urllib.request.urlopen(urllib.request.Request("
-                                     (pr-str url)
-                                     ", data=b'x', method='POST'), timeout=5)\n"
-                                     "    result = 200\n"
-                                     "except urllib.error.HTTPError as error:\n"
-                                     "    result = error.code\n" "print(json.dumps(result))"))))
-        (expect (= 5 (count @(:requests origin))))
-        (expect
-          (some
-            #(and (= token (:token %)) (= "localhost" (:host %)) (= "GET" (:method %)) (:allow? %))
-            @logs))
-        (expect (some #(and (= token (:token %)) (= "POST" (:method %)) (false? (:allow? %)))
-                      @logs))
-        (finally (dispose! sandbox) ((:stop! proxy)) ((:stop! origin)))))))
+      (try (expect
+             (= ["ok" "ok" "ok" "ok" "ok"]
+                (python-json
+                  sandbox
+                  (str "import json, urllib.request\n"
+                       "import aiohttp, httpx, requests\n"
+                       "from pip._internal.network.session import PipSession\n"
+                       "url = " (pr-str url)
+                       "\n" "async def aio():\n"
+                       "    async with aiohttp.ClientSession(trust_env=True) as session:\n"
+                       "        async with session.get(url) as response:\n"
+                       "            return await response.text()\n" "aio_result = await aio()\n"
+                       "with PipSession() as pip_session:\n"
+                       "    pip_result = pip_session.get(url, timeout=5).text\n"
+                       "print(json.dumps([\n"
+                       "    urllib.request.urlopen(url, timeout=5).read().decode(),\n"
+                       "    requests.get(url, timeout=5).text,\n"
+                       "    httpx.get(url, timeout=5).text,\n"
+                       "    aio_result,\n" "    pip_result]))"))))
+           ;; Regression: closing with an unread POST body discarded the 403 response.
+           (expect (= 403
+                      (python-json sandbox
+                                   (str "import json, urllib.error, urllib.request\n"
+                                        "try:\n"
+                                        "    urllib.request.urlopen(urllib.request.Request("
+                                        (pr-str url)
+                                        ", data=b'x', method='POST'), timeout=5)\n"
+                                        "    result = 200\n"
+                                        "except urllib.error.HTTPError as error:\n"
+                                        "    result = error.code\n" "print(json.dumps(result))"))))
+           (expect (= 5 (count @(:requests origin))))
+           (expect (some #(and (= token (:token %))
+                               (= "localhost" (:host %))
+                               (= "GET" (:method %))
+                               (:allow? %))
+                         @logs))
+           (expect (some #(and (= token (:token %)) (= "POST" (:method %)) (false? (:allow? %)))
+                         @logs))
+           (finally (dispose! sandbox) ((:stop! proxy)) ((:stop! origin)))))))
