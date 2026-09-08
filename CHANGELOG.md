@@ -7,6 +7,160 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.44] - 2026-09-08
+
+### Changed
+- chore(release): v0.1.44
+- fix(ui): restore trace insets and nest results under code
+- fix(python): isolate trusted extensions from model workers
+- perf(gateway): defer speech engine loading
+- fix(grep): confine filename matches to requested paths
+- perf(grep): default context to 3 lines and add read budget guidance
+- perf(gateway): defer Clojure test runner loading
+- fix(python): scope host callers to their worker connection
+- fix(ui): order execution bands and remove left rails
+- feat(speech): log correlated synthesis and model loading
+- perf(gateway): isolate SQLite temp and defer tokenizers
+- fix(ci): share the isolated home across Clojure JVMs
+- feat(python): compact tool results and lean session reads
+- fix(python): fail pytest runs that exit without test reports
+- fix(tui): show results before code and activity
+- fix(companion): refresh response controls after reconnect
+- fix(python): use runtime 0.5.2 for jailed native workers
+- fix(python): close reload-stale workers between turns
+- perf(gateway): defer Clojure formatter loading
+- fix(tui): align execution disclosures and fill band padding
+- fix(companion): correct OAuth flow types
+- chore: checkpoint UI and live-view changes
+- fix(companion): correct send and keyboard activation timing
+- fix(companion): open MCP sign-in tab inside the tap
+- chore(deps): upgrade svar to 0.7.162
+- fix(companion): keep refreshing MCP rows until the reconnect lands
+- feat(companion): open MCP sign-in directly from the row
+- fix(python): prepare uv extensions only through explicit sync
+- fix(gateway): require newline before accepting journal terminal
+- fix(ui): align execution rails and collapse activity by default
+- chore(release): record companion build 5487
+- test(companion): allow the MCP rows' own swipe verbs in settings
+- fix(shell): kill TERM-resistant children after the launcher exits
+- docs(ui): highlight Python and show interactive terminal captures
+- feat(python): support indexed dependencies and locked uv projects
+- perf(gateway): settle a finished turn from the journal's tail in hydrate!
+- perf(mcp): back off connects to a server that awaits sign-in
+- perf(config): re-parse a dotenv file only when its stamp moves
+- perf(gateway): hold keychain answers for a minute instead of forking per read
+- perf(db): leave Hikari's leak detector off unless a property arms it
+- fix(docs): align prose and improve installation layout
+- fix(testing): skip generated copies and initialize shell tests
+- chore(tui): upgrade Lanterna to 3.1.5-vis.50
+- docs(site): simplify guides and improve mobile tables
+- feat(activity): unify client groups and align execution text
+- feat(companion): match MCP servers panel to provider rows
+- perf(shell): sample a waited shell's cost once per wait
+- refactor(environment): remove unused inspection tools
+- fix(companion): clear completed project removal state
+- chore(release): record companion build 5468
+- feat(companion): join Activity with execution bands
+- docs: restructure docs site and PyPI README for newcomers
+- fix(desktop): keep only macOS on self-hosted runners
+- fix(ios): register OAuth callbacks in existing projects
+- chore(release): record companion build 5463
+- fix(companion): align thinking and code bands
+- fix(oauth): use paired transport without VPN prompts
+- fix(context): compact pending input and recover resumed overflows
+- fix(oauth): allow confirmed VPN gateway connections
+- fix(presentation): redact secrets at public view boundaries
+- chore(release): record companion build 5457
+- fix(activity): present python object fields, not transport envelopes
+- fix(activity): hide Python transport envelopes
+- fix(desktop): install Linux AppImage desktop helpers
+- docs(audit): record runtime 0.5.1 pin
+- fix(python): recover dead workers with runtime 0.5.1
+- fix(desktop): collect normalized Linux package names
+- feat(auth): receive OAuth callbacks on native clients
+- fix(tui): decode live-view patch operations from gateway
+- fix(tui): open attachment links from assistant replies
+- fix(desktop): target Linux and universal macOS
+- release: update release notes for v0.1.43
+
+### Package changes
+
+#### com.blockether/vis
+- chore(release): v0.1.44 (d015ea65c)
+- fix(ui): restore trace insets and nest results under code (331a00415)
+- fix(python): isolate trusted extensions from model workers (fba0254d8)
+- perf(gateway): defer speech engine loading (a44e35506)
+- fix(grep): confine filename matches to requested paths (bfb0551d7)
+- perf(grep): default context to 3 lines and add read budget guidance (b33b2c5c1)
+- perf(gateway): defer Clojure test runner loading (4e67363bf)
+- fix(python): scope host callers to their worker connection (1e3dc5837)
+- fix(ui): order execution bands and remove left rails (a3c1f1e05)
+- feat(speech): log correlated synthesis and model loading (fde0b44e3)
+- perf(gateway): isolate SQLite temp and defer tokenizers (d2382c5bc)
+- fix(ci): share the isolated home across Clojure JVMs (191dbca98)
+- feat(python): compact tool results and lean session reads (76bf5f0de)
+- fix(python): fail pytest runs that exit without test reports (7fb046dc8)
+- fix(tui): show results before code and activity (9f1a68a4e)
+- fix(companion): refresh response controls after reconnect (a5a37bb0a)
+- fix(python): use runtime 0.5.2 for jailed native workers (dea035d93)
+- fix(python): close reload-stale workers between turns (4c2226140)
+- perf(gateway): defer Clojure formatter loading (e802ef20b)
+- fix(tui): align execution disclosures and fill band padding (99e12bd4f)
+- fix(companion): correct OAuth flow types (d462f126e)
+- chore: checkpoint UI and live-view changes (817fcb8da)
+- fix(companion): correct send and keyboard activation timing (a5175bab3)
+- fix(companion): open MCP sign-in tab inside the tap (fb59002da)
+- chore(deps): upgrade svar to 0.7.162 (de13598de)
+- fix(companion): keep refreshing MCP rows until the reconnect lands (17d5e3223)
+- feat(companion): open MCP sign-in directly from the row (55b6372d9)
+- fix(python): prepare uv extensions only through explicit sync (0613e01d1)
+- fix(gateway): require newline before accepting journal terminal (1554f1a51)
+- fix(ui): align execution rails and collapse activity by default (132d7592c)
+- chore(release): record companion build 5487 (5609bda18)
+- test(companion): allow the MCP rows' own swipe verbs in settings (599dfd9ac)
+- fix(shell): kill TERM-resistant children after the launcher exits (23df1586f)
+- docs(ui): highlight Python and show interactive terminal captures (8ae4ffaa8)
+- feat(python): support indexed dependencies and locked uv projects (d940a681d)
+- perf(gateway): settle a finished turn from the journal's tail in hydrate! (ea021e3a2)
+- perf(mcp): back off connects to a server that awaits sign-in (252872cb4)
+- perf(config): re-parse a dotenv file only when its stamp moves (2e3293799)
+- perf(gateway): hold keychain answers for a minute instead of forking per read (2c433a078)
+- perf(db): leave Hikari's leak detector off unless a property arms it (b0cef5769)
+- fix(docs): align prose and improve installation layout (9ba9d2c0f)
+- fix(testing): skip generated copies and initialize shell tests (5296e2832)
+- chore(tui): upgrade Lanterna to 3.1.5-vis.50 (32757fc82)
+- docs(site): simplify guides and improve mobile tables (3ac0f91ee)
+- feat(activity): unify client groups and align execution text (775aebfca)
+- feat(companion): match MCP servers panel to provider rows (07fbf574d)
+- perf(shell): sample a waited shell's cost once per wait (8c13eba12)
+- refactor(environment): remove unused inspection tools (a80c369e1)
+- fix(companion): clear completed project removal state (926946175)
+- chore(release): record companion build 5468 (b1326f195)
+- feat(companion): join Activity with execution bands (063f89981)
+- docs: restructure docs site and PyPI README for newcomers (dc8854054)
+- fix(desktop): keep only macOS on self-hosted runners (9c2f39003)
+- fix(ios): register OAuth callbacks in existing projects (c9f59212c)
+- chore(release): record companion build 5463 (c67d5cbc7)
+- fix(companion): align thinking and code bands (548183a79)
+- fix(oauth): use paired transport without VPN prompts (97bd801a3)
+- fix(context): compact pending input and recover resumed overflows (d855bac2e)
+- fix(oauth): allow confirmed VPN gateway connections (de7f8a40b)
+- fix(presentation): redact secrets at public view boundaries (da700762e)
+- chore(release): record companion build 5457 (922c25278)
+- fix(activity): present python object fields, not transport envelopes (b716429ab)
+- fix(activity): hide Python transport envelopes (51c40f0fc)
+- fix(desktop): install Linux AppImage desktop helpers (ca0f3c91c)
+- docs(audit): record runtime 0.5.1 pin (1d4e8043d)
+- fix(python): recover dead workers with runtime 0.5.1 (aef9b60f7)
+- fix(desktop): collect normalized Linux package names (72c5c20ab)
+- feat(auth): receive OAuth callbacks on native clients (5659d0ff6)
+- fix(tui): decode live-view patch operations from gateway (a4e2aa774)
+- fix(tui): open attachment links from assistant replies (fb233b8fd)
+- fix(desktop): target Linux and universal macOS (169b38392)
+- release: update release notes for v0.1.43 (51cf309d8)
+
+
+
 ### Fixed
 
 - Preserve one execution and result per native tool call, including repeated programs;
@@ -5912,7 +6066,7 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.43...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.44...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -5947,3 +6101,4 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 [v0.1.40]: https://github.com/Blockether/vis/releases/tag/v0.1.40
 [v0.1.41]: https://github.com/Blockether/vis/releases/tag/v0.1.41
 [v0.1.43]: https://github.com/Blockether/vis/releases/tag/v0.1.43
+[v0.1.44]: https://github.com/Blockether/vis/releases/tag/v0.1.44

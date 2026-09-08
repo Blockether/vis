@@ -36,7 +36,7 @@ vis-agent update            # update the command and runtime
 
 ```clojure
 ;; deps.edn
-{:deps {com.blockether/vis {:mvn/version "0.1.43"}}}
+{:deps {com.blockether/vis {:mvn/version "0.1.44"}}}
 ```
 
 ## Quick start
