@@ -564,50 +564,6 @@
             (and (.exists cur) (.isDirectory cur)) cur
             :else (recur (.getParentFile cur))))))
 
-(defn- normalize-find-dir-path
-  "Normalize one grep scope to a directory. Existing files become their
-   parent directory; missing paths climb to the nearest existing confined
-   directory. The model-facing value uses the same round-trippable address as
-   every search result."
-  [path]
-  (let [p
-        (str/trim (str path))
-
-        p
-        (if (str/blank? p) "." p)
-
-        ^File f
-        (safe-path p)
-
-        ^File dir
-        (cond (.isDirectory f) f
-              (.isFile f) (.getParentFile f)
-              :else (nearest-existing-dir f))]
-
-    (if dir (rel-path dir) p)))
-
-(defn- find-scope-misses
-  "The requested grep scopes that DO NOT exist, each
-   `{\"requested\" p \"searched\" nearest-existing-dir}`.
-
-   `normalize-find-dir-path` climbs a stale path to the nearest existing
-   directory so the search still runs — which would otherwise SWALLOW the typo.
-   Computing the misses from the RAW scopes (before normalization) keeps the
-   climb productive while `grep` still reports `missing_paths`, exactly
-   like the content search does."
-  [paths]
-  (into []
-        (keep (fn [p]
-                (let [s (str/trim (str p))]
-                  (when-not (str/blank? s)
-                    (let [^File f (safe-path s)]
-                      (when-not (.exists f)
-                        (let [anc (nearest-existing-dir f)]
-                          (cond-> {"requested" s}
-                            anc
-                            (assoc "searched" (rel-path anc))))))))))
-        paths))
-
 (defn- resolve-search-roots
   "Resolve grep `paths` into
    `{:roots [File …] :searched-paths [model-path …] :resolutions [{…} …]}`.
@@ -829,14 +785,15 @@
               (sequential? paths) paths
               :else [paths])]
 
-    ;; Gate-check paths as given, not normalized to parent directories.
-    ;; grep's actual search uses resolve-search-roots which handles file→dir
-    ;; normalization internally. The gate must see config/private/settings.edn, not
-    ;; config/private/, so a rule on config/private/ also blocks explicit file access.
+    ;; Gate-check the same file or directory scopes used by the search.
     ;; Missing paths are still resolved to their nearest existing ancestor.
     (mapv (fn [p]
             (let [^File f (safe-path p)]
-              (if (.exists f) (rel-path f) (normalize-find-dir-path p))))
+              (if (.exists f)
+                (rel-path f)
+                (if-let [dir (nearest-existing-dir f)]
+                  (rel-path dir)
+                  p))))
           paths)))
 
 (defn- gate-refusal-failure
@@ -1573,14 +1530,11 @@
        (when-not (and (vector? paths) (seq paths) (every? string? paths))
          (throw
            (ex-info
-             "find \"paths\" must be a string or vector of directory strings (empty defaults to current directory)"
+             "find \"paths\" must be a string or vector of file or directory strings (empty defaults to current directory)"
              {:type :ext.foundation.editing/invalid-find-args :paths raw-paths})))
 
-       precise-paths
+       paths
        (into [] (distinct) paths)
-
-       missing
-       (find-scope-misses paths)
 
        context
        (let [c (get spec "context" default-grep-context-lines)]
@@ -1588,9 +1542,6 @@
            (throw (ex-info "find \"context\" must be a non-negative integer"
                            {:type :ext.foundation.editing/invalid-find-args :context c})))
          (long c))
-
-       paths
-       (into [] (comp (map normalize-find-dir-path) (distinct)) paths)
 
        limit
        (get spec "limit" default-find-limit)
@@ -1612,8 +1563,6 @@
 
       {:query query
        :paths paths
-       :precise-paths precise-paths
-       :missing missing
        :context context
        :limit limit
        :offset offset
@@ -1668,7 +1617,13 @@
   [^File root query is_hidden candidate-page overlay]
   (case (search-root-kind root)
     :file
-    [(find-direct-file-item root)]
+    (let [item
+          (find-direct-file-item root)
+
+          score
+          (find-relevance query (:path item))]
+
+      (when (>= (double score) (double find-min-score)) [(assoc item :score score)]))
 
     :dir
     (fff-index/with-index [idx (fff-index/lease root true overlay)]
@@ -1683,9 +1638,9 @@
 (defn- find-scan
   "Scan `roots` for ONE `query` string and keep candidates whose
    `find-relevance` (name-weighted, order-insensitive) clears `find-min-score`.
-   Returns raw item maps carrying `:score`. A direct FILE root contributes
-   itself at score 1.0. The single-query building block `find-search` runs
-   once for the strict whole-query pass and once per token for the fallback.
+   Returns raw item maps carrying `:score`; direct FILE roots use the same
+   relevance threshold. `find-search` runs this once for the strict whole-query
+   pass and once per token for the fallback.
 
    Directory roots ALWAYS go through fff (fast, frecency-ranked), including
    `.rgignore` / `:grep` overlay projects, which fff honors natively via
@@ -1693,7 +1648,8 @@
   [roots query is_hidden candidate-page overlay]
   (->> roots
        (mapcat #(find-scan-root % query is_hidden candidate-page overlay))
-       (distinct)
+       (into {} (map (juxt :path identity)))
+       vals
        vec))
 
 (defn- find-fallback-tokens
@@ -1765,14 +1721,15 @@
   [roots limit is_hidden overlay]
   (->> roots
        (mapcat #(find-ls-root % limit is_hidden overlay))
-       (distinct)
+       (into {} (map (juxt :path identity)))
+       vals
        (sort-by find-ls-rank)
        (take limit)
        vec))
 
 (defn- find-search
   [args]
-  (let [{:keys [query paths limit offset is_hidden is_ls is_regex] scope-misses :missing}
+  (let [{:keys [query paths limit offset is_hidden is_ls is_regex]}
         (coerce-find-spec args)
 
         {roots :roots find-resolutions :resolutions searched-paths :searched-paths}
@@ -1863,7 +1820,7 @@
                         vec) true]))
 
         items
-        (if fuzzy?
+        (if (or is_ls fuzzy?)
           (vec (take limit (drop offset (map #(dissoc % :rank-score) ranked))))
           (->> ranked
                ;; strongest match first; frecency then path break ties.
@@ -1925,16 +1882,14 @@
      "truncated_by" (if (>= (count items) (long limit)) "limit" "end_of_results")
      "fuzzy" (boolean fuzzy?)
      "matched_terms" (vec matched-terms)
-     "missing_paths" (into (missing-search-paths find-resolutions) scope-misses)}))
+     "missing_paths" (missing-search-paths find-resolutions)}))
 
 (declare ^:private rg-search ^:private coerce-rg-spec)
 
 (defn- find-args->content-spec
-  "Build grep's CONTENT-search spec from its public args. Scope paths are the
-   PRECISE ones the caller named (a file greps as that one file, rg-style); the
-   caller widens to the normalized directory scopes only when the precise pass
-   finds nothing. `context` N (0 = off, omitted = 4) rides along, so one
-   call can ask for the surrounding lines of every hit."
+  "Build grep's CONTENT-search spec from its public args, preserving the same
+   exact file or directory scopes as NAME matching. `context` N rides along so
+   one call can ask for the surrounding lines of every hit."
   [args]
   (let [[a b]
         args
@@ -1948,7 +1903,7 @@
                                  (= 1 (count args)) {"query" a}
                                  :else {}))
 
-        {paths :precise-paths :keys [context offset]}
+        {:keys [paths context offset]}
         (coerce-find-spec args)]
 
     (cond-> {"query" (get spec "query") "paths" paths "offset" offset "context" context}
@@ -2300,11 +2255,10 @@
    page can repeat a row of the wider axis but can never skip one. A `time`
    cap is NOT paged: a re-scan stops at the same wall, so narrow the search.
 
-   For NAME matching, existing files normalize to their parent directory and
-   missing paths to the nearest existing confined directory. CONTENT matching
-   searches an existing file exactly as scoped and never widens it on zero hits;
-   missing scopes are searched at their nearest existing directory and reported.
-   NAME matching is fuzzy subsequence over the fff file index."
+   NAME and CONTENT matching share the caller's exact file or directory scope.
+   An existing file is never widened to its parent, including on zero hits.
+   Missing scopes are searched at their nearest existing confined directory
+   and reported. NAME matching is fuzzy subsequence over the fff file index."
   [& args]
   (let
     [{:strs [query offset item_count truncated_by] :as name-out}
@@ -4314,7 +4268,7 @@
      (str
        "FIND WHERE something is — the codebase-wide search that answers `where is X`, `who calls this "
        "function`, `which file defines this class`, `every usage of this symbol`. Scans the whole repo, "
-       "or only the paths you name. "
+       "or only the paths you name. File and directory scopes bound both content and filename matches. "
        "ONE options map is the whole call — `grep({\"query\": q, \"paths\": [\"src\"], \"context\": 3})`, or that "
        "same map as kwargs; never a positional query. `context: N` includes N anchored lines on each side "
        "(default 3); set it to 0 only for pure location/count sweeps. "

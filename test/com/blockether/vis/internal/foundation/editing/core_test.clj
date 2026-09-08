@@ -2942,56 +2942,51 @@
   (it "grep carries an observation tag (registry-resolvable)"
       (expect (= :observation (:ext.symbol/tag editing/grep-symbol)))))
 
-(defdescribe
-  empty-search-paths-default-test
-  "grep scopes are directories; empty scope still means the workspace root."
-  (let [coerce-find
-        (private-fn "coerce-find-spec")
+(defdescribe empty-search-paths-default-test
+             "grep preserves file and directory scopes; empty scope keeps the default search."
+             (let [coerce-find
+                   (private-fn "coerce-find-spec")
 
-        coerce-rg
-        (private-fn "coerce-rg-spec")
+                   coerce-rg
+                   (private-fn "coerce-rg-spec")
 
-        find-paths
-        (private-fn "find-arg-paths")]
+                   find-paths
+                   (private-fn "find-arg-paths")]
 
-    (it "grep defaults empty paths to current directory in validation and path protection"
-        (let [spec {"query" "resource-config" "paths" []}]
-          (expect (= ["."] (:paths (coerce-find [spec]))))
-          (expect (= ["."] (find-paths [spec])))))
-    (it "coerce-find normalizes file to parent dir, find-arg-paths keeps the file for gate checking"
-        (let [dir
-              (temp-dir-path "find-dir-scope")
+               (it
+                 "grep defaults empty paths to current directory in validation and path protection"
+                 (let [spec {"query" "resource-config" "paths" []}]
+                   (expect (= ["."] (:paths (coerce-find [spec]))))
+                   (expect (= ["."] (find-paths [spec])))))
+               (it "coerce-find and find-arg-paths both preserve the explicit file scope"
+                   (let [dir
+                         (temp-dir-path "find-dir-scope")
 
-              file
-              (str dir "/one.clj")
+                         file
+                         (str dir "/one.clj")
 
-              expected-dir
-              ((private-fn "rel-path") (fs/file dir))
+                         expected-file
+                         ((private-fn "rel-path") (fs/file file))
 
-              expected-file
-              ((private-fn "rel-path") (fs/file file))
+                         spec
+                         {"query" "needle" "paths" [file]}]
 
-              spec
-              {"query" "needle" "paths" [file]}]
-
-          (spit (fs/file file) "needle\n")
-          ;; coerce-find (actual search) normalizes file→dir
-          (expect (= [expected-dir] (:paths (coerce-find [spec]))))
-          ;; find-arg-paths (gate checking) keeps the file so
-          ;; config/private/settings.edn is authorized as that file, not config/private/
-          (expect (= [expected-file] (find-paths [spec])))))
-    (it "accepts an explicit context and defaults both grep paths to three lines"
-        (expect (= 2 (:context (coerce-find [{"query" "needle" "context" 2}]))))
-        (expect (= 0 (:context (coerce-find [{"query" "needle" "context" 0}]))))
-        (expect (= 3 (:context (coerce-find [{"query" "needle"}]))))
-        (expect (= 3 (:context (coerce-rg {"query" "needle"}))))
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(coerce-find [{"query" "needle" "context" -1}])))
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(coerce-find [{"query" "needle" "context" {"before" 1}}]))))
-    (it "rg keeps its own empty-path and file-path semantics"
-        (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
-          (expect (= ["."] (:paths (coerce-rg spec))))))))
+                     (spit (fs/file file) "needle\n")
+                     (expect (= [file] (:paths (coerce-find [spec]))))
+                     ;; The gate checks that same file, not its parent directory.
+                     (expect (= [expected-file] (find-paths [spec])))))
+               (it "accepts an explicit context and defaults both grep paths to three lines"
+                   (expect (= 2 (:context (coerce-find [{"query" "needle" "context" 2}]))))
+                   (expect (= 0 (:context (coerce-find [{"query" "needle" "context" 0}]))))
+                   (expect (= 3 (:context (coerce-find [{"query" "needle"}]))))
+                   (expect (= 3 (:context (coerce-rg {"query" "needle"}))))
+                   (expect (throws? clojure.lang.ExceptionInfo
+                                    #(coerce-find [{"query" "needle" "context" -1}])))
+                   (expect (throws? clojure.lang.ExceptionInfo
+                                    #(coerce-find [{"query" "needle" "context" {"before" 1}}]))))
+               (it "rg keeps its own empty-path and file-path semantics"
+                   (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
+                     (expect (= ["."] (:paths (coerce-rg spec))))))))
 
 (defdescribe grep-max-results-alias-test
              ;; Models sometimes write `max_results` where grep's knob is `limit`; the call
@@ -3151,6 +3146,90 @@
                      (expect (empty? (get result "matches")))
                      (expect (not (contains? result "items")))
                      (expect (nil? (get result "hint")))))))
+
+(defdescribe
+  grep-name-scope-test
+  "Explicit paths bound name matching before scanning and pagination."
+  (let [primary
+        (str (fs/canonicalize (temp-dir-path "grep-name-scope/primary")))
+
+        sibling
+        (str (fs/canonicalize (temp-dir-path "grep-name-scope/sibling")))
+
+        roots
+        [primary sibling]
+
+        _
+        (doseq [[path content] [["primary/qzscope.clj" "qzscope\n"]
+                                ["primary/qzscope-neighbor.clj" "qzscope\n"]
+                                ["primary/sub/qzscope-child.clj" "qzscope\n"]
+                                ["primary/submarine/qzscope-outside.clj" "qzscope\n"]
+                                ["sibling/qzscope-external.clj" "qzscope\n"]]]
+          (write-temp! (str "grep-name-scope/" path) content))
+
+        lease-var
+        (resolve 'com.blockether.vis.internal.workspace.fff-index/lease)
+
+        lease
+        @lease-var
+
+        search
+        (fn [spec]
+          (let [leased (atom [])]
+            (binding [workspace/*workspace-root* (fs/file primary)]
+              (with-redefs [workspace/allowed-roots (constantly roots)
+                            workspace/no-search-roots (constantly #{})
+                            workspace/filesystem-root-mappings (constantly [])]
+
+                (with-redefs-fn {lease-var (fn [root & args]
+                                             (swap! leased conj (str root))
+                                             (apply lease root args))}
+                  #(let [result ((private-fn "grep-data") spec)] {:result result
+                                                                  :leased (set @leased)}))))))]
+
+    ;; A workspace-root file used to normalize to ".", searching every root.
+    (it "a single file never scans its parent or other roots, with or without content hits"
+        (doseq [query ["qzscope" "qzscpe" "" "zzzunmatchable"]]
+          (let [{:keys [result leased]} (search {"query" query "paths" ["qzscope.clj"]})]
+            (expect (= (if (= "zzzunmatchable" query) [] ["qzscope.clj"]) (get result "paths")))
+            (expect (= ["qzscope.clj"] (get result "searched_paths")))
+            (expect (= (if (= "qzscope" query) 1 0) (get result "hit_count")))
+            (expect (empty? leased)))))
+    (it "an explicit workspace directory does not expand into the default multi-root sweep"
+        (let [{:keys [result leased]} (search {"query" "qzscope" "paths" [primary]})]
+          (expect (= #{"qzscope.clj" "qzscope-neighbor.clj" "sub/qzscope-child.clj"
+                       "submarine/qzscope-outside.clj"}
+                     (set (get result "paths"))))
+          (expect (= #{primary} leased))))
+    (it "multiple scopes keep only the named file and directory subtree"
+        (let [{:keys [result leased]} (search {"query" "qzscope" "paths" ["qzscope.clj" "sub"]})]
+          (expect (= #{"qzscope.clj" "sub/qzscope-child.clj"} (set (get result "paths"))))
+          (expect (= 2 (get result "hit_count")))
+          (expect (= #{(str primary "/sub")} leased))))
+    (it "scoped name-only pages do not include neighbors or other roots"
+        (let [page
+              (fn [offset]
+                (:result (search
+                           {"query" "" "paths" ["qzscope.clj" "sub"] "limit" 1 "offset" offset})))
+
+              first-page
+              (page 0)
+
+              second-page
+              (page (get first-page "next_offset"))]
+
+          (expect (= 1 (count (get first-page "paths")) (count (get second-page "paths"))))
+          (expect (= #{"qzscope.clj" "sub/qzscope-child.clj"}
+                     (set (concat (get first-page "paths") (get second-page "paths")))))))
+    (it "overlapping file and directory scopes contribute each name only once"
+        (doseq [query ["qzscope" ""]]
+          (let [paths (get (:result (search {"query" query "paths" ["qzscope.clj" primary]}))
+                           "paths")]
+            (expect (= 4 (count paths))))))
+    (it "omitting paths retains the default multi-root search"
+        (let [{:keys [result leased]} (search {"query" "qzscope"})]
+          (expect (= 5 (count (get result "paths"))))
+          (expect (= (set roots) leased))))))
 
 (defdescribe
   grep-searched-paths-reporting-test
