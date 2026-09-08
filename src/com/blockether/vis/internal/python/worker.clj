@@ -92,15 +92,22 @@
   @guest-source-directory)
 
 (defn- serve-host-call!
-  "Answer one `host` request from the child on this thread, which is on record
-   under the request's id for as long as the tool runs so an interrupt can find it."
+  "Serve only identities the host assigned to this connection. Worker claims do
+   not authorize access to another worker's host bindings. This does not separate
+   trust levels within one worker. Interrupts retain ownership of reply delivery."
   [peer message]
-  (let [id (get message "id")]
+  (let [id
+        (get message "id")
+
+        caller
+        (get message "session")]
+
     (swap! (:serving peer) assoc id (Thread/currentThread))
-    (let [value (python-host/dispatch (get message "session")
-                                      (get message "tool")
-                                      (get message "payload"))]
-      (when (child/claim-reply! peer id) (child/send-line! peer {"id" id "value" value})))))
+    (let [reply (if (and (string? caller) (contains? @(:host-sessions peer) caller))
+                  {"value"
+                   (python-host/dispatch caller (get message "tool") (get message "payload"))}
+                  {"error" "Worker is not authorized for this host session"})]
+      (when (child/claim-reply! peer id) (child/send-line! peer (assoc reply "id" id))))))
 
 (defn- fail-host-calls!
   "Fail every host call the child has in flight on `peer`: each guest thread
@@ -324,7 +331,7 @@
               (.destroy process)
               (throw (ex-info "the python worker did not start"
                               {:type :vis/python-worker :log (.getAbsolutePath log)})))
-            (let [peer (child/peer-over accepted)
+            (let [peer (assoc (child/peer-over accepted) :host-sessions (atom #{}))
                   state {:process process :peer peer :log log}
                   thread (Thread. ^Runnable
                                   #(child/pump! peer
@@ -386,11 +393,29 @@
 (defn- ask
   ([k op session code] (ask k op session code nil))
   ([k op session code timeout-ms]
-   (child/request! (:peer (live k))
-                   (cond-> {"op" op "session" session}
-                     code
-                     (assoc "code" code))
-                   timeout-ms)))
+   (let [peer
+         (:peer (live k))
+
+         installing?
+         (= "install-runtime" op)
+
+         sessions
+         (:host-sessions peer)
+
+         newly-assigned?
+         (and installing? (not (contains? @sessions session)))]
+
+     ;; Assign before bootstrap can call the host; revoke before closing a namespace.
+     (when installing? (swap! sessions conj session))
+     (when (= "close" op) (swap! sessions disj session))
+     (try (child/request! peer
+                          (cond-> {"op" op "session" session}
+                            code
+                            (assoc "code" code))
+                          timeout-ms)
+          (catch Throwable error
+            (when newly-assigned? (swap! sessions disj session))
+            (throw error))))))
 
 (defn install-runtime! [k session] (ask k "install-runtime" session nil))
 

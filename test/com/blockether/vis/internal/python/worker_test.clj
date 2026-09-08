@@ -258,6 +258,70 @@
                               (try (#'worker/child-argv nil "/tmp/control.sock" "/tmp/host-modules")
                                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
 
+(defdescribe worker-host-authorization-test
+             (it "rejects callers not assigned to the connection before host dispatch"
+                 (let [peer
+                       {:serving (atom {}) :host-sessions (atom #{"owned"})}
+
+                       calls
+                       (atom [])
+
+                       replies
+                       (atom [])]
+
+                   (with-redefs [python-host/dispatch
+                                 (fn [caller tool payload]
+                                   (swap! calls conj [caller tool payload])
+                                   "ok")
+
+                                 worker-peer/send-line!
+                                 (fn [_ reply]
+                                   (swap! replies conj reply))]
+
+                     (doseq [[id caller] [[1 "other"] [2 nil] [3 "owned"]]]
+                       (#'worker/serve-host-call!
+                        peer
+                        {"id" id "session" caller "tool" "fixture" "payload" "{}"}))
+                     (expect (= [["owned" "fixture" "{}"]] @calls))
+                     (expect (every? #(contains? % "error") (take 2 @replies)))
+                     (expect (= {"id" 3 "value" "ok"} (last @replies)))
+                     (expect (empty? @(:serving peer)))))))
+
+(defdescribe
+  worker-host-authorization-lifecycle-test
+  (it "assigns on host bootstrap, revokes on close, and rolls back failed bootstrap"
+      (let [sessions
+            (atom #{})
+
+            peer
+            {:host-sessions sessions}
+
+            fail?
+            (atom false)
+
+            observed
+            (atom [])]
+
+        (with-redefs-fn {#'worker/live (fn [_]
+                                         {:peer peer})
+                         #'worker-peer/request!
+                         (fn [_ message _]
+                           (swap! observed conj [(get message "op") @sessions])
+                           (when @fail? (throw (ex-info "bootstrap failure" {}))))}
+          (fn []
+            (worker/install-runtime! "worker" "owned")
+            (expect (= #{"owned"} @sessions))
+            (worker/close-session! "worker" "owned")
+            (expect (empty? @sessions))
+            (reset! fail? true)
+            (expect (= "bootstrap failure"
+                       (try (worker/install-runtime! "worker" "failed")
+                            (catch clojure.lang.ExceptionInfo error (ex-message error)))))
+            (expect (empty? @sessions))
+            (expect (= [["install-runtime" #{"owned"}] ["close" #{}]
+                        ["install-runtime" #{"failed"}]]
+                       @observed)))))))
+
 (defdescribe
   worker-control-plane-test
   (it "bounds an interrupt whose child never replies"
