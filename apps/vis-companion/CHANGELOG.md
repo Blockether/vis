@@ -2,6 +2,22 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.44 (5520) — 2026-09-08
+<!-- commit: bb9bad25ee6d49f5e52f5bc2983c859e23796558 -->
+
+- V0.1.44
+- Restore trace insets and nest results under code
+- Order execution bands and remove left rails
+- Refresh response controls after reconnect
+- Correct OAuth flow types
+- Checkpoint UI and live-view changes
+- Correct send and keyboard activation timing
+- Open MCP sign-in tab inside the tap
+- Keep refreshing MCP rows until the reconnect lands
+- Open MCP sign-in directly from the row
+- Align execution rails and collapse activity by default
+- Record companion build 5487
+
 ## 0.1.43 (5487) — 2026-09-08
 <!-- commit: 599dfd9acb5ae2c7ff2524fa45d28bbad3b5e8dd -->
 
