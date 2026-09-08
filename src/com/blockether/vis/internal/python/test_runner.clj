@@ -145,34 +145,38 @@
    pytest refuse the NEXT file of the same basename (`import file mismatch`).
    The driver restores both, which is what a separate interpreter per file used
    to do for free."
-  (str "import sys as __vis_ts__, io as __vis_tio__\n" "__vis_path0__ = list(__vis_ts__.path)\n"
-       "__vis_mods0__ = set(__vis_ts__.modules)\n" "for __vis_tp__ in __vis_test_paths__:\n"
-       "    if __vis_tp__ and __vis_tp__ not in __vis_ts__.path:\n"
-       "        __vis_ts__.path.insert(0, __vis_tp__)\n"
-       "import pytest as __vis_pt__\n" "class __VisReports__:\n"
-       "    def __init__(self):\n" "        self.records = []\n"
-       "    def pytest_runtest_logreport(self, report):\n"
-       ;; One record per test: the CALL phase is the verdict, and a setup or
-       ;; teardown that fails is an error the call phase never reports.
-       "        if report.when == 'call':\n"
-       "            outcome = report.outcome\n" "        elif report.outcome != 'passed':\n"
-       "            outcome = 'error'\n" "        else:\n"
-       "            return\n" "        self.records.append((report.nodeid, outcome,"
-       " str(report.longrepr) if report.longrepr else ''))\n" "__vis_col__ = __VisReports__()\n"
-       "__vis_tbuf__ = __vis_tio__.StringIO()\n" "__vis_told__ = __vis_ts__.stdout\n"
-       "__vis_terr__ = __vis_ts__.stderr\n" "__vis_ts__.stdout = __vis_tbuf__\n"
-       "__vis_ts__.stderr = __vis_tbuf__\n" "try:\n"
-       "    __vis_test_rc__ = int(__vis_pt__.main("
-       "['-q', '-p', 'no:cacheprovider', '-p', 'no:faulthandler', __vis_test_file__],"
-       " plugins=[__vis_col__]))\n" "finally:\n"
-       "    __vis_ts__.stdout = __vis_told__\n" "    __vis_ts__.stderr = __vis_terr__\n"
-       "    for __vis_m__ in [__vis_k__ for __vis_k__ in list(__vis_ts__.modules)"
-       " if __vis_k__ not in __vis_mods0__]:\n"
-       "        __vis_ts__.modules.pop(__vis_m__, None)\n"
-       "    __vis_ts__.path[:] = __vis_path0__\n"
-       "__vis_test_output__ = __vis_tbuf__.getvalue()\n" "__vis_test_report__ = chr(30).join("
-       "str(__vis_nid__) + chr(31) + str(__vis_oc__) + chr(31) + str(__vis_msg__)"
-       " for (__vis_nid__, __vis_oc__, __vis_msg__) in __vis_col__.records)\n"))
+  (str
+    "import sys as __vis_ts__, io as __vis_tio__\n"
+    "__vis_path0__ = list(__vis_ts__.path)\n" "__vis_mods0__ = set(__vis_ts__.modules)\n"
+    "for __vis_tp__ in __vis_test_paths__:\n"
+    "    if __vis_tp__ and __vis_tp__ not in __vis_ts__.path:\n"
+    "        __vis_ts__.path.insert(0, __vis_tp__)\n" "import pytest as __vis_pt__\n"
+    "class __VisReports__:\n" "    def __init__(self):\n"
+    "        self.records = []\n" "    def pytest_collectreport(self, report):\n"
+    "        if report.failed:\n"
+    "            self.records.append((report.nodeid, 'error', str(report.longrepr)))\n"
+    "    def pytest_runtest_logreport(self, report):\n"
+    ;; One record per test: the CALL phase is the verdict, and a setup or
+    ;; teardown that fails is an error the call phase never reports.
+    "        if report.skipped:\n"
+    "            outcome = 'skipped'\n" "        elif report.when == 'call':\n"
+    "            outcome = report.outcome\n" "        elif report.outcome != 'passed':\n"
+    "            outcome = 'error'\n" "        else:\n"
+    "            return\n" "        self.records.append((report.nodeid, outcome,"
+    " str(report.longrepr) if report.longrepr else ''))\n" "__vis_col__ = __VisReports__()\n"
+    "__vis_tbuf__ = __vis_tio__.StringIO()\n" "__vis_told__ = __vis_ts__.stdout\n"
+    "__vis_terr__ = __vis_ts__.stderr\n" "__vis_ts__.stdout = __vis_tbuf__\n"
+    "__vis_ts__.stderr = __vis_tbuf__\n" "try:\n"
+    "    __vis_test_rc__ = int(__vis_pt__.main("
+    "['-q', '-p', 'no:cacheprovider', '-p', 'no:faulthandler', __vis_test_file__],"
+    " plugins=[__vis_col__]))\n" "finally:\n"
+    "    __vis_ts__.stdout = __vis_told__\n" "    __vis_ts__.stderr = __vis_terr__\n"
+    "    for __vis_m__ in [__vis_k__ for __vis_k__ in list(__vis_ts__.modules)"
+    " if __vis_k__ not in __vis_mods0__]:\n"
+    "        __vis_ts__.modules.pop(__vis_m__, None)\n" "    __vis_ts__.path[:] = __vis_path0__\n"
+    "__vis_test_output__ = __vis_tbuf__.getvalue()\n" "__vis_test_report__ = chr(30).join("
+    "str(__vis_nid__) + chr(31) + str(__vis_oc__) + chr(31) + str(__vis_msg__)"
+    " for (__vis_nid__, __vis_oc__, __vis_msg__) in __vis_col__.records)\n"))
 
 (defn- short-nodeid
   "pytest's nodeid is a path relative to whatever it picked as its rootdir, so
@@ -259,13 +263,29 @@
                                  :key-fn
                                  identity)
 
+                 rc
+                 (int (get outcome "rc" -1))
+
+                 output
+                 (str (get outcome "output"))
+
+                 reported
+                 (parse-report (str (get outcome "report")))
+
+                 ;; A startup/collection/usage failure may emit no test reports.
+                 ;; A runner's nonzero exit can never become a green empty suite.
                  tests
-                 (parse-report (str (get outcome "report")))]
+                 (cond-> reported
+                   (and (not (zero? rc)) (not (failing? reported)))
+                   (conj {:nodeid (.getName test-file)
+                          :outcome :errored
+                          :message (str "pytest exited " rc
+                                        " without a failing test report.\n" output)}))]
 
              {:file path
-              :rc (int (get outcome "rc" -1))
-              :ok? (not (failing? tests))
-              :output (str (get outcome "output"))
+              :rc rc
+              :ok? (and (zero? rc) (not (failing? tests)))
+              :output output
               :tests tests})
            (catch Throwable t
              {:file path

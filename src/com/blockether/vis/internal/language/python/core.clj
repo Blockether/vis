@@ -336,12 +336,9 @@
          (catch Exception _ nil))))
 
 (defn- vispython-faults
-  "The hermetic backend's per-test records as surface contract faults — one map
-   per test whose `:outcome` is in `outcomes`, carrying the node id, its file,
-   the assertion headline and its `\"type\"` (`:errored` -> `\"error\"`, anything
-   else -> `\"fail\"`), so ONE `failures` list carries both kinds. Same reason as
-   the project backend (issue #136): counts alone name nothing the reader can
-   open."
+  "Map hermetic per-test records to surface faults with node id, file and type.
+   Keep the full diagnostic in `message`: unlike the project runner, this backend's
+   `output` is a summary, not the traceback. Only the model-facing repr is bounded."
   [tests outcomes]
   (vec (for [{:keys [nodeid outcome message file]}
              tests
@@ -350,7 +347,7 @@
 
          (cond-> {"test" (or (second (str/split (str nodeid) #"::" 2)) (str nodeid))
                   "type" (if (= :errored outcome) "error" "fail")
-                  "message" (fault-headline message)}
+                  "message" (str message)}
            (seq (str file))
            (assoc "file" (str file))))))
 

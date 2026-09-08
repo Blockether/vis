@@ -144,6 +144,57 @@
                (expect (= 0 (get res "files")))
                (expect (= 0 (get res "pass"))))
              (finally (cleanup root)))))
+  ;; The tool audit reproduced a green result after pytest aborted during collection.
+  (it "reports collection failures instead of an empty successful run"
+      (let [root (tmp-dir)]
+        (try (spit (io/file root "test_collection.py")
+                   "import vis_missing_collection_fixture\n\ndef test_value():\n    assert True\n")
+             (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                                 {"runner" "vispython"}))
+                   fault (first (get res "failures"))]
+
+               (expect (false? (get res "is_pass")))
+               (expect (= 1 (get res "errored")))
+               (expect (= 1 (get res "fail")))
+               (expect (str/includes? (get fault "test") "test_collection.py"))
+               (expect (str/includes? (get fault "message") "vis_missing_collection_fixture")))
+             (finally (cleanup root)))))
+  (it
+    "retains an early pytest exit without any test reports as a runner fault"
+    (let [root (tmp-dir)]
+      (try
+        (spit
+          (io/file root "conftest.py")
+          "import pytest\ndef pytest_sessionstart(session):\n    pytest.exit('fixture interrupted', returncode=2)\n")
+        (spit (io/file root "test_never.py") "def test_never():\n    assert True\n")
+        (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                            {"runner" "vispython"}))]
+          (expect (false? (get res "is_pass")))
+          (expect (= 1 (get res "errored")))
+          (expect (str/includes? (get-in res ["failures" 0 "message"]) "fixture interrupted")))
+        (finally (cleanup root)))))
+  (it "does not pass an empty test file when pytest exits with no tests collected"
+      (let [root (tmp-dir)]
+        (try (spit (io/file root "test_empty.py") "# No test definitions.\n")
+             (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                                 {"runner" "vispython"}))]
+               (expect (false? (get res "is_pass")))
+               (expect (= 1 (get res "errored")))
+               (expect (str/includes? (get-in res ["failures" 0 "message"]) "pytest exited 5")))
+             (finally (cleanup root)))))
+  (it
+    "counts a skipped setup as skipped, not a test error"
+    (let [root (tmp-dir)]
+      (try
+        (spit
+          (io/file root "test_skip.py")
+          "import pytest\n@pytest.fixture\ndef absent():\n    pytest.skip('fixture unavailable')\ndef test_skipped(absent):\n    assert True\n")
+        (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                            {"runner" "vispython"}))]
+          (expect (true? (get res "is_pass")))
+          (expect (= 1 (get res "skipped")))
+          (expect (= 0 (get res "errored"))))
+        (finally (cleanup root)))))
   ;; Regression, CI run 33853319237: concurrent hermetic runs raced pytest's
   ;; process-wide state and sometimes terminated the shared worker.
   (it "isolates concurrent hermetic test runs in the shared worker"
