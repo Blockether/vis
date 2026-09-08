@@ -15,6 +15,11 @@ Choose verification for the changed files and behavior. Code changes need affect
 not a full application build. Reproduce reported bugs before fixing them; reference the issue in
 regression-test comments when an issue exists. Use existing test infrastructure, not ad-hoc demos.
 
+Read with a budget: every tool print is resent to the model on every later request of the session.
+Use `cat(path, start, end)` windows around the region you will edit, not whole files; scope `grep`
+to the directories that can hold the symbol and keep its default context; batch reads per edit
+target, not per repository. Read a file whole only when a rule requires it or you will rewrite it.
+
 For simple, unambiguous bug-fix requests, the user expects the complete workflow: reproduce, fix,
 verify, then commit the scoped changes and push to `main` without another permission round, unless
 that request says otherwise. Treat such requests as authorization for that commit and push, not for

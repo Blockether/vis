@@ -871,7 +871,7 @@
         (expect (= 2 (:total-file-count out)))
         (expect (true? (:total-file-count-exact? out)))
         (expect (vector? (:hits out)))
-        ;; Omitted context defaults to four, including short boundary windows.
+        ;; Omitted context defaults to three, including short boundary windows.
         (expect (every? #(= #{:path :line :text :before :after} (set (keys %))) (:hits out)))
         (expect (= 2 (count (:hits out))))
         (expect (= :end-of-results (:truncated-by out)))))
@@ -2980,11 +2980,11 @@
           ;; find-arg-paths (gate checking) keeps the file so
           ;; config/private/settings.edn is authorized as that file, not config/private/
           (expect (= [expected-file] (find-paths [spec])))))
-    (it "accepts an explicit context and defaults both grep paths to four lines"
+    (it "accepts an explicit context and defaults both grep paths to three lines"
         (expect (= 2 (:context (coerce-find [{"query" "needle" "context" 2}]))))
         (expect (= 0 (:context (coerce-find [{"query" "needle" "context" 0}]))))
-        (expect (= 4 (:context (coerce-find [{"query" "needle"}]))))
-        (expect (= 4 (:context (coerce-rg {"query" "needle"}))))
+        (expect (= 3 (:context (coerce-find [{"query" "needle"}]))))
+        (expect (= 3 (:context (coerce-rg {"query" "needle"}))))
         (expect (throws? clojure.lang.ExceptionInfo
                          #(coerce-find [{"query" "needle" "context" -1}])))
         (expect (throws? clojure.lang.ExceptionInfo
@@ -4933,8 +4933,8 @@
                    (expect (string/includes? result "Text, not a map"))
                    (expect (not (string/includes? result "hit_count")))
                    (expect (not (string/includes? description "hit_count")))
-                   (expect (string/includes? description "\"context\": 4"))
-                   (expect (string/includes? description "default 4"))
+                   (expect (string/includes? description "\"context\": 3"))
+                   (expect (string/includes? description "default 3"))
                    (expect (string/includes? description "set it to 0"))
                    (expect (string/includes? description "pure location/count sweeps"))))
              (it
