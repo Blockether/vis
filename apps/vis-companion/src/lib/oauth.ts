@@ -55,7 +55,7 @@ function authorizationState(url: string | undefined, redirect: string | undefine
     return state;
   } catch { return; }
 }
-function verifiedReturn(input: string, state: string, redirect = APP_CALLBACK): string | undefined {
+function verifiedReturn(input: string, state: string, redirect: string | undefined): string | undefined {
   if (input.length > 8192) return;
   try {
     const url = new URL(input);

@@ -845,7 +845,7 @@ export const STORY_APP_AUTH: ProviderAuth = {
   ...storyProviderAuth([{ ...STORY_PROVIDERS[0], id: 'example-oauth', label: 'Company model',
     status: { is_authenticated: false, auth_state: 'unverified' } }]),
   flow: {
-    flow_id: 'story-app-return', kind: 'pkce', status: 'pending', provider_id: 'example-oauth',
+    flow_id: 'story-app-return', kind: 'pkce', provider_id: 'example-oauth',
     callback_mode: 'app', redirect_uri: 'com.blockether.viscompanion://oauth/callback',
     url: 'https://gateway.example.com/authorize?state=story-state&redirect_uri=com.blockether.viscompanion%3A%2F%2Foauth%2Fcallback',
     instructions: ['Approve sign-in in the browser. The callback opens Vis and sign-in finishes automatically.'],
