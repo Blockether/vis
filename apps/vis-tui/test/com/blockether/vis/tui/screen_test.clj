@@ -2727,34 +2727,39 @@ therapy line 2"
 
 (defdescribe
   compact-code-copy-test
-  (it "copies the complete program from the single painted Copy target"
-      (let [code
-            "first_call()\nsecond_call()"
+  (it
+    "copies the complete program from the single painted Copy target"
+    (let [code
+          "first_call()\nsecond_call()"
 
-            payload
-            (render/format-answer-with-thinking-data ""
-                                                     [{:forms [{:code code :success? true}]}]
-                                                     (- 80 (long render/MESSAGE_SIDE_PAD))
-                                                     {:show-thinking true :show-iterations true}
-                                                     nil
-                                                     false
-                                                     {:session-id "sid" :session-turn-id "turn"})
+          payload
+          (render/format-answer-with-thinking-data ""
+                                                   [{:forms [{:code code :success? true}]}]
+                                                   (- 80 (long render/MESSAGE_SIDE_PAD))
+                                                   {:show-thinking true :show-iterations true}
+                                                   nil
+                                                   false
+                                                   {:session-id "sid" :session-turn-id "turn"})
 
-            message
-            {:role :assistant :prewrapped-lines (:lines payload) :line-meta (:line-meta payload)}
+          message
+          {:role :assistant :prewrapped-lines (:lines payload) :line-meta (:line-meta payload)}
 
-            grid
-            (painted-bubble-grid message 3)
+          grid
+          (painted-bubble-grid message 3)
 
-            row
-            (first (keep-indexed #(when (str/includes? %2 "❐") %1) grid))
+          row
+          (first (keep-indexed #(when (str/includes? %2 "COPY") %1) grid))
 
-            col
-            (.indexOf ^String (nth grid row) "❐")
+          col
+          (.indexOf ^String (nth grid row) "COPY")
 
-            regions
-            (disclosure-copy-regions {:visible [{:top 0 :projected message}]} 3 50 80)]
+          regions
+          (disclosure-copy-regions {:visible [{:top 0 :projected message}]} 3 50 80)]
 
-        (expect (= 1 (count regions)))
-        (expect (= code (:text (bubble-copy-hit {:row row :col col} regions))))
-        (expect (nil? (bubble-copy-hit {:row row :col 4} regions))))))
+      (expect (= 1 (count regions)))
+      (expect (= 4 (:width (first regions))))
+      (doseq [x (range col (+ col 4))]
+        (expect (= code (:text (bubble-copy-hit {:row row :col x} regions)))))
+      (doseq [x [(dec col) (+ col 4) (+ col 5)]]
+        (expect (nil? (bubble-copy-hit {:row row :col x} regions))))
+      (expect (nil? (bubble-copy-hit {:row row :col 4} regions))))))
