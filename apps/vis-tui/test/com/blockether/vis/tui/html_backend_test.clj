@@ -90,6 +90,7 @@
           ""
           [{:thinking "Inspect files, apply the patch, then run tests."
             :forms [{:code "inspect_files()\napply_patch()\nrun_checks()"
+                     :stdout "Read 3 files.\nUpdated 2 files."
                      :duration-ms 1200
                      :activity projection}]}]
           (- cols 4)
@@ -123,6 +124,99 @@
     (:detail-expansions (handler {:detail-expansions expansions :scroll scroll/follow}
                                  [:toggle-detail (:session-id region) (:node-id region)
                                   (:collapsed? region)]))))
+
+(deftest result-before-independent-execution-disclosures-test
+  ;; Regression: Result followed Activity and disappeared when Code was closed.
+  (doseq [cols
+          [40 80 160]
+
+          status
+          ["running" "succeeded" "failed"]]
+
+    (with-open [html
+                (activity-review-terminal cols 50)
+
+                hs
+                (doto (TerminalScreen. html) (.startScreen))
+
+                terminal
+                (DefaultVirtualTerminal. (TerminalSize. cols 50))
+
+                ts
+                (doto (TerminalScreen. terminal) (.startScreen))]
+
+      (let [rows
+            (activity-review-rows status)
+
+            _
+            (paint-activity-review! hs rows {})
+
+            regions
+            (mapv (fn [suffix]
+                    (first (filter #(str/ends-with? (str (:node-id %)) suffix)
+                                   (.current interactions/hit-map))))
+                  [":result" ":code" ":#band"])]
+
+        (is (every? some? regions))
+        (doseq [result-open?
+                [false true]
+
+                code-open?
+                [false true]
+
+                activity-open?
+                [false true]]
+
+          (let [open-states
+                [result-open? code-open? activity-open?]
+
+                expansions
+                (reduce (fn [folds [region open?]]
+                          (if open? (toggle-review-region folds region) folds))
+                        {}
+                        (map vector regions open-states))
+
+                _
+                (paint-activity-review! hs rows expansions)
+
+                _
+                (paint-activity-review! ts rows expansions)
+
+                grid
+                (cell-grid terminal cols 50)
+
+                lines
+                (mapv (fn [row]
+                        (apply str
+                          (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter %)
+                               row)))
+                      grid)
+
+                row-of
+                (fn [label]
+                  (first (keep-indexed #(when (str/includes? %2 label) %1) lines)))
+
+                labels
+                ["RESULT" "CODE" "ACTIVITY"]
+
+                positions
+                (mapv row-of labels)
+
+                text
+                (str/join "\n" lines)]
+
+            (is (= (cell-grid html cols 50) grid))
+            (is (every? some? positions))
+            (is (apply < positions))
+            (is (= result-open? (str/includes? text "Read 3 files.")))
+            (is (= code-open? (str/includes? text "inspect_files()")))
+            (is (= activity-open? (str/includes? text "Read ×3")))
+            (doseq [[label row open?] (map vector labels positions open-states)]
+              (let [col (str/index-of (nth lines row) label)
+                    hit (.lookup interactions/hit-map (TerminalPosition. (int col) (int row)))]
+
+                (is (= :toggle-details (:kind hit)))
+                (is (= (not open?) (:collapsed? hit)))))))))))
 
 (deftest joined-activity-html-native-parity-test
   (doseq [cols

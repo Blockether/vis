@@ -6734,8 +6734,8 @@
                                 (assoc e :line (str result-marker stripped))))]
 
                         (cond
-                          ;; The RESULT under a CODE fold is its own fold, collapsed by
-                          ;; default; the CODE head alone carries the duration.
+                          ;; RESULT is independent of CODE and collapsed by default;
+                          ;; the CODE head alone carries the duration.
                           card (mapv (fn [entry]
                                        (if (and code-node-id
                                                 (seq c-lines)
@@ -6765,7 +6765,7 @@
                                                          ;; Collapsed used to read `+N more result lines` with no
                                                          ;; name at all - the one band whose control never said what
                                                          ;; it folds. It wears `RESULT` in both states now, exactly
-                                                         ;; like the code band above it.
+                                                         ;; like the code band.
                                                          :summary (band-label "RESULT")
                                                          :hidden-entries hidden
                                                          :collapsed? (not expanded?)
@@ -6803,9 +6803,6 @@
                 code-block
                 (vec c-lines)
 
-                ;; A code band already closes with its one blank bottom edge, so the
-                ;; results begin immediately after that edge rather than adding a
-                ;; second visually blank row from the result band.
                 result-block
                 (vec result-lines)
 
@@ -6840,10 +6837,11 @@
                 (when activity-run
                   (activity-detail-entries activity-run (max 1 (- (long fill-w) 3)) session-id))]
 
+            ;; Results precede the execution rail and never depend on the Code fold.
             (vec (concat comment-block
+                         execution-details
                          (map #(update % :meta assoc :execution-rail? true)
                               (concat code-block activity-surface))
-                         (when (or (empty? code-block) code-expanded?) execution-details)
                          artifact-block
                          generic-run-entries))))
 

@@ -234,7 +234,7 @@
       (expect (not (str/includes? txt "java.util.concurrent.ExecutionException")))
       (expect (not (str/includes? txt "{:type :clj/bad-args")))))
   (it
-    "keeps the failed program compact: a red CODE name shut, the error readable once open"
+    "keeps failed source compact while its error remains visible before CODE"
     (let [code
           (str "first = 1\n"
                "second = 2\n" "third = 3\n"
@@ -274,11 +274,12 @@
       (expect (str/includes? shut (str p/INLINE_ERR_ON p/INLINE_BOLD_ON "CODE")))
       (expect (not (str/includes? shut "x = 1/0")))
       (expect (not (str/includes? shut "PYCODEMARKER")))
-      (expect (not (str/includes? shut "ZeroDivisionError")))
+      (expect (= 1 (count (re-seq #"ZeroDivisionError" shut))))
+      (expect (< (.indexOf ^String shut "ZeroDivisionError") (.indexOf ^String shut "CODE")))
       (expect (not (str/includes? open "RUNTIME_EXCERPT_ONLY")))
       (expect (str/includes? open "PYCODEMARKER"))
       (expect (= 1 (count (re-seq #"ZeroDivisionError" open))))))
-  (it "defaults a long failed program collapsed: source and error wait behind a red CODE name"
+  (it "defaults a long failed program collapsed without hiding the error"
       (let [code
             (str "first = 1\nsecond = 2\nthird = 3\nfourth = 4\nfifth = 5\n"
                  "sixth = 6\nseventh = 7\neighth = 8\nx = 1/0")
@@ -306,7 +307,7 @@
         (expect (not (str/includes? txt "first = 1")))
         (expect (not (str/includes? txt "sixth = 6")))
         (expect (not (str/includes? txt "x = 1 / 0")))
-        (expect (not (str/includes? txt "ZeroDivisionError"))))))
+        (expect (str/includes? txt "ZeroDivisionError")))))
 
 (defdescribe
   failed-code-band-name-test
@@ -339,8 +340,9 @@
         (expect (str/includes? header (str p/INLINE_ERR_ON p/INLINE_BOLD_ON "CODE")))
         (expect (not (str/includes? header "NameError")))
         (expect (not (str/includes? header " · ")))
-        ;; Shut, the red name is the whole signal; the message waits behind the fold.
-        (expect (not (str/includes? txt "NameError")))))
+        ;; The error remains visible before the independent source disclosure.
+        (expect (str/includes? txt "NameError"))
+        (expect (< (.indexOf ^String txt "NameError") (.indexOf ^String txt "CODE")))))
   (it "keeps the CODE name plain when the form succeeded"
       (let [header
             (some #(when (str/includes? (str %) "CODE") (str %))
@@ -4958,7 +4960,8 @@ h = 8"
           (expect (= "THINKING" (ink row :bold)))
           (expect (= "THINKING" (ink row #(and (:bold %) (:italic %)))))
           (expect (str/includes? (ink row :italic) "+8 more"))))
-    (it "keeps the output inside the closed CODE fold" (expect (nil? (band-row "RESULT"))))))
+    (it "keeps RESULT visible and bold while CODE is closed"
+        (expect (= "RESULT" (ink (band-row "RESULT") :bold))))))
 
  ;; Canonical output carries no pre-rendered body. The renderer derives it locally,
  ;; and the disclosure keeps the result band's own name in both states.
@@ -4985,7 +4988,8 @@ h = 8"
                (filter #(str/includes? % "RESULT"))
                first))]
 
-    (it "hides the internal result label when CODE is closed" (expect (nil? (label-of {}))))
+    (it "keeps the result disclosure visible when CODE is closed"
+        (expect (re-find #"RESULT\s+\+39 more\s+▸" (label-of {}))))
     (it "keeps the name once expanded"
         (expect (re-find #"RESULT\s+▾" (label-of {:vis.channel-tui/expand-all-details? true}))))
     (it "wraps that name in the painter's bold sentinels"
@@ -5124,8 +5128,8 @@ h = 8"
       (expect (not (str/includes? collapsed "18 matches")))
       (expect (str/includes? collapsed "ACTIVITY"))
       (expect (str/includes? expanded "test evidence companion suite"))
-      (expect (< (.indexOf ^String expanded "grep({...})")
-                 (.indexOf ^String expanded "18 matches")
+      (expect (< (.indexOf ^String expanded "18 matches")
+                 (.indexOf ^String expanded "grep({...})")
                  (.indexOf ^String expanded "test evidence companion suite")
                  (.indexOf ^String expanded "Done.")))
       (expect (str/includes? expanded "ACTIVITY"))
@@ -5226,15 +5230,17 @@ h = 8"
       (expect (str/includes? collapsed "4.8s"))
       (expect (str/includes? collapsed "ACTIVITY"))
       (expect (some? collapsed-status-row))
-      (expect (< (.indexOf ^String collapsed "CODE") (.indexOf ^String collapsed "ACTIVITY"))
-              "the source line precedes visible Activity")
+      (expect (< (.indexOf ^String collapsed "RESULT")
+                 (.indexOf ^String collapsed "CODE")
+                 (.indexOf ^String collapsed "ACTIVITY"))
+              "the result disclosure precedes source and Activity")
       (expect (some? status-row))
       (expect (not (str/includes? expanded "line shown")))
       (expect (not (str/includes? expanded "PYTHON")))
-      (expect (< (.indexOf ^String expanded "print(result")
-                 (.indexOf ^String expanded "operation 6")
-                 (.indexOf ^String expanded "RESULT")
-                 (.indexOf ^String expanded "## main...origin/main")))
+      (expect (< (.indexOf ^String expanded "RESULT")
+                 (.indexOf ^String expanded "## main...origin/main")
+                 (.indexOf ^String expanded "print(result")
+                 (.indexOf ^String expanded "operation 6")))
       (expect (str/includes? expanded "ACTIVITY"))))
   ;; Regression, issue td-9c41a7: the TUI receipt named the calls but never what they
   ;; cost, while the web band beside it printed the three counts the wire classifies —
@@ -5278,7 +5284,7 @@ h = 8"
       (expect (str/includes? receipt "ACTIVITY"))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
-  (it "keeps Activity attached to the combined program before its results"
+  (it "keeps combined results before their program and attached Activity"
       (render/invalidate-cache!)
       (let [activity
             (fn [label]
@@ -5307,11 +5313,11 @@ h = 8"
                 strip-ansi
                 strip-sentinels)]
 
-        (expect (< (.indexOf ^String body "first()")
+        (expect (< (.indexOf ^String body "FIRST RESULT")
+                   (.indexOf ^String body "SECOND RESULT")
+                   (.indexOf ^String body "first()")
                    (.indexOf ^String body "second()")
                    (.indexOf ^String body "FIRST OPERATION")
-                   (.indexOf ^String body "FIRST RESULT")
-                   (.indexOf ^String body "SECOND RESULT")
                    (.indexOf ^String body "Done.")))
         (expect (= 1 (count (re-seq #" ❐" body))))
         (expect (not (str/includes? body "STATUS")) "expanded detail does not repeat status")
@@ -5410,9 +5416,8 @@ h = 8"
               strip-ansi
               strip-sentinels)
 
-          ;; A form carrying Activity collapses to ONE row — its verdict — so the
-          ;; RESULT disclosure is read from the opened receipt, which is where it
-          ;; now stands. It still has to BE a disclosure: that is td-794deb.
+          ;; RESULT remains an independent disclosure in front of the execution rail.
+          ;; Regression td-794deb: its header must retain the toggle metadata.
           result-toggle-meta
           (some (fn [[line meta]]
                   (when (str/includes? (strip-sentinels (str line)) "RESULT") meta))
@@ -5450,7 +5455,7 @@ h = 8"
           [result-row _result-line]
           (row-with "RESULT")
 
-          ;; Activity is attached to Code; results follow the execution bands.
+          ;; Activity stays attached to Code, after the independent Result band.
           [first-row first-line]
           (row-with "Ran npm test")
 
@@ -5464,22 +5469,22 @@ h = 8"
           [tests-row tests-line]
           (row-with "Ran tests")]
 
-      ;; Activity stays independent; CODE owns the complete output fold.
+      ;; All three disclosures are independent; only their bodies collapse.
       (expect (str/includes? collapsed-text "ACTIVITY")
               "Activity stays visible while source and result are collapsed")
       (expect (= :toggle-details (:kind result-toggle-meta))
-              "RESULT is its own fold under CODE, collapsed by default")
+              "RESULT is its own fold before CODE, collapsed by default")
       (expect (not (str/includes? collapsed-text "result-value")) "RESULT is collapsed by default")
       (expect (re-find #"RESULT[^\n]*▾" expanded-text))
-      (expect (str/includes? expanded-text "result-value") "CODE expands its result too")
+      (expect (str/includes? expanded-text "result-value") "expand-all opens the result body")
       (expect (some? python-row) "one compact code line replaces the padded language header")
       (expect (= (get-in frame [python-row 1 :bg])
                  (get-in frame [first-row 1 :bg])
                  (get-in frame [tests-row 1 :bg]))
               "Code and Activity share one uninterrupted surface")
       (expect
-        (< (long python-row) (long first-row) (long second-row) (long tests-row) (long result-row))
-        "the execution bands precede the result")
+        (< (long result-row) (long python-row) (long first-row) (long second-row) (long tests-row))
+        "the result precedes the execution bands")
       (expect (= (get-in frame [first-row 1 :bg])
                  (get-in frame [second-row 1 :bg])
                  (get-in frame [tests-row 1 :bg]))
@@ -6540,35 +6545,50 @@ print(paths)"
 (defdescribe
   result-header-alignment-test
   (it
-    "keeps Activity directly after Code and results in their independent fold"
+    "keeps Result before Code and Activity in live and restored views, open or closed"
     (doseq [cols
-            [48 80]
+            [40 80 160]
 
             expanded?
+            [false true]
+
+            live?
             [false true]]
 
-      (let [data
-            (render/format-answer-with-thinking-data*
-              ""
-              [{:forms
-                [{:code "print(42)\nprint(43)"
-                  :stdout "42\n43"
-                  :success? true
-                  :duration-ms 57
-                  :activity
-                  {:state "succeeded"
-                   :rows
-                   [{:id "a" :sequence 1 :operation "ls" :state "succeeded" :duration-ms 54}]}}]}]
-              (- cols 8)
-              {:show-iterations true}
-              nil
-              false
-              {:session-id "result-align"
-               :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}})
+      (let [iterations
+            [{:forms
+              [{:code "print(42)\nprint(43)"
+                :stdout "42\n43"
+                :success? true
+                :duration-ms 57
+                :activity
+                {:state "succeeded"
+                 :rows
+                 [{:id "a" :sequence 1 :operation "ls" :state "succeeded" :duration-ms 54}]}}]}]
+
+            opts
+            {:session-id "result-align"
+             :now-ms 1000
+             :turn-start-ms 0
+             :detail-expansions {:vis.channel-tui/expand-all-details? expanded?}}
+
+            data
+            (if live?
+              (render/progress->lines-data {:iterations iterations}
+                                           (- cols 8)
+                                           {:show-iterations true}
+                                           opts)
+              (render/format-answer-with-thinking-data* ""
+                                                        iterations
+                                                        (- cols 8)
+                                                        {:show-iterations true}
+                                                        nil
+                                                        false
+                                                        opts))
 
             captured
             (cap/capture! {:cols cols
-                           :rows 20
+                           :rows 30
                            :paint! (fn [{:keys [screen]}]
                                      (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
                                        (render/draw-chat-bubble! (.newTextGraphics s)
@@ -6579,7 +6599,7 @@ print(paths)"
                                                                  2
                                                                  1
                                                                  (- cols 4)
-                                                                 {:viewport-h 18})
+                                                                 {:viewport-h 28})
                                        (.refresh s)))})
 
             lines
@@ -6594,16 +6614,16 @@ print(paths)"
             activity
             (first (filter #(str/includes? % "ACTIVITY") lines))]
 
+        (expect (some? result))
         (expect (some? code))
-        (expect (= expanded? (some? result)))
+        (expect (some? activity))
+        (expect (< (.indexOf lines result) (.indexOf lines code) (.indexOf lines activity)))
         (expect (= (.indexOf ^String code "CODE") (.indexOf ^String activity "ACTIVITY")))
         (when expanded?
           (expect (str/includes? result "▾"))
-          (expect (< (.indexOf lines code) (.indexOf lines activity) (.indexOf lines result)))
           (expect (= (+ 3 (.indexOf ^String result "RESULT"))
                      (.indexOf ^String (first (filter #(str/includes? % "print(42)") lines))
                                "print(42)"))))
-        (expect (some? activity))
         (expect (not (str/includes? (str/join "\n" lines) "</>"))))))
   (it
     "opens the code band like THINKING: a blank under the name, a pad above a chevroned CODE, one column for code and its collapsed RESULT"
