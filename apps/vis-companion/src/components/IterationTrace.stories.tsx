@@ -342,6 +342,12 @@ export const JoinedActivity: Story = {
     const canvas = within(canvasElement);
     const code = canvasElement.querySelector("[data-execution-code]")!;
     const activity = canvasElement.querySelector("[data-execution-activity]")!;
+    const copyIcon = code.querySelector('button[aria-label="Copy code"] svg')!;
+    const activityChevron = activity.querySelector('button[aria-label="Expand Activity"] svg')!;
+    await expect(copyIcon.getBoundingClientRect().right).toBeCloseTo(
+      activityChevron.getBoundingClientRect().right,
+      0,
+    );
     const thought = canvas
       .getByText("Checking the Activity layout and grouping.")
       .closest("section")!;
