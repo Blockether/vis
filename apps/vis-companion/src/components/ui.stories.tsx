@@ -279,6 +279,12 @@ export const Rows: Story = {
         <Disclosure className="w-full" isOpen={false} tone="execution">
           Read ×8 · 6 files
         </Disclosure>
+        <Disclosure className="w-full" isOpen={false} tone="execution" inlineChevron>
+          CODE +12 more
+        </Disclosure>
+        <Disclosure className="w-full" isOpen tone="execution" inlineChevron>
+          RESULT
+        </Disclosure>
         <div className="w-full" role="listbox" aria-label="Reasoning effort">
           <OptionRow className="w-full" isActive>
             Reasoning, high

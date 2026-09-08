@@ -257,15 +257,18 @@ export const CodeWithResult: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByRole("button", { name: "Expand result" })).toBeVisible();
+    await expect(canvas.queryByRole("button", { name: "Expand result" })).toBeNull();
     const code = canvasElement.querySelector("[data-execution-code]")!;
-    const result = canvasElement.querySelector("[data-code-result]")!;
     const activity = canvasElement.querySelector("[data-execution-activity]")!;
-    for (const surface of [code, result, activity]) {
-      await expect(getComputedStyle(surface).borderLeftWidth).toBe("0px");
-    }
-    await expect(result.getBoundingClientRect().top).toBeGreaterThan(code.getBoundingClientRect().top);
-    await expect(activity.getBoundingClientRect().top).toBeGreaterThan(result.getBoundingClientRect().top);
+    const assertHeader = async (button: HTMLElement, label: string) => {
+      await expect(button).toHaveTextContent(label);
+      const text = button.firstElementChild!.getBoundingClientRect();
+      const chevron = button.querySelector("svg")!.getBoundingClientRect();
+      await expect(chevron.left - text.right).toBeGreaterThanOrEqual(4);
+      await expect(chevron.left - text.right).toBeLessThanOrEqual(8);
+      await expect(button.getBoundingClientRect().left - code.getBoundingClientRect().left).toBeCloseTo(12, 0);
+    };
+    await assertHeader(canvas.getByRole("button", { name: "Expand code" }), "CODE +2 more");
     const copy = canvas.getByRole("button", { name: "Copy code" });
     const duration = within(code as HTMLElement).getByText("57ms");
     await expect(duration.getBoundingClientRect().right).toBeLessThanOrEqual(
@@ -276,7 +279,13 @@ export const CodeWithResult: Story = {
     );
     await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
     const band = canvasElement.querySelector("[data-execution-code]")!;
-    await expect(band.textContent).toContain("RESULT +1 more");
+    const result = canvasElement.querySelector("[data-code-result]")!;
+    for (const surface of [code, result, activity]) {
+      await expect(getComputedStyle(surface).borderLeftWidth).toBe("0px");
+    }
+    await expect(result.getBoundingClientRect().top).toBeGreaterThan(code.getBoundingClientRect().top);
+    await expect(activity.getBoundingClientRect().top).toBeGreaterThan(result.getBoundingClientRect().top);
+    await assertHeader(canvas.getByRole("button", { name: "Expand result" }), "RESULT +1 more");
     await expect(band.textContent).not.toContain("Listed 5 entries.");
     await userEvent.click(
       canvas.getByRole("button", { name: "Expand result" }),
@@ -296,10 +305,12 @@ export const CodeWithResult: Story = {
     await expect(band.textContent).toContain("57ms");
     await expect(canvas.getByText("42ms")).toBeTruthy();
     await userEvent.click(canvas.getByRole("button", { name: "Collapse code" }));
-    await expect(canvas.getByText("Listed 5 entries.")).toBeVisible();
-    await expect(code.querySelector("[data-code-body]")).toBeNull();
-    await userEvent.click(canvas.getByRole("button", { name: "Collapse result" }));
     await expect(canvas.queryByText("Listed 5 entries.")).toBeNull();
+    await expect(canvas.queryByRole("button", { name: "Expand result" })).toBeNull();
+    await expect(code.querySelector("[data-code-body]")).toBeNull();
+    await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
+    await expect(canvas.getByRole("button", { name: "Expand result" })).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "Collapse code" }));
     await expect(canvas.getByRole("button", { name: "Expand code" })).toBeVisible();
   },
 };
@@ -345,7 +356,7 @@ export const JoinedActivity: Story = {
       range.selectNodeContents(node!);
       return range.getBoundingClientRect().left;
     };
-    await expect(textEdge(thought)).toBeCloseTo(edge, 0);
+    await expect(textEdge(thought)).toBeCloseTo(edge + 12, 0);
     const executionEdge = textEdge(code);
     await expect(code.getBoundingClientRect().left - edge).toBeCloseTo(0, 0);
     await expect(getComputedStyle(code).borderLeftWidth).toBe("0px");
@@ -492,7 +503,7 @@ export const ProseAlignment: Story = {
     const answer = canvas.getByText("The changes are ready for review.");
     for (const paragraph of [prose, answer]) {
       await expect(paragraph.getBoundingClientRect().left).toBeCloseTo(
-        thought.getBoundingClientRect().left,
+        thought.closest("section")!.getBoundingClientRect().left,
         0,
       );
       await expect(paragraph.getBoundingClientRect().right).toBeCloseTo(

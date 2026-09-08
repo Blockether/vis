@@ -1212,9 +1212,7 @@ const ToolCard = memo(function ToolCard({
       : running
         ? "text-code-result"
         : "text-accent-ink";
-  // RESULT has its own disclosure, independent of the source above it.
-  // the name is the control, the tally says how much it holds. A failure stays
-  // open — its message is the one thing the reader must not have to dig for.
+  // RESULT has its own fold inside CODE; failures remain visible without expanding source.
   const [resultOpen, setResultOpen] = useState(false);
   // The tally counts what the reader would see: fence rows around a stdout block are not output.
   const resultLines = body ? body.split("\n").filter((line) => !line.startsWith("```")).length : 0;
@@ -1224,7 +1222,7 @@ const ToolCard = memo(function ToolCard({
       {failed || interrupted ? (
         <BandLabel tone={stateTone}>{stateLabel}</BandLabel>
       ) : (
-        <Disclosure isOpen={resultOpen} tone="muted" className="min-w-0"
+        <Disclosure isOpen={resultOpen} tone="execution" inlineChevron className="min-w-0"
           aria-label={resultOpen ? "Collapse result" : "Expand result"}
           onClick={() => setResultOpen((open) => !open)}>
           <BandLabel tone={stateTone}>RESULT{!resultOpen && resultLines > 0 && <BandTally> +{resultLines} more</BandTally>}</BandLabel>
@@ -1322,20 +1320,20 @@ function showFormCode(form: TranscriptForm, code: string): boolean {
   return Boolean(code) && !hiddenForm(form);
 }
 
-/** Independent source and result disclosures, in that order. */
+/** Source disclosure containing a nested result fold. Failures remain visible. */
 const CollapsibleFormCode = memo(function CollapsibleFormCode({
   value,
   language = "python",
   showCode,
   duration,
-  outcome,
+  failure,
   children,
 }: {
   value: string;
   language?: string;
   showCode: boolean;
   duration: string | null;
-  outcome?: string;
+  failure?: ReactNode;
   children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -1350,17 +1348,18 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
           <Disclosure
             isOpen={expanded}
             tone="execution"
+            inlineChevron
             className="min-w-0 flex-1"
             aria-label={expanded ? "Collapse code" : "Expand code"}
             onClick={() => setExpanded((open) => !open)}
           >
-            <BandLabel tone={outcome ? "err" : "accent"}>
+            <BandLabel tone={failure ? "err" : "accent"}>
               CODE{!expanded && <BandTally> +{lineCount} more</BandTally>}
             </BandLabel>
           </Disclosure>
         ) : (
           <BandLabel
-            tone={outcome ? "err" : "accent"}
+            tone={failure ? "err" : "accent"}
             className="min-w-0 flex-1"
           >
             CODE
@@ -1387,7 +1386,8 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
           <SyntaxCodeBlock value={value} language={language} compact bare frameless />
         </div>
       )}
-      {children}
+      {failure}
+      {(expanded || !showCode) && children}
     </section>
   );
 });
@@ -1612,7 +1612,7 @@ const FormTrace = memo(function FormTrace({
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : "min-w-0"}>
       {forms[0].comment?.trim() && (
-        <div className="mb-1 bg-thinking-surface pr-3 py-1.5 text-ui text-vis-message">
+        <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui text-vis-message">
           <Markdown compact>{forms[0].comment}</Markdown>
         </div>
       )}
@@ -1622,15 +1622,15 @@ const FormTrace = memo(function FormTrace({
           language={formCodeLanguage(form)}
           showCode={showCode && Boolean(code)}
           duration={formatDuration(form.duration_ms)}
-          outcome={
+          failure={
             cards.some((card) => card.error != null)
-              ? cards.some((card) => interruptedPython(card))
-                ? "Interrupted"
-                : "Failed"
+              ? cards.filter((card) => card.error != null).map((card, index) => (
+                <ToolCard key={index} form={card} embedded />
+              ))
               : undefined
           }
         >
-          {cards.map((card, index) => (
+          {cards.filter((card) => card.error == null).map((card, index) => (
             <ToolCard key={index} form={card} embedded />
           ))}
         </CollapsibleFormCode>
@@ -1798,7 +1798,7 @@ export const ThinkingBand = memo(function ThinkingBand({
     // A step's reasoning and code share one edge with no margin between them.
     // Standalone bands retain their spacing among other message blocks.
     <section
-      className={`min-w-0 bg-thinking-surface py-2 pr-3 text-ui text-thinking ${railed ? "relative z-0" : "my-2 first:mt-0"}`}
+      className={`min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking ${railed ? "relative z-0" : "my-2 first:mt-0"}`}
     >
       {collapsible && (
         <Disclosure

@@ -125,8 +125,8 @@
                                  [:toggle-detail (:session-id region) (:node-id region)
                                   (:collapsed? region)]))))
 
-(deftest ordered-independent-execution-disclosures-test
-  ;; Code, Result and Activity remain ordered and rail-free through every fold state.
+(deftest nested-result-execution-disclosures-test
+  ;; Result stays inside Code; Activity remains independent through every fold state.
   (doseq [cols
           [40 80 160]
 
@@ -151,11 +151,19 @@
             _
             (paint-activity-review! hs rows {})
 
+            code-region
+            (first (filter #(str/ends-with? (str (:node-id %)) ":code")
+                           (.current interactions/hit-map)))
+
+            _
+            (paint-activity-review! hs rows (toggle-review-region {} code-region))
+
             regions
-            (mapv (fn [suffix]
-                    (first (filter #(str/ends-with? (str (:node-id %)) suffix)
-                                   (.current interactions/hit-map))))
-                  [":code" ":result" ":#band"])]
+            (into [code-region]
+                  (map (fn [suffix]
+                         (first (filter #(str/ends-with? (str (:node-id %)) suffix)
+                                        (.current interactions/hit-map))))
+                       [":result" ":#band"]))]
 
         (is (every? some? regions))
         (doseq [result-open?
@@ -197,7 +205,7 @@
                   (first (keep-indexed #(when (str/includes? %2 label) %1) lines)))
 
                 labels
-                ["CODE" "RESULT" "ACTIVITY"]
+                (if code-open? ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])
 
                 positions
                 (mapv row-of labels)
@@ -209,10 +217,14 @@
             (is (every? some? positions))
             (is (apply < positions))
             (is (not-any? #(str/starts-with? % " │") lines))
-            (is (= result-open? (str/includes? text "Read 3 files.")))
+            (is (= (and code-open? result-open?) (str/includes? text "Read 3 files.")))
+            (is (= code-open? (some? (row-of "RESULT"))))
             (is (= code-open? (str/includes? text "inspect_files()")))
             (is (= activity-open? (str/includes? text "Read ×3")))
-            (doseq [[label row open?] (map vector labels positions open-states)]
+            (doseq [[label row open?] (map vector
+                                           labels
+                                           positions
+                                           (if code-open? open-states [code-open? activity-open?]))]
               (let [col (str/index-of (nth lines row) label)
                     hit (.lookup interactions/hit-map (TerminalPosition. (int col) (int row)))]
 
@@ -304,13 +316,17 @@
                 column (fn [text]
                          (some #(when (str/includes? % text) (str/index-of % text)) lines))]
 
-            (is (= (column "Vis") (column "Inspect files")))
-            (doseq [label ["CODE" "RESULT" "ACTIVITY"]]
-              (is (= (column "Vis") (column label))))
+            (is (= (+ 2 (column "Vis")) (column "Inspect files")))
+            (doseq [label (if (seq expansions) ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])]
+              (is (= (+ 2 (column "Vis")) (column label))))
             (is (nil? (column "Read ×3")))
             (is (nil? (column "Command failed")))
             (is (not-any? #(str/includes? % "│") lines))
-            (when (seq expansions) (is (= (column "CODE") (column "inspect_files()"))))))))))
+            (if (seq expansions)
+              (do (is (= (column "CODE") (column "inspect_files()")))
+                  (is (some #(re-find #"RESULT  \+2 more ▸" %) lines)))
+              (do (is (nil? (column "RESULT")))
+                  (is (some #(re-find #"CODE  \+3 more ▸" %) lines))))))))))
 
 (deftest joined-execution-background-and-disclosure-test
   ;; Removing the rail preserves filled execution bands and their disclosures.
@@ -369,7 +385,12 @@
                 col (+ (str/index-of line label) (count label) 1)
                 hit (.lookup interactions/hit-map (TerminalPosition. (int col) (int row)))]
 
-            (is (str/includes? line (str label " " chevron)))
+            (is (re-find (re-pattern (str
+                                       label
+                                       (if (and (= label "CODE") (not expanded?)) "  \\+3 more" "")
+                                       " "
+                                       chevron))
+                         line))
             (is (= :toggle-details (:kind hit)))
             (is (= (not expanded?) (:collapsed? hit)))))
         (is (str/blank? (subs (nth lines bottom) 2))

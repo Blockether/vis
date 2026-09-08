@@ -1080,6 +1080,18 @@ describe("Activity follows the combined Python source", () => {
     expect(painted.container.textContent).not.toContain("Loading Activity");
   });
 
+  it("keeps mixed outcomes nested while the failure stays visible", () => {
+    const painted = render(<AssistantMessage turn={turnOf([
+      { source: "fail()", error: { message: "Operation failed" } },
+      { source: "print_summary()", stdout: "Successful output" },
+    ])} />);
+    expect(painted.getByText(/Operation failed/)).toBeVisible();
+    expect(painted.queryByRole("button", { name: "Expand result" })).toBeNull();
+    fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
+    fireEvent.click(painted.getByRole("button", { name: "Expand result" }));
+    expect(painted.getByText("Successful output")).toBeVisible();
+  });
+
   // Regression, issue td-f9035e: Python, Result, and Activity each painted an
   // independent receipt, while the live Activity headline claimed an unknowable total.
   it.each([320, 390, 768, 1440])(
@@ -1108,25 +1120,17 @@ describe("Activity follows the combined Python source", () => {
       ).toBeNull();
       expect(painted.container.textContent).toContain("CODE");
       expect(painted.container.textContent).not.toContain("line_2()");
-      expect(painted.container.textContent).toContain("RESULT");
+      expect(painted.container.textContent).not.toContain("RESULT");
+      expect(painted.container.textContent).toContain("18 matches");
+      fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
+      expect(painted.container.textContent).not.toContain("result body");
       for (const band of painted.container.querySelectorAll(
         "[data-execution-code], [data-code-result], [data-execution-activity]",
       )) {
         expect(band.className).not.toMatch(/\bborder-l(?:-|\b)/);
       }
-      const closed = painted.container.innerHTML;
-      expect(closed.indexOf("data-execution-code")).toBeLessThan(
-        closed.indexOf("data-code-result"),
-      );
-      expect(closed.indexOf("data-code-result")).toBeLessThan(
-        closed.indexOf("data-execution-activity"),
-      );
       fireEvent.click(painted.getByRole("button", { name: "Expand result" }));
       expect(painted.container.textContent).toContain("result body");
-      expect(painted.container.textContent).not.toContain("line_2()");
-      expect(painted.container.textContent).toContain("18 matches");
-      expect(painted.container.textContent).not.toContain("PYTHON");
-      fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
       expect(painted.container.textContent).toContain("line_6()");
       expect(
         painted.getAllByRole("button", { name: "Copy code" }),
@@ -1139,11 +1143,12 @@ describe("Activity follows the combined Python source", () => {
         opened.indexOf("data-activity-chronology"),
       );
       fireEvent.click(painted.getByRole("button", { name: "Collapse code" }));
-      expect(painted.container.textContent).toContain("result body");
-      expect(painted.container.textContent).not.toContain("line_6()");
-      fireEvent.click(painted.getByRole("button", { name: "Collapse result" }));
+      expect(painted.container.textContent).not.toContain("RESULT");
       expect(painted.container.textContent).not.toContain("result body");
+      expect(painted.container.textContent).not.toContain("line_6()");
       expect(painted.container.textContent).toContain("18 matches");
+      fireEvent.click(painted.getByRole("button", { name: "Expand code" }));
+      expect(painted.getByRole("button", { name: "Expand result" })).toBeVisible();
     },
   );
 

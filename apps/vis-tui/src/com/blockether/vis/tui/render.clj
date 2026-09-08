@@ -2021,15 +2021,18 @@
                       ;; everything Vis says, whether it lands before a call or after it.
                       bg-color (if (:activity-content? meta) t/code-block-bg bg-color)
                       fg-color (if (:activity-content? meta) t/code-block-fg fg-color)
+                      trace-inset (if (:trace-inset? meta) 2 0)
                       content-col (long (or (:activity-content-col meta) 0))
                       x (+ (long bx)
+                           trace-inset
                            (long (if (:activity-content? meta)
                                    content-col
                                    (if (or user? error?) h-pad 0))))
                       y (+ (long btop) (long i))
-                      iw (if (:activity-content? meta)
-                           (max 0 (- (long bubble-w) content-col))
-                           (long bubble-w))
+                      iw (max 0
+                              (- (long bubble-w)
+                                 trace-inset
+                                 (if (:activity-content? meta) content-col 0)))
                       fbx (+ (long bx) (if (:activity-content? meta) content-col 0))
                       meta (if (:copy-width meta)
                              (assoc meta
@@ -2048,14 +2051,15 @@
                                             (str/starts-with? body tool-output-indent))
                       line
                       (if output-indented? (str marker (subs body (count tool-output-indent))) line)
-                      ;; Only nested output owns an inset; execution bands start at the text edge.
+                      ;; Trace bands retain their inset without a left rail.
                       x (if output-indented? (+ x (long tool-output-indent-cols)) x)
                       iw
                       (if output-indented? (max 0 (- (long iw) (long tool-output-indent-cols))) iw)
-                      fbx (if output-indented? (+ (long fbx) (long tool-output-indent-cols)) fbx)]
+                      fbx (if output-indented? (+ (long fbx) (long tool-output-indent-cols)) fbx)
+                      fill-iw (+ iw trace-inset)]
 
                   ;; Pre-fill the answer zone for every line type.
-                  (when in-answer? (p/set-bg! g zone-bg) (p/fill-rect! g fbx y iw 1))
+                  (when in-answer? (p/set-bg! g zone-bg) (p/fill-rect! g fbx y fill-iw 1))
                   (when (:activity-content? meta)
                     (p/set-bg! g t/code-block-bg)
                     (p/fill-rect! g bx y bubble-w 1))
@@ -2097,7 +2101,7 @@
                     ;; Iteration header.
                     (str/starts-with? line iteration-hdr-marker)
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                        (p/fill-rect! g fbx y iw 1)
+                        (p/fill-rect! g fbx y fill-iw 1)
                         (p/put-str! g x y (subs line 1))
                         ;; The block header toggles its code and operation rows.
                         (when (= :toggle-details (:kind meta))
@@ -2197,7 +2201,7 @@
                     (str/starts-with? line hint-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/header-active-tab-accent bg-color)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (p/styled g [p/ITALIC] (p/put-str! g x y raw)))
                     ;; ── Queued section header — a top-left corner glyph `┌` plus a
                     ;; bold accent label ("Queued · N") on the regular bubble
@@ -2208,7 +2212,7 @@
                     (str/starts-with? line queue-hdr-marker)
                     (let [raw (subs line 1)]
                       (p/set-bg! g bg-color)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (p/set-colors! g t/header-active-tab-accent bg-color)
                       (p/styled g [p/BOLD] (p/put-str! g x y (str "┌ " raw))))
                     ;; ── Queued message row — left rail `│`, then the ordinal
@@ -2226,7 +2230,7 @@
                           msg (subs raw cut)]
 
                       (p/set-bg! g bg-color)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       ;; Rail glyph at col x, ordinal two cols in (past the
                       ;; rail + its trailing space) — both accent, bold.
                       (p/set-colors! g t/header-active-tab-accent bg-color)
@@ -2252,7 +2256,7 @@
                     ;; from the "↑ to edit" hint below.
                     (str/starts-with? line queue-border-marker)
                     (do (p/set-colors! g t/header-active-tab-accent bg-color)
-                        (p/fill-rect! g fbx y iw 1)
+                        (p/fill-rect! g fbx y fill-iw 1)
                         (p/put-str! g x y (str "└" (repeat-str "─" (max 0 (dec (long iw)))))))
                     ;; Execution summary stays on transcript paper; only its semantic state colors it.
                     (str/starts-with? line execution-summary-marker)
@@ -2271,7 +2275,7 @@
                           abs-row (+ (long viewport-top) (long y))]
 
                       (p/set-colors! g tone-fg bg-color)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (p/styled g [p/BOLD] (p/put-str! g x y raw))
                       (when (= :toggle-details (:kind meta))
                         (.register interactions/hit-map
@@ -2299,7 +2303,7 @@
                                     t/code-duration-fg)]
 
                       (p/set-colors! g band-fg band-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (p/paint-styled-line! g
                                             x
                                             y
@@ -2421,7 +2425,7 @@
                     (str/starts-with? line thinking-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (p/styled g
                                 [p/ITALIC]
                                 (p/paint-styled-line! g
@@ -2458,7 +2462,7 @@
                           row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
 
                       (p/set-colors! g row-fg row-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (paint-ansi-line! g x y raw row-fg row-bg)
                       ;; The code band hosts the `▸ PYTHON +N more` accordion
                       ;; HEADER (same rule as the THINKING band above). Register
@@ -2476,7 +2480,7 @@
                           row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
 
                       (p/set-colors! g row-fg row-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (paint-ansi-line! g x y raw row-fg row-bg)
                       (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Code (running, no status yet) - neutral bg ──
@@ -2489,7 +2493,7 @@
                           row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
 
                       (p/set-colors! g row-fg row-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (paint-ansi-line! g x y (subs line 1) row-fg row-bg)
                       (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Result (success) - neutral code-block bg ──
@@ -2505,7 +2509,7 @@
                           res-fg (if hovered? t/link-chrome-hover-fg t/code-result-fg)]
 
                       (p/set-colors! g res-fg row-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       ;; Inline code (paths, search needles, moved targets) gets its
                       ;; own high-contrast chip instead of dissolving into the headline.
                       (paint-ansi-line! g
@@ -2529,7 +2533,7 @@
                     (str/starts-with? line err-result-marker)
                     (do
                       (p/set-colors! g t/code-error-result-fg t/code-block-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg t/code-block-bg)
                       (paint-turn-stamp! g x y (subs line 1) t/code-block-bg)
                       (when (= :toggle-details (:kind meta))
@@ -2549,23 +2553,23 @@
                     (str/starts-with? line code-pad-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-block-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (paint-code-pad-payload! g x y raw t/code-block-fg t/code-block-bg))
                     ;; ── Code block padding (success) ──
                     (str/starts-with? line code-ok-pad-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-ok-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (paint-code-pad-payload! g x y raw t/code-block-fg t/code-ok-bg))
                     ;; ── Code block padding (error) ──
                     (str/starts-with? line code-err-pad-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-err-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (paint-code-pad-payload! g x y raw t/code-block-fg t/code-err-bg))
                     ;; ── Iteration zone padding (margin between blocks) ──
-                    (str/starts-with? line iteration-pad-marker) (do (p/set-bg! g bg-color)
-                                                                     (p/fill-rect! g fbx y iw 1))
+                    (str/starts-with? line iteration-pad-marker)
+                    (do (p/set-bg! g bg-color) (p/fill-rect! g fbx y fill-iw 1))
                     ;; ── Answer separator - bold horizontal rule between iterations and answer
                     ;; ──
                     (str/starts-with? line answer-sep-marker)
@@ -2579,7 +2583,7 @@
                     ;; painter consumes nested inline markers.
                     (str/starts-with? line md-h1-marker) (let [lbg (if in-answer? zone-bg bg-color)]
                                                            (p/set-colors! g t/md-h1-fg lbg)
-                                                           (p/fill-rect! g fbx y iw 1)
+                                                           (p/fill-rect! g fbx y fill-iw 1)
                                                            (p/styled g
                                                                      [p/BOLD]
                                                                      (p/paint-styled-line!
@@ -2593,7 +2597,7 @@
                                                                        t/code-block-bg)))
                     (str/starts-with? line md-h2-marker) (let [lbg (if in-answer? zone-bg bg-color)]
                                                            (p/set-colors! g t/md-h2-fg lbg)
-                                                           (p/fill-rect! g fbx y iw 1)
+                                                           (p/fill-rect! g fbx y fill-iw 1)
                                                            (p/styled g
                                                                      [p/BOLD]
                                                                      (p/paint-styled-line!
@@ -2607,7 +2611,7 @@
                                                                        t/code-block-bg)))
                     (str/starts-with? line md-h3-marker) (let [lbg (if in-answer? zone-bg bg-color)]
                                                            (p/set-colors! g t/md-h3-fg lbg)
-                                                           (p/fill-rect! g fbx y iw 1)
+                                                           (p/fill-rect! g fbx y fill-iw 1)
                                                            (p/styled g
                                                                      [p/BOLD]
                                                                      (p/paint-styled-line!
@@ -2622,7 +2626,7 @@
                     (str/starts-with? line md-bold-marker)
                     (let [lbg (if in-answer? zone-bg bg-color)]
                       (p/set-colors! g fg-color lbg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (p/styled g
                                 [p/BOLD]
                                 (p/paint-styled-line! g
@@ -2651,7 +2655,7 @@
                           fg (if hovered? t/link-chrome-hover-fg t/md-summary-fg)]
 
                       (p/set-colors! g fg bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (p/styled g
                                 [p/BOLD]
                                 (p/paint-styled-line! g
@@ -2708,7 +2712,7 @@
 
                       (p/clear-styles! g)
                       (p/set-colors! g t/code-border-fg t/code-block-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       ;; The band is the row's INSIDE, not the whole row. A
                       ;; terminal cell is tinted whole and the frame's `│` runs
                       ;; down the MIDDLE of its own cell, so tinting the frame's
@@ -2782,7 +2786,7 @@
                     (str/starts-with? line md-bullet-marker)
                     (let [lbg (if in-answer? zone-bg bg-color)]
                       (p/set-colors! g fg-color lbg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (p/paint-styled-line! g
                                             x
                                             y
@@ -2800,7 +2804,7 @@
                     (str/starts-with? line md-quote-marker)
                     (let [lbg (if in-answer? zone-bg bg-color)]
                       (p/set-colors! g t/dialog-hint lbg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (p/styled g
                                 [p/ITALIC]
                                 (p/paint-styled-line! g
@@ -2813,7 +2817,7 @@
                                                       t/code-block-bg)))
                     (str/starts-with? line md-hr-marker) (let [lbg (if in-answer? zone-bg bg-color)]
                                                            (p/set-colors! g t/answer-sep-fg lbg)
-                                                           (p/fill-rect! g fbx y iw 1)
+                                                           (p/fill-rect! g fbx y fill-iw 1)
                                                            (p/put-str! g x y (subs line 1)))
                     ;; Tables inherit the answer background when inside that zone.
                     (or (str/starts-with? line md-table-head-marker)
@@ -2827,7 +2831,7 @@
 
                       (p/clear-styles! g)
                       (p/set-colors! g t/code-border-fg tbg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (if border?
                         ;; Border-only row.
                         (p/put-str! g x y stripped)
@@ -2844,7 +2848,7 @@
                     ;; inline markers; fenced code deliberately does not.
                     (str/starts-with? line th-md-h1-marker)
                     (do (p/set-colors! g t/iteration-header-fg t/iteration-header-bg)
-                        (p/fill-rect! g fbx y iw 1)
+                        (p/fill-rect! g fbx y fill-iw 1)
                         (p/styled g
                                   [p/BOLD p/ITALIC]
                                   (p/paint-styled-line! g
@@ -2857,7 +2861,7 @@
                                                         t/code-block-bg)))
                     (str/starts-with? line th-md-h2-marker)
                     (do (p/set-colors! g t/iteration-header-fg t/iteration-header-bg)
-                        (p/fill-rect! g fbx y iw 1)
+                        (p/fill-rect! g fbx y fill-iw 1)
                         (p/styled g
                                   [p/BOLD p/ITALIC]
                                   (p/paint-styled-line! g
@@ -2870,7 +2874,7 @@
                                                         t/code-block-bg)))
                     (str/starts-with? line th-md-h3-marker)
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                        (p/fill-rect! g fbx y iw 1)
+                        (p/fill-rect! g fbx y fill-iw 1)
                         (p/styled g
                                   [p/BOLD p/ITALIC]
                                   (p/paint-styled-line! g
@@ -2883,7 +2887,7 @@
                                                         t/code-block-bg)))
                     (str/starts-with? line th-md-bold-marker)
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                        (p/fill-rect! g fbx y iw 1)
+                        (p/fill-rect! g fbx y fill-iw 1)
                         (p/styled g
                                   [p/BOLD p/ITALIC]
                                   (p/paint-styled-line! g
@@ -2910,7 +2914,7 @@
                           fg (if hovered? t/link-chrome-hover-fg t/th-md-summary-fg)]
 
                       (p/set-colors! g fg bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (p/styled g
                                 [p/BOLD p/ITALIC]
                                 (p/paint-styled-line! g
@@ -2937,14 +2941,14 @@
                     ;; the painter translates ANSI foreground codes to Lanterna.
                     (str/starts-with? line th-md-code-marker)
                     (do (p/set-colors! g t/code-result-fg t/code-block-bg)
-                        (p/fill-rect! g fbx y iw 1)
+                        (p/fill-rect! g fbx y fill-iw 1)
                         (p/styled
                           g
                           [p/ITALIC]
                           (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)))
                     (str/starts-with? line th-md-bullet-marker)
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                        (p/fill-rect! g fbx y iw 1)
+                        (p/fill-rect! g fbx y fill-iw 1)
                         (p/styled g
                                   [p/ITALIC]
                                   (p/paint-styled-line! g
@@ -2957,7 +2961,7 @@
                                                         t/code-block-bg)))
                     (str/starts-with? line th-md-quote-marker)
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                        (p/fill-rect! g fbx y iw 1)
+                        (p/fill-rect! g fbx y fill-iw 1)
                         (p/styled g
                                   [p/ITALIC]
                                   (p/paint-styled-line! g
@@ -2970,7 +2974,7 @@
                                                         t/code-block-bg)))
                     (str/starts-with? line th-md-hr-marker)
                     (do (p/set-colors! g t/answer-sep-fg t/iteration-header-bg)
-                        (p/fill-rect! g fbx y iw 1)
+                        (p/fill-rect! g fbx y fill-iw 1)
                         (p/put-str! g x y (subs line 1)))
                     ;; ── Markdown table (thinking) ── grid blends into thinking zone
                     ;; Same dual-color treatment as the answer-mode table,
@@ -2991,7 +2995,7 @@
 
                       (p/clear-styles! g)
                       (p/set-colors! g t/code-border-fg tbg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/fill-rect! g fbx y fill-iw 1)
                       (if border?
                         (p/put-str! g x y stripped)
                         (paint-table-data-line! g
@@ -3011,7 +3015,7 @@
                     ;; INLINE_CODE_ON/OFF around the body text. Consume those
                     ;; here instead of writing raw PUA glyphs to the terminal.
                     (str/starts-with? line answer-txt-marker) (do (p/set-colors! g zone-fg zone-bg)
-                                                                  (p/fill-rect! g fbx y iw 1)
+                                                                  (p/fill-rect! g fbx y fill-iw 1)
                                                                   (p/paint-styled-line!
                                                                     g
                                                                     x
@@ -3023,7 +3027,7 @@
                                                                     t/code-block-bg))
                     ;; ── Answer padding ──
                     (str/starts-with? line answer-pad-marker) (do (p/set-bg! g zone-bg)
-                                                                  (p/fill-rect! g fbx y iw 1))
+                                                                  (p/fill-rect! g fbx y fill-iw 1))
                     ;; ── Plain text - answer bg if in answer zone, else bubble bg ──
                     ;; Cancelled status messages render in muted italic on
                     ;; terminal bg (no fill) so the line reads as a system
@@ -3037,7 +3041,7 @@
                           line-bg (if in-answer-zone? zone-bg bg-color)
                           line-fg (if in-answer-zone? zone-fg fg-color)]
 
-                      (when in-answer-zone? (p/set-bg! g line-bg) (p/fill-rect! g fbx y iw 1))
+                      (when in-answer-zone? (p/set-bg! g line-bg) (p/fill-rect! g fbx y fill-iw 1))
                       (p/set-colors! g line-fg line-bg)
                       (if (or cancelled? queued?)
                         ;; Cancelled / queued status messages: render as a
@@ -3903,17 +3907,15 @@
          :collapsed? collapsed?}]
 
     (if (= marker result-marker)
-      ;; The RESULT head reads like the THINKING head: a chevron, the name, and a
-      ;; tally of what it folds while collapsed.
+      ;; Keep the tally and chevron together; only timing belongs at the right edge.
       (let [hidden-n
             (count (remove #(str/blank? (subs (str (:line %)) 1)) (:hidden-entries detail-ctx)))
 
             prefix
             (str (layout/ast->inline-sentinel-string (vis/markdown->ast summary))
-                 (when (and collapsed? (pos? hidden-n)) (str "  +" hidden-n " more")))
-
-            suffix
-            (str (if collapsed? "▸" "▾") (when (seq suffix) (str "  " suffix)))]
+                 (when (and collapsed? (pos? hidden-n)) (str "  +" hidden-n " more"))
+                 " "
+                 (if collapsed? "▸" "▾"))]
 
         [{:line (str marker (first (with-right-suffix [prefix] suffix (max 1 (dec (long max-w))))))
           :meta (assoc meta
@@ -6268,6 +6270,10 @@
         (fn [line]
           {:line line :meta nil})
 
+        inset-entries
+        (fn [entries]
+          (mapv #(update % :meta assoc :trace-inset? true) entries))
+
         header
         []
 
@@ -6295,7 +6301,10 @@
           ;; bubble as it arrives. Post-stream collapse (the ▾ REASONING
           ;; summary toggle) still fires once the iteration completes
           ;; via `maybe-collapse-thinking-entries` below.
-          (let [raw-texts
+          (let [fill-w
+                (max 1 (- (long fill-w) 2))
+
+                raw-texts
                 (if (sequential? thinking-text-or-texts)
                   thinking-text-or-texts
                   [thinking-text-or-texts])
@@ -6336,12 +6345,13 @@
               ;; `maybe-collapse-thinking-entries` owns the full block
               ;; (badge + padding), so use its result verbatim.
               (let [_ live-preview?]
-                (maybe-collapse-thinking-entries {:entries entries
-                                                  :session-id session-id
-                                                  :detail-expansions detail-expansions
-                                                  :session-turn-id session-turn-id
-                                                  :iteration-number iteration-number
-                                                  :max-w fill-w})))))
+                (inset-entries (maybe-collapse-thinking-entries {:entries entries
+                                                                 :session-id session-id
+                                                                 :detail-expansions
+                                                                 detail-expansions
+                                                                 :session-turn-id session-turn-id
+                                                                 :iteration-number iteration-number
+                                                                 :max-w fill-w}))))))
 
         error-lines
         (fn []
@@ -6440,7 +6450,10 @@
 
         form-lines
         (fn [form block-number]
-          (let [{:keys [code display-code display-language comment error success? duration-ms runs]}
+          (let [fill-w
+                (max 1 (- (long fill-w) 2))
+
+                {:keys [code display-code display-language comment error success? duration-ms runs]}
                 form
 
                 form-artifacts
@@ -6533,7 +6546,7 @@
                                   (wrap-text line comment-w))
                                 (str/split-lines trimmed))]
 
-                    (mapv #(line-entry (str thinking-marker " " %)) wrapped)))
+                    (mapv #(line-entry (str thinking-marker %)) wrapped)))
 
                 ;; THE PROGRAM THE MODEL WROTE, and no second dialect. The gateway attaches
                 ;; the cached ruff rendering as `:display-code` — on the live chunk and on
@@ -6599,7 +6612,7 @@
                         code-rows
                         (vec (mapcat identity code-line-groups))
 
-                        ;; Keep the disclosure beside the name, before the hidden-line tally. A
+                        ;; Keep the chevron after the hidden-line tally. A
                         ;; failed call turns the NAME red instead of dragging its error headline
                         ;; onto the control row: the band stays the program, and the message
                         ;; keeps its own red row under the code (`inline-error-message-lines`).
@@ -6607,9 +6620,9 @@
                         (str (if error
                                (str p/INLINE_ERR_ON (band-label "CODE") p/INLINE_ERR_OFF)
                                (band-label "CODE"))
+                             (when-not code-expanded? (str "  +" (count code-rows) " more"))
                              " "
-                             (if code-expanded? "▾" "▸")
-                             (when-not code-expanded? (str "  +" (count code-rows) " more")))
+                             (if code-expanded? "▾" "▸"))
 
                         copy?
                         (and code-node-id (>= header-width 20))
@@ -6728,7 +6741,7 @@
                                 (assoc e :line (str result-marker stripped))))]
 
                         (cond
-                          ;; RESULT is independent of CODE and collapsed by default;
+                          ;; RESULT is a nested fold, collapsed by default;
                           ;; the CODE head alone carries the duration.
                           card (mapv (fn [entry]
                                        (if (and code-node-id
@@ -6815,7 +6828,7 @@
                 (vec (concat inline-error-message-lines
                              (when (seq inline-error-message-lines)
                                [(line-entry (str err-result-marker ""))])
-                             result-block))
+                             (when (or code-expanded? (empty? code-block)) result-block)))
 
                 ;; THE SENTENCE THAT INTRODUCES A CALL IS TRANSCRIPT TEXT, above the band and
                 ;; outside its fold. The companion prints a form's comment as an ordinary block
@@ -6831,11 +6844,9 @@
                 (when activity-run
                   (activity-detail-entries activity-run (max 1 (long fill-w)) session-id))]
 
-            ;; Each disclosure is independent, in Code, Result, Activity order.
-            (vec (concat comment-block
-                         code-block
-                         execution-details
-                         activity-surface
+            ;; RESULT lives under CODE; Activity and failures remain visible.
+            (vec (concat (inset-entries
+                           (concat comment-block code-block execution-details activity-surface))
                          artifact-block
                          generic-run-entries))))
 

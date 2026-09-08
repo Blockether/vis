@@ -345,7 +345,7 @@
               projected
               (:projected (first visible))]
 
-          (expect (str/includes? (:text projected) "CODE ▸  +"))
+          (expect (re-find #"CODE  \+\d+ more ▸" (:text projected)))
           (expect (re-find #"CODE[^\n]*▸" (:text projected)))
           (expect (str/includes? (:text projected) "1ms"))
           (expect (not (str/includes? (:text projected) "Execution")))

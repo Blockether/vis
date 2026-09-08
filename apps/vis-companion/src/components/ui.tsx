@@ -716,6 +716,7 @@ export function Disclosure({
   isOpen,
   tone = 'muted',
   bleed = false,
+  inlineChevron = false,
   className = '',
   children,
   ...props
@@ -741,6 +742,8 @@ export function Disclosure({
    * of the column it sits in read as a row missing its last eight pixels.
    */
   bleed?: boolean;
+  /** Keep the chevron immediately after the label and tally, not at either row edge. */
+  inlineChevron?: boolean;
 }) {
   const ink =
     tone === 'step'
@@ -762,12 +765,12 @@ export function Disclosure({
       className={`flex min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono ${tone === 'execution' ? 'min-h-11 text-meta mouse:min-h-7' : `min-h-8 mouse:min-h-6 ${tone === 'branch' ? 'text-ui' : 'text-chip'}`} transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none ${tone === 'caption' ? 'w-auto' : bleed ? 'w-[calc(100%_+_0.5rem)]' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
       {...props}
     >
-      {tone !== 'execution' && tone !== 'thinking' && (
+      {!inlineChevron && tone !== 'execution' && tone !== 'thinking' && (
         <ChevronIcon open={isOpen} className="size-3 shrink-0 opacity-70" />
       )}
       {children}
-      {(tone === 'execution' || tone === 'thinking') && (
-        <ChevronIcon open={isOpen} className="ml-auto size-3 shrink-0" />
+      {(inlineChevron || tone === 'execution' || tone === 'thinking') && (
+        <ChevronIcon open={isOpen} className={`${inlineChevron ? '' : 'ml-auto'} size-3 shrink-0`} />
       )}
     </button>
   );

@@ -302,7 +302,7 @@
                               :detail-expansions {:vis.channel-tui/expand-execution-details?
                                                   true}})))]
 
-        (expect (str/includes? txt "CODE ▸  +"))
+        (expect (re-find #"CODE  \+\d+ more ▸" txt))
         (expect (re-find #"CODE[^\n]*▸" txt))
         (expect (not (str/includes? txt "first = 1")))
         (expect (not (str/includes? txt "sixth = 6")))
@@ -741,7 +741,7 @@
               (first (filter #(str/includes? % ";; why this runs") lines))]
 
           (expect (= p/MARKER_THINKING (marker-of comment-line)))
-          (expect (str/starts-with? (body-of comment-line) " ;;")))))
+          (expect (str/starts-with? (body-of comment-line) ";;")))))
   (describe "provider-fallback-notice-test"
             (it "renders provider fallback recap lines above fallback details"
                 (let [lines
@@ -4307,7 +4307,7 @@
             text
             (str/join "\n" (map (comp strip-sentinels body-of strip-ansi :line) entries))]
 
-        (expect (str/includes? text "CODE ▸  +"))
+        (expect (re-find #"CODE  \+\d+ more ▸" text))
         (expect (re-find #"CODE[^\n]*▸" text))
         (expect (not (str/includes? text "</>")))
         (expect (not (str/includes? text "[0, 2, 4, 6]")))))
@@ -4383,7 +4383,7 @@
           text-of
           #(str/join "\n" (map (comp strip-sentinels strip-ansi :line) %))]
 
-      (expect (str/includes? (text-of closed) "CODE ▸  +"))
+      (expect (re-find #"CODE  \+\d+ more ▸" (text-of closed)))
       (expect (re-find #"CODE[^\n]*▸" (text-of closed)))
       (expect (not (str/includes? (text-of closed) "</>")))
       (expect (not (str/includes? (text-of closed) "Execution")))
@@ -4960,8 +4960,7 @@ h = 8"
           (expect (= "THINKING" (ink row :bold)))
           (expect (= "THINKING" (ink row #(and (:bold %) (:italic %)))))
           (expect (str/includes? (ink row :italic) "+8 more"))))
-    (it "keeps RESULT visible and bold while CODE is closed"
-        (expect (= "RESULT" (ink (band-row "RESULT") :bold))))))
+    (it "hides RESULT while CODE is closed" (expect (nil? (band-row "RESULT"))))))
 
  ;; Canonical output carries no pre-rendered body. The renderer derives it locally,
  ;; and the disclosure keeps the result band's own name in both states.
@@ -4988,8 +4987,7 @@ h = 8"
                (filter #(str/includes? % "RESULT"))
                first))]
 
-    (it "keeps the result disclosure visible when CODE is closed"
-        (expect (re-find #"RESULT\s+\+39 more\s+▸" (label-of {}))))
+    (it "keeps the result disclosure inside CODE" (expect (nil? (label-of {}))))
     (it "keeps the name once expanded"
         (expect (re-find #"RESULT\s+▾" (label-of {:vis.channel-tui/expand-all-details? true}))))
     (it "wraps that name in the painter's bold sentinels"
@@ -5230,10 +5228,9 @@ h = 8"
       (expect (str/includes? collapsed "4.8s"))
       (expect (str/includes? collapsed "ACTIVITY"))
       (expect (some? collapsed-status-row))
-      (expect (< (.indexOf ^String collapsed "CODE")
-                 (.indexOf ^String collapsed "RESULT")
-                 (.indexOf ^String collapsed "ACTIVITY"))
-              "the result disclosure follows source and precedes Activity")
+      (expect (not (str/includes? collapsed "RESULT")))
+      (expect (< (.indexOf ^String collapsed "CODE") (.indexOf ^String collapsed "ACTIVITY"))
+              "Code hides Result without hiding Activity")
       (expect (some? status-row))
       (expect (not (str/includes? expanded "line shown")))
       (expect (not (str/includes? expanded "PYTHON")))
@@ -5416,7 +5413,7 @@ h = 8"
               strip-ansi
               strip-sentinels)
 
-          ;; RESULT remains an independent disclosure between Code and Activity.
+          ;; RESULT remains a nested disclosure between source and Activity.
           ;; Regression td-794deb: its header must retain the toggle metadata.
           result-toggle-meta
           (some (fn [[line meta]]
@@ -5469,7 +5466,7 @@ h = 8"
           [tests-row tests-line]
           (row-with "Ran tests")]
 
-      ;; All three disclosures are independent; only their bodies collapse.
+      ;; Code hides Result; Activity keeps its own disclosure.
       (expect (str/includes? collapsed-text "ACTIVITY")
               "Activity stays visible while source and result are collapsed")
       (expect (= :toggle-details (:kind result-toggle-meta))
@@ -6604,14 +6601,14 @@ print(paths)"
             activity
             (first (filter #(str/includes? % "ACTIVITY") lines))]
 
-        (expect (some? result))
+        (expect (= expanded? (some? result)))
         (expect (some? code))
         (expect (some? activity))
-        (expect (< (.indexOf lines code) (.indexOf lines result) (.indexOf lines activity)))
+        (if expanded?
+          (expect (< (.indexOf lines code) (.indexOf lines result) (.indexOf lines activity)))
+          (expect (< (.indexOf lines code) (.indexOf lines activity))))
         (expect (not-any? #(str/includes? % "│") lines))
-        (expect (= (.indexOf ^String code "CODE")
-                   (.indexOf ^String result "RESULT")
-                   (.indexOf ^String activity "ACTIVITY")))
+        (expect (= (.indexOf ^String code "CODE") (.indexOf ^String activity "ACTIVITY")))
         (when expanded?
           (expect (str/includes? result "▾"))
           (expect (= (.indexOf ^String result "RESULT")
