@@ -6939,6 +6939,138 @@
                           (expect (= [old-env] @disposed)))
                         (finally (swap! env-cache dissoc k)))))))
 
+(defn- with-reload-cache
+  "Isolate reload lifecycle tests from the global cache and record sandbox disposal."
+  [f]
+  (with-redefs [lp/cache
+                (atom {})
+
+                lp/policy-reload-epoch
+                (atom 0)
+
+                lp/env-max-turns-per-ctx
+                (delay 0)]
+
+    (let [id
+          (java.util.UUID/randomUUID)
+
+          environment
+          {:marker :old}
+
+          entry
+          (new-cache-entry environment)
+
+          disposed
+          (atom [])]
+
+      (swap! lp/cache assoc id entry)
+      (with-redefs [env/context-enterable?
+                    (constantly true)
+
+                    env/dispose-sandbox!
+                    #(swap! disposed conj %)
+
+                    lp/open-env!
+                    (fn [_ _]
+                      (throw (ex-info "unexpected eager rebuild" {})))]
+
+        (f id entry disposed)))))
+
+(defdescribe
+  reload-sandbox-lifecycle-test
+  (it "defers a reload on the turn's own thread until the turn returns"
+      (with-reload-cache (fn [id entry disposed]
+                           (with-redefs [lp/turn! (fn [environment _ _]
+                                                    (lp/mark-policy-reload!)
+                                                    (expect (empty? @disposed))
+                                                    (expect (= (:environment entry) environment))
+                                                    :finished)]
+                             (expect (= :finished (lp/send! id "reload")))
+                             (expect (= [(:environment entry)] @disposed))
+                             (expect (identical? entry (get @lp/cache id)))))))
+  (it "closes a busy sandbox after the turn even when turn or bookkeeping fails"
+      (doseq [failure [nil :turn :bookkeeping]]
+        (with-reload-cache
+          (fn [id entry disposed]
+            (let [started (promise)
+                  release (promise)
+                  touch @#'lp/touch-entry!]
+
+              (with-redefs [lp/turn! (fn [_ _ _]
+                                       (deliver started true)
+                                       (when (= ::timeout (deref release 5000 ::timeout))
+                                         (throw (ex-info "test turn was not released" {})))
+                                       (when (= failure :turn) (throw (ex-info "turn failed" {})))
+                                       :finished)
+                            lp/touch-entry! (fn [cur]
+                                              (when (= failure :bookkeeping)
+                                                (throw (ex-info "bookkeeping failed" {})))
+                                              (touch cur))]
+
+                (let [turn (future (try (lp/send! id "busy") (catch Exception _ :failed)))]
+                  (try (expect (= true (deref started 5000 ::timeout)))
+                       (dotimes [_ 2]
+                         (lp/mark-policy-reload!))
+                       (expect (empty? @disposed))
+                       (deliver release true)
+                       (expect (= (if (= failure :turn) :failed :finished)
+                                  (deref turn 5000 ::timeout)))
+                       (expect (= [(:environment entry)] @disposed))
+                       (expect (not (.isLocked ^java.util.concurrent.locks.ReentrantLock
+                                               (:lock entry))))
+                       (finally (deliver release true) (future-cancel turn))))))))))
+  (it "does not close a replacement entry while holding its predecessor's lock"
+      (with-reload-cache
+        (fn [id _ disposed]
+          (let [fresh
+                (new-cache-entry {:marker :replacement})
+
+                lock
+                (proxy [java.util.concurrent.locks.ReentrantLock] []
+                  (tryLock [] (swap! lp/cache assoc id fresh) (proxy-super tryLock)))]
+
+            (swap! lp/cache assoc id (assoc (new-cache-entry {:marker :displaced}) :lock lock))
+            (lp/mark-policy-reload!)
+            (expect (empty? @disposed))
+            (expect (identical? fresh (get @lp/cache id)))))))
+  (it "keeps a failed rebuild stale and reports its error instead of entering a closed sandbox"
+      (with-reload-cache (fn [id entry _]
+                           (lp/mark-policy-reload!)
+                           (with-redefs [env/context-enterable?
+                                         (constantly false)
+
+                                         lp/turn!
+                                         (fn [& _]
+                                           (throw (ex-info "must not run a turn" {})))]
+
+                             (expect (= "unexpected eager rebuild"
+                                        (try (lp/send! id "retry rebuild")
+                                             nil
+                                             (catch clojure.lang.ExceptionInfo e (ex-message e)))))
+                             (expect (identical? entry (get @lp/cache id)))
+                             (expect (not (.isLocked ^java.util.concurrent.locks.ReentrantLock
+                                                     (:lock entry)))))))))
+
+(defdescribe reload-unbuilt-sandbox-test
+             (it "does not start a worker just to close it"
+                 (with-redefs [lp/cache
+                               (atom {})
+
+                               lp/policy-reload-epoch
+                               (atom 0)]
+
+                   (let [environment
+                         {:python-sandbox (delay (throw (ex-info "must stay lazy" {})))
+                          :python-context-retired-atom (atom false)}
+
+                         entry
+                         (new-cache-entry environment)]
+
+                     (swap! lp/cache assoc (java.util.UUID/randomUUID) entry)
+                     (lp/mark-policy-reload!)
+                     (expect (not (realized? (:python-sandbox environment))))
+                     (expect @(:python-context-retired-atom environment))))))
+
 ;; Regression, issue #106: a Settings flip only reached live tool bindings when it
 ;; arrived through the gateway HTTP handler, which called
 ;; `sync-cached-extension-symbols!` inline. A flip made anywhere else — the TUI

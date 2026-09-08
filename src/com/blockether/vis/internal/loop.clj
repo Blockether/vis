@@ -11421,8 +11421,8 @@
 (defonce
   ^{:doc
     "Monotonic `/reload` epoch. Every `/reload` bumps it (via a reload hook).
-   A cache entry stamped with an older epoch is recycled at its NEXT turn
-   boundary so its immutable security-policy snapshot rebuilds from the
+   Stale idle sandboxes close immediately; busy ones close after their turn.
+   The next turn rebuilds the immutable security-policy snapshot from the
    freshly-reloaded vis.yml. This is the sanctioned way `/reload` replaces the
    frozen network-domain / filesystem-root policy: the snapshot drives the
    Python session, egress proxy, and process jail at env-creation time, so it
@@ -11430,20 +11430,38 @@
   policy-reload-epoch
   (atom 0))
 
+(defn- policy-stale?
+  [entry]
+  (when-let [^java.util.concurrent.atomic.AtomicLong epoch (:policy-epoch entry)]
+    (< (.get epoch) (long @policy-reload-epoch))))
+
+(defn- dispose-reloaded-sandbox!
+  "Close an idle, reload-stale sandbox without rebuilding it. The cached env and
+   its lock remain until the next turn rebuilds the policy. Recheck ownership
+   under the lock so a displaced entry cannot close another turn's sandbox."
+  [k]
+  (let [^java.util.concurrent.locks.ReentrantLock lock (:lock (get @cache k))]
+    (when (and lock (not (.isHeldByCurrentThread lock)) (.tryLock lock))
+      (try (let [cur (get @cache k)]
+             (when (and (identical? lock (:lock cur)) (policy-stale? cur))
+               (env/dispose-sandbox! (:environment cur))))
+           (catch Throwable t
+             (tel/log! :error ["gateway: reload failed to dispose sandbox" (str k) (ex-message t)]))
+           (finally (.unlock lock))))))
+
 (defn mark-policy-reload!
-  "Invalidate every cached env's frozen security-policy snapshot. Registered as
-   a `/reload` hook: live sessions recycle at their next turn so vis.yml edits
-   to network domains / filesystem roots actually take effect. Returns nil."
+  "Invalidate every cached env's policy and close idle Python workers now.
+   Busy sessions close their stale sandbox after the current turn releases its
+   lock. The next turn rebuilds the environment from the reloaded configuration."
   []
   (swap! policy-reload-epoch inc)
+  (doseq [k (keys @cache)]
+    (dispose-reloaded-sandbox! k))
   nil)
 
-;; Wire `mark-policy-reload!` into the `/reload` slash. `run-reload-hooks!`
-;; (invoked by `reload-slash` after `config/reload-config!`) bumps the epoch, so
-;; the next turn of each live session rebuilds its security-policy snapshot.
-;; `defonce` keeps the registration idempotent across `(require ... :reload)`.
+;; Run after config reload; keep the Var so namespace reloads retain live wiring.
 (defonce ^:private _policy-reload-hook
-  (extension/register-reload-hook! ::security-policy-reload mark-policy-reload!))
+  (extension/register-reload-hook! ::security-policy-reload #'mark-policy-reload!))
 
 (defn- cache-key
   "Normalize an id-shaped value (UUID or string-UUID) to a UUID
@@ -12195,7 +12213,7 @@
              :as entry}
             (ensure-env! id)]
         (if (.tryLock lock (long ENGINE_LOCK_POLL_MS) java.util.concurrent.TimeUnit/MILLISECONDS)
-          (if (or rescued? (env/context-enterable? (:environment entry)))
+          (if (or rescued? (policy-stale? entry) (env/context-enterable? (:environment entry)))
             (do (when condemned (.set condemned false)) entry)
             (do
               (.unlock lock)
@@ -12395,14 +12413,7 @@
        ;; security-policy snapshot rebuilt from the freshly-reloaded vis.yml
        ;; (new network domains / filesystem roots take effect here). Done under
        ;; the lock, before the turn, so no eval races the swap.
-       (let [cur
-             (or (get @cache k) entry)
-
-             ^java.util.concurrent.atomic.AtomicLong pe
-             (:policy-epoch cur)]
-
-         (when (and pe (< (.get pe) (long @policy-reload-epoch)))
-           (try (recycle-env! k) (catch Throwable _ nil))))
+       (when (policy-stale? (or (get @cache k) entry)) (recycle-env! k))
        ;; Re-read :environment UNDER the lock: a between-turns turn-cap recycle
        ;; or a router/extension reseat may have swapped it since we captured
        ;; `entry`, so the queued turn runs against the CURRENT context.
@@ -12419,11 +12430,16 @@
                 (let [n (bump-turns! cur)]
                   ;; Recycle this session's interpreter namespace between turns so a
                   ;; single never-idle session cannot grow it unbounded.
-                  (when (and (pos? (long @env-max-turns-per-ctx))
+                  (when (and (not (policy-stale? cur))
+                             (pos? (long @env-max-turns-per-ctx))
                              (>= (long n) (long @env-max-turns-per-ctx)))
                     (try (recycle-env! k) (catch Throwable _ nil)))))
               (catch Throwable _ nil)
-              (finally (.unlock lock))))))))
+              (finally (.unlock lock)
+                       ;; After unlocking: a reload racing this handoff either closes
+                       ;; the idle sandbox itself or is picked up here. Never wait for
+                       ;; another turn (or the idle TTL) to reclaim the old worker.
+                       (dispose-reloaded-sandbox! k))))))))
 
 (defn close!
   [id]

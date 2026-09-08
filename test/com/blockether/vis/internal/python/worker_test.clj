@@ -3,6 +3,7 @@
    retired interpreter can never be entered again."
   (:require [com.blockether.vis.internal.python.env :as env]
             [com.blockether.vis.internal.loop :as loop]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.python.worker :as worker]
             [com.blockether.vis.internal.python.worker-peer :as worker-peer]
@@ -52,6 +53,62 @@
                 session
                 "import vis_introspection, vis_autoinstall\nworker_value = 41\nprint(worker_value)"))))
         (expect (= "42\n" (:stdout (env/run-python-block session "print(worker_value + 1)"))))))))
+
+(defdescribe reload-worker-cleanup-test
+             ;; Regression: /reload only advanced the policy epoch, leaving idle workers
+             ;; alive until another turn or the idle reaper eventually visited the session.
+             (it
+               "closes idle workers on reload and rebuilds lazily under the same turn lock"
+               (with-worker-context
+                 (fn [session]
+                   (with-redefs [loop/cache
+                                 (atom {})
+
+                                 loop/policy-reload-epoch
+                                 (atom 0)
+
+                                 loop/env-max-turns-per-ctx
+                                 (delay 0)]
+
+                     (let [id
+                           (java.util.UUID/randomUUID)
+
+                           entry
+                           (#'loop/new-cache-entry {:python-context session})
+
+                           ^Process process
+                           (:process (get @@#'worker/workers session))
+
+                           hook
+                           (get @@#'extension/reload-hooks
+                                :com.blockether.vis.internal.loop/security-policy-reload)
+
+                           builds
+                           (atom 0)
+
+                           fresh
+                           {:marker :fresh}]
+
+                       (swap! loop/cache assoc id entry)
+                       (with-redefs [loop/open-env!
+                                     (fn [_ _]
+                                       (swap! builds inc)
+                                       fresh)
+
+                                     loop/turn!
+                                     (fn [environment _ _]
+                                       environment)]
+
+                         (expect (.isAlive process))
+                         (dotimes [_ 2]
+                           (hook))
+                         (expect (.waitFor process 2 java.util.concurrent.TimeUnit/SECONDS))
+                         (expect (false? (worker/worker-live? session)))
+                         (expect (zero? @builds))
+                         (expect (identical? entry (get @loop/cache id)))
+                         (expect (= fresh (loop/send! id "after reload")))
+                         (expect (= 1 @builds))
+                         (expect (identical? (:lock entry) (:lock (get @loop/cache id)))))))))))
 
 (defdescribe worker-unexpected-exit-test
              ;; Regression: a native image-library crash must not silently replace a fully
