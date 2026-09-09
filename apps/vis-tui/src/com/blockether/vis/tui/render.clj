@@ -4702,9 +4702,14 @@
   (into []
         (mapcat (fn [{:keys [filename media-type] :as artifact}]
                   (let [meta {:artifact artifact :session-id session-id}]
-                    [{:line (str result-marker filename " · " media-type) :meta meta}
-                     {:line (str result-marker "↗ click to open in the system viewer")
-                      :meta meta}])))
+                    (if (attach/live-artifact? artifact)
+                      [{:line (str result-marker
+                                   "▸ " (band-label "LIVE VIEW")
+                                   " " (str/replace filename #"\.live\.ndjson$" ""))
+                        :meta meta}]
+                      [{:line (str result-marker filename " · " media-type) :meta meta}
+                       {:line (str result-marker "↗ click to open in the system viewer")
+                        :meta meta}]))))
         artifacts))
 
 (defn- paste-aware-ast->entries

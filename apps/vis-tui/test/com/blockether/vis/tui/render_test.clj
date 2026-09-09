@@ -7193,3 +7193,29 @@ print(paths)"
 
           (expect (str/includes? (:line entry) caption))
           (expect (str/includes? (:line entry) "42ms"))))))
+
+(defdescribe live-artifact-receipt-test
+             (it "keeps the recorded view named and clickable with code collapsed after reload"
+                 (let [entries
+                       (format-iteration-entry-entries
+                         {:iteration-id "iteration-live"
+                          :attachments [{:source "tool"
+                                         :kind "doc"
+                                         :filename "Release.live.ndjson"
+                                         :media-type "application/vnd.vis.live+ndjson"
+                                         :size 2048}]
+                          :forms [{:code "await gh.watch()" :stdout "Finished" :success? true}]}
+                         80
+                         1
+                         {:session-id "session-live" :session-turn-id "turn-live"})
+
+                       receipt
+                       (first (filter #(= "iteration-live"
+                                          (get-in % [:meta :artifact :iteration-id]))
+                                      entries))]
+
+                   (expect (some? receipt))
+                   (expect (str/includes? (:line receipt) "LIVE VIEW"))
+                   (expect (str/includes? (:line receipt) "Release"))
+                   (expect (not (str/includes? (:line receipt) "ndjson")))
+                   (expect (not-any? #(str/includes? (:line %) "system viewer") entries)))))

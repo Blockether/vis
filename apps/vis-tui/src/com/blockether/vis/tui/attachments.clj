@@ -258,6 +258,16 @@
    why storing one is safe even though sending the container never is."
   #{"video/mp4" "video/quicktime"})
 
+(defn live-artifact?
+  "True for the canonical recorded LiveView media type, not a filename guess."
+  [artifact]
+  (= "application/vnd.vis.live+ndjson"
+     (some-> (:media-type artifact)
+             (str/split #";" 2)
+             first
+             str/trim
+             str/lower-case)))
+
 (defn video-media-type?
   "True when `media-type` is one of [[video-media-types]]."
   [media-type]

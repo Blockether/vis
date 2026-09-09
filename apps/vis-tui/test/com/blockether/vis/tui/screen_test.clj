@@ -11,6 +11,7 @@
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.live-view-test :as live-fixture]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
@@ -2827,3 +2828,45 @@ therapy line 2"
       (doseq [x [(dec col) (+ col 6) (+ col 7)]]
         (expect (nil? (bubble-copy-hit {:row row :col x} regions))))
       (expect (nil? (bubble-copy-hit {:row row :col 4} regions))))))
+
+(defdescribe
+  recorded-live-artifact-click-test
+  (it
+    "loads the exact iteration record inside the TUI instead of the OS viewer"
+    (let [events
+          (atom [])
+
+          requests
+          (atom [])
+
+          opened
+          (atom [])]
+
+      (with-redefs [vis/worker-future
+                    (fn [_ task]
+                      (task))
+
+                    vis/notify!
+                    (fn [& _])
+
+                    vis/gateway-iteration-attachment-bytes
+                    (fn [& request]
+                      (swap! requests conj request)
+                      (.getBytes ^String (live-fixture/recorded-ci-source) "UTF-8"))
+
+                    state/dispatch
+                    #(swap! events conj %)
+
+                    opener/open-local!
+                    #(swap! opened conj %)]
+
+        (#'screen/open-produced-artifact!
+         "s1"
+         {:iteration-id "old-iteration"
+          :index 2
+          :filename "Release.live.ndjson"
+          :media-type "application/vnd.vis.live+ndjson"})
+        (expect (= [["s1" "old-iteration" 2]] @requests))
+        (expect (empty? @opened))
+        (expect (= [:live-record-open "s1"] (subvec (first @events) 0 2)))
+        (expect (= "Release checks" (get-in (first @events) [2 :view :title])))))))

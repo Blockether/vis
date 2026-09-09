@@ -2824,6 +2824,21 @@
                                        (set-run-reopened view-id (:is-reopened next-pane))))
                                  workspace)))))
 
+(reg-event-db :live-record-open
+              (fn [db [_ session-id pane]]
+                (let [target (session-target-tab db session-id)]
+                  (if (= :not-here target)
+                    db
+                    (update-tab db
+                                target
+                                (fn [workspace]
+                                  (update workspace
+                                          :live-views
+                                          (fn [panes]
+                                            (conj (filterv #(not= (lv/view-id pane) (lv/view-id %))
+                                                    panes)
+                                                  pane)))))))))
+
 (reg-event-db :live-view-minimize
               ;; Presentation only: fold one running view to a compact status row. Its
               ;; patches keep landing and the engine is not told.

@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.artifact-inspector :as artifact-inspector]
+            [com.blockether.vis.tui.attachments :as attachments]
             [com.blockether.vis.tui.attachment-intake :as attachment-intake]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.composer-attachment-rail :as attachment-rail]
@@ -2300,13 +2301,27 @@
   (vis/worker-future
     "vis-tui-open-produced-artifact"
     #(try
-       (if-let [file (artifact-inspector/materialize-artifact! session-id target)]
-         (let [{:keys [status error]} (opener/open-local! file)]
-           (when-not (= :ok status)
-             (vis/notify! (or error "Artifact could not be opened")
-                          :level :warn
-                          :ttl-ms status-error-ttl-ms)))
-         (vis/notify! "Artifact bytes are unavailable." :level :warn :ttl-ms status-error-ttl-ms))
+       (if (attachments/live-artifact? target)
+         (do (vis/notify! "Loading recorded live view…" :ttl-ms 1500)
+             (if-let [bytes (vis/gateway-iteration-attachment-bytes session-id
+                                                                    (:iteration-id target)
+                                                                    (:index target))]
+               (state/dispatch [:live-record-open session-id
+                                (lv/recorded-pane (String. ^bytes bytes
+                                                           java.nio.charset.StandardCharsets/UTF_8)
+                                                  session-id)])
+               (vis/notify! "Live view record unavailable. Click to retry."
+                            :level :warn
+                            :ttl-ms status-error-ttl-ms)))
+         (if-let [file (artifact-inspector/materialize-artifact! session-id target)]
+           (let [{:keys [status error]} (opener/open-local! file)]
+             (when-not (= :ok status)
+               (vis/notify! (or error "Artifact could not be opened")
+                            :level :warn
+                            :ttl-ms status-error-ttl-ms)))
+           (vis/notify! "Artifact bytes are unavailable."
+                        :level :warn
+                        :ttl-ms status-error-ttl-ms)))
        (catch Throwable _
          (vis/notify! "Artifact could not be opened." :level :warn :ttl-ms status-error-ttl-ms)))))
 

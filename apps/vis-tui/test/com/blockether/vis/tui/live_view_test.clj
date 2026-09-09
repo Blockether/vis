@@ -1167,3 +1167,50 @@
                      (.refresh ^TerminalScreen screen)))})]
       (is (str/ends-with? png "vis-live-view-settled.png"))
       (is (pos? (long (cap/ink png))) "the band belongs entirely to the run still going"))))
+
+(defn recorded-ci-source
+  "Durable gateway record for the restored-view render and pointer regression."
+  []
+  (str (wire/json-str {:kind :open
+                       :at 1000
+                       :view (assoc (ci-view :rows 3)
+                               :session-id "s1"
+                               :created-at 1000)})
+       "\n"
+       (wire/json-str {:kind :close
+                       :at 5000
+                       :result {:reason :completed
+                                :is-completed true
+                                :view {:title "Release checks"
+                                       :nodes [(fixture/status "now"
+                                                               "All checks passed"
+                                                               {:tone :ok}) (jobs {} 3)]}}})
+       "\n"))
+
+(deftest recorded-live-view-test
+  (let [pane
+        (lv/recorded-pane (recorded-ci-source) "s1")
+
+        text
+        (painted-text [pane])]
+
+    (is (= "view-1" (lv/view-id pane)))
+    (is (= "s1" (get-in pane [:view :session-id])))
+    (is (lv/settled? pane))
+    (is (= :completed (get-in pane [:settled :reason])))
+    (is (= 5000 (get-in pane [:settled :ended-at])))
+    (is (not (lv/dormant? pane)))
+    (is (nil? (lv/interruptible [pane])))
+    (is (str/includes? text "All checks passed"))
+    (is (str/includes? text "job-0"))
+    (is (not (str/includes? text "Polling the run")))
+    (is (some #(= :live-reopen (:kind %)) (regions-of [pane])))
+    (with-db (fn []
+               (state/dispatch [:live-record-open "s1" pane])
+               (state/dispatch [:live-record-open "s1" pane])
+               (is (= 1 (count (:live-views @state/app-db))))
+               (state/dispatch [:live-view-reopen "view-1"])
+               (is (lv/dormant? (first (:live-views @state/app-db))))
+               (state/dispatch [:live-record-open "elsewhere" (assoc-in pane [:view :id] "other")])
+               (is (= 1 (count (:live-views @state/app-db)))))))
+  (is (try (lv/recorded-pane "" "s1") false (catch clojure.lang.ExceptionInfo _ true))))

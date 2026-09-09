@@ -36,7 +36,9 @@
    prompt, so three full panes would leave none of them readable — and the
    collapsed line still carries the title, the state, and the fact that Escape
    hits the newest one first."
-  (:require [clojure.string :as str]
+  (:require [charred.api :as json]
+            [clojure.string :as str]
+            [com.blockether.vis.tui.view-model :as view-model]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.columns :as columns]
@@ -332,6 +334,39 @@
     (-> (update :is-reopened not)
         (assoc :is-following true
                :offset 0))))
+
+(defn recorded-pane
+  "Restore the sealed picture from a durable NDJSON record. The closing snapshot
+   owns mutable presentation; the declaration owns identity. Incomplete records
+   are refused rather than displayed as a finished run. No live action is replayed."
+  [source session-id]
+  (let [{:keys [view result ended-at]}
+        (reduce (fn [record line]
+                  (if (str/blank? line)
+                    record
+                    (let [frame (json/read-json line)]
+                      (case (get frame "kind")
+                        "open"
+                        (assoc record :view (view-model/live-view<-wire (get frame "view")))
+
+                        "close"
+                        (assoc record
+                          :result (view-model/live-result<-wire (get frame "result"))
+                          :ended-at (get frame "at"))
+
+                        record))))
+                {}
+                (str/split-lines source))]
+    (when-not (and (:id view) (map? (:view result)) (sequential? (get-in result [:view :nodes])))
+      (throw (ex-info "Live view record is incomplete. Reopen it after the run finishes." {})))
+    (-> (opened (merge view (:view result) {:id (:id view) :session-id session-id}))
+        (settled (update (dissoc result :view)
+                         :reason
+                         #(some-> %
+                                  keyword))
+                 (or ended-at 0))
+        reopened
+        (assoc :is-following false))))
 
 (defn run-row
   "The transcript receipt for a settled extension run, anchored at its form.
@@ -1406,11 +1441,13 @@
                              (when (> (long pane-count) 1) (str pane-count " views open"))])))}))
 
 (defn- paint-fold-control!
-  "Paint the title control. A running live view retains minimize/restore semantics."
+  "Paint minimize/restore for a running view and Close for a read-only record."
   [g {:keys [left inner-w]} row pane]
-  (when (and pane (not (settled? pane)))
+  (when pane
     (let [label
-          (if (minimized? pane) " ▴ " " ▾ ")
+          (cond (settled? pane) " Close "
+                (minimized? pane) " ▴ "
+                :else " ▾ ")
 
           width
           (long (p/display-width label))
@@ -1422,7 +1459,9 @@
       (p/styled g [p/BOLD] (p/put-str! g col row label))
       (.register interactions/hit-map
                  {:bounds {:row row :col col :width width}
-                  :kind (if (minimized? pane) :live-restore :live-minimize)
+                  :kind (cond (settled? pane) :live-reopen
+                              (minimized? pane) :live-restore
+                              :else :live-minimize)
                   :view-id (view-id pane)
                   :enabled? true}))))
 
