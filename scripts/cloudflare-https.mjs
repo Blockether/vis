@@ -18,7 +18,7 @@ function redirectRule(hostname) {
   return {
     ref: 'vis_https_' + createHash('sha256').update(hostname).digest('hex').slice(0, 24),
     description: `Require HTTPS for ${hostname}`,
-    expression: `(http.host eq "${hostname}" and http.request.scheme eq "http")`,
+    expression: `(http.host eq "${hostname}" and not ssl)`,
     action: 'redirect',
     action_parameters: {from_value: {
       target_url: {expression: 'concat("https://", http.host, http.request.uri.path)'},
