@@ -133,11 +133,24 @@
 
 (defdescribe fork-baseline-ms-test
              (it "advances the persisted baseline past the final seeding millisecond"
-                 (let [ticks (atom [100 100 101])]
+                 (let [ticks
+                       (atom [100 100 101])
+
+                       test-thread
+                       (Thread/currentThread)
+
+                       real-now-ms
+                       util/now-ms]
+
                    (with-redefs [util/now-ms (fn ^long []
-                                               (let [now (first @ticks)]
-                                                 (swap! ticks rest)
-                                                 (long now)))]
+                                               (if (identical? test-thread (Thread/currentThread))
+                                                 (let [now (first @ticks)]
+                                                   (swap! ticks rest)
+                                                   (long now))
+                                                 (long (real-now-ms))))]
+                     ;; Background timers must not consume the test's finite clock sequence.
+                     (expect (> @(future (util/now-ms)) 101))
+                     (expect (= [100 100 101] @ticks))
                      (expect (= 101 (#'ws/fork-baseline-ms)))
                      (expect (empty? @ticks))))))
 
