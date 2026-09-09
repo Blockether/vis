@@ -1487,6 +1487,50 @@
           (expect (nil? (:metadata result)))))))
 
 (defdescribe
+  python-release-publication-test
+  (it "publishes automatically after a successful Vis release with manual recovery on main"
+      (let [release-name
+            (second (re-find #"(?m)^name: (.+)$" (slurp ".github/workflows/release.yml")))
+
+            publisher
+            (slurp ".github/workflows/python-publish.yml")]
+
+        (doseq [needle [(str "workflow_run:\n    workflows: ['"
+                             release-name
+                             "']\n    types: [completed]") "github.event_name == 'workflow_run'"
+                        "github.event.workflow_run.conclusion == 'success'"
+                        "github.event.workflow_run.event == 'push'"
+                        "github.event.workflow_run.head_repository.full_name == github.repository"
+                        "github.event_name == 'workflow_dispatch'" "github.ref == 'refs/heads/main'"
+                        "uses: ./.github/workflows/python-packages.yml"
+                        "ref: ${{ github.event.workflow_run.head_sha || github.sha }}"
+                        "version: ${{ inputs.version }}" "needs: verify" "environment: pypi"
+                        "id-token: write" "uses: pypa/gh-action-pypi-publish@release/v1"]]
+          (expect (str/includes? publisher needle) needle))
+        ;; PyPI trusted publishing does not support reusable workflows.
+        (expect (not (str/includes? publisher "workflow_call:")))
+        (expect (not (str/includes? publisher "continue-on-error:")))))
+  (it
+    "builds and tests the released commit and uses its VIS_VERSION for the distribution"
+    (let [packages (slurp ".github/workflows/python-packages.yml")]
+      (expect (str/includes? packages "      ref:\n"))
+      (expect
+        (=
+          2
+          (count
+            (re-seq
+              #"uses: actions/checkout@v7\n        with:\n          ref: \$\{\{ inputs.ref \|\| github.sha \}\}"
+              packages))))
+      (doseq
+        [needle
+         ["version = (Path(os.environ['GITHUB_WORKSPACE']) / 'VIS_VERSION').read_text().strip()"
+          "assert metadata.version('vis-agent') == version"
+          "os.environ['EXPECTED_VERSION'] == version"
+          "python -m build packages/vis-agent --outdir dist" "name: python-sdk-distributions"
+          "needs: distribution"]]
+        (expect (str/includes? packages needle) needle)))))
+
+(defdescribe
   complete-release-gate-test
   (it
     "keeps stable publication behind native, mobile, desktop and full CI verification"

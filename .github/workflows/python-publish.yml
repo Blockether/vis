@@ -1,6 +1,11 @@
 name: Publish Python SDK
 
+# The release uses GITHUB_TOKEN, so its published release does not trigger workflows.
+# Completion triggers this top-level workflow, as required by PyPI trusted publishing.
 on:
+  workflow_run:
+    workflows: ['Release & Deploy to Clojars']
+    types: [completed]
   workflow_dispatch:
     inputs:
       version:
@@ -13,10 +18,16 @@ permissions:
 
 jobs:
   verify:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     uses: ./.github/workflows/python-packages.yml
     with:
       version: ${{ inputs.version }}
+      ref: ${{ github.event.workflow_run.head_sha || github.sha }}
   publish:
     needs: verify
     runs-on: ubuntu-latest
