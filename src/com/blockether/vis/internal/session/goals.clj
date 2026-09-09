@@ -215,7 +215,9 @@ New user instructions and a user stop always take priority over continuation.")
       :call {:pos ["goal_id" "version" "status" "reason"]}
       :params [{:name "goal_id"} {:name "version"} {:name "status"} {:name "reason"}]
       :description (:doc (meta #'update-goal))
-      :result "The persisted goal, including status, revision, measured usage and reason."})])
+      :result
+      "The persisted goal map: `id`, `objective`, `status`, `version`, `revision`,
+       `token_budget`, `tokens_used`, `time_used_ms`, `reason`, `created_at`, `updated_at`."})])
 
 (defn slash!
   "Parse /goal [--budget N] [--] <objective>, or --pause/--resume/--cancel.

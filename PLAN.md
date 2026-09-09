@@ -1257,6 +1257,11 @@ published or retagged; v0.1.54 includes these fixes and the bounded-cache workfl
   and read the assigned port; the paired-bind test keeps the primary connector open while
   adding the same-port loopback mirror. All HTTP and streaming assertions remain intact.
   All 114 server cases, formatting, lint and reflection checks pass locally.
+- Subsequent main CI [34410980297](https://github.com/Blockether/vis/actions/runs/34410980297)
+  rejects the newly registered `update_goal` result description because it names no wire
+  keys. The description now lists its actual persisted fields; execution is unchanged.
+  The existing regression fails before the edit. All 66 affected extension/goal cases,
+  formatting, lint and reflection checks pass afterwards.
 
 ---
 
