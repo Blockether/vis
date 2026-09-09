@@ -44,7 +44,7 @@
                  :resources [{:type "file" :id (str "file-" i)}]
                  :evidence []})
               (range 6)
-              ["cat" "cat" "patch" "patch" "shell" "shell"])
+              ["cat" "patch" "shell" "cat" "shell" "patch"])
 
         entries
         (fn [rows opened]
@@ -6274,7 +6274,7 @@ h = 8"
         (mapv (fn [n]
                 {:id (str "live-" n)
                  :sequence n
-                 :operation (if (even? n) "grep" "cat")
+                 :operation (["grep" "cat" "ls" "patch" "run_tests" "lint_code" "shell"] n)
                  :summary (str "search-" n)
                  :presenter "generic"
                  :signal "observation"

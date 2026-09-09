@@ -22,27 +22,30 @@ const ACTIVITY_LIMITS = activityContract.limits;
 
 export type OperationGroup = {
   id: string;
-  label: string | null;
+  label: string;
   rows: ActivityRow[];
 };
 
-/** Portable adjacent runs. Keep engine shell groups intact and their launch identity stable. */
+/** One group per operation across the block, ordered by first entry. Shell evidence stays intact. */
 export function operationGroups(
   rows: readonly ActivityRow[],
 ): OperationGroup[] {
   const labels: Readonly<Record<string, string>> =
     activityContract.operation_groups;
   const groups: OperationGroup[] = [];
+  const byOperation = new Map<string, OperationGroup>();
   for (const row of [...rows].sort((a, b) => a.sequence - b.sequence)) {
-    const label = Object.hasOwn(labels, row.operation)
-      ? labels[row.operation]
-      : null;
-    const last = groups.at(-1);
-    if (label && last?.label === label) last.rows.push(row);
+    const existing = byOperation.get(row.operation);
+    if (existing) existing.rows.push(row);
     else {
+      const label = Object.hasOwn(labels, row.operation)
+        ? labels[row.operation]
+        : row.operation;
       const first =
         row.operation === "shell" ? (row.children?.[0] ?? row) : row;
-      groups.push({ id: first.id, label, rows: [row] });
+      const group = { id: first.id, label, rows: [row] };
+      groups.push(group);
+      byOperation.set(row.operation, group);
     }
   }
   return groups;

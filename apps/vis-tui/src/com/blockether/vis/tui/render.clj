@@ -5509,7 +5509,7 @@
 (def ^:private activity-steps-shown 4)
 
 (defn- activity-operation-rows
-  "The shared adjacent runs, expressed as local disclosures without changing receipts."
+  "The shared operation groups, expressed as local disclosures without changing receipts."
   [rows]
   (mapv
     (fn [{:keys [id label rows]}]
@@ -5568,7 +5568,7 @@
     (activity-contract/operation-groups rows)))
 
 (defn- activity-detail-entries
-  "A joined, independently folded Activity band. Adjacent operation groups start shut;
+  "A joined, independently folded Activity band. Block-wide operation groups start shut;
    live/failure context survives manual folding. Row, file and group keys retain reader choices.
    #band folds Activity; #steps reveals retained groups beyond the four-group preview."
   [{:keys [node-id activity-rows activity-expanded? activity-omitted activity-artifacts]} max-w

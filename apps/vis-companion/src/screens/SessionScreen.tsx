@@ -108,6 +108,7 @@ import {
   watchDraftMessageExits,
   writeDraftMessage,
 } from "../lib/draft-messages";
+import { watchComposerInputDiagnostics } from "../lib/diagnostics";
 import {
   appendSharedText,
   hydratePendingShare,
@@ -3010,6 +3011,11 @@ export function SessionScreen({
         scrollMetricsFrameRef.current = null;
       }
     };
+  }, [sid]);
+
+  useEffect(() => {
+    const textarea = composerRef.current;
+    if (textarea) return watchComposerInputDiagnostics(textarea, sid);
   }, [sid]);
 
   // Autosize the composer WITHOUT thrashing layout. The naive pattern

@@ -56,7 +56,7 @@
             (and (= i 6) (= state "failed"))
             (assoc :error-summary "Test suite failed")))
         (range 7)
-        ["cat" "cat" "cat" "patch" "patch" "shell" "shell"]))
+        ["cat" "patch" "shell" "cat" "patch" "cat" "shell"]))
 
 (defn activity-review-terminal
   "Configure review defaults to match the actual TUI theme, including empty cells."

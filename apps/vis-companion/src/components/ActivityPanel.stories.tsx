@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, within } from "storybook/test";
 import {
   ACTIVITY_CHRONOLOGY,
+  ACTIVITY_INTERLEAVED,
   ACTIVITY_LONG_RUNNING,
   ACTIVITY_LISTING,
   ACTIVITY_LISTING_BATCH,
@@ -81,6 +82,36 @@ export const Chronology: Story = {
   args: { activity: ACTIVITY_CHRONOLOGY },
 };
 
+/** Repeated operations share one group even when ten read/search runs are interleaved. */
+export const InterleavedOperations: Story = {
+  args: { activity: ACTIVITY_INTERLEAVED },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    const groups = canvas.getByRole("list", { name: "Operation groups" });
+    await expect(groups.children).toHaveLength(4);
+    await expect(
+      canvas.getByRole("button", { name: /Search ×10/ }),
+    ).toBeVisible();
+    await expect(
+      canvas.getByRole("button", { name: /Test ×2/ }),
+    ).toHaveTextContent("1 running · 1 failed");
+    await expect(canvas.getByText(/Assertion failed/)).toBeVisible();
+    const reads = canvas.getByRole("button", { name: /Read ×10/ });
+    reads.focus();
+    await userEvent.keyboard("{Enter}");
+    const members = canvas.getByRole("list", { name: "Read ×10 operations" });
+    await expect(members.children).toHaveLength(10);
+    await expect(
+      [...members.children].map((row) => row.getAttribute("data-activity-row")),
+    ).toEqual(Array.from({ length: 10 }, (_, index) => `cat-${index + 1}`));
+    await userEvent.click(reads);
+    await expect(reads).toHaveAttribute("aria-expanded", "false");
+  },
+};
+
 /** What a block did to the tree with no tool call of its own: one row per kind. */
 export const TreeChanges: Story = {
   args: { activity: ACTIVITY_TREE_CHANGES },
@@ -155,7 +186,7 @@ export const ListingBatch: Story = {
       await expect(getComputedStyle(body).rowGap).toBe("4px");
     }
     const chronology = canvas.getByRole("list", {
-      name: "Invocation chronology",
+      name: "Operation groups",
     });
     await expect(getComputedStyle(chronology).paddingBottom).toBe("4px");
     await expect(step.getBoundingClientRect().height).toBeGreaterThanOrEqual(

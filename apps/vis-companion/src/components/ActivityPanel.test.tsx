@@ -129,16 +129,42 @@ describe("joined Activity operation groups", () => {
     ).toBe("true");
   });
 
-  it("never sorts separated runs together or hides failure behind the band", () => {
+  it("keeps ten interleaved read and search runs in one group each", () => {
     const activity = reads();
-    activity.rows[1] = { ...activity.rows[1], operation: "patch" };
-    render(<ActivityPanel activity={activity} />);
-    expect(screen.queryByRole("button", { name: /Read ×/ })).toBeNull();
+    const rows = Array.from({ length: 20 }, (_, sequence) => ({
+      ...activity.rows[0],
+      id: `call-${sequence}`,
+      sequence,
+      operation: sequence % 2 ? "grep" : "cat",
+    }));
+    const { rerender } = render(
+      <ActivityPanel activity={{ ...activity, rows }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand Activity" }));
+    expect(document.querySelectorAll("[data-activity-group]")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /Search ×10/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Read ×10/ }));
     expect(
       [...document.querySelectorAll("[data-activity-row]")].map((row) =>
         row.getAttribute("data-activity-row"),
       ),
-    ).toEqual(["a", "b", "c"]);
+    ).toEqual(
+      rows.filter((row) => row.operation === "cat").map((row) => row.id),
+    );
+    rerender(
+      <ActivityPanel
+        activity={{
+          ...activity,
+          rows: [...rows, { ...rows[0], id: "last-read", sequence: 20 }],
+        }}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("button", { name: /Read ×11/ })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(document.querySelectorAll("[data-activity-group]")).toHaveLength(2);
   });
 
   it("keeps failed and cancelled outcomes visible while a group is collapsed", () => {
@@ -359,7 +385,7 @@ describe("one form's Activity on the phone", () => {
     paintActivity();
 
     const chronology = screen.getByRole("list", {
-      name: "Invocation chronology",
+      name: "Operation groups",
     });
     const chronologyText = chronology.textContent ?? "";
     expect(chronologyText.indexOf("Searched 18 matches")).toBeLessThan(
@@ -403,9 +429,9 @@ describe("one form's Activity on the phone", () => {
     expect(activityReceiptText(settled, 12_600)).toBe(
       "SHELL · RUN_TESTS · 12.6s",
     );
-    expect(
-      screen.getByLabelText("Invocation chronology").textContent,
-    ).toContain("Ran git status");
+    expect(screen.getByLabelText("Operation groups").textContent).toContain(
+      "Ran git status",
+    );
     expect(screen.getByText("66ms")).toBeTruthy();
     expect(screen.getByText("12.5s")).toBeTruthy();
   });
@@ -497,7 +523,7 @@ describe("a run reads as one thread", () => {
   it("keeps the one list and removes decorative per-operation marks", () => {
     paintActivity();
     expect(
-      screen.getAllByRole("list", { name: "Invocation chronology" }),
+      screen.getAllByRole("list", { name: "Operation groups" }),
     ).toHaveLength(1);
     for (const step of document.querySelectorAll("[data-activity-row]")) {
       expect(step.querySelector("span.absolute")).toBeNull();
@@ -529,7 +555,7 @@ describe("a run reads as one thread", () => {
     paintActivity();
 
     const chronology =
-      screen.getByLabelText("Invocation chronology").textContent ?? "";
+      screen.getByLabelText("Operation groups").textContent ?? "";
     expect(chronology).toContain("Searched 18 matches");
     expect(chronology).toContain("Running tests suite");
   });
@@ -771,7 +797,7 @@ describe("the axis says a thing once", () => {
     paintStep(refusedPatch);
 
     const chronology =
-      screen.getByLabelText("Invocation chronology").textContent ?? "";
+      screen.getByLabelText("Operation groups").textContent ?? "";
     expect(chronology).toContain("Patch refused");
     expect(chronology).not.toContain("Patched");
   });
@@ -780,7 +806,7 @@ describe("the axis says a thing once", () => {
     paintStep(refusedPatch);
 
     const chronology =
-      screen.getByLabelText("Invocation chronology").textContent ?? "";
+      screen.getByLabelText("Operation groups").textContent ?? "";
     expect(chronology).not.toContain("NO MATCH");
     expect(chronology.match(/src\/components\/ui\.tsx/g) ?? []).toHaveLength(1);
   });
@@ -793,7 +819,7 @@ describe("the axis says a thing once", () => {
     });
 
     const chronology =
-      screen.getByLabelText("Invocation chronology").textContent ?? "";
+      screen.getByLabelText("Operation groups").textContent ?? "";
     expect(chronology).not.toContain("FAILED");
     expect(chronology).toContain(
       "the provider closed the stream before the first token",
@@ -814,7 +840,7 @@ describe("the axis says a thing once", () => {
 
     openEverySettledStep();
     const chronology =
-      screen.getByLabelText("Invocation chronology").textContent ?? "";
+      screen.getByLabelText("Operation groups").textContent ?? "";
     expect(chronology).toContain("Read");
     expect(chronology).not.toContain("2 files");
     expect(document.querySelector('[data-path="src/index.css"]')).toBeTruthy();
@@ -907,9 +933,9 @@ describe("what the axis does while the work is still moving", () => {
 
     paintActivity({ activity: { ...projection, rows: [running] } });
 
-    expect(
-      screen.getByLabelText("Invocation chronology").textContent,
-    ).toContain("…");
+    expect(screen.getByLabelText("Operation groups").textContent).toContain(
+      "…",
+    );
   });
 
   it("silences the live region it sits inside", () => {
@@ -960,7 +986,7 @@ describe("what a code block changed with its own hands", () => {
     render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
     openEverySettledStep();
 
-    const chronology = screen.getByLabelText("Invocation chronology");
+    const chronology = screen.getByLabelText("Operation groups");
     const heads = chronology.querySelectorAll(
       ':scope > [data-activity-depth="0"]',
     );

@@ -1,6 +1,6 @@
 [
   {
-    "name": "adjacent runs preserve chronology",
+    "name": "interleaved operations share one group in first-entry order",
     "projection": {
       "state": "succeeded",
       "counts": {
@@ -99,7 +99,8 @@
         "label": "Read",
         "rows": [
           "call-1",
-          "call-2"
+          "call-2",
+          "call-5"
         ]
       },
       {
@@ -108,13 +109,6 @@
         "rows": [
           "call-3",
           "call-4"
-        ]
-      },
-      {
-        "id": "call-5",
-        "label": "Read",
-        "rows": [
-          "call-5"
         ]
       },
       {
@@ -128,7 +122,7 @@
     ]
   },
   {
-    "name": "unknown operations stay separate",
+    "name": "unknown operations group by exact name across other operations",
     "projection": {
       "state": "succeeded",
       "counts": {
@@ -155,7 +149,7 @@
         },
         {
           "id": "call-2",
-          "sequence": 2,
+          "sequence": 5,
           "operation": "custom",
           "presenter": "generic",
           "signal": "generic",
@@ -191,15 +185,9 @@
     "groups": [
       {
         "id": "call-1",
-        "label": null,
+        "label": "custom",
         "rows": [
-          "call-1"
-        ]
-      },
-      {
-        "id": "call-2",
-        "label": null,
-        "rows": [
+          "call-1",
           "call-2"
         ]
       },
@@ -232,7 +220,7 @@
     "groups": []
   },
   {
-    "name": "all operation families",
+    "name": "all operation families group across intervening calls",
     "projection": {
       "state": "succeeded",
       "counts": {
@@ -259,7 +247,7 @@
         },
         {
           "id": "call-2",
-          "sequence": 2,
+          "sequence": 6,
           "operation": "ls",
           "presenter": "generic",
           "signal": "generic",
@@ -270,7 +258,7 @@
         },
         {
           "id": "call-3",
-          "sequence": 3,
+          "sequence": 2,
           "operation": "run_tests",
           "presenter": "generic",
           "signal": "generic",
@@ -281,7 +269,7 @@
         },
         {
           "id": "call-4",
-          "sequence": 4,
+          "sequence": 7,
           "operation": "run_tests",
           "presenter": "generic",
           "signal": "generic",
@@ -292,7 +280,7 @@
         },
         {
           "id": "call-5",
-          "sequence": 5,
+          "sequence": 3,
           "operation": "lint_code",
           "presenter": "generic",
           "signal": "generic",
@@ -303,7 +291,7 @@
         },
         {
           "id": "call-6",
-          "sequence": 6,
+          "sequence": 8,
           "operation": "lint_code",
           "presenter": "generic",
           "signal": "generic",
@@ -314,7 +302,7 @@
         },
         {
           "id": "call-7",
-          "sequence": 7,
+          "sequence": 4,
           "operation": "format_code",
           "presenter": "generic",
           "signal": "generic",
@@ -325,7 +313,7 @@
         },
         {
           "id": "call-8",
-          "sequence": 8,
+          "sequence": 9,
           "operation": "format_code",
           "presenter": "generic",
           "signal": "generic",
@@ -336,7 +324,7 @@
         },
         {
           "id": "call-9",
-          "sequence": 9,
+          "sequence": 5,
           "operation": "repl_eval",
           "presenter": "generic",
           "signal": "generic",
@@ -501,7 +489,8 @@
         "label": "Read",
         "rows": [
           "call-1",
-          "call-2"
+          "call-2",
+          "call-5"
         ]
       },
       {
@@ -510,13 +499,6 @@
         "rows": [
           "call-3",
           "call-4"
-        ]
-      },
-      {
-        "id": "call-5",
-        "label": "Read",
-        "rows": [
-          "call-5"
         ]
       },
       {
@@ -635,7 +617,8 @@
         "label": "Read",
         "rows": [
           "call-1",
-          "call-2"
+          "call-2",
+          "call-5"
         ]
       },
       {
@@ -644,13 +627,6 @@
         "rows": [
           "call-3",
           "call-4"
-        ]
-      },
-      {
-        "id": "call-5",
-        "label": "Read",
-        "rows": [
-          "call-5"
         ]
       },
       {
@@ -759,6 +735,397 @@
         "label": "Shell",
         "rows": [
           "group-call-1"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "ten interleaved reads and searches with failed and running tests",
+    "projection": {
+      "state": "running",
+      "counts": {
+        "succeeded": 21,
+        "failed": 1,
+        "running": 1,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "cat-1",
+          "sequence": 1,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "src/extension.py",
+          "resources": [
+            {
+              "type": "file",
+              "id": "src/extension.py"
+            }
+          ],
+          "evidence": [],
+          "result_summary": "Retained read output"
+        },
+        {
+          "id": "grep-1",
+          "sequence": 2,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "extension · src/",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Retained search output"
+        },
+        {
+          "id": "cat-2",
+          "sequence": 3,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "tests/test_extension_loading.py",
+          "resources": [
+            {
+              "type": "file",
+              "id": "tests/test_extension_loading.py"
+            }
+          ],
+          "evidence": [],
+          "result_summary": "Retained read output"
+        },
+        {
+          "id": "grep-2",
+          "sequence": 4,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "extension · src/",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Retained search output"
+        },
+        {
+          "id": "cat-3",
+          "sequence": 5,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "src/extension.py",
+          "resources": [
+            {
+              "type": "file",
+              "id": "src/extension.py"
+            }
+          ],
+          "evidence": [],
+          "result_summary": "Retained read output"
+        },
+        {
+          "id": "grep-3",
+          "sequence": 6,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "extension · src/",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Retained search output"
+        },
+        {
+          "id": "cat-4",
+          "sequence": 7,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "tests/test_extension_loading.py",
+          "resources": [
+            {
+              "type": "file",
+              "id": "tests/test_extension_loading.py"
+            }
+          ],
+          "evidence": [],
+          "result_summary": "Retained read output"
+        },
+        {
+          "id": "grep-4",
+          "sequence": 8,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "extension · src/",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Retained search output"
+        },
+        {
+          "id": "cat-5",
+          "sequence": 9,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "src/extension.py",
+          "resources": [
+            {
+              "type": "file",
+              "id": "src/extension.py"
+            }
+          ],
+          "evidence": [],
+          "result_summary": "Retained read output"
+        },
+        {
+          "id": "grep-5",
+          "sequence": 10,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "extension · src/",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Retained search output"
+        },
+        {
+          "id": "test-4",
+          "sequence": 11,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "failed",
+          "summary": "tests/test_extension_loading.py",
+          "resources": [],
+          "evidence": [],
+          "error_summary": "Assertion failed"
+        },
+        {
+          "id": "cat-6",
+          "sequence": 12,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "tests/test_extension_loading.py",
+          "resources": [
+            {
+              "type": "file",
+              "id": "tests/test_extension_loading.py"
+            }
+          ],
+          "evidence": [],
+          "result_summary": "Retained read output"
+        },
+        {
+          "id": "grep-6",
+          "sequence": 13,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "extension · src/",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Retained search output"
+        },
+        {
+          "id": "cat-7",
+          "sequence": 14,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "src/extension.py",
+          "resources": [
+            {
+              "type": "file",
+              "id": "src/extension.py"
+            }
+          ],
+          "evidence": [],
+          "result_summary": "Retained read output"
+        },
+        {
+          "id": "grep-7",
+          "sequence": 15,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "extension · src/",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Retained search output"
+        },
+        {
+          "id": "cat-8",
+          "sequence": 16,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "tests/test_extension_loading.py",
+          "resources": [
+            {
+              "type": "file",
+              "id": "tests/test_extension_loading.py"
+            }
+          ],
+          "evidence": [],
+          "result_summary": "Retained read output"
+        },
+        {
+          "id": "grep-8",
+          "sequence": 17,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "extension · src/",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Retained search output"
+        },
+        {
+          "id": "cat-9",
+          "sequence": 18,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "src/extension.py",
+          "resources": [
+            {
+              "type": "file",
+              "id": "src/extension.py"
+            }
+          ],
+          "evidence": [],
+          "result_summary": "Retained read output"
+        },
+        {
+          "id": "grep-9",
+          "sequence": 19,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "extension · src/",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Retained search output"
+        },
+        {
+          "id": "patch-1",
+          "sequence": 20,
+          "operation": "patch",
+          "presenter": "patch",
+          "signal": "mutation",
+          "state": "succeeded",
+          "summary": "tests/test_extension_loading.py",
+          "resources": [],
+          "evidence": []
+        },
+        {
+          "id": "cat-10",
+          "sequence": 21,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "tests/test_extension_loading.py",
+          "resources": [
+            {
+              "type": "file",
+              "id": "tests/test_extension_loading.py"
+            }
+          ],
+          "evidence": [],
+          "result_summary": "Retained read output"
+        },
+        {
+          "id": "grep-10",
+          "sequence": 22,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "extension · src/",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Retained search output"
+        },
+        {
+          "id": "test-9",
+          "sequence": 23,
+          "operation": "run_tests",
+          "presenter": "tests",
+          "signal": "verification",
+          "state": "running",
+          "summary": "tests/test_extension_loading.py",
+          "resources": [],
+          "evidence": []
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    },
+    "groups": [
+      {
+        "id": "cat-1",
+        "label": "Read",
+        "rows": [
+          "cat-1",
+          "cat-2",
+          "cat-3",
+          "cat-4",
+          "cat-5",
+          "cat-6",
+          "cat-7",
+          "cat-8",
+          "cat-9",
+          "cat-10"
+        ]
+      },
+      {
+        "id": "grep-1",
+        "label": "Search",
+        "rows": [
+          "grep-1",
+          "grep-2",
+          "grep-3",
+          "grep-4",
+          "grep-5",
+          "grep-6",
+          "grep-7",
+          "grep-8",
+          "grep-9",
+          "grep-10"
+        ]
+      },
+      {
+        "id": "test-4",
+        "label": "Test",
+        "rows": [
+          "test-4",
+          "test-9"
+        ]
+      },
+      {
+        "id": "patch-1",
+        "label": "Patch",
+        "rows": [
+          "patch-1"
         ]
       }
     ]

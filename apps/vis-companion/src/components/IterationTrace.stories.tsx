@@ -404,13 +404,13 @@ export const GroupStages: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(
-      canvas.queryByRole("list", { name: "Invocation chronology" }),
+      canvas.queryByRole("list", { name: "Operation groups" }),
     ).toBeNull();
     await userEvent.click(
       canvas.getByRole("button", { name: "Expand Activity" }),
     );
     await expect(
-      canvas.getAllByRole("list", { name: "Invocation chronology" }),
+      canvas.getAllByRole("list", { name: "Operation groups" }),
     ).toHaveLength(1);
     await expect(
       canvas.getAllByRole("button", { name: "Copy code" }),
@@ -423,7 +423,7 @@ export const HiddenCode: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(
-      canvas.queryByRole("list", { name: "Invocation chronology" }),
+      canvas.queryByRole("list", { name: "Operation groups" }),
     ).toBeNull();
     await userEvent.click(
       canvas.getByRole("button", { name: "Expand Activity" }),
@@ -432,7 +432,7 @@ export const HiddenCode: Story = {
       canvas.queryByRole("button", { name: "Copy code" }),
     ).toBeNull();
     await expect(
-      canvas.getAllByRole("list", { name: "Invocation chronology" }),
+      canvas.getAllByRole("list", { name: "Operation groups" }),
     ).toHaveLength(1);
   },
 };
