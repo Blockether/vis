@@ -1,9 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, within } from "storybook/test";
 import type { SpeechPrefs, SpeechVoice } from "../../lib/types";
 import { VoicesPanel } from "./SpeechSettings";
 import { SettingsPanel } from "./SettingsLayout";
+import { getSpeechPrefs } from "../../lib/storage";
 
 const prefs: SpeechPrefs = {
   asrEngine: null,
@@ -14,12 +15,19 @@ const prefs: SpeechPrefs = {
 };
 
 type VoiceClient = Parameters<typeof VoicesPanel>[0]["client"];
-/** An in-memory gateway fixture shared by the stories and the offline review. */
-function fixtureClient(hasVoice: boolean, failsToSave: boolean): VoiceClient {
+/** In-memory gateway: synthesis stays pending for the cancellable loading state. */
+function fixtureClient(
+  hasVoice: boolean,
+  failsToSave: boolean,
+  failsToSpeak: boolean,
+): VoiceClient {
   let voices: SpeechVoice[] = hasVoice
     ? [{ id: "my-voice", label: "My voice", language: "en", is_imported: true }]
     : [];
-  return {
+  const client: Pick<
+    VoiceClient,
+    "speechVoices" | "speakText" | "importSpeechVoice" | "forgetSpeechVoice"
+  > = {
     speechVoices: async () => ({
       engine: {
         id: "chatterbox-local",
@@ -28,6 +36,13 @@ function fixtureClient(hasVoice: boolean, failsToSave: boolean): VoiceClient {
       },
       voices,
     }),
+    speakText: async () => {
+      if (failsToSpeak)
+        throw new Error(
+          "Could not synthesize speech. Check the machine connection and try again.",
+        );
+      return new Promise<Blob>(() => {});
+    },
     importSpeechVoice: async (_file, metadata) => {
       if (failsToSave)
         throw new Error(
@@ -45,18 +60,39 @@ function fixtureClient(hasVoice: boolean, failsToSave: boolean): VoiceClient {
     forgetSpeechVoice: async (id) => {
       voices = voices.filter((voice) => voice.id !== id);
     },
-  } as VoiceClient;
+  };
+  return client as VoiceClient;
 }
 
 /** Only the gateway is replaced; recording uses the production microphone adapter. */
-function VoiceSetup({ hasVoice = false, failsToSave = false }) {
+function VoiceSetup({
+  hasVoice = false,
+  failsToSave = false,
+  failsToSpeak = false,
+}) {
   const client = useMemo(
-    () => fixtureClient(hasVoice, failsToSave),
-    [hasVoice, failsToSave],
+    () => fixtureClient(hasVoice, failsToSave, failsToSpeak),
+    [hasVoice, failsToSave, failsToSpeak],
   );
+  const [selectedPrefs, setSelectedPrefs] = useState({
+    ...prefs,
+    gatewayVoice: hasVoice ? "my-voice" : null,
+  });
   return (
     <SettingsPanel title="Chatterbox">
-      <VoicesPanel client={client} prefs={prefs} onChange={async () => prefs} />
+      <VoicesPanel
+        client={client}
+        prefs={selectedPrefs}
+        onChange={async (write) => {
+          await write();
+          const next = {
+            ...prefs,
+            gatewayVoice: (await getSpeechPrefs()).gatewayVoice,
+          };
+          setSelectedPrefs(next);
+          return next;
+        }}
+      />
     </SettingsPanel>
   );
 }
@@ -65,7 +101,7 @@ const meta = {
   title: "Screens/Voice setup",
   component: VoiceSetup,
   parameters: { layout: "fullscreen" },
-  args: { hasVoice: false, failsToSave: false },
+  args: { hasVoice: false, failsToSave: false, failsToSpeak: false },
 } satisfies Meta<typeof VoiceSetup>;
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -100,7 +136,72 @@ export const Empty: Story = {
   },
 };
 
-export const ExistingVoice: Story = { args: { hasVoice: true } };
+export const ExistingVoice: Story = {
+  args: { hasVoice: true },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const voice = await canvas.findByRole("button", { name: /^My voice/ });
+    const track = voice.closest<HTMLElement>("[data-swipe-track]")!;
+    const forget = within(track).getByRole("button", {
+      name: "Forget My voice",
+    });
+    await expect(forget.querySelector("svg")).not.toBeNull();
+    await expect(forget).toHaveTextContent("Forget");
+    await expect(voice).toHaveAttribute("aria-pressed", "true");
+    await expect(canvas.getByRole("button", { name: "Test" })).toBeDisabled();
+  },
+};
+
+async function startTest(canvasElement: HTMLElement) {
+  const canvas = within(canvasElement);
+  const input = await canvas.findByRole("textbox", {
+    name: "Text to synthesize",
+  });
+  await userEvent.type(input, "This is how my voice sounds in Vis.");
+  await userEvent.click(canvas.getByRole("button", { name: "Test" }));
+  return { canvas, input };
+}
+
+export const TestVoice: Story = {
+  args: { hasVoice: true },
+  play: async ({ canvasElement }) => {
+    const { canvas, input } = await startTest(canvasElement);
+    await expect(canvas.getByRole("status")).toHaveTextContent("Synthesizing");
+    // Pointer release runs before click; Stop must not turn into a submit button between them.
+    const stop = canvas.getByRole("button", { name: "Stop test" });
+    const box = stop.getBoundingClientRect();
+    const coords = {
+      clientX: box.x + box.width / 2,
+      clientY: box.y + box.height / 2,
+    };
+    await userEvent.pointer([
+      { target: stop, coords, keys: "[MouseLeft>]" },
+      { target: stop, coords, keys: "[/MouseLeft]" },
+    ]);
+    await expect(canvas.getByRole("button", { name: "Test" })).toBeEnabled();
+    await expect(input).toHaveValue("This is how my voice sounds in Vis.");
+  },
+};
+
+export const Synthesizing: Story = {
+  args: { hasVoice: true },
+  play: async ({ canvasElement }) => {
+    const { canvas } = await startTest(canvasElement);
+    await expect(canvas.getByRole("status")).toHaveTextContent("Synthesizing");
+  },
+};
+
+export const TestFailure: Story = {
+  args: { hasVoice: true, failsToSpeak: true },
+  play: async ({ canvasElement }) => {
+    const { canvas, input } = await startTest(canvasElement);
+    await expect(
+      await canvas.findByText(/Could not synthesize speech/),
+    ).toBeVisible();
+    await expect(canvas.getByRole("button", { name: "Test" })).toBeEnabled();
+    await expect(input).toHaveValue("This is how my voice sounds in Vis.");
+  },
+};
 
 async function importFile(canvasElement: HTMLElement) {
   const canvas = within(canvasElement);

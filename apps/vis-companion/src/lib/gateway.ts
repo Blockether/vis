@@ -643,6 +643,7 @@ type SessionsWindow = {
 export interface ProjectPage {
   rows: Session[];
   total: number;
+
   /** Cursor of this page's last row: what the page AFTER it is asked for, `""` at the end. */
   nextCursor: string;
   /**
@@ -1154,6 +1155,7 @@ export class GatewayClient {
     return this.request<GatewayHealth>("GET", "/healthz", undefined, signal);
   }
 
+
   /**
    * Last capabilities payload seen for THIS gateway — the first frame for every
    * session and settings panel. The payload is also durable across an app kill.
@@ -1481,7 +1483,8 @@ export class GatewayClient {
   }
 
   /**
-   * Speak a line ON THE MACHINE and hand back the audio.
+   * Speak a line on the machine and hand back the audio. A null session uses
+   * the machine-level route for settings previews, without creating a conversation.
    *
    * Two answers, one call: a short line comes back AS the bytes in a single round
    * trip, a long one answers 202 with a job that is followed to its audio here. The
@@ -1492,15 +1495,22 @@ export class GatewayClient {
    * a WAV is not text.
    */
   async speakText(
-    sid: string,
+    sid: string | null,
     text: string,
-    { voice, engine, signal }: {
+    {
+      voice,
+      engine,
+      signal,
+    }: {
       voice?: string | null;
       engine?: string | null;
       signal?: AbortSignal;
     } = {},
   ): Promise<Blob> {
-    const base = `/v1/sessions/${encodeURIComponent(sid)}/speech`;
+    const base =
+      sid === null
+        ? "/v1/speech"
+        : `/v1/sessions/${encodeURIComponent(sid)}/speech`;
     const answer = await this.requestBody(
       "POST",
       withEngine(base, engine),
@@ -1515,7 +1525,7 @@ export class GatewayClient {
           : { kind: "audio" as const, blob: await response.blob() },
     );
     if (answer.kind === "audio") return answer.blob;
-    const finished = await this.awaitSpeechJob(sid, answer.job, signal);
+    const finished = await this.awaitSpeechJob(base, answer.job, signal);
     const blob = await this.requestBody(
       "GET",
       `${base}/jobs/${encodeURIComponent(finished.id)}/audio`,
@@ -1602,20 +1612,21 @@ export class GatewayClient {
 
   /** Follow one synthesis job to its end, or say why it will never get there. */
   private async awaitSpeechJob(
-    sid: string,
+    base: string,
     job: SpeechJob,
     signal?: AbortSignal,
   ): Promise<SpeechJob> {
-    const path = `/v1/sessions/${encodeURIComponent(sid)}/speech/jobs/${encodeURIComponent(job.id)}`;
+    const path = `${base}/jobs/${encodeURIComponent(job.id)}`;
     const deadline = Date.now() + SPEECH_JOB_TIMEOUT_MS;
     let latest = job;
     while (!latest.is_done) {
       if (Date.now() > deadline) {
-        throw new GatewayError(0, "the machine did not finish speaking in time");
+        throw new GatewayError(
+          0,
+          "the machine did not finish speaking in time",
+        );
       }
-      await new Promise((resolve) =>
-        setTimeout(resolve, SPEECH_JOB_POLL_MS),
-      );
+      await new Promise((resolve) => setTimeout(resolve, SPEECH_JOB_POLL_MS));
       latest = await this.request<SpeechJob>("GET", path, undefined, signal);
     }
     if (latest.error) throw new GatewayError(0, latest.error);
@@ -2808,6 +2819,7 @@ export class GatewayClient {
   ): Promise<GatewayAttachment[]> {
     if (!tid) return [];
     const cached = this.cachedSentAttachments(sid, tid);
+
     if (!refresh && cached?.length) return cached;
     const key = `${sid}\u0000${tid}`;
     const inflight = this.attachmentFetches.get(key);
@@ -2834,6 +2846,7 @@ export class GatewayClient {
     })();
     this.attachmentFetches.set(key, pending);
     void pending.then(
+
       () => this.attachmentFetches.delete(key),
       () => this.attachmentFetches.delete(key),
     );
@@ -3330,6 +3343,7 @@ export class GatewayClient {
       writeSnapshot(
         this.snapshotKey("sessions"),
         rows.filter((row) => !gone.has(row.id)),
+
       );
     }
     return ids;
@@ -3866,6 +3880,7 @@ export class GatewayClient {
   retainAttachment(
     sid: string,
     iterationId: string,
+
     index: number,
   ): () => void {
     const key = GatewayClient.attachmentKey(sid, iterationId, index);
