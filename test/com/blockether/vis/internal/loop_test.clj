@@ -9681,7 +9681,7 @@
 (defdescribe
   council-python-model-history-test
   (it
-    "C14/C18/C22/C24/C25/C26/C30: real Python publication reaches the next model input and history"
+    "Projectless sessions: real Python publication reaches the next model input and history"
     (if-not (clojure.java.io/resource "com/blockether/vis/internal/council/core.clj")
       (expect false "Council has not been implemented")
       (let [router
@@ -9701,9 +9701,6 @@
 
             bid
             (str (:session-id b))
-
-            gid
-            (str (:id (persistance/db-create-project! db {:name "Council integration"})))
 
             update!
             (requiring-resolve 'com.blockether.vis.internal.gateway.state/update-session!)
@@ -9727,7 +9724,7 @@
 
         (try
           (doseq [sid [aid bid]]
-            (persistance/db-set-session-project! db sid gid)
+            (expect (nil? (:project-id (persistance/db-get-session db sid))))
             (update! sid
                      (constantly {:current-turn "fixture"
                                   :turns {"fixture" {:status "running"

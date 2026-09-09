@@ -20,11 +20,19 @@ it does not delete the log.
 
 ## Groups and active participants
 
-The default `group_id` is the session's persisted **owning project ID**, not its
-working directory. Shared and isolated workspaces belonging to that project
-share its group within one engine/store. Projectless sessions return
-`group-not-found`. Version 1 accepts only this default group; the parameter is
-reserved for additional groups, including parent/subagent groups, in a later version.
+The default `group_id` uses the session's persisted **owning project ID** when
+assigned. Otherwise Council resolves the saved workspace's repository root
+(`repo-root`, or `root` when absent): it uses the owner's project registered for
+that root, or a stable, opaque group ID scoped to that owner and repository.
+No manual UI project assignment is required, and Council does not change it.
+
+Shared workspaces and isolated drafts from the same repository therefore share
+a group within one engine/store, unless explicitly assigned to different projects.
+The current process directory and edits to Python's `session` dictionary do not
+select the group. A missing session or one with neither project nor workspace
+returns `group-not-found`. Only the default group is accepted; the `group_id`
+parameter cannot select another project's log. Changing the resolved project
+selects that project's log; existing entries are not moved.
 
 Every session in a group can read its whole log. There are no private messages.
 This uses the gateway's existing daemon-level trust model, not a new per-session

@@ -263,10 +263,10 @@
           (keep (fn [[sid entry]]
                   (when-let [active (:council entry)]
                     (when-let [record (persistance/db-get-session db sid)]
-                      (when-let [gid (:project-id record)]
+                      (when-let [gid (council/session-group db record)]
                         [sid
                          (assoc active
-                           :group-id (str gid)
+                           :group-id gid
                            :title (:title record))]))))
                 (if session-id (select-keys @registry [session-id]) @registry)))))
 

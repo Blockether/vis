@@ -66,6 +66,125 @@
   [kind f]
   (try (f) false (catch clojure.lang.ExceptionInfo e (= kind (:error (ex-data e))))))
 
+(defn- workspace-session
+  [db repo-root workspace-root owner-id]
+  (jdbc/execute! (:datasource db)
+                 ["INSERT OR IGNORE INTO owner (id, name, created_at) VALUES (?, ?, 0)" owner-id
+                  owner-id])
+  (let [workspace (ps/db-workspace-insert! db
+                                           {:id (str (random-uuid))
+                                            :repo-id "council-test"
+                                            :repo-root repo-root
+                                            :root workspace-root
+                                            :state :active})]
+    (str (h/store-session! db {:channel :api :owner-id owner-id :workspace-id (:id workspace)}))))
+
+(deftest projectless-workspace-group-test
+  ;; A repository-backed session must work without a UI project assignment.
+  (with-council
+    (let [db
+          (h/store)
+
+          sid
+          (workspace-session db "/repo" "/repo" "local")
+
+          draft
+          (workspace-session db "/repo" "/draft" "local")
+
+          other
+          (workspace-session db "/other" "/other" "local")
+
+          owner
+          (workspace-session db "/repo" "/repo" "other-owner")
+
+          gid
+          (council 'default-group db sid)]
+
+      (is (string? gid))
+      (is (= gid (council 'default-group db draft)))
+      (is (not= gid (council 'default-group db other)))
+      (is (not= gid (council 'default-group db owner)))
+      (is (nil? (:project-id (ps/db-get-session db sid))))
+      (let [project
+            (ps/db-create-project! db {:name "Repository" :workspace-root "/repo"})
+
+            explicit
+            (ps/db-create-project! db {:name "Explicit"})]
+
+        (is (= (str (:id project)) (council 'default-group db sid)))
+        (is (= (str (:id project)) (council 'default-group db draft)))
+        (ps/db-set-session-project! db draft (:id explicit))
+        (is (= (str (:id explicit)) (council 'default-group db draft)))
+        (is (not= (council 'default-group db sid) (council 'default-group db owner)))))))
+
+(deftest projectless-runtime-conversation-test
+  ;; Presence must use the same persisted workspace resolution as Council operations.
+  (with-council
+    (let [db
+          (h/store)
+
+          project
+          (ps/db-create-project! db {:name "Registered repository" :workspace-root "/repo"})
+
+          a
+          (workspace-session db "/repo" "/repo" "local")
+
+          b
+          (workspace-session db "/repo" "/draft" "local")
+
+          other
+          (workspace-session db "/other" "/other" "local")
+
+          update!
+          (ns-resolve 'com.blockether.vis.internal.gateway.state 'update-session!)
+
+          drop!
+          (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)]
+
+      (ps/db-set-session-project! db a (:id project))
+      (is (nil? (:project-id (ps/db-get-session db b))))
+      (try (doseq [sid [a b other]]
+             (update! sid
+                      (constantly {:turns {"fixture" {:status "running"
+                                                      :cancel-token
+                                                      (cancellation/cancellation-token)}}})))
+           (let [snapshot
+                 #(council 'runtime db)
+
+                 fleet
+                 (snapshot)
+
+                 gid
+                 (council 'default-group db a)
+
+                 actor
+                 {:session-id a :activation-id (get-in fleet [a :activation-id]) :source "host"}
+
+                 entry
+                 (council 'publish! db snapshot actor {:content "Workspace ping" :ping [b]})
+
+                 receiver
+                 (get fleet b)
+
+                 batch
+                 (council 'prepare-input!
+                          db
+                          b
+                          (:activation-id receiver)
+                          gid
+                          (:input-state receiver)
+                          ["fixture" 1]
+                          8192)]
+
+             (is (= #{a b} (set (map :session_id (council 'members db snapshot a {})))))
+             (is (= gid (:group-id receiver) (:group_id entry)))
+             (is (= [(:id entry)] (mapv :id (:entries batch))))
+             (is (= [entry] (:entries (council 'read-entries db b {}))))
+             (is (rejected?
+                   :invalid-recipient
+                   #(council 'publish! db snapshot actor {:content "Wrong group" :ping [other]}))))
+           (finally (run! drop! [a b other]))))))
+
 (deftest council-toggle-contract-test
   ;; Council is available without configuration; an explicit opt-out still wins.
   (let [spec (toggles/toggle-spec "council")]
@@ -418,7 +537,7 @@
                                    (council 'members db #(deref fleet) (:session-id actor) {})))))
                   (is (rejected? :group-not-found #(council 'default-group db "absent")))
                   (let [sid (str (h/store-session! db {:channel :api}))]
-                    (is (rejected? :group-not-found #(council 'default-group db sid))))
+                    (is (string? (council 'default-group db sid))))
                   (is (string? (council 'prompt nil)))
                   (with-redefs [toggles/enabled? (constantly false)]
                     (is (nil? (council 'prompt nil)))))))

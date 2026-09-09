@@ -50,13 +50,25 @@
            "Council text is empty, contains controls or exceeds its UTF-8 byte limit"))
   value)
 
-(defn default-group
-  "The persisted owning project, including for isolated workspaces. Projectless sessions are unsupported."
-  [db sid]
-  (or (some-> (ps/db-get-session db sid)
-              :project-id
+(defn session-group
+  "Resolve a persisted session's group without changing its UI project assignment.
+   Explicit ownership wins; otherwise use the owning repository, never a draft's root."
+  [db {:keys [id project-id owner-id]}]
+  (or (some-> project-id
               str)
-      (fail! :group-not-found "Council requires a session with an owning project")))
+      (when-let [workspace (some->> (ps/db-latest-session-state-id db id)
+                                    (ps/db-workspace-for-session db))]
+        (when-let [origin (or (not-empty (:repo-root workspace)) (not-empty (:root workspace)))]
+          (or (some-> (ps/db-get-project-by-root db owner-id origin)
+                      :id
+                      str)
+              (str "workspace:" (util/sha256-hex (pr-str [(or owner-id "local") origin]))))))))
+
+(defn default-group
+  "The persisted project or repository group, shared by trunk and isolated workspaces."
+  [db sid]
+  (or (session-group db (ps/db-get-session db sid))
+      (fail! :group-not-found "Council requires a persisted session with a project or workspace")))
 
 (defn- group!
   [db sid requested]
@@ -363,7 +375,7 @@
   (when (enabled?)
     (str
       "## Council: active-session conversation\n"
-      "- Use `await council.members()` to discover active sessions in the owning project's group.\n"
+      "- Use `await council.members()` to discover active sessions in the same project or repository group.\n"
       "- `await council.publish(content, title=..., ping=[session_id])` starts a thread. Ping is explicit; `ping='all'` selects active peers now.\n"
       "- `await council.threads()` lists titled threads; `await council.read(thread_id=..., after=...)` reads a page; `await council.publish(content, thread_id=...)` continues it. No parent_id.\n"
       "- Everyone in the group can read the log. Only explicit pings arrive automatically, as attributed peer data with a bounded preview. `await council.get(entry_id)` fetches the full entry.\n"
