@@ -24,7 +24,7 @@ Main publication and GitHub Actions deployment were authorized in turn 12. No li
 - Data: Worker-rendered HTML, D1 public metadata, fixed-host GitHub API and pinned manifests.
 - Acceptance criteria: protected preview/submission, pending moderation, idempotency, bounded requests,
   cached public reads and no secrets or direct database access in the browser.
-- Unknowns: production D1, Turnstile and dedicated Cloudflare credentials must be configured.
+- Unknowns: none in local implementation; production bindings are provisioned during deployment.
 
 ## 3. Interface
 - Rationale: browsing should not reserve half the screen for an unselected detail pane.
@@ -55,8 +55,8 @@ Verification for the Worker application:
 - Preview uses the exact Worker renderer/assets and explicit GitHub/Turnstile/API fixtures.
 - Public docs link is configured by VIS_EXTENSION_CENTER_URL; it adds no doc() entry.
 
-Production deployment is blocked on dedicated GitHub environment secrets, D1, Turnstile
-and the final Worker URL. Automatic deployment now fails closed until configured.
+Production D1, managed Turnstile and the Worker runtime secret are provisioned. GitHub Actions
+uses a separate, account-scoped deployment token; application secrets are not stored in the repository.
 
 Earlier installation verification (installer unchanged by the Worker replacement):
 - SDK and catalog: 379 passed, 9 optional tests skipped, using the prepared project interpreter.
@@ -67,7 +67,9 @@ Earlier installation verification (installer unchanged by the Worker replacement
   A live public repository without an extension manifest correctly reports the required folder/files.
 
 Turn 12: source-filtered GitHub Actions deployment added; 30 Worker/UI/deployment tests pass.
-Main publication verification is in progress. Temporary review services remain stopped.
+Turn 15: 365 SDK tests and 233 affected JVM tests passed after integrating current main;
+30 Worker/UI/deployment tests, actionlint, npm audit, build, Wrangler dry-run and Gitleaks passed.
+Production publication and live smoke checks are in progress. Temporary review services remain stopped.
 
 ---
 
