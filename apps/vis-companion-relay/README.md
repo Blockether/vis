@@ -142,19 +142,28 @@ re-register, or immediately to invalidate grants using that key.
 
 ## Continuous deployment
 
-`.github/workflows/relay.yml` runs on any commit touching
-`apps/vis-companion-relay/**` — and on no other commit.
+`.github/workflows/relay.yml` runs on commits touching `apps/vis-companion-relay/**`,
+`scripts/cloudflare-https*.mjs` or the workflow itself, and on manual dispatch.
 
-1. **verify** (also on PRs): `npm ci`, `npm run typecheck`, `npm test`.
+1. **verify** (also on PRs): `npm ci`, `npm run typecheck`, `npm test`, and the shared
+   HTTPS helper's Node tests.
 2. **deploy** (main only): skips with a `::notice` unless
    `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are configured. It runs
-   `wrangler deploy`, then checks `/healthz` to confirm grant acceptance and
-   credentials for at least one provider.
+   `wrangler deploy`. When `RELAY_HEALTHCHECK_URL` is configured, it requires an enabled
+   production Custom Domain for this Worker, configures HTTP → HTTPS, then checks exact
+   308 redirects (GET and HEAD, preserving path and query) and `/healthz` to confirm grant
+   acceptance and credentials for at least one provider. Checks retry during propagation;
+   an incorrect redirect or unhealthy relay fails the deployment.
 
 | where | name |
 | --- | --- |
-| secret | `CLOUDFLARE_API_TOKEN` (Workers Scripts:Edit), `CLOUDFLARE_ACCOUNT_ID` |
+| secret | `CLOUDFLARE_API_TOKEN` (Workers Scripts:Edit and the Custom Domain zone’s Single Redirect:Edit), `CLOUDFLARE_ACCOUNT_ID` |
 | variable | `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC`, `APNS_DEFAULT_ENV`, `GRANT_TTL_DAYS`, `RELAY_HEALTHCHECK_URL` |
+
+Set `RELAY_HEALTHCHECK_URL` to `https://<custom-domain>/healthz`, not a `workers.dev`
+URL. [`scripts/cloudflare-https.mjs`](../../scripts/cloudflare-https.mjs) manages one
+hostname-scoped edge rule before the Worker runs. It preserves unrelated rules and does not
+change zone-wide HTTPS settings, DNS or certificates. Local development is unaffected.
 
 `wrangler deploy` preserves existing Worker secrets. `RELAY_SEAL_KEY`,
 `APNS_KEY_P8` and `FCM_SERVICE_ACCOUNT` remain in Cloudflare, not GitHub CI.

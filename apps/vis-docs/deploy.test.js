@@ -19,6 +19,12 @@ test('deployment fails closed for missing configuration and testing keys',()=>{
   expect(()=>deploymentConfig(base,{...env,DOCS_TURNSTILE_SITE_KEY:'1x00000000000000000000AA'})).toThrow();
 });
 const paths=['/','/extending.html','/extensions/','/assets/theme.css','/assets/prism.min.js','/api/extensions'];
+const redirectPaths=['/','/extensions/','/assets/theme.css','/api/extensions','/extensions/a%2Fb?check=1&value=x%2Fy'];
+function verificationResponse(value) {
+  const url=new URL(value);
+  if(url.protocol==='http:') {url.protocol='https:';return new Response(null,{status:308,headers:{location:url.href}});}
+  return deployedResponse(url.pathname);
+}
 function deployedResponse(path) {
   if(path==='/') return new Response('<link href="assets/theme.css"><a class="center-link" href="/extensions/">Extensions</a>');
   if(path==='/extending.html') return new Response('<h1>Extending Vis</h1>');
@@ -29,24 +35,40 @@ function deployedResponse(path) {
   throw new Error('Unexpected verification path');
 }
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.restoreAllMocks();});
-test('deployment checks docs, catalog, assets and API on the same origin without redirects',async()=>{
+test('deployment checks HTTPS content and exact HTTP redirects for docs, catalog, assets and API',async()=>{
   const fetch=vi.fn(async(value,options)=>{
-    const url=new URL(value);expect(url.origin).toBe('https://gateway.example.com');expect(options.redirect).toBe('error');
-    return deployedResponse(url.pathname);
+    const url=new URL(value);expect(url.hostname).toBe('gateway.example.com');
+    expect(options.redirect).toBe(url.protocol==='https:'?'error':'manual');
+    return verificationResponse(url);
   });
   vi.stubGlobal('fetch',fetch);await verifyDeployment('gateway.example.com');
-  expect(fetch.mock.calls.map(([url])=>new URL(url).pathname)).toEqual(paths);
+  expect(fetch.mock.calls.filter(([url])=>url.protocol==='https:').map(([url])=>url.pathname)).toEqual(paths);
+  expect(fetch.mock.calls.filter(([url])=>url.protocol==='http:').map(([url,options])=>[url.pathname+url.search,options.method]))
+    .toEqual(redirectPaths.flatMap(path=>[[path,'GET'],[path,'HEAD']]));
 });
 test('deployment retries a connection failure without logging response data',async()=>{
-  vi.useFakeTimers();const fetch=vi.fn().mockRejectedValueOnce(new Error('Connection unavailable')).mockImplementation(async url=>deployedResponse(new URL(url).pathname));
+  vi.useFakeTimers();const fetch=vi.fn().mockRejectedValueOnce(new Error('Connection unavailable')).mockImplementation(async url=>verificationResponse(url));
   vi.stubGlobal('fetch',fetch);const assertion=expect(verifyDeployment('gateway.example.com')).resolves.toBeUndefined();
-  await vi.runAllTimersAsync();await assertion;expect(fetch).toHaveBeenCalledTimes(paths.length+1);
+  await Promise.all([vi.runAllTimersAsync(),assertion]);expect(fetch).toHaveBeenCalledTimes(paths.length+redirectPaths.length*2+1);
 });
 test.each(paths)('deployment checks remain bounded when %s is broken',async broken=>{
   vi.useFakeTimers();const fetch=vi.fn(async url=>new URL(url).pathname===broken?new Response('Wrong deployment'):deployedResponse(new URL(url).pathname));
   vi.stubGlobal('fetch',fetch);const assertion=expect(verifyDeployment('gateway.example.com')).rejects.toThrow('after 8 attempts');
   await vi.runAllTimersAsync();await assertion;
   expect(fetch.mock.calls.filter(([url])=>new URL(url).pathname===broken)).toHaveLength(8);
+});
+test('deployment rejects HTTP success without an HTTPS redirect',async()=>{
+  // Regression: the HTTPS deployment was healthy while HTTP still served content.
+  vi.useFakeTimers();const fetch=vi.fn(async url=>deployedResponse(new URL(url).pathname));
+  vi.stubGlobal('fetch',fetch);const assertion=expect(verifyDeployment('gateway.example.com')).rejects.toThrow('after 8 attempts');
+  await Promise.all([vi.runAllTimersAsync(),assertion]);
+  expect(fetch.mock.calls.filter(([url])=>url.protocol==='http:')).toHaveLength(8);
+});
+test('deployment retries until the HTTP redirect has propagated',async()=>{
+  vi.useFakeTimers();let httpRequests=0;
+  const fetch=vi.fn(async url=>url.protocol==='http:'&&httpRequests++===0?new Response('Not ready'):verificationResponse(url));
+  vi.stubGlobal('fetch',fetch);const assertion=expect(verifyDeployment('gateway.example.com')).resolves.toBeUndefined();
+  await Promise.all([vi.runAllTimersAsync(),assertion]);expect(httpRequests).toBe(redirectPaths.length*2+1);
 });
 test('configuration and verification reject anything other than a public hostname',async()=>{
   const fetch=vi.fn();vi.stubGlobal('fetch',fetch);

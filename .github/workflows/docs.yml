@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths: &docs_paths
       - 'apps/vis-docs/**'
+      - 'scripts/cloudflare-https*.mjs'
       - 'resources/vis-docs/**'
       - '**/resources/vis-docs/**'
       - 'resources/vis-transcript/prism.min.js'
@@ -49,6 +50,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      - run: node --test ../../scripts/cloudflare-https.test.mjs
+      - run: apps/vis-docs/node_modules/.bin/eslint --config apps/vis-docs/eslint.config.js scripts/cloudflare-https*.mjs
+        working-directory: .
       - run: npm audit --audit-level=high
       - run: npx --no-install wrangler deploy --dry-run
 
@@ -87,10 +91,12 @@ jobs:
           DOCS_RATE_LIMIT_NAMESPACE: ${{ vars.DOCS_RATE_LIMIT_NAMESPACE }}
           DOCS_HOSTNAME: ${{ vars.DOCS_HOSTNAME }}
         run: node deploy.mjs
-      - name: Check runtime secret, initialize schema and deploy
+      - name: Check runtime secret, initialize schema, deploy and require HTTPS
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          HTTPS_URL: https://${{ vars.DOCS_HOSTNAME }}
+          WORKER_NAME: vis-docs
         run: |
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN" && test -n "$CLOUDFLARE_ACCOUNT_ID"
@@ -100,7 +106,8 @@ jobs:
             if(!keys.some(key=>key.name==="TURNSTILE_SECRET_KEY")) throw new Error("Configure the vis-docs TURNSTILE_SECRET_KEY before deployment");'
           npx --no-install wrangler d1 execute vis-extension-center --remote --config .deployment.json --file schema.sql --yes
           npx --no-install wrangler deploy --config .deployment.json
-      - name: Check deployed documentation, assets and catalog
+          node ../../scripts/cloudflare-https.mjs configure
+      - name: Check deployed documentation, assets, catalog and HTTPS redirects
         env:
           DOCS_HOSTNAME: ${{ vars.DOCS_HOSTNAME }}
         run: node deploy.mjs --verify

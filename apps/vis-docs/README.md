@@ -83,7 +83,7 @@ show the previous snapshot for up to 60 seconds. There is no automatic refresh j
 ## Production deployment through GitHub Actions
 
 `.github/workflows/docs.yml` verifies pull requests and deploys pushes to `main` when
-this app, documentation content/renderer, dependency pins or the workflow changes.
+this app, documentation content/renderer, dependency pins, the shared HTTPS helper or the workflow changes.
 Manual dispatch is also available. Deployments are serialized and never cancelled midway.
 Installation, build and tests receive no deployment credentials; pull requests cannot deploy.
 There is no GitHub Pages publishing job.
@@ -91,7 +91,8 @@ There is no GitHub Pages publishing job.
 Configure a GitHub environment named `docs`, restricted to the `main` branch:
 
 - Secrets: `CLOUDFLARE_API_TOKEN` (scoped to the intended account/zone for Worker, D1 and
-  custom-domain deployment) and `CLOUDFLARE_ACCOUNT_ID`. Never use a Global API Key.
+  custom-domain deployment, plus Zone → Single Redirect → Edit) and
+  `CLOUDFLARE_ACCOUNT_ID`. Never use a Global API Key.
 - Variables: `DOCS_HOSTNAME` (hostname only, such as `gateway.example.com`),
   `DOCS_D1_DATABASE_ID`, `DOCS_TURNSTILE_SITE_KEY`, and `DOCS_RATE_LIMIT_NAMESPACE`.
   Use the existing catalog database ID and limiter namespace when replacing that app.
@@ -109,8 +110,15 @@ Configure a GitHub environment named `docs`, restricted to the `main` branch:
   configuration with a Worker Custom Domain, which manages DNS and the exact hostname's
   certificate. It disables the new Worker's `workers.dev` and preview URLs. Do not add
   a competing CNAME manually. Missing values and Turnstile test keys fail deployment.
+- After deployment, [`scripts/cloudflare-https.mjs`](../../scripts/cloudflare-https.mjs)
+  creates or updates one hostname-scoped Cloudflare Single Redirect: HTTP → HTTPS with
+  status 308, preserving the method, path and query. It finds the zone through the enabled
+  production Custom Domain and only updates its own rule. It does not change zone-wide
+  HTTPS settings, DNS, certificates or unrelated rules. Static assets still bypass the Worker.
 - CI verifies documentation, the authoring guide, catalog, CSS, highlighter and API on
-  the configured HTTPS origin. Response bodies and secrets are never printed.
+  the configured HTTPS origin, then checks exact HTTP redirects with GET and HEAD, including
+  encoded paths and query parameters. Checks retry during propagation and fail deployment
+  if content or redirects are incorrect. Response bodies and secrets are never printed.
 
 For a registrar-managed DNS zone, import and verify all existing records before changing
 nameservers. Disable old DNSSEC and verify old DS records have cleared first; re-enable
