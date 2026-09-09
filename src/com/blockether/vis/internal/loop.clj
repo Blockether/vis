@@ -845,7 +845,7 @@
    plane. A normal false is the race where the block already finished. A worker
    that cannot answer, or cannot unwind an accepted interrupt, is killed and its
    environment retired so later work gets one fresh process."
-  [python-context exec-future environment]
+  [python-context exec-future environment & {:keys [await-unwind?]}]
   (let [pending-replies
         (env/pending-guest-replies python-context)
 
@@ -859,7 +859,10 @@
                                       t)))]
 
     (when (or landed? (seq pending-replies))
-      (watch-python-unwind! python-context exec-future environment pending-replies))
+      (let [unwind (watch-python-unwind! python-context exec-future environment pending-replies)]
+        ;; A timeout must settle retirement before another block or model request.
+        ;; User cancellation keeps its non-blocking control path.
+        (when await-unwind? @unwind)))
     (when-not landed?
       (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil)))
     (boolean landed?)))
@@ -1224,7 +1227,7 @@
       ;; Eval timeout: interrupt the guest at a bytecode boundary. A guest the
       ;; exception cannot reach retires its environment before the Java interrupt.
       (let [landed?
-            (interrupt-block! python-context exec-future env)
+            (interrupt-block! python-context exec-future env :await-unwind? true)
 
             ;; The unwinding guest cannot reach the host any more, so its `with` never
             ;; closes: the wall that killed the block ends its views too, and the model
@@ -1242,6 +1245,9 @@
             (cond-> {:lru {}
                      :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
                      :timeout? true}
+              (env/retired-context-error env)
+              (update :error assoc :type ::env/context-retired)
+
               out
               (assoc :stdout out))
 
@@ -1503,6 +1509,17 @@
     (when (and msg (or (user-error-data? d) (user-error-data? iteration-error-data)))
       [(content/error "config_error" msg false)])))
 
+(defn- python-error-content
+  "Terminal local-runtime card, never provider retry or model-switch advice."
+  [error]
+  (when (= ::env/context-retired (or (:type error) (get-in error [:data :type])))
+    [(content/error
+       "python_environment_retired"
+       (str "The Python environment was retired, so Vis ended this turn without replaying code. "
+            "Check operations already started before continuing in a new turn; "
+            "Python will be rebuilt and in-memory variables will be lost.")
+       false)]))
+
 (def ^:private CONTEXT_OVERFLOW_HOPELESS_FACTOR
   "A preflight `:svar.tokens/context-overflow` whose measured input exceeds
    the call's max-input budget by this factor is unrecoverable INSIDE the
@@ -1604,11 +1621,20 @@
         user-error?
         (user-configuration-error? e ex-data-map)
 
+        retired-context
+        (some (fn [cause]
+                (when (= ::env/context-retired (:type (ex-data cause))) cause))
+              (bounded-cause-chain e))
+
         fatal?
-        (or (infrastructure-error? ex-data-map) hopeless-overflow? non-correctable? user-error?)
+        (or retired-context
+            (infrastructure-error? ex-data-map)
+            hopeless-overflow?
+            non-correctable?
+            user-error?)
 
         iteration-error-data
-        (exception->iteration-error-data (or output-budget-exhaustion e) ctx)]
+        (exception->iteration-error-data (or retired-context output-budget-exhaustion e) ctx)]
 
     (tel/log!
       {:level (if fatal? :error :warn)
@@ -1635,6 +1661,7 @@
                  (and body (not (str/blank? body)))
                  (assoc :body-snippet (util/truncate body 1000))))}
       (cond
+        retired-context "Python environment retired - ending turn without replaying code"
         hopeless-overflow?
         "Hopeless preflight context overflow - failing turn (feeding it back can never reach the model and only grows the input; VIS-9)"
         non-correctable? (non-correctable-log-message provider-failure)
@@ -5407,31 +5434,32 @@
                                                    settled?
                                                    (assoc :settled? true)))))
                     raw-execution
-                    (cond preflight-error {:error (op-error preflight-error
-                                                            {:code expr :phase :vis/preflight})
-                                           :duration-ms 0
-                                           :op :vis/guard}
-                          :else
-                          (if-let [err (literal-code-block-error (env/python-context environment)
-                                                                 expr)]
-                            {:error (op-error err {:code expr :phase :vis/guard})
-                             :duration-ms 0
-                             :op :vis/guard}
-                            (let [tool-event-fn (when (and on-chunk (not suppress-form-start?))
-                                                  (fn [tool-event]
-                                                    ;; Turn progress consumes starts only. Terminal truth
-                                                    ;; feeds Activity without changing that stream.
-                                                    (when (= :start (:phase tool-event))
-                                                      (on-chunk {:phase :tool-start
-                                                                 :iteration iteration-position
-                                                                 :position idx
-                                                                 :count total-blocks
-                                                                 :scope scope
-                                                                 :code expr
-                                                                 :render-segments render-segments
-                                                                 :tool-event tool-event}))))
-                                  r
-                                  (let [activity-env (assoc environment
+                    (try
+                      (cond
+                        preflight-error {:error (op-error preflight-error
+                                                          {:code expr :phase :vis/preflight})
+                                         :duration-ms 0
+                                         :op :vis/guard}
+                        :else
+                        (if-let [err (literal-code-block-error (env/python-context environment)
+                                                               expr)]
+                          {:error (op-error err {:code expr :phase :vis/guard})
+                           :duration-ms 0
+                           :op :vis/guard}
+                          (let [tool-event-fn (when (and on-chunk (not suppress-form-start?))
+                                                (fn [tool-event]
+                                                  ;; Turn progress consumes starts only. Terminal truth
+                                                  ;; feeds Activity without changing that stream.
+                                                  (when (= :start (:phase tool-event))
+                                                    (on-chunk {:phase :tool-start
+                                                               :iteration iteration-position
+                                                               :position idx
+                                                               :count total-blocks
+                                                               :scope scope
+                                                               :code expr
+                                                               :render-segments render-segments
+                                                               :tool-event tool-event}))))
+                                r (let [activity-env (assoc environment
                                                        ;; Activity belongs to the form and routes on the
                                                        ;; position shared by all of that form's frames.
                                                        :activity/on-snapshot
@@ -5442,14 +5470,20 @@
                                       (execute-code activity-env expr :tool-event-fn tool-event-fn)
                                       (execute-code activity-env expr)))]
 
-                              (log-stage! :code-result
-                                          iteration
-                                          {:idx (inc (long idx))
-                                           :total total-blocks
-                                           :duration-ms (:duration-ms r)
-                                           :error (:error r)
-                                           :timeout? (:timeout? r)})
-                              r)))
+                            (log-stage! :code-result
+                                        iteration
+                                        {:idx (inc (long idx))
+                                         :total total-blocks
+                                         :duration-ms (:duration-ms r)
+                                         :error (:error r)
+                                         :timeout? (:timeout? r)})
+                            r)))
+                      (catch clojure.lang.ExceptionInfo e
+                        ;; Issue #180: keep the attempted source and error in the
+                        ;; normal form/persistence path even when entry is refused.
+                        (if (= ::env/context-retired (:type (ex-data e)))
+                          {:error (assoc (ex-data e) :message (ex-message e)) :duration-ms 0}
+                          (throw e))))
                     ;; Carry parinfer's whole-source rebalance flag into the execution
                     ;; record. `execute-code` may also set `:repaired?` through the
                     ;; extension rescue hook; both paths converge on the same channel flag.
@@ -8889,6 +8923,8 @@
                           [trace' (conj trace trace-entry)
                            fallback
                            (or (some-> (:error trace-entry)
+                                       python-error-content)
+                               (some-> (:error trace-entry)
                                        user-error-content)
                                (some-> (:error trace-entry)
                                        perr/provider-error-content)
@@ -8953,6 +8989,7 @@
                           pick-move
                           (update :llm-routing-trace (fnil conj []) (pick-move-event pick-move)))
                         {:keys [thinking assistant-prose blocks final-result]} iteration-result
+                        python-error (env/retired-context-error environment)
                         block (first blocks)
                         ;; Phase 7: merge per-iteration `:lru` stamps
                         ;; (collected by the patched resolve-symbol*)
@@ -9111,6 +9148,14 @@
                                      :final? (boolean final-result)}]
 
                     (cond
+                      (and python-error (not (and cancel-atom @cancel-atom)))
+                      (-> (merge {:answer (python-error-content python-error)
+                                  :status :error
+                                  :status-id (status->id :error)
+                                  :trace (conj trace (assoc trace-entry :error python-error))
+                                  :iteration-count (inc (long iteration))}
+                                 (finalize-cost))
+                          (attach-llm-routing-summary pre-resolved-model iteration-result))
                       final-result
                       (do (log-stage! :final
                                       iteration

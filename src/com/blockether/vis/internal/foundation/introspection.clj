@@ -195,7 +195,7 @@
    keeps parsing local so callers get failures as Clojure data.
 
    `:key-fn keyword` stays: the parsed map is INTERNAL to
-   `provider-failure` (its keys are read locally via `(:type data)`
+   `iteration-failure` (its keys are read locally via `(:type data)`
    etc. and never emitted), and its string VALUES are what flow into
    the boundary-crossing failure map. Keeping idiomatic keyword access
    here does not put a keyword on the wire."
@@ -230,10 +230,17 @@
 
 (defn- schema-rejected-type? [value] (contains? schema-rejected-type-strings value))
 
-(defn- provider-failure
+(defn- retired-python-error?
+  [error]
+  (contains? #{":com.blockether.vis.internal.python.env/context-retired"
+               "com.blockether.vis.internal.python.env/context-retired"}
+             (str (or (:type error) (get-in error [:data :type])))))
+
+(defn- iteration-failure
   [iteration]
   (when-let [error (:error iteration)]
-    (let [error-map (or (parse-json-map error) {:message (str error)})
+    (let [error-map (if (map? error) error (or (parse-json-map error) {:message (str error)}))
+          runtime? (retired-python-error? error-map)
           data (:data error-map)
           ;; `:type` / `:reason` are JSON string values carried straight
           ;; into the failure map, which crosses the strings-only
@@ -242,13 +249,14 @@
           reason (:reason data)
           raw-data (:raw-data data)]
 
-      (cond-> {:source :provider
+      (cond-> {:source (if runtime? :runtime :provider)
                :iteration-id (:id iteration)
                :iteration (:position iteration)
                :status (:status iteration)
                :message (or (:message error-map) (str error))
-               :classification
-               (if (schema-rejected-type? type) :provider-schema-rejected :provider-error)}
+               :classification (cond runtime? :python-environment-retired
+                                     (schema-rejected-type? type) :provider-schema-rejected
+                                     :else :provider-error)}
         type
         (assoc :type type)
 
@@ -289,7 +297,8 @@
         tool-name
         (or (tool-name-from-code code) "")]
 
-    (cond (cancellation-failure? lower-message) :turn-cancelled
+    (cond (retired-python-error? error) :python-environment-retired
+          (cancellation-failure? lower-message) :turn-cancelled
           (and (str/includes? tool-name "rg")
                (str/includes? lower-message "unsupported escape character"))
           :regex-unsupported-escape
@@ -312,6 +321,9 @@
 (defn- advice-for-classification
   [classification]
   (case classification
+    :python-environment-retired
+    "The local Python environment was retired, not the model provider. Check operations already started before continuing in a new turn with a fresh Python environment; do not blindly replay side effects."
+
     :provider-schema-rejected
     "Provider returned prose/string instead of the iteration map. Skip the SQLite trip - the raw preview is already here. Continue after the built-in schema retry, or switch model when this repeats."
 
@@ -345,7 +357,7 @@
                   (let [code (or (:src form) (:code iteration))
                         classification (classify-expression-failure code error)]
 
-                    {:source :code
+                    {:source (if (= :python-environment-retired classification) :runtime :code)
                      :iteration-id (:id iteration)
                      :iteration (:position iteration)
                      :tool (or (:vis/tool-name form) (tool-name-from-code code))
@@ -358,11 +370,11 @@
 (defn- failures-from-iterations
   [db-info iterations]
   (vec (mapcat (fn [iteration]
-                 (let [provider (when-let [failure (provider-failure iteration)]
-                                  [(assoc failure
-                                     :advice (advice-for-classification (:classification
-                                                                          failure)))])]
-                   (concat provider (expression-failures-for-iteration db-info iteration))))
+                 (let [failure (when-let [failure (iteration-failure iteration)]
+                                 [(assoc failure
+                                    :advice (advice-for-classification (:classification
+                                                                         failure)))])]
+                   (concat failure (expression-failures-for-iteration db-info iteration))))
                iterations)))
 
 (defn- latest-turn

@@ -12,6 +12,27 @@
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defdescribe retired-context-entry-test
+             ;; Issue #180: retirement is a typed local failure, never an invitation to
+             ;; recreate Python while the interrupted turn can still own side effects.
+             (it "checks retirement without forcing a cold sandbox"
+                 (let [environment {:python-sandbox (delay (throw (ex-info "must stay cold" {})))
+                                    :python-context-retired-atom (atom false)}]
+                   (expect (nil? (ep/retired-context-error environment)))
+                   (expect (not (realized? (:python-sandbox environment))))
+                   (reset! (:python-context-retired-atom environment) true)
+                   (doseq [enter [ep/sandbox ep/python-context]]
+                     (let [error (try (enter environment) nil (catch Exception e e))]
+                       (expect (= ::ep/context-retired (:type (ex-data error))))))
+                   (expect (not (realized? (:python-sandbox environment))))))
+             (it "honors retirement even when a caller supplies its context directly"
+                 (let [environment {:python-context "owned-context"
+                                    :python-context-retired-atom (atom false)}]
+                   (expect (= "owned-context" (ep/python-context environment)))
+                   (reset! (:python-context-retired-atom environment) true)
+                   (let [error (try (ep/python-context environment) nil (catch Exception e e))]
+                     (expect (= ::ep/context-retired (:type (ex-data error))))))))
+
 (defdescribe
   session-defs-restart-test
   (it

@@ -579,6 +579,50 @@
                (expect (= code (get attempt "code"))))
              (finally (vis/db-dispose-connection! s))))))
 
+(defdescribe
+  retired-python-diagnostics-test
+  ;; Issue #180: a local runtime failure must retain the attempted Council code,
+  ;; appear in the failure ledger and never advise switching model providers.
+  (it "keeps rejected Council code and its runtime error through persistence and read_session"
+      (let [s (vis/db-create-connection! :memory)]
+        (try (let [cid (h/store-session! s {:channel :tui :title "Retired Python fixture"})
+                   turn (vis/db-store-session-turn!
+                          s
+                          {:parent-session-id cid :user-request "continue" :status :running})
+                   code "print(await council.publish('after timeout', title='Timeout regression'))"
+                   error {:type ::env-python/context-retired
+                          :message "Python environment is disposed or retired"}
+                   _ (h/store-iteration!
+                       s
+                       {:session-turn-id turn
+                        :code code
+                        :forms [{:src code :vis/tool-name "python_execution" :error error}]
+                        :duration-ms 0})
+                   data (:result (introspection/read-session {:session-id cid :db-info s} cid))
+                   failure (first (get data "failures"))
+                   attempt (first (get-in data ["current_turn" "attempts"]))]
+
+               (expect (= 1 (get-in data ["diagnosis" "failure_count"])))
+               (expect (= "runtime" (get failure "source")))
+               (expect (= "python_environment_retired" (get failure "classification")))
+               (expect (= code (get failure "code") (get attempt "code")))
+               (expect (some? (get attempt "error")))
+               (expect (str/includes? (get failure "advice") "new turn"))
+               (expect (not (str/includes? (get failure "advice") "switch model"))))
+             (finally (vis/db-dispose-connection! s)))))
+  (it
+    "classifies a pre-block iteration error as runtime, not provider"
+    (doseq
+      [error
+       [{:message "Python environment is disposed or retired"
+         :data {:type ::env-python/context-retired}}
+        "{\"message\":\"Python environment is disposed or retired\",\"data\":{\"type\":\"com.blockether.vis.internal.python.env/context-retired\"}}"]]
+      (let [failures (#'introspection/failures-from-iterations
+                      nil
+                      [{:id "iteration" :position 1 :error error}])]
+        (expect (= [:runtime] (mapv :source failures)))
+        (expect (= [:python-environment-retired] (mapv :classification failures)))))))
+
 ;; Regression, issue #130: a cancel interrupt was attributed to the form that
 ;; happened to be on the stack, making a user stop look like broken agent code.
 (defdescribe cancel-interrupt-classification-test

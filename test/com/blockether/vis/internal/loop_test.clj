@@ -2423,6 +2423,162 @@
                                                                environment)))))))
              (finally (try (env/dispose-python-context! pc) (catch Throwable _ nil))))))))
 
+(defdescribe
+  retired-python-follow-up-test
+  ;; Issue #180: the first post-timeout block contained council.publish, but the
+  ;; retired-environment guard failed before it could execute any Python.
+  (it
+    "records rejected print and Council blocks and treats retirement as terminal"
+    (let [environment
+          (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+          pc
+          (env/python-context environment)
+
+          retired
+          (:python-context-retired-atom environment)
+
+          entered
+          (atom [])
+
+          run-block
+          env/run-python-block]
+
+      (try
+        (#'lp/run-python-code pc "print('ready')" :env environment)
+        (let [timeout (binding [rt/*eval-timeout-ms* 3000]
+                        (#'lp/run-python-code pc "import time\ntime.sleep(10)" :env environment))]
+          (expect (true? (:timeout? timeout))))
+        (expect (loop [remaining 100]
+                  (cond @retired true
+                        (zero? remaining) false
+                        :else (do (Thread/sleep 50) (recur (dec remaining))))))
+        (expect (false? (env/context-enterable? environment)))
+        (with-redefs [env/run-python-block (fn [context code & args]
+                                             (swap! entered conj code)
+                                             (apply run-block context code args))]
+          (doseq [code ["print(await council.publish('after timeout', title='Timeout regression'))"
+                        "print(42)"]]
+            (with-redefs [svar/ask-code! (fn [_ _]
+                                           {:stop-reason :tool-calls
+                                            :tool-calls [{:id "follow_up"
+                                                          :name "python_execution"
+                                                          :input {:code code}}]})]
+              (let [result (try (lp/run-iteration environment
+                                                  []
+                                                  {:iteration 1
+                                                   :resolved-model {:provider :lmstudio
+                                                                    :name "model"}})
+                                (catch Exception e {:thrown (ex-message e)}))
+                    block (first (:blocks result))]
+
+                (expect (nil? (:thrown result)))
+                (expect (= code (:code block)))
+                (expect (= ::env/context-retired (get-in block [:error :type])))))))
+        (expect (empty? @entered))
+        (let [error (try (env/python-context environment) nil (catch Exception e e))]
+          (expect (= ::env/context-retired (:type (ex-data error))))
+          (doseq [cause [error (ex-info "iteration wrapper" {} error)]]
+            (let [result (lp/handle-iteration-exception! cause {:iteration 2 :messages []})
+                  card (first (#'lp/python-error-content (::lp/iteration-error result)))]
+
+              (expect (true? (::lp/fatal-iteration-error result)))
+              (expect (= "python_environment_retired" (get card "code")))
+              (expect (false? (get card "retryable"))))))
+        (finally (lp/dispose-environment! environment))))))
+
+(defdescribe
+  retired-python-stops-turn-test
+  ;; Issue #180: no automatic model retry or side-effect replay on a dead worker.
+  (doseq [same-response? [false true]]
+    (it
+      (str "stops after the native timeout; Council shares response=" same-response?)
+      (let [environment (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
+            db (:db-info environment)
+            tid (persistance/db-store-session-turn! db
+                                                    {:parent-session-id (:session-id environment)
+                                                     :user-request "timeout regression"})
+            timeout-code "import time\nprint('before native wait')\ntime.sleep(10)"
+            publish-code "print(await council.publish('after timeout', title='Timeout regression'))"
+            calls (atom 0)
+            chunks (atom [])
+            response (fn [codes]
+                       {:stop-reason :tool-calls
+                        :tool-calls (mapv (fn [idx code]
+                                            {:id (str "call_" idx)
+                                             :name "python_execution"
+                                             :input {:code code}})
+                                          (range)
+                                          codes)})]
+
+        (try (expect (nil? (:error (#'lp/execute-code environment "print('ready')"))))
+             (let [result (binding [rt/*eval-timeout-ms* 3000]
+                            (with-redefs [svar/ask-code! (fn [_ _]
+                                                           (case (swap! calls inc)
+                                                             1
+                                                             (response (cond-> [timeout-code]
+                                                                         same-response?
+                                                                         (conj publish-code)))
+
+                                                             2
+                                                             (response [publish-code])
+
+                                                             {:stop-reason :end
+                                                              :content "unexpected retry"}))]
+                              (lp/iteration-loop environment
+                                                 "timeout regression"
+                                                 {:session-turn-id tid
+                                                  :hooks {:on-chunk #(swap! chunks conj %)}})))
+                   iterations (persistance/db-list-session-turn-iterations db tid)
+                   forms (:forms (first iterations))
+                   terminal (first (:answer result))]
+
+               (expect (= 1 @calls))
+               (expect (= :error (:status result)))
+               (expect (= "python_environment_retired" (get terminal "code")))
+               (expect (false? (get terminal "retryable")))
+               (expect (= 1 (count iterations)))
+               (expect (= (if same-response? [timeout-code publish-code] [timeout-code])
+                          (mapv :src forms)))
+               (expect (str/includes? (str (:stdout (first forms))) "before native wait"))
+               (expect (every? :error forms))
+               (expect (= (if same-response? 2 1)
+                          (count (filter #(= :form-result (:phase %)) @chunks)))))
+             (finally (lp/dispose-environment! environment)))))))
+
+(defdescribe
+  retired-python-cancelled-turn-test
+  (it "keeps an explicit user cancellation distinct from runtime failure"
+      (let [environment
+            (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+            tid
+            (persistance/db-store-session-turn! (:db-info environment)
+                                                {:parent-session-id (:session-id environment)
+                                                 :user-request "cancel regression"})
+
+            cancelled
+            (atom false)
+
+            calls
+            (atom 0)]
+
+        (try (let [result (with-redefs [svar/ask-code!
+                                        (fn [_ _]
+                                          (swap! calls inc)
+                                          (reset! (:python-context-retired-atom environment) true)
+                                          (reset! cancelled true)
+                                          {:stop-reason :tool-calls
+                                           :tool-calls [{:id "cancelled_call"
+                                                         :name "python_execution"
+                                                         :input {:code "print(42)"}}]})]
+                            (lp/iteration-loop environment
+                                               "cancel regression"
+                                               {:session-turn-id tid :cancel-atom cancelled}))]
+               (expect (= :cancelled (:status result)))
+               (expect (= 1 @calls)))
+             (finally (lp/dispose-environment! environment))))))
+
 (defdescribe eval-timeout-keeps-partial-stdout-test
              ;; The wall-clock backstop used to return only a timeout error. The
              ;; guest never reaches its final stdout outcome, so every line printed

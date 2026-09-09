@@ -674,6 +674,14 @@
 
 ;; The environment's sandbox — built on first entry, never before
 
+(defn retired-context-error
+  "Local terminal error data for a retired environment, otherwise nil.
+   This check never creates or enters an interpreter. Only a new turn may rebuild it."
+  [environment]
+  (when (some-> (:python-context-retired-atom environment)
+                deref)
+    {:type ::context-retired :message "Python environment is disposed or retired"}))
+
 (defn sandbox
   "The environment's Python sandbox, BUILDING it if this is the first ask.
 
@@ -688,9 +696,8 @@
   [environment]
   (when-let [pending (:python-sandbox environment)]
     (locking pending
-      (when (some-> (:python-context-retired-atom environment)
-                    deref)
-        (throw (ex-info "Python environment is disposed or retired" {})))
+      (when-let [error (retired-context-error environment)]
+        (throw (ex-info (:message error) error)))
       @pending)))
 
 (defn python-context
@@ -698,8 +705,11 @@
 
    An environment may also carry a context DIRECTLY, with no sandbox delay and
    no session lifecycle around it — one interpreter someone built and handed in.
-   That context is already the answer, so this never forces anything for it."
+   That context is already the answer, so this never forces anything for it.
+   An explicit retirement marker still refuses entry."
   [environment]
+  (when-let [error (retired-context-error environment)]
+    (throw (ex-info (:message error) error)))
   (or (:python-context environment) (:python-context (sandbox environment))))
 
 (defn sandbox-ns
