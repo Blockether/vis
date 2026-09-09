@@ -1012,8 +1012,12 @@ remains available. Published version tags remain immutable, including the bootst
    explicit verification results and any concrete unresolved blockers reported.
    Unknowns: none beyond the preceding phases.
 
-Plan state: phases 1–5 complete. The fixes are committed and pushed; the complete stable
-release v0.1.49 is published at 8227cd605a1a86ea814698b4906e4fc0ee0a89ec.
+Plan state: v0.1.49 delivery is complete. Revalidation of the newer main commit is in
+progress for the next immutable production release. Runtime v0.5.6 remains current.
+Main CI 34324113048 exposed a macOS-only checkout-length assumption in the compact
+error-message test; Linux and Android checks passed. A long-path fixture reproduces
+the assertion locally. Correct the test, rerun checks, publish all artifacts, then
+repeat installed native and production verification before marking this work complete.
 
 - Runtime v0.5.6 is published at 51f02270ffc78b5eb49bcab914b27564b1960f82. Run
   34297827905 passed all four platform builds/tests and published the runtime archives and

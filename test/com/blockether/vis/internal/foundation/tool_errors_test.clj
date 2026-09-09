@@ -30,16 +30,30 @@
           (is (= expected (get-in out [:error :message])))
           (is (= :python/host (get-in out [:error :data :phase])))
           (is (not (str/includes? (str (:stdout out)) "unreachable"))))))
-    (doseq [tool ["cat" "patch"]]
-      (testing (str tool " missing file")
-        (let [code (str tool "('resources/__vis_missing_file__'" (when (= tool "patch") ", []") ")")
-              out (ep/run-python-block ctx code "t1/i1")
-              message (get-in out [:error :message])]
+    ;; CI checkout paths differ in length across operating systems.
+    (doseq [missing-path
+            ["resources/__vis_missing_file__"
+             (str "resources/" (apply str (repeat 160 "x")) "/__vis_missing_file__")]
+
+            tool
+            ["cat" "patch"]]
+
+      (testing (str tool " missing file: " missing-path)
+        (let [code
+              (str tool "('" missing-path "'" (when (= tool "patch") ", []") ")")
+
+              out
+              (ep/run-python-block ctx code "t1/i1")
+
+              message
+              (get-in out [:error :message])
+
+              reported-path
+              (second (re-matches #"File not found: ([^\r\n]+); use grep to find the path\."
+                                  message))]
 
           (is (= :python/host (get-in out [:error :data :phase])))
-          (is (str/includes? message "__vis_missing_file__"))
-          (is (str/ends-with? message "; use grep to find the path."))
-          (is (< (count message) 110)))))
+          (is (and reported-path (str/ends-with? reported-path missing-path)) message))))
     (doseq [tool ["format_code" "lint_code" "run_tests" "repl_eval"]]
       (testing (str tool " unknown language")
         (let [out (ep/run-python-block ctx (str tool "('unknown', {})") "t1/i1")
