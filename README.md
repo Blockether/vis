@@ -18,7 +18,7 @@
 
 Vis is a coding agent. It runs Python in a sandboxed CPython runtime, stores session state outside the model's context window, and uses tools to inspect and change your project.
 
-**[Documentation — vis.blockether.com](https://vis.blockether.com/)** · **[Extension Center](https://vis.blockether.com/extensions/)**
+[![Documentation](https://img.shields.io/badge/Documentation-teal?style=for-the-badge)](https://vis.blockether.com/) &nbsp; [![Extension Center](https://img.shields.io/badge/Extension_Center-dimgray?style=for-the-badge)](https://vis.blockether.com/extensions/)
 
 ## Install
 
