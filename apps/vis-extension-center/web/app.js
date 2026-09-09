@@ -51,17 +51,17 @@ export function mount(container,request=fetch,initial) {
   function removeChallenge() {++challengeRevision;token='';if(widget!==null) {window.turnstile?.remove(widget);widget=null;}}
   async function challenge(action) {
     removeChallenge();const revision=challengeRevision;
-    const sitekey=$('#turnstile').dataset.sitekey;
+    const sitekey=$('#turnstile-widget').dataset.sitekey;
     if(!sitekey) {$('#submit-status').textContent='Submissions are not configured yet. Try again later.';return;}
     try {
-      if(!window.turnstile) {
+      if(typeof window.turnstile?.render!=='function') {
         challengeLoading ||= new Promise((resolve,reject)=>{
           const script=document.createElement('script');script.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';script.async=true;script.onload=resolve;script.onerror=()=>{script.remove();challengeLoading=null;reject(new Error('Could not load the anti-spam check. Close and reopen the form to retry.'));};document.head.append(script);
         });
         await challengeLoading;
       }
       if(disposed||revision!==challengeRevision||!dialog.open) return;
-      widget=window.turnstile.render($('#turnstile'),{sitekey,action,theme:'light',size:'flexible',callback:value=>{if(revision===challengeRevision) token=value;},'expired-callback':()=>{if(revision===challengeRevision) {token='';$('#submit-status').textContent='Anti-spam check expired. Please complete it again.';}},'error-callback':()=>{if(revision===challengeRevision) {token='';$('#submit-status').textContent='Anti-spam check failed. Close and reopen the form to retry.';}}});
+      widget=window.turnstile.render($('#turnstile-widget'),{sitekey,action,theme:'light',size:'flexible',callback:value=>{if(revision===challengeRevision) token=value;},'expired-callback':()=>{if(revision===challengeRevision) {token='';$('#submit-status').textContent='Anti-spam check expired. Please complete it again.';}},'error-callback':()=>{if(revision===challengeRevision) {token='';$('#submit-status').textContent='Anti-spam check failed. Close and reopen the form to retry.';}}});
     } catch(error) {if(revision===challengeRevision) $('#submit-status').textContent=error.message;}
   }
   function resetPreview() {
