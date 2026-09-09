@@ -13,6 +13,34 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
+  session-defs-restart-test
+  (it
+    "persists helpers and restores them into a fresh sandbox"
+    (doseq [worker? [false true]]
+      (let [sid (str "vis-test-defs-restart-" (random-uuid))
+            file (io/file (paths/sandbox-defs-file sid))]
+
+        (try
+          (tpc/with-own
+            [ctx {} nil {:worker? worker?}]
+            (expect
+              (nil?
+                (:error
+                  (ep/run-python-block
+                    ctx
+                    "def saved_helper(value=41):\n    \"Return the next value.\"\n    return value + 1\n"))))
+            (expect (some? (ep/persist-session-defs! ctx sid)))
+            (expect (.isFile file)))
+          (ep/forget-session-defs! sid)
+          (tpc/with-own [ctx {} nil {:worker? worker?}]
+                        (expect (= 1 (ep/restore-session-defs! ctx sid)))
+                        (expect (= "42\n"
+                                   (:stdout (ep/run-python-block ctx "print(saved_helper())"))))
+                        (expect (str/includes? (:stdout (ep/run-python-block ctx "print(defs())"))
+                                               "(restored)")))
+          (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
+
+(defdescribe
   canonical-python-literal-test
   (it
     "renders boundary data without a CPython printer context"

@@ -4877,7 +4877,18 @@
                                             :recipient_sid sid
                                             :activation_id activation})
                                          recipients)}))
-              {:fingerprint (:fingerprint row) :entry (db-council-get tx id)}))))))
+              {:fingerprint (:fingerprint row) :entry (db-council-get tx id) :inserted? true}))))))
+
+(defn db-council-bind-wake!
+  "Claim one newly published idle ping for the runtime's selected activation."
+  [db entry-id sid activation]
+  (sqlite-write-tx! db
+                    (fn [tx]
+                      (execute! tx
+                                {:update :council_ping
+                                 :set {:activation_id activation}
+                                 :where [:and [:= :entry_id entry-id] [:= :recipient_sid sid]
+                                         [:= :activation_id "council-wake"]]}))))
 
 (defn db-council-page
   "Keyset pages. A thread uses a root PK seek and an indexed continuation seek, never a group scan."

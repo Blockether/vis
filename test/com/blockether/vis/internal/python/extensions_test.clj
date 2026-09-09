@@ -3871,20 +3871,26 @@ vis.register(vis.Extension(
 
 (defdescribe
   python-symbol-contract-test
-  ;; Issue #176: metadata must survive the actual registration/session boundary.
+  ;; Issues #176 and #179: wrapped typed metadata survives registration and reload.
   (it
     "uses one inert contract for keyword-only docs and callable inspection across reloads"
     (with-fresh-loaded
-      {"contract_tools.py"
+      {"contract_helpers/__init__.py"
+       (str "from functools import wraps\n"
+            "def wrapped(fn):\n    @wraps(fn)\n    def call(*args, **kwargs):\n"
+            "        return fn(*args, **kwargs)\n    return call\n")
+       "contract_tools.py"
        (str
          "from __future__ import annotations\n"
          "from dataclasses import dataclass\n" "from typing import Annotated\n"
-         "import blockether.vis.extension as vis\n" "@dataclass(frozen=True)\n"
-         "class Result:\n" "    \"A greeting result.\"\n"
-         "    text: Annotated[str, 'Greeting text.']\n" "class Greeter:\n"
-         "    def hello(self, name: str, /, *, loud: bool = False) -> Result:\n"
+         "from contract_helpers import wrapped\n" "import blockether.vis.extension as vis\n"
+         "@dataclass(frozen=True)\n" "class Result:\n"
+         "    \"A greeting result.\"\n" "    text: Annotated[str, 'Greeting text.']\n"
+         "@dataclass(frozen=True)\nclass Results:\n    items: tuple[Result, ...]\n"
+         "class Greeter:\n    @vis.method(tag='mutation')\n    @wrapped\n"
+         "    def hello(self, name: str, /, *, loud: bool = False) -> Results:\n"
          "        \"Greet one person without changing state.\"\n"
-         "        return Result(name.upper() if loud else name)\n"
+         "        return Results((Result(name.upper() if loud else name),))\n"
          "vis.register(vis.Extension(name='contract-tools', description='Contract tools', alias='greet', symbols=[vis.Symbol(Greeter(), name='greet')]))\n")}
       (fn [result {:keys [ext-dir]}]
         (expect (= 1 (:loaded result)))
@@ -3910,16 +3916,21 @@ vis.register(vis.Extension(
                    (ep/run-python-block
                      ctx
                      (str
-                       "import json, inspect\n"
+                       "import json, inspect, typing\n" "assert greet.hello.__annotations__ == {}\n"
+                       "assert typing.get_type_hints(greet.hello) == {}\n"
+                       "assert getattr(greet.hello, '__signature__', None) is None\n"
+                       "assert greet.hello.contract['tag'] == 'mutation'\n"
+                       "assert greet.hello.contract['returns']['fields'][0]['type']['variadic'] is True\n"
+                       "assert 'tuple[Result, ...]' in doc('greet.hello')\n"
                        "assert greet.hello.contract['name'] == 'greet.hello'\n"
                        "assert greet.hello.contract['parameters'][1]['kind'] == 'keyword_only'\n"
                        "assert 'loud: bool' in doc('greet.hello')\n"
                        "assert 'Greeting text.' in doc('greet.hello')\n"
                        "assert str(inspect.signature(greet.hello)) == '(name, /, *, loud=Ellipsis)'\n"
-                       "assert (await greet.hello('Ada', loud=True)).text == 'ADA'\n"
+                       "assert (await greet.hello('Ada', loud=True)).items[0].text == 'ADA'\n"
                        "print(json.dumps(greet.hello.contract['returns']['fields'][0]['name']))"))]
                   (expect (nil? (:error answer)) (pr-str answer))
-                  (expect (str/includes? (or (:stdout answer) "") "text"))))
+                  (expect (str/includes? (or (:stdout answer) "") "items"))))
               (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})))))
             (finally (ep/dispose-python-context! ctx))))))))
 

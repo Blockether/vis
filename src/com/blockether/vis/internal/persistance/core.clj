@@ -679,6 +679,8 @@
 
 (defdelegate db-council-insert! [db-info row recipients])
 
+(defdelegate db-council-bind-wake! [db-info entry-id sid activation])
+
 (defdelegate db-council-page [db-info gid thread roots? after limit])
 
 (defdelegate db-council-pending [db-info sid activation gid after limit])

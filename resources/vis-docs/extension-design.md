@@ -70,11 +70,20 @@ fields from the same description exposed as `greet.hello.contract` in the sandbo
 Outside Vis, inspect `vis.Symbol(Greeter(), name="greet").contract` without
 registering it. Namespace descriptions contain full public member names.
 
+`.contract` is the portable structured API; `doc()` renders it. Sandbox proxies
+expose parameter names, kinds and redacted defaults through `inspect.signature()`,
+but not annotations: `__annotations__` and `typing.get_type_hints()` return empty
+dictionaries, and `__signature__` is absent. These proxies do not recreate the
+extension's Python result classes. Read parameter and result types from `.contract`.
+
 The description covers positional-only, positional-or-keyword, keyword-only,
 `*args` and `**kwargs` parameters; requiredness; absence of a default versus a
 `None` default; return types; dataclass fields; and observation/mutation tags.
 Supported type structure includes unions, common containers, `Literal` and
-`Annotated`. Unresolved types are explicitly marked, not guessed or imported.
+`Annotated`. Variadic `tuple[T, ...]` is a generic tuple with `variadic: true` and
+one entry in `arguments` for `T`; fixed-length tuples retain each item type and
+omit `variadic`. Unresolved types render with an explicit `(unresolved)` suffix,
+not as complete types. They are not guessed or imported.
 
 Actual default values and their `repr()` are never exported: they may contain
 credentials. `has_default` and `default_is_none` retain the distinction, and the
@@ -86,6 +95,43 @@ strings. Without `from __future__ import annotations`, these annotations are
 reported as unresolved instead of evaluated. Local forward references that are
 not available in the defining module also remain unresolved. Prefer module-level
 result classes. Recursive records use references instead of infinitely expanding.
+Cross-module `functools.wraps` decorators resolve annotations in the wrapped
+function's defining module, including bound namespace methods. For example:
+
+```python
+# decorators.py
+from functools import wraps
+
+
+def traced(fn):
+    @wraps(fn)
+    def call(*args, **kwargs):
+        return fn(*args, **kwargs)
+    return call
+```
+
+```python
+# tools.py
+from __future__ import annotations
+from dataclasses import dataclass
+from decorators import traced
+
+
+@dataclass(frozen=True)
+class Result:
+    text: str
+
+
+class Tools:
+    @traced
+    def read(self, text: str = "ready") -> tuple[Result, ...]:
+        """Read one result without changing state."""
+        return (Result(text),)
+```
+
+`vis.Symbol(Tools(), name="tools").contract` expands `Result.text` beneath the
+variadic tuple. The SDK and host-to-sandbox regression tests cover this wrapper
+pattern, nested records and reload. Annotation expressions are never evaluated.
 
 This is a documentation contract, not JSON invocation or runtime type validation.
 Python still binds arguments; your code validates domain constraints. There is no

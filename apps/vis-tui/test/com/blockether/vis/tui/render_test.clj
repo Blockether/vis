@@ -7216,6 +7216,6 @@ print(paths)"
 
                    (expect (some? receipt))
                    (expect (str/includes? (:line receipt) "LIVE VIEW"))
-                   (expect (str/includes? (:line receipt) "Release"))
+                   (expect (str/ends-with? (:line receipt) "Release ▸"))
                    (expect (not (str/includes? (:line receipt) "ndjson")))
                    (expect (not-any? #(str/includes? (:line %) "system viewer") entries)))))

@@ -646,7 +646,16 @@ def _kwargs_dict(x):
     return pairs
 
 
+def _annotation_target(fn):
+    """Follow the signature's wrapper chain while preserving method binding."""
+    target = inspect.unwrap(fn, stop=lambda f: hasattr(f, "__signature__"))
+    if inspect.ismethod(fn) and inspect.isfunction(target):
+        return MethodType(target, fn.__self__)
+    return target
+
+
 def _inert_signature(fn):
+    fn = _annotation_target(fn)
     # Even annotationlib.Format.STRING can execute deferred annotations in 3.14.
     # Inspect a structural clone; future/stringized annotations need no clone.
     target = fn.__func__ if inspect.ismethod(fn) else fn
@@ -754,6 +763,13 @@ def _contract_type(annotation, namespace, seen=()):
             "name": "Literal",
             "values": [a for a in args if type(a) in (str, int, bool, type(None))],
         }
+    if origin is tuple and len(args) == 2 and args[1] is Ellipsis:
+        return {
+            "kind": "generic",
+            "name": "tuple",
+            "variadic": True,
+            "arguments": [_contract_type(args[0], namespace, seen)],
+        }
     if origin is not None:
         return {
             "kind": "generic",
@@ -846,6 +862,18 @@ def _contract_ast(node, namespace, seen):
             or base in (list, tuple, dict, set, frozenset, Sequence, Mapping)
         ):
             actual = get_origin(base) or base
+            if (
+                actual is tuple
+                and len(nodes) == 2
+                and isinstance(nodes[1], ast.Constant)
+                and nodes[1].value is Ellipsis
+            ):
+                return {
+                    "kind": "generic",
+                    "name": "tuple",
+                    "variadic": True,
+                    "arguments": [_contract_ast(nodes[0], namespace, seen)],
+                }
             return {
                 "kind": "generic",
                 "name": actual.__name__,
@@ -860,7 +888,8 @@ def _contract_ast(node, namespace, seen):
 def _callable_contract(fn, name, tag, doc):
     # No evaluation or imports are needed to derive the portable description.
     signature = _inert_signature(fn)
-    namespace = getattr(fn, "__globals__", {})
+    target = _annotation_target(fn)
+    namespace = getattr(target, "__globals__", {})
     parameters, safe = [], []
     for item in signature.parameters.values():
         has_default = item.default is not inspect.Parameter.empty
@@ -900,6 +929,8 @@ def _callable_contract(fn, name, tag, doc):
 
 def _contract_type_text(spec):
     arguments = spec.get("arguments", [])
+    if spec["kind"] == "unresolved":
+        return spec["name"] + " (unresolved)"
     if spec["kind"] == "union":
         return " | ".join(_contract_type_text(a) for a in arguments)
     if arguments:
@@ -907,6 +938,7 @@ def _contract_type_text(spec):
             spec["name"]
             + "["
             + ", ".join(_contract_type_text(a) for a in arguments)
+            + (", ..." if spec.get("variadic") else "")
             + "]"
         )
     return spec["name"]

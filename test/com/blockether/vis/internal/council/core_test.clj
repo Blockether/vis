@@ -1044,6 +1044,92 @@
                                               opts))))
                     (is (rejected? :invalid-request #(council 'binding-info db sid opts)))))))
 
+(deftest explicit-idle-ping-wakes-once-test
+  ;; Explicit IDs may start a turn; broadcasts and idempotent retries may not.
+  (with-council
+    (let [{:keys [db ids gid]}
+          (world)
+
+          [a b c]
+          ids
+
+          update!
+          (ns-resolve 'com.blockether.vis.internal.gateway.state 'update-session!)
+
+          drop!
+          (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
+
+          launched
+          (atom [])]
+
+      (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.loop 'db-info) (constantly db)
+                       (ns-resolve 'com.blockether.vis.internal.gateway.state 'session-model)
+                       (constantly {:provider "fixture" :model "fixture"})
+                       (ns-resolve 'com.blockether.vis.internal.gateway.state 'fresh-entry)
+                       (fn [_]
+                         {:next-seq 0 :turns {} :turn-order []})
+                       (ns-resolve 'com.blockether.vis.internal.gateway.state 'launch-turn-worker!)
+                       (fn [sid tid request opts]
+                         (swap! launched conj [sid tid request opts]))}
+        (fn []
+          (try
+            (update! a
+                     (constantly {:turns {"fixture" {:status "running"
+                                                     :cancel-token
+                                                     (cancellation/cancellation-token)}}}))
+            (let [snapshot
+                  #(council 'runtime db)
+
+                  actor
+                  {:session-id a
+                   :activation-id (get-in (snapshot) [a :activation-id])
+                   :source "host"}
+
+                  publish!
+                  #(council 'publish! db snapshot actor %)
+
+                  request
+                  {:content "What did you learn about the parser?"
+                   :ping [b (str "vis_session_id#" b)]
+                   :idempotency_key "wake-once"}]
+
+              (is (empty? (:ping (publish! {:content "Active only" :ping "all"}))))
+              (is (empty? @launched))
+              (let [entry
+                    (publish! request)
+
+                    active
+                    (get (snapshot) b)]
+
+                (is (= [b] (:ping entry)))
+                (is (= [b] (mapv first @launched)))
+                (is (= "running" (:state active)))
+                (is (true? (:wake? active)))
+                (is (= [(:id entry)]
+                       (mapv :id (ps/db-council-pending db b (:activation-id active) gid 0 20))))
+                (is (= entry (publish! (assoc request :ping [b]))))
+                (is (= 1 (count @launched)))
+                ;; Woken sessions can reply to a running author, not start wake chains.
+                (let [reply-actor
+                      {:session-id b :activation-id (:activation-id active) :source "host"}]
+                  (is (rejected?
+                        :invalid-recipient
+                        #(council 'publish! db snapshot reply-actor {:content "Chain" :ping [c]})))
+                  (is (= [a]
+                         (:ping (council 'publish!
+                                         db
+                                         snapshot
+                                         reply-actor
+                                         {:content "Here are my findings"
+                                          :thread_id (:id entry)
+                                          :ping [a]})))))
+                (publish! {:content "Another question" :ping [b]})
+                (is (= 1 (count @launched)))
+                (drop! b)
+                (is (= entry (publish! request)))
+                (is (= 1 (count @launched)))))
+            (finally (run! drop! ids))))))))
+
 (deftest sparse-thread-seeks-and-batched-pings-test
   ;; Explain the actual production queries. Fifty continuations cover a full page;
   ;; the separate contention reference retains the 100,000-row workload.

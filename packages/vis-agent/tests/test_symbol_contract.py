@@ -124,6 +124,16 @@ def test_registration_adapters_do_not_evaluate_deferred_annotations():
     assert calls == []
     assert symbol.contract["parameters"][0]["type"]["kind"] == "unresolved"
     assert calls == []
+    # #179: inspect follows wrappers too; unwrapping must precede deferred detection.
+    from functools import wraps
+
+    @wraps(namespace["deferred"])
+    def wrapped(*args, **kwargs):
+        return namespace["deferred"](*args, **kwargs)
+
+    wrapped_symbol = vis.Symbol(wrapped)
+    assert wrapped_symbol.contract["parameters"][0]["type"]["kind"] == "unresolved"
+    assert calls == []
 
 
 def test_future_annotations_and_recursive_records_are_portable():
@@ -160,3 +170,67 @@ def test_result_field_docs_include_records_in_containers():
     doc = vis.Symbol(readings)._spec()["doc"]
     assert "elapsed_s" in doc
     assert "Seconds" in doc
+
+
+@pytest.mark.parametrize("bound", [False, True])
+def test_cross_module_wraps_resolves_original_namespace(bound):
+    # #179: wrapper globals differ from the defining module, including bound methods.
+    from types import ModuleType
+
+    decorators = ModuleType("contract_decorators")
+    exec(
+        "from functools import wraps\ndef wrap(fn):\n    @wraps(fn)\n    def wrapped(*args, **kwargs):\n        return fn(*args, **kwargs)\n    return wrapped\n",
+        decorators.__dict__,
+    )
+    namespace = {"wrap": decorators.wrap, "Reading": Reading, "vis": vis}
+    exec(
+        'from __future__ import annotations\nclass Tools:\n    @vis.method(tag="mutation")\n    @wrap\n    def read(self, value: Reading) -> tuple[Reading, ...]:\n        "Read records."\n        return (value,)\n',
+        namespace,
+    )
+    tool = namespace["Tools"]().read if bound else namespace["Tools"].read
+    contract = vis.Symbol(tool).contract
+    assert contract["parameters"][-1]["type"]["kind"] == "record"
+    result = contract["returns"]
+    assert result["kind"] == "generic"
+    assert result["variadic"] is True
+    assert len(result["arguments"]) == 1
+    assert result["arguments"][0]["fields"][0]["name"] == "elapsed_s"
+    if bound:
+        member = vis.Symbol(namespace["Tools"](), name="tools").contract["members"][0]
+        assert member["tag"] == "mutation"
+        assert [p["name"] for p in member["parameters"]] == ["value"]
+    assert "tuple[Reading, ...]" in vis.Symbol(tool)._spec()["doc"]
+
+
+@pytest.mark.parametrize("annotation", [tuple[str, ...], "tuple[str, ...]"])
+def test_variadic_tuple_contract(annotation):
+    from blockether.vis import _contracts
+
+    def values():
+        """Read values."""
+
+    values.__annotations__ = {"return": annotation}
+    contract = vis.Symbol(values).contract
+    assert contract["returns"] == {
+        "kind": "generic",
+        "name": "tuple",
+        "variadic": True,
+        "arguments": [{"kind": "scalar", "name": "str"}],
+    }
+    assert _contracts.validate("symbol", "declaration", contract) == contract
+    contract["returns"]["arguments"].append({"kind": "scalar", "name": "int"})
+    with pytest.raises(ValueError):
+        _contracts.validate("symbol", "declaration", contract)
+    values.__annotations__ = {"return": tuple[str, int]}
+    fixed = vis.Symbol(values).contract
+    assert "variadic" not in fixed["returns"]
+    assert len(fixed["returns"]["arguments"]) == 2
+    assert _contracts.validate("symbol", "declaration", fixed) == fixed
+
+
+def test_unresolved_types_are_visible_in_docs():
+    def values():
+        """Read values."""
+
+    values.__annotations__ = {"return": "MissingResult"}
+    assert "Returns: MissingResult (unresolved)" in vis.Symbol(values)._spec()["doc"]
