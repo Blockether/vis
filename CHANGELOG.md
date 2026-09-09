@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.48] - 2026-09-09
+
+### Fixed
+- Isolate the latest jail policy test from concurrent configuration readers.
+
+## [v0.1.47] - 2026-09-09
+
+### Fixed
+- Resolve unpublished GitHub releases by ID before uploading or validating product assets.
+
 ## [v0.1.46] - 2026-09-09
 
 ### Fixed
@@ -6089,7 +6099,7 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.46...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.47...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -6127,3 +6137,4 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 [v0.1.44]: https://github.com/Blockether/vis/releases/tag/v0.1.44
 [v0.1.45]: https://github.com/Blockether/vis/releases/tag/v0.1.45
 [v0.1.46]: https://github.com/Blockether/vis/releases/tag/v0.1.46
+[v0.1.47]: https://github.com/Blockether/vis/releases/tag/v0.1.47

@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vis-agent"
-version = "0.1.46"
+version = "0.1.48"
 description = "The Vis Python SDK — author extensions and control local or remote engines."
 readme = "README.md"
 requires-python = ">=3.11"

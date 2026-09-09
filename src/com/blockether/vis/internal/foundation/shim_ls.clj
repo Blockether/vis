@@ -10,14 +10,9 @@
    The walk itself stays on the HOST: `editing/list-directories` is fff's
    ignore-aware listing (`.gitignore`, `.ignore`, cache directories, the `vis.yml`
    overlay), an order of magnitude faster than a guest `os.scandir` recursion that
-   would honour none of those rules. The bridge is one callable answering the
-   `[ok result kind]` envelope every shim uses, because errors must cross the
-   boundary as DATA — CPython does not route a host exception through Python
-   `except`. The rows themselves cross as a JSON string rather than as the
-   boundary's own `ForeignDict`s: a listing is data the caller SERIALIZES, and
-   `json.dumps` is the one dict operation a foreign map refuses. Measured over a
-   100 KB listing of this repo, the JSON hop costs 3.4 ms against 11.8 ms for
-   `__vis_pyify__` over the proxies — the string is the CHEAPEST real dict.
+   would honour none of those rules. Rows cross as JSON so the shim renders native
+   Python dicts, not foreign proxies. Failures use the standard host-tool boundary
+   and the same declarative error hook as the editing tools.
 
    `:fs/access` is asked by `list-directories` itself, so an extension that hides
    a tree hides it from the listing exactly as it hides it from every read."
@@ -27,15 +22,6 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.editing.core :as editing]))
-
-(def ^:private error-kinds
-  "`ex-info` `:type` → the KIND the Python shim turns into a real exception, so a
-   caller catches `NotADirectoryError` rather than parsing a sentence. Anything
-   unmapped stays a `RuntimeError`."
-  {:ext.foundation.editing/path-protected "denied"
-   :ext.foundation.editing/ls-missing-path "missing"
-   :ext.foundation.editing/ls-on-file "file"
-   :ext.foundation.editing/invalid-ls-args "args"})
 
 (defn- listing-section
   [{:strs [path entries]}]
@@ -96,6 +82,7 @@
    :ext.symbol/tag :observation
    :ext.symbol/presenter :observation
    :ext.symbol/inject-env? true
+   :ext.symbol/on-error-fn (editing/tool-failure-on-error :ls :dir)
    :ext.symbol/fn (fn [env args]
                     (extension/publish-activity! {"headline" "Listing directories"
                                                   "summary" ""
@@ -106,18 +93,14 @@
                       (extension/success {:result rows})))})
 
 (defn- ls-bridge-bindings
-  "Observe the host listing as one symbol invocation, retaining the shim's error envelope."
+  "Observe the listing through the standard host-tool boundary; return rows as JSON."
   []
   {"__vis_list_directories__" (fn list-directories [args-json]
-                                (try [true
-                                      (json/write-json-str (extension/invoke-symbol-wrapper
-                                                             {:ext/name "foundation-shim-ls"}
-                                                             listing-symbol
-                                                             [(json/read-json (str args-json))]
-                                                             extension/*current-environment*)) nil]
-                                     (catch Throwable t
-                                       [false (str (or (ex-message t) t))
-                                        (get error-kinds (:type (ex-data t)))])))})
+                                (json/write-json-str (extension/invoke-symbol-wrapper
+                                                       {:ext/name "foundation-shim-ls"}
+                                                       listing-symbol
+                                                       [(json/read-json (str args-json))]
+                                                       extension/*current-environment*)))})
 
 (def vis-extension
   (vis/extension
@@ -141,8 +124,9 @@
          "it), a file is `name  size` (`812`, `7.2k`, `2.1M`). `ls([dir, ...])` renders one "
          "blank-line separated section per directory, and a batch entry may be a per-path spec "
          "(`{\"path\": dir, \"depth\": 2}`). Dotfiles need `is_hidden=True`; gitignored "
-         "entries are never listed; a file raises `NotADirectoryError`. A path is a `str` or a "
-         "`pathlib.Path`.")
+         "entries are never listed. Use confirmed directories: one missing, protected or "
+         "non-directory path fails the batch with a host tool error. Read files with `cat`. "
+         "A path is a `str` or a `pathlib.Path`.")
        :shim/bindings ls-bridge-bindings
        :shim/source "vis-shims/ls.py"}]}))
 

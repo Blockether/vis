@@ -3,20 +3,12 @@
 # Mapping a tree is the question a model asks most, so it costs a Python call
 # inside the block it is already running rather than a wire round trip.
 # The walk stays on the HOST (fff: .gitignore/.ignore aware, directories first),
-# and errors cross the boundary as DATA - a kind the shim turns into the real
-# Python exception, since CPython does not route host exceptions through except.
+# and failures use the standard host-tool error boundary.
 
 
 def __vis_install_ls__():
     import json as _json
     import os as _os
-
-    __vis_ls_errors = {
-        "denied": PermissionError,
-        "missing": FileNotFoundError,
-        "file": NotADirectoryError,
-        "args": ValueError,
-    }
 
     def _as_path(value):
         """`value` as a filesystem string when it is path-like, else None."""
@@ -85,17 +77,17 @@ def __vis_install_ls__():
         path is a str or any os.PathLike, so pathlib.Path works wherever a
         string does.
 
-        Dotfiles need is_hidden=True; gitignored entries are never listed. A
-        file raises NotADirectoryError (read it with cat), a path that does not
-        exist raises FileNotFoundError naming the nearest existing directory,
-        and a path an extension protects raises PermissionError.
+        Dotfiles need is_hidden=True; gitignored entries are never listed.
+        Start at a known parent and batch only confirmed directories. A missing,
+        protected or non-directory path fails the batch with a host tool error.
+        A missing path names its nearest existing parent; read files with cat.
         """
         bridge = globals().get("__vis_list_directories__")
         if bridge is None:
             raise RuntimeError("ls: listing bridge not bound in this sandbox")
         one = _as_path(paths) is not None
         request = [paths] if one else list(paths)
-        env = bridge(
+        payload = bridge(
             _json.dumps(
                 {
                     "paths": [_as_spec(entry) for entry in request],
@@ -104,9 +96,7 @@ def __vis_install_ls__():
                 }
             )
         )
-        if not env[0]:
-            raise __vis_ls_errors.get(env[2], RuntimeError)(str(env[1]))
-        rows = _json.loads(str(env[1]))
+        rows = _json.loads(str(payload))
         if one:
             return _section(rows[0]["path"], rows[0]["entries"])
         return "\n\n".join(_section(r["path"], r["entries"]) for r in rows)
@@ -123,10 +113,11 @@ def __vis_install_ls__():
         "child count once depth expanded it), a file is `name  size` "
         "(`812`, `7.2k`, `2.1M`); ls([dir, ...]) -> one such section per "
         "directory in request order, blank-line separated. Dotfiles need "
-        "is_hidden=True and gitignored entries are never listed. Raises "
-        "NotADirectoryError for a file, FileNotFoundError naming the nearest "
-        "existing directory, PermissionError when an extension protects it. A "
-        "path is a str or a pathlib.Path."
+        "is_hidden=True and gitignored entries are never listed. Start at a known "
+        "parent; batch only confirmed directories. One missing, protected or "
+        "non-directory path fails the batch with a host tool error; a missing path "
+        "names the nearest existing directory. Read files with cat. A path is a "
+        "str or a pathlib.Path."
     )
 
     # ONE text for one handle: `help(ls)` and `doc("ls")` read the same

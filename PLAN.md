@@ -1034,13 +1034,20 @@ A later Linux run reproduced a native process-group readiness race: immediate PT
 could lose its kill signal before the child called setsid. A runtime readiness handshake
 passes 2000 immediate-termination attempts on both systems. The full runtime suite passes
 171 cases on macOS and on Linux with a clean staged interpreter and test environment.
-Consumer PTY tests pass. The 5048-case Linux run had one cold-start timeout; the isolated
-startup rerun passed. With the published runtime pin, the full local suite passes 5053
-cases and installed SDK HTTP/stdio passes all 8 cases. The gateway capability assertion
-now includes the JSONL type introduced by the shared-log change; its 114 cases pass.
-Version v0.1.45 is committed and its tag is immutable. Its release run 34283012944 was
-rejected before starting: the caller omitted actions:read required by the native runner
-pickup job. The job-scoped permission fix has a red/green regression and 42 passing
-release tests. Candidate v0.1.46 and all version mirrors agree; the generated audit records
-the new runtime pin. Complete native release and server deployment remain pending.
-Preserve unrelated concurrent work.
+The v0.1.46 commit passes 5053 cases on both local macOS and the staged Linux host;
+installed SDK HTTP/stdio passes all 8 cases. Release run 34299890597 passed full source CI
+and preparation, then every component stopped at the draft guard: GitHub's published-tag
+endpoint returns 404 for drafts. No component artifact was uploaded or promoted.
+The shared guard now resolves a release's REST URL by ID, verifies the requested draft and
+passes its metadata to the complete-asset gate. All 44 release cases, formatting, lint,
+reflection and workflow checks pass. Live read-only checks accept the draft, reject an
+existing published release and still reject the draft's incomplete two-asset set.
+Tags v0.1.45 and v0.1.46 remain immutable. The former failed before jobs started because the
+native caller lacked actions:read; that job-scoped permission fix is verified.
+Release v0.1.47 passed 5058 cases on local macOS and the staged Linux host, but source CI
+exposed a test fixture race: a background config reader consumed a scripted spawn policy.
+The regression now reproduces that read and confines the fixture to its owning thread;
+policy validation and the exact two-spawn load assertion are unchanged. The full 5058-case
+suite passes with the fix, as do formatting, lint and reflection. Tag v0.1.47 stays immutable;
+v0.1.48 is the next complete-release candidate.
+Complete native release and server deployment remain pending. Preserve unrelated concurrent work.

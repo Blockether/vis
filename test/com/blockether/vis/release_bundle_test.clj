@@ -1345,6 +1345,71 @@
                    (expect (str/includes? preparation "com.blockether.vis.internal.python.runtime"))
                    (expect (str/includes? preparation "(python-runtime/ensure-library!)")))))
 
+(defn- run-draft-release-action
+  [release-json view-exit]
+  (let [dir
+        (.toFile (Files/createTempDirectory "vis-draft-release-" (make-array FileAttribute 0)))
+
+        output-file
+        (io/file dir "outputs")
+
+        script
+        (-> (slurp ".github/actions/require-draft-release/action.yml")
+            (str/split #"      run: \|\n" 2)
+            second
+            (str/replace #"(?m)^        " ""))]
+
+    (try
+      (write-executable!
+        (io/file dir "gh")
+        (str
+          "#!/usr/bin/env python3\n"
+          "import os, sys\n" "args = sys.argv[1:]\n"
+          "url = 'https://api.github.com/repos/example/project/releases/42'\n"
+          "if args == ['release', 'view', 'v9.8.7', '--repo', 'example/project', '--json', 'apiUrl', '--template', '{{.apiUrl}}']:\n"
+          "    if os.environ['FIXTURE_VIEW_EXIT'] != '0': sys.exit(1)\n" "    print(url)\n"
+          "elif args == ['api', url]:\n" "    print(os.environ['FIXTURE_RELEASE'])\n"
+          "else:\n"
+          "    sys.exit('Draft releases require lookup by ID, not the published-tag endpoint')\n"))
+      (let [result
+            (run-bash ["bash" "-c" script]
+                      {"PATH" (str (.getPath dir) ":" (System/getenv "PATH"))
+                       "GITHUB_REPOSITORY" "example/project"
+                       "RELEASE_TAG" "v9.8.7"
+                       "RUNNER_TEMP" (.getPath dir)
+                       "GITHUB_OUTPUT" (.getPath output-file)
+                       "FIXTURE_VIEW_EXIT" view-exit
+                       "FIXTURE_RELEASE" release-json})
+
+            metadata-path
+            (when (.exists output-file)
+              (second (re-find #"(?m)^metadata=(.+)$" (slurp output-file))))]
+
+        (assoc result :metadata (when metadata-path (str/trim (slurp metadata-path)))))
+      (finally (delete-tree! dir)))))
+
+(defdescribe
+  draft-release-lookup-test
+  ;; The complete release stopped because GitHub's published-tag endpoint hides drafts.
+  (it "resolves draft metadata by release ID and exposes it to the complete-asset gate"
+      (let [metadata
+            "{\"tag_name\":\"v9.8.7\",\"draft\":true,\"assets\":[]}"
+
+            result
+            (run-draft-release-action metadata 0)]
+
+        (expect (zero? (:exit result)) (:output result))
+        (expect (= metadata (:metadata result)))))
+  (it "refuses published, mismatched, malformed or unavailable releases without output metadata"
+      (doseq [[metadata view-exit] [["{\"tag_name\":\"v9.8.7\",\"draft\":false}" 0]
+                                    ["{\"tag_name\":\"v9.8.6\",\"draft\":true}" 0]
+                                    ["{\"tag_name\":\"v9.8.7\",\"draft\":\"true\"}" 0]
+                                    ["invalid JSON" 0]
+                                    ["{\"tag_name\":\"v9.8.7\",\"draft\":true}" 1]]]
+        (let [result (run-draft-release-action metadata view-exit)]
+          (expect (pos? (:exit result)) metadata)
+          (expect (nil? (:metadata result)))))))
+
 (defdescribe
   complete-release-gate-test
   (it "keeps stable publication behind native, mobile, desktop and full CI verification"
@@ -1362,6 +1427,9 @@
                         "needs: [prepare, native, mobile, desktop]" "bin/verify-release-assets.py"
                         "--draft" "--draft=false --latest" "require_complete: true"]]
           (expect (str/includes? release needle) needle))
+        (expect (= 2 (count (re-seq #"uses: \./\.github/actions/require-draft-release" release))))
+        (expect (not (str/includes? release "/releases/tags/")))
+        (expect (str/includes? release "RELEASE_METADATA: ${{ steps.release.outputs.metadata }}"))
         (expect (str/includes? native "workflow_call:"))
         (expect (not (str/includes? release "git commit")))
         (expect (str/includes? mobile "require_complete:"))
