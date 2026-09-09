@@ -184,10 +184,36 @@
                  (expect (= "vis" (#'main/log-role-for-args ["python" "-c" "print(1)"])))))
 
 (defdescribe extension-command-surface-test
-             (it "keeps only listing and contributed commands under `vis-agent extension`"
+             (it "keeps listing, installation and contributed commands under `vis-agent extension`"
                  (let [names (set (map :cmd/name (registry/registered-under ["extension"])))]
                    (expect (contains? names "list"))
                    (expect (every? #(not (contains? names %)) ["scaffold" "check" "test"])))))
+
+(defdescribe
+  extension-install-command-test
+  (it
+    "passes string-keyed CLI arguments to the package installer"
+    ;; Native installation rejected --trust because keyword destructuring discarded parsed flags.
+    (doseq [[flags base trusted folder revision] [[[] "user.home" false "" nil]
+                                                  [["--trust" "--project" "--subdirectory"
+                                                    "plugins/greeting" "--revision"
+                                                    (apply str (repeat 40 "a"))] "user.dir" true
+                                                   "plugins/greeting" (apply str (repeat 40 "a"))]]]
+      (let [calls (atom [])]
+        (with-redefs [python-extensions/install-package!
+                      (fn [source options]
+                        (swap! calls conj [source options])
+                        {"name" "vis-greeter" "version" "1.0.0" "mode" "source" "next" "/reload"})]
+          (with-out-str (commandline/dispatch!
+                          (#'main/root-command)
+                          (into ["vis-agent" "extension" "install" "./vis-greeter"] flags))))
+        (let [[source options] (first @calls)]
+          (expect (= 1 (count @calls)))
+          (expect (= "./vis-greeter" source))
+          (expect (= trusted (boolean (:trust options))))
+          (expect (= folder (:subdirectory options)))
+          (expect (= revision (:revision options)))
+          (expect (= (str (System/getProperty base) "/.vis/extensions") (:directory options))))))))
 
 (defdescribe
   gateway-command-help-test

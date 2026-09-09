@@ -3827,6 +3827,49 @@
                          :cmd/usage "vis-agent extension list"
                          :cmd/run-fn cli-extensions!})
 
+(registry/register-cmd!
+  {:cmd/name "install"
+   :cmd/parent ["extension"]
+   :cmd/internal? true
+   :cmd/doc "Install a reviewed GitHub repository or local Python project."
+   :cmd/usage
+   "vis-agent extension install SOURCE --trust [--subdirectory PATH] [--revision SHA] [--project]"
+   :cmd/args [{:name "source"
+               :kind :positional
+               :type :string
+               :required true
+               :doc "HTTPS GitHub repository URL, pyproject.toml or source directory."}
+              {:name "trust"
+               :kind :flag
+               :type :boolean
+               :doc "Allow this package and its build backend to run with your permissions."}
+              {:name "subdirectory"
+               :kind :flag
+               :type :string
+               :doc
+               "Folder containing pyproject.toml and extension.py; defaults to repository root."}
+              {:name "revision"
+               :kind :flag
+               :type :string
+               :doc "Reviewed full Git commit SHA for a GitHub install."}
+              {:name "project" :kind :flag :type :boolean :doc "Install for this project only."}]
+   :cmd/run-fn (fn [{:strs [source trust subdirectory revision project]} _]
+                 (let [result (python-extensions/install-package!
+                                source
+                                {:trust trust
+                                 :subdirectory (or subdirectory "")
+                                 :revision revision
+                                 :directory (str (io/file (if project
+                                                            (System/getProperty "user.dir")
+                                                            (System/getProperty "user.home"))
+                                                          ".vis"
+                                                          "extensions"))})]
+                   (stdout! (str "Installed " (get result "name")
+                                 "@" (get result "version")
+                                 " (" (get result "mode")
+                                 "). " (get result "next")))
+                   result))})
+
 ;; Dispatcher entry point (-main)
 
 ;; Logging routing

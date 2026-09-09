@@ -315,6 +315,13 @@
                 "every declared root of a prepared git dependency must reach native-image"))))
 
 (defdescribe
+  native-extension-package-resources-test
+  (it "includes the SDK parser and host module in the native resource pattern"
+      (doseq [resource ["blockether/vis/extension.py" "blockether/vis/extension_package.py"]]
+        (expect (io/resource resource)))
+      (expect (str/includes? (slurp "build.clj") "-H:IncludeResources=blockether/vis/.*"))))
+
+(defdescribe
   native-contract-json-resources-test
   ;; A native format_code call completed its file edit, then failed to validate
   ;; the tool result because surface.json was absent from the linked image.

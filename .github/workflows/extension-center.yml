@@ -1,0 +1,95 @@
+name: Extension Center
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/vis-extension-center/**'
+      - 'resources/vis-docs/assets/**'
+      - '.github/workflows/extension-center.yml'
+  pull_request:
+    paths:
+      - 'apps/vis-extension-center/**'
+      - 'resources/vis-docs/assets/**'
+      - '.github/workflows/extension-center.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/vis-extension-center
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/vis-extension-center/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm audit --audit-level=high
+      - run: npx --no-install wrangler deploy --dry-run
+
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: extension-center
+    concurrency:
+      group: extension-center-production
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: apps/vis-extension-center
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/vis-extension-center/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Configure public bindings
+        env:
+          CENTER_D1_DATABASE_ID: ${{ vars.CENTER_D1_DATABASE_ID }}
+          CENTER_TURNSTILE_SITE_KEY: ${{ vars.CENTER_TURNSTILE_SITE_KEY }}
+          CENTER_RATE_LIMIT_NAMESPACE: ${{ vars.CENTER_RATE_LIMIT_NAMESPACE }}
+        run: node deploy.mjs
+      - name: Check runtime secret, initialize schema and deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" && test -n "$CLOUDFLARE_ACCOUNT_ID"
+          npx --no-install wrangler secret list --config .deployment.json | node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            const keys=JSON.parse(readFileSync(0,"utf8"));
+            if(!keys.some(key=>key.name==="TURNSTILE_SECRET_KEY")) throw new Error("Configure the Worker TURNSTILE_SECRET_KEY before deployment");'
+          npx --no-install wrangler d1 execute vis-extension-center --remote --config .deployment.json --file schema.sql --yes
+          npx --no-install wrangler deploy --config .deployment.json
+      - name: Check deployed HTML and catalog
+        env:
+          CENTER_URL: ${{ vars.VIS_EXTENSION_CENTER_URL }}
+        run: |
+          node --input-type=module <<'JS'
+          const url=new URL(process.env.CENTER_URL);
+          if(url.protocol!=="https:" || url.username || url.password) throw new Error("Configure VIS_EXTENSION_CENTER_URL");
+          const page=await fetch(url,{signal:AbortSignal.timeout(20000)});
+          const html=await page.text();
+          if(!page.ok || !html.includes("/assets/theme.css") || !html.includes("Extension Center")) throw new Error("Deployed HTML check failed");
+          const api=await fetch(new URL("/api/extensions",url),{signal:AbortSignal.timeout(20000)});
+          if(!api.ok || !Array.isArray((await api.json()).extensions)) throw new Error("Deployed catalog check failed");
+          console.log("Deployed HTML and catalog verified");
+          JS

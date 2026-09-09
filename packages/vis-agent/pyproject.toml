@@ -14,7 +14,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-dependencies = ["jsonschema>=4.23,<5"]
+dependencies = ["jsonschema>=4.23,<5", "packaging>=24"]
 authors = [{ name = "Blockether" }]
 keywords = ["vis", "agent", "extension", "automation", "human-in-the-loop"]
 classifiers = [

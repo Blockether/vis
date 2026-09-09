@@ -1,0 +1,2 @@
+import js from '@eslint/js';
+export default [{ignores:['dist/**','node_modules/**','center-data/**','.wrangler/**','.venv/**']},js.configs.recommended,{files:['**/*.js','**/*.mjs'],languageOptions:{globals:Object.fromEntries(['document','window','navigator','fetch','URL','URLSearchParams','Request','Response','AbortSignal','TextEncoder','TextDecoder','crypto','atob','console','process','Buffer','setTimeout'].map(name=>[name,'readonly']))}}];

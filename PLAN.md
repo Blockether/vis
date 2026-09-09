@@ -1,3 +1,76 @@
+# Extension Center
+
+Serve Extension Center from a Cloudflare Worker with D1, using the exact Vis light documentation stylesheet.
+
+## Context
+The first draft stored uploaded packages and displayed a monospace split-pane catalog.
+The requested model is link aggregation: public GitHub repositories, with pyproject.toml
+and extension.py at the root or an explicitly selected subdirectory. No archive upload,
+archive storage, registry installation, publisher token or compatibility path remains.
+Pi's package catalog provides the process reference: search/type filters, useful sorting,
+a dedicated detail page and a copyable installation command. Vis uses GitHub stars rather
+than npm download counts. Keep automatic dependency preparation and last-good reload.
+Main publication and GitHub Actions deployment were authorized in turn 12. No live gateway restart.
+
+## 1. Repository contract and installation
+- Rationale: inspect public metadata without executing repository code; install reviewed source.
+- Data: SDK extension_package, CLI, shared manifest validation.
+- Acceptance criteria: root/subdirectory support, explicit trust, pinned Git revision,
+  atomic installation, source links, no archive or registry implementation.
+- Unknowns: resolved; trusted Git execution is covered on JVM and in the native executable.
+
+## 2. Link catalog
+- Rationale: index repositories rather than distribute packages.
+- Data: Worker-rendered HTML, D1 public metadata, fixed-host GitHub API and pinned manifests.
+- Acceptance criteria: protected preview/submission, pending moderation, idempotency, bounded requests,
+  cached public reads and no secrets or direct database access in the browser.
+- Unknowns: production D1, Turnstile and dedicated Cloudflare credentials must be configured.
+
+## 3. Interface
+- Rationale: browsing should not reserve half the screen for an unselected detail pane.
+- Data: Pi catalog process; the documentation stylesheet and bundled font in resources/vis-docs/assets.
+- Acceptance criteria: shared typography, header, sidebar, content width and breakpoints; category counts,
+  search, grid/list, stars/updated/newest/name sorting, separate details, GitHub submission flow,
+  keyboard navigation, responsive layout and loading/empty/error states.
+- Unknowns: none; supported categories remain tools, providers and workflows, not unsupported Pi resources.
+
+## 4. Verification and documentation
+- Rationale: remove the old distribution flow from every consumer and prove the replacement.
+- Data: Worker/D1/UI/Lazytest coverage, browser review and Worker-rendered HTML preview.
+- Acceptance criteria: affected tests, formatting, lint/reflection, native boundary coverage,
+  root and monorepo examples; review desktop, tablet and phone without touching live services.
+- Unknowns: none beyond checks recorded below.
+
+## Plan state
+1–4 complete locally. The Python web server is removed; the Worker renders catalog/details as HTML
+and D1 separates public listings from pending submissions. Installer behavior is unchanged.
+
+Verification for the Worker application:
+- 28 tests passed: actual local workerd/D1 plus UI, including Turnstile replay/action/hostname
+  rejection, rate limits, pending isolation, cache, SSR, escaping and delayed widget loading.
+- 44 affected Clojure documentation/resource tests passed; formatting, lint and reflection passed.
+- ESLint, build, npm audit and Wrangler dry-run passed. D1 schema initialized locally only.
+- Docs, Worker and inline preview have matching measured shell geometry, fonts and colors.
+  Browser review covered 1280, 834 and 393 px, coarse input, 130% text, details and submissions.
+- Preview uses the exact Worker renderer/assets and explicit GitHub/Turnstile/API fixtures.
+- Public docs link is configured by VIS_EXTENSION_CENTER_URL; it adds no doc() entry.
+
+Production deployment is blocked on dedicated GitHub environment secrets, D1, Turnstile
+and the final Worker URL. Automatic deployment now fails closed until configured.
+
+Earlier installation verification (installer unchanged by the Worker replacement):
+- SDK and catalog: 379 passed, 9 optional tests skipped, using the prepared project interpreter.
+- Affected JVM suites: 384 passed, including dependency preparation and last-good reload.
+- Native image built; local-subdirectory and pinned GitHub installation tests passed.
+- Python formatting/lint and all 20 local documentation links/anchors passed.
+- Successful GitHub inspection tests use HTTP fixtures; real Git transport tests use local repositories.
+  A live public repository without an extension manifest correctly reports the required folder/files.
+
+Turn 12: source-filtered GitHub Actions deployment added; 30 Worker/UI/deployment tests pass.
+Main publication verification is in progress. Temporary review services remain stopped.
+
+---
+
 # Session health in app metrics
 
 Implement the approved view using measured session data, not demonstration values.

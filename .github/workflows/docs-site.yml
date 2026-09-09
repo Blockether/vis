@@ -57,13 +57,15 @@ jobs:
       # vis-docs resources on the classpath (no heavy app deps), so generation
       # is fast and deterministic.
       - name: Generate static docs site
+        env:
+          VIS_EXTENSION_CENTER_URL: ${{ vars.VIS_EXTENSION_CENTER_URL }}
         run: |
           clojure -X:deps prep
           clojure -Sdeps '{:paths ["src" "resources"]
             :deps {org.commonmark/commonmark {:mvn/version "0.24.0"}
                    org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.24.0"}
                    org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.24.0"}}}' \
-            -M -e "(require '[com.blockether.vis.internal.docs.core :as d]) (d/build-site! \"target/docs-site\")"
+            -M -e "(require '[com.blockether.vis.internal.docs.core :as d]) (d/build-site! \"target/docs-site\" {:extension-center-url (System/getenv \"VIS_EXTENSION_CENTER_URL\")})"
           test -f target/docs-site/index.html
 
       - uses: actions/upload-pages-artifact@v5

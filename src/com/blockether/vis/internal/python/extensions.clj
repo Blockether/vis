@@ -1674,6 +1674,7 @@
   (let [files (for [^File d (map io/file dirs)
                     :when (.isDirectory d)
                     ^File child (sort-by #(.getName ^File %) (.listFiles d))
+                    :when (not (str/starts-with? (.getName child) "."))
                     ^File f (cond (and (.isFile child)
                                        (str/ends-with? (.getName child) ".py")
                                        (not (test-file? child)))
@@ -1697,21 +1698,59 @@
   ^File [^File f]
   (.getParentFile (.getCanonicalFile f)))
 
+(defn- package-call
+  [expression]
+  (let [ctx (build-context "extension-package")]
+    (try (exec-in! ctx (classpath-src "blockether/vis/extension_package.py"))
+         (run-in ctx expression)
+         (finally (discard-context! ctx)))))
+
+(defn- package-version
+  []
+  (some-> (io/resource "vis/VERSION")
+          slurp
+          str/trim))
+
+(defn install-package!
+  "Admit a reviewed GitHub revision or source project for the next load."
+  [source {:keys [trust subdirectory revision directory]}]
+  (package-call (str "install(**json.loads("
+                     (python-string-literal (json/write-json-str {:source source
+                                                                  :directory directory
+                                                                  :trust (boolean trust)
+                                                                  :subdirectory (or subdirectory "")
+                                                                  :revision revision
+                                                                  :vis_version (package-version)}))
+                     "))")))
+
 (defn- extension-plan
   [^File f]
   (let [source
         (slurp f)
 
-        metadata
-        (if (str/includes? source "# /// script")
-          (let [ctx (build-context "extension-metadata")]
-            (try (exec-in! ctx (classpath-src "vis-guest/extension_metadata.py"))
-                 (run-in ctx (str "extension_metadata(" (python-string-literal source) ")"))
-                 (finally (discard-context! ctx))))
-          {})
-
         root
         (import-root f)
+
+        package?
+        (and (= "extension.py" (.getName f)) (.isFile (io/file root "pyproject.toml")))
+
+        metadata
+        (cond package?
+              (do (when (str/includes? source "# /// script")
+                    (throw (ex-info "Package entries use pyproject.toml, not PEP 723 metadata" {})))
+                  (package-call (str "inspect_source("
+                                     (python-string-literal (str root))
+                                     ", vis_version="
+                                     (if-let [version (package-version)]
+                                       (python-string-literal version)
+                                       "None")
+                                     ", python_version='.'.join(map(str, sys.version_info[:3])))")))
+              (str/includes? source "# /// script")
+              (let [ctx (build-context "extension-metadata")]
+                (try (exec-in! ctx (classpath-src "vis-guest/extension_metadata.py"))
+                     (run-in ctx (str "extension_metadata(" (python-string-literal source) ")"))
+                     (finally (discard-context! ctx))))
+              :else {})
 
         extras
         (mapv (fn [path]
@@ -1731,18 +1770,22 @@
               (get metadata "source_paths" []))
 
         project
-        (when-let [path (get metadata "project")]
-          (let [raw (io/file path)
-                dir (.getCanonicalFile (if (.isAbsolute raw) raw (io/file root path)))]
+        (if package?
+          root
+          (when-let [path (get metadata "project")]
+            (let [raw (io/file path)
+                  dir (.getCanonicalFile (if (.isAbsolute raw) raw (io/file root path)))]
 
-            (when-not (and (.isFile (io/file dir "pyproject.toml"))
-                           (.isFile (io/file dir "uv.lock")))
-              (throw (ex-info "tool.vis.project requires pyproject.toml and uv.lock"
-                              {:type ::invalid-project})))
-            dir))]
+              (when-not (and (.isFile (io/file dir "pyproject.toml"))
+                             (.isFile (io/file dir "uv.lock")))
+                (throw (ex-info "tool.vis.project requires pyproject.toml and uv.lock"
+                                {:type ::invalid-project})))
+              dir)))]
 
     {:roots (into [root] (distinct extras))
-     :dependencies (get metadata "dependencies" [])
+     :dependencies (if package? [] (get metadata "dependencies" []))
+     :automatic? package?
+     :package-metadata (when package? metadata)
      :project project}))
 
 (defn- import-root-files
@@ -1767,7 +1810,8 @@
       (if (nil? dir)
         (vec (sort-by first out))
         (let [k (.getCanonicalPath dir)]
-          (if (or (seen k) (= "__pycache__" (.getName dir)))
+          (if (or (seen k)
+                  (contains? #{"__pycache__" ".git" ".venv" "venv" "node_modules"} (.getName dir)))
             (recur more seen out)
             (let [children (vec (.listFiles dir))]
               (recur (into (vec more)
@@ -1856,7 +1900,7 @@
 
 (defn- prepare-root!
   "Snapshot source roots and prepare declared dependencies before evaluating any entry."
-  [{:keys [roots dependencies project]}]
+  [{:keys [roots dependencies project automatic? package-metadata]}]
   (let [frozen (freeze-root! roots)]
     (try
       (when (or project (seq dependencies))
@@ -1864,7 +1908,9 @@
           [result
            (try
              (if project
-               (do (python-runtime/prepared-project project) {:exit 0})
+               (do ((if automatic? python-runtime/ensure-project! python-runtime/prepared-project)
+                     project)
+                   {:exit 0})
                (python-runtime/pip-install! {:target (runtime/packages-dir) :upgrade? true}
                                             dependencies))
              (catch Throwable t
@@ -1879,7 +1925,9 @@
               (ex-info
                 "Extension dependency installation failed; check python.index_url and wheel availability"
                 {:type ::dependency-install-failed :exit (:exit result)})))))
-      (assoc frozen :roots roots)
+      (assoc frozen
+        :roots roots
+        :package-metadata package-metadata)
       (catch Throwable t (delete-tree! (:dir frozen)) (throw t)))))
 
 (defn ^:no-doc close-context!
@@ -1959,7 +2007,16 @@
             (when (nil? reg)
               (throw (ex-info (str (.getName f) " never called vis.register(vis.Extension(...))")
                               {:type ::no-registration :file path})))
-            (let [spec (registration->spec ctx reg)
+            (let [metadata (:package-metadata frozen)
+                  spec (registration->spec ctx reg)
+                  _ (when (and metadata (not= (get metadata "name") (:ext/name spec)))
+                      (throw (ex-info "Extension name must match normalized project.name" {})))
+                  spec (if metadata
+                         (assoc spec
+                           :ext/version (get metadata "version")
+                           :ext/kind (get metadata "category")
+                           :ext/description (get metadata "description"))
+                         spec)
                   validated (extension/register-extension! spec)]
 
               (tel/log! {:level :info
@@ -1970,6 +2027,7 @@
                :sha sha
                :code-sha (:code-sha frozen)
                :roots (:roots frozen)
+               :package-metadata (:package-metadata frozen)
                :snapshot (.getCanonicalPath snap)
                :source source
                :ext-name (:ext/name spec)
@@ -2023,7 +2081,8 @@
                                             (when (.isDirectory snap)
                                               {:dir snap
                                                :code-sha (:code-sha entry)
-                                               :roots (:roots entry)})))]
+                                               :roots (:roots entry)
+                                               :package-metadata (:package-metadata entry)})))]
                   (swap! loaded assoc path (dissoc rebuilt :path))
                   (close-context! dead-ctx)
                   (tel/log! {:level :info
@@ -2084,7 +2143,7 @@
          (fn [k plan f]
            (when-let [error (:error plan)]
              (throw error))
-           (let [rk [(:roots plan) (:dependencies plan) (:project plan)]]
+           (let [rk [(:roots plan) (:dependencies plan) (:project plan) (:automatic? plan)]]
              (or (get-in @roots [rk k])
                  (let [v (f plan)]
                    (swap! roots assoc-in [rk k] v)

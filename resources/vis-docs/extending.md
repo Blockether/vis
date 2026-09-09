@@ -109,9 +109,110 @@ A failed reload retains the extension definition, but does not roll back shared
 package updates. After changing installed packages, use `/reload` to rebuild the
 session workers; an already running call can retain its imported modules until it ends.
 
+### Extension Center projects
+
+Use this layout for automatic dependency preparation and GitHub discovery. Keep these
+files at repository root or together in a selected subdirectory:
+
+```text
+vis-greeter/
+  pyproject.toml
+  extension.py
+  README.md                 # optional; linked on GitHub
+  uv.lock                   # optional; recommended for repeatable resolution
+```
+
+```toml
+# pyproject.toml
+[project]
+name = "vis-greeter"
+version = "1.0.0"
+description = "Small greeting tools for Vis."
+requires-python = ">=3.11"
+dependencies = ["vis-agent>=0.1.45"]
+
+[tool.vis]
+category = "tools"
+# source_paths = ["src"]    # optional import roots within this package
+```
+
+```python
+# extension.py
+import blockether.vis.extension as vis
+
+
+def greet(name: str) -> str:
+    """Return a greeting for a name."""
+    return f"Hello, {name}!"
+
+
+vis.register(vis.Extension(
+    name="vis-greeter",
+    description="Small greeting tools for Vis.",
+    alias="greeter",
+    symbols=[vis.Symbol(greet)],
+))
+```
+
+The manifest must declare an unconditional `vis-agent` dependency. Its version
+constraint checks compatibility with the running Vis release; `requires-python`
+checks the embedded interpreter. Vis does not download another Python interpreter.
+The registered extension name must match the normalized project name. The manifest
+supplies the displayed version, description and category: `providers`, `tools` or
+`workflows`. Keep any additional Python implementation under the package directory.
+Do not combine this layout with a PEP 723 block in `extension.py`.
+
+The Extension Center aggregates public GitHub repositories. Choose **Add a repository**,
+enter an HTTPS repository URL and leave **Project folder** empty for repository root.
+For a monorepo, specify the folder containing both `pyproject.toml` and `extension.py`,
+for example `extensions/greeting`. The Worker reads metadata without executing code.
+Review the resolved commit and submit it for moderation. New entries and updates remain
+private until approved; resubmission never replaces a published listing automatically.
+Separate folders can have separate entries.
+See the [standalone app instructions](https://github.com/Blockether/vis/tree/main/apps/vis-extension-center).
+
+After reviewing the source and dependencies, copy the catalog's commit-pinned install
+command. You can also install a GitHub project's default branch or link local source.
+These examples use a placeholder public repository; replace it with your own:
+
+```bash
+vis-agent extension install https://github.com/example/vis-greeter --trust
+vis-agent extension install https://github.com/example/extensions --subdirectory tools/greeting --trust
+vis-agent extension install ./vis-greeter/pyproject.toml --project --trust
+```
+
+For a reviewed immutable source version, add `--revision` followed by its full lowercase
+40-character Git commit SHA. GitHub installs require Git on `PATH`; only HTTPS
+`github.com/owner/repository` URLs are accepted. Specify a folder separately instead of
+pasting a GitHub file or tree URL. Submodules and Git LFS are not fetched. Keep required
+source and portable dependency paths within the selected project. Symlinks are not
+accepted in downloaded projects; selected contents are limited to 4096 entries and 64 MiB.
+
+Installation defaults to `~/.vis/extensions/`; `--project` selects the current
+workspace's `.vis/extensions/`. A Git checkout is staged and only the selected project
+is installed atomically. A local checkout is linked rather than copied, so edits become
+available on `/reload`. Existing destinations are never overwritten. To replace one,
+explicitly remove the installed link or directory first, preserving source work.
+The catalog stores no source bundles and is not consulted during installation.
+
+At gateway startup and on `/reload`, Vis automatically prepares these projects using
+`uv` from `PATH`. It creates `uv.lock` if absent, respects an existing lock, and skips
+installation when its readiness record still matches the project, runtime, index and
+installed distributions. A stale supplied lock is an error: update it deliberately
+with `uv lock` rather than expecting reload to rewrite it. Source-only edits need
+`/reload`, not another install command. Use `python.index_url` to select the index.
+The connecting terminal reports startup preparation and dependency stages; status
+is also included in authenticated gateway administration responses.
+
+`--trust` permits extension code and dependency build backends to run with your
+user permissions. Validation is not a security review. Dependencies use the shared
+`~/.vis/python/packages` directory, not isolated per-extension environments. A failed
+reload retains the last working extension definition but cannot roll back shared
+package changes. Fix the dependency error before retrying `/reload`.
+
 ### uv projects
 
-For a package managed by uv, keep normal Python packaging metadata in the package
+For a manually prepared uv package, keep normal Python packaging metadata in the package
 and a thin Vis entry file beside the workspace. The implementation does not need
 to depend on Vis; only the entry imports the host-provided `blockether.vis.extension`.
 
@@ -222,7 +323,7 @@ allowed [workspace filesystem root](jail.md#filesystem-access).
 Keep the checkout at its installed path; moving it requires another sync.
 
 `~/.vis/python/packages` is shared across projects, so dependency versions are
-not isolated. Start and `/reload` do not install uv projects. Changes to
+not isolated. Start and `/reload` do not install these manually selected uv projects. Changes to
 `pyproject.toml`, `uv.lock`, runtime, default index or installed distribution metadata
 require another explicit sync. A failed load does not roll back shared package changes.
 

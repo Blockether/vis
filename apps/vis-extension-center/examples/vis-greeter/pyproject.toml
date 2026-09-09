@@ -1,0 +1,9 @@
+[project]
+name = "vis-greeter"
+version = "1.0.0"
+description = "Small greeting tools for Vis."
+requires-python = ">=3.11"
+dependencies = ["vis-agent>=0.1.45"]
+
+[tool.vis]
+category = "tools"

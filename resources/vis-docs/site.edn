@@ -54,6 +54,7 @@
      :page "jvm-native-image"
      :title "Building the native binary"}]
    :section "Reference"}]
- :site {:repo "https://github.com/Blockether/vis"
+ :site {:extension-center {:section "Community" :title "Extension Center"}
+        :repo "https://github.com/Blockether/vis"
         :tagline "A coding agent for your projects."
         :title "Vis"}}

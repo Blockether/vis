@@ -268,3 +268,41 @@
             (is (= before @calls)))))
       (finally (doseq [file (reverse (file-seq dir))]
                  (io/delete-file file true))))))
+
+(deftest automatic-project-preparation-test
+  (let [project
+        (temp-dir "vis-auto-project")
+
+        ready?
+        (atom false)
+
+        calls
+        (atom [])]
+
+    (try (with-redefs-fn
+           {#'python-runtime/run-uv! (fn [_ args]
+                                       (swap! calls conj :resolve)
+                                       (is (= ["uv" "lock"] (vec (take 2 args))))
+                                       (spit (io/file project "uv.lock") "version = 1"))
+            #'python-runtime/prepared-project
+            (fn [_]
+              (if @ready?
+                project
+                (throw (ex-info
+                         "not ready"
+                         {:type
+                          :com.blockether.vis.internal.python.runtime/project-sync-required}))))
+            #'python-runtime/sync-project! (fn [_ _]
+                                             (swap! calls conj :install)
+                                             (reset! ready? true))}
+           (fn []
+             (is (= project (python-runtime/ensure-project! project)))
+             (is (= [:resolve :install] @calls))
+             (is (= project (python-runtime/ensure-project! project)))
+             (is (= [:resolve :install] @calls) "An unchanged project never runs an installer")
+             (is (= "version = 1" (slurp (io/file project "uv.lock"))))
+             (is (= "ready"
+                    (:stage (first (filter #(= (.getName project) (:name %))
+                                           (python-runtime/preparation-status))))))))
+         (finally (doseq [file (reverse (file-seq project))]
+                    (io/delete-file file true))))))

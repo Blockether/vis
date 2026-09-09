@@ -316,6 +316,49 @@
          {:exit 0 :packages (str packages)}
          (finally (.delete pointer)))))
 
+(defonce ^:private preparation (atom {}))
+
+(defonce ^:private preparation-lock (Object.))
+
+(defn preparation-status
+  "Public, credential-free preparation stages keyed by package display name."
+  []
+  (vals @preparation))
+
+(defn- preparation-stage!
+  [^File project stage]
+  (let [name (.getName project)]
+    (swap! preparation assoc name {:name name :stage stage})
+    (.println config/original-stderr (str "[vis extensions] " name ": " stage))
+    (.flush config/original-stderr)))
+
+(defn ensure-project!
+  "Automatically prepare a trusted package, reusing readiness when unchanged.
+   Resolve a missing lock, never rewrite a supplied lock. Installer diagnostics
+   stay private because index credentials may be present in them."
+  [^File project]
+  (locking preparation-lock
+    (try
+      (when-not (.isFile (io/file project "uv.lock"))
+        (preparation-stage! project "resolving")
+        (run-uv! project
+                 (into ["uv" "lock" "--project" (str project) "--python"
+                        (Interpreter/pythonExecutable) "--no-python-downloads"]
+                       (index-args "--default-index"))))
+      (let [ready? (try (prepared-project project)
+                        true
+                        (catch clojure.lang.ExceptionInfo e
+                          (if (= ::project-sync-required (:type (ex-data e))) false (throw e))))]
+        (when-not ready? (preparation-stage! project "installing") (sync-project! project []))
+        (preparation-stage! project "ready")
+        (prepared-project project))
+      (catch Throwable _
+        (preparation-stage! project "failed")
+        (throw
+          (ex-info
+            "Extension preparation failed; check uv availability, Python compatibility and indexes. If pyproject.toml changed, update uv.lock and /reload."
+            {:type ::project-preparation-failed}))))))
+
 (defn uv-command!
   "Handle the explicit `python uv sync` command; refuse environment/interpreter overrides."
   [args]

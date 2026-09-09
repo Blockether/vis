@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.docs.core-test
   "Documentation rendering, navigation, supported features and Python examples."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.docs.core :as docs]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -132,6 +133,22 @@
                      (expect (str/includes? html "<thead>"))
                      (expect (str/includes? html "initial-scale=1,viewport-fit=cover"))
                      (expect (not (re-find #"user-scalable=no|maximum-scale=" html)))))))
+
+(defdescribe shared-theme-test
+             (it "embeds the same stylesheet as Extension Center, with mode-specific font URLs"
+                 (let [{:keys [pages] :as site}
+                       (docs/collect)
+
+                       theme
+                       (slurp (io/resource "vis-docs/assets/theme.css"))]
+
+                   (doseq [[mode prefix] [[:static "assets/fonts/"] [:live "/docs/assets/fonts/"]]]
+                     (let [html (docs/page-html site (first pages) mode)
+                           stylesheet (second (re-find #"(?s)<style>(.*?)</style>" html))]
+
+                       (expect (= (str/replace theme "./fonts/" prefix) stylesheet))
+                       (expect (some? (io/resource
+                                        "vis-docs/assets/fonts/jetbrains-mono.woff2"))))))))
 
 (defdescribe getting-started-page-test
              (it "uses ordinary documentation links and one install command in both outputs"
@@ -488,3 +505,18 @@
         (expect (seq pages))
         (expect (empty? broken)
                 (str/join "\n" (cons "pages that break the docs page contract:" broken))))))
+
+(defdescribe extension-center-public-link-test
+             (it
+               "links the separate Worker only from the public site, never the live docs or corpus"
+               (let [site
+                     (assoc (docs/collect) :extension-center-url "https://center.example.com/")
+
+                     page
+                     (first (:pages site))]
+
+                 (expect (str/includes? (docs/page-html site page :static)
+                                        "href=\"https://center.example.com/\""))
+                 (expect (not (str/includes? (docs/page-html site page :live)
+                                             "https://center.example.com/")))
+                 (expect (not-any? #(= "extension-center" (:slug %)) (:pages site))))))

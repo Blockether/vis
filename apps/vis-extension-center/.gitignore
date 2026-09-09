@@ -1,0 +1,13 @@
+/node_modules/
+/dist/
+/center-data/
+/.wrangler/
+/.dev.vars
+/.dev.vars.*
+/.env
+/.env.*
+/.deployment.json
+# Existing local review environments are never published.
+/.venv/
+/__pycache__/
+/.pytest_cache/

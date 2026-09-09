@@ -43,6 +43,7 @@
             [com.blockether.vis.internal.sandbox.gateway :as gateway-sandbox]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.channel.slash :as slash]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.util :as util]
@@ -272,6 +273,21 @@
         (util/sha256-hex seed)]
 
     (subs raw 0 16)))
+
+(defonce ^:private extension-startup (atom {:stage "idle"}))
+
+(defn- extension-startup-status
+  []
+  (assoc @extension-startup :packages (vec (python-runtime/preparation-status))))
+
+(defn- prepare-startup-extensions!
+  "Load after HTTP starts so clients can report preparation without a health timeout."
+  []
+  (try (reset! extension-startup (assoc (select-keys
+                                          (python-extensions/ensure-python-extensions-loaded!)
+                                          [:loaded :failed])
+                                   :stage "ready"))
+       (catch Throwable _ (reset! extension-startup {:stage "failed"}))))
 
 (defn- status-map
   []
@@ -1219,7 +1235,8 @@
                                    {:replaced replaced
                                     :replacements-total replacement-total
                                     :leases (count (:clients @server-state))})))
-    (json-response {:client_id client-id :status (status-map)})))
+    (json-response
+      {:client_id client-id :status (status-map) :extensions (extension-startup-status)})))
 
 (defn- client-release-handler
   [request]
@@ -1243,7 +1260,7 @@
   ;; (`vis-agent gateway stop --if-idle`, the TUI, a health probe) also revives a
   ;; reaper that died, so the answer describes a daemon that can still act on it.
   (ensure-idle-reaper!)
-  (json-response (status-map)))
+  (json-response (assoc (status-map) :extensions (extension-startup-status))))
 
 (defn- stop-handler
   "POST /v1/admin/stop. Logs WHO asked and what it costs BEFORE stopping: this
@@ -5005,6 +5022,9 @@
         auto-host
         (when (and pair? (str/blank? host)) (pairing/pair-bind-host))
 
+        _
+        (reset! extension-startup {:stage "initializing"})
+
         {:keys [port host token-file require-token?]}
         (start! {:port (some-> port
                                parse-long)
@@ -5065,5 +5085,6 @@
                                       (str/join " <- " (get culprit "frames"))]))))
                  (stop!))
                "vis-gateway-shutdown"))
+    (prepare-startup-extensions!)
     @serve-exit
     (System/exit 0)))

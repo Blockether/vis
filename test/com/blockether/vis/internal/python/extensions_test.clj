@@ -3652,3 +3652,57 @@ vis.register(vis.Extension(
           (expect (= "lint" (get-in first-step ["__vis_attrs__" "name"])))
           (expect (= "fixture" (get-in first-step ["__vis_attrs__" "output_tail"])))
           (expect (= 1 (get-in first-step ["__vis_attrs__" "exit_code"]))))))))
+
+(defdescribe
+  pyproject-package-reload-test
+  (it
+    "prepares a pyproject package automatically and reloads source with last-good fallback"
+    (let [prepares
+          (atom 0)
+
+          fail?
+          (atom false)]
+
+      (with-redefs [python-runtime/ensure-project!
+                    (fn [_]
+                      (swap! prepares inc)
+                      (when @fail? (throw (ex-info "fixture preparation failure" {}))))]
+        (with-fresh-loaded
+          {"greeter/pyproject.toml"
+           (str
+             "[project]\nname='vis-greeter'\nversion='1.0.0'\n"
+             "description='Greeting tools'\nrequires-python='>=3.11'\n"
+             "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='tools'\nsource_paths=['src']\n")
+           "greeter/extension.py"
+           (str "import blockether.vis.extension as vis\nfrom center_greeter import hello\n"
+                "vis.register(vis.Extension(name='vis-greeter', description='Greeting tools', "
+                "alias='greeter', symbols=[vis.Symbol(hello)]))\n")
+           "greeter/src/center_greeter.py"
+           "def hello():\n    \"Return the greeting.\"\n    return 'one'\n"}
+          (fn [result {:keys [ext-dir]}]
+            (expect (= 0 (:failed result)))
+            (expect (= 1 @prepares))
+            (expect (= "1.0.0" (:ext/version (registered "vis-greeter"))))
+            (expect (= "tools" (:ext/kind (registered "vis-greeter"))))
+            (let [invoke #(:result ((symbol-fn (registered "vis-greeter") 'hello)))
+                  opts {:dirs [(str ext-dir)]}]
+
+              (expect (= "one" (invoke)))
+              (write-ext! ext-dir
+                          "greeter/src/center_greeter.py"
+                          "def hello():\n    \"Return the greeting.\"\n    return 'two'\n")
+              (expect (= "one" (invoke)))
+              (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
+              (expect (= "two" (invoke)))
+              (reset! fail? true)
+              (expect (= 1 (:failed (pyx/reload-python-extensions! opts))))
+              (expect (= "two" (invoke))))))))))
+
+(defdescribe package-staging-is-not-scanned-test
+             (it "ignores an incomplete hidden install directory"
+                 (with-fresh-loaded {".install-incomplete/extension.py"
+                                     "raise RuntimeError('not admitted')
+"}
+                                    (fn [result _]
+                                      (expect (= 0 (:failed result)))
+                                      (expect (= 0 (:loaded result)))))))

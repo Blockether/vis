@@ -1,0 +1,182 @@
+[
+  {
+    "id": "3629461d9a4893c280a4596f",
+    "name": "vis-github",
+    "version": "1.0.0",
+    "description": "Work with issues, pull requests and repository code without leaving Vis.",
+    "category": "tools",
+    "requires_python": ">=3.11",
+    "dependencies": [
+      "vis-agent>=0.1.0"
+    ],
+    "source_paths": [],
+    "owner": "example",
+    "repository": "example/github-tools",
+    "repository_url": "https://github.com/example/github-tools",
+    "subdirectory": "",
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_url": "https://github.com/example/github-tools/tree/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "manifest_url": "https://github.com/example/github-tools/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pyproject.toml",
+    "readme_url": "https://github.com/example/github-tools/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/README.md",
+    "stars": 248,
+    "topics": [
+      "tools",
+      "github-tools"
+    ],
+    "license": "MIT",
+    "archived": false,
+    "updated_at": "2026-02-10T12:00:00Z",
+    "added_at": "2026-01-10T12:00:00Z",
+    "checked_at": "2026-02-20T12:00:00Z"
+  },
+  {
+    "id": "de8810d599294874fc29465c",
+    "name": "vis-web-search",
+    "version": "1.0.0",
+    "description": "Search the web and bring cited sources into your conversation.",
+    "category": "tools",
+    "requires_python": ">=3.11",
+    "dependencies": [
+      "vis-agent>=0.1.0"
+    ],
+    "source_paths": [],
+    "owner": "example",
+    "repository": "example/web-search",
+    "repository_url": "https://github.com/example/web-search",
+    "subdirectory": "",
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_url": "https://github.com/example/web-search/tree/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "manifest_url": "https://github.com/example/web-search/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pyproject.toml",
+    "readme_url": "https://github.com/example/web-search/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/README.md",
+    "stars": 186,
+    "topics": [
+      "tools",
+      "web-search"
+    ],
+    "license": "MIT",
+    "archived": false,
+    "updated_at": "2026-02-11T12:00:00Z",
+    "added_at": "2026-01-11T12:00:00Z",
+    "checked_at": "2026-02-20T12:00:00Z"
+  },
+  {
+    "id": "b2a6839b66a263ce796cdc75",
+    "name": "vis-code-review",
+    "version": "1.0.0",
+    "description": "Run a repeatable review of your changes before you open a pull request.",
+    "category": "workflows",
+    "requires_python": ">=3.11",
+    "dependencies": [
+      "vis-agent>=0.1.0"
+    ],
+    "source_paths": [],
+    "owner": "example",
+    "repository": "example/code-review",
+    "repository_url": "https://github.com/example/code-review",
+    "subdirectory": "",
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_url": "https://github.com/example/code-review/tree/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "manifest_url": "https://github.com/example/code-review/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pyproject.toml",
+    "readme_url": "https://github.com/example/code-review/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/README.md",
+    "stars": 94,
+    "topics": [
+      "workflows",
+      "code-review"
+    ],
+    "license": "MIT",
+    "archived": false,
+    "updated_at": "2026-02-12T12:00:00Z",
+    "added_at": "2026-01-12T12:00:00Z",
+    "checked_at": "2026-02-20T12:00:00Z"
+  },
+  {
+    "id": "47250cd32a9e0c54ab030bca",
+    "name": "vis-local-models",
+    "version": "1.0.0",
+    "description": "Connect Vis to models running on your own machine.",
+    "category": "providers",
+    "requires_python": ">=3.11",
+    "dependencies": [
+      "vis-agent>=0.1.0"
+    ],
+    "source_paths": [],
+    "owner": "example",
+    "repository": "example/local-models",
+    "repository_url": "https://github.com/example/local-models",
+    "subdirectory": "",
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_url": "https://github.com/example/local-models/tree/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "manifest_url": "https://github.com/example/local-models/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pyproject.toml",
+    "readme_url": "https://github.com/example/local-models/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/README.md",
+    "stars": 132,
+    "topics": [
+      "providers",
+      "local-models"
+    ],
+    "license": "MIT",
+    "archived": false,
+    "updated_at": "2026-02-13T12:00:00Z",
+    "added_at": "2026-01-13T12:00:00Z",
+    "checked_at": "2026-02-20T12:00:00Z"
+  },
+  {
+    "id": "8871c37b77e3e06776e2546b",
+    "name": "vis-browser",
+    "version": "1.0.0",
+    "description": "Inspect pages, test interactions and automate browser workflows.",
+    "category": "tools",
+    "requires_python": ">=3.11",
+    "dependencies": [
+      "vis-agent>=0.1.0"
+    ],
+    "source_paths": [],
+    "owner": "example",
+    "repository": "example/browser-tools",
+    "repository_url": "https://github.com/example/browser-tools",
+    "subdirectory": "",
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_url": "https://github.com/example/browser-tools/tree/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "manifest_url": "https://github.com/example/browser-tools/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pyproject.toml",
+    "readme_url": "https://github.com/example/browser-tools/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/README.md",
+    "stars": 217,
+    "topics": [
+      "tools",
+      "browser-tools"
+    ],
+    "license": "MIT",
+    "archived": false,
+    "updated_at": "2026-02-14T12:00:00Z",
+    "added_at": "2026-01-14T12:00:00Z",
+    "checked_at": "2026-02-20T12:00:00Z"
+  },
+  {
+    "id": "11f5a4574f73fb8924d4a590",
+    "name": "vis-greeter",
+    "version": "1.0.0",
+    "description": "A small, runnable example for your first Vis extension.",
+    "category": "tools",
+    "requires_python": ">=3.11",
+    "dependencies": [
+      "vis-agent>=0.1.0"
+    ],
+    "source_paths": [],
+    "owner": "example",
+    "repository": "example/extension-examples",
+    "repository_url": "https://github.com/example/extension-examples",
+    "subdirectory": "extensions/greeting",
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_url": "https://github.com/example/extension-examples/tree/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/extensions/greeting",
+    "manifest_url": "https://github.com/example/extension-examples/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/extensions/greeting/pyproject.toml",
+    "readme_url": "https://github.com/example/extension-examples/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/extensions/greeting/README.md",
+    "stars": 12,
+    "topics": [
+      "tools",
+      "extension-examples"
+    ],
+    "license": "MIT",
+    "archived": false,
+    "updated_at": "2026-02-15T12:00:00Z",
+    "added_at": "2026-01-15T12:00:00Z",
+    "checked_at": "2026-02-20T12:00:00Z"
+  }
+]

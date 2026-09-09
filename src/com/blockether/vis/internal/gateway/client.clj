@@ -591,6 +591,35 @@
                                  (release-client!))
                                "vis-gateway-client-shutdown"))))
 
+(defn- await-extension-startup!
+  "Report a cold gateway's package preparation while retaining its client lease."
+  [entry initial]
+  (when (= "initializing" (get-in initial ["extensions" "stage"]))
+    (let [deadline (+ (util/now-ms) 600000)]
+      (binding [*out* *err*]
+        (println "[vis extensions] preparing gateway extensions…")
+        (loop [status initial
+               seen #{}]
+
+          (let [{:strs [stage packages loaded failed]} (get status "extensions")
+                fresh (remove seen packages)]
+
+            (doseq [{:strs [name stage]} fresh]
+              (println (str "[vis extensions] " name ": " stage)))
+            (flush)
+            (if (= "initializing" stage)
+              (if (< (util/now-ms) deadline)
+                (do (Thread/sleep 200)
+                    (recur (send-json-with-entry! entry "GET" "/v1/admin/status" nil)
+                           (into seen fresh)))
+                (throw (ex-info
+                         "Extension preparation is still running; inspect gateway status and retry."
+                         {:type :gateway/extension-preparation-timeout})))
+              (do (println (if (= "ready" stage)
+                             (str "[vis extensions] " loaded " loaded, " failed " failed")
+                             "[vis extensions] preparation failed; run vis-agent doctor"))
+                  (flush)))))))))
+
 (defn- ensure-client!
   "Register this JVM as a daemon client exactly once. This is the refcount lease
    that keeps a detached gateway alive while a TUI/client process is alive; the
@@ -619,7 +648,8 @@
             (throw (ex-info "gateway client registration returned no client_id"
                             {:type :gateway/invalid-client-registration})))
           (reset! client-id registered-id)
-          (ensure-release-hook!)))))
+          (ensure-release-hook!)
+          (await-extension-startup! entry response)))))
   @client-id)
 
 (defn- loopback-host?

@@ -699,6 +699,132 @@
              (expect (not (.exists (io/file project ".venv")))))
            (finally (delete-tree! dir))))))
 
+(defdescribe
+  native-installs-extension-center-source-test
+  (it
+    "loads the packaged SDK parser and installs only after explicit trust"
+    (let [bin
+          (require-binary)
+
+          dir
+          (temp-dir "vis-native-extension-center")
+
+          project
+          (doto (io/file dir "source/plugins/greeting") .mkdirs)
+
+          destination
+          (io/file dir ".vis/extensions/native-center-example")
+
+          args
+          [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir)) "extension" "install"
+           (str (io/file dir "source")) "--subdirectory" "plugins/greeting" "--project"]]
+
+      (try (spit (io/file project "pyproject.toml")
+                 (str "[project]\nname='native-center-example'\nversion='1.0.0'\n"
+                      "description='Native catalog installation fixture'\n"
+                      "requires-python='>=3.11'\ndependencies=['vis-agent>=0.1.0']\n"
+                      "[tool.vis]\ncategory='tools'\n"))
+           (spit (io/file project "extension.py")
+                 "raise RuntimeError('install must not execute code')\n")
+           (let [refused (run-binary dir args 60)]
+             (expect (not= 0 (:exit refused)))
+             (expect (not (.exists destination))))
+           (let [installed (run-binary dir (conj args "--trust") 60)]
+             (expect (= 0 (:exit installed)) (:output installed))
+             (expect (Files/isSymbolicLink (.toPath destination)))
+             (expect (= (.getCanonicalFile project) (.getCanonicalFile destination)))
+             (expect (not (.exists (io/file project "uv.lock")))))
+           (finally (delete-tree! dir))))))
+
+(defdescribe
+  native-installs-github-project-test
+  (it
+    "fetches a pinned Git revision and installs only its selected project through the binary"
+    (let [bin
+          (require-binary)
+
+          dir
+          (temp-dir "vis-native-github")
+
+          repository
+          (doto (io/file dir "repository") .mkdirs)
+
+          project
+          (doto (io/file repository "plugins/greeting") .mkdirs)
+
+          shim-dir
+          (doto (io/file dir "fixture-bin") .mkdirs)
+
+          git
+          (some (fn [path]
+                  (let [candidate (io/file path "git")]
+                    (when (.canExecute candidate) (.getAbsolutePath candidate))))
+                (str/split (System/getenv "PATH") (re-pattern File/pathSeparator)))
+
+          url
+          "https://github.com/example/extensions"
+
+          environment
+          (native-environment)
+
+          destination
+          (io/file dir ".vis/extensions/native-github-example")]
+
+      (try
+        (spit (io/file project "pyproject.toml")
+              (str "[project]\nname='native-github-example'\nversion='1.0.0'\n"
+                   "description='Native Git source fixture'\nrequires-python='>=3.11'\n"
+                   "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='tools'\n"))
+        (spit (io/file project "extension.py")
+              "raise RuntimeError('install must not execute source')\n")
+        (spit (io/file repository "unrelated.txt") "Outside selected project")
+        (doseq [args [["init" "--quiet"] ["add" "."]
+                      ["-c" "user.name=Test Author" "-c" "user.email=test@example.com" "commit"
+                       "--quiet" "-m" "fixture"]]]
+          (let [result (run-binary dir (into [git "-C" (str repository)] args) 60)]
+            (expect (= 0 (:exit result)) (:output result))))
+        (let [revision
+              (str/trim (:output
+                          (run-binary dir [git "-C" (str repository) "rev-parse" "HEAD"] 60)))
+
+              shim
+              (io/file shim-dir "git")]
+
+          ;; Replace transport only; the SDK still executes real Git in its trusted native worker.
+          (spit
+            shim
+            (str
+              "#!/usr/bin/env python3\nimport os, sys\n"
+              "args = ["
+              (pr-str (str repository))
+              " if a == "
+              (pr-str url)
+              " else 'protocol.file.allow=always' if a == 'protocol.file.allow=never' else a for a in sys.argv[1:]]\n"
+              "os.execv("
+              (pr-str git)
+              ", ["
+              (pr-str git)
+              ", *args])\n"))
+          (.setExecutable shim true)
+          (with-redefs [native-environment (constantly (assoc environment
+                                                         "PATH" (str shim-dir
+                                                                     File/pathSeparator
+                                                                     (System/getenv "PATH"))))]
+            (let [installed (run-binary dir
+                                        [(.getAbsolutePath bin)
+                                         (str "-Duser.home=" (.getAbsolutePath dir)) "extension"
+                                         "install" url "--subdirectory" "plugins/greeting"
+                                         "--revision" revision "--project" "--trust"]
+                                        120)]
+              (expect (= 0 (:exit installed)) (:output installed))
+              (expect (str/includes? (:output installed) "(github)"))
+              (expect (not (Files/isSymbolicLink (.toPath destination))))
+              (expect (= (slurp (io/file project "extension.py"))
+                         (slurp (io/file destination "extension.py"))))
+              (expect (not (.exists (io/file destination ".git"))))
+              (expect (not (.exists (io/file destination "unrelated.txt")))))))
+        (finally (delete-tree! dir))))))
+
 (defn- package-check-result
   [stdout]
   (let [line (last (filter #(str/starts-with? % "PACKAGE_CHECK ") (str/split-lines stdout)))]

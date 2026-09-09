@@ -1102,7 +1102,7 @@
              ;; the same file PyPI ships as `vis-agent`. `vis/VERSION` above is an
              ;; exact resource, so the module needs its own pattern. The Python host
              ;; contract beside it rides in on the `.*\\.edn$` pattern.
-             "-H:IncludeResources=vis/.*\\.py$"
+             "-H:IncludeResources=blockether/vis/.*\\.py$"
              ;; vendored Prism highlighter, inlined into standalone HTML
              ;; transcript exports at RUNTIME via io/resource.
              "-H:IncludeResources=vis-transcript/.*"

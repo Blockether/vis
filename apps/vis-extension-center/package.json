@@ -1,0 +1,30 @@
+{
+  "name": "vis-extension-center",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && wrangler dev --ip 127.0.0.1 --port 4178",
+    "build": "node build.mjs",
+    "db:init": "wrangler d1 execute vis-extension-center --local --file schema.sql",
+    "moderate": "node moderate.mjs",
+    "test": "npm run build && vitest run",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "esbuild": "0.28.2",
+    "eslint": "10.10.0",
+    "jsdom": "29.1.1",
+    "miniflare": "5.20260908.0-alpha",
+    "vite": "8.1.5",
+    "vitest": "4.1.11",
+    "wrangler": "4.130.0"
+  },
+  "dependencies": {
+    "smol-toml": "1.8.0"
+  },
+  "overrides": {
+    "sharp": "0.35.4"
+  }
+}
