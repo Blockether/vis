@@ -1,71 +1,11 @@
 # vis-agent
 
-Python SDK for [Vis](https://github.com/Blockether/vis). Add tools to an agent
-or control its sessions from Python.
+Python SDK for Vis extensions and agent sessions.
 
-## Install
-
-Requires Python 3.11+.
-
-```bash
+```sh
 pip install vis-agent
 ```
 
-The package is imported as `blockether.vis`. It does not include the Vis executable.
+Requires Python 3.11+. The Vis executable is installed separately.
 
-## Write an extension
-
-Start with the [extension quickstart](https://github.com/Blockether/vis/blob/main/resources/vis-docs/extending.md)
-and its [tested package](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter). It includes a thin entrypoint,
-typed Python results, a machine-readable tool contract and a bundled skill.
-The canonical guides cover [design](https://github.com/Blockether/vis/blob/main/resources/vis-docs/extension-design.md),
-[packaging](https://github.com/Blockether/vis/blob/main/resources/vis-docs/extension-packages.md),
-[API details](https://github.com/Blockether/vis/blob/main/resources/vis-docs/extension-api.md)
-and [troubleshooting](https://github.com/Blockether/vis/blob/main/resources/vis-docs/extension-troubleshooting.md).
-The same pages are available through Vis's `doc()`.
-
-## Connect to a gateway
-
-Use a running Vis gateway and its access token:
-
-```python
-import os
-from blockether.vis.engine import GatewayClient
-
-with GatewayClient(
-    "https://gateway.example.com", token=os.environ["VIS_TOKEN"]
-) as client:
-    session = client.create_session(title="Python API")
-    turn = session.send("Describe this project")
-    result = turn.wait(timeout=120)
-    print(result)
-```
-
-The gateway needs a configured model provider. Closing the client leaves its
-sessions intact. A wait timeout does not cancel the turn; use `turn.cancel()`.
-
-## Run a local engine
-
-Requires a separately installed Vis executable with `sdk-stdio` support
-(Linux or macOS) and a configured model provider.
-
-```python
-from blockether.vis.engine import LocalEngine
-
-with LocalEngine(executable="/path/to/vis-agent", root="/path/to/project") as engine:
-    session = engine.create_session(title="Local Python API")
-    result = session.send("Describe this project").wait(timeout=120)
-    print(result)
-```
-
-`LocalEngine` uses the same session API as `GatewayClient`. It starts a private
-process and creates a temporary database; exiting the context stops the process
-and removes the database.
-
-## Documentation
-
-- [Extensions: tools, input forms, hooks and providers](https://github.com/Blockether/vis/blob/main/resources/vis-docs/extending.md)
-- [Gateway setup and API](https://github.com/Blockether/vis/blob/main/resources/vis-docs/gateway.md)
-- [Vis installation](https://github.com/Blockether/vis#readme)
-
-License: Apache-2.0.
+[Documentation](https://vis.blockether.com)

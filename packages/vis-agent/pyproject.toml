@@ -26,7 +26,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Blockether/vis"
+Homepage = "https://vis.blockether.com"
+Documentation = "https://vis.blockether.com"
 Source = "https://github.com/Blockether/vis"
 Issues = "https://github.com/Blockether/vis/issues"
 

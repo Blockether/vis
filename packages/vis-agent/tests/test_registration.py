@@ -263,11 +263,11 @@ vis.register(
     assert updates[-1]["content"] == [{"type": "text", "text": result.text}]
 
 
-def test_sdk_readme_links_to_canonical_authoring_guides():
+def test_sdk_readme_links_to_documentation_site():
     from pathlib import Path
 
     readme = (Path(__file__).parents[1] / "README.md").read_text()
     # #176: executable examples live in examples/greeter and test_authoring.py.
-    assert "extending" in readme
-    assert "extension-design" in readme
-    assert "vis.Extension(" not in readme
+    assert "[Documentation](https://vis.blockether.com)" in readme
+    assert "pip install vis-agent" in readme
+    assert "```python" not in readme
