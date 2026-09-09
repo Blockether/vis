@@ -1251,6 +1251,12 @@ published or retagged; v0.1.54 includes these fixes and the bounded-cache workfl
   all 29 real SDK/local cases and all 200 gateway cases pass, with clean formatting, lint
   and reflection checks. This correction changes tests only; the v0.1.55 native candidate
   and the independent Apple publication blocker remain unchanged.
+- Main CI [34408559005](https://github.com/Blockether/vis/actions/runs/34408559005)
+  passes both real SDK jobs, but exposes a separate macOS test-port race. The fixtures
+  released a probed port before Jetty bound it. They now bind Jetty directly on port zero
+  and read the assigned port; the paired-bind test keeps the primary connector open while
+  adding the same-port loopback mirror. All HTTP and streaming assertions remain intact.
+  All 114 server cases, formatting, lint and reflection checks pass locally.
 
 ---
 

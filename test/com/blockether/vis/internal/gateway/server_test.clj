@@ -2543,18 +2543,28 @@
               (.getHostAddress a)))
        first))
 
+(defn- bound-port
+  [^org.eclipse.jetty.server.Server server]
+  (.getLocalPort ^org.eclipse.jetty.server.ServerConnector (first (.getConnectors server))))
+
 (deftest pair-bind-still-answers-on-loopback
   (testing
     "a concrete non-loopback bind (what --pair picks) also serves 127.0.0.1,
             so the local TUI attaches to THIS gateway instead of seeing a free port
             and spawning a second one"
     (if-let [host (non-loopback-ipv4)]
-      (let [port (with-open [s (java.net.ServerSocket. 0)]
-                   (.getLocalPort s))
-            server
-            (jetty/run-jetty
-              (constantly {:status 200 :headers {} :body "ok"})
-              {:port port :host host :join? false :configurator ((rv 'gateway-configurator) port)})]
+      ;; CI 34408559005: bind the real connector on port zero, never probe then release a port.
+      (let [server (jetty/run-jetty (constantly {:status 200 :headers {} :body "ok"})
+                                    {:port 0
+                                     :host host
+                                     :join? false
+                                     :configurator
+                                     (fn [^org.eclipse.jetty.server.Server server]
+                                       ;; Keep the primary bound while the configurator adds the same-port mirror.
+                                       (.open ^org.eclipse.jetty.server.ServerConnector
+                                              (first (.getConnectors server)))
+                                       (((rv 'gateway-configurator) (bound-port server)) server))})
+            port (bound-port server)]
 
         (try (is (= #{host "127.0.0.1"}
                     (set (map (fn [^org.eclipse.jetty.server.ServerConnector c]
@@ -2572,18 +2582,17 @@
             path: it cancels and then DRAINS in-flight turns before the socket goes, so a
             second hook racing it would guillotine exactly the mid-turn work that drain
             exists to save"
-    (let [port
-          (with-open [s (java.net.ServerSocket. 0)]
-            (.getLocalPort s))
-
-          server
+    (let [server
           (jetty/run-jetty (constantly {:status 200 :headers {} :body "ok"})
-                           {:port port
+                           {:port 0
                             :host "127.0.0.1"
                             :join? false
                             ;; nil mirror-port: loopback needs no mirror, and this is
                             ;; the shape `start!` passes on a default bind.
-                            :configurator ((rv 'gateway-configurator) nil)})]
+                            :configurator ((rv 'gateway-configurator) nil)})
+
+          port
+          (bound-port server)]
 
       (try (is (false? (.getStopAtShutdown ^org.eclipse.jetty.server.Server server)))
            (is (= "ok" (slurp (str "http://127.0.0.1:" port "/"))))
@@ -2595,11 +2604,7 @@
             and only returns when the session ends. An adapter that buffered the body
             instead of pushing each flush would hold a whole turn's events back and
             deliver them in one burst at the end — a live stream that is not live"
-    (let [port
-          (with-open [s (java.net.ServerSocket. 0)]
-            (.getLocalPort s))
-
-          release
+    (let [release
           (promise)
 
           server
@@ -2618,7 +2623,10 @@
                                                 (.write out (.getBytes "data: last\n\n" "UTF-8"))
                                                 (.flush out)
                                                 (.close out))))})
-                           {:port port :host "127.0.0.1" :join? false})]
+                           {:port 0 :host "127.0.0.1" :join? false})
+
+          port
+          (bound-port server)]
 
       (try (with-open [socket (java.net.Socket. "127.0.0.1" (int port))]
              (.setSoTimeout socket 5000)
