@@ -1409,6 +1409,63 @@
                                "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"))
         (expect (str/includes? workflow "bwrap --unshare-all --ro-bind / / /bin/true")))))
 
+(defdescribe
+  ci-supersession-and-npm-cache-test
+  ;; A per-SHA main queue delayed releases, and a persistent npm cache uploaded 8.5 GB.
+  (it
+    "supersedes branch CI without cancelling tagged release verification"
+    (let [ci (slurp ".github/workflows/ci.yml")]
+      (expect (str/includes? ci "group: ci-${{ github.workflow }}-${{ github.ref }}"))
+      (expect
+        (str/includes?
+          ci
+          "cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')) }}"))
+      (expect (not (str/includes? ci "|| github.sha"))))
+    (doseq [workflow ["release.yml" "mobile-release.yml" "native-release.yml"
+                      "desktop-companion.yml"]]
+      (expect (str/includes? (slurp (str ".github/workflows/" workflow))
+                             "cancel-in-progress: false"))))
+  (it "keeps npm downloads job-local and never uploads a persistent release-runner cache"
+      (doseq [[workflow jobs]
+              [["mobile-release.yml" 2] ["desktop-companion.yml" 1]]
+
+              :let [body
+                    (slurp (str ".github/workflows/" workflow))]]
+
+        (expect (= jobs (count (re-seq #"npm_config_cache=\$RUNNER_TEMP/vis-npm-cache" body))))
+        (expect (not (str/includes? body "cache: npm")))
+        (expect (not (str/includes? body "cache-dependency-path:"))))))
+
+(defdescribe
+  npm-cache-cleanup-test
+  (it
+    "deletes only oversized or week-old npm caches and tolerates concurrent eviction"
+    (let
+      [workflow
+       (slurp ".github/workflows/npm-cache-cleanup.yml")
+
+       script
+       (-> workflow
+           (str/split #"          script: \|\n" 2)
+           second
+           (str/replace #"(?m)^            " ""))
+
+       fixture
+       "const assert = require('node:assert/strict');\nconst now = Date.now();\nconst recent = new Date(now).toISOString();\nconst old = new Date(now - 8 * 86400000).toISOString();\nconst cache = (id, key, created_at, size_in_bytes) => ({id, key, created_at, size_in_bytes});\nconst npm = 'node-cache-macOS-arm64-npm-lock';\nconst rows = [cache(1, npm, recent, 2 ** 31), cache(2, npm, old, 100),\n  cache(3, npm, recent, 100), cache(4, 'deps-macOS-lock', old, 2 ** 31),\n  cache(5, 'node-cache-Linux-x64-yarn-lock', old, 2 ** 31),\n  cache(6, npm, recent, 2 ** 30), cache(7, npm, 'unknown', 100),\n  cache(8, npm, old, 100)];\nconst deleted = [];\nconst context = {repo: {owner: 'example', repo: 'project'}};\nconst core = {info: () => {}};\nconst github = {\n  paginate: async (method, params) => {\n    assert.equal(method, 'list-caches');\n    assert.deepEqual(params, {...context.repo, per_page: 100});\n    return rows;\n  },\n  rest: {actions: {getActionsCacheList: 'list-caches', deleteActionsCacheById: async params => {\n    assert.deepEqual(params, {...context.repo, cache_id: params.cache_id});\n    deleted.push(params.cache_id);\n    if (params.cache_id === 8) throw Object.assign(new Error('removed concurrently'), {status: 404});\n  }}}\n};\n"
+
+       {:keys [exit output]}
+       (run-bash ["node" "-e"
+                  (str fixture
+                       "(async () => {\n"
+                       script
+                       "\n})().then(() => assert.deepEqual(deleted, [1, 2, 8]));")]
+                 {})]
+
+      (expect (str/includes? workflow "- cron: '0 5 * * 1'"))
+      (expect (str/includes? workflow "workflow_dispatch:"))
+      (expect (str/includes? workflow "actions: write"))
+      (expect (zero? exit) output))))
+
 (defdescribe ci-native-runtime-provisioning-test
              (it "provisions the Python library before the suite disables outbound downloads"
                  ;; A warm developer runtime hid the cold Linux worker failure.

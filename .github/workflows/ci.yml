@@ -6,16 +6,12 @@ on:
   pull_request:
     branches: [main]
   workflow_call:
-# Every commit that lands on main is verified on its own, so a push gets a group
-# of its own: sharing one group per ref meant a rapid series of merges cancelled
-# each other -- an in-progress run was killed by the next push, and even with
-# cancellation off a PENDING run is always dropped when a newer one queues, so
-# main could go a whole afternoon with no completed run at all (six in a row).
-# A pull request keeps the per-ref group: there, superseding your own last push
-# is exactly what you want.
+# New branch pushes supersede older checks. A reusable release check has its
+# caller's workflow/ref, so it neither waits for nor cancels ordinary main CI.
+# Tagged release verification must finish even when main advances.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')) }}
 
 jobs:
   # Full test suite on Linux + macOS only. vis embeds CPython (FFM) + rift

@@ -154,11 +154,12 @@ jobs:
             }
           fi
 
+      # RUNNER_TEMP is cleaned between jobs; never upload the persistent npm cache.
+      - name: Use job-local npm cache
+        run: echo "npm_config_cache=$RUNNER_TEMP/vis-npm-cache" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: apps/vis-companion/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -322,11 +323,12 @@ jobs:
             }
           fi
 
+      # RUNNER_TEMP is cleaned between jobs; never upload the persistent npm cache.
+      - name: Use job-local npm cache
+        run: echo "npm_config_cache=$RUNNER_TEMP/vis-npm-cache" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: apps/vis-companion/package-lock.json
 
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '21' }

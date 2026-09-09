@@ -67,11 +67,12 @@ jobs:
         if: steps.target.outputs.publish == 'true'
         with:
           tag: ${{ inputs.tag || github.ref_name }}
+      # RUNNER_TEMP is cleaned between jobs; never upload the persistent npm cache.
+      - name: Use job-local npm cache
+        run: echo "npm_config_cache=$RUNNER_TEMP/vis-npm-cache" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: apps/vis-companion/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
         with:
