@@ -1132,7 +1132,7 @@ remains available. Published version tags remain immutable, including the bootst
    explicit verification results and any concrete unresolved blockers reported.
    Unknowns: none beyond the preceding phases.
 
-Plan state: phases 1–2 are complete; phases 3–5 are in progress for v0.1.53. Runtime
+Plan state: phases 1–2 are complete; phases 3–5 are in progress for v0.1.54. Runtime
 v0.5.6 remains current. Release v0.1.52 passed its complete publication gate, but an
 extended native regression reproduced a missing directory-listing downcall registration
 in the published binary. The FFF 0.12.9 fix and native search coverage are already on main.
@@ -1142,12 +1142,20 @@ Preserve the healthy production hotfix until the replacement passes every requir
 The expanded native search regression fails against published v0.1.52 and passes against
 the current native hotfix. The release also includes the verified package-readiness and
 reload corrections: 230 affected JVM cases and five native cases pass, with formatting,
-lint and reflection checks clean. Local release/version checks pass all 54 cases.
+lint and reflection checks clean. Current release, version and hygiene checks pass all 61 cases.
 Branch CI now supersedes older pushes without cancelling tagged release verification.
 Mobile and desktop jobs use temporary npm caches without uploading them; weekly cleanup
 removes only npm caches older than seven days or larger than 1 GiB. The affected release
 suite passes 53 cases, including three new regression cases; actionlint, formatting,
-scoped lint and reflection checks pass.
+scoped lint and reflection checks pass. The cleanup workflow completed successfully,
+and a newer main commit demonstrably cancelled its superseded CI run.
+
+Release v0.1.53 passed 5131 Linux JVM cases and native file-search checks on both Linux
+architectures. Its native publication gate correctly stopped at a test reading the old
+documentation page. The corrected regression passes against the native macOS binary.
+The public documentation-host guard now accepts the deployed docs site while retaining
+private-address and operations-path guards. The failed release was cancelled, not
+published or retagged; v0.1.54 includes these fixes and the bounded-cache workflow.
 
 - Runtime v0.5.6 is published at 51f02270ffc78b5eb49bcab914b27564b1960f82. Run
   34297827905 passed all four platform builds/tests and published the runtime archives and
@@ -1171,9 +1179,9 @@ scoped lint and reflection checks pass.
   25 HTTP/stdio cases and the original native suite passed 15 cases. A real-terminal TUI
   turn exercised native gateway and worker processes and returned to idle. These results
   do not cover the subsequently added native directory-listing regression, which fails
-  against that published binary. Release v0.1.53 must pass the expanded suite.
+  against that published binary. Release v0.1.54 must pass the expanded suite.
 - Fresh default-stable installation, native SDK and TUI end-to-end verification, complete
-  release assets and rollback-safe production replacement remain required for v0.1.53.
+  release assets and rollback-safe production replacement remain required for v0.1.54.
   Existing immutable tags and concurrent work are preserved.
 
 ---

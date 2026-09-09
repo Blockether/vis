@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.54] - 2026-09-09
+
+### Fixed
+- Supersede older branch CI runs without cancelling tagged release verification.
+- Keep mobile and desktop npm caches job-local and prune expired or oversized GitHub npm caches weekly.
+- Run the documented editable-package native regression from its current guide.
+- Reopen recorded live views from the TUI transcript.
+
+### Changed
+- Serve public documentation and the extension catalog from one site.
+
 ## [v0.1.53] - 2026-09-09
 
 ### Fixed
