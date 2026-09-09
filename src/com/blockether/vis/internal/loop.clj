@@ -4944,6 +4944,67 @@
           (svar/ask-code! (:router environment)
                           (update ask-opts :messages apply-cache-breakpoints provider))))))
 
+(defn- ask-code-with-first-output-timeout!
+  "Bound one provider attempt without cancelling its turn. Svar polls this attempt's
+   cancel predicate on both SSE and WebSocket transports. Only an abort initiated
+   by this deadline becomes a retryable stream timeout; a user Stop keeps its type.
+   Text, reasoning or tool-input progress disables the first-output deadline."
+  [environment resolved-model ask-opts timeout-ms]
+  (let [started
+        (System/nanoTime)
+
+        timeout-ns
+        (* (long timeout-ms) 1000000)
+
+        phase
+        (atom :waiting)
+
+        caller-cancel?
+        (:cancel-fn ask-opts)
+
+        cancelled?
+        (fn []
+          (boolean (and caller-cancel? (caller-cancel?))))
+
+        on-chunk
+        (:on-chunk ask-opts)
+
+        opts
+        (assoc ask-opts
+          :cancel-fn (fn []
+                       (or (cancelled?)
+                           (= :timed-out @phase)
+                           (and (>= (- (System/nanoTime) started) timeout-ns)
+                                (compare-and-set! phase :waiting :timed-out))))
+          :on-chunk (fn [chunk]
+                      (when (some
+                              seq
+                              ((juxt :content :reasoning :tool-input :tool-call-preview :tool-calls)
+                                chunk))
+                        (compare-and-set! phase :waiting :output))
+                      ;; A late frame must not become visible before this attempt is retried.
+                      (when (and on-chunk (not= :timed-out @phase)) (on-chunk chunk))))]
+
+    (try (ask-code-with-session! environment resolved-model opts)
+         (catch Exception e
+           (if (and (= :timed-out @phase)
+                    (not (cancelled?))
+                    (some #(or (= :svar.core/stream-cancelled (:type (ex-data %)))
+                               (instance? InterruptedException %))
+                          (bounded-cause-chain e)))
+             (do
+               ;; Svar/HTTP wrappers may restore the interrupt after classifying the
+               ;; abort. Consume only our own deadline's interrupt before retry/backoff.
+               (Thread/interrupted)
+               (throw (ex-info (str "Provider produced no output for " timeout-ms "ms.")
+                               {:type :svar.core/stream-semantic-timeout
+                                :source :vis-first-output-watchdog
+                                :stream? true
+                                :first-output-timeout? true
+                                :semantic-timeout-ms timeout-ms}
+                               e)))
+             (throw e))))))
+
 (defn- context-overflow-token-data
   "Keep rejection counts separate from response usage. Preflight may count remotely;
    the tokens error type alone identifies neither a provider refusal nor a local count."
@@ -5136,7 +5197,13 @@
           effective-llm-headers
           (not-empty (merge (copilot-llm-headers resolved-model copilot-initiator) llm-headers))
           provider-network (provider-network-policy (:router environment) resolved-model)
-          provider-watchdog-timeouts (provider-watchdog-timeouts provider-network)
+          provider-deadlines (provider-watchdog-timeouts provider-network)
+          first-output-timeout-ms (long (or (:first-output-timeout-ms provider-deadlines)
+                                            rt/ASK_CODE_FIRST_OUTPUT_TIMEOUT_MS))
+          ;; Let Svar abort this attempt and the retry callback run before the
+          ;; gateway's last-resort watchdog can cancel the entire turn.
+          provider-watchdog-timeouts (assoc provider-deadlines
+                                       :first-output-timeout-ms (+ first-output-timeout-ms 10000))
           provider-started-at-ms (util/now-ms)
           _ (when on-chunk
               (on-chunk (provider-call-chunk iteration-position
@@ -5255,7 +5322,10 @@
                                              :query-id (:request-id request-context)
                                              :iteration iteration-position)]
             ;; Svar remains the owner of provider classification and retries.
-            (try (ask-code-with-session! environment resolved-model ask-opts)
+            (try (ask-code-with-first-output-timeout! environment
+                                                      resolved-model
+                                                      ask-opts
+                                                      first-output-timeout-ms)
                  (catch Exception e
                    (when (perr/context-overflow-error? e)
                      (log-context-token-counts!
@@ -7425,8 +7495,14 @@
   "True after visible assistant output or a tool execution entered the stream.
    Engine lifecycle/progress chunks are safe to replay after a pre-output failure."
   [chunk]
-  (contains? #{:reasoning :content :assistant-prose :form-start :tool-start :form-result}
-             (:phase chunk)))
+  (case (:phase chunk)
+    (:reasoning :content :assistant-prose)
+    (boolean (some seq ((juxt :delta :thinking :content :text) chunk)))
+
+    (:form-start :tool-start :form-result)
+    true
+
+    false))
 
 (defn- emergency-fold-activity
   "Mechanical activity count for the omitted iterations, derived only from the
@@ -8581,6 +8657,9 @@
                              :trailer-iteration-count (count visible-attempt-trailer)})
                           result
                           (try
+                            (when (and cancel-atom @cancel-atom)
+                              (throw (ex-info "Provider request cancelled"
+                                              {:type :svar.core/stream-cancelled})))
                             (reset! provider-output-started? false)
                             (run-iteration
                               attempt-env
@@ -9581,8 +9660,9 @@
 (defn- run-normal-turn!
   "LLM round-trip path: store turn, run iteration-loop, persist
    the end-of-turn CTX snapshot, update the turn row with answer +
-   tokens. Called by `run-turn!` when slash dispatch said the user
-   message was NOT a slash."
+   tokens. `:hooks :prepare-result`, when supplied, transforms the result before
+   terminal ownership and persistence, so the gateway's timeout diagnosis is durable.
+   Called by `run-turn!` for a normal user message."
   [env user-request loop-opts]
   (let [;; Persist EVERY image the user attached to this turn as durable
         ;; `session_turn_attachment` BLOB bytes: INLINE uploads (web/API base64,
@@ -9635,7 +9715,12 @@
         (titling/maybe-auto-title! env user-request)
 
         result
-        (iteration-loop env user-request (assoc loop-opts :session-turn-id session-turn-id))
+        (let [result
+              (iteration-loop env user-request (assoc loop-opts :session-turn-id session-turn-id))]
+          (if-let [prepare-result (get-in loop-opts [:hooks :prepare-result])]
+            (let [prepared (prepare-result result)]
+              (assoc prepared :status-id (status->id (:status prepared))))
+            result))
 
         ;; Deferred auto-title: only a successful foreground turn earns a cosmetic
         ;; provider call. Cancellation and failure must stay terminal without

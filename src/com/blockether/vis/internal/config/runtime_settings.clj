@@ -44,6 +44,12 @@
   "Dynamic timeout in milliseconds for Python code evaluation."
   DEFAULT_EVAL_TIMEOUT_MS)
 
+(def ASK_CODE_FIRST_OUTPUT_TIMEOUT_MS
+  "Host deadline for a provider attempt with no text, reasoning or tool-input output.
+   It aborts only that request, allowing bounded retry without cancelling the turn.
+   A provider-scoped network policy may widen this prefill window."
+  120000)
+
 (def ASK_CODE_TTFT_TIMEOUT_MS
   "Default time-to-first-token timeout for Vis `svar/ask-code!` calls (ms).
 

@@ -13,6 +13,7 @@
    lives here - this namespace owns wire bookkeeping (events, turn
    records, subscribers), nothing else."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.attachment.core :as attachments]
@@ -2412,18 +2413,11 @@
   (* 6 60 1000))
 
 (def ^:private TURN_FIRST_OUTPUT_TIMEOUT_MS
-  "Tight ceiling for a STARTED turn that has produced nothing at all: no token,
-   no reasoning, no tool call — only the `:provider-call` marker saying the
-   request left the building.
-
-   [[TURN_STALL_TIMEOUT_MS]] is sized for a stream that died MID-answer and sits
-   deliberately above svar's 5-minute semantic watchdog. Applying that same budget
-   to silence from the very first byte is what let the reported turn sit 3m47s
-   with zero iterations, freezing the session queue behind it while the user
-   watched a spinner. A provider-scoped network policy may widen this ceiling for
-   a legitimately long prefill. If the watchdog still trips, the turn fails and
-   waits for an explicit retry; Vis never replays a provider request automatically."
-  (* 2 60 1000))
+  "Backstop for a started turn with no output. An active provider call supplies
+   its attempt deadline plus unwind grace, so the engine can retry a silent request
+   before this watchdog cancels the whole turn. Reaching this backstop is terminal;
+   the gateway never replays a failed turn. Provider policy may widen the deadline."
+  rt/ASK_CODE_FIRST_OUTPUT_TIMEOUT_MS)
 
 (def ^:private first-output-exempt-phases
   "Phases where a started turn may legitimately still owe its first output:
@@ -3022,7 +3016,29 @@
     (try
       (let [opts
             (cond-> (assoc (or engine-opts {})
-                      :hooks {:on-chunk on-chunk :claim-terminal! claim-terminal!}
+                      :hooks {:on-chunk on-chunk
+                              :claim-terminal! claim-terminal!
+                              :prepare-result (fn [result]
+                                                ;; Normalize before the engine claims and persists the terminal.
+                                                ;; A watchdog abort must not survive in history as a user Stop.
+                                                (if (and stall (:stalled? @stall))
+                                                  (let [block
+                                                        (content/error (if (stall-reached-provider?
+                                                                             stall)
+                                                                         "provider_stream_stalled"
+                                                                         "turn_stalled")
+                                                                       (stall-failure-text stall)
+                                                                       true)
+
+                                                        prior
+                                                        (try (answer-content (:answer result))
+                                                             (catch Throwable _ []))]
+
+                                                    (assoc result
+                                                      :status :error
+                                                      :error block
+                                                      :answer (conj prior block)))
+                                                  result))}
                       :cancel-token cancel-token
                       :session-turn-id tid)
               provider
@@ -3122,7 +3138,8 @@
             {:status status
              :role "assistant"
              :content (cond-> content-blocks
-                        failure-code
+                        (and failure-code
+                             (not-any? #(= failure-code (get % "code")) content-blocks))
                         (conj (content/error failure-code failure-text true)))
              :is_needs_input needs-input?
              :model (or (get-in result [:cost "model"])

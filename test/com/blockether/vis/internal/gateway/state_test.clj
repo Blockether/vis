@@ -4268,6 +4268,78 @@
            (expect (= "queued" (get-in @registry [sid :turns "t2" :status])))
            (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid "t1"))))))
 
+(defdescribe
+  watchdog-terminal-persistence-test
+  ;; Regression: session 86f0b252-41c2-4727-be85-733f139e2462 displayed only
+  ;; cancellation after the gateway stopped a provider with no first output.
+  (doseq [stalled? [true false]]
+    (it
+      (str "keeps the durable outcome consistent with the terminal event; stalled=" stalled?)
+      (let [sid (str "watchdog-outcome-" (java.util.UUID/randomUUID))
+            tid "turn-1"
+            token (cancellation/cancellation-token)
+            stall
+            (atom
+              {:started? true :phase :provider-call :provider :openai-codex :model "fixture-model"})
+            registry @#'state/registry
+            writes (atom [])
+            events (atom [])
+            environment {:db-info ::db
+                         :session-id sid
+                         :router {:providers [{:id :openai-codex
+                                               :models [{:name "fixture-model"}]}]}}]
+
+        (try
+          (swap! registry assoc
+            sid
+            {:next-seq 0
+             :current-turn tid
+             :turn-order [tid]
+             :turns {tid {:turn_id tid :status "running" :request "continue" :cancel-token token}}})
+          (with-redefs-fn
+            {#'lp/db-info (constantly ::db)
+             #'persistance/db-store-session-turn! (fn [_ _]
+                                                    tid)
+             #'persistance/db-update-session-turn! (fn [_ _ opts]
+                                                     (swap! writes conj opts)
+                                                     true)
+             #'lp/session-turn-position (fn [_ _]
+                                          1)
+             #'lp/iteration-loop
+             (fn [_ _ _]
+               (when stalled?
+                 (swap! stall assoc :stalled? true :stall-detail "no output for 127381ms"))
+               (cancellation/cancel! token (if stalled? :stall-watchdog :user))
+               {:status :cancelled :answer nil :trace [] :iteration-count 0 :duration-ms 0})
+             #'lp/send! (fn [_ request opts]
+                          (let [result (#'lp/run-normal-turn! environment request opts)]
+                            (expect (= (if stalled? :rlm.status/error :rlm.status/cancelled)
+                                       (:status-id result)))
+                            result))
+             #'state/append-event! (fn [_ type payload & _]
+                                     (swap! events conj [type payload]))
+             #'state/emit-context-updated! (fn [_]
+                                             nil)
+             #'state/record-metrics! (fn [_ _]
+                                       nil)}
+            (fn []
+              (#'state/run-turn! sid tid "continue" {:cancel-token token :stall stall})))
+          (let [written (last @writes)
+                [event-type payload] (first (filter #(str/starts-with? (first %) "turn.") @events))
+                card (first (:content written))]
+
+            (expect (= 1 (count @writes)))
+            (expect (= (if stalled? :error :cancelled) (:status written)))
+            (expect (= (if stalled? :error :cancelled) (:prior-outcome written)))
+            (expect (= (if stalled? "turn.failed" "turn.cancelled") event-type))
+            (if stalled?
+              (do (expect (= "provider_stream_stalled" (get card "code")))
+                  (expect (str/includes? (str (get card "message")) "127381ms"))
+                  (expect (= card (:error written)))
+                  (expect (= (:content written) (:content payload))))
+              (expect (empty? (:content written)))))
+          (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid)))))))
+
 ;; Recursive project delete. Until now DELETE of a project removed the row and
 ;; scattered its member sessions back to project-less, so there was no way at all
 ;; to remove a project AND its conversations — the one endpoint that sounded

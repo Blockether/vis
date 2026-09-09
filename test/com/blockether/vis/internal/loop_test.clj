@@ -5932,6 +5932,172 @@
             (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))))
 
 (defdescribe
+  provider-first-output-deadline-test
+  (doseq [chunk [{:content "answer"} {:reasoning "thinking"} {:tool-input "partial"}
+                 {:tool-call-preview {:name "python_execution"}}]]
+    (it (str "does not interrupt an attempt that has produced " (keys chunk))
+        (with-redefs-fn {#'lp/ask-code-with-session! (fn [_ _ opts]
+                                                       ((:on-chunk opts) chunk)
+                                                       (Thread/sleep 5)
+                                                       (expect (false? ((:cancel-fn opts))))
+                                                       :complete)}
+          #(expect (= :complete (#'lp/ask-code-with-first-output-timeout! {} {} {} 1))))))
+  (doseq [stop? [false true]]
+    (it (str "drops late output and preserves an overriding Stop=" stop?)
+        (let [cancelled (atom false)
+              chunks (atom [])
+              error (with-redefs-fn {#'lp/ask-code-with-session!
+                                     (fn [_ _ opts]
+                                       (Thread/sleep 5)
+                                       (expect (true? ((:cancel-fn opts))))
+                                       ((:on-chunk opts) {:content "late output"})
+                                       (reset! cancelled stop?)
+                                       (throw (ex-info "cancelled"
+                                                       {:type :svar.core/stream-cancelled})))}
+                      #(try (#'lp/ask-code-with-first-output-timeout!
+                             {}
+                             {}
+                             {:on-chunk (fn [chunk]
+                                          (swap! chunks conj chunk))
+                              :cancel-fn (fn []
+                                           @cancelled)}
+                             1)
+                            (catch Exception e e)))]
+
+          (expect (= [] @chunks))
+          (expect (= (if stop? :svar.core/stream-cancelled :svar.core/stream-semantic-timeout)
+                     (:type (ex-data error))))))))
+
+(defdescribe provider-first-output-svar-boundary-test
+             (it "uses Svar's real pre-header cancellation without cancelling the turn"
+                 (let [environment
+                       (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+                       requests
+                       (atom 0)]
+
+                   (try (with-redefs [rt/ASK_CODE_FIRST_OUTPUT_TIMEOUT_MS
+                                      25
+
+                                      http/post
+                                      (fn [& _]
+                                        (swap! requests inc)
+                                        (Thread/sleep 2000)
+                                        (throw (ex-info "Request was not interrupted" {})))]
+
+                          (let [error (try (lp/run-iteration
+                                             environment
+                                             [{:role "user" :content "timeout"}]
+                                             {:iteration 0
+                                              :resolved-model {:provider :lmstudio :name "model"}
+                                              :routing {:provider :lmstudio :model "model"}})
+                                           (catch Exception e e))]
+                            (expect (= :svar.core/stream-semantic-timeout (:type (ex-data error))))
+                            (expect (= :vis-first-output-watchdog (:source (ex-data error))))
+                            (expect (= 1 @requests))
+                            (expect (not (.isInterrupted (Thread/currentThread))))))
+                        (finally (lp/dispose-environment! environment))))))
+
+(defdescribe
+  provider-first-output-recovery-test
+  ;; Regression: session 86f0b252-41c2-4727-be85-733f139e2462 reached the
+  ;; gateway's first-output watchdog as stream-cancelled, bypassing bounded retry.
+  (doseq [[label mode expected-status expected-calls]
+          [["recovers" :recover :success 3] ["exhausts its budget" :exhaust :error 4]
+           ["honors Stop" :stop :cancelled 2]
+           ["honors Stop during retry backoff" :stop-retry :cancelled 2]]]
+    (it
+      label
+      (let
+        [cancelled (atom false)
+         environment (assoc (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
+                       :cancel-atom cancelled)
+         db (:db-info environment)
+         tid (persistance/db-store-session-turn! db
+                                                 {:parent-session-id (:session-id environment)
+                                                  :user-request "timeout recovery"})
+         calls (atom 0)
+         chunks (atom [])
+         code
+         "provider_retry_runs = globals().get('provider_retry_runs', 0) + 1\nprint(provider_retry_runs)"]
+
+        (try
+          (let [result
+                (with-redefs-fn
+                  {#'lp/provider-network-policy
+                   (fn [_ _]
+                     {:ttft-timeout-ms 30 :idle-timeout-ms 30 :semantic-timeout-ms 30})
+                   #'lp/PRE_OUTPUT_STREAM_RETRY_DELAYS_MS [0 0]
+                   #'svar/ask-code!
+                   (fn [_ opts]
+                     (let [call (swap! calls inc)]
+                       (cond
+                         (= 1 call) {:stop-reason :tool-calls
+                                     :tool-calls
+                                     [{:id "once" :name "python_execution" :input {:code code}}]}
+                         (and (= :recover mode) (= 3 call))
+                         {:stop-reason :end :content "Recovered without repeating the tool."}
+                         :else
+                         (do
+                           ;; Empty callbacks are keepalives, not model output.
+                           ((:on-chunk opts) {:content "" :reasoning "" :done? false})
+                           (when (= :stop mode) (reset! cancelled true))
+                           (let [deadline (+ (System/currentTimeMillis) 500)]
+                             (loop []
+
+                               (cond ((:cancel-fn opts))
+                                     (throw (ex-info
+                                              "Responses WebSocket operation cancelled by caller."
+                                              {:type :svar.core/stream-cancelled
+                                               :stream? true
+                                               :transport :websocket}))
+                                     (>= (System/currentTimeMillis) deadline)
+                                     (throw (ex-info "First-output deadline was not enforced"
+                                                     {:type :svar.core/http-error :stream? true}))
+                                     :else (do (Thread/sleep 2) (recur)))))))))}
+                  #(lp/iteration-loop environment
+                                      "timeout recovery"
+                                      {:session-turn-id tid
+                                       :cancel-atom cancelled
+                                       :hooks {:on-chunk (fn [chunk]
+                                                           (swap! chunks conj chunk)
+                                                           (when (and (= :stop-retry mode)
+                                                                      (= :stream-watchdog-pre-output
+                                                                         (get-in chunk
+                                                                                 [:event :reason])))
+                                                             (reset! cancelled true)))}}))
+                forms (mapcat :forms (persistance/db-list-session-turn-iterations db tid))
+                retries (filter #(= :stream-watchdog-pre-output (get-in % [:event :reason]))
+                                @chunks)]
+
+            (expect (= expected-status (or (:status result) :success)))
+            (when (= :recover mode)
+              (expect (str/includes? (str (:answer result))
+                                     "Recovered without repeating the tool.")))
+            (expect (= expected-calls @calls))
+            (expect (= (repeat expected-calls 10060)
+                       (map :first-output-timeout-ms
+                            (filter #(= :provider-call (:phase %)) @chunks))))
+            (expect (= [code] (mapv :src forms)))
+            (expect (= "1" (str/trim (:stdout (first forms)))))
+            (expect (= (contains? #{:stop :stop-retry} mode) @cancelled))
+            (expect (= (case mode
+                         :recover
+                         1
+
+                         :exhaust
+                         2
+
+                         :stop
+                         0
+
+                         :stop-retry
+                         1)
+                       (count retries)))
+            (when (= :exhaust mode) (expect (= "error" (get (first (:answer result)) "type")))))
+          (finally (lp/dispose-environment! environment)))))))
+
+(defdescribe
   provider-unavailable-is-terminal-test
   ;; Regression, issue #105: Vis used to retry svar's terminal provider-unavailable
   ;; result three more times, stacking a second retry ladder above svar.
@@ -7848,7 +8014,10 @@
     (it "distinguishes replay-safe lifecycle chunks from output and side effects"
         (expect (false? (provider-output-chunk? {:phase :provider-call})))
         (expect (false? (provider-output-chunk? {:phase :response-parse})))
-        (doseq [phase [:reasoning :content :assistant-prose :form-start :tool-start :form-result]]
+        (doseq [phase [:reasoning :content :assistant-prose]]
+          (expect (false? (provider-output-chunk? {:phase phase :delta ""})))
+          (expect (true? (provider-output-chunk? {:phase phase :delta "output"}))))
+        (doseq [phase [:form-start :tool-start :form-result]]
           (expect (true? (provider-output-chunk? {:phase phase})))))
     (it
       "performs exactly one smaller retry, preserves live and canonical input, then terminates"
