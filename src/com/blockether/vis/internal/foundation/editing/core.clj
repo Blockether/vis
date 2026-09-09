@@ -814,11 +814,13 @@
        (merge {:target (path->target path kind) :started-at-ms t :finished-at-ms t :duration-ms 0}
               metadata)})))
 
-(defn- tool-failure-on-error
+(defn tool-failure-on-error
+  "Build an observed filesystem symbol's error hook with target metadata.
+   The wrapper supplies and validates the symbol's identity and classification."
   [op kind]
   (fn [err _env _f args]
     (let [path
-          (first args)
+          (or (:path (ex-data err)) (first args))
 
           target
           (path->target path kind)
@@ -835,7 +837,6 @@
 
       {:result (extension/failure
                  {:result nil
-                  :op op
                   :metadata
                   (cond-> {:target target :started-at-ms t :finished-at-ms t :duration-ms 0}
                     interrupted?
@@ -2942,13 +2943,8 @@
         entries))
 
 (defn- ls-one
-  "List ONE normalized `ls` spec. `ls` is the DIRECTORY helper, so a file path is a
-   routing mistake and says so instead of returning a degenerate one-row tree.
-   A path that does NOT exist reports the nearest EXISTING directory above it
-   (`nearest-existing-dir`, the same climb `grep` uses for `missing_paths`), so an
-   invented address — typically a filesystem path assembled from a language
-   namespace, which is wrong in a workspace with many source roots — is recovered
-   by listing that real directory instead of being guessed a second time."
+  "List one normalized directory. A missing path names its nearest existing
+   parent; a file directs the caller to `cat`. Neither returns a partial listing."
   [spec]
   (let [path
         (get spec "path")
@@ -2959,22 +2955,16 @@
     (when-not (.exists f)
       (let [near (some-> (nearest-existing-dir f)
                          rel-path)]
-        (throw (ex-info (str "`ls`: no such path `" path
-                             "`" (when near
-                                   (str
-                                     " \u2014 nearest existing directory is `" near
-                                     "`. List that, or `grep` the name: a language namespace is"
-                                     " not a path \u2014 this workspace has many source roots.")))
+        (throw (ex-info (str "ls: no such directory `"
+                             (rel-path f)
+                             "`"
+                             (when near (str "; list `" near "` first"))
+                             ".")
                         (cond-> {:type :ext.foundation.editing/ls-missing-path :path path}
                           near
                           (assoc :nearest near))))))
     (when-not (.isDirectory f)
-      (throw (ex-info (str "`ls` lists directories \u2014 `"
-                           path
-                           "` is a file. Read it in python_execution: "
-                           "Path(\""
-                           path
-                           "\").read_text()")
+      (throw (ex-info (str "ls: `" (rel-path f) "` is a file; use `cat`.")
                       {:type :ext.foundation.editing/ls-on-file :path path})))
     (list-dir f {:depth (or (get spec "depth") 1) :is_hidden (boolean (get spec "is_hidden"))})))
 
@@ -2990,10 +2980,9 @@
    so the `:fs/access` gate is asked here exactly as the native readers ask it —
    an extension that hides a tree hides it from the listing too.
 
-   Everything that can go wrong throws `ex-info` and the shim maps its `:type`
-   onto the Python exception a caller can actually catch: a gate refusal is a
-   `PermissionError`, a path that does not exist a `FileNotFoundError` (naming
-   the nearest existing directory), a FILE path a `NotADirectoryError`."
+   Failures throw `ex-info` with a stable `:type`. The observed listing symbol
+   applies the shared filesystem-tool error hook and surfaces a canonical,
+   catchable host-tool failure."
   [env args]
   (let [entries
         (or (get args "paths")
@@ -3009,7 +2998,9 @@
 
     (when-let [refusal (fs-access-refusal env :dir "file-read" (map #(get % "path") specs))]
       (throw (ex-info (str "ls blocked: " (:resolved (:target refusal)) " — " (:reason refusal))
-                      {:type :ext.foundation.editing/path-protected :owner (:owner refusal)})))
+                      {:type :ext.foundation.editing/path-protected
+                       :owner (:owner refusal)
+                       :path (:resolved (:target refusal))})))
     (mapv ls-one specs)))
 
 ;; One row per edit, and a batch is one write: a 300-edit refactor still answers in
