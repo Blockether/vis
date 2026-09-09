@@ -4969,8 +4969,8 @@
    `name` is the persisted project's name when the root is bound to one and \"\"
    otherwise - the folder is the client's own fallback.
 
-   Liveness and demand are counts here, never an ordering band: projects come
-   back freshest-content first."
+   Projects are ordered by canonical root, ascending. Activity, liveness and
+   demand update counts only; they never move project headers."
   ([] (projects-overview :all nil))
   ([channel] (projects-overview channel nil))
   ([channel dirty]
@@ -5042,9 +5042,7 @@
                                        :live_count (long (:live-count g))
                                        :awaiting_count (long (:awaiting-count g))
                                        :last_activity_ms (long (:last-activity-ms g))})))
-              (sort-by (fn [p]
-                         [(unchecked-negate (long (get p "last_activity_ms")))
-                          (str (get p "root"))]))
+              (sort-by #(str (get % "root")))
               vec)
 
          listed

@@ -493,22 +493,8 @@ export function projectLabel(sessions: Session[]): string {
   return 'No project';
 }
 
-/**
- * Group sessions by working directory, never by their optional project name, and put the groups in
- * an order the PROJECT owns.
- *
- * The order used to be whatever order the Map was filled in — that is, a project sat wherever its
- * best-ranked session sat. Nothing about a project decided where its header went: `sessionOrder`
- * lifts a starred or unsent row to the front of the machine's list and dragged its whole project
- * with it, the gateway floats every live session to the top of the fleet, and both are per-row
- * facts. So one turn starting moved a header the user was reading, a star saved on THIS device
- * reordered the screen against every other device, and the same data painted two ways.
- *
- * The key is the project's own: work RUNNING first (the gateway's own navigator rule, one level
- * up), then the project's most recent activity, then the workspace root. Total and data-only, so
- * every device paints identical projects in an identical order, and only a real change to a project
- * moves it. Stars and drafts still lift rows INSIDE the group, which is where a per-device
- * preference belongs.
+/** Group by workspace root, preserving session order inside each group.
+ * Roots absent from the server overview use stable root order, never activity.
  */
 export function groupByWorkDir(sessions: Session[]): Array<[string, Session[]]> {
   const groups = new Map<string, Session[]>();
@@ -518,13 +504,9 @@ export function groupByWorkDir(sessions: Session[]): Array<[string, Session[]]> 
     group.push(session);
     groups.set(key, group);
   }
-  return [...groups.entries()].sort(([leftRoot, left], [rightRoot, right]) => {
-    const live = Number(!left.some(sessionIsLive)) - Number(!right.some(sessionIsLive));
-    if (live !== 0) return live;
-    const recency = projectMillis(right) - projectMillis(left);
-    if (recency !== 0) return recency;
-    return leftRoot < rightRoot ? -1 : leftRoot > rightRoot ? 1 : 0;
-  });
+  return [...groups.entries()].sort(([leftRoot], [rightRoot]) =>
+    leftRoot < rightRoot ? -1 : leftRoot > rightRoot ? 1 : 0,
+  );
 }
 
 /**
@@ -604,10 +586,7 @@ export interface ProjectGroupView {
 }
 
 /**
- * A machine's projects, in the order a PROJECT owns: work running first, then the
- * project's own last activity, then the root — the same key `groupByWorkDir` sorts
- * by, decided from the gateway's counts instead of from rows this device happens to
- * hold.
+ * A machine's projects in server order. Counts and activity never reorder headers.
  *
  * A root the gateway did not tally — a draft workspace, or any root at all when the
  * machine has answered no overview yet — is not in its ordering either, so it follows
@@ -635,17 +614,8 @@ export function projectGroups(
           unread: sessions.filter(isUnread).length,
         },
         sessions,
-        when: project.last_activity_ms ?? 0,
       };
-    })
-    .sort((left, right) => {
-      const live = Number(left.tally.live === 0) - Number(right.tally.live === 0);
-      if (live !== 0) return live;
-      const recency = right.when - left.when;
-      if (recency !== 0) return recency;
-      return left.root < right.root ? -1 : left.root > right.root ? 1 : 0;
-    })
-    .map(({ when: _when, ...group }) => group);
+    });
   const counted = new Set(tallied.map((project) => project.root));
   return groups.concat(
     held
@@ -701,11 +671,6 @@ function agreedProjectId(sessions: Session[]): string {
 function rootLabel(root: string): string {
   if (!root) return 'No project';
   return root.split('/').pop() || homeifyPath(root);
-}
-
-/** When a PROJECT last moved: the newest of its sessions. */
-function projectMillis(sessions: Session[]): number {
-  return sessions.reduce((newest, session) => Math.max(newest, sessionMillis(session)), 0);
 }
 
 /** Where a machine is working right now, as the menu says it out loud. */

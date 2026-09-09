@@ -4729,7 +4729,7 @@
                                      [(get p "root") p]))
                               (:projects overview))]
 
-            ;; Freshest project first — liveness is a COUNT here, never a band.
+            ;; Stable root order; activity remains metadata.
             (expect (= ["/repo/a" "/repo/b"] (mapv #(get % "root") (:projects overview))))
             (expect (= "Vis" (get-in by-root ["/repo/a" "name"])))
             (expect (= "p-a" (get-in by-root ["/repo/a" "project_id"])))
@@ -4744,6 +4744,38 @@
                        (select-keys overview
                                     [:project_count :session_count :live_count
                                      :awaiting_count]))))))))
+  ;; Regression: live updates must not move project headers.
+  (it "keeps root order across activity, liveness and input-order changes"
+      (let [stats
+            (atom {"a" {:latest-turn-at 1 :turn-count 1} "b" {:latest-turn-at 900 :turn-count 1}})
+
+            live
+            (atom {"b" "turn"})
+
+            rows
+            (atom [{:id "b"} {:id "a"}])]
+
+        (with-redefs-fn {#'lp/db-info (constantly ::db)
+                         #'lp/projects (constantly [{:id "empty" :workspace-root "/repo/c"}])
+                         #'persistance/db-session-turn-stats (fn [_]
+                                                               @stats)
+                         #'lp/by-channel (fn [_]
+                                           @rows)
+                         #'state/session-project-root (fn [_ sid]
+                                                        (str "/repo/" sid))
+                         #'bus/live-turns (fn []
+                                            @live)
+                         #'bus/waiting-requests (constantly {})}
+          (fn []
+            (let [roots #(mapv (fn [p]
+                                 (get p "root"))
+                               (:projects (state/projects-overview)))]
+              (expect (= ["/repo/a" "/repo/b" "/repo/c"] (roots)))
+              (reset! stats {"a" {:latest-turn-at 999 :turn-count 1}
+                             "b" {:latest-turn-at 900 :turn-count 1}})
+              (reset! live {"a" "turn"})
+              (swap! rows reverse)
+              (expect (= ["/repo/a" "/repo/b" "/repo/c"] (roots))))))))
   ;; Regression, user report: `Use project` persisted an empty project, but the
   ;; overview omitted it until a session existed, so the companion could not show it.
   (it "keeps a persisted project visible before its first session"
