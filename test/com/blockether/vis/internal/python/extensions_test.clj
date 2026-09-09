@@ -1677,6 +1677,47 @@ vis.register(vis.Extension(
                          (expect (= 5 (get-in res [:result "sum"])))
                          (expect (= "1.2.3" (get-in res [:result "version"])))))))))
 
+(defdescribe
+  entrypoint-import-collision-test
+  ;; Issue #176: preserve import precedence and explain the entrypoint rename.
+  (it
+    "reports a colliding entrypoint and keeps a renamed bridge working across reloads"
+    (with-shared-packages
+      (fn [packages]
+        (write-ext! packages "issue176_demo/__init__.py" "")
+        (write-ext! packages "issue176_demo/core.py" "VALUE = 'OK'\n")
+        (doseq [[entry collision?] [["issue176_demo.py" true] ["issue176_bridge.py" false]]]
+          (let [source (str "import importlib\nimport blockether.vis.extension as vis\n"
+                            "def ping():\n" "    'Return the implementation value.'\n"
+                            "    return importlib.import_module('issue176_demo.core').VALUE\n"
+                            "vis.register(vis.Extension(name='issue176-collision', "
+                            "description='Import collision fixture', alias='issue176_demo', "
+                            "symbols=[vis.Symbol(ping, tag='observation')]))\n")]
+            (with-fresh-loaded
+              {entry source}
+              (fn [result {:keys [ext-dir]}]
+                (expect (= 1 (:loaded result)) (pr-str (pyx/load-failures)))
+                (expect (= 0 (:failed result)))
+                (dotimes [generation 3]
+                  (dotimes [_ 2]
+                    (let [out ((symbol-fn (registered "issue176-collision") 'ping))]
+                      (if collision?
+                        (do (expect (false? (:success? out)) (pr-str out))
+                            (doseq [fragment
+                                    ["extension 'issue176-collision' is already registered"
+                                     "If this happened during an import"
+                                     "may be shadowing a package or module with the same name"
+                                     "Rename the entrypoint" "demo.py -> demo_bridge.py"
+                                     "public alias can stay unchanged"]]
+                              (expect (str/includes? (str (get-in out [:error :message])) fragment)
+                                      (pr-str out))))
+                        (do (expect (extension/envelope-success? out) (pr-str out))
+                            (expect (= "OK" (:result out)) (pr-str out))))))
+                  (when (< generation 2)
+                    (write-ext! ext-dir entry (str source "# Reload " generation "\n"))
+                    (expect (= {:loaded 1 :failed 0 :changed? true}
+                               (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})))))))))))))
+
 ;; Characterization of the split implementation/dependency layout, before adding
 ;; a declaration format. These assertions describe today's missing bootstrap steps,
 ;; not the desired final behavior. No private index or network install is needed.

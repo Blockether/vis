@@ -594,7 +594,15 @@ def register(extension: Extension) -> None:
     if not isinstance(extension, Extension):
         raise TypeError("vis.register requires an Extension declaration")
     if _registration["spec"] is not None:
-        raise ValueError("vis.register() may only be called once per file")
+        raise ValueError(
+            "vis.register() may only be called once per file; "
+            f"extension {_registration['spec']['name']!r} is already registered. "
+            "Keep a single registration in the entrypoint. "
+            "If this happened during an import, the entrypoint may be shadowing "
+            "a package or module with the same name. "
+            "Rename the entrypoint (e.g. demo.py -> demo_bridge.py); "
+            "the public alias can stay unchanged."
+        )
     spec = extension._spec()
     import os
 

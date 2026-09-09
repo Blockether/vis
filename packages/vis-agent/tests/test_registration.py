@@ -47,10 +47,13 @@ def test_importable_extension_exposes_typed_tools(tmp_path):
     assert result.text == "HELLO ADA"
     with pytest.raises(FrozenInstanceError):
         result.text = "changed"
-    with pytest.raises(ValueError, match="once per file"):
+    with pytest.raises(ValueError, match="once per file") as error:
         vis.register(
             vis.Extension(name="second", description="A duplicate declaration.")
         )
+    assert "extension 'greeter' is already registered" in str(error.value)
+    assert "Keep a single registration in the entrypoint" in str(error.value)
+    assert vis._registration["spec"] is declaration
 
 
 def test_thin_entry_registers_tool_from_separate_package(tmp_path, monkeypatch):
@@ -82,6 +85,62 @@ def test_thin_entry_registers_tool_from_separate_package(tmp_path, monkeypatch):
         assert tool["fn"]() == "ready"
     finally:
         sys.modules.pop("einmal", None)
+
+
+@pytest.mark.parametrize("filename", ["issue176_demo.py", "issue176_bridge.py"])
+def test_entrypoint_import_collision_has_actionable_error(
+    tmp_path, monkeypatch, filename
+):
+    # Issue #176: an entrypoint can shadow the package imported by its tool.
+    import sys
+
+    package = tmp_path / "src" / "issue176_demo"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "core.py").write_text("VALUE = 'OK'\n", encoding="utf-8")
+    entry = tmp_path / ".vis" / "extensions" / filename
+    entry.parent.mkdir(parents=True)
+    entry.write_text(
+        "import importlib\nimport blockether.vis.extension as vis\n"
+        "def ping():\n"
+        "    'Return the implementation value.'\n"
+        "    return importlib.import_module('issue176_demo.core').VALUE\n"
+        "vis.register(vis.Extension(name='issue176-collision', "
+        "description='Import collision fixture', alias='issue176_demo', "
+        "symbols=[vis.Symbol(ping)]))\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(package.parent))
+    monkeypatch.syspath_prepend(str(entry.parent))
+    module_names = ("issue176_demo", "issue176_demo.core")
+    for name in module_names:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    try:
+        runpy.run_path(str(entry))
+        declaration = vis._registration["spec"]
+        ping = declaration["symbols"][0]["fn"]
+        import_path = list(sys.path)
+        for _ in range(2):
+            if filename == "issue176_demo.py":
+                with pytest.raises(ValueError, match="once per file") as error:
+                    ping()
+                message = str(error.value)
+                assert "extension 'issue176-collision' is already registered" in message
+                assert "If this happened during an import" in message
+                assert (
+                    "may be shadowing a package or module with the same name" in message
+                )
+                assert "Rename the entrypoint" in message
+                assert "demo.py -> demo_bridge.py" in message
+                assert "public alias can stay unchanged" in message
+            else:
+                assert ping() == "OK"
+            assert vis._registration["spec"] is declaration
+            assert declaration["alias"] == "issue176_demo"
+            assert sys.path == import_path
+    finally:
+        for name in module_names:
+            sys.modules.pop(name, None)
 
 
 def test_object_tools_keep_method_metadata_and_raise_normally():
