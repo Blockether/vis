@@ -1,3 +1,9 @@
+## 0.1.45 (5588) — 2026-09-09
+<!-- commit: dbe0fced9974f9d67b8ce836fa56bb0509e2c6b0 -->
+
+- V0.1.45
+- Record companion build 5579
+
 ## 0.1.44 (5579) — 2026-09-08
 <!-- commit: 6190dedbd3da348a245b74e1d3d901604ac4aa65 -->
 
@@ -74,7 +80,6 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Register OAuth callbacks in existing projects
 - Record companion build 5463
 
-
 ## 0.1.43 (5463) — 2026-09-07
 <!-- commit: 548183a79fd7a98368a3085c93df1f1705d04c35 -->
 
@@ -100,7 +105,6 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Omit absent chooser group headers
 - Fold CODE and RESULT like THINKING in both clients
 - Record companion build 5421
-
 
 ## 0.1.42 (5421) — 2026-09-07
 <!-- commit: b474a223c91064abf40823ad86f04c34e374831f -->
@@ -1480,3 +1484,4 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Regenerate the dependency inventory (ruff 0.3.2, svar 0.7.86)
 - Collapse recorded non-image attachments into one disclosure row
 - Read packaging metadata with Python's own parsers, add `python.source_paths`
+
