@@ -424,9 +424,9 @@
 (defn- code-block->lines
   "Code blocks preserve source indentation. Diff fences stay COMPACT: the
    unified patch is rendered as-is, one row per patch line, coloured by kind.
-   Plain output may still soft-wrap; every code block gets an inside-code
-   padding row above and below its content."
-  [node width {:keys [code-fence?] :as _opts}]
+   Plain output may still soft-wrap. `:code-spacing? false` omits generated
+   padding; source blank lines remain unchanged."
+  [node width {:keys [code-fence? code-spacing?] :as _opts}]
   (let [src
         (raw-body node)
 
@@ -571,7 +571,7 @@
         (if (str/ends-with? content "\n") (conj body {:runs []}) body)
 
         body
-        (vec (concat [pad] body [pad]))]
+        (if (false? code-spacing?) (vec body) (vec (concat [pad] body [pad])))]
 
     (if code-fence?
       (let [open
@@ -1133,9 +1133,12 @@
       ;; emits, so the dedup pass in `ast->lines` collapses adjacent
       ;; outer-margin blanks regardless of which sibling block produced
       ;; them. The inner :code padding is deliberately preserved.
-      (vec (concat [(assoc (empty-line) :block-tag :outer-margin)]
-                   (tag-lines (code-block->lines node width opts) :code)
-                   [(assoc (empty-line) :block-tag :outer-margin)]))
+      (let [body (tag-lines (code-block->lines node width opts) :code)]
+        (if (false? (:code-spacing? opts))
+          body
+          (vec (concat [(assoc (empty-line) :block-tag :outer-margin)]
+                       body
+                       [(assoc (empty-line) :block-tag :outer-margin)]))))
 
       :ul
       (conj (vec (tag-lines (list->lines :ul (node-children node) width opts) :ul))
@@ -1231,12 +1234,12 @@
          ;; trailer emission in `block->lines`.
          lines
          (cond->> lines
-           (= :code (:block-tag (first lines)))
+           (and (not (false? (:code-spacing? opts))) (= :code (:block-tag (first lines))))
            (into [(assoc (empty-line) :block-tag :outer-margin)]))
 
          lines
          (cond-> lines
-           (= :code (:block-tag (peek lines)))
+           (and (not (false? (:code-spacing? opts))) (= :code (:block-tag (peek lines))))
            (conj (assoc (empty-line) :block-tag :outer-margin)))
 
          lines
@@ -1747,6 +1750,9 @@
    block-terminal lines stay ragged-right (stretching a four-word last line is
    the mega-hole bug) and code lines are never touched — their columns ARE the
    content.
+
+   `:code-spacing? false` suppresses generated code margins and padding for
+   content inside an existing band. Literal blank source lines are preserved.
 
    This is the IR-side analogue of `markdown->entries`. Every
    bubble rendering path that used to parse the rendered markdown

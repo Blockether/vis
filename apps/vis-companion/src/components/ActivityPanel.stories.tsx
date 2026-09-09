@@ -280,7 +280,7 @@ export const ListingBatch: Story = {
         sections[0].getBoundingClientRect().bottom,
     ).toBe(16);
     for (const body of bodies) {
-      await expect(getComputedStyle(body).marginTop).toBe("4px");
+      await expect(getComputedStyle(body).marginTop).toBe("0px");
       await expect(getComputedStyle(body).rowGap).toBe("4px");
     }
     const chronology = canvas.getByRole("list", {
@@ -294,5 +294,62 @@ export const ListingBatch: Story = {
     await userEvent.keyboard("{Enter}");
     await expect(step).toHaveAttribute("aria-expanded", "false");
     await expect(canvas.queryByRole("table")).not.toBeInTheDocument();
+  },
+};
+
+export const CompactMiddle: Story = {
+  args: {
+    activity: {
+      ...ACTIVITY_SETTLED,
+      rows: ["Before", "Middle", "After"].map((headline, index) => ({
+        ...ACTIVITY_SETTLED.rows[0],
+        id: headline.toLowerCase(),
+        sequence: index + 1,
+        operation: headline.toLowerCase(),
+        state: "succeeded",
+        resources: [],
+        evidence: [],
+        result_summary: undefined,
+        presentation: {
+          headline,
+          summary: "",
+          content: [{ type: "code", language: "text", text: "alpha\n\nbeta" }],
+        },
+      })),
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Expand Activity" }));
+    const rows = ["before", "middle", "after"].map((id) =>
+      canvasElement.querySelector<HTMLElement>(`[data-activity-row="${id}"]`)!,
+    );
+    const middle = within(rows[1]).getByRole("button");
+    const checkSiblings = async () => {
+      await expect(rows[1].getBoundingClientRect().top).toBe(
+        rows[0].getBoundingClientRect().bottom,
+      );
+      await expect(rows[2].getBoundingClientRect().top).toBe(
+        rows[1].getBoundingClientRect().bottom,
+      );
+    };
+    await checkSiblings();
+    await userEvent.click(middle);
+    const body = rows[1].querySelector<HTMLElement>("[data-activity-content]")!;
+    const code = within(rows[1]).getByRole("region", { name: "text code" });
+    await expect(getComputedStyle(body).marginTop).toBe("0px");
+    await expect(getComputedStyle(code).paddingTop).toBe("0px");
+    await expect(getComputedStyle(code).paddingBottom).toBe("0px");
+    await expect(code.textContent).toContain("alpha");
+    await expect(code.querySelector("code")!.children).toHaveLength(3);
+    await expect(body.getBoundingClientRect().top).toBe(
+      middle.getBoundingClientRect().bottom,
+    );
+    await expect(rows[1].getBoundingClientRect().bottom).toBe(
+      body.getBoundingClientRect().bottom,
+    );
+    await checkSiblings();
+    await userEvent.click(middle);
+    await checkSiblings();
   },
 };

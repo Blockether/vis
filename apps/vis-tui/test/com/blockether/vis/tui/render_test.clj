@@ -7269,3 +7269,57 @@ print(paths)"
                    (expect (str/ends-with? (:line receipt) "Release ▸"))
                    (expect (not (str/includes? (:line receipt) "ndjson")))
                    (expect (not-any? #(str/includes? (:line %) "system viewer") entries)))))
+
+(defdescribe
+  activity-middle-content-spacing-test
+  (it
+    "opens the middle row without synthetic gaps and preserves source blank lines"
+    (doseq [kind
+            ["code" "diff" "markdown"]
+
+            width
+            [40 80]
+
+            open?
+            [false true]]
+
+      (let [source
+            "alpha\n\nbeta"
+
+            rows
+            (mapv (fn [id]
+                    {:id id
+                     :operation id
+                     :state "succeeded"
+                     :presentation {:headline id
+                                    :summary ""
+                                    :content [{:type kind
+                                               :language "text"
+                                               :text (if (= kind "markdown")
+                                                       (str "```text\n" source "\n```")
+                                                       source)}]}})
+                  ["before" "middle" "after"])
+
+            entries
+            (#'render/activity-detail-entries
+             {:node-id "compact"
+              :activity-rows rows
+              :activity-expanded? (fn [id & _]
+                                    (or (str/ends-with? id "#band") (and open? (= id "middle"))))}
+             width
+             "compact")
+
+            positions
+            (keep-indexed #(when (= :activity-row (get-in %2 [:meta :kind])) %1) entries)
+
+            [before middle after]
+            positions
+
+            content
+            (subvec entries (inc middle) after)]
+
+        (expect (= 1 (- middle before)))
+        (expect (= (if open? (if (= kind "markdown") 4 3) 0) (count content)))
+        (when open?
+          (expect (str/ends-with? (:line (first content)) "alpha"))
+          (expect (str/ends-with? (:line (nth content 2)) "beta")))))))

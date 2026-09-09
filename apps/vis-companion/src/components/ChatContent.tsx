@@ -438,6 +438,7 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   copyValue,
   bare = false,
   frameless = false,
+  padded = true,
 }: {
   value: string;
   language: string;
@@ -447,6 +448,8 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   bare?: boolean;
   /** Keep the spacing but drop the frame: an enclosing card already draws one. */
   frameless?: boolean;
+  /** Omit vertical code padding when the enclosing activity owns its spacing. */
+  padded?: boolean;
 }) {
   const gutter = splitGutter(value);
   const marks = extractMarks(gutter ? gutter.code : value);
@@ -469,7 +472,7 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
         </div>
       )}
       <pre
-        className={`${compact ? "py-2 text-meta " : "py-2.5 text-ui "} m-0 max-w-full overflow-x-auto overscroll-x-contain text-left font-mono text-code-foreground`}
+        className={`${compact ? "text-meta" : "text-ui"} ${padded ? (compact ? "py-2" : "py-2.5") : ""} m-0 max-w-full overflow-x-auto overscroll-x-contain text-left font-mono text-code-foreground`}
         role="region"
         aria-label={language ? `${language} code` : "Code"}
         tabIndex={0}

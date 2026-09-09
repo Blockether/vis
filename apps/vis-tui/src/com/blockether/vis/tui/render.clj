@@ -5514,9 +5514,10 @@
 
               entries
               (mapv #(update % :meta assoc :activity-content? true :activity-content-col col)
-                    (layout/ast->entries ast
-                                         (max 1 (- (long width) (long col)))
-                                         {:mode :channel :session-id session-id}))]
+                    (layout/ast->entries
+                      ast
+                      (max 1 (- (long width) (long col)))
+                      {:mode :channel :code-spacing? false :session-id session-id}))]
 
           (if (and media? artifact)
             (mapv #(update % :meta merge {:artifact artifact :session-id session-id}) entries)

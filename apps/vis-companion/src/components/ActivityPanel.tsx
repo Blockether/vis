@@ -590,7 +590,7 @@ function ActivityBody({
 }) {
   const attachment = useContext(ActivityAttachmentContext);
   return (
-    <div className="mt-1 grid min-w-0 gap-1" data-activity-content>
+    <div className="grid min-w-0 gap-1" data-activity-content>
       {content.map((block, index) => {
         switch (block.type) {
           case "heading":
@@ -626,6 +626,7 @@ function ActivityBody({
                 compact
                 bare
                 frameless
+                padded={false}
               />
             );
           case "table":
