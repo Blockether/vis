@@ -4031,6 +4031,32 @@ vis.register(vis.Extension(
   authoring-example-test
   ;; #176: load the documented package itself, not a second copy of its snippets.
   (it
+    "loads the one-file tutorial and calls its documented defaults in the sandbox"
+    (let [source (second (re-find #"(?s)```python\n# \.vis/extensions/greeting_tools\.py\n(.*?)\n```"
+                                  (slurp (io/resource "vis-docs/extending.md"))))]
+      (expect (some? source))
+      (with-fresh-loaded
+        {"greeting_tools.py" source}
+        (fn [result _]
+          (expect (= 1 (:loaded result)) (pr-str result))
+          (let [ext (registered "greeting")
+                ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                env {:python-context ctx :extensions (atom [ext]) :active-extensions (atom [])}]
+            (try
+              (lp/sync-active-extension-symbols! env [ext])
+              (let [answer (ep/run-python-block
+                             ctx
+                             (str "hits = apropos(r'^hello$')\n"
+                                  "assert len(hits) == 1, repr(hits)\n"
+                                  "assert 'uppercase defaults to False' in doc(hits[0])\n"
+                                  "assert hello.contract['parameters'][1]['has_default']\n"
+                                  "assert await hello('Ada') == 'Hello, Ada!'\n"
+                                  "assert await hello('Ada', uppercase=True) == 'HELLO, ADA!'\n"
+                                  "print('tutorial verified')"))]
+                (expect (nil? (:error answer)) (pr-str answer))
+                (expect (str/includes? (or (:stdout answer) "") "tutorial verified")))
+              (finally (ep/dispose-python-context! ctx))))))))
+  (it
     "exposes its contract, result, documentation and packaged skill in a real session"
     (let [example
           (io/file "packages/vis-agent/examples/greeter")
@@ -4061,8 +4087,8 @@ vis.register(vis.Extension(
                    (ep/run-python-block
                      ctx
                      (str
-                       "hits = apropos(r'^(?:greet\\.hello|vis-greeter/greeting|extension-(?:design|packages|api|troubleshooting))$')\n"
-                       "assert len(hits) == 6, repr(hits)\n"
+                       "hits = apropos(r'^(?:greet[.]hello|vis-greeter/greeting|extension-(?:design|packages|development|api|troubleshooting))$')\n"
+                       "assert len(hits) == 7, repr(hits)\n"
                        "by_name = {hit.name: hit for hit in hits}\n"
                        "tool_hit = by_name['greet.hello']\n"
                        "assert tool_hit.type == 'tool', repr(tool_hit)\n"
@@ -4070,11 +4096,12 @@ vis.register(vis.Extension(
                        "assert 'Parameters:' not in tool_hit.body\n"
                        "assert 'Unicode code points' in doc(tool_hit)\n"
                        "assert 'uppercase: bool' in doc(tool_hit)\n"
+                       "assert 'uppercase defaults to False' in doc(tool_hit)\n"
                        "assert doc(tool_hit) == doc('greet.hello')\n"
                        "assert all(0 < len(hit.body) <= 100 and '\\n' not in hit.body for hit in hits)\n"
-                       "for name in ('extension-design', 'extension-packages', 'extension-api', 'extension-troubleshooting'):\n"
+                       "for name in ('extension-design', 'extension-packages', 'extension-development', 'extension-api', 'extension-troubleshooting'):\n"
                        "    hit = by_name[name]\n" "    assert hit.type == 'doc', repr(hit)\n"
-                       "    page = doc(hit)\n" "    assert '# Extension ' in page, page[:100]\n"
+                       "    page = doc(hit)\n" "    assert page.startswith('# '), page[:100]\n"
                        "    assert hit.body.casefold() != name.replace('-', ' '), repr(hit)\n"
                        "    assert '## See also' in page\n"
                        "skill_hit = by_name['vis-greeter/greeting']\n"

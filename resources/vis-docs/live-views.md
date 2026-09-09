@@ -4,6 +4,13 @@ A live view displays status, progress, tables or logs while an extension runs.
 `vis.live(...)` opens the view and returns a handle for updates. The user can
 watch it in the terminal or Companion app and stop it at any time.
 
+## Before you start
+
+Open a live view inside a registered tool or user command with a calling session,
+not during extension registration. Choose [Activity presentation](extension-api.md#activity-presentation)
+for a tool's ordinary status; use a live view when the user needs to watch or interact
+with ongoing work. Stopping the view stops watching, not necessarily the external job.
+
 ## In the terminal
 
 The example below updates a single pane as jobs finish, rather than printing a
@@ -17,7 +24,14 @@ before stopping the view; cancelling the confirmation keeps it running.
 
 [![Vis live view stop confirmation with an optional note for the agent](assets/screenshots/live-stop.png)](assets/screenshots/live-stop.png)
 
-## Example
+## Watch a CI run
+
+This implementation belongs in a trusted extension module. Register `watch_run`
+with `vis.Symbol` to call it from Vis. It requires the GitHub CLI, authentication
+and a working directory inside the target repository; `run_id` is a numeric Actions
+run ID. The function returns the final view receipt, not a GitHub run object.
+For a complete integration with typed results and error handling, use the
+[repository's GitHub extension](https://github.com/Blockether/vis/blob/main/.vis/extensions/gh.py).
 
 ```python
 import json
@@ -34,7 +48,8 @@ def poll(run_id):
     return json.loads(done["out"])
 
 
-def watch_run(run_id):
+def watch_run(run_id: int) -> dict:
+    """Watch a GitHub Actions run; stopping the view does not cancel the run."""
     run = poll(run_id)
     with vis.live(
         f"CI · run {run_id}",
@@ -80,7 +95,6 @@ GitHub may return a run before publishing its jobs. Declare progress without a
 `total` when jobs appear, and update the total if more jobs are added. The example
 keeps the last known counts across later empty polls.
 
-For a complete implementation, see `.vis/extensions/gh.py` in the Vis repository.
 
 ## Nodes
 

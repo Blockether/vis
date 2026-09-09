@@ -3,6 +3,7 @@
 import json
 
 import blockether.vis.extension as vis
+import pytest
 
 
 def test_live_recorder_isolates_extension_output_from_surface_actions():
@@ -210,3 +211,57 @@ def test_live_view_documentation_renders_terminal_jobs(monkeypatch):
     assert result["summary"] == "Run result: success"
     assert recorder.node("jobs")["rows"][0]["cells"] == ["Tests", "success"]
     assert recorder.node("progress")["done"] == 1
+
+
+@pytest.mark.parametrize("counts", [(0, 0), (0, 1, 0, 2)])
+def test_live_view_documentation_handles_queued_and_growing_job_lists(
+    monkeypatch, counts
+):
+    # #180: the documented example must accept no jobs, later additions and empty polls.
+    import re
+    from pathlib import Path
+
+    document = Path(__file__).parents[3] / "resources/vis-docs/live-views.md"
+    example = re.search(r"```python\n(.*?)\n```", document.read_text(), re.S)[1]
+    namespace = {}
+    exec(compile(example, str(document), "exec"), namespace)
+    now = [0.0]
+    monkeypatch.setattr(namespace["time"], "monotonic", lambda: now[0])
+
+    def sleep(view, seconds):
+        now[0] += seconds
+        return False
+
+    monkeypatch.setattr(vis.LiveView, "sleep", sleep)
+    recorder = vis.testing.LiveRecorder(vis._host)
+    monkeypatch.setattr(vis, "_host", recorder)
+    snapshots = iter(
+        {
+            "status": "completed" if index == len(counts) - 1 else "in_progress",
+            "conclusion": "success" if index == len(counts) - 1 else "",
+            "url": "https://github.com/example/repo/actions/runs/1",
+            "jobs": [
+                {
+                    "databaseId": job,
+                    "name": f"Job {job}",
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+                for job in range(count)
+            ],
+        }
+        for index, count in enumerate(counts)
+    )
+    namespace["poll"] = lambda _: next(snapshots)
+    result = namespace["watch_run"](1)
+    assert result["summary"] == "Run result: success"
+    progress = recorder.node("progress")
+    if counts[-1]:
+        assert progress["done"] == progress["total"] == counts[-1]
+    else:
+        assert progress.get("total") is None
+    assert all(
+        operation.get("total") != 0
+        for operation in recorder.patched()
+        if operation.get("node_id") == "progress"
+    )

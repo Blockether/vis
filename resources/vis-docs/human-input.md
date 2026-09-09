@@ -4,7 +4,19 @@
 Companion app, and returns the answer. This page describes fields, layout,
 validation and results.
 
-## A request
+## Before you start
+
+Use `vis.ask` inside a registered tool, user command or session-bound hook. In Vis,
+it needs the calling session and an available TUI or Companion client. Do not ask
+during registration or from a passive provider callback. Outside Vis, the SDK uses
+terminal input; see [testing outside Vis](extension-design.md#test-the-python-implementation).
+
+## Ask and handle cancellation
+
+This fragment belongs inside your tool's implementation. Import
+`blockether.vis.extension as vis` in that module and supply your own `deploy`
+function. The form does not deploy anything by itself; call the operation only
+after a submitted answer and handle cancellation explicitly.
 
 ```python
 answer = vis.ask("Deploy", [
@@ -20,7 +32,7 @@ else:
     vis.log("info", "deploy skipped: " + answer.reason)
 ```
 
-The request above opens this form in the Vis terminal. Select a target, enter
+The request opens this form in the Vis terminal. Select a target, enter
 notes and submit; the extension resumes with the answer. Password input stays
 masked. This capture uses example data. Select the image to view it full size.
 
@@ -34,10 +46,6 @@ Request options:
 | `submit_label`, `cancel_label` | Button labels. |
 | `is_cancellable` | `False` removes the cancel button. |
 | `timeout_ms` | 5 minutes by default; `0` waits until the person answers or cancels. |
-
-A question needs a session: `vis.ask` uses the session of the running tool,
-slash command or hook, and refuses immediately when there is none. Provider
-callbacks (`detect_fn`, `status_fn`) run without a session and must not ask.
 
 Every key is a snake_case string (`is_required`, `max_length`, `timeout_ms`).
 A camelCase or kebab-case key is refused with an error naming the right
@@ -140,7 +148,8 @@ field keys above.
 `validate` is a function, or a list of functions run in order until one
 refuses. A validator receives the coerced value, or the value and the flat map
 of every answer, and returns `None` or `True` to accept or a message string to
-refuse:
+refuse. This fragment assumes your module imports `re` and defines `is_free`, a
+validator returning `None` for an available slug or an error message otherwise:
 
 ```python
 def a_slug(text):

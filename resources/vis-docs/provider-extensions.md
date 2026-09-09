@@ -5,7 +5,17 @@ same way as built-in providers. This page describes `vis.Provider`, callbacks
 and managed providers. To add a provider without an extension, see
 [Configuration](configuration.md#providers-and-models).
 
-## Declaring a provider
+## Before you start
+
+Use a provider extension when authentication or model discovery needs Python code.
+For a fixed endpoint and API key, prefer [provider configuration](configuration.md#providers-and-models).
+The example needs no external Python dependencies, but its endpoint and model names
+are placeholders: replace them with a service you are authorized to use.
+
+## Declare and load a provider
+
+1. Save this complete entry as `.vis/extensions/example_provider.py` in your project.
+   It reads `EXAMPLE_API_KEY` only when a callback runs, not while declaring the provider.
 
 ```python
 import os
@@ -40,10 +50,18 @@ vis.register(vis.Extension(
 ))
 ```
 
-Add `example` through **Add provider** or the `providers` configuration, then
-select `example-model`. The preset supplies the endpoint, API format and
-default model names; callbacks supply credentials and status. The commands
-`vis-agent providers status|limits|auth <id>` use the same registration.
+2. Supply `EXAMPLE_API_KEY` through the project's environment configuration, a local
+   `.env` file or the gateway's startup environment. Do not commit the value. See
+   [environment resolution](extension-api.md#environment).
+3. Start Vis in that project or run `/reload`, then inspect
+   `vis-agent providers status example` in the terminal. The status callback reports
+   whether a credential is present; it does not verify it with the service.
+4. Add `example` through **Add provider** or `providers` configuration, select the
+   real model name and make a request to verify the connection.
+
+The preset supplies endpoint and model defaults; callbacks supply credentials and
+status. Registration or a positive local status is not proof that the service accepts
+the key. No interactive login is defined in this minimal example.
 
 ## Records
 

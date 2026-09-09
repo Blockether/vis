@@ -74,7 +74,7 @@ Their `.pth` files or backend import hooks resolve imports to the source checkou
 After editing Python source, `/reload` refreshes editable imports and extension
 tools without another sync or gateway restart. Dependency or packaging-metadata
 changes require another sync. See the
-[package-authoring example](extension-packages.md#uv-projects).
+[editable-project guide](extension-development.md).
 
 Editable source is not a frozen snapshot. Already imported modules can retain old
 code until reload, and an in-flight call can still use old bindings. Native extension

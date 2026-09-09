@@ -1,16 +1,112 @@
-# Extension packages
+# Installing and sharing extensions
 
-Use a package for publication or for tools that ship with skills. For a small local
-script or an existing editable uv project, use the alternatives below. Do not mix
-these dependency modes in one entrypoint.
+Install an extension for one project or every project, reload changes, and package
+code with optional skills for sharing. To write your first tool, start with
+[Extending Vis](extending.md). Connecting an existing uv package has its own
+[development workflow](extension-development.md).
 
-## Extension Center projects
+## Choose a layout
 
-The [tested greeter package](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter) is the canonical starter:
+| Situation | Layout | Dependency preparation |
+| --- | --- | --- |
+| Small local tool using the standard library | `.vis/extensions/greeting_tools.py` | None; the SDK is supplied by Vis |
+| Local script with third-party wheels or source roots | [PEP 723 entry file](#standalone-scripts) | Automatic wheel installation at load/reload |
+| Package to install or share, optionally with skills | [`pyproject.toml` and `extension.py`](#package-manifest) | Automatic uv preparation at load/reload |
+| Existing uv project with an editable implementation | Entry file declaring `tool.vis.project` | Explicit sync; see [existing Python projects](extension-development.md) |
+
+Choose one dependency mode per entrypoint. A package does not need a skill, a
+provider does not need tools, and a small tool does not need a package.
+
+## Where extensions load
+
+| Directory | Scope |
+| --- | --- |
+| `~/.vis/extensions/` | Every project |
+| `<project>/.vis/extensions/` | That project |
+
+A project extension with the same registered name overrides the global extension.
+Single `.py` files are entries; a package directory loads only `extension.py`.
+Test files (`test_*.py` and `*_test.py`) are not extension entries.
+
+**Trust boundary:** entrypoints and dependencies run with your user permissions,
+not the model's jail. Review project extensions before starting Vis in an unfamiliar
+checkout. `--trust` acknowledges this execution; validation is not a security review.
+
+## Install a package
+
+**Prerequisites:** Vis installed, reviewed source and dependencies, and `uv` on the
+gateway's `PATH`. GitHub installs also need Git on `PATH`.
+
+1. In the target project, link the local [greeter example](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter)
+   after copying its complete directory to `greeter/`:
+
+   ```bash
+   vis-agent extension install ./greeter --project --trust
+   ```
+
+   The local checkout is linked, not copied. You may also pass its `pyproject.toml`.
+   Omit `--project` only when you intend a global installation.
+
+2. Start Vis there, or run `/reload`. Vis prepares dependencies before registration.
+3. On the next turn, ask Vis to inspect `doc("greet.hello")` and call
+   `await greet.hello("Ada")`. The result's `.text` is `Hello, Ada!`.
+   `vis-agent extension list` checks registration, not execution.
+
+### Install reviewed GitHub source
+
+The [Extension Center](https://vis.blockether.com/extensions/) lists public GitHub
+projects. After reviewing source and dependencies, copy its commit-pinned install
+command. For your own repository, the command has this form:
+
+```bash
+vis-agent extension install https://github.com/example/vis-greeter --project --trust
+vis-agent extension install https://github.com/example/extensions --subdirectory tools/greeting --project --trust
+```
+
+Replace the placeholder repository. These commands select its default branch; add
+`--revision` with the reviewed full lowercase 40-character commit SHA to pin a
+version. Only HTTPS `github.com/owner/repository` URLs are accepted. Pass a project
+folder with `--subdirectory`, not as a GitHub file or tree URL.
+
+GitHub installation stages a checkout and atomically installs only the selected
+project. The catalog stores no source bundles and is not contacted during installation.
+Submodules and Git LFS are not fetched; symlinks are refused. Keep required source
+and portable dependency paths inside the selected project, within the limits of
+4096 entries and 64 MiB.
+
+## Reload, update or remove
+
+| Change | Action |
+| --- | --- |
+| Edit an entry, helper module, declared source root or bundled skill | `/reload`; call the tool on the next turn |
+| Change a package's dependencies | Deliberately update `uv.lock` if needed, then `/reload` |
+| Change a manually prepared editable project's dependencies | Follow the [explicit sync workflow](extension-development.md#prepare-the-vis-environment) |
+| Replace an installed GitHub revision | Preserve any local work, remove the installed directory, install the reviewed revision, then `/reload` |
+| Uninstall | Remove only the installed link or directory, then `/reload`; do not delete a linked development checkout |
+
+Install never overwrites an existing destination. `/reload` does not fetch a newer
+GitHub revision. It rebuilds extension contexts from installed source; already
+running calls may finish with old code. Live sessions switch at the next turn boundary.
+
+`vis.state` survives reload and restarts. A failed reload retains the last working
+code, contracts, docs and package skills, marked stale with the failure reason and
+loaded/requested source fingerprints. A successful retry clears the warning.
+See [troubleshooting](extension-troubleshooting.md#old-code-or-documentation-after-an-edit).
+
+Vis runs admitted copies of entries and declared source roots. Writes beside those
+files affect a private copy, not durable project data; use `vis.state` for persistence.
+Editable projects instead import their live checkout. Reload does not replace the
+running gateway binary or its startup environment, and is not a native-library reload.
+
+## Package manifest
+
+A distributable package keeps `pyproject.toml` and `extension.py` together, at
+repository root or in a selected subdirectory:
 
 ```text
 greeter/
   pyproject.toml
+  uv.lock
   extension.py
   src/vis_greeter/__init__.py
   tests/test_greeter.py
@@ -18,7 +114,8 @@ greeter/
   skills/greeting/references/style.md
 ```
 
-Its `pyproject.toml` declares import roots and skill directories without executing code:
+The [tested example](https://github.com/Blockether/vis/tree/main/packages/vis-agent/examples/greeter)
+uses this manifest. Generate and commit `uv.lock` before publishing:
 
 ```toml
 [project]
@@ -37,95 +134,52 @@ skills = ["skills/greeting"]
 pythonpath = ["src"]
 ```
 
-Keep `pyproject.toml` and `extension.py` together at repository root or in a selected
-subdirectory. Commit `uv.lock` for repeatable dependency resolution. The complete
-entrypoint is shown in the [quickstart](extending.md); the implementation is in
-[Extension design](extension-design.md).
+| Field | Requirement or behavior |
+| --- | --- |
+| `project.name` | The normalized package name must equal the registered extension name |
+| `project.description`, `project.version` | Supply displayed package metadata |
+| `project.requires-python` | Must allow Vis's embedded interpreter; Vis does not download another Python |
+| `project.dependencies` | Must include an unconditional `vis-agent` requirement compatible with the running release |
+| `tool.vis.category` | `providers`, `tools` or `workflows` |
+| `tool.vis.source_paths` | Import roots inside the package, such as `src`, not the `vis_greeter` package directory |
+| `tool.vis.skills` | Optional relative skill directories; omit when no procedure is needed |
 
-The manifest must declare an unconditional `vis-agent` dependency. Its version
-constraint checks compatibility with the running Vis release; `requires-python`
-checks the embedded interpreter. Vis does not download another Python interpreter.
-The registered extension name must match the normalized project name. The manifest
-supplies the displayed version, description and category: `providers`, `tools` or
-`workflows`. Keep any additional Python implementation under the package directory.
-Do not combine this layout with a PEP 723 block in `extension.py`.
+Keep the implementation under the selected package directory. Do not put a PEP 723
+block in this package's `extension.py`. See [Extension design](extension-design.md#keep-the-entrypoint-small)
+for the complete registration and implementation.
 
-The Extension Center aggregates public GitHub repositories. Choose **Add a repository**,
-enter an HTTPS repository URL and leave **Project folder** empty for repository root.
-For a monorepo, specify the folder containing both `pyproject.toml` and `extension.py`,
-for example `extensions/greeting`. The Worker reads metadata without executing code.
-Review the resolved commit and submit it for moderation. New entries and updates remain
-private until approved; resubmission never replaces a published listing automatically.
-Separate folders can have separate entries.
-See the [docs application instructions](https://github.com/Blockether/vis/tree/main/apps/vis-docs).
+At startup and `/reload`, Vis uses uv to prepare these packages. It creates a lock
+if absent, respects an existing lock, and skips work when the readiness record still
+matches the project, runtime, index and installed distributions. A stale supplied
+lock is an error: update it with `uv lock` rather than expecting reload to rewrite it.
+Set the default package index with `python.index_url`.
 
-After reviewing the source and dependencies, copy the catalog's commit-pinned install
-command. You can also install a GitHub project's default branch or link local source.
-These examples use a placeholder public repository; replace it with your own:
-
-```bash
-vis-agent extension install https://github.com/example/vis-greeter --trust
-vis-agent extension install https://github.com/example/extensions --subdirectory tools/greeting --trust
-vis-agent extension install ./vis-greeter/pyproject.toml --project --trust
-```
-
-For a reviewed immutable source version, add `--revision` followed by its full lowercase
-40-character Git commit SHA. GitHub installs require Git on `PATH`; only HTTPS
-`github.com/owner/repository` URLs are accepted. Specify a folder separately instead of
-pasting a GitHub file or tree URL. Submodules and Git LFS are not fetched. Keep required
-source and portable dependency paths within the selected project. Symlinks are not
-accepted in downloaded projects; selected contents are limited to 4096 entries and 64 MiB.
-
-Installation defaults to `~/.vis/extensions/`; `--project` selects the current
-workspace's `.vis/extensions/`. A Git checkout is staged and only the selected project
-is installed atomically. A local checkout is linked rather than copied, so edits become
-available on `/reload`. Existing destinations are never overwritten. To replace one,
-explicitly remove the installed link or directory first, preserving source work.
-The catalog stores no source bundles and is not consulted during installation.
-
-At gateway startup and on `/reload`, Vis automatically prepares these projects using
-`uv` from `PATH`. It creates `uv.lock` if absent, respects an existing lock, and skips
-installation when its readiness record still matches the project, runtime, index and
-installed distributions. A stale supplied lock is an error: update it deliberately
-with `uv lock` rather than expecting reload to rewrite it. Source-only edits need
-`/reload`, not another install command. Use `python.index_url` to select the index.
-The connecting terminal reports startup preparation and dependency stages; status
-is also included in authenticated gateway administration responses.
-
-`--trust` permits extension code and dependency build backends to run with your
-user permissions. Validation is not a security review. Dependencies use the shared
-`~/.vis/python/packages` directory, not isolated per-extension environments. A failed
-reload retains the last working extension definition but cannot roll back shared
-package changes. Fix the dependency error before retrying `/reload`.
+Dependencies share `~/.vis/python/packages` with other extensions and sandbox imports;
+they are not isolated per extension or project. A failed load cannot roll back shared
+package changes. Source-only edits need reload, not dependency installation. Build
+backends and executable `.pth` files are trusted code. Imports in `python_execution`
+never install packages, and its view of the shared package directory is read-only.
 
 ## Bundled skills
 
-`tool.vis.skills` is an optional list of up to 64 relative directories containing
-`SKILL.md`. Paths and resource symlinks must stay inside the package; duplicate
-paths are rejected. Scripts using PEP 723 metadata do not declare bundled skills.
+Declare up to 64 relative directories containing `SKILL.md` in `tool.vis.skills`.
+Paths and resource symlinks must stay inside the package. Duplicate paths, duplicate
+skill names and escaping resources fail loading. PEP 723 scripts do not declare skills.
 
-Each skill is discovered as `<normalized-project-name>/<skill-name>`, for example
-`vis-greeter/greeting`. The frontmatter name, or directory name when absent, must
-contain only letters, digits, underscores and hyphens, starting with a letter or
-digit. Duplicate skill names within a package fail its load. Package names must
-already match the extension's registered name.
+A skill is discovered as `<normalized-project-name>/<skill-name>`, for example
+`vis-greeter/greeting`. Its frontmatter name, or directory name when absent, uses
+letters, digits, underscores and hyphens and starts with a letter or digit.
+`doc()` identifies the package version and bundled resource directory.
 
-Existing project, user and plugin skills keep their current precedence. A skill
-with the exact qualified name can explicitly override a package skill; otherwise
-names from different packages do not collide. `doc()` identifies the package
-version and bundled resource directory. Package procedures do not change the
-session's working project.
+Read it with `doc("vis-greeter/greeting")`, discover it with
+`apropos("vis-greeter/")`, or request `/skill:vis-greeter/greeting`. An ordinary
+skill with that exact qualified name takes precedence; otherwise different packages
+do not collide. The procedure does not change the working project or widen filesystem
+access. Installing, listing or reading it never executes its instructions.
 
-Skills and resources are read from the same admitted source snapshot as the
-extension. Edits take effect on successful `/reload`; a failed reload retains the
-last working code and skills. Updating the installed revision and reloading updates
-both. Removing the installed package/link and reloading removes its skills too.
-Never remove a linked development checkout when you only intend to uninstall its link.
-
-`doc("vis-greeter/greeting")`, `apropos("vis-greeter/")` and
-`/skill:vis-greeter/greeting` use the existing skill mechanism. Resources remain
-subject to normal filesystem access; declaring a skill does not widen the sandbox.
-Installing, listing or reading a skill never executes its procedure. See [Skills](skills.md).
+Code, skills and resources share the admitted source snapshot and the same reload,
+last-good retention and removal behavior. See [Skills](skills.md) for authoring and
+precedence; put tool reference material in docstrings rather than duplicating it here.
 
 ## Standalone scripts
 
@@ -184,239 +238,28 @@ installs dependencies, then evaluates the entry and registers its tools.
   an unchanged loader scan does neither. Source edits are not used by existing
   tools until reload. A failed reload retains the last working extension.
 
-Source snapshots contain extension code, not installed dependencies. Both embedded
-workers import the same shared package directory; calling a tool does not install
-packages again. Each process has its own module cache and permissions. Dependency
-versions are shared across all sessions and extensions, not isolated per project.
-A failed reload retains the extension definition, but does not roll back shared
-package updates. After changing installed packages, use `/reload` to rebuild the
-session workers; an already running call can retain its imported modules until it ends.
+Both embedded workers import shared installed dependencies; a tool call does not
+install them again. Each process has its own module cache. After package changes,
+reload to rebuild session workers; an already running call may keep its old imports.
 
-## uv projects
+## Publish a package
 
-For a manually prepared uv package, keep normal Python packaging metadata in the package
-and a thin Vis entry file beside the workspace. The implementation does not need
-to depend on Vis; only the entry imports the host-provided `blockether.vis.extension`.
+1. Verify the package tests and a registered tool call as described in
+   [Extension design](extension-design.md#test-both-boundaries).
+2. Commit the implementation, manifest, lockfile and any declared skills to a public
+   GitHub repository. Keep credentials and private deployment details out of it.
+3. In the Extension Center, choose **Add a repository** and enter its HTTPS URL.
+   Leave **Project folder** empty for repository root, or provide the directory
+   containing both `pyproject.toml` and `extension.py`.
+4. Review the resolved commit and submit it for moderation.
 
-```text
-project/
-  einmal/
-    pyproject.toml
-    uv.lock                       # generated by uv lock
-    src/einmal/__init__.py
-    tests/test_status.py
-  .vis/extensions/einmal_tools.py
-```
-
-This complete example uses setuptools with an editable `src/` layout:
-
-```toml
-# einmal/pyproject.toml
-[project]
-name = "einmal"
-version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = []
-
-[build-system]
-requires = ["setuptools>=64"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools.packages.find]
-where = ["src"]
-```
-
-```python
-# einmal/src/einmal/__init__.py
-def status() -> str:
-    """Return the integration status."""
-    return "ready"
-```
-
-```python
-# .vis/extensions/einmal_tools.py
-# /// script
-# requires-python = ">=3.12"
-# dependencies = []
-# [tool.vis]
-# project = "../../einmal"
-# ///
-import blockether.vis.extension as vis
-from einmal import status
-
-vis.register(vis.Extension(
-    name="einmal",
-    description="Package example.",
-    alias="einmal",
-    symbols=[vis.Symbol(status)],
-))
-```
-
-`project` is relative to the entry file, not the working directory. Absolute paths
-also work. It must contain both `pyproject.toml` and `uv.lock`. Project mode rejects
-nonempty script dependencies; declare dependencies in `pyproject.toml` instead.
-Do not add this package's `src` to `tool.vis.source_paths`: its editable install
-already provides the import root. `source_paths` is the alternative for source
-that Vis snapshots without installing it as a package.
-
-Install uv on the **sync command's PATH**. From `project/`, generate and commit the
-lockfile, then prepare the package for Vis:
-
-```bash
-uv lock --project ./einmal
-vis-agent python uv sync --project ./einmal --locked
-vis-agent python -c "import einmal; print(einmal.status(), einmal.__file__)"
-vis-agent extension list
-```
-
-The import prints `ready` and the path to `einmal/src/einmal/__init__.py` in this
-checkout, not a copied module under `~/.vis/python/packages`. The extension list
-includes `einmal`. Start Vis in `project/`, or run `/reload` there, to load its tools.
-
-Run sync as the same OS user and with the same Vis runtime and package-directory
-settings as the gateway. It uses the embedded Python and runs
-`uv export --locked --no-default-groups --format pylock.toml`, then
-`uv pip install --target` on the exported lock. It preserves editable local
-sources, resolved dependencies, artifact hashes and named indexes while retaining
-unrelated packages. Python downloads are disabled. The temporary export is removed;
-`uv.lock` and the project's `.venv` are unchanged. Default dependency groups and
-optional extras are not installed. `--offline` and `--no-cache` are supported;
-other uv sync options are rejected.
-
-A project needs a build backend to install its own package. Without `[build-system]`
-(or when uv is configured not to package the project), preparing dependencies does
-not install the project's source. For a local dependency, declare it in
-`project.dependencies` and explicitly select editable mode in the project's TOML:
-
-```toml
-[tool.uv.sources]
-shared-tools = { path = "../shared-tools", editable = true }
-```
-
-The sibling package must have its own packaging metadata. A plain path dependency
-without `editable = true` is not a promise of live source imports. Published wheels
-are normal installed dependencies, not editable source trees.
-
-Vis installs into **`~/.vis/python/packages`**. Editable installs place `.pth` files
-or backend import hooks there, rather than copying the implementation. Both the
-sandbox and trusted extension worker activate them. They do **not** grant access
-to the referenced source: sandbox imports still require that checkout to be in an
-allowed [workspace filesystem root](jail.md#filesystem-access).
-Keep the checkout at its installed path; moving it requires another sync.
-
-`~/.vis/python/packages` is shared across projects, so dependency versions are
-not isolated. Startup and plain `/reload` never install manually selected uv projects.
-Readiness checks name changed inputs: project location, `pyproject.toml`, `uv.lock`,
-runtime, interpreter path, packages directory, default index or installed distribution
-metadata. Only distributions named in the exported project lock are tracked; updating
-an unrelated shared package or editing editable Python source does not require sync.
-A failed load does not roll back shared package changes.
-
-After reviewing dependency changes, use **`/reload --sync`** to prepare the uv projects
-declared by the configured extensions and retry loading them. This explicit host operation
-works even when the assistant's shell is disabled. It runs trusted build backends with the
-gateway's user, interpreter and package directory, and requires uv on the gateway's PATH.
-It respects supplied locks; update a stale lock deliberately before retrying. Ordinary
-`/reload` and imports do not authorize this preparation.
-
-A failed reload reports whether an extension was not loaded or its last-known-good tools
-and docs were retained as stale. The reload result, doctor and assistant context include
-loaded/requested source fingerprints and the failure reason. Successful retry clears the
-warning; execution, signatures, contracts and docs update at the next turn boundary.
-
-Build backends and executable `.pth` lines are trusted package code, not inert
-configuration. Review projects and dependencies before installing them. Builds run
-during explicit sync; `.pth` setup runs when a worker activates the package site.
-Imports in `python_execution` never install packages, and the shared directory is
-read-only to sandbox code.
-
-`python.index_url` supplies uv's default index; named source indexes are not replaced.
-Keep credentials in uv's supported credential configuration or the sync process's
-environment, not committed URLs. Installer diagnostics are suppressed because they
-may contain credentials. Loading a prepared project does not require uv on the
-gateway's PATH.
-
-### Explicit installation workflow
-
-| Change | Required action |
-| --- | --- |
-| First use of a checkout | Generate `uv.lock`, run `vis-agent python uv sync --project ./einmal --locked`, then start Vis or `/reload` |
-| Edit existing editable Python source or an extension entry | `/reload`; no reinstall or gateway restart |
-| Change dependencies, packaging metadata or the checkout location | Update the lock if needed, sync again, then `/reload` |
-| Change Vis runtime, package directory or index | Sync using the intended runtime and settings, then load the extension |
-| Replace compiled extension code | Rebuild and install it, then use a fresh Vis process; Python source reload is not a native-library reload |
-
-`/reload` updates tools in live sessions at the next turn boundary.
-Already running calls may finish with old code. `/reload` does not replace a running
-gateway's binary or startup environment; adopting a new Vis build or changing
-startup location overrides requires starting the gateway with those settings once.
-
-Editable packages use the live checkout, not Vis's frozen source snapshots. Cached
-imports can retain old code until reload, while a first import can read edits sooner.
-Use `/reload` as the update step; do not rely on editing a file alone to refresh an
-already imported function. Ordinary installed dependencies are not cleared from
-the registration worker's module cache by editable reload.
-
-This manual installation workflow is selected by `tool.vis.project`. Script-only
-PEP 723 `dependencies` still use the automatic pip loader. A plain external `uv sync`
-prepares a separate project environment; it does not install packages for Vis.
-
-### Keep business logic outside the entry file
-
-Keep the implementation in the ordinary Python package, as in the example above,
-and test it independently:
-
-```python
-# einmal/tests/test_status.py
-from einmal import status
-
-
-def test_status():
-    assert status() == "ready"
-```
-
-After the initial sync, run from `project/`:
-
-```bash
-vis-agent python -m pip install pytest
-vis-agent python -m pytest einmal/tests/ -q
-```
-
-No `PYTHONPATH` or extra `source_paths` is needed for this editable package. The
-spelling is `vis-agent python -m pytest`, not `vis-agent python pytest`. The command
-uses the shared Vis packages, not the project's `.venv`; dev groups in `uv.lock`
-are not installed by the sync command. Update the test expectation when changing
-`status()`'s result. For source used only through `tool.vis.source_paths`, configure
-import roots separately in the package's own test environment.
-
-After unit tests pass, verify extension registration and a tool call in a Vis
-session: explicit sync, `/reload`, then call the tool. `vis-agent extension list`
-checks registration only. A passing package test alone does not prove that the
-prepared dependencies can be imported and called in the trusted extension worker.
-
-Trusted extension workers support native calls through `ctypes`, including SciPy's
-callback initialization. The model sandbox remains a separate, confined process.
-Verify a representative calculation through the extension tool; installation or
-registration alone is not a compatibility check.
-
-## Reloading
-
-`/reload` closes Python extension contexts and loads the current files.
-`vis.state` persists, and live sessions can use the new tools and commands.
-File edits do not affect a running extension until it reloads.
-
-At load, Vis copies the extension's directory to a private location and runs
-that copy. Changes to helper modules also require `/reload`. Files written
-next to the extension are created in the private copy; use `vis.state` for
-persistent data.
-
-
-Only `extension.py` is loaded from a package directory. Test files (`test_*.py` and
-`*_test.py`) are not extensions. `/test` runs extension tests with pytest, installed
-on first use. Test the ordinary package and an actual tool call as described in
-[Extension design](extension-design.md#test-both-boundaries).
+The catalog reads metadata without executing project code. New entries and updates
+stay private until approved; resubmission does not replace a published listing.
+Different folders can have separate entries. Publishing is separate from local
+installation and should only be done when requested.
 
 ## See also
 
-- [Extending Vis](extending.md).
-- [Extension troubleshooting](extension-troubleshooting.md).
+- [Extension design](extension-design.md) — implementation and integration tests.
+- [Using an existing Python project](extension-development.md) — manual uv preparation.
+- [Extension troubleshooting](extension-troubleshooting.md) — loading, imports and stale tools.

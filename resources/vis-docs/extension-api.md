@@ -1,39 +1,53 @@
 # Extension API
 
-Reference for extension declarations, tool contracts, commands, hooks and host operations.
+Reference for Python extension declarations, tool contracts, callbacks and host
+operations. Start with the [tutorial](extending.md) for a complete entry file or
+[Extension design](extension-design.md) for authoring and test guidance.
 
-For a runnable package, start with the [quickstart](extending.md). Dependency and
-skill metadata belong to the [package manifest](extension-packages.md), not `Extension`.
+## Find an API
 
-## The declaration
+| Task | Section |
+| --- | --- |
+| Declare and register an extension | [Registration](#registration) |
+| Export a callable or object namespace | [Tools](#tools) |
+| Explain when the agent should use it | [Prompts and discovery](#prompts-and-discovery) |
+| Read types, defaults and introspection limits | [Tool contracts](#tool-contracts) |
+| Add a user command or guard | [Slash commands](#slash-commands) · [Op hooks](#op-hooks) |
+| Persist data or report status | [Durable state](#durable-state) · [Logging and notifications](#logging-and-notifications) |
+| Read environment or add session context | [Environment](#environment) · [Session context](#session-context) |
+| Access files or start a process | [Filesystem and processes](#filesystem-and-processes) |
+| Show forms, live work or register a provider | [Forms](human-input.md) · [Live views](live-views.md) · [Providers](provider-extensions.md) |
 
-Call `vis.register(vis.Extension(...))` once per extension file. The
-`Extension`, `Symbol`, `SlashCommand`, `OpHook`, `NetworkFilter` and `Provider`
-constructors create immutable declarations. Construction validates values but
-performs no IO; registration applies them.
+## Registration
 
-| Argument | Type | Purpose |
+Examples on this page use `import blockether.vis.extension as vis` inside a trusted
+extension, not in `python_execution`. Call `vis.register(vis.Extension(...))` once
+per entry file. The declaration constructors validate and copy values without IO;
+registration applies them and resolves the declared environment.
+
+`Extension` arguments are keyword-only. Its collection arguments accept sequences
+of the corresponding SDK declarations and are stored as tuples, not mutable registries.
+
+| Argument | Default | Meaning |
 | --- | --- | --- |
-| `name` | str, required | Unique extension name. |
-| `description` | str, required | One line for `vis-agent extension list` and the model's extension snapshot. |
-| `alias` | str | Registry identity; required with `symbols`. It does not prefix tool names. |
-| `symbols` | list of `vis.Symbol` | Tools the model can call. See [Tools](#tools). |
-| `prompt` | str or callable | Text added to the model's prompt. A callable receives the env dict every turn and returns a string or `None`. |
-| `activation` | callable | `(env) -> bool`, evaluated per turn. `False` hides the whole extension for that turn. |
-| `slash_commands` | list of `vis.SlashCommand` | Commands for the user. See [Slash commands](#slash-commands). |
-| `op_hooks` | list of `vis.OpHook` | Guards and observers over tool calls. See [Op hooks](#op-hooks). |
-| `network_filters` | list of `vis.NetworkFilter` | Request and response policy at the gateway proxy. See [Process jail and network policy](jail.md#project-network-filters). |
-| `providers` | list of `vis.Provider` | LLM providers. See [Provider extensions](provider-extensions.md). |
-| `ctx` | callable | `(env) -> dict`, merged into the model's `session` dict every turn. See [Session context](#session-context). |
-| `env` | list of str | Host environment variables this file may read. See [Environment](#environment). |
-| `kind`, `version` | str | Display metadata. |
+| `name: str` | Required | Unique extension identity; also keys durable state |
+| `description: str` | Required | One-line summary for the extension list and model snapshot |
+| `alias: str` | `None`; required with symbols | Registry identity, not a tool-name prefix |
+| `symbols` | `()` | `vis.Symbol` declarations for callable tools |
+| `prompt: str` or callable | `None` | Model instructions; a callable receives the env dict each turn and returns text or `None` |
+| `activation` | `None` | Optional `(env) -> bool`; `False` hides the extension for that turn |
+| `slash_commands` | `()` | `vis.SlashCommand` declarations for user commands |
+| `op_hooks` | `()` | `vis.OpHook` guards or observers |
+| `network_filters` | `()` | `vis.NetworkFilter` request/response policy; see [network filters](jail.md#project-network-filters) |
+| `providers` | `()` | `vis.Provider` declarations |
+| `ctx` | `None` | Optional `(env) -> dict` merged into the model's session context |
+| `env` | `()` | Names of host environment variables this entry may read |
+| `kind`, `version` | `None` | Display metadata; an installed package supplies its manifest metadata |
 
-The env dict passed to `prompt`, `activation` and `ctx` contains only `cwd`,
-`session_id` and `channel`.
-
-Keep `prompt` short. The model finds tools with `apropos(pattern)` and reads
-their docstrings with `doc(name)`. Do not repeat signatures in the prompt. Use
-it for additional context, such as a project-specific catalog.
+The callback env dict contains `cwd`, `session_id` and `channel`. Keep `prompt`,
+`activation` and `ctx` short-running. Calls into one extension instance are serialized.
+Dependency and skill metadata belong to the [package manifest](extension-packages.md#package-manifest),
+not `Extension`.
 
 ## Tools
 
@@ -41,21 +55,16 @@ it for additional context, such as a project-specific catalog.
 vis.Symbol(fn_or_object, name=None, tag="observation", is_hidden=False, activity=None)
 ```
 
-`name` is the public sandbox name, defaulting to the function name. `tag` is
-`observation` or `mutation`; `is_hidden=True` leaves the tool callable but removes
-it from model-facing discovery. A callable must have a nonblank docstring.
+`name=None` uses a function's name; set `name` explicitly for an object namespace.
+`tag` is `observation` or `mutation`. `is_hidden=True` removes a callable from
+model-facing discovery but does not make it inaccessible or authorize its use.
+Every exported callable needs a nonblank docstring. `activity=None` uses the
+default presentation.
 
-`Symbol.contract` returns fresh portable data without registration. A callable
-contract has `version`, `name`, `tag`, `description`, `signature`, `parameters` and
-`returns`. A namespace contract has `version`, `name` and `members`, each with its
-full public name. The engine exposes each callable's description as its `.contract`
-attribute; changing that local dict does not change the declaration or permissions.
-Read [type descriptions and limitations](extension-design.md#one-description-two-readers).
-
-`doc(name)` uses the same contract for its signature, prose, argument types and
-result fields. `apropos(pattern)` remains a compact name-filtered catalog, not a
-schema dump. Operations continue to accept Python arguments and return Python
-values; exceptions remain ordinary tool failures.
+Source functions can be ordinary synchronous Python. The model calls their proxies
+with `await` in `python_execution`; arguments and results remain Python values.
+Exceptions are ordinary tool failures. The [execution boundary](#filesystem-and-processes)
+determines which values can cross to the sandbox.
 
 ### Return typed objects
 
@@ -67,7 +76,7 @@ not cross into the sandbox.
 ### Object namespaces
 
 `vis.Symbol(Greeter(), name="greet")` exports `greet.hello(...)` in the
-[quickstart](extending.md). Public methods become tools; object attributes become
+[packaged example](extension-design.md#keep-the-entrypoint-small). Public methods become tools; object attributes become
 nested namespaces. Names beginning with `_` are excluded. Public scalars, modules,
 classes, cycles and repeated object references are rejected with their path.
 `vis.method(tag="observation", is_hidden=False, activity=None)` overrides metadata
@@ -85,6 +94,136 @@ or `failure`), `args`, `kwargs`, `result` and `error` and returns a
 presentation while the tool runs. Presentation errors never change a tool's
 result. Supported block types are defined in the
 [Activity contract](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/activity.json).
+
+## Prompts and discovery
+
+Use `prompt` for a short explanation of **when** to choose this extension and the
+public names to search. For the packaged greeter, a suitable value is:
+
+```text
+Use greet.hello to generate greeting text; it never sends messages.
+Discover the tools with apropos(r"^greet\.") and read doc("greet.hello") before calling.
+```
+
+Assign this text to `Extension.prompt`; it is not Python code and does not execute
+at registration. A prompt callable computes text each turn; it should not log in,
+start background work or repeat the entire API. `description` supplies the extension
+summary even when `prompt` is omitted.
+
+`apropos(pattern)` filters public symbol names by regular expression. `doc(name)`
+or `doc(hit)` reads the complete matching document. Put parameter details in the
+tool's docstring and annotations, not the prompt. Put an optional multi-step
+procedure in a [skill](skills.md). Neither prompt text nor reading a skill enforces
+permissions; use explicit policy mechanisms for guards.
+
+## Tool contracts
+
+`Symbol.contract` returns fresh portable data without registration or a tool call.
+In the sandbox, each callable exposes its contract as an attribute, for example
+`greet.hello.contract`. Changing that local dictionary does not change the declared
+tool or its permissions.
+
+| Contract | Fields |
+| --- | --- |
+| Callable | `version`, `name`, `tag`, `description`, `signature`, `parameters`, `returns` |
+| Namespace | `version`, `name`, `members` with full public member names |
+| Parameter | Name, parameter kind, `required`, `has_default`, `default_is_none`, and type description |
+
+`doc()` renders this same contract as the signature, prose, argument types and
+result fields. This is a documentation contract, not JSON invocation or runtime
+validation. Python binds arguments; the implementation validates domain constraints.
+There is no manual schema/signature override. The exact portable shape is the
+[symbol schema](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/schema/symbol.json).
+
+### Defaults and introspection
+
+Non-`None` runtime default values are withheld, and their `repr()` is never called.
+This avoids exposing private host objects or credentials, including values whose
+Python type looks ordinary. **Public default behavior still belongs in the tool's
+documentation**; see [documenting defaults](extension-design.md#document-default-behavior).
+
+| Python declaration | `has_default` | `default_is_none` | Rendered default |
+| --- | --- | --- | --- |
+| Required argument | `False` | `False` | No default |
+| Argument with `= None` | `True` | `True` | `None` |
+| Argument with any other default, including `False` or `30` | `True` | `False` | `...` |
+
+`*args` and `**kwargs` are not required even though they have no default.
+The original defaults apply when arguments are omitted. `...` is a display marker,
+not an instruction to pass `Ellipsis`. Dataclass-field defaults and factories are
+also described without exporting values or running factories.
+
+| Sandbox inspection | Supported result |
+| --- | --- |
+| `tool.contract` | Portable parameter/result types, fields and documented meaning |
+| `doc("tool")` | Human-readable rendering of that contract |
+| `inspect.signature(tool)` | Names and parameter kinds; `None` or `Ellipsis` defaults; no type annotations |
+| `tool.__annotations__`, `typing.get_type_hints(tool)` | Empty dictionaries, not a supported type-discovery API |
+| `tool.__signature__` | Not supplied |
+
+The original host classes and their identity do not cross the sandbox boundary.
+Use `.contract` for type discovery instead of trying to reconstruct host annotations.
+
+### Supported types and unresolved annotations
+
+Descriptions cover every parameter kind, return types, dataclass fields, unions,
+common containers, `Literal` and string metadata in `Annotated`. Recursive records
+use references rather than expanding forever.
+
+- `tuple[T, ...]` has `variadic: true` and one type in `arguments`; a fixed-length
+  tuple retains each item type and omits `variadic`.
+- `Name (unresolved)` means the annotation could not be resolved safely. Vis does
+  not guess, import or evaluate an expression to discover a type.
+- `Name (opaque)` means the class is known but its structure is not described.
+  Both labels appear in nested types and record fields, not just top-level returns.
+
+Use `from __future__ import annotations` and module-level result classes. Python
+3.14's deferred annotation functions can execute code even when asked for strings;
+without that import they are reported as unresolved instead of evaluated. Local
+forward references absent from the defining module remain unresolved.
+
+### Cross-module decorators
+
+`functools.wraps` chains resolve annotations in the wrapped function's defining
+module, including bound namespace methods and qualified names such as `models.Result`.
+Cyclic `__wrapped__` chains raise `ValueError`. These two complete modules illustrate
+cross-module wrapping and a variadic tuple result:
+
+```python
+# decorators.py
+from functools import wraps
+
+
+def traced(fn):
+    @wraps(fn)
+    def call(*args, **kwargs):
+        return fn(*args, **kwargs)
+    return call
+```
+
+```python
+# tools.py
+from __future__ import annotations
+from dataclasses import dataclass
+from decorators import traced
+
+
+@dataclass(frozen=True)
+class Result:
+    text: str
+
+
+class Tools:
+    @traced
+    def read(self, text: str = "ready") -> tuple[Result, ...]:
+        """Read one result without changing state."""
+        return (Result(text),)
+```
+
+`vis.Symbol(Tools(), name="tools").contract` expands `Result.text` beneath the
+variadic tuple. Omitting `text` uses the public string `"ready"`. The SDK tests
+execute these snippets, and host-to-sandbox tests cover invocation, nested records,
+redacted defaults, introspection and refreshed metadata after reload.
 
 ## Slash commands
 
@@ -207,9 +346,10 @@ and does not block the turn.
 ## Filesystem and processes
 
 Extension code runs in a trusted process, separate from the model's sandbox.
-A gateway-wide worker loads registrations. Each session gets a separate trusted
-extension worker on its first extension call; session disposal stops both workers.
-The workers do not share interpreter memory or host-call identities.
+A gateway-wide worker loads registrations; a session gets its own trusted extension
+worker on its first extension call. Session disposal stops that session's worker,
+not the gateway-wide registration worker. Interpreter memory and host-call identities
+are not shared across workers.
 
 | | Model sandbox | Extension context |
 | --- | --- | --- |
@@ -240,12 +380,10 @@ To confine a child, use a jailed shell:
 
 `vis.fs` provides filesystem operations with extension permissions: `mkdir`,
 `write`, `read` (bytes), `read_text`, `copy`, `move`, `list`, `stat` and `remove`.
-Use ordinary `open()` for paths inside the session's roots.
-
-Calls into one extension instance are serialized. Keep `prompt`, `activation`
-and `ctx` short-running; tools can perform longer operations.
+Ordinary `open()` uses the extension's permissions too, not the model's jail.
 
 ## See also
 
-- [Extension packages](extension-packages.md) — installation and reload.
+- [Extension design](extension-design.md) — choosing and documenting tool behavior.
+- [Installing and sharing extensions](extension-packages.md) — installation and reload.
 - [Extension troubleshooting](extension-troubleshooting.md) — loading and call errors.

@@ -17,3 +17,7 @@ def test_greeting_is_typed_and_immutable():
 def test_blank_name_is_rejected():
     with pytest.raises(ValueError, match="blank"):
         Greeter().hello(" ")
+
+
+def test_omitting_uppercase_preserves_capitalization():
+    assert Greeter().hello(" Ada ").text == "Hello, Ada!"

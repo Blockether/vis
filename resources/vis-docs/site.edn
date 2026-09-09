@@ -26,15 +26,18 @@
      :title "Reporting a bug"}]
    :section "Guides"}
   {:pages
-   [{:blurb "Write a Python extension: tools, commands, guards and state."
+   [{:blurb "Choose an extension capability and build your first tool."
      :page "extending"
      :title "Extending Vis"}
-    {:blurb "Design typed tools from one tested package."
+    {:blurb "Design, document and test useful Python tools."
      :page "extension-design"
      :title "Extension design"}
-    {:blurb "Install, publish and bundle skills with extensions."
+    {:blurb "Choose a layout, install, reload and share extensions."
      :page "extension-packages"
-     :title "Extension packages"}
+     :title "Installing and sharing extensions"}
+    {:blurb "Connect an editable uv project to the Vis environment."
+     :page "extension-development"
+     :title "Using an existing Python project"}
     {:blurb "Declarations, tool contracts and host operations."
      :page "extension-api"
      :title "Extension API"}

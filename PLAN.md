@@ -1273,3 +1273,53 @@ Completed locally. No commit, push, release or service restart was performed.
   successful reloads, retains last-good discovery on failure and removes uninstalled skills.
   The quickstart demonstrates apropos → doc(row) → contract → call. All 254 affected JVM
   tests and 4 executable-example SDK tests pass; formatting, lint/reflection and diff checks pass.
+
+# Extension documentation information hierarchy
+
+Teach the smallest working extension first; organize the rest by the reader's task.
+
+## Context
+The extension pages in `resources/vis-docs/` mix tutorials, package installation,
+API details and advanced editable-project preparation. The opening `extending`
+page requires a package before showing how to write a tool. Public default behavior
+needs explicit documentation without exposing arbitrary host defaults.
+The [Pi Coding Agent extension guide](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md)
+and [Google procedure-writing guidance](https://developers.google.com/style/procedures)
+support a complete quickstart, task-based navigation, explicit prerequisites and expected results.
+Do not add a schema registry, change the default-redaction policy or copy Pi's runtime model.
+
+## 1. Audit and organize
+- Rationale: readers need to distinguish tools, commands, prompts and skills before choosing a layout.
+- Data: all extension guides, current SDK declarations, existing executable examples and public references.
+- Acceptance criteria: a task map, one owner per topic and a separate existing-project workflow.
+- Unknowns: resolved; runtime `doc()` serves an older bundled guide than the current source.
+
+## 2. Rewrite and exercise examples
+- Rationale: a minimal tutorial must work without packaging; advanced details must remain accurate.
+- Data: `extending`, design, API, installation, existing projects, forms, views and providers.
+- Acceptance criteria: executable quickstart and documented public defaults, no missing prerequisites,
+  consistent navigation and symptom-led troubleshooting; preserve #175, #176 and #179 coverage.
+- Unknowns: resolved; the current source already handles queued runs. New example tests cover
+  empty polls, no published jobs and growing job counts without network access.
+
+## 3. Verify the documentation surface
+- Rationale: source pages serve both the website and `doc()`.
+- Data: SDK authoring/view tests, real loader example coverage and docs/corpus tests.
+- Acceptance criteria: affected tests, formatting, lint/reflection and content/link/diff checks pass.
+- Unknowns: resolved for local checks; the installed Vis package path supplies SDK test
+  dependencies. The public catalog URL returns HTTP 403 to this environment.
+
+## Plan state
+Completed locally. The tutorial now runs from one file; API details and existing uv
+projects have focused destinations. Forms, live views and providers state their
+prerequisites and execution context. Public omitted-argument behavior is documented
+and tested without changing the automatic runtime-default redaction policy.
+
+Verification: 84 SDK tests, 110 Python-host JVM tests and 50 docs/corpus tests pass
+across affected runs, including the real one-file tutorial and packaged example.
+Formatting, Python lint, Clojure lint/reflection and internal content/link checks pass.
+The source/example GitHub links resolve; the public catalog link check is blocked
+by HTTP 403. No live provider or paid model call was made.
+
+No commit, push, publication, deployment or gateway restart was performed. The
+running gateway's older bundled docs remain unchanged until it adopts a new build.
