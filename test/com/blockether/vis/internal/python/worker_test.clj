@@ -338,6 +338,133 @@ print(worker_value)"))))
                         ["install-runtime" #{"failed"}]]
                        @observed)))))))
 
+(defn- assert-trusted-cancellation
+  [native-wait?]
+  (with-worker-context
+    (fn [session]
+      (let [key
+            (worker/extension-worker-key session)
+
+            caller
+            (str session "-extension")
+
+            marker
+            (doto (java.io.File/createTempFile "vis-extension-wait-" ".ready") (.delete))
+
+            entered
+            (promise)
+
+            released
+            (promise)
+
+            retired
+            (atom false)
+
+            dispatch
+            python-host/dispatch]
+
+        (try (worker/trust! key caller true)
+             (worker/install-runtime! key caller)
+             (worker/exec!
+               key
+               caller
+               (str "import threading, vis_runtime\nextension_value = 42\n"
+                    "def wait_for_cancel():\n"
+                    (if native-wait?
+                      (str "    condition = threading.Condition()\n"
+                           "    def notify_waiting():\n        with condition:\n"
+                           "            with open("
+                           (pr-str (str marker))
+                           ", 'w') as ready:\n"
+                           "                ready.write('waiting')\n" "    with condition:\n"
+                           "        threading.Thread(target=notify_waiting, daemon=True).start()\n"
+                           "        condition.wait(30)\n")
+                      "    return vis_runtime.host_call('extension-blocked', '{}')\n")))
+             (let [process ^Process (:process (get @(var-get #'worker/workers) key))]
+               (with-redefs [python-host/dispatch (fn [host-session tool payload]
+                                                    (case tool
+                                                      "extension-wait"
+                                                      (worker/run key caller "wait_for_cancel()")
+
+                                                      "extension-blocked"
+                                                      (do (deliver entered true)
+                                                          (deref released 30000 "null"))
+
+                                                      (dispatch host-session tool payload)))]
+                 (let [execution (future (env/run-python-block
+                                           session
+                                           (str "import vis_runtime\nworker_value = 41\n"
+                                                "vis_runtime.host_call('extension-wait', '{}')")))]
+                   (try (expect (if native-wait?
+                                  (loop [remaining 500]
+                                    (cond (.exists marker) true
+                                          (or (zero? remaining) (realized? execution)) false
+                                          :else (do (Thread/sleep 10) (recur (dec remaining)))))
+                                  (true? (deref entered 5000 false))))
+                        (expect (true? (#'loop/interrupt-block!
+                                        session
+                                        execution
+                                        {:python-context-retired-atom retired})))
+                        (expect (not= ::parked (deref execution 5000 ::parked)))
+                        (if native-wait?
+                          (do
+                            ;; The caller can finish while its trusted extension remains in C.
+                            (expect (.waitFor process 10 java.util.concurrent.TimeUnit/SECONDS))
+                            (expect (true? @retired))
+                            (expect (false? (env/context-enterable? {:python-context session}))))
+                          (do
+                            ;; New work may outlive the previous interrupt's unwind deadline.
+                            (expect (= "41\n"
+                                       (:stdout
+                                         (env/run-python-block
+                                           session
+                                           "import time\ntime.sleep(3)\nprint(worker_value)"))))
+                            (expect (= "42" (worker/eval-str key caller "extension_value")))
+                            (expect (identical? process
+                                                (:process (get @(var-get #'worker/workers) key))))
+                            (expect (.isAlive process))
+                            (expect (false? @retired))
+                            (expect (env/context-enterable? {:python-context session}))))
+                        (finally (future-cancel execution))))))
+             (finally (deliver released "null") (worker/stop-worker! key) (.delete marker)))))))
+
+(defdescribe trusted-extension-cancellation-test
+             (it "retires a trusted extension stuck in C after its sandbox caller unwinds"
+                 (assert-trusted-cancellation true))
+             (it "preserves both interpreters and subsequent work after cancelling a host wait"
+                 (assert-trusted-cancellation false)))
+
+(defdescribe
+  worker-reply-lifetime-test
+  (it "keeps a cancelled caller's completion until the actual reply or peer close"
+      (doseq [reply-line ["{\"id\":1,\"value\":42}\n" ""]]
+        (let [sent (promise)
+              finished (promise)
+              peer {:pending (atom {})
+                    :seq (AtomicLong. 0)
+                    :reader (java.io.BufferedReader. (java.io.StringReader. reply-line))
+                    :workers (java.util.concurrent.Executors/newSingleThreadExecutor)}]
+
+          (try (with-redefs [worker-peer/send-line! (fn [_ _]
+                                                      (deliver sent true))]
+                 (let [call (future (try (worker-peer/request! peer {"op" "run"})
+                                         (finally (deliver finished true))))]
+                   (try (expect (true? (deref sent 1000 false)))
+                        (let [waiting (get @(:pending peer) 1)]
+                          (future-cancel call)
+                          (expect (true? (deref finished 1000 false)))
+                          (expect (identical? waiting (get @(:pending peer) 1)))
+                          (expect (not (realized? waiting)))
+                          (worker-peer/pump! peer
+                                             (fn [_ _])
+                                             (constantly "closed"))
+                          (expect (= (if (empty? reply-line) {"error" "closed"} {"id" 1 "value" 42})
+                                     (deref waiting 1000 ::pending)))
+                          (expect (empty? @(:pending peer))))
+                        (finally (future-cancel call)))))
+               (finally (.close ^java.io.BufferedReader (:reader peer))
+                        (.shutdownNow ^java.util.concurrent.ExecutorService (:workers peer))))))))
+
 (defdescribe
   worker-control-plane-test
   (it "interrupts trusted extension waits before releasing the session sandbox"
@@ -351,6 +478,11 @@ print(worker_value)"))))
                                (expect (= [[(worker/extension-worker-key session) session]
                                            [session session]]
                                           @calls))))))
+  (it "reports an extension interrupt even if its sandbox already stopped"
+      (with-worker-context (fn [session]
+                             (with-redefs [worker/interrupt! (fn [key _]
+                                                               (not= session key))]
+                               (expect (true? (env/interrupt-guest! session)))))))
   (it "bounds an interrupt whose child never replies"
       (let [pending
             (atom {})

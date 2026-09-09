@@ -437,6 +437,17 @@
 
 (defn close-session! [k session] (ask k "close" session nil))
 
+(defn pending-replies
+  "Snapshot the replies still owed by `k`, without starting a worker. These settle
+   only when the guest replies or exits, even if its host caller was cancelled."
+  [k]
+  (some-> (get @workers k)
+          :peer
+          :pending
+          deref
+          vals
+          vec))
+
 (defn interrupt!
   "Interrupt whatever `k`'s interpreter is running for `session` and answer
    whether the child acknowledged it. A guest parked in a host call cannot take

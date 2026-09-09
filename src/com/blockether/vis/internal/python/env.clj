@@ -156,11 +156,13 @@
   (if-let [k (worker-of session)]
     ;; A trusted extension can be parked in a host input view while the sandbox
     ;; waits for that extension. Unwind the inner worker before releasing its caller.
-    (let [extension-error
-          (try (pyext/interrupt! (pyext/extension-worker-key k) session) nil (catch Throwable t t))
+    (let [extension-result (try (pyext/interrupt! (pyext/extension-worker-key k) session)
+                                (catch Throwable t t))
           interrupted? (pyext/interrupt! k session)]
 
-      (if extension-error (throw extension-error) interrupted?))
+      (if (instance? Throwable extension-result)
+        (throw extension-result)
+        (or interrupted? extension-result)))
     (runtime/interrupt!)))
 
 (defn- py-close-session!
@@ -1340,6 +1342,14 @@
       (try (close-extensions session) (catch Throwable _ nil))))
   (try (python-host/forget-session! session) (catch Throwable _ nil))
   nil)
+
+(defn pending-guest-replies
+  "Snapshot actual sandbox and trusted-extension completions before interrupting.
+   Cancelling a host caller does not settle these replies."
+  [session]
+  (if-let [k (worker-of session)]
+    (into (vec (pyext/pending-replies k)) (pyext/pending-replies (pyext/extension-worker-key k)))
+    []))
 
 (defn interrupt-guest!
   "Ask the interpreter to raise `KeyboardInterrupt` in the thread running guest

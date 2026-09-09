@@ -1021,12 +1021,14 @@ The production installer and 15-artifact draft gate have regression coverage. Re
 container, palette and loop suites: 541 tests passed; scoped lint, reflection, workflow
 validation and shell checks passed. Companion: 2408 tests passed, 2 skipped; 184 browser
 stories passed; full theme contrast scan, compiler lint and production build passed.
-Full local JVM run passes: 5042 cases, zero failures. The foundation prompt-size
-and draft-discard-veto regressions are fixed on main. A cold Linux council failure
-was reproduced: the test network guard prevented downloading the Python runtime.
-Provisioning the pinned runtime fixes that isolated Linux reproduction; CI now does
-this explicitly. Loop/release tests: 522 passed; formatting, lint/reflection and workflow
-validation passed. Main CI 34282315882 still reports a Linux failure and needs diagnosis.
+Baseline full JVM verification passed 5044 cases; main CI 34286742665 passed after retrying
+one transient package download. Cold Linux permission-snapshot leakage and same-millisecond
+draft edits are fixed. Cancellation now watches actual replies from both Python workers,
+not just cancelled host futures; native waits are retired and normal cancellation preserves
+state. Affected suites passed 580 cases; installed SDK HTTP/stdio passed all 8 cases, including
+post-cancel reuse and trusted-extension process reclamation. Formatting and scoped lint and
+reflection passed. The latest full run overlapped concurrent Council changes: 5050 cases,
+5 failures in that separate work; rerun after it settles before the release gate.
 Version v0.1.45 is committed and its tag is immutable. Its release run 34283012944 was
 rejected before starting: the caller omitted actions:read required by the native runner
 pickup job. The job-scoped permission fix has a red/green regression and 42 passing

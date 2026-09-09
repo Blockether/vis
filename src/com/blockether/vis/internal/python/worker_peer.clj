@@ -42,7 +42,8 @@
 (defn request!
   "Ask the peer `message` and answer its reply value; its error throws here.
    `timeout-ms` bounds CONTROL messages only; ordinary work waits for its real
-   result."
+   result. Pending replies survive caller cancellation until the child replies
+   or closes, so cancellation can still watch the actual guest execution."
   ([peer message] (request! peer message nil))
   ([peer message timeout-ms]
    (let [id
@@ -53,17 +54,20 @@
 
      (swap! (:pending peer) assoc id waiting)
      (try (send-line! peer (assoc message "id" id))
-          (let [reply (if timeout-ms (deref waiting (long timeout-ms) ::timed-out) @waiting)]
-            (when (identical? ::timed-out reply)
-              (throw (ex-info (str "the python worker did not answer " (get message "op"))
-                              {:type :vis/python-worker-timeout
-                               :op (get message "op")
-                               :timeout-ms timeout-ms})))
-            (if (contains? reply "error")
-              (throw (ex-info (str (get reply "error"))
-                              {:type :vis/python-worker :op (get message "op")}))
-              (get reply "value")))
-          (finally (swap! (:pending peer) dissoc id))))))
+          (catch Throwable error
+            (swap! (:pending peer) dissoc id)
+            (deliver waiting {"error" (ex-message error)})
+            (throw error)))
+     (let [reply (if timeout-ms (deref waiting (long timeout-ms) ::timed-out) @waiting)]
+       (when (identical? ::timed-out reply)
+         (throw (ex-info (str "the python worker did not answer " (get message "op"))
+                         {:type :vis/python-worker-timeout
+                          :op (get message "op")
+                          :timeout-ms timeout-ms})))
+       (if (contains? reply "error")
+         (throw (ex-info (str (get reply "error"))
+                         {:type :vis/python-worker :op (get message "op")}))
+         (get reply "value"))))))
 
 (defn pump!
   "Read this peer until it closes: a reply settles whoever waits for it, a
@@ -80,12 +84,16 @@
              (let [message (json/read-json line :key-fn identity)]
                (if (contains? message "op")
                  (.submit ^ExecutorService (:workers peer) ^Runnable #(serve peer message))
-                 (some-> (get @(:pending peer) (get message "id"))
-                         (deliver message)))))
+                 (let [id (get message "id")
+                       [pending _] (swap-vals! (:pending peer) dissoc id)]
+
+                   (some-> (get pending id)
+                           (deliver message))))))
            (recur)))
        (catch Throwable _ nil)
-       (finally (doseq [[_ waiting] @(:pending peer)]
-                  (deliver waiting {"error" (reason)}))
+       (finally (let [[pending _] (reset-vals! (:pending peer) {})]
+                  (doseq [[_ waiting] pending]
+                    (deliver waiting {"error" (reason)})))
                 (.shutdownNow ^ExecutorService (:workers peer)))))
 
 (defn claim-reply!

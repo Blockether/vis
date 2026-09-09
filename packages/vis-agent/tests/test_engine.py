@@ -41,8 +41,22 @@ def sdk_flow(mode):
         vis.state["name"] = answer["name"]
         return {"name": vis.state["name"]}
 
+def sdk_native_wait(marker: str):
+    "Wait inside C until cancellation reclaims this trusted extension worker."
+    import os
+    import threading
+    from pathlib import Path
+    condition = threading.Condition()
+    def notify_waiting():
+        with condition:
+            Path(marker).write_text(str(os.getpid()))
+    with condition:
+        threading.Thread(target=notify_waiting, daemon=True).start()
+        condition.wait(120)
+
 vis.register(vis.Extension(name="sdk-fixture", description="SDK integration fixture", alias="sdk",
-    symbols=[vis.Symbol(sdk_flow, activity=vis.Activity(presenter="observation", label="SDK flow", render=sdk_activity))]))
+    symbols=[vis.Symbol(sdk_flow, activity=vis.Activity(presenter="observation", label="SDK flow", render=sdk_activity)),
+             vis.Symbol(sdk_native_wait)]))
 """
 
 
@@ -92,8 +106,13 @@ def model_endpoint(*, tool_code=None, before_reply=None):
                 body["_test_path"] = self.path
                 requests.append(body)
                 position = len(requests)
-                if position % 2:
-                    mode = "complete" if position == 1 else "cancel"
+                # The default flow completes, cancels without a final model reply,
+                # then completes again in the same session.
+                tool_reply = (
+                    position in (1, 3, 4) if tool_code is None else position % 2
+                )
+                if tool_reply:
+                    mode = "cancel" if position == 3 else "complete"
                     if before_reply is not None:
                         before_reply(position)
                     delta = {
@@ -299,7 +318,7 @@ def test_real_agent_tool_view_activity_and_cancellation(
         session = client.create_session(
             title="SDK fixture", root=str(work), channel="app"
         )
-        for mode in ("complete", "cancel"):
+        for mode in ("complete", "cancel", "complete"):
             turn = session.send(mode)
             seen = []
             pending_input = None
@@ -389,7 +408,7 @@ def test_real_agent_tool_view_activity_and_cancellation(
                     and row.presentation["content"][0]["text"] == "SDK stage: success"
                     for row in rows
                 )
-        assert len(requests) == 3
+        assert len(requests) == 5
         for request in requests:
             assert request["_test_path"] == "/v1/chat/completions"
             headers = {
@@ -401,7 +420,45 @@ def test_real_agent_tool_view_activity_and_cancellation(
             assert headers[header] == "kept"
             assert request["sdk_marker"] == {"keep_this_key": "preserved"}
         assert session.transcript().content
-        assert len(session.turns()) == 2
+        assert len(session.turns()) == 3
+        session.delete()
+
+
+@pytest.mark.parametrize("transport", ["stdio", "http"])
+def test_real_agent_cancellation_reclaims_native_extension_wait(
+    tmp_path, monkeypatch, transport
+):
+    marker = tmp_path / "extension-worker.pid"
+    code = f"print(await sdk_native_wait({str(marker)!r}))"
+    with sdk_fixture(tmp_path, monkeypatch, transport, tool_code=code) as (
+        client,
+        work,
+        _,
+    ):
+        session = client.create_session(root=str(work), channel="app")
+        turn = session.send("Cancel a trusted extension blocked in C")
+        deadline = time.monotonic() + 60
+        while True:
+            pid_text = marker.read_text() if marker.exists() else ""
+            if pid_text.isdigit():
+                pid = int(pid_text)
+                break
+            assert time.monotonic() < deadline, (
+                "extension did not enter its native wait"
+            )
+            time.sleep(0.05)
+        turn.cancel()
+        assert turn.wait(timeout=30)["status"] == "cancelled"
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            assert time.monotonic() < deadline, (
+                "cancelled extension worker is still alive"
+            )
+            time.sleep(0.05)
         session.delete()
 
 

@@ -821,26 +821,28 @@
   false)
 
 (defn- watch-python-unwind!
-  "After an interrupt was accepted, reclaim the process if guest execution still
-   has not returned. Native code may release the GIL, let the interrupt be queued,
-   and then never reach the bytecode boundary that delivers it."
-  [python-context exec-future environment]
+  "Reclaim a worker unless both the block and its actual guest calls unwind.
+   A cancelled host future is not proof that its trusted extension left C."
+  [python-context exec-future environment pending-replies]
   (cancellation/worker-future
     "vis-python-interrupt-unwind"
     (fn []
-      (let [timed-out? (try (.get ^java.util.concurrent.Future exec-future
-                                  (long INTERRUPT_UNWIND_MS)
-                                  java.util.concurrent.TimeUnit/MILLISECONDS)
-                            false
-                            (catch java.util.concurrent.TimeoutException _ true)
-                            (catch InterruptedException _ (.interrupt (Thread/currentThread)) false)
-                            (catch Throwable _ false))]
-        (when timed-out?
-          (retire-python-worker! python-context
-                                 exec-future
-                                 environment
-                                 :interrupt-unwind-timeout
-                                 nil))))))
+      (let [deadline (+ (System/nanoTime) (* (long INTERRUPT_UNWIND_MS) 1000000))]
+        (try (when-not (every? (fn [completion]
+                                 (try (not= ::pending
+                                            (deref
+                                              completion
+                                              (max 0 (quot (- deadline (System/nanoTime)) 1000000))
+                                              ::pending))
+                                      (catch InterruptedException error (throw error))
+                                      (catch Throwable _ true)))
+                               (cons exec-future pending-replies))
+               (retire-python-worker! python-context
+                                      exec-future
+                                      environment
+                                      :interrupt-unwind-timeout
+                                      nil))
+             (catch InterruptedException _ (.interrupt (Thread/currentThread))))))))
 
 (defn- interrupt-block!
   "Interrupt the guest without ever leaving cancellation parked on its control
@@ -848,17 +850,23 @@
    that cannot answer, or cannot unwind an accepted interrupt, is killed and its
    environment retired so later work gets one fresh process."
   [python-context exec-future environment]
-  (let [landed? (try (interrupt-guest! python-context)
-                     (catch Throwable t
-                       (retire-python-worker! python-context
-                                              exec-future
-                                              environment
-                                              :interrupt-control-timeout
-                                              t)))]
-    (if landed?
-      (do (watch-python-unwind! python-context exec-future environment) true)
-      (do (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil))
-          false))))
+  (let [pending-replies
+        (env/pending-guest-replies python-context)
+
+        landed?
+        (try (interrupt-guest! python-context)
+             (catch Throwable t
+               (retire-python-worker! python-context
+                                      exec-future
+                                      environment
+                                      :interrupt-control-timeout
+                                      t)))]
+
+    (when (or landed? (seq pending-replies))
+      (watch-python-unwind! python-context exec-future environment pending-replies))
+    (when-not landed?
+      (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil)))
+    (boolean landed?)))
 
 (defn- unwound-stdout
   "What an INTERRUPTED block printed before it was killed, or nil.
