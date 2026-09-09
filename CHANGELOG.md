@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.50] - 2026-09-09
+
+### Fixed
+- Report compact, actionable tool errors and validate them independently of checkout path length.
+- Correct draft handling, attachment metadata and companion activity spacing.
+- Verify that cancellation leaves no empty answer bubble in the companion.
+- Keep gateway project ordering stable during live updates.
 ## [v0.1.49] - 2026-09-09
 
 ### Fixed
