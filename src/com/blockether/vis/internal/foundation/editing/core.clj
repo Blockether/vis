@@ -421,10 +421,7 @@
   (when-not (.exists f)
     (throw
       (ex-info
-        (str
-          "File not found: "
-          (paths/abbreviate-home (.getPath f))
-          ". Do not guess or reconstruct paths; use grep to locate the file, then copy its returned path exactly.")
+        (str "File not found: " (paths/abbreviate-home (.getPath f)) "; use grep to find the path.")
         {:type :ext.foundation.editing/file-not-found :path (paths/abbreviate-home (.getPath f))})))
   (when (.isDirectory f)
     (throw (ex-info (str "Path is a directory, not a file: " (paths/abbreviate-home (.getPath f)))
@@ -3040,12 +3037,9 @@
    there is one edit of the batch."
   [op v]
   (when (map? v)
-    (throw (ex-info (str (name op)
-                         " takes POSITIONAL arguments, not an options map — "
-                         (if (= op :cat)
-                           "cat(path), cat(path, start) or cat(path, start, end)."
-                           (str "patch(path, edits), edits "
-                                "[{\"from\": anchor, \"to\": anchor, \"replace\": text}].")))
+    (throw (ex-info (if (= op :cat)
+                      "cat: use cat(path, start?, end?); not an options map."
+                      "patch: use patch(path, edits); see doc(\"patch\") for edit keys.")
                     {:type :ext.foundation.editing/positional-only :op op})))
   v)
 

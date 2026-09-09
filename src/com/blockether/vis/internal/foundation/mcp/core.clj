@@ -1085,18 +1085,6 @@
        (unavailable-err env server))
      (catch Throwable t (call-failed-err env server tool t)))))
 
-;; Error envelope
-
-(defn- mcp-on-error
-  [op]
-  (fn [err* _env _f _args]
-    {:result (extension/failure {:result nil
-                                 :op op
-                                 :metadata {:started-at-ms (util/now-ms)
-                                            :finished-at-ms (util/now-ms)
-                                            :duration-ms 0}
-                                 :throwable err*})}))
-
 ;; Public vars retain developer examples and fallback docs. Native symbols
 ;; below own compact model-facing semantics and exact schemas. Under alias
 ;; `mcp` the Python names use one underscore; direct native names use two.
@@ -1127,7 +1115,7 @@
       :call {:pos ["server"] :opt-pos ["tool" "args"]}
       :tag :mutation
       :inject-env? true
-      :on-error-fn (mcp-on-error :mcp/call)})])
+      :on-error-fn extension/tool-failure-on-error})])
 
 (defn- contribute
   "`:ext/ctx-fn` - proactively reconcile the daemon-wide MCP pool, then surface

@@ -585,7 +585,7 @@ function ActivityBody({
 }) {
   const attachment = useContext(ActivityAttachmentContext);
   return (
-    <div className="mt-2 grid min-w-0 gap-2" data-activity-content>
+    <div className="mt-1 grid min-w-0 gap-1" data-activity-content>
       {content.map((block, index) => {
         switch (block.type) {
           case "heading":
@@ -872,7 +872,7 @@ function ActivityStep({
         <section
           key={index}
           data-activity-section
-          className="mt-[var(--text-ui--line-height)] min-w-0 pl-4.5"
+          className={`min-w-0 pl-4.5 ${index === 0 && !(open && content?.length) ? "mt-1" : "mt-[var(--text-ui--line-height)]"}`}
         >
           <h5
             className="truncate text-meta font-bold text-code-result"
@@ -918,7 +918,7 @@ function ActivityStep({
       )}
       {open && error && <ActivityError evidence={error} />}
       {open && hasChildren && (
-        <ol data-activity-children={row.id} className="mt-1.5 min-w-0 pl-4.5">
+        <ol data-activity-children={row.id} className="min-w-0 pl-4.5">
           {children.map((child) => (
             <ActivityStep key={child.id} row={child} depth={depth + 1} />
           ))}
@@ -1018,7 +1018,7 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
     <ol
       aria-label="Invocation chronology"
       data-activity-chronology
-      className="min-w-0 pb-2"
+      className="min-w-0 pb-1"
     >
       {(showAll ? groups : preview).map((group) => (
         <ActivityGroup key={group.id} group={group} />

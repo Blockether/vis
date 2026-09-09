@@ -1331,7 +1331,7 @@
                          id (get sh "id")]
 
                      (expect (str/includes? (throw-message #(wait* mine "no-such-shell" 1))
-                                            "No shell"))
+                                            "shell: unknown id"))
                      (expect (str/includes? (throw-message #(wait* theirs id 1))
                                             "different trust origin"))
                      ;; The refusal names the key the CALLER spelled, not an internal one.
@@ -1480,7 +1480,7 @@
         ;; so it reaches the read, which then fails on the unknown id alone.
         (expect (str/includes? (str (throw-message #(shell* {:session-id "t"}
                                                             {"op" "logs" "id" "nope" "offset" -5})))
-                               "No shell 'nope'"))
+                               "shell: unknown id 'nope'"))
         ;; A fraction is still a different number, whichever side of zero it is on.
         (expect (str/includes? (str (throw-message #(shell*
                                                       {:session-id "t"}

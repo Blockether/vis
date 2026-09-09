@@ -983,6 +983,33 @@
    'defs "name=None"
    'fold-session "key, gist=None"})
 
+(defn- discovery-tool
+  "Wrap a discovery call; its error hook shortens regex diagnostics only."
+  [sym f]
+  (let [entry {:ext.symbol/symbol sym
+               :ext.symbol/tag :observation
+               :ext.symbol/fn (fn [& args]
+                                (extension/success {:result (apply f args)}))
+               :ext.symbol/on-error-fn
+               (fn [err env f args]
+                 (cond-> (extension/tool-failure-on-error err env f args)
+                   (instance? java.util.regex.PatternSyntaxException err)
+                   (assoc-in [:result :error :message]
+                     (str (name sym)
+                          ": invalid regex at index "
+                          (.getIndex ^java.util.regex.PatternSyntaxException err)
+                          ": "
+                          (.getDescription ^java.util.regex.PatternSyntaxException err)
+                          "."))))}]
+    (fn [& args]
+      ;; Preserve discovery's existing presentation, without duplicating whole
+      ;; documents or the introspection catalog in tool Activity.
+      (binding [extension/*tool-event-sink* nil]
+        (extension/invoke-symbol-wrapper {:ext/name "foundation-introspection"}
+                                         entry
+                                         args
+                                         extension/*current-environment*)))))
+
 (defn- install-introspection!
   "Wire `apropos` and `doc` into `session` and seed the contracts of the five
    verbs the engine itself owns.
@@ -992,12 +1019,15 @@
    holds the corpus. They meet in one host call, because a host tool runs while
    the block waits inside it and cannot ask the interpreter anything."
   [session]
-  (python-host/install-tools! session
-                              {"__vis_apropos__" (fn [facts pattern]
-                                                   (apropos-rows (keywordize-facts facts) pattern))
-                               "__vis_doc__" (fn [facts target live]
-                                               (doc-text (keywordize-facts facts) target live))}
-                              (partial py-install-tool!))
+  (python-host/install-sync-tools!
+    session
+    {"__vis_apropos__" (discovery-tool 'apropos
+                                       (fn [facts pattern]
+                                         (apropos-rows (keywordize-facts facts) pattern)))
+     "__vis_doc__" (discovery-tool 'doc
+                                   (fn [facts target live]
+                                     (doc-text (keywordize-facts facts) target live)))}
+    (partial py-install-sync-tool!))
   (exec! session "import vis_introspection\nvis_introspection.install(globals())")
   (doseq [[sym text] introspection-doc]
     (set-python-binding-doc! session sym text))

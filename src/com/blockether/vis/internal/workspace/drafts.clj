@@ -215,18 +215,11 @@
           (str/split (git! trunk ["worktree" "list" "--porcelain" "-z"])
                      (re-pattern (str separator separator))))))
 
-(defn- require-clean-target!
+(defn- require-target-branch!
   [^File checkout target]
   (when-not (= target (current-branch checkout))
     (throw (ex-info "The target checkout changed branches; retry approval."
-                    {:type :draft/target-moved :target-branch target})))
-  (when-not (str/blank? (git! checkout ["status" "--porcelain" "--untracked-files=all"]))
-    (throw (ex-info (str "Approval needs a clean "
-                         target
-                         " checkout at "
-                         (.getPath checkout)
-                         "; commit or stash its changes first. No changes were overwritten.")
-                    {:type :draft/dirty-target :target-branch target :root (.getPath checkout)}))))
+                    {:type :draft/target-moved :target-branch target}))))
 
 (defn- ancestor?
   [^File root ancestor descendant]
@@ -261,7 +254,7 @@
 (defn- land!
   [^File trunk target target-sha sha]
   (if-let [checkout (target-checkout trunk target)]
-    (do (require-clean-target! checkout target)
+    (do (require-target-branch! checkout target)
         (git! checkout ["merge" "--ff-only" "--no-autostash" "--no-overwrite-ignore" sha]))
     ;; Compare-and-swap refuses a concurrent update; never reset another branch
     ;; or switch the user's checkout just to move an unchecked-out target.
@@ -270,9 +263,10 @@
 (defn approve!
   "Commit the draft and merge it into the local default branch (origin/HEAD,
    otherwise main or master). A diverged target is merged inside the draft,
-   then the target is fast-forwarded. Dirty target checkouts refuse; conflicts
-   leave the draft commit available for resolution and retry. No push, stash,
-   force update or checkout switch. The draft stays active.
+   then the target is fast-forwarded, preserving non-overlapping local changes.
+   Git refuses updates that would overwrite local work; conflicts leave the draft
+   commit available for retry. No push, stash, force update or checkout switch.
+   The draft stays active.
 
    Crosses :draft/approve and, for each new commit, :git/commit. Returns
    {:status :approved :branch … :target-branch … :commit … :files …}, or
@@ -323,7 +317,7 @@
         (hook-ctx ws {:branch branch :target-branch target :files files :message message})
         (fn []
           (when-let [checkout (target-checkout trunk target)]
-            (require-clean-target! checkout target))
+            (require-target-branch! checkout target))
           (when (seq staged) (commit! root (commit-message (:label ws) message (:session-id env))))
           (merge-target! root
                          target-sha

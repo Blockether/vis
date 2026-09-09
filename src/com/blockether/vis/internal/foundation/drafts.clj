@@ -77,9 +77,7 @@
 
 (defn- not-in-draft
   [tool]
-  (failure (str "Not in a draft: " tool
-                " works on the session's current draft and this session "
-                "works on its trunk. draft_create(\"name\") opens one.")))
+  (failure (str tool ": not in a draft; use draft_create(\"name\") first.")))
 
 (defn- refusal
   "A refused draft operation: the thrown message, plus the canonical `:hint`
@@ -219,8 +217,8 @@
        "Open a draft — an isolated working copy of this repository — and move the session into it. "
        "The trunk checkout is left alone until `draft_approve()` commits and merges the work into "
        "the default branch; `draft_discard()` removes the working copy. Pending trunk changes come "
-       "along; `clean=True` seeds from `HEAD` and leaves them behind. Approval requires a clean "
-       "target checkout. One draft at a time: discard the current one before opening another. "
+       "along; `clean=True` seeds from `HEAD` and leaves them behind. Approval preserves unrelated "
+       "local changes in the target checkout. One draft at a time: discard the current one before opening another. "
        "Extension hooks on `draft/create` may refuse.")
      :params [{:name "label" :note "draft name; also the `vis/<label>` branch"}
               {:name "clean" :note "`True` excludes pending trunk changes"}]
@@ -241,8 +239,9 @@
        "Commit the session's draft and merge it into the local default branch: `origin/HEAD`, "
        "otherwise `main` or `master`. Stage every changed and non-ignored untracked path; new "
        "commits carry Vis-Session/Vis-Draft trailers. A diverged target is merged inside the draft, "
-       "then fast-forwarded. Dirty target checkouts refuse; conflicts retain the draft commit for "
-       "resolution and retry. No automatic stash, forced update or remote push. "
+       "then fast-forwarded, preserving unrelated local changes in the target checkout. Git refuses "
+       "updates that would overwrite local work; conflicts retain the draft commit for retry. "
+       "No automatic stash, forced update or remote push. "
        "`draft_approve()` uses the default subject, `draft_approve(\"subject\")` yours. Existing "
        "draft commits are merged even when no paths are pending. The draft stays open. "
        "Extension hooks on `draft/approve` and `git/commit` may veto the operation.")

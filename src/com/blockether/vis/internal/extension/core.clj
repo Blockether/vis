@@ -265,6 +265,12 @@
   (let [err (or error (when throwable (normalize-error throwable)))]
     (envelope-of args false err)))
 
+(defn tool-failure-on-error
+  "Observed-symbol error hook. Preserve the exception's message and diagnostic
+   trace; the wrapper supplies the declared tool identity and classification."
+  [err _env _f _args]
+  {:result (failure {:throwable err})})
+
 (defn envelope-success?
   "True when `envelope` is an `:envelope` and `:success?` is
    true. Use this instead of raw `(:success? e)` in renderers and
@@ -1176,9 +1182,11 @@
     {:env env :fn f :args args :result result}))
 
 (defn- run-on-error
-  [ext-ns sym-entry err env f args]
-  (if-let [on-error (:ext.symbol/on-error-fn sym-entry)]
-    (let [sym (:ext.symbol/symbol sym-entry)
+  [ext sym-entry err env f args]
+  (if-let [on-error (or (:ext.symbol/on-error-fn sym-entry)
+                        (when (instance? clojure.lang.ArityException err) tool-failure-on-error))]
+    (let [ext-ns (:ext/name ext)
+          sym (:ext.symbol/symbol sym-entry)
           t0 (System/nanoTime)
           _ (log-hook! :warn
                        ::on-error-fn
@@ -1195,6 +1203,13 @@
                                        {:type :extension/on-error-fn-error :symbol sym}
                                        e)))))
           _ (validate-hook-return! ":on-error-fn" sym ret)
+          ret (if (and (instance? clojure.lang.ArityException err)
+                       (envelope-failure? (:result ret)))
+                (let [tool (str/replace (tool-call-name ext sym) "-" "_")]
+                  (assoc-in ret
+                    [:result :error :message]
+                    (str tool ": wrong number of arguments; see doc(\"" tool "\").")))
+                ret)
           ms (elapsed-ms t0)]
 
       (cond
@@ -1869,7 +1884,7 @@
                      (catch Throwable e
                        (let [ms (elapsed-ms ct0)]
                          (log-hook! :warn ::fn-threw ext-ns sym :call ms (ex-message e))
-                         (try (let [recovery (run-on-error ext-ns sym-entry e call-env f call-args)]
+                         (try (let [recovery (run-on-error ext sym-entry e call-env f call-args)]
                                 (cond (contains? recovery :result) recovery
                                       (contains? recovery :error) (throw (:error recovery))
                                       :else {:result (apply (get recovery :fn f)

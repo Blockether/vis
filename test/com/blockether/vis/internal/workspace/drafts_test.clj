@@ -436,27 +436,59 @@
 
 (defdescribe
   approve-safety-test
-  (it
-    "preserves staged, unstaged and untracked target changes, and can retry after they are committed"
-    (doseq [kind [:staged :unstaged :untracked]]
-      (with-clean-draft
-        (fn [base env draft]
-          (spit (io/file base (if (= :untracked kind) "local.txt" "a.txt")) "local work\n")
-          (when (= :staged kind) (git! base "add" "a.txt"))
-          (spit (io/file (:root draft) "b.txt") "draft work\n")
-          (let [head (git! base "rev-parse" "HEAD")
-                index (git! base "write-tree")
-                status (git! base "status" "--porcelain")
-                draft-head (git! (:root draft) "rev-parse" "HEAD")]
+  (it "approves with unrelated staged, unstaged, partially staged and untracked target changes"
+      ;; A dirty main must not block approval of unrelated draft paths.
+      (doseq [kind [:staged :unstaged :partially-staged :untracked]]
+        (with-clean-draft
+          (fn [base env draft]
+            (let [path (if (= :untracked kind) "local.txt" "a.txt")]
+              (spit (io/file base path) "local work\n")
+              (when (#{:staged :partially-staged} kind) (git! base "add" path))
+              (when (= :partially-staged kind) (spit (io/file base path) "more local work\n"))
+              (spit (io/file (:root draft) "b.txt") "draft work\n")
+              (let [status (git! base "status" "--porcelain")
+                    staged (git! base "diff" "--cached")
+                    unstaged (git! base "diff")
+                    contents (slurp (io/file base path))
+                    result (drafts/approve! env {:workspace-id (:id draft)})]
 
-            (expect (= :draft/dirty-target (:type (approval-error env draft))))
-            (expect (= head (git! base "rev-parse" "HEAD")))
-            (expect (= index (git! base "write-tree")))
-            (expect (= status (git! base "status" "--porcelain")))
-            (expect (= draft-head (git! (:root draft) "rev-parse" "HEAD")))
-            (git! base "add" "-A")
-            (git! base "commit" "-q" "-m" "keep local work")
-            (expect (= :approved (:status (drafts/approve! env {:workspace-id (:id draft)})))))))))
+                (expect (= :approved (:status result)))
+                (expect (= (:commit result) (git! base "rev-parse" "HEAD")))
+                (expect (= "draft work\n" (slurp (io/file base "b.txt"))))
+                (expect (= status (git! base "status" "--porcelain")))
+                (expect (= staged (git! base "diff" "--cached")))
+                (expect (= unstaged (git! base "diff")))
+                (expect (= contents (slurp (io/file base path))))))))))
+  (it "refuses to overwrite overlapping local work and allows retry without another draft commit"
+      (doseq [kind [:staged :unstaged :untracked :ignored]]
+        (with-clean-draft
+          (fn [base env draft]
+            (let [path (if (#{:untracked :ignored} kind) "local.txt" "a.txt")]
+              (spit (io/file base path) "local work\n")
+              (when (= :staged kind) (git! base "add" path))
+              (when (= :ignored kind) (spit (io/file base ".git/info/exclude") "local.txt\n"))
+              (spit (io/file (:root draft) path) "draft work\n")
+              (when (= :ignored kind) (git! (:root draft) "add" "-f" path))
+              (let [head (git! base "rev-parse" "HEAD")
+                    index (git! base "write-tree")
+                    status (git! base "status" "--porcelain")]
+
+                (expect (= :draft/git-failed (:type (approval-error env draft))))
+                (expect (= head (git! base "rev-parse" "HEAD")))
+                (expect (= index (git! base "write-tree")))
+                (expect (= status (git! base "status" "--porcelain")))
+                (expect (= "local work\n" (slurp (io/file base path))))
+                (expect (= "draft work" (git! (:root draft) "show" (str "HEAD:" path))))
+                (expect (= "" (git! (:root draft) "status" "--porcelain")))
+                (let [draft-head (git! (:root draft) "rev-parse" "HEAD")]
+                  ;; Clear only this fixture's collision; approval reuses its saved commit.
+                  (if (#{:untracked :ignored} kind)
+                    (.delete (io/file base path))
+                    (git! base "restore" "--source=HEAD" "--staged" "--worktree" "--" path))
+                  (let [result (drafts/approve! env {:workspace-id (:id draft)})]
+                    (expect (= :approved (:status result)))
+                    (expect (= draft-head (:commit result)))
+                    (expect (= "draft work\n" (slurp (io/file base path))))))))))))
   (it
     "conflicts leave the target untouched and retain a clean draft commit for resolution and retry"
     (with-clean-draft

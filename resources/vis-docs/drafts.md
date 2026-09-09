@@ -43,10 +43,13 @@ fast-forwards directly to the draft commit. A linked checkout of the target is
 updated in place; an unchecked-out target is updated without changing the
 original checkout.
 
-The target checkout must be clean. This also applies when `draft_create()`
-copied pending changes from it: copying does not remove the originals. Commit
-or stash those changes deliberately before approving. Vis does not stash,
-force-update or overwrite local changes automatically.
+The target checkout does not need to be clean. Approval preserves staged,
+unstaged and untracked changes outside the paths being updated. Git refuses a
+fast-forward that would overwrite local work, leaving the target unchanged and
+the draft commit available for retry. Changes copied by `draft_create()` remain
+in the original checkout and can still overlap the draft's updates. Resolve
+those overlapping changes before retrying; unrelated changes can stay in place.
+Vis does not stash, force-update or overwrite local changes automatically.
 
 A merge conflict leaves the target unchanged and the draft commit intact;
 Vis aborts its attempted merge in the draft. Resolve the conflicting changes

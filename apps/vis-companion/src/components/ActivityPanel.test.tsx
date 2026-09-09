@@ -273,13 +273,11 @@ describe("one form's Activity on the phone", () => {
     expect(screen.getByText("3 directories · 2 files")).toBeTruthy();
     expect(screen.getByText("0 directories · 2 files")).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
-    for (const section of document.querySelectorAll(
-      "[data-activity-section]",
-    )) {
-      expect(
-        section.classList.contains("mt-[var(--text-ui--line-height)]"),
-      ).toBe(true);
-    }
+    const sections = [...document.querySelectorAll("[data-activity-section]")];
+    expect(sections[0].classList.contains("mt-1")).toBe(true);
+    expect(
+      sections[1].classList.contains("mt-[var(--text-ui--line-height)]"),
+    ).toBe(true);
     fireEvent.click(toggle);
     expect(screen.getAllByRole("table")).toHaveLength(2);
     expect(

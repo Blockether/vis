@@ -924,3 +924,32 @@
                  (let [ext (extension/extension {:ext/name "test.no-dependency-graph"
                                                  :ext/description "No dependency graph."})]
                    (expect (not (contains? ext :ext/requires))))))
+
+(defdescribe compact-arity-errors-test
+             "The existing error hook keeps public arity errors separate from diagnostic traces."
+             (let [entry
+                   {:ext.symbol/symbol 'arity_probe
+                    :ext.symbol/tag :observation
+                    :ext.symbol/fn (fn [arg]
+                                     (extension/success {:result arg}))}
+
+                   ext
+                   {:ext/name "arity-probe"}]
+
+               (it "uses the declared name even without a custom error hook, retaining the trace"
+                   (let [err (try (extension/invoke-symbol-wrapper ext entry [] {})
+                                  (catch clojure.lang.ExceptionInfo e e))]
+                     (expect (= "arity_probe: wrong number of arguments; see doc(\"arity_probe\")."
+                                (ex-message err)))
+                     (expect (= :vis/tool-failure (:type (ex-data err))))
+                     (expect (re-find #"ArityException" (get-in (ex-data err) [:error :trace])))))
+               (it "does not replace a custom hook's successful recovery"
+                   (expect (= "recovered"
+                              (extension/invoke-symbol-wrapper
+                                ext
+                                (assoc entry
+                                  :ext.symbol/on-error-fn (fn [& _]
+                                                            {:result (extension/success
+                                                                       {:result "recovered"})}))
+                                []
+                                {}))))))

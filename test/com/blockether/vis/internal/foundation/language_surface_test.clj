@@ -527,7 +527,19 @@
                    #(resolved-language "json" ["json" "typescript"] ["typescript"] "rust")))))
   (it "asks for a language when several packs match and none can be inferred"
       (expect (= :language-surface/ambiguous-language
-                 (error-type #(resolved-language "json" ["json"] ["typescript" "clojure"]))))))
+                 (error-type #(resolved-language "json" ["json"] ["typescript" "clojure"])))))
+  (it
+    "distinguishes missing, ambiguous and duplicate handlers with public tool names"
+    (doseq
+      [[handlers args message]
+       [[[] [] "repl_eval: no language handler enabled."]
+        [["clojure"] ["rust"] "repl_eval: no handler for 'rust'; available: clojure."]
+        [["typescript" "clojure"] [] "repl_eval: specify language; available: typescript, clojure."]
+        [["clojure" "clojure"] ["clojure"]
+         "repl_eval: multiple handlers for 'clojure'; disable the duplicate language extension."]]]
+      (expect (= message
+                 (try (apply resolved-language "json" ["json"] handlers args)
+                      (catch clojure.lang.ExceptionInfo e (ex-message e))))))))
 
 (defdescribe
   capability-matrix-test

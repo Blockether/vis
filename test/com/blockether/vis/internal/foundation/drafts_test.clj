@@ -139,7 +139,9 @@
               (:result (drafts/draft-status env))
 
               _
-              (do (spit (io/file draft-root "b.txt") "new\n") (spit (io/file base "a.txt") "x\n"))
+              (do (spit (io/file draft-root "b.txt") "new\n")
+                  (spit (io/file base "a.txt") "x\n")
+                  (spit (io/file base "local.txt") "keep local work\n"))
 
               draft-content
               (slurp (io/file draft-root "a.txt"))
@@ -183,6 +185,8 @@
           (expect (= base (ctx-root env)))
           (expect (false? (get trunk-status "in_draft")))
           (expect (= base (get trunk-status "root")))
+          (expect (= "keep local work\n" (slurp (io/file base "local.txt"))))
+          (expect (= "?? local.txt" (git! base "status" "--porcelain")))
           (expect (= "new\n" (slurp (io/file base "b.txt"))))))))
   (it "clean=True seeds from HEAD and leaves pending trunk work behind"
       (with-session "vis-fdrafts-clean"
