@@ -68,8 +68,15 @@ Earlier installation verification (installer unchanged by the Worker replacement
 
 Turn 12: source-filtered GitHub Actions deployment added; 30 Worker/UI/deployment tests pass.
 Turn 15: 365 SDK tests and 233 affected JVM tests passed after integrating current main;
-30 Worker/UI/deployment tests, actionlint, npm audit, build, Wrangler dry-run and Gitleaks passed.
-Production publication and live smoke checks are in progress. Temporary review services remain stopped.
+36 Worker/UI/deployment tests, actionlint, npm audit, build, Wrangler dry-run and Gitleaks passed.
+Remote main publication, the source-filtered Worker workflow and public docs deployment succeeded.
+Live HTML, catalog, CSS and JavaScript return 200; credential scans found no keys in tracked
+changes, built assets or those public responses. The docs and Worker use the same stylesheet,
+with only the font URL adjusted for each serving path.
+Bounded deployment-readiness retries and the Turnstile named-element regression are covered.
+The production Turnstile SDK and widget load; completing its interactive challenge and submitting
+a repository still requires a human check. No fixture catalog entries were published.
+The local default checkout was left untouched; temporary review services and browsers are stopped.
 
 ---
 
