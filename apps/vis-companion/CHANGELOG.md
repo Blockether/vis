@@ -2,6 +2,23 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.55 (5710) — 2026-09-09
+<!-- commit: 6f33f1c218e92e3c543bda251b5fe157fc4c2860 -->
+
+- Add canonical goals and footer controls
+- Align execution bands with transcript text
+- Align limit reset action with availability
+- V0.1.55
+- Equalize live table row spacing
+- Use the custom relay domain by default
+- Compact activity operation rows
+- Remove expanded content gaps
+- Pause hidden draft subscriptions
+- V0.1.54
+- Recover source updates from corrupt packs
+- Right-align the limit reset action
+- Record companion build 5659
+
 ## 0.1.52 (5659) — 2026-09-09
 <!-- commit: f7935667911a5f2853c045b93923040bbad31d34 -->
 
