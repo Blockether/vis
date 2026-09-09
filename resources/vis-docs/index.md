@@ -1,6 +1,6 @@
-Vis is a coding agent for working with a codebase. It can read and edit files,
-run commands and tests, and use tools you add through extensions. Use it in a
-terminal or connect through the Companion app.
+Vis is a coding agent that combines tools into Python programs.
+It can chain operations, run them in parallel, and inspect results before deciding
+what belongs in the conversation.
 
 [Install](#install) · [First session](#first-session) · [Configuration](configuration.md)
 

@@ -18,7 +18,7 @@
 
 # Vis
 
-Vis is an AI coding agent that helps you understand, modify, and test your codebase. It runs Python in a sandboxed CPython runtime and stores session state outside the model's context window.
+Vis is a coding agent that combines tools into Python programs. It can chain operations, run them in parallel, and inspect results before deciding what belongs in the conversation.
 
 ## Install
 

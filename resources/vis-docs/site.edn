@@ -68,5 +68,5 @@
    :section "Reference"}]
  :site {:extension-center {:section "Community" :title "Extension Center"}
         :repo "https://github.com/Blockether/vis"
-        :tagline "A coding agent for your projects."
+        :tagline "Vis is a coding agent that combines tools into Python programs."
         :title "Vis"}}
