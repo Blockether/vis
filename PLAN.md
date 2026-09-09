@@ -1141,6 +1141,11 @@ The expanded native search regression fails against published v0.1.52 and passes
 the current native hotfix. The release also includes the verified package-readiness and
 reload corrections: 230 affected JVM cases and five native cases pass, with formatting,
 lint and reflection checks clean. Local release/version checks pass all 54 cases.
+Branch CI now supersedes older pushes without cancelling tagged release verification.
+Mobile and desktop jobs use temporary npm caches without uploading them; weekly cleanup
+removes only npm caches older than seven days or larger than 1 GiB. The affected release
+suite passes 53 cases, including three new regression cases; actionlint, formatting,
+scoped lint and reflection checks pass.
 
 - Runtime v0.5.6 is published at 51f02270ffc78b5eb49bcab914b27564b1960f82. Run
   34297827905 passed all four platform builds/tests and published the runtime archives and

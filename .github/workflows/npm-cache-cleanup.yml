@@ -1,0 +1,41 @@
+name: Clean npm caches
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+concurrency:
+  group: npm-cache-cleanup
+  cancel-in-progress: false
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const caches = await github.paginate(github.rest.actions.getActionsCacheList, {
+              ...context.repo, per_page: 100
+            });
+            const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+            const maxBytes = 1024 ** 3;
+            let removed = 0;
+            for (const cache of caches) {
+              if (!/^node-cache-[^-]+-[^-]+-npm-/.test(cache.key)) continue;
+              if (!(Date.parse(cache.created_at) < cutoff || cache.size_in_bytes > maxBytes)) continue;
+              try {
+                await github.rest.actions.deleteActionsCacheById({
+                  ...context.repo, cache_id: cache.id
+                });
+                removed++;
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+            core.info(`Removed ${removed} expired or oversized npm caches; other caches are unchanged.`);
