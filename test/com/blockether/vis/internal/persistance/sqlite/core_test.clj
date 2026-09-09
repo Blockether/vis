@@ -21,7 +21,8 @@
             [com.blockether.vis.internal.persistance.core :as persistance]
             [honey.sql :as sql]
             [lazytest.core :refer [defdescribe it expect]]
-            [next.jdbc :as jdbc])
+            [next.jdbc :as jdbc]
+            [taoensso.nippy :as nippy])
   (:import (java.io File)
            (java.util.concurrent CountDownLatch TimeUnit)))
 
@@ -2114,6 +2115,89 @@
                     :output_tokens 5
                     :total_cost_usd 1.25}
                    row))))))
+
+(defdescribe
+  runtime-state-persistence-test
+  ;; A live Atom previously failed the terminal transaction and lost the answer.
+  (it
+    "persists the answer and data without dereferencing runtime state"
+    (let [s
+          (h/store)
+
+          sid
+          (h/store-session! s {:channel :api})
+
+          tid
+          (vis/db-store-session-turn!
+            s
+            {:parent-session-id sid :user-request "runtime state" :status :running})
+
+          self
+          (atom nil)
+
+          pending
+          (delay (throw (ex-info "must not realize runtime state" {})))
+
+          runtime
+          [self (ref {}) (volatile! {}) (promise) pending (java.util.concurrent.CompletableFuture.)
+           (reify
+             clojure.lang.IDeref
+               (deref [_] (throw (ex-info "must not dereference runtime state" {}))))]
+
+          marker
+          {:vis/ref :expr}
+
+          content
+          {:type "text" :text "kept answer"}]
+
+      (reset! self self)
+      (expect (true? (vis/db-update-session-turn!
+                       s
+                       tid
+                       {:status :success
+                        :content content
+                        :ctx
+                        {"session_title" "kept title" "runtime" runtime "keys" {self "kept value"}}
+                        :error {:message "diagnostic" :data {:runtime self}}})))
+      (let [row
+            (first
+              (raw-query s {:select [:status :content_json :ctx :error] :from :session_turn_state}))
+
+            ctx
+            (nippy/thaw (:ctx row))]
+
+        (expect (= "done" (:status row)))
+        (expect (str/includes? (:content_json row) "kept answer"))
+        (expect (= {"session_title" "kept title"
+                    "runtime" (vec (repeat (count runtime) marker))
+                    "keys" {marker "kept value"}}
+                   ctx))
+        (expect (= {:message "diagnostic" :data {:runtime marker}} (nippy/thaw (:error row))))
+        (expect (not (realized? pending)))
+        (expect (identical? self @self)))))
+  (it "replaces runtime state nested in iteration evidence"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {:channel :api})
+
+            tid
+            (vis/db-store-session-turn!
+              s
+              {:parent-session-id sid :user-request "runtime evidence" :status :running})]
+
+        (h/store-iteration! s
+                            {:session-turn-id tid
+                             :code "print(runtime_state)"
+                             :forms [{:scope nil
+                                      :tag :observation
+                                      :src "print(runtime_state)"
+                                      :channel [{:result {:state (atom {})}}]}]
+                             :duration-ms 1})
+        (expect (= {:state {:vis/ref :expr}}
+                   (get-in (first (vis/db-list-session-turn-iterations s tid))
+                           [:forms 0 :channel 0 :result]))))))
 
 ;; Dedicated ctx stores (task/fact/archive) — write-through + per-session id
 

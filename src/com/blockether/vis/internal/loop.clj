@@ -8405,9 +8405,11 @@
                                   (get (council/runtime (:db-info environment)
                                                         (str (:session-id environment)))
                                        (str (:session-id environment))))
+                 ;; Only the host publication identity belongs in CTX, and it is
+                 ;; ephemeral. The activation's input-state Atom stays in runtime.
                  _council-start (swap! (:ctx-atom environment) assoc
-                                  :council-actor council-active
-                                  :council-publications [])
+                                  "engine_council_activation_id" (:activation-id council-active)
+                                  "engine_council_publications" [])
                  council-input (when council-active
                                  (council/prepare-input!
                                    (:db-info environment)
@@ -8799,8 +8801,8 @@
                                                            (:provider resolved-model))]
                               (cond-> {:session-turn-id session-turn-id
                                        :council-input council-input
-                                       :council-publications (:council-publications @(:ctx-atom
-                                                                                       environment))
+                                       :council-publications (get @(:ctx-atom environment)
+                                                                  "engine_council_publications")
                                        :vars []
                                        :code (or err-partial-content "")
                                        :thinking err-reasoning
@@ -8993,8 +8995,8 @@
 
                             (cond-> {:session-turn-id session-turn-id
                                      :council-input council-input
-                                     :council-publications (:council-publications @(:ctx-atom
-                                                                                     environment))
+                                     :council-publications (get @(:ctx-atom environment)
+                                                                "engine_council_publications")
                                      :request-health
                                      (cond-> (assoc (:request-health iteration-result)
                                                :budget-tokens budget

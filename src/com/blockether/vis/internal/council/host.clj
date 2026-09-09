@@ -67,7 +67,7 @@
 
          actor
          {:session-id sid
-          :activation-id (:activation-id (:council-actor ctx))
+          :activation-id (clojure.core/get ctx "engine_council_activation_id")
           :source "host"
           :source-ref source}
 
@@ -80,7 +80,7 @@
          ref
          (select-keys entry [:id :thread_id :group_id :source_ref])]
 
-     (swap! (:ctx-atom env) update :council-publications (fnil conj []) ref)
+     (swap! (:ctx-atom env) update "engine_council_publications" (fnil conj []) ref)
      (result env :council.publish opts entry))))
 
 (defn threads
