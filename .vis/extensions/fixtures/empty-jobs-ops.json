@@ -1,0 +1,59 @@
+[
+  {
+    "op": "open",
+    "view": {
+      "title": "Job progress",
+      "nodes": [
+        {
+          "done": 0,
+          "label": "Jobs finished",
+          "type": "progress",
+          "id": "progress"
+        }
+      ]
+    }
+  },
+  {
+    "op": "patch",
+    "patch": {
+      "ops": [
+        {
+          "done": 0,
+          "total": 2,
+          "op": "set",
+          "node_id": "progress"
+        }
+      ]
+    }
+  },
+  {
+    "op": "patch",
+    "patch": {
+      "ops": [
+        {
+          "done": 1,
+          "total": 3,
+          "op": "set",
+          "node_id": "progress"
+        }
+      ]
+    }
+  },
+  {
+    "op": "patch",
+    "patch": {
+      "ops": [
+        {
+          "done": 3,
+          "total": 3,
+          "op": "set",
+          "node_id": "progress"
+        }
+      ]
+    }
+  },
+  {
+    "op": "close",
+    "ending": {}
+  }
+]

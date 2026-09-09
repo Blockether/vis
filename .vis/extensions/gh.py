@@ -665,8 +665,12 @@ def declared_nodes(shape):
         vis.status(
             "run", shape["headline"], tone=shape["tone"], detail=shape["detail"]
         ),
+        # GitHub can report a run before its jobs. No total means indeterminate.
         vis.progress(
-            "progress", done=shape["done"], total=shape["total"], label="Jobs finished"
+            "progress",
+            done=shape["done"],
+            total=shape["total"] or None,
+            label="Jobs finished",
         ),
         vis.stat("score", stats=[dict(one) for one in shape["score"]]),
         vis.table(
@@ -702,7 +706,10 @@ def push_changes(view, before, after):
         or before.get("detail") != after["detail"]
     ):
         view["run"].set(after["headline"], tone=after["tone"], detail=after["detail"])
-    if before.get("done") != after["done"] or before.get("total") != after["total"]:
+    # Empty polls do not erase the last known counts or publish an invalid total=0.
+    if after["total"] and (
+        before.get("done") != after["done"] or before.get("total") != after["total"]
+    ):
         view["progress"].set(done=after["done"], total=after["total"])
     was = {one["id"]: one for one in before.get("score") or []}
     for one in after["score"]:

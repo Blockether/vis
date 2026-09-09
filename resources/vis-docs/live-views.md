@@ -40,7 +40,7 @@ def watch_run(run_id):
         f"CI · run {run_id}",
         [
             vis.status("run", "Watching", tone="running"),
-            vis.progress("progress", done=0, total=len(run["jobs"])),
+            vis.progress("progress"),
             vis.table("jobs", columns=[vis.table_column("job", "Job"),
                                        vis.table_column("state", "Status")]),
             vis.link("links", links=[{"id": "run", "label": "This run", "target": run["url"]}]),
@@ -48,7 +48,7 @@ def watch_run(run_id):
         description=f"{len(run['jobs'])} jobs",
     ) as view:
         seen = {}
-        done = 0
+        counts = None
         while True:
             if view.is_interrupted:
                 return view.close(summary="Stopped watching before the run completed")
@@ -59,9 +59,10 @@ def watch_run(run_id):
                     view["jobs"].upsert(str(job["databaseId"]), [job["name"], state],
                                         tone=TONES.get(job["conclusion"], "error"))
             completed = sum(1 for j in run["jobs"] if j["status"] == "completed")
-            if completed != done:
-                view["progress"].set(done=completed)
-                done = completed
+            total = len(run["jobs"])
+            if total and (completed, total) != counts:
+                view["progress"].set(done=completed, total=total)
+                counts = (completed, total)
             if run["status"] == "completed":
                 break
             deadline = time.monotonic() + 5
@@ -73,6 +74,11 @@ def watch_run(run_id):
         view["run"].set(run["conclusion"], tone=TONES.get(run["conclusion"], "error"))
         return view.close(summary=f"Run result: {run['conclusion']}")
 ```
+
+GitHub may return a run before publishing its jobs. Declare progress without a
+`total` while the count is unknown; `total=0` is invalid. Set both `done` and
+`total` when jobs appear, and update the total if more jobs are added. The example
+keeps the last known counts across later empty polls.
 
 For a complete implementation, see `.vis/extensions/gh.py` in the Vis repository.
 

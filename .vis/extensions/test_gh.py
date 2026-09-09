@@ -281,6 +281,52 @@ def test_the_view_opens_declared_from_the_first_poll(watched):
     assert jobs["selected_ids"] == ["95742028721", "95742028781"]
 
 
+@pytest.mark.parametrize("jobs", [None, []])
+@pytest.mark.parametrize("status", ["pending", "completed"])
+def test_watch_can_open_before_github_reports_jobs(recorder, jobs, status):
+    # Regression, session 7c4afc6e-3278-4a52-bf98-935ebb037d6c: total=0
+    # failed the engine contract before either concurrent watch could open.
+    first = dict(fixture("run-mid.json"), jobs=jobs, status=status)
+    if status == "completed":
+        first["conclusion"] = "neutral"
+    polls = [first, fixture("run-final.json")]
+    result = gh.watch(TITLE, DESCRIPTION, lambda: polls.pop(0))
+
+    progress = node(recorder.said[0]["view"], "progress")
+    assert progress["done"] == 0
+    assert "total" not in progress
+    assert "value" not in progress
+    assert result.ending == "completed"
+    if status == "pending":
+        assert (
+            node(recorder.said[0]["view"], "run")["text"] == "Waiting for job details"
+        )
+        assert node(recorder.picture(), "progress")["total"] == 6
+    else:
+        assert result.conclusion == "neutral"
+        assert result.jobs == ()
+        assert not recorder.patched()
+
+
+def test_progress_keeps_known_counts_across_empty_polls(recorder):
+    shape = gh.run_shape({"status": "pending", "jobs": []})
+    progress = node({"nodes": gh.declared_nodes(shape)}, "progress")
+    with vis.live("Job progress", [progress], flush_ms=0) as view:
+        for done, total in [(0, 0), (0, 2), (1, 3), (0, 0), (3, 3)]:
+            after = dict(shape, done=done, total=total)
+            gh.push_changes(view, shape, after)
+            shape = after
+        view.close()
+
+    counts = [
+        (op["done"], op["total"])
+        for op in recorder.patched()
+        if op["node_id"] == "progress"
+    ]
+    assert counts == [(0, 2), (1, 3), (3, 3)]
+    assert_tree(recorder.ops(), golden("empty-jobs-ops.json", recorder.ops()))
+
+
 def test_only_what_moved_since_the_last_poll_crosses_the_wire(watched):
     recorder, _ = watched
     rows = [op for op in recorder.patched() if op.get("node_id") == "jobs"]

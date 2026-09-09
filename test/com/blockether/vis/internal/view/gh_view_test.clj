@@ -141,6 +141,30 @@
       (expect (str/ends-with? (last (:lines (node view "output")))
                               "##[error]Process completed with exit code 1."))
       (expect (= ["run" "95742028770"] (mapv :id (:links (node view "links")))))))
+  ;; Regression, session 7c4afc6e-3278-4a52-bf98-935ebb037d6c: GitHub had not
+  ;; published jobs yet, and total=0 prevented the live view from opening.
+  (it "accepts indeterminate progress until the gh extension knows the job count"
+      (let [ops
+            (fixture (io/file ".vis" "extensions" "fixtures" "empty-jobs-ops.json"))
+
+            answers
+            (replay (mapcat #(if (= "patch" (get % "op")) [% {"op" "state"}] [%]) ops))
+
+            opened
+            (node (:view (first answers)) "progress")
+
+            updated
+            (mapv #(node % "progress") (keep :view (rest answers)))
+
+            final
+            (node (:final-view (last answers)) "progress")]
+
+        (expect (every? :is-open (butlast answers)))
+        (expect (nil? (live/fraction opened)))
+        (expect (not (contains? opened :total)))
+        (expect (= [[0 2] [1 3] [3 3]] (mapv (juxt :done :total) updated)))
+        (expect (= 1.0 (live/fraction final)))
+        (expect (= :completed (get-in (last answers) [:result :reason])))))
   (it "renders the preserved human picture into the durable document"
       (let [view
             (:final-view (last (replay (fixture ops-file))))
