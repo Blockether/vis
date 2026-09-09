@@ -92,11 +92,9 @@ export const Button = forwardRef<
      * the incoherence this app was reported for. Touch is untouched — a finger
      * still gets the full box.
      *
-     * `panel` is a SETTINGS PANEL's own verb. The panel reports in monospace at
-     * the meta scale, so the buttons under its prose speak in that voice too, in
-     * a 36px box on the rhythm of the rows above them. It used to be four copies
-     * of the same forty characters of `className`, two hundred lines apart in one
-     * file — which is how a fifth copy gets one utility wrong and nobody sees it.
+     * `panel` is a settings action: a content-width 32px face with an 11px label.
+     * Its invisible extension preserves a 44px touch target without filling the
+     * panel. Owners provide padding and at least 8px between adjacent targets.
      */
     density?: 'default' | 'compact' | 'panel';
     /**
@@ -216,10 +214,11 @@ export const Button = forwardRef<
   // `⋯` beside it shrinks by exactly the same amount, because a header that holds
   // one 32px button and one 44px button holds two different affordances.
   const scale = {
-    default: '',
+    default: 'min-h-7 px-2.5 sm:min-h-8 sm:px-3 sm:text-ui',
     compact:
-      'relative h-8 self-center after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] mouse:h-6 mouse:min-h-6 mouse:text-meta mouse:after:content-none',
-    panel: 'min-h-9 px-3 font-mono text-meta',
+      'relative min-h-7 h-8 px-2.5 self-center after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] sm:min-h-8 sm:px-3 sm:text-ui mouse:h-6 mouse:min-h-6 mouse:text-meta mouse:after:content-none',
+    panel:
+      'relative min-h-8 px-3 font-mono text-ui after:absolute after:inset-x-0 after:-top-[7px] after:-bottom-[7px] after:content-[""] mouse:after:content-none',
   }[density];
   const joined = isJoined ? 'border-x-0' : '';
   // THE DISC IS THE BOX THAT NEVER LEARNED A WORD. It keeps the header's own 32px
@@ -230,7 +229,7 @@ export const Button = forwardRef<
   const frame =
     shape === 'disc'
       ? 'relative grid size-8 self-center place-items-center rounded-full after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] mouse:size-7 mouse:after:content-none'
-      : `min-h-7 rounded-control px-2.5 py-0.5 sm:min-h-8 sm:px-3 sm:text-ui ${scale}`;
+      : `rounded-control py-0.5 ${scale}`;
 
   return (
     <button

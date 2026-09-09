@@ -1351,7 +1351,7 @@ describe("settings is ONE dialog with two columns", () => {
     expect(voices).not.toContain("description=");
     expect(voices).not.toContain("meta=");
     expect(voices).not.toContain("bg-panel-2");
-    expect(voices).toContain("Import a voice…");
+    // Creation actions are exercised in SettingsScreen.voiceSetup.test.tsx.
 
     const engines = settings.slice(
       settings.indexOf("export function SpeechEnginesPanel"),
@@ -1384,10 +1384,7 @@ describe("settings is ONE dialog with two columns", () => {
     expect(notify).not.toContain(
       'className="flex items-center justify-end px-3 py-2"',
     );
-    // One full-width verb is left in the dialog and it is not a band's: importing a
-    // voice is a file picker inside a nested group, which has no trailing cell.
-    expect(settings.match(/w-full justify-center/g)).toHaveLength(1);
-    expect(settings).toContain("Import a voice…");
+    // Voice action padding and content-width buttons are measured in SpeechSettings.stories.tsx.
     // And a dot centred in a two-line row sat between the name and its meta line,
     // marking neither. Both lists now lead with the RING the live view paints
     // rather than a character in the body face: the one-line machine row lets the
@@ -3457,11 +3454,7 @@ describe("a call site positions, and the component paints", () => {
     expect(renderToStaticMarkup(<Button>Save</Button>)).not.toContain(
       "font-mono",
     );
-    // The panel's two verbs became one control (`NotifyConnectionSwitch`), which
-    // wears the disc; the MCP list's last row went back into its band as a mark.
-    // What remains is the door to the OS, the diagnostics export, and the Voices
-    // list's own last row.
-    expect(settingsSource.match(/density="panel"/g)).toHaveLength(3);
+    // Panel geometry and touch reach are measured in SpeechSettings.stories.tsx.
   });
 
   it("gives the spinner the app's waiting ink as a tone", () => {

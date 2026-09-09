@@ -18,7 +18,13 @@ import {
   setSpeechTtsEngine,
 } from "../../lib/storage";
 import { speechOutput } from "../../lib/speech";
-import { DownloadIcon, PlayIcon, StopIcon } from "../../components/icons";
+import { startWavRecording, type WavRecording } from "../../lib/voice";
+import {
+  DownloadIcon,
+  MicIcon,
+  PlayIcon,
+  StopIcon,
+} from "../../components/icons";
 import {
   bestDeviceVoices,
   deviceVoices,
@@ -39,14 +45,9 @@ import {
 import { FormLabel, SettingsPanel } from "./SettingsLayout";
 
 /**
- * ONE ENGINE'S VOICES, immediately under the engine that owns them.
- *
- * A cloning engine speaks by imitating a reference recording, so a voice IS a clip and
- * "create a voice" is an upload and nothing else. The clip is stored on the machine that
- * imported it and every session there speaks with the same catalogue.
- *
- * A machine whose built-in speaking runtime is unavailable renders NOTHING. Speech is
- * optional in use; a group explaining a capability that cannot run is noise.
+ * Voices for one engine, including local recording and file import for cloning engines.
+ * A clip is uploaded only after the user confirms its name. Imported voices belong
+ * to this machine. Engines without a speaking runtime do not render this panel.
  */
 export function VoicesPanel({
   client,
@@ -72,9 +73,37 @@ export function VoicesPanel({
   const [confirmingInstall, setConfirmingInstall] = useState<string | null>(
     null,
   );
-  // Which of THIS machine's voices this device asks for. Stored by id: a machine
-  // that no longer has it speaks in its selected engine's default instead.
   const fileRef = useRef<HTMLInputElement>(null);
+  const canImport = catalogue?.engine?.is_voice_import === true;
+  const [recording, setRecording] = useState<
+    "starting" | "recording" | "stopping" | null
+  >(null);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const recordingRef = useRef<{ recorder: WavRecording | null } | null>(null);
+  const cancelRecording = useCallback(() => {
+    const take = recordingRef.current;
+    recordingRef.current = null;
+    void take?.recorder?.cancel().catch(() => {
+      setErr(
+        "Could not release the microphone. Check this device's microphone access.",
+      );
+    });
+    setRecording(null);
+  }, []);
+
+  useEffect(() => {
+    if (!canImport) return;
+    return () => cancelRecording();
+  }, [cancelRecording, client, engine, canImport]);
+
+  useEffect(() => {
+    if (recording !== "recording") return;
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      setRecordingSeconds(Math.floor((Date.now() - started) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [recording]);
   // Which voice this device is auditioning right now. One at a time on purpose: the
   // player has one output, so a second press replaces the sound instead of layering it.
   const [playing, setPlaying] = useState<string | null>(null);
@@ -183,9 +212,67 @@ export function VoicesPanel({
     }
   }
 
+  async function recordClip() {
+    if (recordingRef.current) return;
+    cancelAudition();
+    const take: { recorder: WavRecording | null } = { recorder: null };
+    recordingRef.current = take;
+    setRecording("starting");
+    setRecordingSeconds(0);
+    setErr(null);
+    setNote(null);
+    try {
+      const recorder = await startWavRecording({
+        onInterrupted: () => {
+          if (recordingRef.current !== take) return;
+          cancelRecording();
+          setErr(
+            "Recording interrupted. Record again or import an audio file.",
+          );
+        },
+      });
+      if (recordingRef.current !== take) {
+        await recorder.cancel();
+        return;
+      }
+      take.recorder = recorder;
+      setRecording("recording");
+    } catch (e) {
+      if (recordingRef.current !== take) return;
+      recordingRef.current = null;
+      setRecording(null);
+      setErr(
+        `${e instanceof Error ? e.message : "Microphone could not start"}. Record again or import an audio file.`,
+      );
+    }
+  }
+
+  async function stopRecording() {
+    const take = recordingRef.current;
+    const recorder = take?.recorder;
+    if (!recorder) return;
+    take.recorder = null;
+    setRecording("stopping");
+    try {
+      const audio = await recorder.stop();
+      if (recordingRef.current !== take) return;
+      chooseClip(new File([audio], "My voice.wav", { type: "audio/wav" }));
+    } catch (e) {
+      if (recordingRef.current !== take) return;
+      setErr(
+        `${e instanceof Error ? e.message : "Recording could not be saved"}. Record again or import an audio file.`,
+      );
+    } finally {
+      if (recordingRef.current === take) {
+        recordingRef.current = null;
+        setRecording(null);
+      }
+    }
+  }
   async function importClip() {
     if (!clip || !voiceName.trim()) return;
     setPending("import");
+    setErr(null);
     try {
       const voice = await client.importSpeechVoice(
         clip,
@@ -196,8 +283,8 @@ export function VoicesPanel({
         },
         { engine },
       );
-      setNote(`${voice.label ?? voice.id} can speak on this machine now.`);
       chooseClip(null);
+      setNote(`${voice.label ?? voice.id} can speak on this machine now.`);
       setVoiceName("");
       setLanguage("");
       setSays("");
@@ -255,20 +342,14 @@ export function VoicesPanel({
   if (isAbsent) return null;
 
   const voices = catalogue?.voices ?? [];
-  const canImport = catalogue?.engine?.is_voice_import === true;
 
   return (
     <SettingsChoiceGroup label="Voices" isNested>
-      {/* A VOICE IS A ROW, NOT A CARD. Reported over this screen: every voice sat in
-          its own hairline box inside a padded box inside the panel, three frames
-          deep, and the band spent two lines saying where a DIFFERENT band lives.
-          The list divides on one rule like every other list here, and the panel's
-          one verb is its last row. */}
       <div className="divide-y divide-dialog-edge">
         {(err || note) && (
           <div className="space-y-2 p-3">
             {err && <Banner kind="err">{err}</Banner>}
-            {note && <Banner kind="ok">{note}</Banner>}
+            {note && <Banner kind="neutral">{note}</Banner>}
           </div>
         )}
 
@@ -279,9 +360,9 @@ export function VoicesPanel({
         )}
 
         {catalogue && voices.length === 0 && (
-          <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4">
+          <p className="px-3 py-3 font-mono text-body text-dialog-hint sm:px-4">
             {canImport
-              ? "No voice yet — import a recording and it becomes one."
+              ? "No custom voices yet."
               : "This engine speaks in no named voice."}
           </p>
         )}
@@ -460,21 +541,70 @@ export function VoicesPanel({
             onChange={(event) => chooseClip(event.target.files?.[0] ?? null)}
           />
           {clip === null ? (
-            <Button
-              variant="primary"
-              density="panel"
-              className="w-full justify-center"
-              onClick={() => fileRef.current?.click()}
-            >
-              Import a voice…
-            </Button>
+            <div className="space-y-3 px-3 py-3 sm:px-4">
+              <p className="font-mono text-body text-dialog-hint">
+                Use 10–30 seconds of clear speech, without music or other
+                voices.
+              </p>
+              {recording ? (
+                <>
+                  <p role="status" className="font-mono text-ui text-white">
+                    {recording === "starting"
+                      ? "Waiting for microphone permission…"
+                      : recording === "stopping"
+                        ? "Preparing recording…"
+                        : `Recording · ${Math.floor(recordingSeconds / 60)}:${String(recordingSeconds % 60).padStart(2, "0")}`}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-5">
+                    <Button
+                      variant="secondary"
+                      density="panel"
+                      disabled={recording !== "recording"}
+                      onClick={() => void stopRecording()}
+                    >
+                      <span className="flex items-center gap-2">
+                        <StopIcon className="size-3" />
+                        Stop recording
+                      </span>
+                    </Button>
+                    <Button
+                      variant="quiet"
+                      density="panel"
+                      onClick={() => cancelRecording()}
+                    >
+                      Cancel recording
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-5">
+                  <Button
+                    variant="secondary"
+                    density="panel"
+                    onClick={() => void recordClip()}
+                  >
+                    <span className="flex items-center gap-2">
+                      <MicIcon className="size-3" />
+                      Record your voice
+                    </span>
+                  </Button>
+                  <Button
+                    variant="quiet"
+                    density="panel"
+                    onClick={() => fileRef.current?.click()}
+                  >
+                    Import voice
+                  </Button>
+                </div>
+              )}
+            </div>
           ) : (
-            <div className="space-y-2 p-3">
+            <div className="space-y-3 px-3 py-3 sm:px-4">
               <FormLabel
                 label="Recording"
                 hint="Ten to thirty seconds of clear speech is plenty."
               >
-                <p className="truncate font-mono text-meta text-white">
+                <p className="break-words font-mono text-ui text-white">
                   {clip.name}
                 </p>
               </FormLabel>
@@ -497,7 +627,7 @@ export function VoicesPanel({
               </FormLabel>
               <FormLabel
                 label="What the clip says"
-                hint="Optional, and worth typing: the model is TOLD these words, so the clone tracks the voice instead of guessing them."
+                hint="Optional — a transcript helps the model match your voice."
               >
                 <Input
                   value={says}
@@ -505,15 +635,26 @@ export function VoicesPanel({
                   onChange={(event) => setSays(event.target.value)}
                 />
               </FormLabel>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-x-2 gap-y-5">
                 <Button
                   variant="primary"
+                  density="panel"
                   disabled={!voiceName.trim() || pending === "import"}
                   onClick={() => void importClip()}
                 >
-                  {pending === "import" ? "Importing…" : "Import"}
+                  {pending === "import" ? "Saving voice…" : "Save voice"}
                 </Button>
-                <Button variant="quiet" onClick={() => chooseClip(null)}>
+                <Button
+                  variant="quiet"
+                  density="panel"
+                  disabled={pending === "import"}
+                  onClick={() => {
+                    chooseClip(null);
+                    setVoiceName("");
+                    setLanguage("");
+                    setSays("");
+                  }}
+                >
                   Cancel
                 </Button>
               </div>
