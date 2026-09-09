@@ -73,7 +73,7 @@ export function ProviderLimitReset({ credits, isChecking = false, hasPending = f
           </div>
         </div>
       ) : (available !== null || hasPending) && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button density="compact" variant="secondary" disabled={!canReset || isChecking || busy} onClick={() => { setNotice(null); setConfirmAccount(accountId!); }}>
             {hasPending ? 'Check reset result…' : 'Reset limits…'}
           </Button>

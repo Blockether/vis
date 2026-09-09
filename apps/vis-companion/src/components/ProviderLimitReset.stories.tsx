@@ -15,7 +15,15 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Available: Story = {};
+export const Available: Story = {
+  play: async ({ canvas }) => {
+    const group = canvas.getByRole('group', { name: 'Codex limit resets' });
+    const button = canvas.getByRole('button', { name: 'Reset limits…' });
+    const status = canvas.getByRole('status');
+    await expect(button.getBoundingClientRect().right).toBeCloseTo(group.getBoundingClientRect().right, 0);
+    await expect(status.getBoundingClientRect().left).toBeCloseTo(group.getBoundingClientRect().left, 0);
+  },
+};
 export const Confirmation: Story = {
   play: async ({ canvas, args }) => {
     await userEvent.click(canvas.getByRole('button', { name: 'Reset limits…' }));
