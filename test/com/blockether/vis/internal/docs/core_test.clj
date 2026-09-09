@@ -542,7 +542,8 @@
                      page
                      (first (:pages site))]
 
-                 (expect (str/includes? (docs/page-html site page :static)
+                 (expect (str/includes? (re-find #"<header[^>]*>.*?</header>"
+                                                 (docs/page-html site page :static))
                                         "href=\"https://center.example.com/\""))
                  (expect (not (str/includes? (docs/page-html site page :live)
                                              "https://center.example.com/")))

@@ -343,6 +343,12 @@
       "\">"
       (esc (:title site))
       "</a>"
+      (when (and (= mode :static) (seq (:extension-center-url site-data)))
+        (str "<a class=\"center-link\" href=\""
+             (esc (:extension-center-url site-data))
+             "\">"
+             (esc (get-in site [:extension-center :title]))
+             "</a>"))
       "<span class=\"spacer\"></span>"
       (when-let [r (:repo site)]
         (str

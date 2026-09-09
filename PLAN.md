@@ -41,6 +41,15 @@ Main publication and GitHub Actions deployment were authorized in turn 12. No li
   root and monorepo examples; review desktop, tablet and phone without touching live services.
 - Unknowns: none beyond checks recorded below.
 
+## 5. Shared site navigation and origin
+- Rationale: expose the catalog in the documentation header and keep navigation on one hostname.
+- Data: documentation page-html, Worker shellHTML and the shared theme.css.
+- Acceptance criteria: a visible header link on desktop and touch devices, no link in embedded docs,
+  and documentation/catalog navigation on the same public origin.
+- Unknowns: the common hostname. GitHub Pages cannot route requests to this Worker. Moving the
+  docs to the Worker hostname or adding a user-selected domain requires a hosting decision.
+  No DNS or origin migration was performed.
+
 ## Plan state
 1–4 complete locally. The Python web server is removed; the Worker renders catalog/details as HTML
 and D1 separates public listings from pending submissions. Installer behavior is unchanged.
@@ -78,6 +87,11 @@ The production Turnstile SDK and widget load; completing its interactive challen
 a repository still requires a human check. No fixture catalog entries were published.
 The local default checkout was left untouched; temporary review services and browsers are stopped.
 
+Turn 17: the header link is implemented in the public documentation and catalog. Both use the
+shared Vis light stylesheet; the catalog marks its active location and the Vis brand links to docs.
+36 Worker/UI/deployment tests and 25 documentation tests pass. Browser measurements match at
+1280 px and 320 px with 130% text scaling, without horizontal overflow; the new touch target
+exceeds 44 px. Shared-origin delivery remains blocked on the hostname decision in phase 5.
 ---
 
 # Session health in app metrics

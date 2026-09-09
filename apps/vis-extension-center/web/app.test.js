@@ -139,6 +139,11 @@ test('the catalog uses the documentation stylesheet and three-column page shell'
   expect(build).toContain('resources/vis-docs/assets');
   expect(readFileSync('dist/assets/theme.css')).toEqual(readFileSync('../../resources/vis-docs/assets/theme.css'));
   expect($('.top .brand').textContent).toBe('Vis');
+  expect($('.top .brand').href).toBe('https://blockether.github.io/vis/');
+  expect($('.top .center-link').textContent).toBe('Extension Center');
+  expect($('.top .center-link').getAttribute('href')).toBe('/');
+  expect($('.top .center-link').getAttribute('aria-current')).toBe('location');
+  expect($('.top .center-link').hasAttribute('target')).toBe(false);
   expect($('.shell > .side #categories')).not.toBeNull();
   expect($('.shell > .main > .content #catalog-page')).not.toBeNull();
   expect($('.shell > .toc')).not.toBeNull();
