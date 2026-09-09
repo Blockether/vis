@@ -1744,6 +1744,10 @@
 
 (def ^:private code-copy-label " COPY ")
 
+(defn- inline-disclosure-prefix
+  [prefix mark width]
+  (str (p/ellipsize prefix (max 0 (- (long width) (p/display-width (or mark ""))))) mark))
+
 (defn- draw-band-copy!
   [g meta x y iw right-inset]
   (when-let [copy-width (:copy-width meta)]
@@ -2055,7 +2059,9 @@
                              meta)
                       line (if-let [suffix (not-empty (:right-suffix meta))]
                              (let [room (max 0 (- (long iw) right-inset (p/display-width suffix)))
-                                   prefix (p/ellipsize (:headline-prefix meta) (max 0 (dec room)))
+                                   prefix (inline-disclosure-prefix (:headline-prefix meta)
+                                                                    (:inline-disclosure meta)
+                                                                    (max 0 (dec room)))
                                    padding (max 0 (- room (p/display-width prefix)))]
 
                                (str (subs line 0 1) prefix (apply str (repeat padding " ")) suffix))
@@ -2330,9 +2336,10 @@
                       (case (:kind meta)
                         (:activity-row :activity-header)
                         (do (p/set-colors! g
-                                           (if (contains? #{:error :running} (:status-tone meta))
-                                             tone-fg
-                                             t/result-highlight-fg)
+                                           (cond (= :activity-header (:kind meta)) band-fg
+                                                 (contains? #{:error :running} (:status-tone meta))
+                                                 tone-fg
+                                                 :else t/result-highlight-fg)
                                            band-bg)
                             (p/styled g
                                       [p/BOLD]
@@ -5860,15 +5867,21 @@
                                                             delta)
 
                                                        suffix
-                                                       (str/join "  "
-                                                                 (remove str/blank?
-                                                                   [(activity-row-tail row)
-                                                                    (when openable?
-                                                                      (if open? "▾" "▸"))]))
+                                                       (activity-row-tail row)
+
+                                                       mark
+                                                       (when openable? (if open? " ▾" " ▸"))
 
                                                        line
-                                                       (first
-                                                         (with-right-suffix [prefix] suffix width))
+                                                       (first (with-right-suffix
+                                                                [(inline-disclosure-prefix
+                                                                   prefix
+                                                                   mark
+                                                                   (- (long width)
+                                                                      (p/display-width suffix)
+                                                                      2))]
+                                                                suffix
+                                                                width))
 
                                                        error
                                                        (first (filter #(= "error"
@@ -5886,6 +5899,7 @@
                                                                {:kind :activity-row
                                                                 :headline-prefix prefix
                                                                 :right-suffix suffix
+                                                                :inline-disclosure mark
                                                                 :item-id id
                                                                 :node-id (when openable?
                                                                            (str node-id ":" id))
@@ -5915,32 +5929,15 @@
                                                        diffs
                                                        (activity-diffs row)
 
-                                                       ;; Shut children stand one under another; a blank line parts a child
-                                                       ;; that opened from its neighbours on either side, so its evidence is
-                                                       ;; read as its own and never as the next child's head.
+                                                       ;; Separate sibling operations, whether open or closed.
                                                        nested-entries
                                                        (fn []
-                                                         (:entries
-                                                           (reduce
-                                                             (fn [{:keys [entries prev-open?]}
-                                                                  child]
-                                                               (let [chunk
-                                                                     (row-entry child
+                                                         (vec (mapcat identity
+                                                                      (interpose [blank]
+                                                                        (map #(row-entry
+                                                                                %
                                                                                 (inc (long depth)))
-
-                                                                     open-child?
-                                                                     (< 1 (count chunk))]
-
-                                                                 {:entries
-                                                                  (into (cond-> entries
-                                                                          (and (seq entries)
-                                                                               (or prev-open?
-                                                                                   open-child?))
-                                                                          (conj blank))
-                                                                        chunk)
-                                                                  :prev-open? open-child?}))
-                                                             {:entries [] :prev-open? false}
-                                                             nested)))]
+                                                                             nested)))))]
 
                                                    (cond-> [head]
                                                      (and open? (seq content))
@@ -6029,14 +6026,23 @@
                                                      (and (not open?)
                                                           (seq nested)
                                                           (not (:activity-repeat-count row)))
-                                                     (into (mapcat #(row-entry % (inc (long depth)))
-                                                                   (remove #(= :succeeded
-                                                                               (activity-row-state
-                                                                                 %))
-                                                                     nested)))
+                                                     (into (let [chunks
+                                                                 (seq (map #(row-entry
+                                                                              %
+                                                                              (inc (long depth)))
+                                                                           (remove
+                                                                             #(= :succeeded
+                                                                                 (activity-row-state
+                                                                                   %))
+                                                                             nested)))]
+                                                             (when chunks
+                                                               (cons blank
+                                                                     (mapcat identity
+                                                                             (interpose [blank]
+                                                                               chunks))))))
 
                                                      (and open? (seq nested))
-                                                     (into (nested-entries))))))
+                                                     (into (cons blank (nested-entries)))))))
 
         ;; A hard transport limit is not a disclosure: those bytes are unavailable.
         omitted-entry
@@ -6102,7 +6108,7 @@
                            :operation-label "ACTIVITY"})}]
 
         (vec (concat [header]
-                     (when band-open? (mapcat row-entry rows))
+                     (when band-open? (mapcat identity (interpose [blank] (map row-entry rows))))
                      (when (and band-open? omitted-entry) [omitted-entry])
                      [blank]))))))
 

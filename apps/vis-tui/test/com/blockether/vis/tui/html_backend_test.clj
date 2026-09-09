@@ -184,6 +184,12 @@
                 (is (= code-open? (some? (row-of "RESULT"))))
                 (is (= code-open? (str/includes? text "inspect_files()")))
                 (is (= activity-open? (str/includes? text "Read ×3")))
+                (let [y (row-of "ACTIVITY")
+                      x (str/index-of (nth lines y) "ACTIVITY")]
+
+                  (is (= theme/code-block-fg
+                         (.getForegroundColor ^com.googlecode.lanterna.TextCharacter
+                                              (get-in grid [y x])))))
                 (doseq [y (range (row-of "CODE") (inc (long (row-of "ACTIVITY"))))]
                   (is (= theme/code-block-bg
                          (.getBackgroundColor ^com.googlecode.lanterna.TextCharacter

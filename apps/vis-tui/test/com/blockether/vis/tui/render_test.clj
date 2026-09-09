@@ -6022,8 +6022,8 @@ h = 8"
                   "a call hangs one level in from its group's words")
           (expect (= (+ 2 (long (.indexOf head "Ran"))) (long (.indexOf wait "_shell-wait"))))
           (expect (not-any? #(str/includes? % "\"keys\"") open))
-          (expect (not-any? str/blank? (butlast open))
-                  "shut calls stand one under another, with no blank between them")))
+          (expect (= 3 (count (filter str/blank? (butlast open))))
+                  "one blank line separates each pair of shut sibling calls")))
     (it "opens one call onto its outcome and keeps its siblings shut"
         (let [open
               (lines [group] {"sh-1" true "wait-1" true})
@@ -6624,6 +6624,52 @@ h = 8"
         (expect (str/includes? (:line (second entries)) "List ×2")))))
 
 (defdescribe
+  activity-inline-disclosure-spacing-test
+  (it
+    "keeps disclosures next to text and separates sibling operations"
+    (doseq [width
+            [40 80 160]
+
+            grouped?
+            [false true]]
+
+      (let [rows
+            (mapv (fn [id op]
+                    {:id id
+                     :sequence (if (= id "one") 1 2)
+                     :operation op
+                     :state "succeeded"
+                     :duration-ms 42
+                     :presentation {:headline (str "Read " id)
+                                    :summary "2 files"
+                                    :content [{:type "text" :text "evidence"}]}})
+                  ["one" "two"]
+                  (if grouped? ["cat" "cat"] ["cat" "ls"]))
+
+            entries
+            (#'render/activity-detail-entries
+             {:node-id "spacing"
+              :activity-rows rows
+              :activity-expanded? (fn [id & _]
+                                    (or (str/ends-with? id "#band")
+                                        (not (contains? #{"one" "two"}
+                                                        (last (str/split id #":"))))))}
+             width
+             "spacing")
+
+            heads
+            (keep-indexed #(when (= :activity-row (get-in %2 [:meta :kind])) [%1 %2]) entries)]
+
+        (expect (<= 2 (count heads)))
+        (doseq [[_ entry] (filter #(contains? #{"one" "two"} (get-in (second %) [:meta :item-id]))
+                                  heads)]
+          (expect (not (re-find #"[▸▾]" (get-in entry [:meta :right-suffix]))))
+          (expect (re-find #" ▸\s+42ms" (:line entry))))
+        (doseq [[[a _] [b _]] (partition 2 1 heads)]
+          (expect (= 2 (- b a)))
+          (expect (nil? (:meta (nth entries (inc a))))))))))
+
+(defdescribe
   activity-content-painter-test
   (it
     "keeps listing content clear of the rail without an empty timing band"
@@ -6701,7 +6747,7 @@ print(paths)"
           (expect (= marker (nth (:lines data) (dec source-idx))))
           (expect (= marker (nth (:lines data) (inc last-source-idx)))))
         (expect (= 1 (count (re-seq #"apps/vis-companion/src" text))))
-        (expect (< (.indexOf ^String head "42ms") (.indexOf ^String head "▾")))
+        (expect (< (.indexOf ^String head "▾") (.indexOf ^String head "42ms")))
         (expect (str/ends-with? code " COPY"))
         (doseq [source (filter #(or (str/includes? % "ls()") (str/includes? % "print(paths)"))
                                lines)]
