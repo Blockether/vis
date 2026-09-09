@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.51] - 2026-09-09
+
+### Fixed
+- Synchronize drafts before fast-forward approval and include the current main fixes in the native production release.
+
 ## [v0.1.50] - 2026-09-09
 
 ### Fixed
@@ -14,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Correct draft handling, attachment metadata and companion activity spacing.
 - Verify that cancellation leaves no empty answer bubble in the companion.
 - Keep gateway project ordering stable during live updates.
+
 ## [v0.1.49] - 2026-09-09
 
 ### Fixed

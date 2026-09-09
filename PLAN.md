@@ -1012,14 +1012,14 @@ remains available. Published version tags remain immutable, including the bootst
    explicit verification results and any concrete unresolved blockers reported.
    Unknowns: none beyond the preceding phases.
 
-Plan state: phases 1–2 are complete for v0.1.50; phases 3–5 are in progress. Runtime
-v0.5.6 remains the latest published runtime and the current immutable dependency pin.
-Main CI 34324113048 exposed a macOS checkout-length assumption in the compact error
-regression test. Commit f8905d141 reproduces it with a long-path fixture and validates
-the exact message format independently of path length; focused tests, formatting,
-lint and reflection checks pass. Publish the newer main changes as v0.1.50 only through
-the complete release gate, then repeat installed native and production verification.
-The verified v0.1.49 production service remains healthy until its replacement passes.
+Plan state: phases 1–2 are complete; phases 3–5 are in progress for v0.1.51. Runtime
+v0.5.6 remains current. The checkout-length regression is fixed in f8905d141, with
+long-path coverage and passing formatting, lint and reflection checks. The v0.1.50
+source CI passed all checks; its isolated Linux run passed 5072 cases. Publication
+correctly stopped when main advanced before preparation, so v0.1.50 remains immutable
+and unpublished. The v0.1.51 candidate includes the subsequent draft synchronization
+fix. Require the complete release gate and repeat installed native and production
+verification. The healthy v0.1.49 production service remains in place until then.
 
 - Runtime v0.5.6 is published at 51f02270ffc78b5eb49bcab914b27564b1960f82. Run
   34297827905 passed all four platform builds/tests and published the runtime archives and
