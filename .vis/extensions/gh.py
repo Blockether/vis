@@ -401,11 +401,13 @@ def _run_status(payload, jobs, tones, groups, now=None):
         job, group = running[0]
         step = _current_step(job)
         detail = []
-        if step is not None:
+        if step is not None and str(step.get("status") or "") == "in_progress":
             detail.append(str(step.get("name") or "?"))
             moment = _elapsed(step, now)
             if moment != "·":
                 detail.append(f"{moment} in this step")
+        if not detail:
+            detail.append("Waiting for next step" if _job_steps(job) else "starting")
         if len(running) > 1:
             detail.append(f"{len(running) - 1} other jobs running")
         return _selection_name(job, group), " · ".join(detail) or "starting"
@@ -414,14 +416,20 @@ def _run_status(payload, jobs, tones, groups, now=None):
         ending = str(payload.get("conclusion") or "").replace("_", " ")
         headline = (
             f"All {passed} jobs passed"
-            if ending == "success" and passed
-            else (ending.capitalize() or "Finished")
+            if ending == "success" and passed == len(jobs) and passed
+            else (
+                "Succeeded"
+                if ending == "success"
+                else ending.capitalize() or "Finished"
+            )
         )
         took = _run_elapsed(jobs, now)
         return (
             headline,
             f"{len(jobs)} jobs · {took}" if took != "·" else f"{len(jobs)} jobs",
         )
+    if not jobs:
+        return "Waiting for job details", "No jobs reported yet"
     waiting = sum(
         1
         for job, tone, _ in paired
@@ -562,6 +570,7 @@ def run_shape(payload, selected_ids=None, now=None):
             for job, job_tone in zip(jobs, tones, strict=True)
             if job_tone == "running" and str(job.get("status") or "") != "in_progress"
         ),
+        "skipped": sum(1 for job in jobs if job.get("conclusion") == "skipped"),
     }
     return {
         "is_over": is_over,
@@ -596,7 +605,9 @@ def run_shape(payload, selected_ids=None, now=None):
             },
             {
                 "id": "waiting",
-                "value_text": str(counted["queued"]),
+                "value_text": str(
+                    counted["queued"] + (counted["skipped"] if is_over else 0)
+                ),
                 "label": "unrun" if is_over else "queued",
                 "tone": "idle",
             },

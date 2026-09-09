@@ -1205,3 +1205,46 @@ def test_completed_prepare_does_not_finish_a_queued_release(pending):
     assert shape["is_over"] is False
     assert shape["detail"] == "15 jobs queued"
     assert shape["tone"] == "running"
+
+
+@pytest.mark.parametrize("conclusion", ["skipped", "neutral"])
+def test_success_does_not_claim_every_job_passed(conclusion):
+    payload = fixture("run-final.json")
+    payload["conclusion"] = "success"
+    for job in payload["jobs"]:
+        job["conclusion"] = "success"
+    payload["jobs"][-1]["conclusion"] = conclusion
+    shape = gh.run_shape(payload)
+    assert shape["headline"] == "Succeeded"
+    waiting = next(one for one in shape["score"] if one["id"] == "waiting")
+    assert waiting["value_text"] == ("1" if conclusion == "skipped" else "0")
+
+
+def test_between_steps_does_not_describe_a_finished_step_as_running():
+    payload = {
+        "status": "in_progress",
+        "jobs": [
+            {
+                "name": "build",
+                "status": "in_progress",
+                "steps": [
+                    {
+                        "name": "checkout",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "startedAt": "2026-09-09T08:00:00Z",
+                        "completedAt": "2026-09-09T08:00:10Z",
+                    }
+                ],
+            }
+        ],
+    }
+    shape = gh.run_shape(payload, now=gh._timestamp("2026-09-09T08:01:00Z"))
+    assert shape["headline"] == "build"
+    assert shape["detail"] == "Waiting for next step"
+
+
+def test_empty_job_list_does_not_claim_to_be_waiting_for_a_runner():
+    shape = gh.run_shape({"status": "queued", "jobs": []})
+    assert shape["headline"] == "Waiting for job details"
+    assert shape["detail"] == "No jobs reported yet"
