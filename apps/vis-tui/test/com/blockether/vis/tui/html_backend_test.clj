@@ -218,7 +218,7 @@
                     ts (doto (TerminalScreen. terminal) (.startScreen))]
 
           (paint-activity-review! ts (activity-review-rows "succeeded") {})
-          (components/button! (.newTextGraphics ts) 0 0 " copy " :copy-code {:register? false})
+          (components/button! (.newTextGraphics ts) 0 0 " COPY " :copy-code {:register? false})
           (.refresh ts)
           (let [grid (cell-grid terminal cols 50)
                 row-text (fn [row]
@@ -230,7 +230,7 @@
 
             (is (= (- cols 6) (count (str/trimr (row-text code-row)))))
             (is (= (- cols 5) (count (str/trimr (row-text activity-row)))))
-            (is (str/ends-with? (str/trimr (row-text code-row)) " copy"))
+            (is (str/ends-with? (str/trimr (row-text code-row)) " COPY"))
             (is (= (subvec (first grid) 0 6) (subvec code-row (- cols 11) (- cols 5))))
             (is (str/ends-with? (str/trimr (row-text activity-row)) "7 operations"))
             (doseq [x (range (- cols 11) (- cols 5))]

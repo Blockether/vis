@@ -1742,7 +1742,7 @@
 
       nil)))
 
-(def ^:private code-copy-label " copy ")
+(def ^:private code-copy-label " COPY ")
 
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
