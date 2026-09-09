@@ -220,7 +220,7 @@
        "Approval preserves unrelated local work. Discard the current draft before opening another. "
        "Extension hooks on `draft/create` may refuse.")
      :params [{:name "label" :note "draft name; also the `vis/<label>` branch"}
-              {:name "clean" :note "Defaults to True; False copies pending trunk changes"}]
+              {:name "clean" :note "False copies pending changes; default True"}]
      :call {:pos ["label"] :opt-pos ["clean"]}
      :result
      (str
