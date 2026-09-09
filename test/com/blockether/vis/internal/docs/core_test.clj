@@ -258,6 +258,29 @@
                       (str/replace #"<[^>]+>" "")
                       str/trim))))))))
 
+;; Regression: native ordered-marker suffixes can put numbers outside the prose edge.
+(defdescribe
+  ordered-marker-spacing-test
+  (it "sets an explicit ordered-marker suffix in static and live documentation"
+      (let [{:keys [pages] :as site}
+            (docs/collect)
+
+            home
+            (first (filter #(= "index" (:slug %)) pages))]
+
+        (doseq [mode
+                [:static :live]
+
+                :let [html
+                      (docs/page-html site home mode)
+
+                      css
+                      (rendered-theme html mode)]]
+
+          (expect (str/includes? html "<ol>"))
+          (expect (str/includes? css ".content ol>li::marker{content:counter(list-item) '. '}")
+                  "Ordered markers must not depend on the browser's native separator width.")))))
+
 (defdescribe handle-md-redirect-test
              (it "GET /docs/<slug>.md permanent-redirects to /docs/<slug>"
                  (let [resp (docs/handle {:uri "/docs/skills.md" :headers {}})]
