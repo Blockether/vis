@@ -1133,9 +1133,12 @@ remains available. Published version tags remain immutable, including the bootst
    Unknowns: none beyond the preceding phases.
 
 Plan state: phases 1–5 are complete for v0.1.54. Runtime v0.5.6 remains current.
-A production reactivation fix found during final main CI requires a follow-up native
-publication and verified deployment; those follow-up checks are pending.
-The complete stable release is published, and its installed native binaries passed the
+
+The follow-up v0.1.55 is tagged and its source/native checks pass. Apple's Beta App Review
+submission quota blocks complete publication. Default-installer verification and production
+deployment of that version remain pending; healthy v0.1.54 stays active.
+
+The complete v0.1.54 stable release is published, and its installed native binaries passed the
 Linux end-to-end checks before the rollback-safe production replacement. The native
 FFF regression passes in the released Linux and macOS images. Earlier immutable tags
 and unrelated concurrent changes remain intact.
@@ -1214,6 +1217,31 @@ published or retagged; v0.1.54 includes these fixes and the bounded-cache workfl
   deterministic regression failed before the fix. All 199 gateway cases and 29 real
   HTTP/stdio SDK cases pass; formatting, lint and reflection checks pass. SDK assertions
   and fixture deadlines are unchanged.
+
+- Follow-up v0.1.55 is tagged at b67b056b4faf2d569816467772a7f1ef09540150. Its version,
+  release and public-repository checks pass 62 cases. The tagged Linux and macOS jobs each
+  pass 5168 JVM cases and 1801 TUI cases; both real HTTP/stdio SDK jobs pass 29 cases.
+  The immutable checkout also passes 5168 cases on an isolated Linux host.
+- All three v0.1.55 native platforms pass 17 cases, including the FFF search regression.
+  Linux candidate archives match GitHub's SHA-256 digests. Their packaged native wrapper
+  passes 29 SDK cases and 17 native cases in isolation. A real keyboard-driven TUI turn
+  executes Python, sends its result to the model fixture, renders the final reply and
+  returns to idle. Process inspection verifies ELF images for the TUI, gateway and both
+  workers; every owned verification process stops afterwards. This is candidate evidence,
+  not a claim that the unpublished version was installed through the default installer.
+- [Release run 34396848655](https://github.com/Blockether/vis/actions/runs/34396848655)
+  finishes with 28 successful jobs, one failed iOS distribution job and two skipped downstream
+  jobs. The unpublished draft contains 14 of 15 required assets. Android build 5702 reaches
+  internal, alpha and beta tracks, never production. Both mobile jobs upload no npm cache.
+- Apple accepts and processes iOS v0.1.55 build 5702: it is VALID and IN_BETA_TESTING
+  internally, but READY_FOR_BETA_SUBMISSION externally. Public distribution fails with
+  HTTP 422, "Submission limit has been reached." The signed-package attachment, complete
+  publication, SDK publication and verified production replacement remain blocked. Do not
+  bypass these gates or resubmit the same binary through another publishing path.
+- Compared with v0.1.54, the follow-up has no schema or migration changes. Its persistence
+  changes bind Council activations using existing columns. Production remains on the verified
+  v0.1.54 bundle with healthy canonical health/administration responses, native processes,
+  matching public command versions and a successful SQLite integrity check.
 
 ---
 
