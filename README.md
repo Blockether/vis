@@ -11,14 +11,14 @@
     <a href="https://github.com/Blockether/vis/blob/main/LICENSE">
       <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License - Apache 2.0">
     </a>
+    <a href="https://vis.blockether.com/"><img src="https://img.shields.io/badge/Documentation-teal" alt="Documentation"></a>
+    <a href="https://vis.blockether.com/extensions/"><img src="https://img.shields.io/badge/Extension_Center-dimgray" alt="Extension Center"></a>
   </h2>
 </div>
 
 # Vis
 
-Vis is a coding agent. It runs Python in a sandboxed CPython runtime, stores session state outside the model's context window, and uses tools to inspect and change your project.
-
-[![Documentation](https://img.shields.io/badge/Documentation-teal?style=for-the-badge)](https://vis.blockether.com/) &nbsp; [![Extension Center](https://img.shields.io/badge/Extension_Center-dimgray?style=for-the-badge)](https://vis.blockether.com/extensions/)
+Vis is an AI coding agent that helps you understand, modify, and test your codebase. It runs Python in a sandboxed CPython runtime and stores session state outside the model's context window.
 
 ## Install
 
