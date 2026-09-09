@@ -5506,8 +5506,6 @@
             entries)))
       blocks)))
 
-(def ^:private activity-steps-shown 4)
-
 (defn- activity-operation-rows
   "The shared operation groups, expressed as local disclosures without changing receipts."
   [rows]
@@ -5568,9 +5566,9 @@
     (activity-contract/operation-groups rows)))
 
 (defn- activity-detail-entries
-  "A joined, independently folded Activity band. Block-wide operation groups start shut;
-   live/failure context survives manual folding. Row, file and group keys retain reader choices.
-   #band folds Activity; #steps reveals retained groups beyond the four-group preview."
+  "A joined, independently folded Activity band. Every operation group is visible when
+   #band is open; group contents start shut. Live/failure context survives manual folding.
+   Row, file and group keys retain reader choices."
   [{:keys [node-id activity-rows activity-expanded? activity-omitted activity-artifacts]} max-w
    session-id]
   (let [rows
@@ -5586,23 +5584,6 @@
 
         band-open?
         (expanded? "#band" false)
-
-        show-all?
-        (expanded? "#steps" false)
-
-        preview
-        (into []
-              (keep-indexed (fn [index row]
-                              (when (or (< (long index) activity-steps-shown)
-                                        (not= :succeeded (activity-row-state row)))
-                                row)))
-              rows)
-
-        hidden
-        (- (count rows) (count preview))
-
-        shown
-        (if show-all? rows preview)
 
         width
         (max 1 (long max-w))
@@ -6017,21 +5998,6 @@
                                                      (and open? (seq nested))
                                                      (into (nested-entries))))))
 
-        more-entry
-        (when (pos? hidden)
-          (let [label (more-rule
-                        (if show-all? "show fewer groups" (str "show " (more-count hidden "group")))
-                        width)]
-            {:line (str activity-marker (ellipsize-cols label width))
-             :meta (merge meta-base
-                          {:kind :activity-more
-                           :item-id "#steps"
-                           :mark ""
-                           :label label
-                           :node-id (str node-id ":#steps")
-                           :collapsed? (not show-all?)
-                           :mark-col 0})}))
-
         ;; A hard transport limit is not a disclosure: those bytes are unavailable.
         omitted-entry
         (when (pos? (long (or activity-omitted 0)))
@@ -6087,8 +6053,7 @@
                            :operation-label "ACTIVITY"})}]
 
         (vec (concat [header]
-                     (when band-open? (mapcat row-entry shown))
-                     (when (and band-open? more-entry) [more-entry])
+                     (when band-open? (mapcat row-entry rows))
                      (when (and band-open? omitted-entry) [omitted-entry])
                      [blank]))))))
 

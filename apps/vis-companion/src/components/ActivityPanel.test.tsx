@@ -167,6 +167,44 @@ describe("joined Activity operation groups", () => {
     expect(document.querySelectorAll("[data-activity-group]")).toHaveLength(2);
   });
 
+  it.each(["succeeded", "running", "failed", "cancelled"] as const)(
+    "shows every operation group without pagination when work is %s",
+    (state) => {
+      const activity = reads();
+      const rows = [
+        "grep",
+        "cat",
+        "ls",
+        "patch",
+        "run_tests",
+        "lint_code",
+        "shell",
+      ].map((operation, sequence) => ({
+        ...activity.rows[0],
+        id: `operation-${sequence}`,
+        sequence,
+        operation,
+        state: sequence === 6 ? state : ("succeeded" as const),
+      }));
+      const counts = { running: 0, succeeded: 6, failed: 0, cancelled: 0 };
+      counts[state] += 1;
+      paintActivity({ activity: { ...activity, state, counts, rows } });
+      expect(
+        screen.getByRole("list", { name: "Operation groups" }).children,
+      ).toHaveLength(7);
+      expect(
+        [...document.querySelectorAll("[data-activity-row]")].map((row) =>
+          row.getAttribute("data-activity-row"),
+        ),
+      ).toEqual(rows.map((row) => row.id));
+      expect(
+        screen.queryByRole("button", {
+          name: /(?:show|hide).*(?:more|fewer).*groups?/i,
+        }),
+      ).toBeNull();
+    },
+  );
+
   it("keeps failed and cancelled outcomes visible while a group is collapsed", () => {
     const activity = reads();
     render(

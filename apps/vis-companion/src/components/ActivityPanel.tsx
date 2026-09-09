@@ -1001,18 +1001,9 @@ function ActivityGroup({ group }: { group: OperationGroup }) {
   );
 }
 
-/** Preview groups, never hide running, failed or cancelled work behind Load more. */
-const ACTIVITY_STEPS_SHOWN = 4;
-
+/** Show every operation group; only individual group contents are disclosed. */
 function ActivityThread({ activity }: { activity?: ActivityProjection }) {
-  const [showAll, setShowAll] = useState(false);
   const groups = operationGroups(activity?.rows ?? []);
-  const preview = groups.filter(
-    (group, index) =>
-      index < ACTIVITY_STEPS_SHOWN ||
-      group.rows.some((row) => row.state !== "succeeded"),
-  );
-  const hidden = groups.length - preview.length;
   const omitted = activity?.omitted.rows ?? 0;
   return (
     <ol
@@ -1020,26 +1011,9 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
       data-activity-chronology
       className="min-w-0 pb-1"
     >
-      {(showAll ? groups : preview).map((group) => (
+      {groups.map((group) => (
         <ActivityGroup key={group.id} group={group} />
       ))}
-      {hidden > 0 && (
-        <li>
-          <LoadMore
-            label={
-              showAll
-                ? "Show fewer groups"
-                : `Show ${moreCount(hidden, "group")}`
-            }
-            aria-expanded={showAll}
-            onClick={() => setShowAll((value) => !value)}
-          >
-            {showAll
-              ? "show fewer groups"
-              : `show ${moreCount(hidden, "group")}`}
-          </LoadMore>
-        </li>
-      )}
       {omitted > 0 && (
         <li className="text-meta text-dialog-hint">
           {omitted} {omitted === 1 ? "step" : "steps"} omitted · Activity limit

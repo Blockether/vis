@@ -6307,46 +6307,40 @@ h = 8"
           (mapv :item-id (filter #(= :activity-row (:kind %)) (:line-meta payload))))]
 
     (it
-      "registers a real show-more hit in live progress and keeps it through replacements"
-      (let [closed
+      "shows every operation group in live and settled replacements without pagination"
+      (let [live
             (paint activity {})
 
-            more
-            (first (filter #(and (= :activity-more (:kind %)) (:node-id %)) (:line-meta closed)))
+            settled
+            (paint (assoc-in activity [:rows 6 :state] "succeeded") {})]
 
-            expansions
-            {["live-more" (:node-id more)] true}
-
-            opened
-            (paint activity expansions)
-
-            replacement
-            (paint (assoc-in activity [:rows 6 :state] "succeeded") expansions)]
-
-        (expect (= 5 (count (row-ids closed))))
-        (expect (some? (:node-id more)))
-        (expect (str/includes? (:label more) "show 2 more groups"))
-        (expect (:collapsed? more))
-        (expect (= 7 (count (row-ids opened))))
-        (expect (= (row-ids opened) (row-ids replacement)))
-        (expect (some #(and (= (:node-id more) (:node-id %)) (false? (:collapsed? %)))
-                      (:line-meta opened)))
+        (expect (= (mapv :id rows) (row-ids live)))
+        (expect (= (row-ids live) (row-ids settled)))
+        (doseq [payload [live settled]]
+          (expect (not-any? #(= "#steps" (:item-id %)) (:line-meta payload))))
         (.reset interactions/hit-map)
         (.beginFrame interactions/hit-map)
-        (cap/capture! {:cols 108
-                       :rows 50
-                       :paint! (fn [{:keys [screen]}]
-                                 (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-                                   (render/draw-chat-bubble! (.newTextGraphics s)
-                                                             {:role :assistant
-                                                              :prewrapped-lines (:lines closed)
-                                                              :line-meta (:line-meta closed)}
-                                                             2 2
-                                                             104 {:viewport-h 46})
-                                   (.refresh s)))})
+        (let [capture
+              (cap/capture! {:cols 108
+                             :rows 50
+                             :paint! (fn [{:keys [screen]}]
+                                       (let [^com.googlecode.lanterna.screen.TerminalScreen s
+                                             screen]
+                                         (render/draw-chat-bubble! (.newTextGraphics s)
+                                                                   {:role :assistant
+                                                                    :prewrapped-lines (:lines live)
+                                                                    :line-meta (:line-meta live)}
+                                                                   2 2
+                                                                   104 {:viewport-h 46})
+                                         (.refresh s)))})
+
+              text
+              (cap/frame-text capture)]
+
+          (expect (every? #(str/includes? text (:summary %)) rows)))
         (.commitFrame interactions/hit-map)
-        (expect (some #(and (= :toggle-details (:kind %)) (= (:node-id more) (:node-id %)))
-                      (.current interactions/hit-map)))))
+        (expect (not-any? #(str/ends-with? (str (:node-id %)) ":#steps")
+                          (.current interactions/hit-map)))))
     (it "distinguishes permanently omitted steps even when none were retained"
         (let [payload
               (paint (assoc activity
