@@ -24,6 +24,7 @@ from blockether.vis.engine import (
     GatewayError,
     LocalEngine,
     ProtocolError,
+    Turn,
 )
 
 EXTENSION = """import blockether.vis.extension as vis
@@ -696,8 +697,12 @@ def test_real_council_reply_after_author_finishes(tmp_path, monkeypatch, transpo
         deadline = time.monotonic() + 30
         while True:
             turns = peer.turns()
+            # History settles before the gateway retires its Council activation.
+            # Wait on the owning runtime before sending another idle wake.
             if len(turns) == count and all(
-                row["status"] == "completed" for row in turns
+                row["status"] == "completed"
+                and Turn(peer, row["turn_id"]).read()["status"] == "completed"
+                for row in turns
             ):
                 return
             assert time.monotonic() < deadline, "peer did not finish"

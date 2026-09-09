@@ -1242,6 +1242,15 @@ published or retagged; v0.1.54 includes these fixes and the bounded-cache workfl
   changes bind Council activations using existing columns. Production remains on the verified
   v0.1.54 bundle with healthy canonical health/administration responses, native processes,
   matching public command versions and a successful SQLite integrity check.
+- Main CI [34405863589](https://github.com/Blockether/vis/actions/runs/34405863589)
+  exposed a separate SDK scheduling error: stored turn history becomes terminal before the
+  gateway retires its Council activation. Delaying the return from `lp/send!` by 500 ms
+  deterministically reproduces the missed second wake. The test now also waits for the
+  owning runtime's `Turn.read()` status, within the unchanged 30-second deadline. A gateway
+  regression pins the history/runtime distinction. Both delayed HTTP and stdio cases,
+  all 29 real SDK/local cases and all 200 gateway cases pass, with clean formatting, lint
+  and reflection checks. This correction changes tests only; the v0.1.55 native candidate
+  and the independent Apple publication blocker remain unchanged.
 
 ---
 

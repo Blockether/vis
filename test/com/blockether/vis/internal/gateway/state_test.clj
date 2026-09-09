@@ -771,6 +771,36 @@
                (expect (= 2 (get (first turns) "iteration_count")))
                (expect (= "stored" (get-in (first turns) ["content" 0 "id"])))))
            (finally (reset! registry saved)))))
+  ;; SDK CI 34405863589: persisted completion is not a Council activation barrier.
+  (it "keeps the runtime running after history settles until gateway completion"
+      (let [sid
+            "council-finishing"
+
+            tid
+            "turn-1"
+
+            registry
+            (atom {sid {:turn-order [tid]
+                        :current-turn tid
+                        :council {:activation-id "active" :input-state (atom {})}
+                        :turns {tid {:turn_id tid
+                                     :session_id sid
+                                     :status "running"
+                                     :cancel-token (cancellation/cancellation-token)}}}})]
+
+        (with-redefs-fn {#'state/registry registry
+                         #'lp/db-info (constantly nil)
+                         #'persistance/db-list-session-turns
+                         (fn [_ _]
+                           [{:id tid :status :success :content []}])
+                         #'persistance/db-list-turns-attachments (constantly {})}
+          (fn []
+            (expect (= "completed" (get (first (state/list-turns sid)) "status")))
+            (expect (= "streaming" (get (state/get-turn sid tid) "status")))
+            (expect (= "active" (get-in @registry [sid :council :activation-id])))
+            (#'state/finish-turn! sid tid {:status "completed"})
+            (expect (= "completed" (get (state/get-turn sid tid) "status")))
+            (expect (nil? (get-in @registry [sid :council])))))))
   (it "prefers the live paint while the same durable row is running"
       (let [sid
             (str (random-uuid))
