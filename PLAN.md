@@ -1132,12 +1132,11 @@ remains available. Published version tags remain immutable, including the bootst
    explicit verification results and any concrete unresolved blockers reported.
    Unknowns: none beyond the preceding phases.
 
-Plan state: phases 1–2 are complete; phases 3–5 are in progress for v0.1.54. Runtime
-v0.5.6 remains current. Release v0.1.52 passed its complete publication gate, but an
-extended native regression reproduced a missing directory-listing downcall registration
-in the published binary. The FFF 0.12.9 fix and native search coverage are already on main.
-Build a new immutable release with that fix and rerun the complete installed native path.
-Preserve the healthy production hotfix until the replacement passes every required check.
+Plan state: phases 1–5 are complete for v0.1.54. Runtime v0.5.6 remains current.
+The complete stable release is published, and its installed native binaries passed the
+Linux end-to-end checks before the rollback-safe production replacement. The native
+FFF regression passes in the released Linux and macOS images. Earlier immutable tags
+and unrelated concurrent changes remain intact.
 
 The expanded native search regression fails against published v0.1.52 and passes against
 the current native hotfix. The release also includes the verified package-readiness and
@@ -1148,7 +1147,8 @@ Mobile and desktop jobs use temporary npm caches without uploading them; weekly 
 removes only npm caches older than seven days or larger than 1 GiB. The affected release
 suite passes 53 cases, including three new regression cases; actionlint, formatting,
 scoped lint and reflection checks pass. The cleanup workflow completed successfully,
-and a newer main commit demonstrably cancelled its superseded CI run.
+and a newer main commit demonstrably cancelled its superseded CI run. The v0.1.54 iOS
+job completed in 6 minutes 35 seconds; neither mobile job uploaded an npm cache.
 
 Release v0.1.53 passed 5131 Linux JVM cases and native file-search checks on both Linux
 architectures. Its native publication gate correctly stopped at a test reading the old
@@ -1169,20 +1169,35 @@ published or retagged; v0.1.54 includes these fixes and the bounded-cache workfl
   tag/version/main alignment before long-running source verification. Every artifact job
   still requires source verification; stable promotion requires all 15 nonempty assets.
   iOS signing pins the imported identity for archive and export and fails closed.
-- [Release v0.1.52](https://github.com/Blockether/vis/releases/tag/v0.1.52) passed all 31 jobs
-  in [release run 34331911466](https://github.com/Blockether/vis/actions/runs/34331911466).
+- [Release v0.1.54](https://github.com/Blockether/vis/releases/tag/v0.1.54) passed all 31 jobs
+  in [release run 34377107034](https://github.com/Blockether/vis/actions/runs/34377107034).
   Its 15 assets include bootstrap files, native engine/worker and TUI bundles for Linux
   x64, Linux ARM64 and macOS ARM64, signed mobile packages and five desktop packages.
-  TestFlight and Android tester distribution passed; Android production was not published.
-  The pinned CE toolchain does not support a native macOS x64 engine.
-- The immutable v0.1.52 checkout passed 5083 Linux JVM cases. Its installed SDK passed
-  25 HTTP/stdio cases and the original native suite passed 15 cases. A real-terminal TUI
-  turn exercised native gateway and worker processes and returned to idle. These results
-  do not cover the subsequently added native directory-listing regression, which fails
-  against that published binary. Release v0.1.54 must pass the expanded suite.
-- Fresh default-stable installation, native SDK and TUI end-to-end verification, complete
-  release assets and rollback-safe production replacement remain required for v0.1.54.
-  Existing immutable tags and concurrent work are preserved.
+  Public TestFlight distribution and release notes passed. Android internal, closed and
+  open tester tracks were published; Android production was not published. The pinned
+  CE toolchain does not support a native macOS x64 engine.
+- The immutable v0.1.54 checkout passed 5137 Linux JVM cases. Each released native platform
+  passed all 17 native cases, including file listing, file/directory search and the
+  documented editable package. A fresh default-stable installation used native binaries
+  without source or JVM fallback; its SDK passed 25 HTTP/stdio cases, and its expanded
+  native suite passed all 17 cases. The isolated native gateway closed after verification.
+- A real-terminal TUI turn used an isolated model double, executed the Python tool,
+  returned its result in the second model request, rendered the answer and returned to
+  idle. Process inspection verified native ELF images for the TUI, gateway and both
+  workers. The terminal, fixture gateway and owned processes closed after the check.
+- The verified v0.1.54 bundle replaced production with an online SQLite backup and the
+  previous native installation retained for rollback. Tagged persistence code and schema
+  were unchanged from the previous deployment. Canonical health, administration and
+  session-context requests returned 200; the verification session was deleted with 204
+  and subsequently returned 404. SQLite integrity passed, the session count returned to
+  its prior value, both public commands report v0.1.54 and the native service stays active.
+- [SDK publication run 34381713654](https://github.com/Blockether/vis/actions/runs/34381713654)
+  passed all 13 jobs. The v0.1.54 wheel and source distribution are public on PyPI.
+- Final main checks found a documentation paragraph violation and a cancellation-test
+  acknowledgement race in post-release commits. The page contract is unchanged; the
+  cancellation regression still requires evaluation unwind and reuse of the same session.
+  Both affected documentation/shell suites pass all 146 cases; formatting, lint and
+  reflection checks pass.
 
 ---
 

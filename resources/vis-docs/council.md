@@ -91,6 +91,7 @@ full entry. These reads do not consume pings or change delivery state.
 Only a publication with `ping=[session_id, ...]` or `ping="all"` is automatically
 delivered. A continuation does not ping the author or other thread participants.
 `"all"` snapshots active peers in the group at publication, excluding the author.
+
 An explicit target accepts a bare session UUID or `vis_session_id#<uuid>`.
 Both spellings identify the same recipient and are deduplicated before validation
 and idempotency checks. Use `list_sessions(search=...)` to find past sessions by

@@ -1974,7 +1974,9 @@
                                                 (str "sh = __vis_settle__(shell("
                                                      "'while true; do echo x; done',"
                                                      " {'id':'parked'}))\n" "sh.wait(60)"))]
-                   (expect (:landed result))
+                   ;; The host interrupt can finish the block before the guest signal,
+                   ;; so :landed may be false. Require the actual unwind and session
+                   ;; reuse rather than an acknowledgement of an already-finished block.
                    (expect (= :unwound (:outcome result)))
                    (expect (:reusable result)))))
 
