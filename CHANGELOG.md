@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.52] - 2026-09-09
+
+### Fixed
+- Validate release tag, version and main alignment before long-running CI while preserving every artifact and publication gate.
+- Isolate the fork-baseline regression clock from background timers.
+
 ## [v0.1.51] - 2026-09-09
 
 ### Fixed
