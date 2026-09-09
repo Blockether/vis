@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.46] - 2026-09-09
+
+### Fixed
+- Reclaim trusted Python extensions that stay blocked after cancellation, while preserving healthy interpreter state and subsequent turns.
+- Keep cold JVM dependency preparation off the SDK stdio protocol.
+- Preserve edits made at the draft fork timestamp and isolate cached test permission policies.
+- Allow the complete native release workflow to inspect its macOS runner pickup.
+- Resolve Council groups from persisted repositories for sessions without an explicit UI project.
+
 ## [v0.1.45] - 2026-09-08
 
 ### Changed
@@ -6079,7 +6088,7 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.45...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.46...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -6116,3 +6125,4 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 [v0.1.43]: https://github.com/Blockether/vis/releases/tag/v0.1.43
 [v0.1.44]: https://github.com/Blockether/vis/releases/tag/v0.1.44
 [v0.1.45]: https://github.com/Blockether/vis/releases/tag/v0.1.45
+[v0.1.46]: https://github.com/Blockether/vis/releases/tag/v0.1.46

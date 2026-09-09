@@ -1,0 +1,5549 @@
+[
+  {
+    "name": "apropos",
+    "family": "Wiedza",
+    "kind": "registered",
+    "before": {
+      "id": "apropos",
+      "sequence": 1,
+      "operation": "apropos",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "(?i)activity",
+      "duration_ms": 42,
+      "result_summary": "8 symboli związanych z Activity",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "apropos",
+      "sequence": 1,
+      "operation": "apropos",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "(?i)activity",
+      "result_summary": "8 symboli związanych z Activity",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono narzędzia",
+        "summary": "8 symboli związanych z Activity",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: apropos\nObiekt: (?i)activity\nWynik: 8 symboli związanych z Activity\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "doc",
+    "family": "Wiedza",
+    "kind": "registered",
+    "before": {
+      "id": "doc",
+      "sequence": 1,
+      "operation": "doc",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "extending",
+      "duration_ms": 42,
+      "result_summary": "ActivityPresentation · kontrakt prezentacji",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "doc",
+      "sequence": 1,
+      "operation": "doc",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "extending",
+      "result_summary": "ActivityPresentation · kontrakt prezentacji",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano dokumentację SDK",
+        "summary": "ActivityPresentation · kontrakt prezentacji",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: doc\nObiekt: extending\nWynik: ActivityPresentation · kontrakt prezentacji\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "defs",
+    "family": "Wiedza",
+    "kind": "registered",
+    "before": {
+      "id": "defs",
+      "sequence": 1,
+      "operation": "defs",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "defs()",
+      "duration_ms": 42,
+      "result_summary": "3 pomocnicze funkcje tej sesji",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "defs",
+      "sequence": 1,
+      "operation": "defs",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "defs()",
+      "result_summary": "3 pomocnicze funkcje tej sesji",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono zapisane funkcje",
+        "summary": "3 pomocnicze funkcje tej sesji",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: defs\nObiekt: defs()\nWynik: 3 pomocnicze funkcje tej sesji\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "main_agent_instructions",
+    "family": "Wiedza",
+    "kind": "registered",
+    "before": {
+      "id": "main_agent_instructions",
+      "sequence": 1,
+      "operation": "main_agent_instructions",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "workspace instructions",
+      "duration_ms": 42,
+      "result_summary": "Instrukcje obowiązujące w tej sesji",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "main_agent_instructions",
+      "sequence": 1,
+      "operation": "main_agent_instructions",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "workspace instructions",
+      "result_summary": "Instrukcje obowiązujące w tej sesji",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Odczytano zasady projektu",
+        "summary": "Instrukcje obowiązujące w tej sesji",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: main_agent_instructions\nObiekt: workspace instructions\nWynik: Instrukcje obowiązujące w tej sesji\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "ls",
+    "family": "Pliki",
+    "kind": "registered",
+    "before": {
+      "id": "ls",
+      "sequence": 1,
+      "operation": "ls",
+      "presenter": "observation",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "apps/vis-companion/src",
+      "duration_ms": 42,
+      "result_summary": "3 katalogi · 2 pliki",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "ls",
+      "sequence": 1,
+      "operation": "ls",
+      "presenter": "observation",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "apps/vis-companion/src",
+      "result_summary": "3 katalogi · 2 pliki",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono katalog src",
+        "summary": "3 katalogi · 2 pliki",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: ls\nObiekt: apps/vis-companion/src\nWynik: 3 katalogi · 2 pliki\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "grep",
+    "family": "Pliki",
+    "kind": "registered",
+    "before": {
+      "id": "grep",
+      "sequence": 1,
+      "operation": "grep",
+      "presenter": "observation",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "ActivityPanel · apps/vis-companion/src",
+      "duration_ms": 42,
+      "result_summary": "18 dopasowań w 4 plikach",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "grep",
+      "sequence": 1,
+      "operation": "grep",
+      "presenter": "observation",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "ActivityPanel · apps/vis-companion/src",
+      "result_summary": "18 dopasowań w 4 plikach",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono użycia ActivityPanel",
+        "summary": "18 dopasowań w 4 plikach",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: grep\nObiekt: ActivityPanel · apps/vis-companion/src\nWynik: 18 dopasowań w 4 plikach\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "cat",
+    "family": "Pliki",
+    "kind": "registered",
+    "before": {
+      "id": "cat",
+      "sequence": 1,
+      "operation": "cat",
+      "presenter": "observation",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "apps/vis-companion/src/components/ChatContent.tsx",
+      "duration_ms": 42,
+      "result_summary": "Wiersze 700–820 · 121 wierszy",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "cat",
+      "sequence": 1,
+      "operation": "cat",
+      "presenter": "observation",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "apps/vis-companion/src/components/ChatContent.tsx",
+      "result_summary": "Wiersze 700–820 · 121 wierszy",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano ChatContent.tsx",
+        "summary": "Wiersze 700–820 · 121 wierszy",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: cat\nObiekt: apps/vis-companion/src/components/ChatContent.tsx\nWynik: Wiersze 700–820 · 121 wierszy\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "patch",
+    "family": "Pliki",
+    "kind": "registered",
+    "before": {
+      "id": "patch",
+      "sequence": 1,
+      "operation": "patch",
+      "presenter": "patch",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "apps/vis-companion/src/components/ActivityPanel.tsx",
+      "duration_ms": 42,
+      "result_summary": "1 plik · 2 fragmenty",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "patch",
+      "sequence": 1,
+      "operation": "patch",
+      "presenter": "patch",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "apps/vis-companion/src/components/ActivityPanel.tsx",
+      "result_summary": "1 plik · 2 fragmenty",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zmieniono ActivityPanel.tsx",
+        "summary": "1 plik · 2 fragmenty",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: patch\nObiekt: apps/vis-companion/src/components/ActivityPanel.tsx\nWynik: 1 plik · 2 fragmenty\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "shell",
+    "family": "Procesy",
+    "kind": "registered",
+    "before": {
+      "id": "shell",
+      "sequence": 1,
+      "operation": "shell",
+      "presenter": "shell",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "npm run build",
+      "duration_ms": 42,
+      "result_summary": "Kod wyjścia 0 · 30 s",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "shell",
+      "sequence": 1,
+      "operation": "shell",
+      "presenter": "shell",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "npm run build",
+      "result_summary": "Kod wyjścia 0 · 30 s",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zakończono budowanie aplikacji",
+        "summary": "Kod wyjścia 0 · 30 s",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: shell\nObiekt: npm run build\nWynik: Kod wyjścia 0 · 30 s\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "gather",
+    "family": "Procesy",
+    "kind": "registered",
+    "before": {
+      "id": "gather",
+      "sequence": 1,
+      "operation": "gather",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gather(lint, tests)",
+      "duration_ms": 42,
+      "result_summary": "2 działania · oba zakończone",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "gather",
+      "sequence": 1,
+      "operation": "gather",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gather(lint, tests)",
+      "result_summary": "2 działania · oba zakończone",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zakończono równoległe sprawdzenia",
+        "summary": "2 działania · oba zakończone",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: gather\nObiekt: gather(lint, tests)\nWynik: 2 działania · oba zakończone\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "format_code",
+    "family": "Jakość",
+    "kind": "registered",
+    "before": {
+      "id": "format_code",
+      "sequence": 1,
+      "operation": "format_code",
+      "presenter": "format",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "apps/vis-companion/src",
+      "duration_ms": 42,
+      "result_summary": "2 pliki zmienione · 6 bez zmian",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "format_code",
+      "sequence": 1,
+      "operation": "format_code",
+      "presenter": "format",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "apps/vis-companion/src",
+      "result_summary": "2 pliki zmienione · 6 bez zmian",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sformatowano kod",
+        "summary": "2 pliki zmienione · 6 bez zmian",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: format_code\nObiekt: apps/vis-companion/src\nWynik: 2 pliki zmienione · 6 bez zmian\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "lint_code",
+    "family": "Jakość",
+    "kind": "registered",
+    "before": {
+      "id": "lint_code",
+      "sequence": 1,
+      "operation": "lint_code",
+      "presenter": "lint",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "apps/vis-companion/src",
+      "duration_ms": 42,
+      "result_summary": "0 błędów · 2 ostrzeżenia",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "lint_code",
+      "sequence": 1,
+      "operation": "lint_code",
+      "presenter": "lint",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "apps/vis-companion/src",
+      "result_summary": "0 błędów · 2 ostrzeżenia",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono jakość kodu",
+        "summary": "0 błędów · 2 ostrzeżenia",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: lint_code\nObiekt: apps/vis-companion/src\nWynik: 0 błędów · 2 ostrzeżenia\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "run_tests",
+    "family": "Jakość",
+    "kind": "registered",
+    "before": {
+      "id": "run_tests",
+      "sequence": 1,
+      "operation": "run_tests",
+      "presenter": "tests",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "ActivityPanel.test.tsx",
+      "duration_ms": 42,
+      "result_summary": "24 z 24 testów zdane",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "run_tests",
+      "sequence": 1,
+      "operation": "run_tests",
+      "presenter": "tests",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "ActivityPanel.test.tsx",
+      "result_summary": "24 z 24 testów zdane",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Testy zakończone pomyślnie",
+        "summary": "24 z 24 testów zdane",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: run_tests\nObiekt: ActivityPanel.test.tsx\nWynik: 24 z 24 testów zdane\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "repl_start",
+    "family": "REPL",
+    "kind": "registered",
+    "before": {
+      "id": "repl_start",
+      "sequence": 1,
+      "operation": "repl_start",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Clojure · vis",
+      "duration_ms": 42,
+      "result_summary": "Gotowe do sprawdzania kodu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "repl_start",
+      "sequence": 1,
+      "operation": "repl_start",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Clojure · vis",
+      "result_summary": "Gotowe do sprawdzania kodu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Uruchomiono środowisko Clojure",
+        "summary": "Gotowe do sprawdzania kodu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: repl_start\nObiekt: Clojure · vis\nWynik: Gotowe do sprawdzania kodu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "repl_connect",
+    "family": "REPL",
+    "kind": "registered",
+    "before": {
+      "id": "repl_connect",
+      "sequence": 1,
+      "operation": "repl_connect",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Clojure REPL",
+      "duration_ms": 42,
+      "result_summary": "Połączenie aktywne · 127.0.0.1",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "repl_connect",
+      "sequence": 1,
+      "operation": "repl_connect",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Clojure REPL",
+      "result_summary": "Połączenie aktywne · 127.0.0.1",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Połączono ze środowiskiem Clojure",
+        "summary": "Połączenie aktywne · 127.0.0.1",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: repl_connect\nObiekt: Clojure REPL\nWynik: Połączenie aktywne · 127.0.0.1\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "repl_eval",
+    "family": "REPL",
+    "kind": "registered",
+    "before": {
+      "id": "repl_eval",
+      "sequence": 1,
+      "operation": "repl_eval",
+      "presenter": "repl",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "(count rows)",
+      "duration_ms": 42,
+      "result_summary": "Zwrócono 12 elementów",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "repl_eval",
+      "sequence": 1,
+      "operation": "repl_eval",
+      "presenter": "repl",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "(count rows)",
+      "result_summary": "Zwrócono 12 elementów",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono wyrażenie Clojure",
+        "summary": "Zwrócono 12 elementów",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: repl_eval\nObiekt: (count rows)\nWynik: Zwrócono 12 elementów\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "repl_status",
+    "family": "REPL",
+    "kind": "registered",
+    "before": {
+      "id": "repl_status",
+      "sequence": 1,
+      "operation": "repl_status",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "repl_status()",
+      "duration_ms": 42,
+      "result_summary": "1 aktywne środowisko Clojure",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "repl_status",
+      "sequence": 1,
+      "operation": "repl_status",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "repl_status()",
+      "result_summary": "1 aktywne środowisko Clojure",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono środowiska wykonawcze",
+        "summary": "1 aktywne środowisko Clojure",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: repl_status\nObiekt: repl_status()\nWynik: 1 aktywne środowisko Clojure\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "repl_stop",
+    "family": "REPL",
+    "kind": "registered",
+    "before": {
+      "id": "repl_stop",
+      "sequence": 1,
+      "operation": "repl_stop",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Clojure · vis",
+      "duration_ms": 42,
+      "result_summary": "Sesja wykonawcza zamknięta",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "repl_stop",
+      "sequence": 1,
+      "operation": "repl_stop",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Clojure · vis",
+      "result_summary": "Sesja wykonawcza zamknięta",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zatrzymano środowisko Clojure",
+        "summary": "Sesja wykonawcza zamknięta",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: repl_stop\nObiekt: Clojure · vis\nWynik: Sesja wykonawcza zamknięta\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "get_session",
+    "family": "Sesje",
+    "kind": "registered",
+    "before": {
+      "id": "get_session",
+      "sequence": 1,
+      "operation": "get_session",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "sesja Activity",
+      "duration_ms": 42,
+      "result_summary": "Tytuł, projekt i stan sesji",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "get_session",
+      "sequence": 1,
+      "operation": "get_session",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "sesja Activity",
+      "result_summary": "Tytuł, projekt i stan sesji",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono sesję Activity",
+        "summary": "Tytuł, projekt i stan sesji",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: get_session\nObiekt: sesja Activity\nWynik: Tytuł, projekt i stan sesji\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "list_sessions",
+    "family": "Sesje",
+    "kind": "registered",
+    "before": {
+      "id": "list_sessions",
+      "sequence": 1,
+      "operation": "list_sessions",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity",
+      "duration_ms": 42,
+      "result_summary": "3 sesje pasujące do „Activity”",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "list_sessions",
+      "sequence": 1,
+      "operation": "list_sessions",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity",
+      "result_summary": "3 sesje pasujące do „Activity”",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono wcześniejsze rozmowy",
+        "summary": "3 sesje pasujące do „Activity”",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: list_sessions\nObiekt: Activity\nWynik: 3 sesje pasujące do „Activity”\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "read_session",
+    "family": "Sesje",
+    "kind": "registered",
+    "before": {
+      "id": "read_session",
+      "sequence": 1,
+      "operation": "read_session",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "sesja Activity",
+      "duration_ms": 42,
+      "result_summary": "2 tury · historia projektu Activity",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "read_session",
+      "sequence": 1,
+      "operation": "read_session",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "sesja Activity",
+      "result_summary": "2 tury · historia projektu Activity",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano wcześniejszą rozmowę",
+        "summary": "2 tury · historia projektu Activity",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: read_session\nObiekt: sesja Activity\nWynik: 2 tury · historia projektu Activity\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "fold_session",
+    "family": "Sesje",
+    "kind": "registered",
+    "before": {
+      "id": "fold_session",
+      "sequence": 1,
+      "operation": "fold_session",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "do tury 1 / iteracji 4",
+      "duration_ms": 42,
+      "result_summary": "Zachowano podsumowanie ustaleń",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "fold_session",
+      "sequence": 1,
+      "operation": "fold_session",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "do tury 1 / iteracji 4",
+      "result_summary": "Zachowano podsumowanie ustaleń",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Skrócono kontekst rozmowy",
+        "summary": "Zachowano podsumowanie ustaleń",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: fold_session\nObiekt: do tury 1 / iteracji 4\nWynik: Zachowano podsumowanie ustaleń\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "draft_create",
+    "family": "Wersje robocze",
+    "kind": "registered",
+    "before": {
+      "id": "draft_create",
+      "sequence": 1,
+      "operation": "draft_create",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity design",
+      "duration_ms": 42,
+      "result_summary": "Zmiany będą izolowane od głównego drzewa",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "draft_create",
+      "sequence": 1,
+      "operation": "draft_create",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity design",
+      "result_summary": "Zmiany będą izolowane od głównego drzewa",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Utworzono wersję roboczą",
+        "summary": "Zmiany będą izolowane od głównego drzewa",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: draft_create\nObiekt: Activity design\nWynik: Zmiany będą izolowane od głównego drzewa\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "draft_status",
+    "family": "Wersje robocze",
+    "kind": "registered",
+    "before": {
+      "id": "draft_status",
+      "sequence": 1,
+      "operation": "draft_status",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity design",
+      "duration_ms": 42,
+      "result_summary": "2 zmienione pliki · oczekuje na decyzję",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "draft_status",
+      "sequence": 1,
+      "operation": "draft_status",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity design",
+      "result_summary": "2 zmienione pliki · oczekuje na decyzję",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono wersję roboczą",
+        "summary": "2 zmienione pliki · oczekuje na decyzję",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: draft_status\nObiekt: Activity design\nWynik: 2 zmienione pliki · oczekuje na decyzję\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "draft_approve",
+    "family": "Wersje robocze",
+    "kind": "registered",
+    "before": {
+      "id": "draft_approve",
+      "sequence": 1,
+      "operation": "draft_approve",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity design",
+      "duration_ms": 42,
+      "result_summary": "2 pliki przeniesione do drzewa roboczego",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "draft_approve",
+      "sequence": 1,
+      "operation": "draft_approve",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity design",
+      "result_summary": "2 pliki przeniesione do drzewa roboczego",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zatwierdzono wersję roboczą",
+        "summary": "2 pliki przeniesione do drzewa roboczego",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: draft_approve\nObiekt: Activity design\nWynik: 2 pliki przeniesione do drzewa roboczego\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "draft_discard",
+    "family": "Wersje robocze",
+    "kind": "registered",
+    "before": {
+      "id": "draft_discard",
+      "sequence": 1,
+      "operation": "draft_discard",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity design",
+      "duration_ms": 42,
+      "result_summary": "Usunięto izolowane zmiany",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "draft_discard",
+      "sequence": 1,
+      "operation": "draft_discard",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity design",
+      "result_summary": "Usunięto izolowane zmiany",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Odrzucono wersję roboczą",
+        "summary": "Usunięto izolowane zmiany",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: draft_discard\nObiekt: Activity design\nWynik: Usunięto izolowane zmiany\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "attach",
+    "family": "Załączniki",
+    "kind": "registered",
+    "before": {
+      "id": "attach",
+      "sequence": 1,
+      "operation": "attach",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "activity.html",
+      "duration_ms": 42,
+      "result_summary": "activity.html · dokument HTML",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "attach",
+      "sequence": 1,
+      "operation": "attach",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "activity.html",
+      "result_summary": "activity.html · dokument HTML",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Dodano projekt Activity",
+        "summary": "activity.html · dokument HTML",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: attach\nObiekt: activity.html\nWynik: activity.html · dokument HTML\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "get_attachment",
+    "family": "Załączniki",
+    "kind": "registered",
+    "before": {
+      "id": "get_attachment",
+      "sequence": 1,
+      "operation": "get_attachment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "activity.html",
+      "duration_ms": 42,
+      "result_summary": "activity.html · wersja 1 · metadane",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "get_attachment",
+      "sequence": 1,
+      "operation": "get_attachment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "activity.html",
+      "result_summary": "activity.html · wersja 1 · metadane",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono załącznik",
+        "summary": "activity.html · wersja 1 · metadane",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: get_attachment\nObiekt: activity.html\nWynik: activity.html · wersja 1 · metadane\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "list_attachments",
+    "family": "Załączniki",
+    "kind": "registered",
+    "before": {
+      "id": "list_attachments",
+      "sequence": 1,
+      "operation": "list_attachments",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "bieżąca sesja",
+      "duration_ms": 42,
+      "result_summary": "3 pliki · 1 dokument i 2 obrazy",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "list_attachments",
+      "sequence": 1,
+      "operation": "list_attachments",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "bieżąca sesja",
+      "result_summary": "3 pliki · 1 dokument i 2 obrazy",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono załączniki rozmowy",
+        "summary": "3 pliki · 1 dokument i 2 obrazy",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: list_attachments\nObiekt: bieżąca sesja\nWynik: 3 pliki · 1 dokument i 2 obrazy\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "read_attachment",
+    "family": "Załączniki",
+    "kind": "registered",
+    "before": {
+      "id": "read_attachment",
+      "sequence": 1,
+      "operation": "read_attachment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "activity.html",
+      "duration_ms": 42,
+      "result_summary": "activity.html · treść dokumentu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "read_attachment",
+      "sequence": 1,
+      "operation": "read_attachment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "activity.html",
+      "result_summary": "activity.html · treść dokumentu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Odczytano załącznik",
+        "summary": "activity.html · treść dokumentu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: read_attachment\nObiekt: activity.html\nWynik: activity.html · treść dokumentu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "show_attachment",
+    "family": "Załączniki",
+    "kind": "registered",
+    "before": {
+      "id": "show_attachment",
+      "sequence": 1,
+      "operation": "show_attachment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "layout.png",
+      "duration_ms": 42,
+      "result_summary": "layout.png · obraz dostępny dla modelu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "show_attachment",
+      "sequence": 1,
+      "operation": "show_attachment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "layout.png",
+      "result_summary": "layout.png · obraz dostępny dla modelu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przekazano obraz do analizy",
+        "summary": "layout.png · obraz dostępny dla modelu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: show_attachment\nObiekt: layout.png\nWynik: layout.png · obraz dostępny dla modelu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "council.members",
+    "family": "Zespół",
+    "kind": "registered",
+    "before": {
+      "id": "council.members",
+      "sequence": 1,
+      "operation": "council.members",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "grupa projektu",
+      "duration_ms": 42,
+      "result_summary": "2 aktywne sesje w projekcie",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "council.members",
+      "sequence": 1,
+      "operation": "council.members",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "grupa projektu",
+      "result_summary": "2 aktywne sesje w projekcie",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono aktywne sesje zespołu",
+        "summary": "2 aktywne sesje w projekcie",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: council.members\nObiekt: grupa projektu\nWynik: 2 aktywne sesje w projekcie\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "council.threads",
+    "family": "Zespół",
+    "kind": "registered",
+    "before": {
+      "id": "council.threads",
+      "sequence": 1,
+      "operation": "council.threads",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "grupa projektu",
+      "duration_ms": 42,
+      "result_summary": "4 wątki · najnowszy: Activity",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "council.threads",
+      "sequence": 1,
+      "operation": "council.threads",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "grupa projektu",
+      "result_summary": "4 wątki · najnowszy: Activity",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Pobrano wątki zespołu",
+        "summary": "4 wątki · najnowszy: Activity",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: council.threads\nObiekt: grupa projektu\nWynik: 4 wątki · najnowszy: Activity\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "council.read",
+    "family": "Zespół",
+    "kind": "registered",
+    "before": {
+      "id": "council.read",
+      "sequence": 1,
+      "operation": "council.read",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity",
+      "duration_ms": 42,
+      "result_summary": "6 wiadomości w wątku",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "council.read",
+      "sequence": 1,
+      "operation": "council.read",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity",
+      "result_summary": "6 wiadomości w wątku",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano dyskusję o Activity",
+        "summary": "6 wiadomości w wątku",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: council.read\nObiekt: Activity\nWynik: 6 wiadomości w wątku\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "council.get",
+    "family": "Zespół",
+    "kind": "registered",
+    "before": {
+      "id": "council.get",
+      "sequence": 1,
+      "operation": "council.get",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "wiadomość w wątku Activity",
+      "duration_ms": 42,
+      "result_summary": "Pełna treść wskazanej wiadomości",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "council.get",
+      "sequence": 1,
+      "operation": "council.get",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "wiadomość w wątku Activity",
+      "result_summary": "Pełna treść wskazanej wiadomości",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Odczytano wiadomość zespołu",
+        "summary": "Pełna treść wskazanej wiadomości",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: council.get\nObiekt: wiadomość w wątku Activity\nWynik: Pełna treść wskazanej wiadomości\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "council.publish",
+    "family": "Zespół",
+    "kind": "registered",
+    "before": {
+      "id": "council.publish",
+      "sequence": 1,
+      "operation": "council.publish",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity",
+      "duration_ms": 42,
+      "result_summary": "Wątek Activity · powiadomiono 1 sesję",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "council.publish",
+      "sequence": 1,
+      "operation": "council.publish",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "Activity",
+      "result_summary": "Wątek Activity · powiadomiono 1 sesję",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przekazano ustalenia zespołowi",
+        "summary": "Wątek Activity · powiadomiono 1 sesję",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: council.publish\nObiekt: Activity\nWynik: Wątek Activity · powiadomiono 1 sesję\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "gh.login",
+    "family": "GitHub",
+    "kind": "registered",
+    "before": {
+      "id": "gh.login",
+      "sequence": 1,
+      "operation": "gh.login",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "github.com",
+      "duration_ms": 42,
+      "result_summary": "Logowanie zakończone · dane dostępowe ukryte",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "gh.login",
+      "sequence": 1,
+      "operation": "gh.login",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "github.com",
+      "result_summary": "Logowanie zakończone · dane dostępowe ukryte",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Połączono konto GitHub",
+        "summary": "Logowanie zakończone · dane dostępowe ukryte",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: gh.login\nObiekt: github.com\nWynik: Logowanie zakończone · dane dostępowe ukryte\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "gh.runs",
+    "family": "GitHub",
+    "kind": "registered",
+    "before": {
+      "id": "gh.runs",
+      "sequence": 1,
+      "operation": "gh.runs",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "example/activity",
+      "duration_ms": 42,
+      "result_summary": "5 przebiegów · najnowszy w toku",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "gh.runs",
+      "sequence": 1,
+      "operation": "gh.runs",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "example/activity",
+      "result_summary": "5 przebiegów · najnowszy w toku",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono przebiegi CI",
+        "summary": "5 przebiegów · najnowszy w toku",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: gh.runs\nObiekt: example/activity\nWynik: 5 przebiegów · najnowszy w toku\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "gh.watch",
+    "family": "GitHub",
+    "kind": "registered",
+    "before": {
+      "id": "gh.watch",
+      "sequence": 1,
+      "operation": "gh.watch",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "CI #42 · example/activity",
+      "duration_ms": 42,
+      "result_summary": "8 zadań · wszystkie zakończone",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "gh.watch",
+      "sequence": 1,
+      "operation": "gh.watch",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "CI #42 · example/activity",
+      "result_summary": "8 zadań · wszystkie zakończone",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "CI zakończone pomyślnie",
+        "summary": "8 zadań · wszystkie zakończone",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: gh.watch\nObiekt: CI #42 · example/activity\nWynik: 8 zadań · wszystkie zakończone\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "sdk.check",
+    "family": "SDK",
+    "kind": "registered",
+    "before": {
+      "id": "sdk.check",
+      "sequence": 1,
+      "operation": "sdk.check",
+      "presenter": "tests",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "SDK · bez zbudowanego obrazu",
+      "duration_ms": 42,
+      "result_summary": "Testy Python zdane · integracja HTTP pominięta",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "sdk.check",
+      "sequence": 1,
+      "operation": "sdk.check",
+      "presenter": "tests",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "SDK · bez zbudowanego obrazu",
+      "result_summary": "Testy Python zdane · integracja HTTP pominięta",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono SDK",
+        "summary": "Testy Python zdane · integracja HTTP pominięta",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: sdk.check\nObiekt: SDK · bez zbudowanego obrazu\nWynik: Testy Python zdane · integracja HTTP pominięta\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "uplink.run",
+    "family": "Serwer",
+    "kind": "registered",
+    "before": {
+      "id": "uplink.run",
+      "sequence": 1,
+      "operation": "uplink.run",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gateway.example.com · polecenie diagnostyczne",
+      "duration_ms": 42,
+      "result_summary": "Kod wyjścia 0 · 12 s",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "uplink.run",
+      "sequence": 1,
+      "operation": "uplink.run",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gateway.example.com · polecenie diagnostyczne",
+      "result_summary": "Kod wyjścia 0 · 12 s",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Wykonano polecenie na serwerze",
+        "summary": "Kod wyjścia 0 · 12 s",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: uplink.run\nObiekt: gateway.example.com · polecenie diagnostyczne\nWynik: Kod wyjścia 0 · 12 s\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "uplink.service",
+    "family": "Serwer",
+    "kind": "registered",
+    "before": {
+      "id": "uplink.service",
+      "sequence": 1,
+      "operation": "uplink.service",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gateway.example.com · visgw",
+      "duration_ms": 42,
+      "result_summary": "Usługa działa",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "uplink.service",
+      "sequence": 1,
+      "operation": "uplink.service",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gateway.example.com · visgw",
+      "result_summary": "Usługa działa",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono usługę visgw",
+        "summary": "Usługa działa",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: uplink.service\nObiekt: gateway.example.com · visgw\nWynik: Usługa działa\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "uplink.health",
+    "family": "Serwer",
+    "kind": "registered",
+    "before": {
+      "id": "uplink.health",
+      "sequence": 1,
+      "operation": "uplink.health",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gateway.example.com · /healthz",
+      "duration_ms": 42,
+      "result_summary": "HTTP 200 · odpowiedź prawidłowa",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "uplink.health",
+      "sequence": 1,
+      "operation": "uplink.health",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gateway.example.com · /healthz",
+      "result_summary": "HTTP 200 · odpowiedź prawidłowa",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono stan usługi",
+        "summary": "HTTP 200 · odpowiedź prawidłowa",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: uplink.health\nObiekt: gateway.example.com · /healthz\nWynik: HTTP 200 · odpowiedź prawidłowa\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "uplink.info",
+    "family": "Serwer",
+    "kind": "registered",
+    "before": {
+      "id": "uplink.info",
+      "sequence": 1,
+      "operation": "uplink.info",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gateway.example.com",
+      "duration_ms": 42,
+      "result_summary": "Pamięć 2,1 z 8 GB · działa od 3 dni",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "uplink.info",
+      "sequence": 1,
+      "operation": "uplink.info",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gateway.example.com",
+      "result_summary": "Pamięć 2,1 z 8 GB · działa od 3 dni",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono zasoby serwera",
+        "summary": "Pamięć 2,1 z 8 GB · działa od 3 dni",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: uplink.info\nObiekt: gateway.example.com\nWynik: Pamięć 2,1 z 8 GB · działa od 3 dni\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "uplink.put",
+    "family": "Serwer",
+    "kind": "registered",
+    "before": {
+      "id": "uplink.put",
+      "sequence": 1,
+      "operation": "uplink.put",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gateway.example.com · config.example.json",
+      "duration_ms": 42,
+      "result_summary": "config.example.json · przesyłanie zakończone",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "uplink.put",
+      "sequence": 1,
+      "operation": "uplink.put",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gateway.example.com · config.example.json",
+      "result_summary": "config.example.json · przesyłanie zakończone",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Wysłano plik na serwer",
+        "summary": "config.example.json · przesyłanie zakończone",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: uplink.put\nObiekt: gateway.example.com · config.example.json\nWynik: config.example.json · przesyłanie zakończone\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "uplink.get",
+    "family": "Serwer",
+    "kind": "registered",
+    "before": {
+      "id": "uplink.get",
+      "sequence": 1,
+      "operation": "uplink.get",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gateway.example.com · service.log",
+      "duration_ms": 42,
+      "result_summary": "service.log · pobieranie zakończone",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "uplink.get",
+      "sequence": 1,
+      "operation": "uplink.get",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "gateway.example.com · service.log",
+      "result_summary": "service.log · pobieranie zakończone",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Pobrano plik z serwera",
+        "summary": "service.log · pobieranie zakończone",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: uplink.get\nObiekt: gateway.example.com · service.log\nWynik: service.log · pobieranie zakończone\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "mcp_call",
+    "family": "Integracje MCP",
+    "kind": "registered",
+    "before": {
+      "id": "mcp_call",
+      "sequence": 1,
+      "operation": "mcp_call",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "linear/get_issue · VIS-42",
+      "duration_ms": 42,
+      "result_summary": "VIS-42 · Activity · w toku",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "mcp_call",
+      "sequence": 1,
+      "operation": "mcp_call",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "linear/get_issue · VIS-42",
+      "result_summary": "VIS-42 · Activity · w toku",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Odczytano zgłoszenie z Linear",
+        "summary": "VIS-42 · Activity · w toku",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: mcp_call\nObiekt: linear/get_issue · VIS-42\nWynik: VIS-42 · Activity · w toku\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Czynność i wynik na pierwszym planie. Parametry, pełny wynik i czas w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_attachment",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_attachment",
+      "sequence": 1,
+      "operation": "linear/get_attachment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get attachment · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "layout.png · VIS-42",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_attachment",
+      "sequence": 1,
+      "operation": "linear/get_attachment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get attachment · przykładowy obiekt",
+      "result_summary": "layout.png · VIS-42",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Pobrano załącznik zgłoszenia",
+        "summary": "layout.png · VIS-42",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_attachment\nObiekt: get attachment · przykładowy obiekt\nWynik: layout.png · VIS-42\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/prepare_attachment_upload",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/prepare_attachment_upload",
+      "sequence": 1,
+      "operation": "linear/prepare_attachment_upload",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "prepare attachment upload · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "layout.png · plik nie został jeszcze dołączony",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/prepare_attachment_upload",
+      "sequence": 1,
+      "operation": "linear/prepare_attachment_upload",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "prepare attachment upload · przykładowy obiekt",
+      "result_summary": "layout.png · plik nie został jeszcze dołączony",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przygotowano wysłanie załącznika",
+        "summary": "layout.png · plik nie został jeszcze dołączony",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/prepare_attachment_upload\nObiekt: prepare attachment upload · przykładowy obiekt\nWynik: layout.png · plik nie został jeszcze dołączony\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/create_attachment_from_upload",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/create_attachment_from_upload",
+      "sequence": 1,
+      "operation": "linear/create_attachment_from_upload",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "create attachment from upload · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "layout.png · powiązano z VIS-42",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/create_attachment_from_upload",
+      "sequence": 1,
+      "operation": "linear/create_attachment_from_upload",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "create attachment from upload · przykładowy obiekt",
+      "result_summary": "layout.png · powiązano z VIS-42",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Dołączono przesłany plik",
+        "summary": "layout.png · powiązano z VIS-42",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/create_attachment_from_upload\nObiekt: create attachment from upload · przykładowy obiekt\nWynik: layout.png · powiązano z VIS-42\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/create_attachment",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/create_attachment",
+      "sequence": 1,
+      "operation": "linear/create_attachment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "create attachment · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Projekt Activity · VIS-42",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/create_attachment",
+      "sequence": 1,
+      "operation": "linear/create_attachment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "create attachment · przykładowy obiekt",
+      "result_summary": "Projekt Activity · VIS-42",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Dodano załącznik do zgłoszenia",
+        "summary": "Projekt Activity · VIS-42",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/create_attachment\nObiekt: create attachment · przykładowy obiekt\nWynik: Projekt Activity · VIS-42\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/delete_attachment",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/delete_attachment",
+      "sequence": 1,
+      "operation": "linear/delete_attachment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "delete attachment · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "layout-old.png · VIS-42",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/delete_attachment",
+      "sequence": 1,
+      "operation": "linear/delete_attachment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "delete attachment · przykładowy obiekt",
+      "result_summary": "layout-old.png · VIS-42",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Usunięto załącznik zgłoszenia",
+        "summary": "layout-old.png · VIS-42",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/delete_attachment\nObiekt: delete attachment · przykładowy obiekt\nWynik: layout-old.png · VIS-42\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_agent_skills",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_agent_skills",
+      "sequence": 1,
+      "operation": "linear/list_agent_skills",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list agent skills · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "3 dostępne umiejętności",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_agent_skills",
+      "sequence": 1,
+      "operation": "linear/list_agent_skills",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list agent skills · przykładowy obiekt",
+      "result_summary": "3 dostępne umiejętności",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono umiejętności agenta",
+        "summary": "3 dostępne umiejętności",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_agent_skills\nObiekt: list agent skills · przykładowy obiekt\nWynik: 3 dostępne umiejętności\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_agent_skill",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_agent_skill",
+      "sequence": 1,
+      "operation": "linear/get_agent_skill",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get agent skill · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Instrukcja obsługi zgłoszeń",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_agent_skill",
+      "sequence": 1,
+      "operation": "linear/get_agent_skill",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get agent skill · przykładowy obiekt",
+      "result_summary": "Instrukcja obsługi zgłoszeń",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Odczytano umiejętność agenta",
+        "summary": "Instrukcja obsługi zgłoszeń",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_agent_skill\nObiekt: get agent skill · przykładowy obiekt\nWynik: Instrukcja obsługi zgłoszeń\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_comments",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_comments",
+      "sequence": 1,
+      "operation": "linear/list_comments",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list comments · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "VIS-42 · 4 komentarze",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_comments",
+      "sequence": 1,
+      "operation": "linear/list_comments",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list comments · przykładowy obiekt",
+      "result_summary": "VIS-42 · 4 komentarze",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano komentarze zgłoszenia",
+        "summary": "VIS-42 · 4 komentarze",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_comments\nObiekt: list comments · przykładowy obiekt\nWynik: VIS-42 · 4 komentarze\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/save_comment",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/save_comment",
+      "sequence": 1,
+      "operation": "linear/save_comment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save comment · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "VIS-42 · uwagi do projektu Activity",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/save_comment",
+      "sequence": 1,
+      "operation": "linear/save_comment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save comment · przykładowy obiekt",
+      "result_summary": "VIS-42 · uwagi do projektu Activity",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zapisano komentarz",
+        "summary": "VIS-42 · uwagi do projektu Activity",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/save_comment\nObiekt: save comment · przykładowy obiekt\nWynik: VIS-42 · uwagi do projektu Activity\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/delete_comment",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/delete_comment",
+      "sequence": 1,
+      "operation": "linear/delete_comment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "delete comment · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "VIS-42 · wskazany komentarz",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/delete_comment",
+      "sequence": 1,
+      "operation": "linear/delete_comment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "delete comment · przykładowy obiekt",
+      "result_summary": "VIS-42 · wskazany komentarz",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Usunięto komentarz",
+        "summary": "VIS-42 · wskazany komentarz",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/delete_comment\nObiekt: delete comment · przykładowy obiekt\nWynik: VIS-42 · wskazany komentarz\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_cycles",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_cycles",
+      "sequence": 1,
+      "operation": "linear/list_cycles",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list cycles · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "2 cykle · bieżący i następny",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_cycles",
+      "sequence": 1,
+      "operation": "linear/list_cycles",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list cycles · przykładowy obiekt",
+      "result_summary": "2 cykle · bieżący i następny",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Pobrano cykle zespołu",
+        "summary": "2 cykle · bieżący i następny",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_cycles\nObiekt: list cycles · przykładowy obiekt\nWynik: 2 cykle · bieżący i następny\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_document",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_document",
+      "sequence": 1,
+      "operation": "linear/get_document",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get document · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · wymagania",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_document",
+      "sequence": 1,
+      "operation": "linear/get_document",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get document · przykładowy obiekt",
+      "result_summary": "Activity · wymagania",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano dokument projektu",
+        "summary": "Activity · wymagania",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_document\nObiekt: get document · przykładowy obiekt\nWynik: Activity · wymagania\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_documents",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_documents",
+      "sequence": 1,
+      "operation": "linear/list_documents",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list documents · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · 3 dokumenty",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_documents",
+      "sequence": 1,
+      "operation": "linear/list_documents",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list documents · przykładowy obiekt",
+      "result_summary": "Activity · 3 dokumenty",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono dokumenty projektu",
+        "summary": "Activity · 3 dokumenty",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_documents\nObiekt: list documents · przykładowy obiekt\nWynik: Activity · 3 dokumenty\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/save_document",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/save_document",
+      "sequence": 1,
+      "operation": "linear/save_document",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save document · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · wymagania zaktualizowane",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/save_document",
+      "sequence": 1,
+      "operation": "linear/save_document",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save document · przykładowy obiekt",
+      "result_summary": "Activity · wymagania zaktualizowane",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zapisano dokument projektu",
+        "summary": "Activity · wymagania zaktualizowane",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/save_document\nObiekt: save document · przykładowy obiekt\nWynik: Activity · wymagania zaktualizowane\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/extract_images",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/extract_images",
+      "sequence": 1,
+      "operation": "linear/extract_images",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "extract images · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "2 obrazy · projekt Activity",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/extract_images",
+      "sequence": 1,
+      "operation": "linear/extract_images",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "extract images · przykładowy obiekt",
+      "result_summary": "2 obrazy · projekt Activity",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Odczytano obrazy z dokumentu",
+        "summary": "2 obrazy · projekt Activity",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/extract_images\nObiekt: extract images · przykładowy obiekt\nWynik: 2 obrazy · projekt Activity\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_issue",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_issue",
+      "sequence": 1,
+      "operation": "linear/get_issue",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get issue · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · w toku · priorytet normalny",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_issue",
+      "sequence": 1,
+      "operation": "linear/get_issue",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get issue · przykładowy obiekt",
+      "result_summary": "Activity · w toku · priorytet normalny",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano zgłoszenie VIS-42",
+        "summary": "Activity · w toku · priorytet normalny",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_issue\nObiekt: get issue · przykładowy obiekt\nWynik: Activity · w toku · priorytet normalny\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_issues",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_issues",
+      "sequence": 1,
+      "operation": "linear/list_issues",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list issues · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "12 zgłoszeń · 3 w toku",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_issues",
+      "sequence": 1,
+      "operation": "linear/list_issues",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list issues · przykładowy obiekt",
+      "result_summary": "12 zgłoszeń · 3 w toku",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono zgłoszenia Activity",
+        "summary": "12 zgłoszeń · 3 w toku",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_issues\nObiekt: list issues · przykładowy obiekt\nWynik: 12 zgłoszeń · 3 w toku\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/save_issue",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/save_issue",
+      "sequence": 1,
+      "operation": "linear/save_issue",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save issue · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Zmieniono opis i priorytet",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/save_issue",
+      "sequence": 1,
+      "operation": "linear/save_issue",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save issue · przykładowy obiekt",
+      "result_summary": "Zmieniono opis i priorytet",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zapisano zgłoszenie VIS-42",
+        "summary": "Zmieniono opis i priorytet",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/save_issue\nObiekt: save issue · przykładowy obiekt\nWynik: Zmieniono opis i priorytet\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_issue_statuses",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_issue_statuses",
+      "sequence": 1,
+      "operation": "linear/list_issue_statuses",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list issue statuses · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Zespół produktu · 5 stanów",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_issue_statuses",
+      "sequence": 1,
+      "operation": "linear/list_issue_statuses",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list issue statuses · przykładowy obiekt",
+      "result_summary": "Zespół produktu · 5 stanów",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono stany zgłoszeń",
+        "summary": "Zespół produktu · 5 stanów",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_issue_statuses\nObiekt: list issue statuses · przykładowy obiekt\nWynik: Zespół produktu · 5 stanów\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_issue_status",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_issue_status",
+      "sequence": 1,
+      "operation": "linear/get_issue_status",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get issue status · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "W toku · stan aktywny",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_issue_status",
+      "sequence": 1,
+      "operation": "linear/get_issue_status",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get issue status · przykładowy obiekt",
+      "result_summary": "W toku · stan aktywny",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono stan zgłoszenia",
+        "summary": "W toku · stan aktywny",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_issue_status\nObiekt: get issue status · przykładowy obiekt\nWynik: W toku · stan aktywny\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_issue_labels",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_issue_labels",
+      "sequence": 1,
+      "operation": "linear/list_issue_labels",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list issue labels · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "8 etykiet w zespole",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_issue_labels",
+      "sequence": 1,
+      "operation": "linear/list_issue_labels",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list issue labels · przykładowy obiekt",
+      "result_summary": "8 etykiet w zespole",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono etykiety zgłoszeń",
+        "summary": "8 etykiet w zespole",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_issue_labels\nObiekt: list issue labels · przykładowy obiekt\nWynik: 8 etykiet w zespole\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/save_issue_label",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/save_issue_label",
+      "sequence": 1,
+      "operation": "linear/save_issue_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save issue label · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Design · opis zaktualizowany",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/save_issue_label",
+      "sequence": 1,
+      "operation": "linear/save_issue_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save issue label · przykładowy obiekt",
+      "result_summary": "Design · opis zaktualizowany",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zapisano etykietę zgłoszeń",
+        "summary": "Design · opis zaktualizowany",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/save_issue_label\nObiekt: save issue label · przykładowy obiekt\nWynik: Design · opis zaktualizowany\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/create_issue_label",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/create_issue_label",
+      "sequence": 1,
+      "operation": "linear/create_issue_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "create issue label · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · etykieta zespołu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/create_issue_label",
+      "sequence": 1,
+      "operation": "linear/create_issue_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "create issue label · przykładowy obiekt",
+      "result_summary": "Activity · etykieta zespołu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Utworzono etykietę zgłoszeń",
+        "summary": "Activity · etykieta zespołu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/create_issue_label\nObiekt: create issue label · przykładowy obiekt\nWynik: Activity · etykieta zespołu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/retire_issue_label",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/retire_issue_label",
+      "sequence": 1,
+      "operation": "linear/retire_issue_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "retire issue label · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Legacy UI · etykieta nieaktywna",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/retire_issue_label",
+      "sequence": 1,
+      "operation": "linear/retire_issue_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "retire issue label · przykładowy obiekt",
+      "result_summary": "Legacy UI · etykieta nieaktywna",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Wycofano etykietę zgłoszeń",
+        "summary": "Legacy UI · etykieta nieaktywna",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/retire_issue_label\nObiekt: retire issue label · przykładowy obiekt\nWynik: Legacy UI · etykieta nieaktywna\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/restore_issue_label",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/restore_issue_label",
+      "sequence": 1,
+      "operation": "linear/restore_issue_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "restore issue label · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · etykieta aktywna",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/restore_issue_label",
+      "sequence": 1,
+      "operation": "linear/restore_issue_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "restore issue label · przykładowy obiekt",
+      "result_summary": "Activity · etykieta aktywna",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przywrócono etykietę zgłoszeń",
+        "summary": "Activity · etykieta aktywna",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/restore_issue_label\nObiekt: restore issue label · przykładowy obiekt\nWynik: Activity · etykieta aktywna\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_projects",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_projects",
+      "sequence": 1,
+      "operation": "linear/list_projects",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list projects · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "3 projekty zespołu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_projects",
+      "sequence": 1,
+      "operation": "linear/list_projects",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list projects · przykładowy obiekt",
+      "result_summary": "3 projekty zespołu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono projekty",
+        "summary": "3 projekty zespołu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_projects\nObiekt: list projects · przykładowy obiekt\nWynik: 3 projekty zespołu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_project",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_project",
+      "sequence": 1,
+      "operation": "linear/get_project",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get project · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Zakres, harmonogram i stan",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_project",
+      "sequence": 1,
+      "operation": "linear/get_project",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get project · przykładowy obiekt",
+      "result_summary": "Zakres, harmonogram i stan",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano projekt Activity",
+        "summary": "Zakres, harmonogram i stan",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_project\nObiekt: get project · przykładowy obiekt\nWynik: Zakres, harmonogram i stan\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/save_project",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/save_project",
+      "sequence": 1,
+      "operation": "linear/save_project",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save project · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Zaktualizowano opis projektu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/save_project",
+      "sequence": 1,
+      "operation": "linear/save_project",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save project · przykładowy obiekt",
+      "result_summary": "Zaktualizowano opis projektu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zapisano projekt Activity",
+        "summary": "Zaktualizowano opis projektu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/save_project\nObiekt: save project · przykładowy obiekt\nWynik: Zaktualizowano opis projektu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_project_labels",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_project_labels",
+      "sequence": 1,
+      "operation": "linear/list_project_labels",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list project labels · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "4 etykiety w obszarze roboczym",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_project_labels",
+      "sequence": 1,
+      "operation": "linear/list_project_labels",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list project labels · przykładowy obiekt",
+      "result_summary": "4 etykiety w obszarze roboczym",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono etykiety projektów",
+        "summary": "4 etykiety w obszarze roboczym",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_project_labels\nObiekt: list project labels · przykładowy obiekt\nWynik: 4 etykiety w obszarze roboczym\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/retire_project_label",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/retire_project_label",
+      "sequence": 1,
+      "operation": "linear/retire_project_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "retire project label · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Legacy · etykieta nieaktywna",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/retire_project_label",
+      "sequence": 1,
+      "operation": "linear/retire_project_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "retire project label · przykładowy obiekt",
+      "result_summary": "Legacy · etykieta nieaktywna",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Wycofano etykietę projektu",
+        "summary": "Legacy · etykieta nieaktywna",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/retire_project_label\nObiekt: retire project label · przykładowy obiekt\nWynik: Legacy · etykieta nieaktywna\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/restore_project_label",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/restore_project_label",
+      "sequence": 1,
+      "operation": "linear/restore_project_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "restore project label · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Design · etykieta aktywna",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/restore_project_label",
+      "sequence": 1,
+      "operation": "linear/restore_project_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "restore project label · przykładowy obiekt",
+      "result_summary": "Design · etykieta aktywna",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przywrócono etykietę projektu",
+        "summary": "Design · etykieta aktywna",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/restore_project_label\nObiekt: restore project label · przykładowy obiekt\nWynik: Design · etykieta aktywna\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/save_project_label",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/save_project_label",
+      "sequence": 1,
+      "operation": "linear/save_project_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save project label · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Design · opis zaktualizowany",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/save_project_label",
+      "sequence": 1,
+      "operation": "linear/save_project_label",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save project label · przykładowy obiekt",
+      "result_summary": "Design · opis zaktualizowany",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zapisano etykietę projektu",
+        "summary": "Design · opis zaktualizowany",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/save_project_label\nObiekt: save project label · przykładowy obiekt\nWynik: Design · opis zaktualizowany\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_release_pipelines",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_release_pipelines",
+      "sequence": 1,
+      "operation": "linear/list_release_pipelines",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list release pipelines · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "2 procesy publikacji",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_release_pipelines",
+      "sequence": 1,
+      "operation": "linear/list_release_pipelines",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list release pipelines · przykładowy obiekt",
+      "result_summary": "2 procesy publikacji",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono procesy wydań",
+        "summary": "2 procesy publikacji",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_release_pipelines\nObiekt: list release pipelines · przykładowy obiekt\nWynik: 2 procesy publikacji\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_releases",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_releases",
+      "sequence": 1,
+      "operation": "linear/list_releases",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list releases · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "4 wydania produktu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_releases",
+      "sequence": 1,
+      "operation": "linear/list_releases",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list releases · przykładowy obiekt",
+      "result_summary": "4 wydania produktu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono wydania",
+        "summary": "4 wydania produktu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_releases\nObiekt: list releases · przykładowy obiekt\nWynik: 4 wydania produktu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_release",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_release",
+      "sequence": 1,
+      "operation": "linear/get_release",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get release · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Wydanie Activity · wersja demonstracyjna",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_release",
+      "sequence": 1,
+      "operation": "linear/get_release",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get release · przykładowy obiekt",
+      "result_summary": "Wydanie Activity · wersja demonstracyjna",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano informacje o wydaniu",
+        "summary": "Wydanie Activity · wersja demonstracyjna",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_release\nObiekt: get release · przykładowy obiekt\nWynik: Wydanie Activity · wersja demonstracyjna\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/save_release",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/save_release",
+      "sequence": 1,
+      "operation": "linear/save_release",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save release · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Wydanie Activity · opis zaktualizowany",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/save_release",
+      "sequence": 1,
+      "operation": "linear/save_release",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save release · przykładowy obiekt",
+      "result_summary": "Wydanie Activity · opis zaktualizowany",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zapisano informacje o wydaniu",
+        "summary": "Wydanie Activity · opis zaktualizowany",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/save_release\nObiekt: save release · przykładowy obiekt\nWynik: Wydanie Activity · opis zaktualizowany\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_release_notes",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_release_notes",
+      "sequence": 1,
+      "operation": "linear/list_release_notes",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list release notes · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "3 notatki do wydania Activity",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_release_notes",
+      "sequence": 1,
+      "operation": "linear/list_release_notes",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list release notes · przykładowy obiekt",
+      "result_summary": "3 notatki do wydania Activity",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono notatki wydania",
+        "summary": "3 notatki do wydania Activity",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_release_notes\nObiekt: list release notes · przykładowy obiekt\nWynik: 3 notatki do wydania Activity\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_release_note",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_release_note",
+      "sequence": 1,
+      "operation": "linear/get_release_note",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get release note · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · zmiany interfejsu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_release_note",
+      "sequence": 1,
+      "operation": "linear/get_release_note",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get release note · przykładowy obiekt",
+      "result_summary": "Activity · zmiany interfejsu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano notatkę wydania",
+        "summary": "Activity · zmiany interfejsu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_release_note\nObiekt: get release note · przykładowy obiekt\nWynik: Activity · zmiany interfejsu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/save_release_note",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/save_release_note",
+      "sequence": 1,
+      "operation": "linear/save_release_note",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save release note · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · opis zmian zaktualizowany",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/save_release_note",
+      "sequence": 1,
+      "operation": "linear/save_release_note",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save release note · przykładowy obiekt",
+      "result_summary": "Activity · opis zmian zaktualizowany",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zapisano notatkę wydania",
+        "summary": "Activity · opis zmian zaktualizowany",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/save_release_note\nObiekt: save release note · przykładowy obiekt\nWynik: Activity · opis zmian zaktualizowany\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_diff",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_diff",
+      "sequence": 1,
+      "operation": "linear/get_diff",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get diff · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · 2 pliki · +18 −6",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_diff",
+      "sequence": 1,
+      "operation": "linear/get_diff",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get diff · przykładowy obiekt",
+      "result_summary": "Activity · 2 pliki · +18 −6",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano zestaw zmian",
+        "summary": "Activity · 2 pliki · +18 −6",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_diff\nObiekt: get diff · przykładowy obiekt\nWynik: Activity · 2 pliki · +18 −6\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_diffs",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_diffs",
+      "sequence": 1,
+      "operation": "linear/list_diffs",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list diffs · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "3 zestawy zmian do przeglądu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_diffs",
+      "sequence": 1,
+      "operation": "linear/list_diffs",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list diffs · przykładowy obiekt",
+      "result_summary": "3 zestawy zmian do przeglądu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono zestawy zmian",
+        "summary": "3 zestawy zmian do przeglądu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_diffs\nObiekt: list diffs · przykładowy obiekt\nWynik: 3 zestawy zmian do przeglądu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_diff_threads",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_diff_threads",
+      "sequence": 1,
+      "operation": "linear/get_diff_threads",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get diff threads · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "4 wątki · 1 nierozwiązany",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_diff_threads",
+      "sequence": 1,
+      "operation": "linear/get_diff_threads",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get diff threads · przykładowy obiekt",
+      "result_summary": "4 wątki · 1 nierozwiązany",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano dyskusje o zmianach",
+        "summary": "4 wątki · 1 nierozwiązany",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_diff_threads\nObiekt: get diff threads · przykładowy obiekt\nWynik: 4 wątki · 1 nierozwiązany\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/save_diff_comment",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/save_diff_comment",
+      "sequence": 1,
+      "operation": "linear/save_diff_comment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save diff comment · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "ActivityPanel.tsx · wiersz 84",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/save_diff_comment",
+      "sequence": 1,
+      "operation": "linear/save_diff_comment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save diff comment · przykładowy obiekt",
+      "result_summary": "ActivityPanel.tsx · wiersz 84",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zapisano uwagę do kodu",
+        "summary": "ActivityPanel.tsx · wiersz 84",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/save_diff_comment\nObiekt: save diff comment · przykładowy obiekt\nWynik: ActivityPanel.tsx · wiersz 84\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/resolve_diff_thread",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/resolve_diff_thread",
+      "sequence": 1,
+      "operation": "linear/resolve_diff_thread",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "resolve diff thread · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "ActivityPanel.tsx · uwaga uwzględniona",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/resolve_diff_thread",
+      "sequence": 1,
+      "operation": "linear/resolve_diff_thread",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "resolve diff thread · przykładowy obiekt",
+      "result_summary": "ActivityPanel.tsx · uwaga uwzględniona",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Rozwiązano wątek przeglądu",
+        "summary": "ActivityPanel.tsx · uwaga uwzględniona",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/resolve_diff_thread\nObiekt: resolve diff thread · przykładowy obiekt\nWynik: ActivityPanel.tsx · uwaga uwzględniona\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/delete_diff_comment",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/delete_diff_comment",
+      "sequence": 1,
+      "operation": "linear/delete_diff_comment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "delete diff comment · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "ActivityPanel.tsx · wskazany komentarz",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/delete_diff_comment",
+      "sequence": 1,
+      "operation": "linear/delete_diff_comment",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "delete diff comment · przykładowy obiekt",
+      "result_summary": "ActivityPanel.tsx · wskazany komentarz",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Usunięto uwagę do kodu",
+        "summary": "ActivityPanel.tsx · wskazany komentarz",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/delete_diff_comment\nObiekt: delete diff comment · przykładowy obiekt\nWynik: ActivityPanel.tsx · wskazany komentarz\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/submit_diff_review",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/submit_diff_review",
+      "sequence": 1,
+      "operation": "linear/submit_diff_review",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "submit diff review · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · zatwierdzono przegląd",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/submit_diff_review",
+      "sequence": 1,
+      "operation": "linear/submit_diff_review",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "submit diff review · przykładowy obiekt",
+      "result_summary": "Activity · zatwierdzono przegląd",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przesłano ocenę zmian",
+        "summary": "Activity · zatwierdzono przegląd",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/submit_diff_review\nObiekt: submit diff review · przykładowy obiekt\nWynik: Activity · zatwierdzono przegląd\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/merge_diff",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/merge_diff",
+      "sequence": 1,
+      "operation": "linear/merge_diff",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "merge diff · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · scalanie potwierdzone",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/merge_diff",
+      "sequence": 1,
+      "operation": "linear/merge_diff",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "merge diff · przykładowy obiekt",
+      "result_summary": "Activity · scalanie potwierdzone",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Scalono zestaw zmian",
+        "summary": "Activity · scalanie potwierdzone",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/merge_diff\nObiekt: merge diff · przykładowy obiekt\nWynik: Activity · scalanie potwierdzone\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/share_issue",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/share_issue",
+      "sequence": 1,
+      "operation": "linear/share_issue",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "share issue · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "VIS-42 · dostęp do wskazanego zgłoszenia",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/share_issue",
+      "sequence": 1,
+      "operation": "linear/share_issue",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "share issue · przykładowy obiekt",
+      "result_summary": "VIS-42 · dostęp do wskazanego zgłoszenia",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Udostępniono zgłoszenie",
+        "summary": "VIS-42 · dostęp do wskazanego zgłoszenia",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/share_issue\nObiekt: share issue · przykładowy obiekt\nWynik: VIS-42 · dostęp do wskazanego zgłoszenia\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/unshare_issue",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/unshare_issue",
+      "sequence": 1,
+      "operation": "linear/unshare_issue",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "unshare issue · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "VIS-42 · poprzedni dostęp wycofany",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/unshare_issue",
+      "sequence": 1,
+      "operation": "linear/unshare_issue",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "unshare issue · przykładowy obiekt",
+      "result_summary": "VIS-42 · poprzedni dostęp wycofany",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Wyłączono udostępnianie zgłoszenia",
+        "summary": "VIS-42 · poprzedni dostęp wycofany",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/unshare_issue\nObiekt: unshare issue · przykładowy obiekt\nWynik: VIS-42 · poprzedni dostęp wycofany\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_milestones",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_milestones",
+      "sequence": 1,
+      "operation": "linear/list_milestones",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list milestones · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · 3 etapy projektu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_milestones",
+      "sequence": 1,
+      "operation": "linear/list_milestones",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list milestones · przykładowy obiekt",
+      "result_summary": "Activity · 3 etapy projektu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono kamienie milowe",
+        "summary": "Activity · 3 etapy projektu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_milestones\nObiekt: list milestones · przykładowy obiekt\nWynik: Activity · 3 etapy projektu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_milestone",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_milestone",
+      "sequence": 1,
+      "operation": "linear/get_milestone",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get milestone · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Prototyp Activity · zakres i termin",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_milestone",
+      "sequence": 1,
+      "operation": "linear/get_milestone",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get milestone · przykładowy obiekt",
+      "result_summary": "Prototyp Activity · zakres i termin",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano kamień milowy",
+        "summary": "Prototyp Activity · zakres i termin",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_milestone\nObiekt: get milestone · przykładowy obiekt\nWynik: Prototyp Activity · zakres i termin\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/save_milestone",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/save_milestone",
+      "sequence": 1,
+      "operation": "linear/save_milestone",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save milestone · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Prototyp Activity · termin zaktualizowany",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/save_milestone",
+      "sequence": 1,
+      "operation": "linear/save_milestone",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save milestone · przykładowy obiekt",
+      "result_summary": "Prototyp Activity · termin zaktualizowany",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zapisano kamień milowy",
+        "summary": "Prototyp Activity · termin zaktualizowany",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/save_milestone\nObiekt: save milestone · przykładowy obiekt\nWynik: Prototyp Activity · termin zaktualizowany\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_notifications",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_notifications",
+      "sequence": 1,
+      "operation": "linear/get_notifications",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get notifications · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "6 powiadomień · 2 nieprzeczytane",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_notifications",
+      "sequence": 1,
+      "operation": "linear/get_notifications",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get notifications · przykładowy obiekt",
+      "result_summary": "6 powiadomień · 2 nieprzeczytane",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Pobrano powiadomienia",
+        "summary": "6 powiadomień · 2 nieprzeczytane",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_notifications\nObiekt: get notifications · przykładowy obiekt\nWynik: 6 powiadomień · 2 nieprzeczytane\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/mark_notification",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/mark_notification",
+      "sequence": 1,
+      "operation": "linear/mark_notification",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "mark notification · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Powiadomienie oznaczone jako przeczytane",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/mark_notification",
+      "sequence": 1,
+      "operation": "linear/mark_notification",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "mark notification · przykładowy obiekt",
+      "result_summary": "Powiadomienie oznaczone jako przeczytane",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zmieniono stan powiadomienia",
+        "summary": "Powiadomienie oznaczone jako przeczytane",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/mark_notification\nObiekt: mark notification · przykładowy obiekt\nWynik: Powiadomienie oznaczone jako przeczytane\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_teams",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_teams",
+      "sequence": 1,
+      "operation": "linear/list_teams",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list teams · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "2 zespoły w obszarze roboczym",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_teams",
+      "sequence": 1,
+      "operation": "linear/list_teams",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list teams · przykładowy obiekt",
+      "result_summary": "2 zespoły w obszarze roboczym",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono zespoły",
+        "summary": "2 zespoły w obszarze roboczym",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_teams\nObiekt: list teams · przykładowy obiekt\nWynik: 2 zespoły w obszarze roboczym\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_team",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_team",
+      "sequence": 1,
+      "operation": "linear/get_team",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get team · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Nazwa, opis i ustawienia zespołu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_team",
+      "sequence": 1,
+      "operation": "linear/get_team",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get team · przykładowy obiekt",
+      "result_summary": "Nazwa, opis i ustawienia zespołu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono zespół produktu",
+        "summary": "Nazwa, opis i ustawienia zespołu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_team\nObiekt: get team · przykładowy obiekt\nWynik: Nazwa, opis i ustawienia zespołu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_templates",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_templates",
+      "sequence": 1,
+      "operation": "linear/list_templates",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list templates · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "4 szablony zgłoszeń",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_templates",
+      "sequence": 1,
+      "operation": "linear/list_templates",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list templates · przykładowy obiekt",
+      "result_summary": "4 szablony zgłoszeń",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono szablony",
+        "summary": "4 szablony zgłoszeń",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_templates\nObiekt: list templates · przykładowy obiekt\nWynik: 4 szablony zgłoszeń\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_template",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_template",
+      "sequence": 1,
+      "operation": "linear/get_template",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get template · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Przegląd interfejsu · wymagane pola",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_template",
+      "sequence": 1,
+      "operation": "linear/get_template",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get template · przykładowy obiekt",
+      "result_summary": "Przegląd interfejsu · wymagane pola",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano szablon zgłoszenia",
+        "summary": "Przegląd interfejsu · wymagane pola",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_template\nObiekt: get template · przykładowy obiekt\nWynik: Przegląd interfejsu · wymagane pola\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/list_users",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/list_users",
+      "sequence": 1,
+      "operation": "linear/list_users",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list users · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "8 osób w obszarze roboczym",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/list_users",
+      "sequence": 1,
+      "operation": "linear/list_users",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "list users · przykładowy obiekt",
+      "result_summary": "8 osób w obszarze roboczym",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono użytkowników",
+        "summary": "8 osób w obszarze roboczym",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/list_users\nObiekt: list users · przykładowy obiekt\nWynik: 8 osób w obszarze roboczym\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_user",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_user",
+      "sequence": 1,
+      "operation": "linear/get_user",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get user · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Nazwa i przynależność do zespołu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_user",
+      "sequence": 1,
+      "operation": "linear/get_user",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get user · przykładowy obiekt",
+      "result_summary": "Nazwa i przynależność do zespołu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono profil użytkownika",
+        "summary": "Nazwa i przynależność do zespołu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_user\nObiekt: get user · przykładowy obiekt\nWynik: Nazwa i przynależność do zespołu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_workspace",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_workspace",
+      "sequence": 1,
+      "operation": "linear/get_workspace",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get workspace · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Przykładowy obszar · podstawowe informacje",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_workspace",
+      "sequence": 1,
+      "operation": "linear/get_workspace",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get workspace · przykładowy obiekt",
+      "result_summary": "Przykładowy obszar · podstawowe informacje",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono obszar roboczy",
+        "summary": "Przykładowy obszar · podstawowe informacje",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_workspace\nObiekt: get workspace · przykładowy obiekt\nWynik: Przykładowy obszar · podstawowe informacje\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/search_documentation",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/search_documentation",
+      "sequence": 1,
+      "operation": "linear/search_documentation",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "search documentation · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "3 wyniki dla „issue labels”",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/search_documentation",
+      "sequence": 1,
+      "operation": "linear/search_documentation",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "search documentation · przykładowy obiekt",
+      "result_summary": "3 wyniki dla „issue labels”",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Znaleziono dokumentację Linear",
+        "summary": "3 wyniki dla „issue labels”",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/search_documentation\nObiekt: search documentation · przykładowy obiekt\nWynik: 3 wyniki dla „issue labels”\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/get_status_updates",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/get_status_updates",
+      "sequence": 1,
+      "operation": "linear/get_status_updates",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get status updates · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · 3 aktualizacje",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/get_status_updates",
+      "sequence": 1,
+      "operation": "linear/get_status_updates",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "get status updates · przykładowy obiekt",
+      "result_summary": "Activity · 3 aktualizacje",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przeczytano aktualizacje projektu",
+        "summary": "Activity · 3 aktualizacje",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/get_status_updates\nObiekt: get status updates · przykładowy obiekt\nWynik: Activity · 3 aktualizacje\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/save_status_update",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/save_status_update",
+      "sequence": 1,
+      "operation": "linear/save_status_update",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save status update · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · podsumowanie postępu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/save_status_update",
+      "sequence": 1,
+      "operation": "linear/save_status_update",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "save status update · przykładowy obiekt",
+      "result_summary": "Activity · podsumowanie postępu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zapisano aktualizację projektu",
+        "summary": "Activity · podsumowanie postępu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/save_status_update\nObiekt: save status update · przykładowy obiekt\nWynik: Activity · podsumowanie postępu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "linear/delete_status_update",
+    "family": "Linear",
+    "kind": "registered",
+    "before": {
+      "id": "linear/delete_status_update",
+      "sequence": 1,
+      "operation": "linear/delete_status_update",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "delete status update · przykładowy obiekt",
+      "duration_ms": 42,
+      "result_summary": "Activity · wskazana aktualizacja",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "linear/delete_status_update",
+      "sequence": 1,
+      "operation": "linear/delete_status_update",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "delete status update · przykładowy obiekt",
+      "result_summary": "Activity · wskazana aktualizacja",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Usunięto aktualizację projektu",
+        "summary": "Activity · wskazana aktualizacja",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: linear/delete_status_update\nObiekt: delete status update · przykładowy obiekt\nWynik: Activity · wskazana aktualizacja\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Zawsze pokaż nazwę obiektu i potwierdzony wynik. Nazwa endpointu i identyfikatory są diagnostyką. Nie wykonano żadnej operacji w Linear.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "sh.wait() / _shell-wait",
+    "family": "Procesy",
+    "kind": "support",
+    "before": {
+      "id": "sh.wait() / _shell-wait",
+      "sequence": 1,
+      "operation": "sh.wait() / _shell-wait",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "shell handle · wait 30 s",
+      "duration_ms": 42,
+      "result_summary": "Oczekiwanie zakończone · proces nadal działa",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "sh.wait() / _shell-wait",
+      "sequence": 1,
+      "operation": "sh.wait() / _shell-wait",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "shell handle · wait 30 s",
+      "result_summary": "Oczekiwanie zakończone · proces nadal działa",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Budowanie aplikacji nadal trwa",
+        "summary": "Oczekiwanie zakończone · proces nadal działa",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: sh.wait() / _shell-wait\nObiekt: shell handle · wait 30 s\nWynik: Oczekiwanie zakończone · proces nadal działa\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "sh.logs() / _shell-logs",
+    "family": "Procesy",
+    "kind": "support",
+    "before": {
+      "id": "sh.logs() / _shell-logs",
+      "sequence": 1,
+      "operation": "sh.logs() / _shell-logs",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "shell handle · log offset",
+      "duration_ms": 42,
+      "result_summary": "Ostatnie 50 wierszy · ten sam proces",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "sh.logs() / _shell-logs",
+      "sequence": 1,
+      "operation": "sh.logs() / _shell-logs",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "shell handle · log offset",
+      "result_summary": "Ostatnie 50 wierszy · ten sam proces",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Odczytano log procesu",
+        "summary": "Ostatnie 50 wierszy · ten sam proces",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: sh.logs() / _shell-logs\nObiekt: shell handle · log offset\nWynik: Ostatnie 50 wierszy · ten sam proces\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "sh.type() / _shell-type",
+    "family": "Procesy",
+    "kind": "support",
+    "before": {
+      "id": "sh.type() / _shell-type",
+      "sequence": 1,
+      "operation": "sh.type() / _shell-type",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "shell handle · stdin",
+      "duration_ms": 42,
+      "result_summary": "Proces otrzymał dane wejściowe",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "sh.type() / _shell-type",
+      "sequence": 1,
+      "operation": "sh.type() / _shell-type",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "shell handle · stdin",
+      "result_summary": "Proces otrzymał dane wejściowe",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przekazano odpowiedź do procesu",
+        "summary": "Proces otrzymał dane wejściowe",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: sh.type() / _shell-type\nObiekt: shell handle · stdin\nWynik: Proces otrzymał dane wejściowe\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "sh.stop() / _shell-stop",
+    "family": "Procesy",
+    "kind": "support",
+    "before": {
+      "id": "sh.stop() / _shell-stop",
+      "sequence": 1,
+      "operation": "sh.stop() / _shell-stop",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "shell handle",
+      "duration_ms": 42,
+      "result_summary": "Proces zakończony na żądanie",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "sh.stop() / _shell-stop",
+      "sequence": 1,
+      "operation": "sh.stop() / _shell-stop",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "shell handle",
+      "result_summary": "Proces zakończony na żądanie",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zatrzymano proces",
+        "summary": "Proces zakończony na żądanie",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: sh.stop() / _shell-stop\nObiekt: shell handle\nWynik: Proces zakończony na żądanie\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "next(logs) / pages()",
+    "family": "Procesy",
+    "kind": "support",
+    "before": {
+      "id": "next(logs) / pages()",
+      "sequence": 1,
+      "operation": "next(logs) / pages()",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "shell handle · next offset",
+      "duration_ms": 42,
+      "result_summary": "Kolejne 50 wierszy · bez nowego zadania",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "next(logs) / pages()",
+      "sequence": 1,
+      "operation": "next(logs) / pages()",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "shell handle · next offset",
+      "result_summary": "Kolejne 50 wierszy · bez nowego zadania",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Odczytano dalszy fragment logu",
+        "summary": "Kolejne 50 wierszy · bez nowego zadania",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: next(logs) / pages()\nObiekt: shell handle · next offset\nWynik: Kolejne 50 wierszy · bez nowego zadania\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "Path.write_text() / write_bytes()",
+    "family": "Zmiany plików",
+    "kind": "support",
+    "before": {
+      "id": "Path.write_text() / write_bytes()",
+      "sequence": 1,
+      "operation": "Path.write_text() / write_bytes()",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "src/components/ActivityPanel.tsx",
+      "duration_ms": 42,
+      "result_summary": "1 plik · podgląd zmian w szczegółach",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "Path.write_text() / write_bytes()",
+      "sequence": 1,
+      "operation": "Path.write_text() / write_bytes()",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "src/components/ActivityPanel.tsx",
+      "result_summary": "1 plik · podgląd zmian w szczegółach",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zapisano ActivityPanel.tsx",
+        "summary": "1 plik · podgląd zmian w szczegółach",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: Path.write_text() / write_bytes()\nObiekt: src/components/ActivityPanel.tsx\nWynik: 1 plik · podgląd zmian w szczegółach\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "Path.mkdir()",
+    "family": "Zmiany plików",
+    "kind": "support",
+    "before": {
+      "id": "Path.mkdir()",
+      "sequence": 1,
+      "operation": "Path.mkdir()",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "apps/vis-companion/tests",
+      "duration_ms": 42,
+      "result_summary": "Nowy katalog w projekcie",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "Path.mkdir()",
+      "sequence": 1,
+      "operation": "Path.mkdir()",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "apps/vis-companion/tests",
+      "result_summary": "Nowy katalog w projekcie",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Utworzono katalog tests",
+        "summary": "Nowy katalog w projekcie",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: Path.mkdir()\nObiekt: apps/vis-companion/tests\nWynik: Nowy katalog w projekcie\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "copy",
+    "family": "Zmiany plików",
+    "kind": "support",
+    "before": {
+      "id": "copy",
+      "sequence": 1,
+      "operation": "copy",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "config.example.json",
+      "duration_ms": 42,
+      "result_summary": "config.example.json → config.local.json",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "copy",
+      "sequence": 1,
+      "operation": "copy",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "config.example.json",
+      "result_summary": "config.example.json → config.local.json",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Skopiowano plik konfiguracji",
+        "summary": "config.example.json → config.local.json",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: copy\nObiekt: config.example.json\nWynik: config.example.json → config.local.json\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "move / rename",
+    "family": "Zmiany plików",
+    "kind": "support",
+    "before": {
+      "id": "move / rename",
+      "sequence": 1,
+      "operation": "move / rename",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "src/components/Activity.tsx",
+      "duration_ms": 42,
+      "result_summary": "Activity.tsx → ActivityPanel.tsx",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "move / rename",
+      "sequence": 1,
+      "operation": "move / rename",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "src/components/Activity.tsx",
+      "result_summary": "Activity.tsx → ActivityPanel.tsx",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zmieniono nazwę pliku",
+        "summary": "Activity.tsx → ActivityPanel.tsx",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: move / rename\nObiekt: src/components/Activity.tsx\nWynik: Activity.tsx → ActivityPanel.tsx\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "link / symlink",
+    "family": "Zmiany plików",
+    "kind": "support",
+    "before": {
+      "id": "link / symlink",
+      "sequence": 1,
+      "operation": "link / symlink",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "assets",
+      "duration_ms": 42,
+      "result_summary": "assets → shared/assets",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "link / symlink",
+      "sequence": 1,
+      "operation": "link / symlink",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "assets",
+      "result_summary": "assets → shared/assets",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Utworzono dowiązanie",
+        "summary": "assets → shared/assets",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: link / symlink\nObiekt: assets\nWynik: assets → shared/assets\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "delete / unlink / rmdir",
+    "family": "Zmiany plików",
+    "kind": "support",
+    "before": {
+      "id": "delete / unlink / rmdir",
+      "sequence": 1,
+      "operation": "delete / unlink / rmdir",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "src/components/Activity.old.tsx",
+      "duration_ms": 42,
+      "result_summary": "Activity.old.tsx · usunięcie potwierdzone",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "delete / unlink / rmdir",
+      "sequence": 1,
+      "operation": "delete / unlink / rmdir",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "src/components/Activity.old.tsx",
+      "result_summary": "Activity.old.tsx · usunięcie potwierdzone",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Usunięto nieużywany plik",
+        "summary": "Activity.old.tsx · usunięcie potwierdzone",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: delete / unlink / rmdir\nObiekt: src/components/Activity.old.tsx\nWynik: Activity.old.tsx · usunięcie potwierdzone\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "change / grouped filesystem events",
+    "family": "Zmiany plików",
+    "kind": "support",
+    "before": {
+      "id": "change / grouped filesystem events",
+      "sequence": 1,
+      "operation": "change / grouped filesystem events",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "zmiany drzewa plików",
+      "duration_ms": 42,
+      "result_summary": "1 dodany · 1 zmieniony · 1 usunięty",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "change / grouped filesystem events",
+      "sequence": 1,
+      "operation": "change / grouped filesystem events",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "zmiany drzewa plików",
+      "result_summary": "1 dodany · 1 zmieniony · 1 usunięty",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Zmieniono 3 pliki",
+        "summary": "1 dodany · 1 zmieniony · 1 usunięty",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: change / grouped filesystem events\nObiekt: zmiany drzewa plików\nWynik: 1 dodany · 1 zmieniony · 1 usunięty\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "vis.publish_activity()",
+    "family": "SDK",
+    "kind": "support",
+    "before": {
+      "id": "vis.publish_activity()",
+      "sequence": 1,
+      "operation": "vis.publish_activity()",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "aktualizacja tej samej operacji",
+      "duration_ms": 42,
+      "result_summary": "W toku · przygotowano dane testowe",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "vis.publish_activity()",
+      "sequence": 1,
+      "operation": "vis.publish_activity()",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "aktualizacja tej samej operacji",
+      "result_summary": "W toku · przygotowano dane testowe",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzanie widoku",
+        "summary": "W toku · przygotowano dane testowe",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: vis.publish_activity()\nObiekt: aktualizacja tej samej operacji\nWynik: W toku · przygotowano dane testowe\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "vis.ask()",
+    "family": "SDK",
+    "kind": "support",
+    "before": {
+      "id": "vis.ask()",
+      "sequence": 1,
+      "operation": "vis.ask()",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "formularz: wybierz wariant",
+      "duration_ms": 42,
+      "result_summary": "Oczekiwanie na wybór wariantu",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "vis.ask()",
+      "sequence": 1,
+      "operation": "vis.ask()",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "formularz: wybierz wariant",
+      "result_summary": "Oczekiwanie na wybór wariantu",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Potrzebna odpowiedź użytkownika",
+        "summary": "Oczekiwanie na wybór wariantu",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: vis.ask()\nObiekt: formularz: wybierz wariant\nWynik: Oczekiwanie na wybór wariantu\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "vis.live()",
+    "family": "SDK",
+    "kind": "support",
+    "before": {
+      "id": "vis.live()",
+      "sequence": 1,
+      "operation": "vis.live()",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "CI #42",
+      "duration_ms": 42,
+      "result_summary": "Widok na żywo dostępny w rozmowie",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "vis.live()",
+      "sequence": 1,
+      "operation": "vis.live()",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "CI #42",
+      "result_summary": "Widok na żywo dostępny w rozmowie",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Obserwowanie przebiegu CI",
+        "summary": "Widok na żywo dostępny w rozmowie",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: vis.live()\nObiekt: CI #42\nWynik: Widok na żywo dostępny w rozmowie\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "vis.Activity(render=...)",
+    "family": "SDK",
+    "kind": "support",
+    "before": {
+      "id": "vis.Activity(render=...)",
+      "sequence": 1,
+      "operation": "vis.Activity(render=...)",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "callback prezentacji",
+      "duration_ms": 42,
+      "result_summary": "3 sekcje · wynik prezentera rozszerzenia",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "vis.Activity(render=...)",
+      "sequence": 1,
+      "operation": "vis.Activity(render=...)",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "callback prezentacji",
+      "result_summary": "3 sekcje · wynik prezentera rozszerzenia",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Sprawdzono projekt Activity",
+        "summary": "3 sekcje · wynik prezentera rozszerzenia",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: vis.Activity(render=...)\nObiekt: callback prezentacji\nWynik: 3 sekcje · wynik prezentera rozszerzenia\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  },
+  {
+    "name": "python_execution",
+    "family": "Wykonanie",
+    "kind": "support",
+    "before": {
+      "id": "python_execution",
+      "sequence": 1,
+      "operation": "python_execution",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "kod wykonawczy",
+      "duration_ms": 42,
+      "result_summary": "1 blok Python · działania widoczne poniżej",
+      "resources": [],
+      "evidence": []
+    },
+    "after": {
+      "id": "python_execution",
+      "sequence": 1,
+      "operation": "python_execution",
+      "presenter": "generic",
+      "signal": "generic",
+      "state": "succeeded",
+      "summary": "kod wykonawczy",
+      "result_summary": "1 blok Python · działania widoczne poniżej",
+      "resources": [],
+      "evidence": [],
+      "presentation": {
+        "headline": "Przygotowano dane do przeglądu",
+        "summary": "1 blok Python · działania widoczne poniżej",
+        "content": [
+          {
+            "type": "code",
+            "language": "text",
+            "text": "Symbol: python_execution\nObiekt: kod wykonawczy\nWynik: 1 blok Python · działania widoczne poniżej\nCzas: 42 ms\nDane demonstracyjne — narzędzia nie uruchomiono."
+          }
+        ]
+      }
+    },
+    "note": "Dodatkowa powierzchnia, nie osobna pozycja w rejestrze narzędzi. Powiąż z macierzystym działaniem; zachowaj pełny ślad w szczegółach.",
+    "baseline": "Rekonstrukcja ogólnego widoku na przykładowych danych; nie zapis rzeczywistego wywołania."
+  }
+]
