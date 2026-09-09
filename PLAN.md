@@ -1101,6 +1101,11 @@ in the published binary. The FFF 0.12.9 fix and native search coverage are alrea
 Build a new immutable release with that fix and rerun the complete installed native path.
 Preserve the healthy production hotfix until the replacement passes every required check.
 
+The expanded native search regression fails against published v0.1.52 and passes against
+the current native hotfix. The release also includes the verified package-readiness and
+reload corrections: 230 affected JVM cases and five native cases pass, with formatting,
+lint and reflection checks clean. Local release/version checks pass all 54 cases.
+
 - Runtime v0.5.6 is published at 51f02270ffc78b5eb49bcab914b27564b1960f82. Run
   34297827905 passed all four platform builds/tests and published the runtime archives and
   JVM jar. The readiness handshake passes 2000 immediate process-group terminations on
