@@ -1012,50 +1012,46 @@ remains available. Published version tags remain immutable, including the bootst
    explicit verification results and any concrete unresolved blockers reported.
    Unknowns: none beyond the preceding phases.
 
-Plan state: phases 1 and 2 implemented and locally verified; phase 3 in progress.
-Runtime v0.5.6 is published at 51f02270ffc78b5eb49bcab914b27564b1960f82. Release run
-34297827905 passed all four platform builds/tests, the JVM jar and asset publication.
-The earlier native dry-run 34270462640 passed on Linux x64, Linux ARM64 and macOS ARM64,
-including installed-wrapper/gateway smoke checks, native tests, real HTTP/stdio Python SDK
-checks and standalone TUI builds. Native macOS x64 is not supported by the pinned CE toolchain.
-The production installer and 15-artifact draft gate have regression coverage. Release,
-container, palette and loop suites: 541 tests passed; scoped lint, reflection, workflow
-validation and shell checks passed. Companion: 2408 tests passed, 2 skipped; 184 browser
-stories passed; full theme contrast scan, compiler lint and production build passed.
-Baseline full JVM verification passed 5044 cases; main CI 34286742665 passed after retrying
-one transient package download. Cold Linux permission-snapshot leakage and same-millisecond
-draft edits are fixed. Cancellation now watches actual replies from both Python workers,
-not just cancelled host futures; native waits are retired and normal cancellation preserves
-state. Affected suites passed 580 cases; installed SDK HTTP/stdio passed all 8 cases, including
-post-cancel reuse and trusted-extension process reclamation. Formatting and scoped lint and
-reflection passed. After the concurrent Council fix, the full local suite passed 5050 cases
-with zero failures. Cancellation CI 34295274479 also passed on both operating systems.
-A later Linux run reproduced a native process-group readiness race: immediate PTY teardown
-could lose its kill signal before the child called setsid. A runtime readiness handshake
-passes 2000 immediate-termination attempts on both systems. The full runtime suite passes
-171 cases on macOS and on Linux with a clean staged interpreter and test environment.
-The v0.1.46 commit passes 5053 cases on both local macOS and the staged Linux host;
-installed SDK HTTP/stdio passes all 8 cases. Release run 34299890597 passed full source CI
-and preparation, then every component stopped at the draft guard: GitHub's published-tag
-endpoint returns 404 for drafts. No component artifact was uploaded or promoted.
-The shared guard now resolves a release's REST URL by ID, verifies the requested draft and
-passes its metadata to the complete-asset gate. All 44 release cases, formatting, lint,
-reflection and workflow checks pass. Live read-only checks accept the draft, reject an
-existing published release and still reject the draft's incomplete two-asset set.
-Tags v0.1.45 and v0.1.46 remain immutable. The former failed before jobs started because the
-native caller lacked actions:read; that job-scoped permission fix is verified.
-Release v0.1.47 passed 5058 cases on local macOS and the staged Linux host, but source CI
-exposed a test fixture race: a background config reader consumed a scripted spawn policy.
-The regression now reproduces that read and confines the fixture to its owning thread;
-policy validation and the exact two-spawn load assertion are unchanged. The full 5058-case
-suite passes with the fix, as do formatting, lint and reflection. Tag v0.1.47 stays immutable;
-Release v0.1.48 passed all source CI, all three native engine/worker/TUI builds and integration
-tests, Android publication and all desktop packages. Its staged Linux JVM run passed 5058
-cases. Run 34305148277 stopped at iOS codesigning: the generic distribution identity selected
-a different certificate from the one imported for the job. The draft has 14 of 15 assets and
-was not promoted. The fix scopes identity discovery to the job keychain and pins the exact
-fingerprint through archive and export; missing manual identities fail closed. Regression
-tests reproduce the ambiguity and export selection. All 220 script cases pass (one existing
-skip), as do 44 release cases, scoped syntax/lint/reflection, formatting and workflow checks.
-Tag v0.1.48 stays immutable; v0.1.49 is the next complete-release candidate.
-Complete native release and server deployment remain pending. Preserve unrelated concurrent work.
+Plan state: phases 1–5 complete. The fixes are committed and pushed; the complete stable
+release v0.1.49 is published at 8227cd605a1a86ea814698b4906e4fc0ee0a89ec.
+
+- Runtime v0.5.6 is published at 51f02270ffc78b5eb49bcab914b27564b1960f82. Run
+  34297827905 passed all four platform builds/tests and published the runtime archives and
+  JVM jar. The readiness handshake passes 2000 immediate process-group terminations on
+  each tested operating system; the full runtime suite passes 171 cases on macOS and Linux.
+- Cancellation waits for actual sandbox and trusted-worker replies, not only cancelled
+  host futures. Wedged native waits retire their workers; normal cancellation preserves
+  state and permits reuse. Affected suites passed 580 cases, with formatting, scoped lint
+  and reflection checks passing.
+- The installer defaults to complete stable native bundles. The draft guard resolves
+  release metadata by ID and rejects incomplete artifacts. iOS signing pins the exact
+  identity imported into the job keychain through archive and export and fails closed.
+  All 44 release cases and 220 script cases pass, with one existing script skip; shell,
+  formatting, lint, reflection and workflow checks pass.
+- [Release v0.1.49](https://github.com/Blockether/vis/releases/tag/v0.1.49) passed all 31 jobs
+  in [release run 34311326223](https://github.com/Blockether/vis/actions/runs/34311326223),
+  including the complete source CI. Its 15 nonempty assets include bootstrap files, native
+  engine/worker and TUI bundles for Linux x64, Linux ARM64 and macOS ARM64, signed mobile
+  packages and five desktop packages. Clojars publication, iOS TestFlight distribution,
+  all existing Android tester tracks, stable promotion and installer verification passed.
+  Android production publication was not requested or performed. The pinned CE toolchain
+  does not support a native macOS x64 engine.
+- Clean full JVM verification passed 5058 cases on macOS and Linux; the administered
+  Linux host completed its run in 676.706 seconds. The published installer was exercised
+  with a fresh home, without installing source or selecting JVM fallback. Installed SDK
+  HTTP/stdio verification passed all 25 cases, including cancellation, reuse and native
+  wait reclamation. The installed native suite passed all 15 cases in 615.218 seconds.
+- The administered production gateway now runs the published native release. Executable
+  identities confirmed a native engine and Python worker. A native TUI was exercised
+  through a real terminal with the native fixture gateway and keyboard input. Public CLI
+  entrypoints select the same pinned native bundle. Canonical production health and admin
+  checks return 200; session creation, hydration, deletion (204) and absence afterward
+  (404) pass. Database integrity checks pass and the persisted session count is unchanged.
+  Rollback backups are retained; the healthy production service is left running.
+- Post-release commit 43e687f388ac6c64a00dad8bc7c7a8cd04349d18 corrects only the regression
+  assertion for an absent cancelled-answer bubble. All seven focused tests and the full
+  companion suite pass: 2440 cases, two existing skips. Type checking, scoped lint and
+  changed-region formatting pass. Main CI 34322681529, Android companion 34322681333 and
+  CodeQL 34322680874 pass. This test-only change does not alter the published artifacts.
+- Earlier failed release tags v0.1.45 through v0.1.48 remain immutable; incomplete drafts
+  were not promoted. No delivery blocker remains. Unrelated concurrent work is preserved.
