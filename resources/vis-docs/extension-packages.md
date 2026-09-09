@@ -305,9 +305,24 @@ allowed [workspace filesystem root](jail.md#filesystem-access).
 Keep the checkout at its installed path; moving it requires another sync.
 
 `~/.vis/python/packages` is shared across projects, so dependency versions are
-not isolated. Start and `/reload` do not install these manually selected uv projects. Changes to
-`pyproject.toml`, `uv.lock`, runtime, default index or installed distribution metadata
-require another explicit sync. A failed load does not roll back shared package changes.
+not isolated. Startup and plain `/reload` never install manually selected uv projects.
+Readiness checks name changed inputs: project location, `pyproject.toml`, `uv.lock`,
+runtime, interpreter path, packages directory, default index or installed distribution
+metadata. Only distributions named in the exported project lock are tracked; updating
+an unrelated shared package or editing editable Python source does not require sync.
+A failed load does not roll back shared package changes.
+
+After reviewing dependency changes, use **`/reload --sync`** to prepare the uv projects
+declared by the configured extensions and retry loading them. This explicit host operation
+works even when the assistant's shell is disabled. It runs trusted build backends with the
+gateway's user, interpreter and package directory, and requires uv on the gateway's PATH.
+It respects supplied locks; update a stale lock deliberately before retrying. Ordinary
+`/reload` and imports do not authorize this preparation.
+
+A failed reload reports whether an extension was not loaded or its last-known-good tools
+and docs were retained as stale. The reload result, doctor and assistant context include
+loaded/requested source fingerprints and the failure reason. Successful retry clears the
+warning; execution, signatures, contracts and docs update at the next turn boundary.
 
 Build backends and executable `.pth` lines are trusted package code, not inert
 configuration. Review projects and dependencies before installing them. Builds run

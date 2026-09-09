@@ -17,6 +17,7 @@
    library — and `tar` does the unpacking because the tree carries symlinks and
    execute bits that no jar or zip round-trips."
   (:require [babashka.http-client :as http]
+            [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -180,6 +181,28 @@
                                  (accept [_ child] (.destroyForcibly ^ProcessHandle child)))))
                  (.destroyForcibly process))))))
 
+(defn- locked-distributions
+  "Read exported distribution names with the embedded Python's standard TOML parser."
+  [^File lock-file]
+  (let [command
+        [(Interpreter/pythonExecutable) "-I" "-S" "-c"
+         (str "import json, re, sys, tomllib\n"
+              "with open(sys.argv[1], 'rb') as f: lock = tomllib.load(f)\n"
+              "print(json.dumps(sorted({re.sub(r'[-_.]+', '-', p['name']).lower() "
+              "for p in lock.get('packages', [])})))") (str lock-file)]
+
+        process
+        (.start (doto (ProcessBuilder. ^java.util.List command)
+                  (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)))
+
+        output
+        (future (slurp (.getInputStream process)))]
+
+    (try (when-not (and (.waitFor process 30 TimeUnit/SECONDS) (zero? (.exitValue process)))
+           (throw (ex-info "Could not read the exported Python distribution names" {})))
+         (set (json/read-json @output))
+         (finally (when (.isAlive process) (.destroyForcibly process)) (future-cancel output)))))
+
 (defn uv-sync!
   "Install a locked uv project into the shared packages directory.
    uv exports its resolved sources and artifact hashes to pylock.toml, then installs
@@ -210,15 +233,24 @@
                      (into ["uv" "pip" "install" "--target" (str packages) "--requirements"
                             (str lock-file) "--no-deps"]
                            common))
-            {:exit 0}
+            {:exit 0 :distributions (locked-distributions lock-file)}
             (finally (Files/deleteIfExists (.toPath lock-file))))))))
 
-(defn- project-key
+(defn- project-inputs
+  "Credential-free fingerprints of each dependency readiness input, never Python source."
   [^File project]
-  (util/sha256-hex (pr-str [(.getCanonicalPath project) runtime/version
-                            (Interpreter/pythonExecutable) (runtime/packages-dir)
-                            (slurp (io/file project "pyproject.toml"))
-                            (slurp (io/file project "uv.lock")) (index-args "--default-index")])))
+  (into (sorted-map)
+        (map (fn [[key value]]
+               [key (util/sha256-hex (pr-str value))]))
+        {:project (.getCanonicalPath project)
+         :runtime runtime/version
+         :interpreter (Interpreter/pythonExecutable)
+         :packages (.getCanonicalPath (io/file (runtime/packages-dir)))
+         :pyproject (let [f (io/file project "pyproject.toml")]
+                      (when (.isFile f) (slurp f)))
+         :lock (let [f (io/file project "uv.lock")]
+                 (when (.isFile f) (slurp f)))
+         :index (index-args "--default-index")}))
 
 (defn- project-home
   ^File [^File project]
@@ -253,32 +285,73 @@
 
 (defn prepared-project
   "Validate a manually prepared project and return the shared packages directory.
-   Never installs or copies dependencies. A changed lock, runtime, index or installed
-   distribution requires another explicit sync. Project state stores metadata only."
+   Never installs dependencies. Refusals name changed inputs and locked distributions;
+   unrelated installed packages and editable source changes do not invalidate readiness."
   ^File [^File project]
   (let [pointer
-        (io/file (project-home project) (str (project-key project) ".ready"))
+        (io/file (project-home project) "environment.ready")
 
         packages
         (.getCanonicalFile (io/file (runtime/packages-dir)))
 
+        inputs
+        (project-inputs project)
+
         ready
         (when (.isFile pointer) (try (edn/read-string (slurp pointer)) (catch Exception _ nil)))
 
-        installed
-        (package-metadata packages)]
+        valid?
+        (and (map? (:inputs ready)) (map? (:metadata ready)))
 
-    (when-not (and (.isDirectory packages)
-                   (= (str packages) (:packages ready))
-                   (map? (:metadata ready))
-                   (every? (fn [[name digest]]
-                             (= digest (get installed name)))
-                           (:metadata ready)))
-      (throw (ex-info (str
-                        "Missing or stale Vis environment; run: vis-agent python uv sync --project "
-                        (pr-str (.getCanonicalPath project))
-                        " --locked")
-                      {:type ::project-sync-required})))
+        installed
+        (package-metadata packages)
+
+        changed
+        (cond-> (if valid?
+                  (vec (for [[key value]
+                             inputs
+
+                             :when (not= value (get-in ready [:inputs key]))]
+
+                         key))
+                  [:readiness])
+          (not (.isDirectory packages))
+          (conj :packages))
+
+        distributions
+        (when valid?
+          (vec (sort (for [[name digest]
+                           (:metadata ready)
+
+                           :when (not= digest (get installed name))]
+
+                       name))))
+
+        reasons
+        (concat (map #(str (get {:pyproject "pyproject.toml"
+                                 :lock "uv.lock"
+                                 :packages "packages directory"
+                                 :project "project location"
+                                 :runtime "runtime version"
+                                 :interpreter "interpreter path"
+                                 :index "default index"
+                                 :readiness "readiness record"}
+                                %)
+                           " changed or missing")
+                     (distinct changed))
+                (when (seq distributions)
+                  [(str "installed distributions changed: " (str/join ", " distributions))]))]
+
+    (when (seq reasons)
+      (throw (ex-info (str "Missing or stale Vis environment: "
+                           (str/join "; " reasons)
+                           ". After reviewing dependency changes, use /reload --sync, or run: "
+                           "vis-agent python uv sync --project "
+                           (pr-str (.getCanonicalPath project))
+                           " --locked, then /reload")
+                      {:type ::project-sync-required
+                       :changed-inputs (vec (distinct changed))
+                       :changed-distributions (vec distributions)})))
     packages))
 
 (defn sync-project!
@@ -291,8 +364,8 @@
   (let [project
         (.getCanonicalFile project)
 
-        key
-        (project-key project)
+        inputs
+        (project-inputs project)
 
         home
         (project-home project)
@@ -304,15 +377,19 @@
         (io/file home (str (java.util.UUID/randomUUID) ".ready"))]
 
     (.mkdirs home)
-    (try (uv-sync! project packages options)
-         (when-not (= key (project-key project))
-           (throw (ex-info "Project changed during sync; run sync again" {})))
-         (spit pointer (pr-str {:packages (str packages) :metadata (package-metadata packages)}))
-         (Files/move (.toPath pointer)
-                     (.toPath (io/file home (str key ".ready")))
-                     (into-array CopyOption
-                                 [StandardCopyOption/ATOMIC_MOVE
-                                  StandardCopyOption/REPLACE_EXISTING]))
+    (try (let [{:keys [distributions]} (uv-sync! project packages options)]
+           (when-not (set? distributions)
+             (throw (ex-info "Python sync did not report its locked distributions" {})))
+           (when-not (= inputs (project-inputs project))
+             (throw (ex-info "Project changed during sync; run sync again" {})))
+           (spit pointer
+                 (pr-str {:inputs inputs
+                          :metadata (select-keys (package-metadata packages) distributions)}))
+           (Files/move (.toPath pointer)
+                       (.toPath (io/file home "environment.ready"))
+                       (into-array CopyOption
+                                   [StandardCopyOption/ATOMIC_MOVE
+                                    StandardCopyOption/REPLACE_EXISTING])))
          {:exit 0 :packages (str packages)}
          (finally (.delete pointer)))))
 

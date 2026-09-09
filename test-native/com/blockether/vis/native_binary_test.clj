@@ -650,6 +650,9 @@
           wheel-name
           "vis_cli_fixture-1.0-py3-none-any.whl"
 
+          unrelated
+          (io/file dir ".vis/python/packages/unrelated-1.dist-info/METADATA")
+
           bin
           (require-binary)]
 
@@ -678,12 +681,16 @@
                                                      "python"))) "--no-python-downloads"]
                                     60)]
              (expect (= 0 (:exit locked)) (:output locked)))
+           ;; #178: an unrelated shared distribution update must not invalidate this project.
+           (io/make-parents unrelated)
+           (spit unrelated "Name: unrelated\nVersion: 1\n")
            (let [synced (run-binary dir
                                     [(.getAbsolutePath bin)
                                      (str "-Duser.home=" (.getAbsolutePath dir)) "python" "uv"
                                      "sync" "--project" (str project) "--locked" "--offline"]
                                     120)]
              (expect (= 0 (:exit synced)) (:output synced)))
+           (spit unrelated "Summary: updated metadata\n" :append true)
            (let [lock-before
                  (slurp (io/file project "uv.lock"))
 

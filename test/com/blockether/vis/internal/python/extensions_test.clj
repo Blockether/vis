@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.context.agents :as agents]
+            [com.blockether.vis.internal.context.prompt :as prompt-context]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [com.blockether.vis.internal.foundation.harness.core :as harness]
             [com.blockether.vis.internal.config.core :as config]
@@ -2932,23 +2933,51 @@ vis.register(vis.Extension(
    hydrated only at process start (gateway `install-toggle-persistence!`, TUI
    `screen/run-chat!`), so `shell: false` in the YAML kept the tool live until a
    restart while `/reload` reported success."
-  (it "the shell toggle edited in vis.yml applies after /reload — #64"
-      (let [before (toggles/enabled? "shell")]
-        (toggles/set-value! "shell" true)
-        (expect (true? (toggles/enabled? "shell")))
-        (try (with-redefs [pyx/reload-python-extensions! (fn [& _]
-                                                           {:loaded 0 :failed 0})
-                           config/reload-config! (constantly {})
-                           config/current-config (constantly {})
-                           config/load-config-raw (constantly {"toggles" {"shell" false}})
-                           extension/run-reload-hooks! (constantly {})
-                           agents/reload! (constantly nil)
-                           prompt-templates/reload! (constantly [])]
+  (it
+    "the shell toggle edited in vis.yml applies after /reload — #64"
+    (let [before
+          (toggles/enabled? "shell")
 
-               (let [res ((var pyx/reload-slash) {:channel/id :tui :command/argv []})]
-                 (expect (= :ok (:slash/status res)))))
-             (expect (false? (toggles/enabled? "shell")))
-             (finally (toggles/set-value! "shell" before))))))
+          calls
+          (atom [])]
+
+      (toggles/set-value! "shell" true)
+      (expect (true? (toggles/enabled? "shell")))
+      (try (with-redefs [pyx/reload-python-extensions!
+                         (fn [opts]
+                           (swap! calls conj opts)
+                           {:loaded 0 :failed 0})
+
+                         config/reload-config!
+                         (constantly {})
+
+                         config/current-config
+                         (constantly {})
+
+                         config/load-config-raw
+                         (constantly {"toggles" {"shell" false}})
+
+                         extension/run-reload-hooks!
+                         (constantly {})
+
+                         agents/reload!
+                         (constantly nil)
+
+                         prompt-templates/reload!
+                         (constantly [])]
+
+             (let [res ((var pyx/reload-slash) {:channel/id :tui :command/argv []})]
+               (expect (= [{:sync-projects? false}] @calls))
+               ;; #178: only explicit --sync authorizes preparation, even with shell off.
+               (expect (false? (toggles/enabled? "shell")))
+               (expect (= :error
+                          (:slash/status (#'pyx/reload-slash {:command/argv ["--unknown"]}))))
+               (expect (= 1 (count @calls)))
+               (expect (= :ok (:slash/status (#'pyx/reload-slash {:command/argv ["--sync"]}))))
+               (expect (= [{:sync-projects? false} {:sync-projects? true}] @calls))
+               (expect (= :ok (:slash/status res)))))
+           (expect (false? (toggles/enabled? "shell")))
+           (finally (toggles/set-value! "shell" before))))))
 
 ;; Input Views — `vis.ask` blocks the extension until a channel answers
 
@@ -3806,8 +3835,29 @@ vis.register(vis.Extension(
               (expect (= "one" (invoke)))
               (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
               (expect (= "two" (invoke)))
+              ;; Regression #178: retained tools must be explicitly marked stale.
               (reset! fail? true)
+              (write-ext! ext-dir
+                          "greeter/src/center_greeter.py"
+                          "def hello():\n    return 'three'\n")
               (expect (= 1 (:failed (pyx/reload-python-extensions! opts))))
+              (let [failure (first (pyx/load-failures))
+                    prompt (:ext/prompt-fn (registered "python-extensions"))]
+
+                (expect (true? (:stale? failure)))
+                (expect (= "vis-greeter" (:extension failure)))
+                (expect (not= (:loaded-fingerprint failure) (:requested-fingerprint failure)))
+                (let [loader (registered "python-extensions")
+                      context (#'prompt-context/turn-system-context-block {} [loader])
+                      checks (#'pyx/doctor-fn {})]
+
+                  (expect ((:ext/activation-fn loader) {}))
+                  (expect (str/includes? context "tools and docs are stale"))
+                  (expect (some #(and (= :error (:level %))
+                                      (str/includes? (:message %) "tools and docs are stale"))
+                                checks))
+                  (expect (not-any? #(= :info (:level %)) checks)))
+                (expect (and prompt (str/includes? (prompt {}) "stale"))))
               (expect (= "two" (invoke))))))))))
 
 (defdescribe package-staging-is-not-scanned-test

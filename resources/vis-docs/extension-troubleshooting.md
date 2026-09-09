@@ -19,15 +19,21 @@ See the [entrypoint design](extension-design.md#keep-the-entrypoint-small).
   The extension directory is an import root and a same-named file can shadow the package.
 - **Missing import:** check the build backend, editable source configuration and
   `package.__file__`. Sync must use the gateway's OS user, runtime and package directory.
-- **Missing or stale Vis environment:** update the lock when needed, run the printed
-  sync command, then `/reload`. Imports do not repair readiness or install packages.
+- **Missing or stale Vis environment:** the message identifies changed readiness inputs
+  or installed distributions. Review dependency changes and update the lock when needed,
+  then use `/reload --sync` to prepare declared uv projects through the host, including
+  when assistant shell access is disabled. Alternatively, run the printed sync command
+  and `/reload`. Ordinary reload and imports never install manual project dependencies.
 - **Import works in the CLI or extension but not the sandbox:** inspect
   [filesystem access](jail.md#filesystem-access) and the package's native operations.
   An editable install does not widen the sandbox policy.
 - **Old tool result after an edit:** use `/reload` and invoke the tool on the next
   turn. Check whether the import came from the checkout, a frozen source snapshot
   or an ordinary installed wheel. Copied wheels need another install; editable
-  Python source and declared `source_paths` need `/reload`.
+  Python source and declared `source_paths` need `/reload`. A failed reload explicitly
+  marks retained tools and docs as stale, with loaded/requested source fingerprints in
+  the reload result, doctor and assistant context. Resolve that failure before checking
+  the new API; a successful retry clears the warning at the next turn boundary.
 
 ## Contract metadata
 
