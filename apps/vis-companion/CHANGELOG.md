@@ -2,6 +2,17 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.52 (5650) — 2026-09-09
+<!-- commit: fa460242998f80ce9dc4aa3936700b87a926b128 -->
+
+- Group repeated calls by operation
+- Record bounded typing diagnostics
+- Avoid reflow for overflowing draft corrections
+- Align speech test action with text input
+- Add speech previews and sliding voice actions
+- V0.1.52
+- Record companion build 5618
+
 ## 0.1.51 (5618) — 2026-09-09
 <!-- commit: 9a741e64bbbd2326e2a88bda9ebf2eb5633a4172 -->
 
