@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.55] - 2026-09-09
+
+### Fixed
+- Reactivate idle Council sessions after terminal transitions and preserve publications addressed to inactive peers.
+- Retry silent gateway requests, persist timeout errors and stop turns after sandbox retirement.
+- Align activity spacing in the TUI and companion and pause hidden draft subscriptions.
+- Keep extension type documentation and early GitHub workflow watches reliable.
+- Use official Ubuntu package sources for native sandbox test dependencies.
+
 ## [v0.1.54] - 2026-09-09
 
 ### Fixed
