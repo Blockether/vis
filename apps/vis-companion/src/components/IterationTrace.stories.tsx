@@ -494,10 +494,14 @@ export const CodeWithResult: Story = {
         getComputedStyle(document.body).color,
       );
     }
-    for (const side of ["paddingTop", "paddingBottom"] as const) {
-      await expect(getComputedStyle(codeBody)[side]).toBe("8px");
-      await expect(getComputedStyle(result)[side]).toBe("4px");
-    }
+    // Regression: CODE and RESULT stacked body padding beneath the disclosure.
+    // Like ACTIVITY, the first content row begins at the end of its header.
+    const headerBottom = (name: string) =>
+      canvas.getByRole("button", { name }).getBoundingClientRect().bottom;
+    const firstCodeLine = codeBody.querySelector("pre code > div")!;
+    await expect(
+      firstCodeLine.getBoundingClientRect().top - headerBottom("Collapse code"),
+    ).toBe(0);
     for (const surface of [code, result, activity]) {
       await expect(getComputedStyle(surface).borderLeftWidth).toBe("0px");
     }
@@ -508,6 +512,19 @@ export const CodeWithResult: Story = {
     canvas.getByRole("button", { name: "Expand result" }).focus();
     await userEvent.keyboard("{Enter}");
     await expect(band.textContent).toContain("Listed 5 entries.");
+    const firstResultLine = result.querySelector("pre code > div")!;
+    await expect(
+      firstResultLine.getBoundingClientRect().top -
+        headerBottom("Collapse result"),
+    ).toBe(0);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    const activityBody = canvas.getByRole("list", { name: "Operation groups" });
+    await expect(
+      activityBody.getBoundingClientRect().top -
+        headerBottom("Collapse Activity"),
+    ).toBe(0);
     await expect(band.querySelector("summary")).toBeNull();
     await expect(
       canvas

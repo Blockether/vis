@@ -495,6 +495,27 @@ describe("Markdown tool card body", () => {
   });
 });
 
+describe("nested result spacing", () => {
+  it.each(["text", "diff"])(
+    "lets the result own %s block padding without changing standalone blocks",
+    (language) => {
+      // Regression: nested output added another 8px below the RESULT header.
+      const value = `\`\`\`${language}\n first line\n\n last line\n\`\`\``;
+      const view = render(<Markdown compact>{value}</Markdown>);
+      const content = () => view.container.querySelector(".overflow-x-auto")!;
+      expect(content()).toHaveClass("py-2");
+      const text = content().textContent;
+      view.rerender(
+        <Markdown compact nested>
+          {value}
+        </Markdown>,
+      );
+      expect(content()).not.toHaveClass("py-2");
+      expect(content().textContent).toBe(text);
+    },
+  );
+});
+
 // Regression, companion transcript report: PATCH diffs used a two-column
 // desktop layout, leaving each side unreadably narrow in the web and native apps.
 describe("compact diff blocks", () => {

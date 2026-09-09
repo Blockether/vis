@@ -250,7 +250,7 @@ const DiffBlock = memo(function DiffBlock({
         </div>
       )}
       <div
-        className={`${compact ? "text-meta" : "text-ui"} max-w-full overflow-x-auto overscroll-x-contain py-2 font-mono`}
+        className={`${compact ? "text-meta" : "text-ui"} max-w-full overflow-x-auto overscroll-x-contain ${frameless ? "" : "py-2"} font-mono`}
       >
         <div className="w-max min-w-full">
           {rows.map((row, index) => {
@@ -448,7 +448,7 @@ export const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   bare?: boolean;
   /** Keep the spacing but drop the frame: an enclosing card already draws one. */
   frameless?: boolean;
-  /** Omit vertical code padding when the enclosing activity owns its spacing. */
+  /** Omit vertical code padding when the enclosing band owns its spacing. */
   padded?: boolean;
 }) {
   const gutter = splitGutter(value);
@@ -541,8 +541,7 @@ export const Markdown = memo(function Markdown({
   children: string;
   compact?: boolean;
   hardBreaks?: boolean;
-  /** Rendered INSIDE an already-framed container (a tool result card): code and
-      diff blocks drop their own border so the card shows ONE frame, not two. */
+  /** The enclosing result owns the frame and padding of nested code and diffs. */
   nested?: boolean;
   onOpenAttachment?: OpenAttachment;
 }) {
@@ -715,6 +714,7 @@ export const Markdown = memo(function Markdown({
                 language={language}
                 compact={compact}
                 frameless={nested}
+                padded={!nested}
               />
             );
           },
@@ -1251,11 +1251,11 @@ const ToolCard = memo(function ToolCard({
         )}
         {resultShown &&
           (failed ? (
-            <pre className="mt-2 whitespace-pre-wrap break-words font-mono">
+            <pre className="m-0 whitespace-pre-wrap break-words font-mono">
               {body}
             </pre>
           ) : (
-            <div className="mt-2">
+            <div>
               <Markdown compact nested>
                 {body}
               </Markdown>
@@ -1396,13 +1396,14 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
         )}
       </div>
       {expanded && showCode && (
-        <div className="py-2" data-code-body>
+        <div className="pb-2" data-code-body>
           <SyntaxCodeBlock
             value={value}
             language={language}
             compact
             bare
             frameless
+            padded={false}
           />
         </div>
       )}
