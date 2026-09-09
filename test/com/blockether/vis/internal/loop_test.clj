@@ -9786,7 +9786,25 @@
                                                              "Picked up JAVA_TOOL_OPTIONS:")
                                                     (line-seq reader))))))
                               (keep #(get-in % [:error :data :log]) (:trace result)))))
-                    (expect (pos? @idx) (pr-str result))))
+                    (expect (pos? @idx) (pr-str result))
+                    ;; Council's input-state Atom belongs to the live activation,
+                    ;; never to the context snapshot saved with the final answer.
+                    (let [ctx @(:ctx-atom environment)
+                          clean (eng/strip-ephemeral ctx)]
+
+                      (expect (string? (get ctx "engine_council_activation_id")))
+                      (expect (every? string? (keys clean)))
+                      (expect (not-any? #(str/starts-with? % "engine_council_")
+                                        (filter string? (keys clean))))
+                      (expect (true? (#'lp/persist-turn-outcome!
+                                      db
+                                      tid
+                                      {:status :success
+                                       :content {:type "text" :text "done"}
+                                       :ctx clean})))
+                      (expect (nil? (:error (first (persistance/db-list-session-turns
+                                                     db
+                                                     (:session-id environment)))))))))
                 (let [iterations (persistance/db-list-session-turn-iterations db tid)
                       rows (mapcat #(tree-seq (comp seq :children) :children %)
                                    (mapcat #(get-in % [:activity :rows])

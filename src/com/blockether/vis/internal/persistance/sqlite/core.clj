@@ -2649,12 +2649,10 @@
 ;; you'll be tempted to `(declare freeze-safe)` again.
 
 (defn- runtime-object?
-  "True when `v` is a runtime-only object (function, var, or other
-   runtime-internal object) that cannot be meaningfully serialized as
-   data. These get a :vis/ref marker
-   so the system knows to re-eval from the `expression` column to reconstruct them."
+  "True when `v` is runtime state rather than durable data.
+   Never dereference it: that can block, execute code or expose live resources."
   [v]
-  (or (fn? v) (instance? clojure.lang.Var v) (instance? java.util.concurrent.Future v)))
+  (or (fn? v) (instance? clojure.lang.IDeref v) (instance? java.util.concurrent.Future v)))
 
 (defn- freeze-safe
   "Prepare `v` for nippy serialization.
@@ -2664,7 +2662,7 @@
    - Lazy seqs -> `{:vis/ref :expr}`. A lazy seq IS a computation. Its durable
      form is the source code that produces it, not a materialized snapshot.
      Re-eval from :expr to reconstruct.
-   - Functions, vars -> `{:vis/ref :expr}`. Same reason.
+   - Functions, dereferenceable state and futures -> `{:vis/ref :expr}`.
    - Plain scalars (strings, numbers, keywords, etc.) -> pass through
      at ANY depth. The depth limit is a safety against runaway recursion
      into self-referential collections; clipping scalars makes legitimate
@@ -2679,28 +2677,28 @@
    restored bubbles painted no badge text."
   ([v] (freeze-safe v 32))
   ([v ^long depth]
-   (cond (nil? v) nil
-         (runtime-object? v) {:vis/ref :expr}
-         (instance? clojure.lang.LazySeq v) {:vis/ref :expr}
-         (map? v) (if (zero? depth)
-                    {:vis/ref :depth-exceeded}
-                    (persistent! (reduce-kv (fn [m k val]
-                                              (assoc! m k (freeze-safe val (dec depth))))
-                                            (transient {})
-                                            v)))
-         (vector? v)
-         (if (zero? depth) {:vis/ref :depth-exceeded} (mapv #(freeze-safe % (dec depth)) v))
-         (set? v) (if (zero? depth)
-                    {:vis/ref :depth-exceeded}
-                    (into #{} (map #(freeze-safe % (dec depth))) v))
-         (list? v)
-         (if (zero? depth) {:vis/ref :depth-exceeded} (doall (map #(freeze-safe % (dec depth)) v)))
-         ;; A NON-lazy seq (ArraySeq from `sort`, Cons, ChunkedCons) is already
-         ;; realized DATA — walk it like a list. Only LazySeq (caught above) is
-         ;; a computation whose durable form is the source in :expr.
-         (seq? v)
-         (if (zero? depth) {:vis/ref :depth-exceeded} (doall (map #(freeze-safe % (dec depth)) v)))
-         :else v)))
+   (cond
+     (nil? v) nil
+     (runtime-object? v) {:vis/ref :expr}
+     (instance? clojure.lang.LazySeq v) {:vis/ref :expr}
+     (map? v) (if (zero? depth)
+                {:vis/ref :depth-exceeded}
+                (persistent!
+                  (reduce-kv (fn [m k val]
+                               (assoc! m (freeze-safe k (dec depth)) (freeze-safe val (dec depth))))
+                             (transient {})
+                             v)))
+     (vector? v) (if (zero? depth) {:vis/ref :depth-exceeded} (mapv #(freeze-safe % (dec depth)) v))
+     (set? v)
+     (if (zero? depth) {:vis/ref :depth-exceeded} (into #{} (map #(freeze-safe % (dec depth))) v))
+     (list? v)
+     (if (zero? depth) {:vis/ref :depth-exceeded} (doall (map #(freeze-safe % (dec depth)) v)))
+     ;; A NON-lazy seq (ArraySeq from `sort`, Cons, ChunkedCons) is already
+     ;; realized DATA — walk it like a list. Only LazySeq (caught above) is
+     ;; a computation whose durable form is the source in :expr.
+     (seq? v)
+     (if (zero? depth) {:vis/ref :depth-exceeded} (doall (map #(freeze-safe % (dec depth)) v)))
+     :else v)))
 
 ;; Per-session model preference (session_soul.llm_pref_provider + llm_pref_model)
 

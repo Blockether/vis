@@ -29,7 +29,7 @@
         env
         {:session-id sid
          :db-info db
-         :ctx-atom (atom {:council-actor {:activation-id activation}})
+         :ctx-atom (atom {"engine_council_activation_id" activation})
          :turn-state-atom (atom {:turn-position 1 :iteration 1 :form-idx 0})}]
 
     (ps/db-set-session-project! db sid gid)
@@ -54,7 +54,7 @@
           (is (document/valid-json? "council" "entry" entry))
           (is (= "fixture-op" (get-in entry ["source_ref" "operation_id"])))
           (is (= 1 (count (:entries (council/read-entries db sid {})))))
-          (is (seq (:council-publications @(:ctx-atom env))))
+          (is (seq (get @(:ctx-atom env) "engine_council_publications")))
           (doseq [ref (get-in result [:metadata :activity/resources])]
             (is (document/valid? "council" "activity_resource" ref))))))))
 
