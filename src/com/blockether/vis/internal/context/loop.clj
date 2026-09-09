@@ -2,7 +2,9 @@
   "Loop integration layer for context management.
 
    The loop keeps a per-session `:ctx-atom` for stable model-facing context
-   and a separate `:turn-state-atom` for live turn/iteration/form counters.
+   and a separate `:turn-state-atom` for live execution state and counters.
+   Council publication identity and references live there only during execution;
+   activation resources and retry input belong to the session runtime registry.
    This namespace stamps the cursor, enriches context with env/access/routing,
    and renders the standing context block. Live resources (background shells,
    managed REPLs) are deliberately NOT part of ctx: a handle or `repl_status`
@@ -14,7 +16,7 @@
             [com.blockether.vis.internal.context.prompt :as prompt]
             [taoensso.telemere :as tel]))
 
-;; Atom and constructor — ONE atom carries the entire engine state
+;; Model context constructor
 
 (defn make-ctx-atom
   "Initialize the CTX atom for a session. Uses the canonical empty scaffold.
@@ -43,8 +45,9 @@
 ;; atomic update path, single source of truth.
 
 (defn make-turn-state-atom
-  "Initialize the per-session turn-state atom. Holds every cursor +
-   DB-id field the iteration loop and ctx-loop helpers consume."
+  "Initialize the per-session execution state: cursors, answers and DB ids.
+   The loop scopes optional `:council` publication identity and references to one
+   logical iteration, including retries. It is not model context or a snapshot."
   []
   (atom {:turn-position nil
          :iteration nil

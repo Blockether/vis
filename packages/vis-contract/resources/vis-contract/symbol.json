@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "parameter_kinds": [
+    "positional_only",
+    "positional_or_keyword",
+    "var_positional",
+    "keyword_only",
+    "var_keyword"
+  ],
+  "type_kinds": [
+    "any",
+    "null",
+    "scalar",
+    "opaque",
+    "unresolved",
+    "union",
+    "literal",
+    "generic",
+    "record",
+    "reference"
+  ]
+}

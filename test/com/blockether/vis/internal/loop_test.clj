@@ -9452,16 +9452,20 @@
         (atom [])
 
         result
-        (atom nil)]
+        (atom nil)
 
-    (with-redefs-fn {#'persistance/db-update-session-turn!
-                     (fn [_db _id o]
-                       (swap! calls conj o)
-                       (when (reject? o)
-                         (throw (ex-info "[SQLITE_TOOBIG] String or BLOB exceeds size limit" {})))
-                       :written)}
-      #(reset! result (#'lp/persist-turn-outcome! {} "turn-1" opts)))
-    {:calls @calls :result @result}))
+        {:keys [signals]}
+        (tel/with-signals (with-redefs-fn
+                            {#'persistance/db-update-session-turn!
+                             (fn [_db _id o]
+                               (swap! calls conj o)
+                               (when (reject? o)
+                                 (throw (ex-info "[SQLITE_TOOBIG] String or BLOB exceeds size limit"
+                                                 {})))
+                               :written)}
+                            #(reset! result (#'lp/persist-turn-outcome! {} "turn-1" opts))))]
+
+    {:calls @calls :result @result :signals signals}))
 
 ;; Regression (session 4b6897d4): the write that RECORDS a turn's outcome was
 ;; itself unguarded, so a payload the store refused (`[SQLITE_TOOBIG]` on an
@@ -9470,23 +9474,21 @@
 ;; session that had already finished it.
 (defdescribe
   turn-outcome-guard-test
-  "The write that records HOW a turn ended must never be the write that loses
-   it: on refusal the outcome is re-written from a minimal payload that carries
-   neither CTX nor the content the store would not take."
+  "Persistence degrades from full outcome to no context, then minimal content.
+   Snapshot failure alone never discards the answer or its structured error."
   (it "writes once and reports success when the store accepts the payload"
       (let [{:keys [calls result]} (outcome-writes (constantly false) failed-turn-outcome)]
         (expect (true? result))
         (expect (= [failed-turn-outcome] calls))))
-  (it "degrades to a recorded outcome when the full payload is refused"
-      (let [{:keys [calls result]}
-            (outcome-writes #(some? (:ctx %)) failed-turn-outcome)
+  (it "degrades only after the answer itself is refused and logs each failed write"
+      (let [{:keys [calls result signals]}
+            (outcome-writes #(= (:content failed-turn-outcome) (:content %)) failed-turn-outcome)
 
             degraded
-            (second calls)]
+            (last calls)]
 
         (expect (true? result))
-        (expect (= 2 (count calls)))
-        ;; The turn ENDS: same status and counters, no CTX, no unstorable answer.
+        (expect (= 3 (count calls)))
         (expect (= :error (:status degraded)))
         (expect (= 33 (:iteration-count degraded)))
         (expect (= 1234 (:duration-ms degraded)))
@@ -9494,20 +9496,35 @@
         (expect (nil? (:ctx degraded)))
         (expect (= 1 (count (:content degraded))))
         (expect (= "turn_outcome_persist_failed" (get (:error degraded) "code")))
-        (expect (str/includes? (get (:error degraded) "message") "SQLITE_TOOBIG"))))
-  (it "keeps a successful turn's own status when only its answer is refused"
-      (let [{:keys [calls result]} (outcome-writes #(some? (:ctx %))
-                                                   (assoc failed-turn-outcome
-                                                     :status :success
-                                                     :error nil
-                                                     :prior-outcome :complete))]
+        (expect (< (count (get (:error degraded) "message")) 256))
+        (expect (= [::lp/turn-outcome-persist-failed ::lp/turn-outcome-without-context-failed]
+                   (mapv :id signals)))
+        (expect (every? #(= :warn (:level %)) signals))))
+  (it "preserves the original structured error when only CTX is refused"
+      (let [{:keys [calls result signals]} (outcome-writes #(contains? % :ctx) failed-turn-outcome)]
         (expect (true? result))
-        (expect (= :success (:status (second calls))))
-        (expect (= "turn_outcome_persist_failed" (get (:error (second calls)) "code")))))
+        (expect (= [failed-turn-outcome (dissoc failed-turn-outcome :ctx)] calls))
+        (expect (= [::lp/turn-outcome-persist-failed] (mapv :id signals)))))
+  (it "preserves a successful answer when only the context snapshot is refused"
+      (let [outcome
+            (assoc failed-turn-outcome
+              :content [(content/prose "The completed answer")]
+              :status :success
+              :error nil
+              :prior-outcome :complete)
+
+            {:keys [calls result]}
+            (outcome-writes #(some? (:ctx %)) outcome)]
+
+        (expect (true? result))
+        (expect (= 2 (count calls)))
+        (expect (= (dissoc outcome :ctx) (second calls)))))
   (it "reports failure instead of throwing when even the minimal outcome is refused"
-      (let [{:keys [calls result]} (outcome-writes (constantly true) failed-turn-outcome)]
+      (let [{:keys [calls result signals]} (outcome-writes (constantly true) failed-turn-outcome)]
         (expect (false? result))
-        (expect (= 2 (count calls)))))
+        (expect (= 3 (count calls)))
+        (expect (= ::lp/turn-outcome-lost (:id (last signals))))
+        (expect (= :error (:level (last signals))))))
   (it "does not write after another terminal path owns the turn"
       (let [writes
             (atom [])
@@ -9792,7 +9809,10 @@
                     (let [ctx @(:ctx-atom environment)
                           clean (eng/strip-ephemeral ctx)]
 
-                      (expect (string? (get ctx "engine_council_activation_id")))
+                      (expect (not (contains? (ctx-loop/read-turn-state environment) :council)))
+                      (expect (not (contains? ctx :council-actor)))
+                      (expect (not-any? #(str/starts-with? % "engine_council_")
+                                        (filter string? (keys ctx))))
                       (expect (every? string? (keys clean)))
                       (expect (not-any? #(str/starts-with? % "engine_council_")
                                         (filter string? (keys clean))))
@@ -9866,3 +9886,150 @@
                      (drop! sid))
                    (lp/dispose-environment! b)
                    (lp/dispose-environment! a)))))))
+
+(defdescribe
+  council-execution-state-test
+  (it "collects publication references outside CTX and detaches them before persistence"
+      (let [environment
+            {:session-id "session"
+             :ctx-atom (atom {})
+             :turn-state-atom (ctx-loop/make-turn-state-atom)}
+
+            publication
+            {:id 7 :thread_id 7}
+
+            result
+            (#'lp/with-council-execution
+             environment
+             {:activation-id "active"}
+             ["turn" 1]
+             (fn []
+               (expect (= "active"
+                          (get-in (ctx-loop/read-turn-state environment)
+                                  [:council :activation-id])))
+               (expect (empty? @(:ctx-atom environment)))
+               (ctx-loop/swap-turn-state! environment
+                                          update-in
+                                          [:council :publications]
+                                          conj
+                                          publication)
+               {:status :success}))]
+
+        (expect (= [publication] (:council-publications result)))
+        (expect (not (contains? (ctx-loop/read-turn-state environment) :council)))
+        (expect (empty? @(:ctx-atom environment)))))
+  (it "does not lose a publication accepted while execution is being detached"
+      (let [environment
+            {:turn-state-atom (ctx-loop/make-turn-state-atom)}
+
+            publication
+            {:id 9}
+
+            accepted?
+            (atom false)
+
+            swap-state!
+            ctx-loop/swap-turn-state!
+
+            result
+            (with-redefs [ctx-loop/swap-turn-state! (fn [env f & args]
+                                                      ;; Complete a host publication immediately before cleanup.
+                                                      (when (:council (ctx-loop/read-turn-state
+                                                                        env))
+                                                        (reset! accepted? true)
+                                                        (swap! (:turn-state-atom env) update-in
+                                                          [:council :publications]
+                                                          conj
+                                                          publication))
+                                                      (apply swap-state! env f args))]
+              (#'lp/with-council-execution
+               environment
+               {:activation-id "active"}
+               ["turn" 1]
+               (constantly {})))]
+
+        (expect (or (not @accepted?) (= [publication] (:council-publications result))))
+        (expect (not (contains? (ctx-loop/read-turn-state environment) :council)))))
+  (it "cleans execution state after an exception or cancellation"
+      (doseq [error [(ex-info "fixture failure" {}) (InterruptedException. "fixture cancellation")]]
+        (let [environment {:turn-state-atom (ctx-loop/make-turn-state-atom)}
+              caught (try (#'lp/with-council-execution
+                           environment
+                           {:activation-id "active"}
+                           ["turn" 1]
+                           (fn []
+                             (throw error)))
+                          nil
+                          (catch Throwable t t))]
+
+          (expect (identical? error caught))
+          (expect (not (contains? (ctx-loop/read-turn-state environment) :council))))))
+  (it "does not collect or clear a newer execution when stale work returns"
+      (let [environment
+            {:session-id "session" :turn-state-atom (ctx-loop/make-turn-state-atom)}
+
+            newer
+            {:activation-id "new" :iteration-key ["turn" 2] :publications [{:id 8}]}
+
+            result
+            (atom nil)
+
+            {:keys [signals]}
+            (tel/with-signals
+              (reset! result (#'lp/with-council-execution
+                              environment
+                              {:activation-id "old"}
+                              ["turn" 1]
+                              (fn []
+                                (ctx-loop/set-turn-state! environment :council newer)
+                                {}))))]
+
+        (expect (nil? (:council-publications @result)))
+        (expect (= newer (:council (ctx-loop/read-turn-state environment))))
+        (expect (= [::lp/council-execution-superseded] (mapv :id signals))))))
+
+(defdescribe
+  unfreezable-context-preserves-answer-test
+  (it
+    "persists a successful answer in real SQLite when its snapshot cannot be frozen"
+    (let [environment
+          (lp/create-environment (helper-router :lmstudio nil) {:db :memory})
+
+          db
+          (:db-info environment)
+
+          sid
+          (:session-id environment)
+
+          tid
+          (persistance/db-store-session-turn! db
+                                              {:parent-session-id sid
+                                               :user-request "snapshot fixture"})
+
+          answer
+          [(content/prose "The completed answer")]]
+
+      (try (let [written
+                 (atom nil)
+
+                 {:keys [signals]}
+                 (tel/with-signals (reset! written (#'lp/persist-turn-outcome!
+                                                    db
+                                                    tid
+                                                    {:status :success
+                                                     :content answer
+                                                     :iteration-count 2
+                                                     :duration-ms 42
+                                                     :ctx {"unsupported" (Object.)}})))
+
+                 stored
+                 (first (persistance/db-list-session-turns db sid))]
+
+             (expect (true? @written))
+             (expect (= answer (:content stored)))
+             (expect (= :done (:status stored)))
+             (expect (= 2 (:iteration-count stored)))
+             (expect (= 42 (:duration-ms stored)))
+             (expect (nil? (:error stored)))
+             (expect (= [::lp/turn-outcome-persist-failed] (mapv :id signals))))
+           (finally (lp/dispose-environment! environment))))))

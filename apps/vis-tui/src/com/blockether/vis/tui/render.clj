@@ -1744,6 +1744,16 @@
 
 (def ^:private code-copy-label " COPY ")
 
+(defn- draw-band-copy!
+  [g meta x y iw right-inset]
+  (when-let [copy-width (:copy-width meta)]
+    (p/clear-styles! g)
+    (p/set-colors! g t/button-fg t/button-bg)
+    (p/put-str! g
+                (+ (long x) (- (long iw) (long right-inset) (long copy-width)))
+                y
+                code-copy-label)))
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -2338,12 +2348,14 @@
                             ;; expansion store, so bulk fold and `C-x t` reach it too.
                             (when (:node-id meta)
                               (.register interactions/hit-map
-                                         {:bounds
-                                          {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                                         {:bounds {:row (+ (long viewport-top) (long y))
+                                                   :col x
+                                                   :width (or (:click-width meta) iw)}
                                           :kind :toggle-details
                                           :session-id (:session-id meta)
                                           :node-id (:node-id meta)
-                                          :collapsed? (:collapsed? meta)})))
+                                          :collapsed? (:collapsed? meta)}))
+                            (draw-band-copy! g meta x y iw right-inset))
 
                         ;; A path keeps its name: the directory reads quiet because it is
                         ;; only where the file lives, the filename wears the darker ink
@@ -2500,14 +2512,7 @@
                       (p/set-colors! g row-fg row-bg)
                       (p/fill-rect! g fbx y fill-iw 1)
                       (paint-ansi-line! g x y (subs line 1) row-fg row-bg)
-                      (when-let [copy-width (:copy-width meta)]
-                        ;; Match the header buttons; screen regions still own copy/selection.
-                        (p/clear-styles! g)
-                        (p/set-colors! g t/button-fg t/button-bg)
-                        (p/put-str! g
-                                    (+ (long x) (- (long iw) right-inset (long copy-width)))
-                                    y
-                                    code-copy-label))
+                      (draw-band-copy! g meta x y iw right-inset)
                       (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)
@@ -5103,13 +5108,11 @@
       operation)))
 
 (defn- activity-row-tail
-  "How long the step took, or the `...` the web prints while it is still counting: this
-   wire carries no elapsed time for a call in flight, and an empty column reads as a
-   number that went missing rather than one not taken yet."
-  [{:keys [duration-ms] :as row}]
-  (if (pos? (long (or duration-ms 0)))
-    (vis/format-duration duration-ms)
-    (when (= :running (activity-row-state row)) "…")))
+  "Keep repetition counts visible at the right edge; otherwise show duration or live state."
+  [{:keys [duration-ms activity-repeat-count] :as row}]
+  (cond activity-repeat-count (str "×" activity-repeat-count)
+        (pos? (long (or duration-ms 0))) (vis/format-duration duration-ms)
+        (= :running (activity-row-state row)) "…"))
 
 (defn- activity-state-word
   "The execution word for a form's Activity. The form's OWN verdict wins; before it
@@ -5506,71 +5509,82 @@
             entries)))
       blocks)))
 
-(def ^:private activity-steps-shown 4)
+(defn- activity-group-row
+  [id label rows children]
+  (if (= 1 (count rows))
+    (first rows)
+    (let [files
+          (set (map :id (filter #(= "file" (:type %)) (mapcat :resources rows))))
+
+          complete?
+          (every? #(and (not (:is-truncated %))
+                        (some (fn [r]
+                                (= "file" (:type r)))
+                              (:resources %)))
+                  rows)
+
+          deltas
+          (map activity-step-delta rows)
+
+          additions
+          (reduce + 0 (map :additions deltas))
+
+          deletions
+          (reduce + 0 (map :deletions deltas))
+
+          states
+          (frequencies (map activity-row-state rows))
+
+          facts
+          (str/join " · "
+                    (remove nil?
+                      [(when (seq files)
+                         (str (count files)
+                              (if complete? " " " known ")
+                              (if (= 1 (count files)) "file" "files")))
+                       (when (pos? (+ additions deletions)) (str "+" additions " −" deletions))
+                       (not-empty (str/join " · "
+                                            (for [state
+                                                  [:running :failed :cancelled]
+
+                                                  :when (get states state)]
+
+                                              (str (get states state) " " (name state)))))
+                       (when (some :is-truncated rows) "partial details")]))]
+
+      {:id id
+       :sequence (:sequence (first rows))
+       :operation label
+       :summary ""
+       :activity-group? true
+       :state (name (or (some #(when (get states %) %) [:failed :running :cancelled]) :succeeded))
+       :presentation {:headline (str label " ×" (count rows)) :summary facts}
+       :children children
+       :resources []
+       :evidence []})))
 
 (defn- activity-operation-rows
-  "The shared operation groups, expressed as local disclosures without changing receipts."
+  "Shared operation and argument groups as local disclosures; receipts remain unchanged."
   [rows]
-  (mapv
-    (fn [{:keys [id label rows]}]
-      (if (= 1 (count rows))
-        (first rows)
-        (let [files
-              (set (map :id (filter #(= "file" (:type %)) (mapcat :resources rows))))
-
-              complete?
-              (every? #(and (not (:is-truncated %))
-                            (some (fn [r]
-                                    (= "file" (:type r)))
-                                  (:resources %)))
-                      rows)
-
-              deltas
-              (map activity-step-delta rows)
-
-              additions
-              (reduce + 0 (map :additions deltas))
-
-              deletions
-              (reduce + 0 (map :deletions deltas))
-
-              states
-              (frequencies (map activity-row-state rows))
-
-              facts
-              (str/join " · "
-                        (remove nil?
-                          [(when (seq files)
-                             (str (count files)
-                                  (if complete? " " " known ")
-                                  (if (= 1 (count files)) "file" "files")))
-                           (when (pos? (+ additions deletions)) (str "+" additions " −" deletions))
-                           (not-empty (str/join " · "
-                                                (for [state
-                                                      [:running :failed :cancelled]
-
-                                                      :when (get states state)]
-
-                                                  (str (get states state) " " (name state)))))
-                           (when (some :is-truncated rows) "partial details")]))]
-
-          {:id (str id "#group")
-           :sequence (:sequence (first rows))
-           :operation label
-           :summary ""
-           :activity-group? true
-           :state (name (or (some #(when (get states %) %) [:failed :running :cancelled])
-                            :succeeded))
-           :presentation {:headline (str label " ×" (count rows)) :summary facts}
-           :children rows
-           :resources []
-           :evidence []})))
-    (activity-contract/operation-groups rows)))
+  (mapv (fn [{:keys [id label rows]}]
+          (activity-group-row
+            (str id "#group")
+            label
+            rows
+            (mapv (fn [{:keys [id rows]}]
+                    (if (= 1 (count rows))
+                      (first rows)
+                      (let [title (or (not-empty (activity-step-object (first rows))) label)]
+                        (-> (activity-group-row (str id "#arguments") title rows rows)
+                            (assoc :activity-repeat-count (count rows))
+                            (assoc-in [:presentation :headline] title)))))
+                  (activity-contract/argument-groups rows))))
+        (activity-contract/operation-groups rows)))
 
 (defn- activity-detail-entries
-  "A joined, independently folded Activity band. Block-wide operation groups start shut;
-   live/failure context survives manual folding. Row, file and group keys retain reader choices.
-   #band folds Activity; #steps reveals retained groups beyond the four-group preview."
+  "A joined, independently folded Activity band. Every operation group is visible when
+   #band is open; group contents start shut. Live/failure context survives manual folding.
+   Row, file and group keys retain reader choices."
   [{:keys [node-id activity-rows activity-expanded? activity-omitted activity-artifacts]} max-w
    session-id]
   (let [rows
@@ -5586,23 +5600,6 @@
 
         band-open?
         (expanded? "#band" false)
-
-        show-all?
-        (expanded? "#steps" false)
-
-        preview
-        (into []
-              (keep-indexed (fn [index row]
-                              (when (or (< (long index) activity-steps-shown)
-                                        (not= :succeeded (activity-row-state row)))
-                                row)))
-              rows)
-
-        hidden
-        (- (count rows) (count preview))
-
-        shown
-        (if show-all? rows preview)
 
         width
         (max 1 (long max-w))
@@ -6007,7 +6004,24 @@
                                                                          {:kind :activity-evidence
                                                                           :item-id id})})
 
-                                                     (and (not open?) (seq nested))
+                                                     (and (not open?) (:activity-repeat-count row))
+                                                     (into (map (fn [message]
+                                                                  {:line (str activity-marker
+                                                                              (ellipsize-cols
+                                                                                (str (activity-lead
+                                                                                       col)
+                                                                                     message)
+                                                                                width))
+                                                                   :meta (merge meta-base
+                                                                                {:kind
+                                                                                 :activity-evidence
+                                                                                 :item-id id})})
+                                                                (distinct (keep :error-summary
+                                                                                nested))))
+
+                                                     (and (not open?)
+                                                          (seq nested)
+                                                          (not (:activity-repeat-count row)))
                                                      (into (mapcat #(row-entry % (inc (long depth)))
                                                                    (remove #(= :succeeded
                                                                                (activity-row-state
@@ -6016,21 +6030,6 @@
 
                                                      (and open? (seq nested))
                                                      (into (nested-entries))))))
-
-        more-entry
-        (when (pos? hidden)
-          (let [label (more-rule
-                        (if show-all? "show fewer groups" (str "show " (more-count hidden "group")))
-                        width)]
-            {:line (str activity-marker (ellipsize-cols label width))
-             :meta (merge meta-base
-                          {:kind :activity-more
-                           :item-id "#steps"
-                           :mark ""
-                           :label label
-                           :node-id (str node-id ":#steps")
-                           :collapsed? (not show-all?)
-                           :mark-col 0})}))
 
         ;; A hard transport limit is not a disclosure: those bytes are unavailable.
         omitted-entry
@@ -6070,8 +6069,14 @@
             prefix
             (str (band-label "ACTIVITY") " " (if band-open? "▾" "▸"))
 
+            copy?
+            (and node-id (>= width 20))
+
             suffix
-            (ellipsize-cols suffix (max 0 (- (long width) 12)))
+            (str/join "  "
+                      (remove str/blank?
+                        [(ellipsize-cols suffix (max 0 (- width (if copy? 20 12))))
+                         (when copy? code-copy-label)]))
 
             header
             {:line (str activity-marker (first (with-right-suffix [prefix] suffix width)))
@@ -6082,13 +6087,15 @@
                            :right-inset 2
                            :node-id (str node-id ":#band")
                            :item-id "#band"
+                           :copy-text (activity-contract/copy-text
+                                        {:rows activity-rows :omitted {:rows activity-omitted}})
+                           :copy-width (when copy? (p/display-width code-copy-label))
                            :collapsed? (not band-open?)
                            :operation-col 0
                            :operation-label "ACTIVITY"})}]
 
         (vec (concat [header]
-                     (when band-open? (mapcat row-entry shown))
-                     (when (and band-open? more-entry) [more-entry])
+                     (when band-open? (mapcat row-entry rows))
                      (when (and band-open? omitted-entry) [omitted-entry])
                      [blank]))))))
 

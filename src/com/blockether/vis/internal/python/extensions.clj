@@ -46,6 +46,7 @@
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [com.blockether.vis.internal.extension.aggregate :as aggregate]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.channel.notifications :as notifications]
@@ -1115,13 +1116,23 @@
         activity
         (get spec "activity")
 
+        contract
+        (get spec "contract")
+
+        _
+        (when-not (and (contract-document/valid-json? "symbol" "callable" contract)
+                       (= (str sym) (get contract "name"))
+                       (= (get spec "tag") (get contract "tag")))
+          (throw (ex-info (str "Invalid Python symbol contract for " sym)
+                          {:type :extension/invalid-symbol-contract})))
+
         _
         (when (and activity (not (contract-document/valid-json? "activity" "declaration" activity)))
           (throw (ex-info "Invalid Python Activity declaration"
                           {:type :extension/invalid-activity})))
 
         opts
-        (cond-> {:tag (get symbol-tags (str (get spec "tag")) :observation)}
+        (cond-> {:tag (get symbol-tags (str (get spec "tag")) :observation) :contract contract}
           (get spec "hidden")
           (assoc :hidden? true)
 
@@ -1634,10 +1645,20 @@
                       :data {:listener id :error (ex-message t)}})))))
 
 (defn load-failures
-  "Load failures from the most recent Python-extension scan:
-   `[{:file <path> :error <message>} ...]`."
+  "Load failures from the latest scan. Each row names the file, error, retained
+   extension, stale? status, loaded/requested source fingerprints and readiness changes."
   []
   @failures)
+
+(defn- failure-summary
+  [{:keys [file error extension stale? loaded-fingerprint requested-fingerprint]}]
+  (str "Python extension "
+       (or extension file)
+       ": reload failed; "
+       (if stale? "last-known-good tools and docs are stale" "not loaded")
+       (when loaded-fingerprint (str "; loaded fingerprint " loaded-fingerprint))
+       "; requested fingerprint " requested-fingerprint
+       ". " error))
 
 (defn loaded-python-extensions
   "Snapshot of the currently loaded Python extensions:
@@ -1900,7 +1921,7 @@
 
 (defn- prepare-root!
   "Snapshot source roots and prepare declared dependencies before evaluating any entry."
-  [{:keys [roots dependencies project automatic? package-metadata]}]
+  [{:keys [roots dependencies project automatic? package-metadata sync-projects?]}]
   (let [frozen (freeze-root! roots)]
     (try
       (when (or project (seq dependencies))
@@ -1908,7 +1929,9 @@
           [result
            (try
              (if project
-               (do ((if automatic? python-runtime/ensure-project! python-runtime/prepared-project)
+               (do ((if (or automatic? sync-projects?)
+                      python-runtime/ensure-project!
+                      python-runtime/prepared-project)
                      project)
                    {:exit 0})
                (python-runtime/pip-install! {:target (runtime/packages-dir) :upgrade? true}
@@ -2015,7 +2038,8 @@
                          (assoc spec
                            :ext/version (get metadata "version")
                            :ext/kind (get metadata "category")
-                           :ext/description (get metadata "description"))
+                           :ext/description (get metadata "description")
+                           :ext/skills (discovery/read-package-skills snap metadata))
                          spec)
                   validated (extension/register-extension! spec)]
 
@@ -2122,7 +2146,7 @@
 
    Returns `{:loaded n :failed n :changed? bool}`."
   ([] (load-python-extensions! nil))
-  ([{:keys [dirs]}]
+  ([{:keys [dirs sync-projects?]}]
    (register-loader-extension!)
    (let [dirs
          (or dirs (default-extension-dirs))
@@ -2133,7 +2157,9 @@
          plans
          (into {}
                (map (fn [f]
-                      [f (try (extension-plan f) (catch Throwable t {:error t}))])
+                      [f
+                       (try (assoc (extension-plan f) :sync-projects? sync-projects?)
+                            (catch Throwable t {:error t}))])
                     files))
 
          roots
@@ -2184,26 +2210,39 @@
            (let [path (.getCanonicalPath f)
                  prev-ctx (get-in @loaded [path :context])]
 
-             (try (let [{:keys [ext-name] :as entry}
-                        (load-file! f (per-root :frozen (get plans f) prepare-root!))]
-                    ;; A later file (project dir) registering the same extension
-                    ;; name supersedes an earlier one at a DIFFERENT path — the
-                    ;; registry already swapped the registration; close the
-                    ;; superseded context so its adapters can't linger.
-                    (doseq [[opath {oname :ext-name octx :context}] @loaded
-                            :when (and (= oname ext-name) (not= opath path))]
+             (try
+               (let [{:keys [ext-name] :as entry}
+                     (load-file! f (per-root :frozen (get plans f) prepare-root!))]
+                 ;; A later file (project dir) registering the same extension
+                 ;; name supersedes an earlier one at a DIFFERENT path — the
+                 ;; registry already swapped the registration; close the
+                 ;; superseded context so its adapters can't linger.
+                 (doseq [[opath {oname :ext-name octx :context}] @loaded
+                         :when (and (= oname ext-name) (not= opath path))]
 
-                      (close-context! octx)
-                      (swap! loaded dissoc opath))
-                    (swap! loaded assoc path (dissoc entry :path))
-                    (close-context! prev-ctx))
-                  (catch Throwable t
-                    (tel/log! {:level :warn
-                               :id ::load-failed
-                               :data {:file (str f) :error (ex-message t)}
-                               :msg (str "Python extension failed to load: " f
-                                         " — " (ex-message t))})
-                    (swap! failures conj {:file (str f) :error (ex-message t)})))))
+                   (close-context! octx)
+                   (swap! loaded dissoc opath))
+                 (swap! loaded assoc path (dissoc entry :path))
+                 (close-context! prev-ctx))
+               (catch Throwable t
+                 (tel/log! {:level :warn
+                            :id ::load-failed
+                            :data {:file (str f) :error (ex-message t)}
+                            :msg (str "Python extension failed to load: " f " — " (ex-message t))})
+                 (let [previous (get @loaded path)
+                       [_ sha source-sha] (some #(when (= path (first %)) %) fp)]
+
+                   (swap! failures conj
+                     (merge (select-keys (ex-data t) [:changed-inputs :changed-distributions])
+                            {:file (str f)
+                             :error (ex-message t)
+                             :extension (:ext-name previous)
+                             :stale? (boolean previous)
+                             :loaded-fingerprint
+                             (when previous
+                               (util/sha256-hex (pr-str (select-keys previous [:sha :code-sha]))))
+                             :requested-fingerprint
+                             (util/sha256-hex (pr-str {:sha sha :code-sha source-sha}))})))))))
          ;; Files that vanished from disk since the last scan (deleted / renamed)
          ;; have no entry to retain — deregister and close so they don't linger.
          (doseq [[opath {:keys [ext-name] :as e}]
@@ -2301,66 +2340,65 @@
     (when (seq tokens) (str/join ", " tokens))))
 
 (defn- reload-slash
-  [_ctx]
-  ;; One user-facing reload for EVERY hot-reloadable resource: configuration,
-  ;; Python extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
-  ;; templates, and any extension-owned discovery cache registered as a
-  ;; reload hook (harness skills/agents).
-  (let [{:keys [loaded failed]}
-        (reload-python-extensions!)
+  [{argv :command/argv}]
+  (if-not (or (empty? argv) (= ["--sync"] (vec argv)))
+    {:slash/status :error :slash/title "Usage: /reload [--sync]"}
+    ;; One user-facing reload for EVERY hot-reloadable resource: configuration,
+    ;; Python extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
+    ;; templates, and any extension-owned discovery cache registered as a
+    ;; reload hook (harness skills/agents).
+    (let [{:keys [loaded failed]}
+          (reload-python-extensions! {:sync-projects? (= ["--sync"] (vec argv))})
 
-        old-config
-        (config/current-config)
+          old-config
+          (config/current-config)
 
-        _config
-        (config/reload-config!)
+          _config
+          (config/reload-config!)
 
-        ;; Feature toggles live in the `toggles:` slot of the merged YAML and are
-        ;; otherwise hydrated ONLY at process start (gateway
-        ;; `install-toggle-persistence!`, TUI `screen/run-chat!`). Without this the
-        ;; in `vis.yml` (e.g. `shell: false`) had no effect until a full restart —
-        ;; `/reload` said "Reloaded" while the tool stayed live. Re-hydrate
-        ;; from the freshly re-read raw config so YAML is the source of truth again;
-        ;; ids absent from the file keep their current in-memory value.
-        _toggles
-        (try (toggles/hydrate-from-config! (or (config/load-config-raw) {}))
-             (catch Throwable _ nil))
+          ;; Feature toggles live in the `toggles:` slot of the merged YAML and are
+          ;; otherwise hydrated ONLY at process start (gateway
+          ;; `install-toggle-persistence!`, TUI `screen/run-chat!`). Without this the
+          ;; in `vis.yml` (e.g. `shell: false`) had no effect until a full restart —
+          ;; `/reload` said "Reloaded" while the tool stayed live. Re-hydrate
+          ;; from the freshly re-read raw config so YAML is the source of truth again;
+          ;; ids absent from the file keep their current in-memory value.
+          _toggles
+          (try (toggles/hydrate-from-config! (or (config/load-config-raw) {}))
+               (catch Throwable _ nil))
 
-        cfg-changes
-        (config-diff old-config (config/current-config))
+          cfg-changes
+          (config-diff old-config (config/current-config))
 
-        hook-results
-        (extension/run-reload-hooks!)
+          hook-results
+          (extension/run-reload-hooks!)
 
-        failed-hooks
-        (into []
-              (keep (fn [[id r]]
-                      (when-not (:ok? r) id)))
-              hook-results)
+          failed-hooks
+          (into []
+                (keep (fn [[id r]]
+                        (when-not (:ok? r) id)))
+                hook-results)
 
-        guidance
-        (try (agents/reload!) nil (catch Throwable t (ex-message t)))
+          guidance
+          (try (agents/reload!) nil (catch Throwable t (ex-message t)))
 
-        template-cnt
-        (try (count (prompt-templates/reload!)) (catch Throwable _ nil))]
+          template-cnt
+          (try (count (prompt-templates/reload!)) (catch Throwable _ nil))]
 
-    {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
-     :slash/title
-     (str "Reloaded — configuration" (when cfg-changes (str " (" cfg-changes ")"))
-          "; Python extensions: " loaded
-          " loaded" (when (pos? (long failed))
-                      (str ", "
-                           failed
-                           " failed (last-good kept): "
-                           (str/join "; "
-                                     (map (fn [{:keys [file error]}]
-                                            (str (.getName (io/file ^String file)) " — " error))
-                                          (load-failures)))
-                           " — see `vis-agent doctor`"))
-          "; skills/agents, prompt templates" (when template-cnt (str " (" template-cnt ")"))
-          ", and context files rescanned" (when (seq failed-hooks)
-                                            (str " — hook failures: "
-                                                 (str/join ", " (map str failed-hooks)))))}))
+      {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
+       :slash/title (str "Reloaded — configuration" (when cfg-changes (str " (" cfg-changes ")"))
+                         "; Python extensions: " loaded
+                         " loaded" (when (pos? (long failed))
+                                     (str ", "
+                                          failed
+                                          " failed: "
+                                          (str/join "; " (map failure-summary (load-failures)))
+                                          " — see `vis-agent doctor`"))
+                         "; skills/agents, prompt templates" (when template-cnt
+                                                               (str " (" template-cnt ")"))
+                         ", and context files rescanned"
+                         (when (seq failed-hooks)
+                           (str " — hook failures: " (str/join ", " (map str failed-hooks)))))})))
 
 (def ^:private http-methods
   #{"GET" "HEAD" "POST" "PUT" "PATCH" "DELETE" "OPTIONS" "TRACE" "CONNECT"})
@@ -2527,12 +2565,16 @@
 
 (defn- doctor-fn
   [_env]
-  (vec (concat (for [{:keys [file error]} @failures]
+  (vec (concat (for [failure @failures]
                  {:level :error
                   :check-id ::load
-                  :message (str "Python extension failed to load: " file)
-                  :remediation error})
-               (for [[path {:keys [ext-name]}] @loaded]
+                  :message (failure-summary failure)
+                  :remediation (:error failure)})
+               (for [[path {:keys [ext-name]}]
+                     @loaded
+
+                     :when (not-any? #(= path (:file %)) @failures)]
+
                  {:level :info
                   :check-id ::load
                   :message (str "Python extension '" ext-name "' loaded from " path)}))))
@@ -2551,10 +2593,13 @@
          "Loads Python extensions from ~/.vis/extensions and <project>/.vis/extensions."
          :ext/kind "host"
          :ext/source-nses ['com.blockether.vis.internal.python.extensions]
+         :ext/prompt-fn (fn [_]
+                          (when (seq @failures) (str/join "\n" (map failure-summary @failures))))
          :ext/slash-commands
          [{:slash/name "reload"
            :slash/doc
-           "Reload configuration, Python extensions, skills/agents, prompt templates, and context files."
+           "Reload configuration, extensions and context. --sync authorizes locked dependency preparation for declared uv projects."
+           :slash/usage "/reload [--sync]"
            :slash/run-fn reload-slash}
           {:slash/name "test"
            :slash/doc

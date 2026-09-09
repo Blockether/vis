@@ -209,3 +209,42 @@ def test_remote_failure_and_invalid_revision_leave_no_installation(
     assert not target.exists() or not list(target.iterdir())
     with pytest.raises(ValueError, match="revision"):
         package.install(REPOSITORY, target, trust=True, revision="--upload-pack=bad")
+
+
+@pytest.mark.parametrize("skills", ['["skills/greeting"]', "[]"])
+def test_manifest_declares_skills_without_executing_code(tmp_path, skills):
+    source = project(tmp_path / "source", MANIFEST + f"skills = {skills}\n")
+    skill = source / "skills/greeting"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: greeting\ndescription: Greet a person.\n---\nRead the tool contract."
+    )
+    metadata = package.inspect_source(source)
+    assert metadata["skills"] == (["skills/greeting"] if skills != "[]" else [])
+
+
+@pytest.mark.parametrize(
+    "skills",
+    [
+        '"skills/greeting"',
+        '["../outside"]',
+        '["skills/a", "skills/a"]',
+        '["/absolute"]',
+    ],
+)
+def test_invalid_skill_declarations_are_rejected(skills):
+    with pytest.raises(ValueError, match="skills|path"):
+        package.manifest_metadata(MANIFEST + f"skills = {skills}\n")
+
+
+def test_skill_paths_and_resources_stay_inside_package(tmp_path):
+    source = project(tmp_path / "source", MANIFEST + 'skills = ["skills/greeting"]\n')
+    with pytest.raises(ValueError, match="SKILL.md"):
+        package.inspect_source(source)
+    skill = source / "skills/greeting"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("Greet a person.")
+    (tmp_path / "private.txt").write_text("must not be read")
+    (skill / "reference.txt").symlink_to(tmp_path / "private.txt")
+    with pytest.raises(ValueError, match="inside"):
+        package.inspect_source(source)

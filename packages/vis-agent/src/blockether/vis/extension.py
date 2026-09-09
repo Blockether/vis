@@ -5,23 +5,31 @@ The engine injects the host declared by `vis-contract`; an installed wheel uses
 """
 
 from __future__ import annotations
+import __future__
 
+import ast
+import builtins
 import inspect
 import json
 import math
+import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from collections.abc import MutableMapping as _MutableMapping
 from contextlib import contextmanager
-from dataclasses import dataclass, field, fields
-from types import MappingProxyType
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass
+from types import FunctionType, MappingProxyType, MethodType, ModuleType, UnionType
 from typing import (
+    Annotated,
     Any,
     ClassVar,
     Literal,
+    Optional,
     Protocol,
     TypeAlias,
+    Union,
     get_args,
+    get_origin,
     runtime_checkable,
 )
 
@@ -638,6 +646,36 @@ def _kwargs_dict(x):
     return pairs
 
 
+def _inert_signature(fn):
+    # Even annotationlib.Format.STRING can execute deferred annotations in 3.14.
+    # Inspect a structural clone; future/stringized annotations need no clone.
+    target = fn.__func__ if inspect.ismethod(fn) else fn
+    if (
+        inspect.isfunction(target)
+        and getattr(target, "__annotate__", None) is not None
+        and not target.__code__.co_flags & __future__.annotations.compiler_flag
+    ):
+        clone = FunctionType(
+            target.__code__,
+            target.__globals__,
+            target.__name__,
+            target.__defaults__,
+            target.__closure__,
+        )
+        clone.__kwdefaults__ = target.__kwdefaults__
+        clone.__annotations__ = {}
+        actual = MethodType(clone, fn.__self__) if inspect.ismethod(fn) else clone
+        signature = inspect.signature(actual, eval_str=False)
+        unknown = "deferred annotation; use from __future__ import annotations"
+        return signature.replace(
+            parameters=[
+                p.replace(annotation=unknown) for p in signature.parameters.values()
+            ],
+            return_annotation=unknown,
+        )
+    return inspect.signature(fn, eval_str=False)
+
+
 def _kwargs_call(fn):
     # KEYWORD ARGUMENTS for a Python-backed tool. Host tool callables are
     # positional-only proxies, so the sandbox folds a caller's **kwargs into ONE
@@ -647,7 +685,7 @@ def _kwargs_call(fn):
     # keyword; a genuine dict positional (no such parameter, a positional-only
     # slot, non-identifier keys) fails the bind and passes through untouched.
     try:
-        sig = inspect.signature(fn)
+        sig = _inert_signature(fn)
     except (TypeError, ValueError):
         return fn
 
@@ -667,6 +705,244 @@ def _kwargs_call(fn):
     _call.__name__ = getattr(fn, "__name__", "symbol")
     _call.__doc__ = fn.__doc__
     return _call
+
+
+def _annotation_name(node, namespace):
+    """Resolve names statically; never import modules or run annotation expressions."""
+    if isinstance(node, ast.Name):
+        return namespace.get(
+            node.id, vars(builtins).get(node.id, inspect.Signature.empty)
+        )
+    if isinstance(node, ast.Attribute):
+        parent = _annotation_name(node.value, namespace)
+        if isinstance(parent, ModuleType) or inspect.isclass(parent):
+            return vars(parent).get(node.attr, inspect.Signature.empty)
+    return inspect.Signature.empty
+
+
+def _contract_type(annotation, namespace, seen=()):
+    if annotation is inspect.Signature.empty or annotation is Any:
+        return {"kind": "any", "name": "Any"}
+    if annotation is None or annotation is type(None):
+        return {"kind": "null", "name": "None"}
+    if isinstance(annotation, str):
+        if annotation in seen:
+            return {"kind": "reference", "name": annotation}
+        seen = (*seen, annotation)
+        try:
+            node = ast.parse(annotation, mode="eval").body
+        except (SyntaxError, ValueError):
+            return {"kind": "unresolved", "name": annotation}
+        return _contract_ast(node, namespace, seen)
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin is Annotated:
+        result = _contract_type(args[0], namespace, seen)
+        descriptions = [value for value in args[1:] if type(value) is str]
+        if descriptions:
+            result["description"] = "\n".join(descriptions)
+        return result
+    if origin in (Union, UnionType):
+        return {
+            "kind": "union",
+            "name": "union",
+            "arguments": [_contract_type(a, namespace, seen) for a in args],
+        }
+    if origin is Literal:
+        return {
+            "kind": "literal",
+            "name": "Literal",
+            "values": [a for a in args if type(a) in (str, int, bool, type(None))],
+        }
+    if origin is not None:
+        return {
+            "kind": "generic",
+            "name": getattr(origin, "__name__", "generic"),
+            "arguments": [_contract_type(a, namespace, seen) for a in args],
+        }
+    if inspect.isclass(annotation):
+        name = annotation.__name__
+        if annotation in seen:
+            return {"kind": "reference", "name": name}
+        if is_dataclass(annotation):
+            module = sys.modules.get(annotation.__module__)
+            scope = vars(module) if module else namespace
+            doc = inspect.getdoc(annotation) or ""
+            result = {"kind": "record", "name": name, "fields": []}
+            if doc and not doc.startswith(name + "("):
+                result["description"] = doc
+            for item in fields(annotation):
+                if not item.name.startswith("_"):
+                    has_default = (
+                        item.default is not MISSING
+                        or item.default_factory is not MISSING
+                    )
+                    result["fields"].append(
+                        {
+                            "name": item.name,
+                            "type": _contract_type(
+                                item.type, scope, (*seen, annotation)
+                            ),
+                            "required": not has_default,
+                            "has_default": has_default,
+                            "default_is_none": item.default is None,
+                        }
+                    )
+            return result
+        return {
+            "kind": "scalar"
+            if annotation in (str, int, float, bool, bytes)
+            else "opaque",
+            "name": name,
+        }
+    return {"kind": "unresolved", "name": type(annotation).__name__}
+
+
+def _contract_ast(node, namespace, seen):
+    if isinstance(node, ast.Constant):
+        if node.value is None:
+            return _contract_type(None, namespace, seen)
+        if isinstance(node.value, str):
+            return _contract_type(node.value, namespace, seen)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return {
+            "kind": "union",
+            "name": "union",
+            "arguments": [
+                _contract_ast(n, namespace, seen) for n in (node.left, node.right)
+            ],
+        }
+    if isinstance(node, ast.Subscript):
+        base = _annotation_name(node.value, namespace)
+        nodes = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+        if base is Annotated and nodes:
+            result = _contract_ast(nodes[0], namespace, seen)
+            descriptions = [
+                n.value
+                for n in nodes[1:]
+                if isinstance(n, ast.Constant) and type(n.value) is str
+            ]
+            if descriptions:
+                result["description"] = "\n".join(descriptions)
+            return result
+        if base is Literal:
+            return {
+                "kind": "literal",
+                "name": "Literal",
+                "values": [
+                    n.value
+                    for n in nodes
+                    if isinstance(n, ast.Constant)
+                    and type(n.value) in (str, int, bool, type(None))
+                ],
+            }
+        if base in (Union, Optional):
+            arguments = [_contract_ast(n, namespace, seen) for n in nodes]
+            if base is Optional:
+                arguments.append(_contract_type(None, namespace, seen))
+            return {"kind": "union", "name": "union", "arguments": arguments}
+        if base is not inspect.Signature.empty and (
+            get_origin(base) is not None
+            or base in (list, tuple, dict, set, frozenset, Sequence, Mapping)
+        ):
+            actual = get_origin(base) or base
+            return {
+                "kind": "generic",
+                "name": actual.__name__,
+                "arguments": [_contract_ast(n, namespace, seen) for n in nodes],
+            }
+    resolved = _annotation_name(node, namespace)
+    if resolved is not inspect.Signature.empty:
+        return _contract_type(resolved, namespace, seen)
+    return {"kind": "unresolved", "name": ast.unparse(node)}
+
+
+def _callable_contract(fn, name, tag, doc):
+    # No evaluation or imports are needed to derive the portable description.
+    signature = _inert_signature(fn)
+    namespace = getattr(fn, "__globals__", {})
+    parameters, safe = [], []
+    for item in signature.parameters.values():
+        has_default = item.default is not inspect.Parameter.empty
+        parameters.append(
+            {
+                "name": item.name,
+                "kind": item.kind.name.lower(),
+                "required": not has_default
+                and item.kind not in (item.VAR_POSITIONAL, item.VAR_KEYWORD),
+                "has_default": has_default,
+                "default_is_none": item.default is None,
+                "type": _contract_type(item.annotation, namespace),
+            }
+        )
+        safe.append(
+            item.replace(
+                annotation=inspect.Parameter.empty,
+                default=(None if item.default is None else ...)
+                if has_default
+                else inspect.Parameter.empty,
+            )
+        )
+    return {
+        "version": 1,
+        "name": name,
+        "tag": tag,
+        "description": doc,
+        "signature": str(
+            signature.replace(
+                parameters=safe, return_annotation=inspect.Signature.empty
+            )
+        )[1:-1].replace("=Ellipsis", "=..."),
+        "parameters": parameters,
+        "returns": _contract_type(signature.return_annotation, namespace),
+    }
+
+
+def _contract_type_text(spec):
+    arguments = spec.get("arguments", [])
+    if spec["kind"] == "union":
+        return " | ".join(_contract_type_text(a) for a in arguments)
+    if arguments:
+        return (
+            spec["name"]
+            + "["
+            + ", ".join(_contract_type_text(a) for a in arguments)
+            + "]"
+        )
+    return spec["name"]
+
+
+def _contract_field_docs(spec, prefix=""):
+    for item in spec.get("fields", []):
+        typ = item["type"]
+        name = prefix + item["name"]
+        note = typ.get("description", "")
+        yield f"- {name}: {_contract_type_text(typ)}" + (f" — {note}" if note else "")
+        yield from _contract_field_docs(typ, name + ".")
+    for argument in spec.get("arguments", []):
+        yield from _contract_field_docs(argument, prefix)
+
+
+def _contract_doc(contract):
+    lines = (
+        [contract["description"], "", "Parameters:"]
+        if contract["parameters"]
+        else [contract["description"]]
+    )
+    for item in contract["parameters"]:
+        typ = item["type"]
+        note = typ.get("description", "")
+        lines.append(
+            f"- {item['name']}: {_contract_type_text(typ)}"
+            + (f" — {note}" if note else "")
+        )
+        lines.extend(_contract_field_docs(typ, item["name"] + "."))
+    result = contract["returns"]
+    lines.extend(["", "Returns: " + _contract_type_text(result)])
+    if result.get("description"):
+        lines.append(result["description"])
+    lines.extend(_contract_field_docs(result))
+    return "\n".join(lines)
 
 
 def _symbol_spec(fn, name, tag, is_hidden, activity=None):
@@ -690,22 +966,21 @@ def _symbol_spec(fn, name, tag, is_hidden, activity=None):
                 getattr(fn, "__name__", "?")
             )
         )
-    params, varargs = [], False
-    for p in inspect.signature(fn).parameters.values():
-        if p.kind == inspect.Parameter.VAR_POSITIONAL:
-            varargs = True
-        elif p.kind in (
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        ):
-            params.append(p.name)
+    contract = _callable_contract(fn, public_name, tag, doc)
+    params = [
+        p["name"]
+        for p in contract["parameters"]
+        if p["kind"] in ("positional_only", "positional_or_keyword")
+    ]
+    varargs = any(p["kind"] == "var_positional" for p in contract["parameters"])
     return {
         "marker": "symbol",
         "fn": _kwargs_call(_activity_call(fn, activity)),
         "name": public_name,
         "tag": tag,
         "hidden": bool(is_hidden),
-        "doc": doc,
+        "doc": _contract_doc(contract),
+        "contract": contract,
         "params": params,
         "varargs": varargs,
         **({"activity": _activity_spec(activity)} if activity is not None else {}),
@@ -801,6 +1076,7 @@ def _object_symbol_specs(obj, path, tag, is_hidden, seen):
                 getattr(raw, "__vis_symbol_activity__", None),
             )
             spec["name"] = member_path.split(".", 1)[1]
+            spec["contract"]["name"] = member_path
             specs.append(spec)
         elif _is_namespace_object(value):
             specs.extend(_object_symbol_specs(value, member_path, tag, is_hidden, seen))
@@ -827,6 +1103,23 @@ class Symbol:
         if type(self.is_hidden) is not bool:
             raise TypeError("vis.Symbol is_hidden must be a boolean")
         self._spec()  # Pure validation; adapters are installed only by register().
+
+    @property
+    def contract(self) -> dict[str, Any]:
+        """Fresh portable tool description; no callable, default values or host access.
+
+        Namespace members carry their full public names. Strings in Annotated
+        describe meaning; unresolved annotations remain explicit, never evaluated.
+        This is documentation, not runtime argument or result validation.
+        """
+        spec = self._spec()
+        if spec["marker"] == "namespace":
+            return {
+                "version": 1,
+                "name": spec["name"],
+                "members": [item["contract"] for item in spec["methods"]],
+            }
+        return spec["contract"]
 
     def _spec(self):
         if inspect.isroutine(self.fn):

@@ -18,6 +18,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.fff :as fff]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.workspace.fff-index :as fff-index]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]))
@@ -272,6 +273,47 @@
        (sort)
        (vec)))
 
+(defn read-package-skills
+  "Read the explicitly declared skills from an admitted package snapshot.
+   Names are package/skill; duplicate names fail the entire load. Resource files
+   remain beside SKILL.md. No project-root: a procedure never changes the workspace."
+  [^java.io.File snapshot metadata]
+  (let [package-name
+        (get metadata "name")
+
+        entries
+        (mapv (fn [path]
+                (let [dir
+                      (io/file snapshot path)
+
+                      file
+                      (io/file dir "SKILL.md")
+
+                      skill
+                      (parse-skill-meta (slurp file)
+                                        {:name-default (.getName dir)
+                                         :tool :vis-package
+                                         :dir (.getPath dir)
+                                         :path (.getPath file)})]
+
+                  (when-not (and skill (re-matches #"[A-Za-z0-9][A-Za-z0-9_-]*" (:name skill)))
+                    (throw (ex-info
+                             "Packaged skill names use letters, digits, underscores and hyphens"
+                             {:package package-name :path path})))
+                  (assoc skill
+                    :name (str package-name "/" (:name skill))
+                    :package {:name package-name :version (get metadata "version")}
+                    :resources (skill-resources dir))))
+              (get metadata "skills" []))]
+
+    (when-not (= (count entries) (count (dedup-by-name entries)))
+      (throw (ex-info "Duplicate skill name in extension package" {:package package-name})))
+    entries))
+
+(defn- registered-package-skills
+  []
+  (vec (mapcat :ext/skills (sort-by :ext/name (extension/registered-extensions)))))
+
 ;; Discovery (filesystem → deduped entries)
 
 (defn discover-agents
@@ -399,33 +441,36 @@
 
 (defn discover-skills
   "Parse every project, nested-project, user, and plugin SKILL.md in precedence
-   order. First name wins. Repository-local skills carry `:project-root`, which
+   order, then registered package skills. First name wins, including explicit
+   local overrides of qualified package/skill names. Repository-local skills carry
+   `:project-root`, which
    makes their slash-expanded turn execute from the project that owns the skill."
   []
   (dedup-by-name
-    (for [[tool ^java.io.File f]
-          (skill-candidates)
+    (concat (for [[tool ^java.io.File f]
+                  (skill-candidates)
 
-          :let [sdir
-                (.getParentFile f)
+                  :let [sdir
+                        (.getParentFile f)
 
-                project-root
-                (skill-project-root f)
+                        project-root
+                        (skill-project-root f)
 
-                e
-                (try (some-> (parse-skill-meta (slurp f)
-                                               {:name-default (.getName sdir)
-                                                :tool tool
-                                                :dir (.getPath sdir)
-                                                :path (.getPath f)})
-                             (assoc :resources (skill-resources sdir))
-                             (cond->
-                               project-root
-                               (assoc :project-root project-root)))
-                     (catch Throwable _ nil))]
-          :when e]
+                        e
+                        (try (some-> (parse-skill-meta (slurp f)
+                                                       {:name-default (.getName sdir)
+                                                        :tool tool
+                                                        :dir (.getPath sdir)
+                                                        :path (.getPath f)})
+                                     (assoc :resources (skill-resources sdir))
+                                     (cond->
+                                       project-root
+                                       (assoc :project-root project-root)))
+                             (catch Throwable _ nil))]
+                  :when e]
 
-      e)))
+              e)
+            (registered-package-skills))))
 
 (defn discover-commands
   "Parse every command markdown across `command-dirs`, first-name-wins, tagged by
@@ -468,6 +513,7 @@
                   [tool (file-mark f)]))
    :skills (vec (for [[tool ^java.io.File f] (skill-candidates)]
                   [tool (file-mark f)]))
+   :package-skills (registered-package-skills)
    :commands (vec (for [[tool ^java.io.File d]
                         (command-dirs)
 

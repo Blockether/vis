@@ -22,6 +22,7 @@
 import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
 import activityWire from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
 import activityGroupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
+import activityArgumentCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json';
 import type { SessionArtifact } from '../lib/artifacts';
 import type { PendingAttachment } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
@@ -70,6 +71,9 @@ export const ACTIVITY_INTERLEAVED = projection(
   )!.projection,
 );
 
+/** Exact repeated arguments with distinct results, a live call and a failed call. */
+export const ACTIVITY_REPEATED_ARGUMENTS = projection(activityArgumentCases[0].projection);
+
 /** The engine's own payload, refused loudly rather than drawn empty. */
 function projection(wire: unknown): ActivityProjection {
   const parsed = activityProjectionFromWire(wire);
@@ -80,7 +84,7 @@ function projection(wire: unknown): ActivityProjection {
 /** A form still working: the fixture the app's own parser test reads. */
 export const ACTIVITY_RUNNING = projection(activityWire);
 
-/** Retained steps overflow the preview while the last invocation is still running. */
+/** Seven retained searches in one group while the last invocation is still running. */
 export const ACTIVITY_LONG_RUNNING = projection({
   state: 'running',
   counts: { running: 1, succeeded: 6, failed: 0, cancelled: 0 },
@@ -95,6 +99,29 @@ export const ACTIVITY_LONG_RUNNING = projection({
     result_summary: `result-${index}`,
     resources: [],
     evidence: [],
+  })),
+  omitted: { rows: 0, by_classification: {} },
+});
+
+/** Every operation group stays visible, including settled groups beyond the old preview. */
+export const ACTIVITY_ALL_GROUPS = projection({
+  state: 'succeeded',
+  counts: { running: 0, succeeded: 7, failed: 0, cancelled: 0 },
+  rows: [
+    ['grep', 'ActivityPanel', '3 matches'],
+    ['cat', 'src/components/ActivityPanel.tsx', 'Read 80 lines'],
+    ['ls', 'src/components', '12 files'],
+    ['patch', 'src/components/ActivityPanel.tsx', 'Removed the group limit'],
+    ['run_tests', 'Activity tests', '51 tests passed'],
+    ['lint_code', 'src/components', 'No warnings'],
+    ['shell', 'npm run build', 'Build completed'],
+  ].map(([operation, summary, result_summary], sequence) => ({
+    ...ACTIVITY_LONG_RUNNING.rows[sequence],
+    id: `all-group-${sequence}`,
+    operation,
+    summary,
+    result_summary,
+    state: 'succeeded',
   })),
   omitted: { rows: 0, by_classification: {} },
 });

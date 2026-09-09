@@ -7,21 +7,59 @@
             [com.blockether.vis.internal.python.extensions-test :as fixtures]
             [com.blockether.vis.internal.python.worker :as worker]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.loop :as loop]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]))
 
+(defn- entry-source
+  [typed? description]
+  (str "# /// script\n# dependencies = []\n# [tool.vis]\n"
+       "# project = '../../project'\n# ///\n"
+       "from __future__ import annotations\n"
+       "from dataclasses import dataclass\nimport blockether.vis.extension as vis\n"
+       "from vis_editable_fixture.value import answer\n"
+       "def editable_value():\n    \"Return the editable source value.\"\n    return answer()\n"
+       "@dataclass(frozen=True)\nclass HelpDocument:\n    text: str\n"
+       "class Doctor:\n    def help(self"
+       (when typed? ", tool: str = 'doctor'")
+       ")"
+       (when typed? " -> HelpDocument")
+       ":\n        \""
+       description
+       "\"\n"
+       "        return HelpDocument(" (if typed? "tool" "'doctor'")
+       " + ':' + str(answer()))\n"
+       "vis.register(vis.Extension(name='editable-fixture', alias='editable', "
+       "description='Editable fixture', symbols=[vis.Symbol(editable_value), "
+       "vis.Symbol(Doctor(), name='doctor')]))\n"))
+
 (defn- probe
-  [context]
+  [context typed? description]
   (let [ext (#'fixtures/registered "editable-fixture")]
     (loop/sync-active-extension-symbols!
       {:python-context context :extensions (atom [ext]) :active-extensions (atom [])}
       [ext])
     (env/run-python-block
       context
-      "import vis_editable_fixture\nfrom vis_editable_fixture import value\nassert await editable_value() == value.answer()\nprint(value.answer(), vis_editable_fixture.__file__)")))
+      (str
+        "import inspect, vis_editable_fixture\nfrom vis_editable_fixture import value\n"
+        "assert await editable_value() == value.answer()\n"
+        "assert str(inspect.signature(doctor.help)) == '"
+        (if typed? "(tool=Ellipsis)" "()")
+        "'\n"
+        "assert '"
+        description
+        "' in doc('doctor.help')\n"
+        (when typed?
+          (str
+            "assert doctor.help.contract['parameters'][0]['name'] == 'tool'\n"
+            "assert doctor.help.contract['returns'].get('fields', [{}])[0].get('name') == 'text', repr(doctor.help.contract['returns'])\n"
+            "assert 'tool: str' in doc('doctor.help')\n"
+            "assert (await doctor.help('other')).text == 'other:' + str(value.answer())\n"))
+        "print(value.answer(), vis_editable_fixture.__file__)"))))
 
 (deftest editable-sync-and-reload-test
-  ;; #175: real uv install -> sandbox import -> edit -> /reload, without reinstalling.
+  ;; #175 and #178: real manual uv preparation, source/API reload, stale status and retry.
   (#'fixtures/with-shared-packages
    (fn [packages]
      (#'fixtures/with-fresh-loaded
@@ -39,6 +77,9 @@
               entries
               (io/file ext-dir ".vis/extensions")
 
+              entry
+              (io/file entries "editable.py")
+
               contexts
               (atom [])
 
@@ -53,8 +94,9 @@
                   ctx))
 
               reload!
-              #(let [result (extensions/reload-python-extensions! {:dirs [(str entries)]})]
-                 (is (zero? (:failed result)) (str (extensions/load-failures))) result)]
+              (fn [sync?]
+                (extensions/reload-python-extensions! {:dirs [(str entries)]
+                                                       :sync-projects? sync?}))]
 
           (.mkdirs source)
           (.mkdirs entries)
@@ -65,65 +107,88 @@
                    (io/file project "backend.py"))
           (spit (io/file source "__init__.py") "from .value import answer\n")
           (spit value "def answer():\n    return 41\n")
-          (spit
-            (io/file entries "editable.py")
-            "import blockether.vis.extension as vis\nfrom vis_editable_fixture.value import answer\ndef editable_value():\n    \"Return the editable source value.\"\n    return answer()\nvis.register(vis.Extension(name='editable-fixture', alias='editable', description='Editable fixture', symbols=[vis.Symbol(editable_value)]))\n")
+          (spit entry (entry-source false "Original help."))
           (try
             (python-runtime/ensure-library!)
             (#'fixtures/run-fixture-uv!
              project
              ["uv" "lock" "--project" (str project) "--offline" "--no-python-downloads" "--python"
               (com.blockether.vispython.Interpreter/pythonExecutable)])
-            (with-redefs-fn {#'python-runtime/project-home (fn [_]
-                                                             (io/file ext-dir "prepared"))
+            (with-redefs-fn {#'python-runtime/project-home (constantly (io/file ext-dir "prepared"))
                              #'python-runtime/run-uv! @#'fixtures/run-fixture-uv!}
               (fn []
                 (is (= 0
                        (:exit (python-runtime/uv-command! ["sync" "--project" (str project)
-                                                           "--locked" "--offline"]))))))
-            (is (some #(str/ends-with? (.getName ^java.io.File %) ".pth") (.listFiles packages)))
-            (is (not (.exists (io/file packages "vis_editable_fixture"))))
-            (is (= {:loaded 1 :failed 0 :changed? true} (reload!)))
-            (let [first-context
-                  (make-context)
+                                                           "--locked" "--offline"]))))
+                (is (some #(str/ends-with? (.getName ^java.io.File %) ".pth")
+                          (.listFiles packages)))
+                (is (not (.exists (io/file packages "vis_editable_fixture"))))
+                (is (= {:loaded 1 :failed 0 :changed? true} (reload! false)))
+                (let [first-context
+                      (make-context)
 
-                  id
-                  (java.util.UUID/randomUUID)
+                      id
+                      (java.util.UUID/randomUUID)
 
-                  original
-                  (probe first-context)
+                      original
+                      (probe first-context false "Original help.")
 
-                  invoke
-                  #(let [ext (#'fixtures/registered "editable-fixture")] (:result
-                                                                           ((#'fixtures/symbol-fn
-                                                                             ext
-                                                                             'editable_value))))]
+                      invoke
+                      #(let [ext (#'fixtures/registered "editable-fixture")]
+                         (:result ((#'fixtures/symbol-fn ext 'editable_value))))]
 
-              (is (nil? (:error original)) (str original))
-              (is (str/includes? (:stdout original) (str source "/__init__.py")))
-              (is (str/starts-with? (:stdout original) "41 "))
-              (is (= 41 (invoke)))
-              ;; Same timestamp and size deliberately exercise stale .pyc handling.
-              (let [mtime (.lastModified value)]
-                (spit value "def answer():\n    return 42\n")
-                (.setLastModified value mtime))
-              (with-redefs [python-runtime/uv-sync!
-                            (fn [& _]
-                              (throw (ex-info "Unexpected reinstall" {})))
+                  (is (nil? (:error original)) (str original))
+                  (is (str/includes? (:stdout original) (str source "/__init__.py")))
+                  (is (str/starts-with? (:stdout original) "41 "))
+                  (is (= 41 (invoke)))
+                  ;; Same timestamp and size deliberately exercise stale .pyc handling.
+                  (let [mtime (.lastModified value)]
+                    (spit value "def answer():\n    return 42\n")
+                    (.setLastModified value mtime))
+                  (spit entry (entry-source true "Typed help."))
+                  (with-redefs [python-runtime/uv-sync!
+                                (fn [& _]
+                                  (throw (ex-info "Unexpected reinstall" {})))
 
-                            loop/cache
-                            (atom {id (#'loop/new-cache-entry {:python-context first-context})})
+                                loop/cache
+                                (atom {id (#'loop/new-cache-entry {:python-context first-context})})
 
-                            loop/policy-reload-epoch
-                            (atom @loop/policy-reload-epoch)]
+                                loop/policy-reload-epoch
+                                (atom @loop/policy-reload-epoch)]
 
-                (is (= {:loaded 1 :failed 0 :changed? true} (reload!)))
-                ((get @@#'extension/reload-hooks
-                      :com.blockether.vis.internal.loop/security-policy-reload))
-                (is (not (worker/worker-live? first-context)))
-                (let [fresh (probe (make-context))]
+                    (is (= {:loaded 1 :failed 0 :changed? true} (reload! false)))
+                    ((get @@#'extension/reload-hooks
+                          :com.blockether.vis.internal.loop/security-policy-reload))
+                    (is (not (worker/worker-live? first-context)))
+                    (let [fresh (probe (make-context) true "Typed help.")]
+                      (is (nil? (:error fresh)) (str fresh))
+                      (is (str/starts-with? (:stdout fresh) "42 ")))
+                    (is (= 42 (invoke)))))
+                ;; A genuine readiness change retains a visibly stale, internally consistent API.
+                (spit (io/file project "uv.lock") "\n" :append true)
+                (spit entry (entry-source true "Retried help."))
+                (is (= 1 (:failed (reload! false))))
+                (let [failure
+                      (first (extensions/load-failures))
+
+                      prompt
+                      (:ext/prompt-fn (#'fixtures/registered "python-extensions"))
+
+                      stale
+                      (probe (make-context) true "Typed help.")]
+
+                  (is (nil? (:error stale)) (str stale))
+                  (is (true? (:stale? failure)))
+                  (is (= [:lock] (:changed-inputs failure)))
+                  (is (not= (:loaded-fingerprint failure) (:requested-fingerprint failure)))
+                  (is (str/includes? (prompt {}) "tools and docs are stale")))
+                ;; Explicit host preparation does not depend on the assistant's shell toggle.
+                (with-redefs [toggles/enabled? (constantly false)]
+                  (is (= {:loaded 1 :failed 0 :changed? true} (reload! true))))
+                (is (empty? (extensions/load-failures)))
+                (is (nil? ((:ext/prompt-fn (#'fixtures/registered "python-extensions")) {})))
+                (let [fresh (probe (make-context) true "Retried help.")]
                   (is (nil? (:error fresh)) (str fresh))
-                  (is (str/starts-with? (:stdout fresh) "42 ")))
-                (is (= 42 (invoke)))))
+                  (is (str/starts-with? (:stdout fresh) "42 ")))))
             (finally (doseq [ctx @contexts]
                        (env/dispose-python-context! ctx))))))))))

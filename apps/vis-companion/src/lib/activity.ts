@@ -26,6 +26,31 @@ export type OperationGroup = {
   rows: ActivityRow[];
 };
 
+export type ArgumentGroup = Pick<OperationGroup, "id" | "rows">;
+
+function firstInvocationId(row: ActivityRow): string {
+  return (row.operation === "shell" ? (row.children?.[0] ?? row) : row).id;
+}
+
+/** Exact operation/argument pairs, within one block. Unknown keys never collapse. */
+export function argumentGroups(rows: readonly ActivityRow[]): ArgumentGroup[] {
+  const groups: ArgumentGroup[] = [];
+  const byArguments = new Map<string, ArgumentGroup>();
+  for (const row of [...rows].sort((a, b) => a.sequence - b.sequence)) {
+    const key = row.argument_key
+      ? JSON.stringify([row.operation, row.argument_key])
+      : undefined;
+    const existing = key === undefined ? undefined : byArguments.get(key);
+    if (existing) existing.rows.push(row);
+    else {
+      const group = { id: firstInvocationId(row), rows: [row] };
+      groups.push(group);
+      if (key !== undefined) byArguments.set(key, group);
+    }
+  }
+  return groups;
+}
+
 /** One group per operation across the block, ordered by first entry. Shell evidence stays intact. */
 export function operationGroups(
   rows: readonly ActivityRow[],
@@ -41,9 +66,7 @@ export function operationGroups(
       const label = Object.hasOwn(labels, row.operation)
         ? labels[row.operation]
         : row.operation;
-      const first =
-        row.operation === "shell" ? (row.children?.[0] ?? row) : row;
-      const group = { id: first.id, label, rows: [row] };
+      const group = { id: firstInvocationId(row), label, rows: [row] };
       groups.push(group);
       byOperation.set(row.operation, group);
     }
@@ -303,6 +326,7 @@ export interface ActivityRow {
   state: ActivityState;
   summary: string;
   summary_format?: ActivityTextFormat;
+  argument_key?: string;
   group_token?: string;
   duration_ms?: number;
   result_summary?: string;
@@ -329,6 +353,74 @@ export interface ActivityProjection {
     rows: number;
     by_classification: Record<string, number>;
   };
+}
+
+/** Copy retained invocations, not the visible grouping or viewport. Never include identity keys. */
+export function activityCopyText(activity: ActivityProjection): string {
+  const contentText = (block: ActivityContent): string => {
+    if ("text" in block) return block.text;
+    if (block.type === "table")
+      return [block.columns, ...block.rows]
+        .map((row) => row.join("\t"))
+        .join("\n");
+    if (block.type === "progress")
+      return `${block.label}${block.value === undefined ? "" : `: ${block.value}/${block.total}`}`;
+    return `${block.type}: ${block.label} (${block.attachment_id})`;
+  };
+  const rowText = (row: ActivityRow, depth: number): string => {
+    const indent = "  ".repeat(depth);
+    const lines = [
+      `${indent}${row.operation} [${row.state}]${row.duration_ms === undefined ? "" : ` (${row.duration_ms}ms)`}`,
+    ];
+    const add = (text?: string) => {
+      if (text?.trim())
+        lines.push(...text.split("\n").map((line) => `${indent}  ${line}`));
+    };
+    add(row.summary);
+    if (row.result_summary) add(`Result: ${row.result_summary}`);
+    if (row.error_summary) add(`Error: ${row.error_summary}`);
+    for (const resource of row.resources)
+      add(`${resource.type}: ${resource.id}`);
+    for (const evidence of row.evidence) {
+      const parts = [`${evidence.kind}:\n${evidence.text}`];
+      if (evidence.kind === "diff") {
+        for (const line of evidence.lines)
+          parts.push(
+            `${line.kind === "addition" ? "+" : line.kind === "deletion" ? "-" : line.kind === "context" ? " " : ""}${line.text}`,
+          );
+        if (evidence.is_truncated) parts.push("Diff truncated");
+        if (evidence.is_redacted) parts.push("Diff redacted");
+      }
+      add(parts.join("\n"));
+    }
+    if (row.presentation) {
+      for (const section of [
+        row.presentation,
+        ...(row.presentation.sections ?? []),
+      ]) {
+        add(section.headline);
+        add(section.summary);
+        section.content.forEach((block) => add(contentText(block)));
+      }
+    }
+    if (row.is_truncated) add("Details truncated");
+    for (const child of [...(row.children ?? [])].sort(
+      (a, b) => a.sequence - b.sequence,
+    ))
+      lines.push("", rowText(child, depth + 1));
+    return lines.join("\n");
+  };
+  const blocks = [
+    "ACTIVITY",
+    ...[...activity.rows]
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((row) => rowText(row, 0)),
+  ];
+  if (activity.omitted.rows)
+    blocks.push(
+      `${activity.omitted.rows} ${activity.omitted.rows === 1 ? "step" : "steps"} omitted · Activity limit`,
+    );
+  return blocks.join("\n\n");
 }
 
 function activityEnum<T extends string>(
@@ -453,6 +545,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
         "evidence",
       ],
       [
+        "argument_key",
         "group_token",
         "duration_ms",
         "result_summary",
@@ -487,6 +580,12 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     : null;
   const groupToken =
     raw.group_token === undefined ? undefined : optionalText(raw.group_token);
+  const argumentKey =
+    typeof raw.argument_key === "string" &&
+    raw.argument_key.length === 64 &&
+    /^[0-9a-f]{64}$/.test(raw.argument_key)
+      ? raw.argument_key
+      : undefined;
   const duration =
     raw.duration_ms === undefined ? undefined : activityCount(raw.duration_ms);
   const resultSummary =
@@ -528,6 +627,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     evidence === null ||
     evidence.length !== evidenceRaw!.length ||
     (raw.group_token !== undefined && groupToken === undefined) ||
+    (raw.argument_key !== undefined && argumentKey === undefined) ||
     duration === null ||
     (raw.result_summary !== undefined && resultSummary === undefined) ||
     (raw.error_summary !== undefined && errorSummary === undefined) ||
@@ -551,6 +651,7 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     resources,
     evidence,
     ...(groupToken !== undefined ? { group_token: groupToken } : {}),
+    ...(argumentKey !== undefined ? { argument_key: argumentKey } : {}),
     ...(duration !== undefined ? { duration_ms: duration } : {}),
     ...(resultSummary !== undefined ? { result_summary: resultSummary } : {}),
     ...(errorSummary !== undefined ? { error_summary: errorSummary } : {}),

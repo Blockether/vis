@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/symbol.json",
+  "title": "Inert Python extension symbol description",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "parameter_kinds": {
+      "const": [
+        "positional_only",
+        "positional_or_keyword",
+        "var_positional",
+        "keyword_only",
+        "var_keyword"
+      ]
+    },
+    "type_kinds": {
+      "const": [
+        "any",
+        "null",
+        "scalar",
+        "opaque",
+        "unresolved",
+        "union",
+        "literal",
+        "generic",
+        "record",
+        "reference"
+      ]
+    }
+  },
+  "required": [
+    "version",
+    "parameter_kinds",
+    "type_kinds"
+  ],
+  "$defs": {
+    "type": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "any",
+            "null",
+            "scalar",
+            "opaque",
+            "unresolved",
+            "union",
+            "literal",
+            "generic",
+            "record",
+            "reference"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/type"
+          }
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/field"
+          }
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "integer",
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ]
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/type"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "has_default": {
+          "type": "boolean"
+        },
+        "default_is_none": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "required",
+        "has_default",
+        "default_is_none"
+      ]
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/type"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "has_default": {
+          "type": "boolean"
+        },
+        "default_is_none": {
+          "type": "boolean"
+        },
+        "kind": {
+          "enum": [
+            "positional_only",
+            "positional_or_keyword",
+            "var_positional",
+            "keyword_only",
+            "var_keyword"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "required",
+        "has_default",
+        "default_is_none",
+        "kind"
+      ]
+    },
+    "callable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "enum": [
+            "observation",
+            "mutation"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signature": {
+          "type": "string"
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/parameter"
+          }
+        },
+        "returns": {
+          "$ref": "#/$defs/type"
+        }
+      },
+      "required": [
+        "version",
+        "name",
+        "tag",
+        "description",
+        "signature",
+        "parameters",
+        "returns"
+      ]
+    },
+    "namespace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "name": {
+          "type": "string"
+        },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/callable"
+          }
+        }
+      },
+      "required": [
+        "version",
+        "name",
+        "members"
+      ]
+    },
+    "declaration": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/callable"
+        },
+        {
+          "$ref": "#/$defs/namespace"
+        }
+      ]
+    }
+  }
+}

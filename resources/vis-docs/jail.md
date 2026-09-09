@@ -204,7 +204,7 @@ requests, responses and SOCKS connections. An exception denies the request.
 Inside `python_execution`, `network_filter(...)` and `network_probe(...)` test
 session-local filters; those filters do not change gateway network policy.
 
-See [Extending Vis](extending.md#the-declaration) for `network_filters`.
+See [Extension API](extension-api.md#the-declaration) for `network_filters`.
 
 ## Platform enforcement
 

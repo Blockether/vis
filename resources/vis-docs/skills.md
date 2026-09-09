@@ -38,24 +38,33 @@ when the skill is used.
 
 ## Where Vis looks
 
-Vis searches these locations in order. The first skill with a given name is
-used; later matches are ignored.
+Vis searches these sources in order. The first skill with a given name is used;
+later matches are ignored.
 
 | Location | Scope |
 |---|---|
 | `.vis/skills` | Project |
 | `.claude/skills` | Project |
+| `.pi/skills` | Project |
+| `.agents/skills` | Project |
+| `.opencode/skills`, then `.opencode/skill` | Project |
+| Nested projects using those same locations | When the session is at the Git root |
 | `~/.claude/skills` | User |
 | `~/.claude/plugins/cache/**/skills` | Installed Claude Code plugins |
-| `.pi/skills` | Project |
 | `~/.pi/agent/skills` | User |
-| `.agents/skills` | Project |
 | `~/.agents/skills` | User |
-| `.opencode/skills`, then `.opencode/skill` | Project |
 | `~/.config/opencode/skills`, then `~/.config/opencode/skill` | User |
+| Registered extension packages | Qualified `package/skill` names |
 
 Project locations are also searched in parent directories up to the Git root.
-Changes on disk are loaded without restarting Vis.
+Local file changes are loaded without restarting Vis. Package skills come from
+the admitted snapshot: `/reload` updates them with their extension, and a failed
+reload keeps the last working version. An ordinary skill with the exact qualified
+name overrides a package skill without affecting its tools.
+
+See [bundled skills](extension-packages.md#bundled-skills) to ship a procedure and
+its resources with an extension. Installing a package or reading `doc(name)` does
+not execute its skill or grant permission for actions described by it.
 
 ## Use a skill explicitly
 

@@ -207,17 +207,24 @@
         args
         ["sync" "--project" (str project) "--locked" "--offline"]
 
-        sync-required?
+        readiness-error
         (fn []
-          (= :com.blockether.vis.internal.python.runtime/project-sync-required
-             (try (python-runtime/prepared-project project)
-                  nil
-                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))]
+          (try (python-runtime/prepared-project project)
+               nil
+               (catch clojure.lang.ExceptionInfo e e)))
+
+        sync-required?
+        #(= :com.blockether.vis.internal.python.runtime/project-sync-required
+            (:type (ex-data (readiness-error))))]
 
     (spit (io/file project "pyproject.toml") "[project]\nname='fixture'\nversion='1'\n")
     (spit (io/file project "uv.lock") "version = 1\n")
     (.mkdirs packages)
     (spit (io/file packages "unrelated.py") "VALUE = 7\n")
+    ;; Regression #178: shared packages unrelated to this project must not stale it.
+    (let [metadata (io/file packages "unrelated-1.dist-info/METADATA")]
+      (io/make-parents metadata)
+      (spit metadata "Name: unrelated\nVersion: 1\n"))
     (try
       (with-redefs-fn {#'python-runtime/project-home (fn [_]
                                                        home)
@@ -230,7 +237,8 @@
                          (spit (io/file target "value.py") "VALUE = 42")
                          (let [metadata (io/file target "fixture-1.dist-info/METADATA")]
                            (io/make-parents metadata)
-                           (spit metadata "Name: fixture\nVersion: 1\n")))}
+                           (spit metadata "Name: fixture\nVersion: 1\n"))
+                         {:exit 0 :distributions #{"fixture"}})}
         (fn []
           (is (sync-required?))
           (is (= {:exit 0 :packages (str packages)} (python-runtime/uv-command! args)))
@@ -248,6 +256,34 @@
           (is (.isFile (io/file packages "value.py")))
           (is (.isFile (io/file packages "unrelated.py")))
           (is (not-any? #(.isDirectory ^java.io.File %) (.listFiles home)))
+          (spit (io/file packages "unrelated-1.dist-info/METADATA") "Name: unrelated\nVersion: 2\n")
+          (is (= packages (python-runtime/prepared-project project))
+              "An unrelated shared distribution update does not require another sync")
+          (let [inputs
+                @#'python-runtime/project-inputs
+
+                before
+                @calls]
+
+            (doseq [key [:project :pyproject :lock :runtime :interpreter :packages :index]]
+              (with-redefs-fn {#'python-runtime/project-inputs #(assoc (inputs %) key "changed")}
+                (fn []
+                  (let [error (readiness-error)]
+                    (is (= [key] (:changed-inputs (ex-data error))))
+                    (is (.contains (ex-message error) (name key)))
+                    (is (.contains (ex-message error) "/reload --sync"))))))
+            (is (= before @calls) "Readiness checks never install dependencies"))
+          (spit (io/file project "source.py") "def answer(): return 42\n")
+          (is (= packages (python-runtime/prepared-project project)))
+          (let [pointer
+                (io/file home "environment.ready")
+
+                before
+                (slurp pointer)]
+
+            (spit pointer "{")
+            (is (= [:readiness] (:changed-inputs (ex-data (readiness-error)))))
+            (spit pointer before))
           (let [extra (io/file packages "fixture-2.dist-info/METADATA")]
             (io/make-parents extra)
             (spit extra "Name: fixture\nVersion: 2\n")
@@ -256,6 +292,7 @@
             (io/delete-file (.getParentFile extra)))
           (spit (io/file packages "fixture-1.dist-info/METADATA") "Name: fixture\nVersion: 2\n")
           (is (sync-required?) "A conflicting shared install invalidates the prepared project")
+          (is (= ["fixture"] (:changed-distributions (ex-data (readiness-error)))))
           (python-runtime/uv-command! args)
           (spit (io/file project "uv.lock") "version = 2\n")
           (is (sync-required?))

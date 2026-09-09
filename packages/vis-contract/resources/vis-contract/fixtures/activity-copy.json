@@ -1,0 +1,241 @@
+[
+  {
+    "name": "retained invocations and rich content in sequence order",
+    "projection": {
+      "state": "failed",
+      "counts": {
+        "running": 1,
+        "succeeded": 2,
+        "failed": 1,
+        "cancelled": 1
+      },
+      "rows": [
+        {
+          "id": "copy-rich",
+          "sequence": 5,
+          "operation": "patch",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "src/main.clj",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "diff",
+              "text": "src/main.clj",
+              "lines": [
+                {
+                  "kind": "header",
+                  "text": "--- before"
+                },
+                {
+                  "kind": "hunk",
+                  "text": "@@ -1 +1 @@"
+                },
+                {
+                  "kind": "deletion",
+                  "text": "old"
+                },
+                {
+                  "kind": "addition",
+                  "text": "[REDACTED]",
+                  "is_redacted": true
+                },
+                {
+                  "kind": "context",
+                  "text": "kept"
+                },
+                {"kind": "context", "text": ""}
+              ],
+              "additions": 1,
+              "deletions": 1,
+              "modifications": 1,
+              "is_truncated": true,
+              "is_redacted": true
+            }
+          ],
+          "is_truncated": true,
+          "presentation": {
+            "headline": "Patched source",
+            "summary": "Retained preview",
+            "content": [
+              {
+                "type": "heading",
+                "text": "Verification"
+              },
+              {
+                "type": "text",
+                "text": "Plain text"
+              },
+              {
+                "type": "markdown",
+                "text": "**Ready**"
+              },
+              {
+                "type": "code",
+                "language": "python",
+                "text": "print(1)\nprint(2)"
+              },
+              {
+                "type": "diff",
+                "text": "-old\n+new"
+              },
+              {
+                "type": "table",
+                "columns": [
+                  "Check",
+                  "State"
+                ],
+                "rows": [
+                  [
+                    "Unit",
+                    "Passed"
+                  ]
+                ]
+              },
+              {
+                "type": "image",
+                "label": "Screenshot",
+                "attachment_id": "image-1"
+              },
+              {
+                "type": "video",
+                "label": "Playback",
+                "attachment_id": "video-1"
+              },
+              {
+                "type": "audio",
+                "label": "Recording",
+                "attachment_id": "audio-1"
+              },
+              {
+                "type": "file",
+                "label": "Report",
+                "attachment_id": "file-1"
+              },
+              {
+                "type": "progress",
+                "label": "Checks",
+                "value": 1,
+                "total": 2
+              },
+              {
+                "type": "progress",
+                "label": "Waiting"
+              }
+            ],
+            "sections": [
+              {
+                "headline": "Details",
+                "summary": "Still bounded",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Section output"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "copy-second",
+          "sequence": 2,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "failed",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [
+            {
+              "kind": "error",
+              "text": "Directory unavailable"
+            }
+          ],
+          "error_summary": "Directory unavailable",
+          "children": [
+            {
+              "id": "child-late",
+              "sequence": 4,
+              "operation": "shell",
+              "presenter": "generic",
+              "signal": "observation",
+              "state": "cancelled",
+              "summary": "cancelled command",
+              "resources": [],
+              "evidence": []
+            },
+            {
+              "id": "child-first",
+              "sequence": 3,
+              "operation": "shell",
+              "presenter": "generic",
+              "signal": "observation",
+              "state": "running",
+              "summary": "command running",
+              "resources": [],
+              "evidence": []
+            }
+          ],
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "id": "copy-first",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [
+            {
+              "type": "file",
+              "id": "src/main.clj"
+            }
+          ],
+          "evidence": [
+            {
+              "kind": "arguments",
+              "text": "{\"query\":\"[REDACTED]\"}"
+            },
+            {
+              "kind": "result",
+              "text": "first result\nsecond result"
+            }
+          ],
+          "duration_ms": 5,
+          "result_summary": "2 matches",
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "omitted": {
+        "rows": 2,
+        "by_classification": {
+          "generic": 2
+        }
+      }
+    },
+    "text": "ACTIVITY\n\ngrep [succeeded] (5ms)\n  same query\n  Result: 2 matches\n  file: src/main.clj\n  arguments:\n  {\"query\":\"[REDACTED]\"}\n  result:\n  first result\n  second result\n\ngrep [failed]\n  same query\n  Error: Directory unavailable\n  error:\n  Directory unavailable\n\n  shell [running]\n    command running\n\n  shell [cancelled]\n    cancelled command\n\npatch [succeeded]\n  src/main.clj\n  diff:\n  src/main.clj\n  --- before\n  @@ -1 +1 @@\n  -old\n  +[REDACTED]\n   kept\n   \n  Diff truncated\n  Diff redacted\n  Patched source\n  Retained preview\n  Verification\n  Plain text\n  **Ready**\n  print(1)\n  print(2)\n  -old\n  +new\n  Check\tState\n  Unit\tPassed\n  image: Screenshot (image-1)\n  video: Playback (video-1)\n  audio: Recording (audio-1)\n  file: Report (file-1)\n  Checks: 1/2\n  Waiting\n  Details\n  Still bounded\n  Section output\n  Details truncated\n\n2 steps omitted · Activity limit"
+  },
+  {
+    "name": "omissions without retained rows",
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [],
+      "omitted": {
+        "rows": 1,
+        "by_classification": {
+          "generic": 1
+        }
+      }
+    },
+    "text": "ACTIVITY\n\n1 step omitted · Activity limit"
+  }
+]

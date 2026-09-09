@@ -473,7 +473,10 @@ export const CodeWithResult: Story = {
     await expect(duration.getBoundingClientRect().right).toBeLessThanOrEqual(
       copy.getBoundingClientRect().left,
     );
-    await expect(copy.getBoundingClientRect().right).toBeLessThan(
+    await expect(copy.getBoundingClientRect().right).toBeLessThanOrEqual(
+      code.getBoundingClientRect().right,
+    );
+    await expect(copy.querySelector("svg")!.getBoundingClientRect().right).toBeLessThan(
       code.getBoundingClientRect().right,
     );
     await userEvent.click(canvas.getByRole("button", { name: "Expand code" }));
@@ -526,9 +529,9 @@ export const JoinedActivity: Story = {
     const code = canvasElement.querySelector("[data-execution-code]")!;
     const activity = canvasElement.querySelector("[data-execution-activity]")!;
     const copyIcon = code.querySelector('button[aria-label="Copy code"] svg')!;
-    const activityChevron = activity.querySelector('button[aria-label="Expand Activity"] svg')!;
+    const activityCopyIcon = activity.querySelector('button[aria-label="Copy activity"] svg')!;
     await expect(copyIcon.getBoundingClientRect().right).toBeCloseTo(
-      activityChevron.getBoundingClientRect().right,
+      activityCopyIcon.getBoundingClientRect().right,
       0,
     );
     const thought = canvas
@@ -718,7 +721,8 @@ export const ProseAlignment: Story = {
         0,
       );
       await expect(paragraph.getBoundingClientRect().right).toBeCloseTo(
-        thought.getBoundingClientRect().right,
+        // Prose aligns to both outer edges, not the inset reasoning text.
+        thought.closest("section")!.getBoundingClientRect().right,
         0,
       );
     }

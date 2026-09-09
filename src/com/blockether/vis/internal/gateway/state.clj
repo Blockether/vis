@@ -229,28 +229,52 @@
 
 (defn- fresh-council [] {:activation-id (str (random-uuid)) :input-state (atom {})})
 
+(defn- retire-council-input!
+  [sid before after]
+  (let [input-state (get-in before [sid :council :input-state])]
+    (when (and input-state
+               (not (identical? input-state (get-in after [sid :council :input-state]))))
+      (council/retire-input! sid input-state))))
+
 (defn- update-session!
-  "The atomic registry write boundary also publishes a fully initialized Council activation."
+  "Publish initialized activations atomically; retire removed input after the registry write."
   [sid f]
-  (let [fresh (delay (fresh-council))]
-    (swap! registry update
-      (sid-key sid)
-      (fn [old]
-        (council-transition old (f old) fresh))))
+  (let [sid
+        (sid-key sid)
+
+        fresh
+        (delay (fresh-council))
+
+        [before after]
+        (swap-vals! registry
+                    update
+                    sid
+                    (fn [old]
+                      (council-transition old (f old) fresh)))]
+
+    (retire-council-input! sid before after))
   nil)
 
 (defn- update-existing-session!
   "Apply f only to an existing registry record."
   [sid f]
-  (let [fresh (delay (fresh-council))]
-    (swap! registry (fn [reg]
-                      (let [k (sid-key sid)]
-                        (if (contains? reg k)
-                          (update reg
-                                  k
-                                  (fn [old]
-                                    (council-transition old (f old) fresh)))
-                          reg)))))
+  (let [sid
+        (sid-key sid)
+
+        fresh
+        (delay (fresh-council))
+
+        [before after]
+        (swap-vals! registry
+                    (fn [reg]
+                      (if (contains? reg sid)
+                        (update reg
+                                sid
+                                (fn [old]
+                                  (council-transition old (f old) fresh)))
+                        reg)))]
+
+    (retire-council-input! sid before after))
   nil)
 
 (defn- update-turn! [sid tid f] (update-session! sid #(update-in % [:turns tid] f)))
@@ -273,7 +297,13 @@
 (defn- drop-session!
   "Forget `sid`'s registry record entirely."
   [sid]
-  (swap! registry dissoc (sid-key sid))
+  (let [sid
+        (sid-key sid)
+
+        [before after]
+        (swap-vals! registry dissoc sid)]
+
+    (retire-council-input! sid before after))
   nil)
 
 (defn- drop-subscriber!

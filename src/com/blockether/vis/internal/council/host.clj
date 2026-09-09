@@ -5,7 +5,8 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.council.core :as council]
-            [com.blockether.vis.internal.extension.core :as extension]))
+            [com.blockether.vis.internal.extension.core :as extension]
+            [taoensso.telemere :as tel]))
 
 (defn- result
   [env op opts value]
@@ -31,7 +32,13 @@
                                        (if-let [id (:id value)]
                                          (str "Entry #" id " in thread #" (:thread_id value))
                                          (str (count (or (:entries value) value)) " records"))})
-         (catch Exception _ nil))
+         (catch Exception e
+           (tel/log! {:level :warn
+                      :id ::activity-publication-failed
+                      :data {:session-id (str (:session-id env))
+                             :op op
+                             :entry-id (:id value)
+                             :error-class (.getName (class e))}})))
     (extension/success {:op op :result (wire/->wire value) :metadata {:activity/resources refs}})))
 
 (defn members
@@ -57,8 +64,8 @@
          sid
          (str (:session-id env))
 
-         ctx
-         @(:ctx-atom env)
+         execution
+         (:council (ctx-loop/read-turn-state env))
 
          source
          (cond-> {:session_id sid :scope (ctx-loop/cursor-snapshot env)}
@@ -67,7 +74,7 @@
 
          actor
          {:session-id sid
-          :activation-id (clojure.core/get ctx "engine_council_activation_id")
+          :activation-id (:activation-id execution)
           :source "host"
           :source-ref source}
 
@@ -80,7 +87,19 @@
          ref
          (select-keys entry [:id :thread_id :group_id :source_ref])]
 
-     (swap! (:ctx-atom env) update "engine_council_publications" (fnil conj []) ref)
+     (let [[before after] (swap-vals!
+                            (:turn-state-atom env)
+                            (fn [state]
+                              (if (and execution
+                                       (= (select-keys execution [:activation-id :iteration-key])
+                                          (select-keys (:council state)
+                                                       [:activation-id :iteration-key])))
+                                (update-in state [:council :publications] (fnil conj []) ref)
+                                state)))]
+       (when (identical? before after)
+         (tel/log! {:level :warn
+                    :id ::publication-execution-ended
+                    :data {:session-id sid :entry-id (:id entry)}})))
      (result env :council.publish opts entry))))
 
 (defn threads

@@ -259,6 +259,12 @@ export const Chips: Story = {
           fd3c03f9
         </CopyChip>
       </Group>
+      <Group of="CopyChip, execution-band target">
+        <div className="flex min-h-11 items-center gap-2 mouse:min-h-7">
+          <BandLabel>Activity</BandLabel>
+          <CopyChip value="ACTIVITY\n\ngrep [succeeded]\n  2 matches" label="Copy activity" density="compact" edge />
+        </div>
+      </Group>
       <Group of="Band furniture">
         <BandLabel>Recent</BandLabel>
         <SectionHeader>Machines</SectionHeader>

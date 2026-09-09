@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { Button, ComposerButton, MetaButton, Modal } from "./ui";
 import { NewSessionButton } from "./SessionNavigator";
@@ -27,7 +27,11 @@ const tap = (element: Element, at = { x: 0, y: 0 }) => {
 // click itself from the touch, which it may decide was a hover instead.
 describe("the send button under a finger", () => {
   it("sends on a tap that never becomes a click", async () => {
-    const submitTurn = vi.fn(() => Promise.resolve(null));
+    // A successful submission must appear in the transcript, not be found in
+    // the textarea's reset text after a malformed response restores the draft.
+    const submitTurn = vi.fn(() =>
+      Promise.resolve({ turn_id: "sent-by-tap", status: "running" }),
+    );
     renderSessionScreen({ client: { submitTurn } });
 
     const box = await screen.findByLabelText("Message Vis");
@@ -35,7 +39,12 @@ describe("the send button under a finger", () => {
     tap(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => expect(submitTurn).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("run the tests")).toBeInTheDocument();
+    expect(
+      await within(screen.getByRole("region", { name: "Transcript" })).findByText(
+        "run the tests",
+      ),
+    ).toBeInTheDocument();
+    expect(box).toHaveValue("");
   });
 
   // Regression, WebKit issue #164077: an iOS autocorrection could update the

@@ -76,6 +76,10 @@
           "type": "string",
           "pattern": "\\S"
         },
+        "arguments": {
+          "type": "string",
+          "pattern": "\\S"
+        },
         "counts": {
           "type": "string",
           "pattern": "\\S"
@@ -93,6 +97,7 @@
         "ownership",
         "delivery",
         "lifecycle",
+        "arguments",
         "counts",
         "bounds",
         "declaration"
@@ -322,6 +327,12 @@
             "$ref": "#/$defs/evidence"
           }
         },
+        "argument_key": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
         "group_token": {
           "type": "string",
           "pattern": "\\S"
@@ -409,6 +420,12 @@
             "$ref": "#/$defs/evidence"
           }
         },
+        "argument_key": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
         "group_token": {
           "type": "string",
           "pattern": "\\S"
@@ -495,6 +512,12 @@
           "items": {
             "$ref": "#/$defs/evidence"
           }
+        },
+        "argument_key": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
         },
         "group_token": {
           "type": "string",

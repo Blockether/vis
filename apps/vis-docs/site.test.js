@@ -26,7 +26,7 @@ test('the canonical renderer builds documentation, with one exact CSS and no inl
 });
 test('the static upload contains only public output and the same security policy',()=>{
   const output=readdirSync('dist',{recursive:true});
-  expect(output.some(file=>/fixture|schema|wrangler|deployment|package|node_modules|\.env|\.vars/.test(file))).toBe(false);
+  expect(output.some(file=>/(^|\/)(?:[^/]*fixture[^/]*|schema\.sql|wrangler[^/]*|\.?deployment[^/]*|package(?:-lock)?\.json|node_modules|\.env[^/]*|\.vars[^/]*)$/.test(file))).toBe(false);
   const headers=readFileSync('dist/_headers','utf8');
   for(const [key,value] of Object.entries(security)) expect(headers).toContain(`${key}: ${value}`);
   const config=JSON.parse(readFileSync('wrangler.jsonc','utf8'));

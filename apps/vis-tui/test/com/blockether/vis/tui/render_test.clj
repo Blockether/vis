@@ -8,6 +8,8 @@
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.iteration :as iteration]
+            [com.blockether.vis.contract.activity :as activity-contract]
+            [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe describe expect it]]))
@@ -82,6 +84,81 @@
                      (count (filter #(= :activity-header (get-in % [:meta :kind]))
                                     (entries rows {"#band" false})))))))
     (it "does not paint an empty Activity band" (expect (empty? (entries [] {}))))))
+
+(defdescribe
+  repeated-activity-arguments-test
+  (let [fixture
+        (-> (io/resource "vis-contract/fixtures/activity-arguments.json")
+            slurp
+            json/read-str
+            first
+            (get "projection")
+            activity-contract/from-wire)
+
+        rows
+        (:rows fixture)
+
+        entries
+        (fn [value opened width]
+          (#'render/activity-detail-entries
+           {:node-id "activity"
+            :activity-rows value
+            :activity-expanded? (fn [key default]
+                                  (get opened key default))}
+           width
+           "s1"))
+
+        opened
+        {"#band" true "search-1#group" true}
+
+        row-ids
+        (fn [result]
+          (mapv #(get-in % [:meta :item-id])
+                (filter #(= :activity-row (get-in % [:meta :kind])) result)))]
+
+    (it "groups complete identical arguments while retaining different and unknown calls"
+        (let [result (entries rows opened 72)]
+          (expect (= ["search-1#group" "search-1#arguments" "search-2" "unknown-1" "unknown-2"
+                      "read-1"]
+                     (row-ids result)))
+          (expect (some #(str/includes? (:line %) "×3") result))
+          (expect (some #(str/includes? (:line %) "1 failed") result))))
+    (it "keeps every result and live replacement behind the repeated-argument disclosure"
+        (let [choices
+              (assoc opened
+                "search-1#arguments" true
+                "search-1" true
+                "search-4" true)
+
+              settled
+              (mapv #(if (= "search-4" (:id %))
+                       (assoc %
+                         :state "succeeded"
+                         :result-summary "Last search: 5 matches")
+                       %)
+                    rows)
+
+              result
+              (entries settled choices 100)
+
+              text
+              (str/join "\n" (map :line result))]
+
+          (expect (= ["search-1#group" "search-1#arguments" "search-1" "search-3" "search-4"
+                      "search-2" "unknown-1" "unknown-2" "read-1"]
+                     (row-ids result)))
+          (doseq [value ["First search: 2 matches" "Search directory unavailable"
+                         "Last search: 5 matches"]]
+            (expect (str/includes? text value)))))
+    (it "keeps the repetition count visible on narrow rows with long arguments"
+        (let [long-rows
+              (mapv #(assoc % :summary (apply str (repeat 120 "q"))) rows)
+
+              repeated-row
+              (some #(when (= "search-1#arguments" (get-in % [:meta :item-id])) %)
+                    (entries long-rows opened 36))]
+
+          (expect (str/includes? (str (:line repeated-row)) "×3"))))))
 
 (defn- step-expansions
   "Control step details while keeping the independent Activity band open."
@@ -4430,6 +4507,43 @@
       (expect (str/includes? expanded "RESULT")))))
 
 (defdescribe
+  activity-copy-header-test
+  (it
+    "copies the full retained Activity independently of disclosure and code"
+    (let [entry
+          {:forms [{:code "answer = search()"
+                    :success? true
+                    :activity {:state "succeeded"
+                               :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+                               :rows [{:id "grep-1"
+                                       :sequence 0
+                                       :operation "grep"
+                                       :summary "source"
+                                       :state "succeeded"
+                                       :result-summary "one match beyond the folded row"}]
+                               :omitted {:rows 0 :by-classification {}}}}]}
+
+          headers
+          (for [expanded? [false true]]
+            (->> (format-iteration-entry-entries entry
+                                                 40
+                                                 1
+                                                 {:session-id "s1"
+                                                  :session-turn-id "t1"
+                                                  :detail-expansions
+                                                  {:vis.channel-tui/expand-all-details? expanded?}})
+                 (filter #(= :activity-header (get-in % [:meta :kind])))
+                 first))]
+
+      (doseq [header headers]
+        (expect (str/includes? (:line header) "COPY"))
+        (expect (= 6 (get-in header [:meta :copy-width])))
+        (expect (str/includes? (str (get-in header [:meta :copy-text]))
+                               "one match beyond the folded row"))
+        (expect (not (str/includes? (str (get-in header [:meta :copy-text])) "answer ="))))
+      (expect (apply = (map #(get-in % [:meta :copy-text]) headers))))))
+
+(defdescribe
   python-code-disclosure-is-a-header-test
   (it
     "keeps exactly one source line before the receipt and expands the full program"
@@ -5391,7 +5505,7 @@ h = 8"
                    (.indexOf ^String body "SECOND RESULT")
                    (.indexOf ^String body "FIRST OPERATION")
                    (.indexOf ^String body "Done.")))
-        (expect (= 1 (count (re-seq #" COPY " body))))
+        (expect (= 2 (count (re-seq #" COPY " body))) "Code and Activity each have one Copy")
         (expect (not (str/includes? body "STATUS")) "expanded detail does not repeat status")
         (expect (not (str/includes? body "Succeeded 1"))
                 "expanded detail does not repeat counters")))
@@ -6307,46 +6421,40 @@ h = 8"
           (mapv :item-id (filter #(= :activity-row (:kind %)) (:line-meta payload))))]
 
     (it
-      "registers a real show-more hit in live progress and keeps it through replacements"
-      (let [closed
+      "shows every operation group in live and settled replacements without pagination"
+      (let [live
             (paint activity {})
 
-            more
-            (first (filter #(and (= :activity-more (:kind %)) (:node-id %)) (:line-meta closed)))
+            settled
+            (paint (assoc-in activity [:rows 6 :state] "succeeded") {})]
 
-            expansions
-            {["live-more" (:node-id more)] true}
-
-            opened
-            (paint activity expansions)
-
-            replacement
-            (paint (assoc-in activity [:rows 6 :state] "succeeded") expansions)]
-
-        (expect (= 5 (count (row-ids closed))))
-        (expect (some? (:node-id more)))
-        (expect (str/includes? (:label more) "show 2 more groups"))
-        (expect (:collapsed? more))
-        (expect (= 7 (count (row-ids opened))))
-        (expect (= (row-ids opened) (row-ids replacement)))
-        (expect (some #(and (= (:node-id more) (:node-id %)) (false? (:collapsed? %)))
-                      (:line-meta opened)))
+        (expect (= (mapv :id rows) (row-ids live)))
+        (expect (= (row-ids live) (row-ids settled)))
+        (doseq [payload [live settled]]
+          (expect (not-any? #(= "#steps" (:item-id %)) (:line-meta payload))))
         (.reset interactions/hit-map)
         (.beginFrame interactions/hit-map)
-        (cap/capture! {:cols 108
-                       :rows 50
-                       :paint! (fn [{:keys [screen]}]
-                                 (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
-                                   (render/draw-chat-bubble! (.newTextGraphics s)
-                                                             {:role :assistant
-                                                              :prewrapped-lines (:lines closed)
-                                                              :line-meta (:line-meta closed)}
-                                                             2 2
-                                                             104 {:viewport-h 46})
-                                   (.refresh s)))})
+        (let [capture
+              (cap/capture! {:cols 108
+                             :rows 50
+                             :paint! (fn [{:keys [screen]}]
+                                       (let [^com.googlecode.lanterna.screen.TerminalScreen s
+                                             screen]
+                                         (render/draw-chat-bubble! (.newTextGraphics s)
+                                                                   {:role :assistant
+                                                                    :prewrapped-lines (:lines live)
+                                                                    :line-meta (:line-meta live)}
+                                                                   2 2
+                                                                   104 {:viewport-h 46})
+                                         (.refresh s)))})
+
+              text
+              (cap/frame-text capture)]
+
+          (expect (every? #(str/includes? text (:summary %)) rows)))
         (.commitFrame interactions/hit-map)
-        (expect (some #(and (= :toggle-details (:kind %)) (= (:node-id more) (:node-id %)))
-                      (.current interactions/hit-map)))))
+        (expect (not-any? #(str/ends-with? (str (:node-id %)) ":#steps")
+                          (.current interactions/hit-map)))))
     (it "distinguishes permanently omitted steps even when none were retained"
         (let [payload
               (paint (assoc activity

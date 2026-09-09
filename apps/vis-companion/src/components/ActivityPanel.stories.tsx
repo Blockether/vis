@@ -1,8 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, within } from "storybook/test";
 import {
+  ACTIVITY_ALL_GROUPS,
   ACTIVITY_CHRONOLOGY,
   ACTIVITY_INTERLEAVED,
+  ACTIVITY_REPEATED_ARGUMENTS,
   ACTIVITY_LONG_RUNNING,
   ACTIVITY_LISTING,
   ACTIVITY_LISTING_BATCH,
@@ -38,6 +40,71 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
+
+/** The Storybook clipboard is a boundary stub, as for the shared Code copy control. */
+export const CopyActivity: Story = {
+  args: { activity: ACTIVITY_REPEATED_ARGUMENTS },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const copy = canvas.getByRole("button", { name: "Copy activity" });
+    const minimum = matchMedia("(pointer: coarse)").matches ? 44 : 28;
+    await expect(copy.getBoundingClientRect().width).toBeGreaterThanOrEqual(
+      minimum,
+    );
+    await expect(copy.getBoundingClientRect().height).toBeGreaterThanOrEqual(
+      minimum,
+    );
+    await user.click(copy);
+    await expect(navigator.clipboard.readText()).resolves.toContain(
+      "First search: 2 matches",
+    );
+    await expect(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    await user.click(canvas.getByRole("button", { name: "Expand Activity" }));
+    copy.focus();
+    await user.keyboard("{Enter}");
+    await expect(navigator.clipboard.readText()).resolves.toContain(
+      "Search directory unavailable",
+    );
+    await expect(
+      canvas.getByRole("button", { name: "Collapse Activity" }),
+    ).toHaveAttribute("aria-expanded", "true");
+  },
+};
+
+export const RepeatedArguments: Story = {
+  args: { activity: ACTIVITY_REPEATED_ARGUMENTS },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    await userEvent.click(canvas.getByRole("button", { name: /Search ×6/ }));
+    const repeated = canvas.getByRole("button", { name: /same query ×3/ });
+    await expect(repeated).toHaveAttribute("aria-expanded", "false");
+    await expect(
+      canvas.getByText(/Search directory unavailable/),
+    ).toBeVisible();
+    repeated.focus();
+    await userEvent.keyboard("{Enter}");
+    const first = within(
+      canvasElement.querySelector<HTMLElement>(
+        '[data-activity-row="search-1"]',
+      )!,
+    );
+    await userEvent.click(first.getByRole("button"));
+    await expect(canvas.getByText("First search: 2 matches")).toBeVisible();
+    await userEvent.click(repeated);
+    await expect(
+      canvas.queryByText("First search: 2 matches"),
+    ).not.toBeInTheDocument();
+    await expect(
+      canvasElement.querySelector('[data-activity-row="search-2"]'),
+    ).toBeVisible();
+  },
+};
 
 /** A turn in flight: one call answered, one still running. */
 export const Running: Story = {
@@ -109,6 +176,37 @@ export const InterleavedOperations: Story = {
     ).toEqual(Array.from({ length: 10 }, (_, index) => `cat-${index + 1}`));
     await userEvent.click(reads);
     await expect(reads).toHaveAttribute("aria-expanded", "false");
+  },
+};
+
+/** All groups are available immediately; individual step details still fold independently. */
+export const AllOperationGroups: Story = {
+  args: { activity: ACTIVITY_ALL_GROUPS },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Expand Activity" }),
+    );
+    const groups = canvas.getByRole("list", { name: "Operation groups" });
+    await expect(groups.children).toHaveLength(7);
+    await expect(
+      canvas.queryByRole("button", {
+        name: /(?:show|hide).*(?:more|fewer).*groups?/i,
+      }),
+    ).not.toBeInTheDocument();
+    const lastStep = within(groups.children[6] as HTMLElement).getByRole(
+      "button",
+      {
+        expanded: false,
+      },
+    );
+    await expect(lastStep).toBeVisible();
+    lastStep.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect(lastStep).toHaveAttribute("aria-expanded", "true");
+    await expect(canvas.getByText("Build completed")).toBeVisible();
+    await userEvent.click(lastStep);
+    await expect(lastStep).toHaveAttribute("aria-expanded", "false");
   },
 };
 

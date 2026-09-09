@@ -4,7 +4,7 @@
 // reads the document that landed. Nothing here opens, patches or closes a view:
 // that is the Live View rail, and it is a different file for that reason.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ActivityPanel,
   activityCostParts,
@@ -12,6 +12,7 @@ import {
 } from "./ActivityPanel";
 import activityPanelSource from "./ActivityPanel.tsx?raw";
 import activityFixture from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json";
+import argumentCases from "../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json";
 import {
   ACTIVITY_LONG_RUNNING,
   ACTIVITY_TREE_CHANGES,
@@ -64,6 +65,67 @@ function openEverySettledStep() {
   }
 }
 
+describe("Activity copy", () => {
+  it("copies retained activity while collapsed without opening the band", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    try {
+      const activity = activityProjectionFromWire(argumentCases[0].projection)!;
+      const { rerender } = render(<ActivityPanel activity={activity} />);
+      fireEvent.click(screen.getByRole("button", { name: "Copy activity" }));
+      await screen.findByRole("button", { name: "Copied" });
+      expect(writeText).toHaveBeenCalledTimes(1);
+      const copied = writeText.mock.calls[0][0] as string;
+      expect(copied).toContain("First search: 2 matches");
+      expect(copied).toContain("Search directory unavailable");
+      expect(copied).not.toContain(activity.rows[0].argument_key);
+      expect(
+        screen
+          .getByRole("button", { name: "Expand Activity" })
+          .getAttribute("aria-expanded"),
+      ).toBe("false");
+      fireEvent.click(screen.getByRole("button", { name: "Expand Activity" }));
+      rerender(
+        <ActivityPanel
+          activity={{
+            ...activity,
+            state: "failed",
+            rows: activity.rows.map((row) =>
+              row.id === "search-4"
+                ? {
+                    ...row,
+                    state: "succeeded",
+                    result_summary: "Latest retained result",
+                  }
+                : row,
+            ),
+          }}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Copied" }));
+      expect(writeText).toHaveBeenCalledTimes(2);
+      expect(writeText.mock.calls[1][0]).toContain("Latest retained result");
+      expect(
+        screen
+          .getByRole("button", { name: "Collapse Activity" })
+          .getAttribute("aria-expanded"),
+      ).toBe("true");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it.each(["running", "succeeded", "failed", "cancelled"] as const)(
+    "keeps Copy available in the %s state",
+    (state) => {
+      render(<ActivityPanel activity={{ ...activityProjection(), state }} />);
+      const copy = screen.getByRole("button", { name: "Copy activity" });
+      expect(copy.closest("[data-disclosure-toggle]")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Expand Activity" }));
+      expect(screen.getByRole("button", { name: "Copy activity" })).toBe(copy);
+    },
+  );
+});
+
 describe("joined Activity operation groups", () => {
   function reads() {
     const base = activityProjection();
@@ -87,6 +149,66 @@ describe("joined Activity operation groups", () => {
       rows,
     };
   }
+
+  it("collapses identical arguments, preserves different/unknown calls and every outcome", () => {
+    const activity = activityProjectionFromWire(argumentCases[0].projection)!;
+    const { rerender } = render(<ActivityPanel activity={activity} />);
+    fireEvent.click(screen.getByRole("button", { name: "Expand Activity" }));
+    fireEvent.click(screen.getByRole("button", { name: /Search ×6/ }));
+    const repeat = screen.getByRole("button", { name: /same query ×3/ });
+    expect(repeat.textContent).toContain("1 running");
+    expect(repeat.textContent).toContain("1 failed");
+    expect(repeat.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector('[data-activity-row="search-1"]')).toBeNull();
+    for (const id of ["search-2", "unknown-1", "unknown-2", "read-1"]) {
+      expect(
+        document.querySelector(`[data-activity-row="${id}"]`),
+      ).toBeTruthy();
+    }
+    expect(screen.getByText(/Search directory unavailable/)).toBeTruthy();
+    fireEvent.click(repeat);
+    fireEvent.click(
+      document.querySelector<HTMLElement>(
+        '[data-activity-row="search-1"] [data-disclosure-toggle]',
+      )!,
+    );
+    expect(screen.getByText("First search: 2 matches")).toBeTruthy();
+    expect(
+      document.querySelector('[data-activity-row="search-3"]'),
+    ).toBeTruthy();
+    expect(
+      document.querySelector('[data-activity-row="search-4"]'),
+    ).toBeTruthy();
+    rerender(
+      <ActivityPanel
+        activity={{
+          ...activity,
+          state: "failed",
+          rows: activity.rows.map((row) =>
+            row.id === "search-4"
+              ? {
+                  ...row,
+                  state: "succeeded",
+                  result_summary: "Last search: 5 matches",
+                }
+              : row,
+          ),
+        }}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("button", { name: /same query ×3/ })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(screen.getByText("First search: 2 matches")).toBeTruthy();
+    fireEvent.click(
+      document.querySelector<HTMLElement>(
+        '[data-activity-row="search-4"] [data-disclosure-toggle]',
+      )!,
+    );
+    expect(screen.getByText("Last search: 5 matches")).toBeTruthy();
+  });
 
   it("groups adjacent reads, counts unique files and preserves disclosure through updates", () => {
     const activity = reads();
@@ -166,6 +288,44 @@ describe("joined Activity operation groups", () => {
     ).toBe("true");
     expect(document.querySelectorAll("[data-activity-group]")).toHaveLength(2);
   });
+
+  it.each(["succeeded", "running", "failed", "cancelled"] as const)(
+    "shows every operation group without pagination when work is %s",
+    (state) => {
+      const activity = reads();
+      const rows = [
+        "grep",
+        "cat",
+        "ls",
+        "patch",
+        "run_tests",
+        "lint_code",
+        "shell",
+      ].map((operation, sequence) => ({
+        ...activity.rows[0],
+        id: `operation-${sequence}`,
+        sequence,
+        operation,
+        state: sequence === 6 ? state : ("succeeded" as const),
+      }));
+      const counts = { running: 0, succeeded: 6, failed: 0, cancelled: 0 };
+      counts[state] += 1;
+      paintActivity({ activity: { ...activity, state, counts, rows } });
+      expect(
+        screen.getByRole("list", { name: "Operation groups" }).children,
+      ).toHaveLength(7);
+      expect(
+        [...document.querySelectorAll("[data-activity-row]")].map((row) =>
+          row.getAttribute("data-activity-row"),
+        ),
+      ).toEqual(rows.map((row) => row.id));
+      expect(
+        screen.queryByRole("button", {
+          name: /(?:show|hide).*(?:more|fewer).*groups?/i,
+        }),
+      ).toBeNull();
+    },
+  );
 
   it("keeps failed and cancelled outcomes visible while a group is collapsed", () => {
     const activity = reads();

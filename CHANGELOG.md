@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.53] - 2026-09-09
+
+### Fixed
+- Register native directory-listing calls and verify native file search in the release regression suite.
+- Isolate Council execution context and preserve completed answers when persistence fails.
+- Keep prepared Python environments valid after unrelated package updates and report stale tools after failed reloads.
+
 ## [v0.1.52] - 2026-09-09
 
 ### Fixed

@@ -2232,6 +2232,15 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(iconOnly).not.toContain("<span");
       expect(html()).toContain("abc12345");
     });
+    it("uses the full trailing cell for an execution band's copy action", () => {
+      const copy = renderToStaticMarkup(
+        <CopyChip value="abc" label="Copy activity" density="compact" edge />,
+      );
+      const button = renderToStaticMarkup(
+        <IconButton label="Copy activity" variant="quiet" edge fullCell />,
+      );
+      expect(first(copy)).toStrictEqual(first(button));
+    });
     it("carries a name and, when there is more to say, a title", () => {
       expect(html()).toContain('aria-label="Copy session id"');
       const titled = renderToStaticMarkup(

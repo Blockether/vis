@@ -68,6 +68,9 @@
            :evidence (if-let [argument (:argument-summary event)]
                        [{:kind :arguments :text argument}]
                        [])}
+    (:argument-key event)
+    (assoc :argument-key (:argument-key event))
+
     (:summary-format event)
     (assoc :summary-format (:summary-format event))
 
@@ -291,6 +294,9 @@
                                     (Math/addExact (long total) (long duration)))
                                   0
                                   (keep :duration-ms children))}
+      (and (= kind :shell) (= :shell (:operation first-row)) (:argument-key first-row))
+      (assoc :argument-key (:argument-key first-row))
+
       (:summary-format head)
       (assoc :summary-format (:summary-format head))
 
@@ -578,9 +584,9 @@
       (boolean is-redacted))))
 
 (defn- presentation-row
-  [{:keys [id sequence operation presenter classification state summary group-token resources
-           duration-ms result-summary error-summary evidence children is-truncated summary-format
-           result-format presentation]}]
+  [{:keys [id sequence operation presenter classification state summary group-token argument-key
+           resources duration-ms result-summary error-summary evidence children is-truncated
+           summary-format result-format presentation]}]
   (cond-> {:id (str id)
            :sequence (long sequence)
            :operation (enum-name operation)
@@ -592,6 +598,9 @@
            :evidence (mapv presentation-evidence evidence)}
     (some? presentation)
     (assoc :presentation presentation)
+
+    argument-key
+    (assoc :argument-key argument-key)
 
     group-token
     (assoc :group-token (str group-token))

@@ -229,10 +229,17 @@
                 activity-row (first (filter #(str/includes? (row-text %) "ACTIVITY") grid))]
 
             (is (= (- cols 6) (count (str/trimr (row-text code-row)))))
-            (is (= (- cols 5) (count (str/trimr (row-text activity-row)))))
+            (is (= (- cols 6) (count (str/trimr (row-text activity-row)))))
             (is (str/ends-with? (str/trimr (row-text code-row)) " COPY"))
             (is (= (subvec (first grid) 0 6) (subvec code-row (- cols 11) (- cols 5))))
-            (is (str/ends-with? (str/trimr (row-text activity-row)) "7 operations"))
+            (is (str/ends-with? (str/trimr (row-text activity-row)) " COPY"))
+            (is (= (subvec code-row (- cols 11) (- cols 5))
+                   (subvec activity-row (- cols 11) (- cols 5))))
+            (doseq [x (range (- cols 11) (- cols 5))]
+              (is (nil? (.lookup interactions/hit-map
+                                 (TerminalPosition. (int x)
+                                                    (.indexOf ^java.util.List grid
+                                                              activity-row))))))
             (doseq [x (range (- cols 11) (- cols 5))]
               (is (nil? (.lookup interactions/hit-map
                                  (TerminalPosition. (int x)

@@ -1,0 +1,385 @@
+[
+  {
+    "name": "interleaved identical arguments retain every outcome and unknown calls",
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 5,
+        "failed": 1,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "search-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "First search: 2 matches",
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "id": "read-1",
+          "sequence": 2,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "File content",
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "id": "search-2",
+          "sequence": 3,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Different arguments: 4 matches",
+          "argument_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "id": "search-3",
+          "sequence": 4,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "failed",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "error_summary": "Search directory unavailable",
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "id": "search-4",
+          "sequence": 5,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "running",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "id": "unknown-1",
+          "sequence": 6,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Unkeyed result one"
+        },
+        {
+          "id": "unknown-2",
+          "sequence": 7,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Unkeyed result two"
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    },
+    "groups": [
+      {
+        "id": "search-1",
+        "rows": [
+          "search-1",
+          "search-3",
+          "search-4"
+        ]
+      },
+      {
+        "id": "read-1",
+        "rows": [
+          "read-1"
+        ]
+      },
+      {
+        "id": "search-2",
+        "rows": [
+          "search-2"
+        ]
+      },
+      {
+        "id": "unknown-1",
+        "rows": [
+          "unknown-1"
+        ]
+      },
+      {
+        "id": "unknown-2",
+        "rows": [
+          "unknown-2"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "first entry and member sequence survive out-of-order input",
+    "projection": {
+      "state": "running",
+      "counts": {
+        "running": 1,
+        "succeeded": 5,
+        "failed": 1,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "unknown-2",
+          "sequence": 7,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Unkeyed result two"
+        },
+        {
+          "id": "unknown-1",
+          "sequence": 6,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Unkeyed result one"
+        },
+        {
+          "id": "search-4",
+          "sequence": 5,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "running",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "id": "search-3",
+          "sequence": 4,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "failed",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "error_summary": "Search directory unavailable",
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "id": "search-2",
+          "sequence": 3,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "Different arguments: 4 matches",
+          "argument_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "id": "read-1",
+          "sequence": 2,
+          "operation": "cat",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "File content",
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "id": "search-1",
+          "sequence": 1,
+          "operation": "grep",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "result_summary": "First search: 2 matches",
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    },
+    "groups": [
+      {
+        "id": "search-1",
+        "rows": [
+          "search-1",
+          "search-3",
+          "search-4"
+        ]
+      },
+      {
+        "id": "read-1",
+        "rows": [
+          "read-1"
+        ]
+      },
+      {
+        "id": "search-2",
+        "rows": [
+          "search-2"
+        ]
+      },
+      {
+        "id": "unknown-1",
+        "rows": [
+          "unknown-1"
+        ]
+      },
+      {
+        "id": "unknown-2",
+        "rows": [
+          "unknown-2"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "shell polling stays inside each repeated command",
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 4,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "group-launch-1",
+          "sequence": 3,
+          "operation": "shell",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "children": [
+            {
+              "id": "launch-1",
+              "sequence": 3,
+              "operation": "shell",
+              "presenter": "generic",
+              "signal": "observation",
+              "state": "succeeded",
+              "summary": "same query",
+              "resources": [],
+              "evidence": [],
+              "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "id": "poll-1",
+              "sequence": 4,
+              "operation": "_shell_logs",
+              "presenter": "generic",
+              "signal": "observation",
+              "state": "succeeded",
+              "summary": "same query",
+              "resources": [],
+              "evidence": [],
+              "argument_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          ],
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "id": "group-launch-2",
+          "sequence": 6,
+          "operation": "shell",
+          "presenter": "generic",
+          "signal": "observation",
+          "state": "succeeded",
+          "summary": "same query",
+          "resources": [],
+          "evidence": [],
+          "children": [
+            {
+              "id": "launch-2",
+              "sequence": 6,
+              "operation": "shell",
+              "presenter": "generic",
+              "signal": "observation",
+              "state": "succeeded",
+              "summary": "same query",
+              "resources": [],
+              "evidence": [],
+              "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "id": "poll-2",
+              "sequence": 7,
+              "operation": "_shell_logs",
+              "presenter": "generic",
+              "signal": "observation",
+              "state": "succeeded",
+              "summary": "same query",
+              "resources": [],
+              "evidence": [],
+              "argument_key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          ],
+          "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "omitted": {
+        "rows": 0,
+        "by_classification": {}
+      }
+    },
+    "groups": [
+      {
+        "id": "launch-1",
+        "rows": [
+          "group-launch-1",
+          "group-launch-2"
+        ]
+      }
+    ]
+  }
+]

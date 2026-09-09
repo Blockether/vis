@@ -24,6 +24,7 @@ _DOCUMENT_NAMES = (
     "toggle",
     "provider",
     "surface",
+    "symbol",
     "test-runner",
 )
 _SCHEMA_NAMES = (*_DOCUMENT_NAMES, "python-host", "common")
