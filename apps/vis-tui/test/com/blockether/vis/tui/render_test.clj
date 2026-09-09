@@ -6022,8 +6022,8 @@ h = 8"
                   "a call hangs one level in from its group's words")
           (expect (= (+ 2 (long (.indexOf head "Ran"))) (long (.indexOf wait "_shell-wait"))))
           (expect (not-any? #(str/includes? % "\"keys\"") open))
-          (expect (= 3 (count (filter str/blank? (butlast open))))
-                  "one blank line separates each pair of shut sibling calls")))
+          (expect (= 1 (count (filter str/blank? (butlast open))))
+                  "only the Activity header has a blank row before the compact calls")))
     (it "opens one call onto its outcome and keeps its siblings shut"
         (let [open
               (lines [group] {"sh-1" true "wait-1" true})
@@ -6040,7 +6040,7 @@ h = 8"
           (expect (= (long (.indexOf wait "_shell-wait")) (long (.indexOf outcome-line "{")))
                   "the outcome starts in the column the call's own words do")
           (expect (str/includes? (line-with open "› git") "› git") "with the handle it touched")
-          (expect (some str/blank? open) "a blank line parts the opened call from its neighbours")))
+          (expect (str/blank? (second open)) "the header stays separated from the operations")))
     (it
       "starts a running step and a failed step open, because their progress and their reason are the point"
       (let [running
@@ -6620,13 +6620,14 @@ h = 8"
              76
              "spacing")]
 
-        (expect (= [:activity-header :activity-row nil] (mapv #(get-in % [:meta :kind]) entries)))
-        (expect (str/includes? (:line (second entries)) "List ×2")))))
+        (expect (= [:activity-header nil :activity-row nil]
+                   (mapv #(get-in % [:meta :kind]) entries)))
+        (expect (str/includes? (:line (nth entries 2)) "List ×2")))))
 
 (defdescribe
   activity-inline-disclosure-spacing-test
   (it
-    "keeps disclosures next to text and separates sibling operations"
+    "keeps disclosures inline and spaces only the Activity header from compact operations"
     (doseq [width
             [40 80 160]
 
@@ -6661,13 +6662,14 @@ h = 8"
             (keep-indexed #(when (= :activity-row (get-in %2 [:meta :kind])) [%1 %2]) entries)]
 
         (expect (<= 2 (count heads)))
+        (expect (= 2 (ffirst heads)))
+        (expect (nil? (:meta (second entries))))
         (doseq [[_ entry] (filter #(contains? #{"one" "two"} (get-in (second %) [:meta :item-id]))
                                   heads)]
           (expect (not (re-find #"[▸▾]" (get-in entry [:meta :right-suffix]))))
           (expect (re-find #" ▸\s+42ms" (:line entry))))
         (doseq [[[a _] [b _]] (partition 2 1 heads)]
-          (expect (= 2 (- b a)))
-          (expect (nil? (:meta (nth entries (inc a))))))))))
+          (expect (= 1 (- b a))))))))
 
 (defdescribe
   activity-content-painter-test
@@ -7193,17 +7195,18 @@ print(paths)"
             (expect (= open? (str/includes? text "Source details")))
             (expect (= p/MARKER_ACTIVITY (get lines (dec second-section))))))))
   (it "does not offer an inert chevron for a summary-only presentation"
-      (let [entry (second (#'render/activity-detail-entries
-                           {:node-id "summary"
-                            :activity-rows [{:id "listing"
-                                             :state "succeeded"
-                                             :operation "ls"
-                                             :presentation {:headline "Listed src"
-                                                            :summary "Empty directory"
-                                                            :content []}}]
-                            :activity-expanded? (step-expansions false)}
-                           90
-                           "summary"))]
+      (let [entry (nth (#'render/activity-detail-entries
+                        {:node-id "summary"
+                         :activity-rows [{:id "listing"
+                                          :state "succeeded"
+                                          :operation "ls"
+                                          :presentation {:headline "Listed src"
+                                                         :summary "Empty directory"
+                                                         :content []}}]
+                         :activity-expanded? (step-expansions false)}
+                        90
+                        "summary")
+                       2)]
         (expect (str/includes? (:line entry) "Listed src · Empty directory"))
         (expect (nil? (get-in entry [:meta :node-id]))))))
 
@@ -7231,11 +7234,12 @@ print(paths)"
                 (assoc :error-summary caption))
 
               entry
-              (second
+              (nth
                 (#'render/activity-detail-entries
                  {:node-id "width" :activity-rows [row] :activity-expanded? (step-expansions false)}
                  width
-                 "width"))]
+                 "width")
+                2)]
 
           (expect (str/includes? (:line entry) caption))
           (expect (str/includes? (:line entry) "42ms"))))))

@@ -184,6 +184,11 @@
                 (is (= code-open? (some? (row-of "RESULT"))))
                 (is (= code-open? (str/includes? text "inspect_files()")))
                 (is (= activity-open? (str/includes? text "Read ×3")))
+                (when activity-open?
+                  (let [header-row (row-of "ACTIVITY")]
+                    (is (str/blank? (nth lines (inc header-row))))
+                    (is (= (mapv #(+ header-row %) [2 3 4])
+                           (mapv row-of ["Read ×3" "Patch ×2" "Shell ×2"])))))
                 (let [y (row-of "ACTIVITY")
                       x (str/index-of (nth lines y) "ACTIVITY")]
 

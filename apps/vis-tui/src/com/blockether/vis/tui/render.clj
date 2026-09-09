@@ -5927,17 +5927,7 @@
                                                        (if (seq nested) [] resources)
 
                                                        diffs
-                                                       (activity-diffs row)
-
-                                                       ;; Separate sibling operations, whether open or closed.
-                                                       nested-entries
-                                                       (fn []
-                                                         (vec (mapcat identity
-                                                                      (interpose [blank]
-                                                                        (map #(row-entry
-                                                                                %
-                                                                                (inc (long depth)))
-                                                                             nested)))))]
+                                                       (activity-diffs row)]
 
                                                    (cond-> [head]
                                                      (and open? (seq content))
@@ -6026,23 +6016,15 @@
                                                      (and (not open?)
                                                           (seq nested)
                                                           (not (:activity-repeat-count row)))
-                                                     (into (let [chunks
-                                                                 (seq (map #(row-entry
-                                                                              %
-                                                                              (inc (long depth)))
-                                                                           (remove
-                                                                             #(= :succeeded
-                                                                                 (activity-row-state
-                                                                                   %))
-                                                                             nested)))]
-                                                             (when chunks
-                                                               (cons blank
-                                                                     (mapcat identity
-                                                                             (interpose [blank]
-                                                                               chunks))))))
+                                                     (into (mapcat #(row-entry % (inc (long depth)))
+                                                                   (remove #(= :succeeded
+                                                                               (activity-row-state
+                                                                                 %))
+                                                                     nested)))
 
                                                      (and open? (seq nested))
-                                                     (into (cons blank (nested-entries)))))))
+                                                     (into (mapcat #(row-entry % (inc (long depth)))
+                                                                   nested))))))
 
         ;; A hard transport limit is not a disclosure: those bytes are unavailable.
         omitted-entry
@@ -6108,7 +6090,7 @@
                            :operation-label "ACTIVITY"})}]
 
         (vec (concat [header]
-                     (when band-open? (mapcat identity (interpose [blank] (map row-entry rows))))
+                     (when band-open? (cons blank (mapcat row-entry rows)))
                      (when (and band-open? omitted-entry) [omitted-entry])
                      [blank]))))))
 
