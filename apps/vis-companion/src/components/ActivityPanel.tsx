@@ -1016,7 +1016,7 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
   const omitted = activity?.omitted.rows ?? 0;
   return (
     <ol
-      aria-label="Invocation chronology"
+      aria-label="Operation groups"
       data-activity-chronology
       className="min-w-0 pb-1"
     >

@@ -21,6 +21,7 @@
 
 import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
 import activityWire from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
+import activityGroupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
 import type { SessionArtifact } from '../lib/artifacts';
 import type { PendingAttachment } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
@@ -61,6 +62,13 @@ export const STORY_MACHINES = [
   { name: 'macbook-pro-16-work', color: storyHue('violet'), live: 0, unread: 4, isDown: false },
   { name: 'mini', color: storyHue('orange'), live: 0, unread: 0, isDown: true },
 ] as const;
+
+/** Interleaved calls from the shared grouping contract, including a failed and a running test. */
+export const ACTIVITY_INTERLEAVED = projection(
+  activityGroupingCases.find(
+    (sample) => sample.name === 'ten interleaved reads and searches with failed and running tests',
+  )!.projection,
+);
 
 /** The engine's own payload, refused loudly rather than drawn empty. */
 function projection(wire: unknown): ActivityProjection {
