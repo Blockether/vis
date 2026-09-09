@@ -3881,14 +3881,15 @@ vis.register(vis.Extension(
             "        return fn(*args, **kwargs)\n    return call\n")
        "contract_tools.py"
        (str
-         "from __future__ import annotations\n"
-         "from dataclasses import dataclass\n" "from typing import Annotated\n"
-         "from contract_helpers import wrapped\n" "import blockether.vis.extension as vis\n"
-         "@dataclass(frozen=True)\n" "class Result:\n"
-         "    \"A greeting result.\"\n" "    text: Annotated[str, 'Greeting text.']\n"
+         "from __future__ import annotations\n" "from dataclasses import dataclass\n"
+         "from typing import Annotated\n" "from contract_helpers import wrapped\n"
+         "import blockether.vis.extension as vis\n" "@dataclass(frozen=True)\n"
+         "class Result:\n" "    \"A greeting result.\"\n"
+         "    text: Annotated[str, 'Greeting text.']\n"
          "@dataclass(frozen=True)\nclass Results:\n    items: tuple[Result, ...]\n"
+         "    opaque: object = None\n    missing: MissingResult = None\n"
          "class Greeter:\n    @vis.method(tag='mutation')\n    @wrapped\n"
-         "    def hello(self, name: str, /, *, loud: bool = False) -> Results:\n"
+         "    def hello(self, name: str, /, *, loud: bool = False, note: str | None = None) -> Results:\n"
          "        \"Greet one person without changing state.\"\n"
          "        return Results((Result(name.upper() if loud else name),))\n"
          "vis.register(vis.Extension(name='contract-tools', description='Contract tools', alias='greet', symbols=[vis.Symbol(Greeter(), name='greet')]))\n")}
@@ -3904,7 +3905,7 @@ vis.register(vis.Extension(
               {:python-context ctx :extensions (atom []) :active-extensions (atom [])}]
 
           (try
-            (dotimes [_ 2]
+            (dotimes [iteration 2]
               (let [ext (registered "contract-tools")
                     entry (first (get-in ext [:ext/engine :ext.engine/symbols]))]
 
@@ -3916,22 +3917,45 @@ vis.register(vis.Extension(
                    (ep/run-python-block
                      ctx
                      (str
-                       "import json, inspect, typing\n" "assert greet.hello.__annotations__ == {}\n"
+                       "import json, inspect, typing\n"
+                       "assert greet.hello.__annotations__ == {}\n"
                        "assert typing.get_type_hints(greet.hello) == {}\n"
                        "assert getattr(greet.hello, '__signature__', None) is None\n"
                        "assert greet.hello.contract['tag'] == 'mutation'\n"
                        "assert greet.hello.contract['returns']['fields'][0]['type']['variadic'] is True\n"
                        "assert 'tuple[Result, ...]' in doc('greet.hello')\n"
+                       "assert greet.hello.contract['returns']['fields'][1]['type']['kind'] == 'opaque'\n"
+                       "assert greet.hello.contract['returns']['fields'][2]['type']['kind'] == 'unresolved'\n"
+                       "assert 'opaque: object (opaque)' in doc('greet.hello')\n"
+                       "assert 'missing: MissingResult (unresolved)' in doc('greet.hello')\n"
                        "assert greet.hello.contract['name'] == 'greet.hello'\n"
                        "assert greet.hello.contract['parameters'][1]['kind'] == 'keyword_only'\n"
                        "assert 'loud: bool' in doc('greet.hello')\n"
-                       "assert 'Greeting text.' in doc('greet.hello')\n"
-                       "assert str(inspect.signature(greet.hello)) == '(name, /, *, loud=Ellipsis)'\n"
-                       "assert (await greet.hello('Ada', loud=True)).items[0].text == 'ADA'\n"
+                       "assert "
+                       (pr-str (if (zero? iteration) "Greeting text." "Reloaded greeting text."))
+                       " == greet.hello.contract['returns']['fields'][0]['type']['arguments'][0]['fields'][0]['type']['description']\n"
+                       "assert "
+                       (pr-str (if (zero? iteration) "Greeting text." "Reloaded greeting text."))
+                       " in doc('greet.hello')\n"
+                       "assert str(inspect.signature(greet.hello)) == '(name, /, *, loud=Ellipsis, note=None)'\n"
+                       "assert inspect.signature(greet.hello).return_annotation is inspect.Signature.empty\n"
+                       "assert all(p.annotation is inspect.Parameter.empty for p in inspect.signature(greet.hello).parameters.values())\n"
+                       "value = await greet.hello('Ada', loud=True)\n"
+                       "assert value.items[0].text == 'ADA'\n"
+                       "assert (await greet.hello('Ada')).items[0].text == 'Ada'\n"
+                       "try:\n    value.items[0].text = 'changed'\n"
+                       "except AttributeError:\n    pass\n"
+                       "else:\n    raise AssertionError('mutable nested result')\n"
                        "print(json.dumps(greet.hello.contract['returns']['fields'][0]['name']))"))]
                   (expect (nil? (:error answer)) (pr-str answer))
                   (expect (str/includes? (or (:stdout answer) "") "items"))))
-              (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})))))
+              (when (zero? iteration)
+                (write-ext! ext-dir
+                            "contract_tools.py"
+                            (str/replace (slurp (io/file ext-dir "contract_tools.py"))
+                                         "Greeting text."
+                                         "Reloaded greeting text."))
+                (expect (= 1 (:loaded (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))))
             (finally (ep/dispose-python-context! ctx))))))))
 
 (defdescribe

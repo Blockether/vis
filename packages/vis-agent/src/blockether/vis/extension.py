@@ -929,8 +929,8 @@ def _callable_contract(fn, name, tag, doc):
 
 def _contract_type_text(spec):
     arguments = spec.get("arguments", [])
-    if spec["kind"] == "unresolved":
-        return spec["name"] + " (unresolved)"
+    if spec["kind"] in ("unresolved", "opaque"):
+        return f"{spec['name']} ({spec['kind']})"
     if spec["kind"] == "union":
         return " | ".join(_contract_type_text(a) for a in arguments)
     if arguments:

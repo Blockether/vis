@@ -182,9 +182,11 @@ def test_cross_module_wraps_resolves_original_namespace(bound):
         "from functools import wraps\ndef wrap(fn):\n    @wraps(fn)\n    def wrapped(*args, **kwargs):\n        return fn(*args, **kwargs)\n    return wrapped\n",
         decorators.__dict__,
     )
-    namespace = {"wrap": decorators.wrap, "Reading": Reading, "vis": vis}
+    models = ModuleType("contract_models")
+    models.Reading = Reading
+    namespace = {"wrap": decorators.wrap, "models": models, "vis": vis}
     exec(
-        'from __future__ import annotations\nclass Tools:\n    @vis.method(tag="mutation")\n    @wrap\n    def read(self, value: Reading) -> tuple[Reading, ...]:\n        "Read records."\n        return (value,)\n',
+        'from __future__ import annotations\nclass Tools:\n    @wrap\n    @vis.method(tag="mutation")\n    @wrap\n    def read(self, value: models.Reading) -> tuple[models.Reading, ...]:\n        "Read records."\n        return (value,)\n',
         namespace,
     )
     tool = namespace["Tools"]().read if bound else namespace["Tools"].read
@@ -228,9 +230,35 @@ def test_variadic_tuple_contract(annotation):
     assert _contracts.validate("symbol", "declaration", fixed) == fixed
 
 
-def test_unresolved_types_are_visible_in_docs():
-    def values():
+@pytest.mark.parametrize("bound", [False, True])
+def test_wrapper_cycles_are_rejected_without_calling_the_tool(bound):
+    # #179: cyclic wrapper metadata must fail rather than hang or invoke a tool.
+    class Tools:
+        def read(self, value: str) -> str:
+            """Read one value."""
+            pytest.fail("tool ran during inspection")
+
+    Tools.read.__wrapped__ = Tools.read
+    tool = Tools().read if bound else Tools.read
+    with pytest.raises(ValueError, match="wrapper loop"):
+        vis.Symbol(tool)
+
+
+@pytest.mark.parametrize(
+    "annotation, rendered",
+    [
+        ("MissingResult", "MissingResult (unresolved)"),
+        (object, "object (opaque)"),
+        (list[object], "list[object (opaque)]"),
+        ("tuple[MissingResult, ...]", "tuple[MissingResult (unresolved), ...]"),
+    ],
+)
+def test_incomplete_types_are_visible_in_docs(annotation, rendered):
+    # #179: a type name alone must not imply that its structure was resolved.
+    def values(value):
         """Read values."""
 
-    values.__annotations__ = {"return": "MissingResult"}
-    assert "Returns: MissingResult (unresolved)" in vis.Symbol(values)._spec()["doc"]
+    values.__annotations__ = {"value": annotation, "return": annotation}
+    document = vis.Symbol(values)._spec()["doc"]
+    assert f"- value: {rendered}" in document
+    assert f"Returns: {rendered}" in document

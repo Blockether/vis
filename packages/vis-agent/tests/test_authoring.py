@@ -1,7 +1,11 @@
 """Issue #176: the authoring pages use one executable package, not drifting snippets."""
 
+import re
 import runpy
+import sys
+from dataclasses import FrozenInstanceError
 from pathlib import Path
+from types import ModuleType
 
 import blockether.vis.extension as vis
 import pytest
@@ -42,3 +46,37 @@ def test_example_manifest_registration_and_domain_behavior(monkeypatch):
     for name, test in domain_tests.items():
         if name.startswith("test_"):
             test()
+
+
+def test_documented_cross_module_wrapper_example(monkeypatch):
+    # #179: execute the actual guide, not a second implementation of its example.
+    snippets = re.findall(
+        r"```python\n# (decorators|tools)\.py\n(.*?)```",
+        (DOCS / "extension-design.md").read_text(),
+        re.S,
+    )
+    assert [name for name, _ in snippets] == ["decorators", "tools"]
+    modules = {}
+    for name, source in snippets:
+        module = ModuleType(name)
+        monkeypatch.setitem(sys.modules, name, module)
+        exec(compile(source, f"{name}.py", "exec", dont_inherit=True), module.__dict__)
+        modules[name] = module
+
+    tools = modules["tools"].Tools()
+    contract = vis.Symbol(tools, name="tools").contract["members"][0]
+    assert _contracts.validate("symbol", "callable", contract) == contract
+    assert contract["signature"] == "text=..."
+    result_type = contract["returns"]
+    assert result_type["name"] == "tuple"
+    assert result_type["variadic"] is True
+    (record,) = result_type["arguments"]
+    assert record["kind"] == "record"
+    assert record["name"] == "Result"
+    (text,) = record["fields"]
+    assert text["name"] == "text"
+    assert text["type"] == {"kind": "scalar", "name": "str"}
+    result = tools.read()
+    assert result[0].text == "ready"
+    with pytest.raises(FrozenInstanceError):
+        result[0].text = "changed"
