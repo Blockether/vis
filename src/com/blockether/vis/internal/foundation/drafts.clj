@@ -71,7 +71,7 @@
 (defn- clean-arg
   "`draft_create(name, clean=True)` or `draft_create(name, {\"clean\": true})`."
   [x]
-  (boolean (if (map? x) (or (get x "clean") (:clean x)) x)))
+  (not (false? (if (map? x) (get x "clean" (get x :clean true)) x))))
 
 (defn- failure [message] (extension/failure {:error {:message message}}))
 
@@ -215,13 +215,12 @@
      :description
      (str
        "Open a draft — an isolated working copy of this repository — and move the session into it. "
-       "The trunk checkout is left alone until `draft_approve()` commits and merges the work into "
-       "the default branch; `draft_discard()` removes the working copy. Pending trunk changes come "
-       "along; `clean=True` seeds from `HEAD` and leaves them behind. Approval preserves unrelated "
-       "local changes in the target checkout. One draft at a time: discard the current one before opening another. "
+       "The trunk checkout is left alone until approval. Drafts default to committed HEAD (clean=True); "
+       "clean=False explicitly copies pending trunk work and can cause overlap refusals on approval. "
+       "Approval preserves unrelated local work. Discard the current draft before opening another. "
        "Extension hooks on `draft/create` may refuse.")
      :params [{:name "label" :note "draft name; also the `vis/<label>` branch"}
-              {:name "clean" :note "`True` excludes pending trunk changes"}]
+              {:name "clean" :note "Defaults to True; False copies pending trunk changes"}]
      :call {:pos ["label"] :opt-pos ["clean"]}
      :result
      (str
@@ -236,20 +235,20 @@
      :tag :mutation
      :description
      (str
-       "Commit the session's draft and merge it into the local default branch: `origin/HEAD`, "
-       "otherwise `main` or `master`. Stage every changed and non-ignored untracked path; new "
-       "commits carry Vis-Session/Vis-Draft trailers. A diverged target is merged inside the draft, "
-       "then fast-forwarded, preserving unrelated local changes in the target checkout. Git refuses "
-       "updates that would overwrite local work; conflicts retain the draft commit for retry. "
-       "No automatic stash, forced update or remote push. "
-       "`draft_approve()` uses the default subject, `draft_approve(\"subject\")` yours. Existing "
-       "draft commits are merged even when no paths are pending. The draft stays open. "
-       "Extension hooks on `draft/approve` and `git/commit` may veto the operation.")
+       "Commit the draft and fast-forward the default branch (origin/HEAD, otherwise main or master). "
+       "Fetch origin when configured; the draft must contain both local and origin target commits. "
+       "If synchronization is required, merge or rebase in the draft, resolve conflicts and retry. "
+       "Approval never merges target history. All pending draft paths are staged; commits carry "
+       "Vis-Session/Vis-Draft trailers. Overlapping local paths are refused before landing. "
+       "Unrelated local changes are stashed including untracked files, then restored with --index. "
+       "Push to origin without force only after restoration succeeds. A failed restore retains the stash; "
+       "a failed push reports landed locally and permits retry. No origin means local-only approval. "
+       "The draft stays open. Hooks on draft/approve and git/commit may veto.")
      :params [{:name "message" :note "commit subject; default `draft(<name>): approve`"}]
      :call {:lead-opt "message" :rest :never}
      :result
      (str
-       "String-keyed `{status: approved|nothing-to-approve, branch, target_branch, commit, files}`; "
+       "String-keyed `{status: approved|nothing-to-approve, published, branch, target_branch, commit, files}`; "
        "`files` lists the paths that landed.")}))
 
 (def draft-discard-symbol
