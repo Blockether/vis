@@ -63,6 +63,84 @@
                                   [:llm-headers :responses-path]))))))))
 
 (defdescribe
+  custom-provider-preset-base-url-test
+  ;; Regression #176: registered extension endpoints must reach Svar for custom ids.
+  (it "retains the preset URL with a configured API key"
+      (with-redefs [registry/provider-by-id {:custom-preset
+                                             {:provider/preset
+                                              {:base-url "https://gateway.example.com/preset/v1"}}}]
+        (expect (= "https://gateway.example.com/preset/v1"
+                   (:base-url (config/->svar-provider {:id :custom-preset
+                                                       :api-key "fixture"
+                                                       :models [{:name "fixture-model"}]}))))))
+  (it "retains the preset URL when the credential callback supplies only a token"
+      (with-redefs [registry/provider-by-id
+                    {:custom-preset {:provider/preset {:base-url
+                                                       "https://gateway.example.com/preset/v1"}
+                                     :provider/get-token-fn (constantly {:token "fixture"})}}]
+        (expect (= "https://gateway.example.com/preset/v1"
+                   (:base-url (config/->svar-provider {:id :custom-preset
+                                                       :models [{:name "fixture-model"}]})))))))
+
+(defdescribe
+  custom-provider-endpoint-precedence-test
+  (it "preserves configured overrides and credential-supplied endpoints"
+      (let [preset
+            "https://gateway.example.com/preset/v1"
+
+            configured
+            "https://gateway.example.com/configured/v1"
+
+            issued
+            "https://gateway.example.com/issued/v1"]
+
+        (doseq [[literal-key configured-url token-url expected]
+                [["fixture" configured issued configured] [nil configured nil configured]
+                 [nil nil issued issued] [nil configured issued configured]
+                 [nil preset issued issued] [nil (str preset "/") issued issued]]]
+          (with-redefs [registry/provider-by-id
+                        {:custom-preset {:provider/preset {:base-url preset}
+                                         :provider/get-token-fn (constantly {:token "fixture"
+                                                                             :api-url token-url})}}]
+            (expect (= expected
+                       (:base-url (config/->svar-provider
+                                    (cond-> {:id :custom-preset :models [{:name "fixture-model"}]}
+                                      literal-key
+                                      (assoc :api-key literal-key)
+
+                                      configured-url
+                                      (assoc :base-url configured-url)))))))))))
+
+(defdescribe custom-provider-preset-router-test
+             ;; Regression #176: a missing custom endpoint also aborts a mixed-provider router.
+             (it "builds a router with a registered preset alongside a healthy built-in provider"
+                 (with-redefs [registry/provider-registry (atom {})]
+                   (registry/register-provider!
+                     {:provider/id :custom-preset
+                      :provider/label "Custom preset fixture"
+                      :provider/preset {:base-url "https://gateway.example.com/preset/v1"
+                                        :api-style :openai-compatible-chat}
+                      :provider/get-token-fn (constantly {:token "fixture"})})
+                   (let [healthy (config/->svar-provider {:id :openai
+                                                          :api-key "fixture"
+                                                          :models [{:name "fixture-model"}]})]
+                     (expect (= :openai
+                                (-> (svar/make-router [healthy])
+                                    :providers
+                                    first
+                                    :id)))
+                     (doseq [literal-key ["fixture" nil]]
+                       (let [custom (config/->svar-provider
+                                      (cond-> {:id :custom-preset :models [{:name "fixture-model"}]}
+                                        literal-key
+                                        (assoc :api-key literal-key)))
+                             providers (:providers (svar/make-router [healthy custom]))]
+
+                         (expect (= [:openai :custom-preset] (mapv :id providers)))
+                         (expect (= "https://gateway.example.com/preset/v1"
+                                    (:base-url (second providers))))))))))
+
+(defdescribe
   router-opts-test
   "`router-opts` extracts the `:router` block from a Vis config map and
    trims it to the keys `svar/make-router`'s opts arity understands.

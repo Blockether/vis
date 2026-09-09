@@ -600,12 +600,11 @@
    `:base-url`, `:api-style`, `:models`, optional `:responses-path`,
    optional `:llm-headers`, and Vis-owned `:network` request defaults).
 
-   svar's `make-router` calls `normalize-provider` which auto-resolves
-   `:base-url` from svar's `KNOWN_PROVIDERS` table for built-in
-   providers, so we forward `:base-url` ONLY when the provider map
-   has one explicitly (vis-only providers like `:github-models`,
-   user overrides, or OAuth-supplied URLs). For known providers
-   svar fills in the URL itself - stop fighting it.
+   Resolve `:base-url` from configuration or the provider template
+   (registered preset, then svar's catalog). A credential callback's
+   `:api-url` replaces that URL only when no endpoint is configured or it
+   matches the preset/catalog default; a custom configured endpoint wins.
+   Forward the resolved URL because svar cannot recover extension-only presets.
 
    When `:api-key` is nil, look the provider up in the global
    provider registry (registry.clj) and call its
@@ -655,8 +654,8 @@
              (keep #(->svar-model pid %))
              vec)
 
-        explicit-url
-        (:base-url provider)
+        static-url
+        (or (:base-url provider) (:base-url template))
 
         ;; What the CONFIG declares, kept apart from the template so a dialect the
         ;; provider's own extension answers at runtime can sit between them.
@@ -715,7 +714,7 @@
             (with-boot-token-timeout pid get-token-fn)
 
             url
-            (provider-token-base-url pid explicit-url api-url)
+            (provider-token-base-url pid static-url api-url)
 
             merged-headers
             (or explicit-headers llm-headers (:llm-headers template))
@@ -760,8 +759,8 @@
         (or api-key catalog-api-key)
         (assoc :api-key (or api-key catalog-api-key))
 
-        explicit-url
-        (assoc :base-url explicit-url)
+        static-url
+        (assoc :base-url static-url)
 
         static-api-style
         (assoc :api-style static-api-style)
