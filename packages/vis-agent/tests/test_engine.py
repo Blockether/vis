@@ -588,8 +588,7 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
         )  # No Council request started a turn or extra iteration.
         for request in requests:
             assert any(
-                "## Council: active-session conversation"
-                in str(message.get("content", ""))
+                "## Council: session conversation" in str(message.get("content", ""))
                 for message in request["messages"]
                 if message["role"] == "system"
             )
@@ -613,6 +612,74 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport):
 
 
 @pytest.mark.parametrize("transport", ["stdio", "http"])
+def test_real_council_idle_ping_wakes_once(tmp_path, monkeypatch, transport):
+    ready, release = threading.Event(), threading.Event()
+
+    def before_reply(position):
+        if position == 1:
+            ready.set()
+            assert release.wait(30), "SDK did not release the author"
+
+    with sdk_fixture(
+        tmp_path,
+        monkeypatch,
+        transport,
+        council=True,
+        tool_code="print('Council fixture')",
+        before_reply=before_reply,
+    ) as (client, work, requests):
+        author = client.create_session(
+            title="Council author", root=str(work), channel="app"
+        )
+        peer = client.create_session(
+            title="Past parser research", root=str(work), channel="app"
+        )
+        turn = author.send("Ask the peer about its research")
+        try:
+            assert ready.wait(30), "author model request was not observed"
+            conversation = author.council()
+            assert conversation.publish("Active peers only", ping="all").ping == ()
+            assert peer.turns() == []
+            entry = conversation.publish(
+                "What did you learn about the parser?",
+                ping=[peer.id, f"vis_session_id#{peer.id}"],
+                idempotency_key="wake-once",
+            )
+            assert entry.ping == (peer.id,)
+            deadline = time.monotonic() + 30
+            while True:
+                turns = peer.turns()
+                if turns and turns[0]["status"] in {"completed", "failed", "cancelled"}:
+                    break
+                assert time.monotonic() < deadline, "Council wake did not finish"
+                time.sleep(0.05)
+            assert len(turns) == 1 and turns[0]["status"] == "completed"
+            assert "Council wake" in turns[0]["request"]
+            assert (
+                conversation.publish(
+                    entry.content, ping=[peer.id], idempotency_key="wake-once"
+                )
+                == entry
+            )
+            assert len(peer.turns()) == 1
+            assert len(requests) == 2  # Author blocked; exactly one peer invocation.
+            ping_messages = [
+                message["content"]
+                for message in requests[1]["messages"]
+                if message.get("role") == "user"
+                and "Council ping — attributed peer data" in str(message.get("content"))
+            ]
+            assert len(ping_messages) == 1
+            assert entry.content in ping_messages[0] and author.id in ping_messages[0]
+            assert "council_input" in str(peer.transcript().content)
+        finally:
+            release.set()
+        assert turn.wait(timeout=30)["status"] == "completed"
+        author.delete()
+        peer.delete()
+
+
+@pytest.mark.parametrize("transport", ["stdio", "http"])
 def test_real_council_disabled(tmp_path, monkeypatch, transport):
     with sdk_fixture(
         tmp_path,
@@ -631,8 +698,7 @@ def test_real_council_disabled(tmp_path, monkeypatch, transport):
         assert disabled.value.status == 409
         assert len(requests) == 2
         assert all(
-            "## Council: active-session conversation"
-            not in str(message.get("content", ""))
+            "## Council: session conversation" not in str(message.get("content", ""))
             for request in requests
             for message in request["messages"]
             if message["role"] == "system"

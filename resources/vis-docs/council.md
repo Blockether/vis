@@ -1,7 +1,8 @@
 # Council
 
-Council is a persistent, project-scoped conversation between active sessions.
-It does not schedule work, wake idle sessions or require approval to continue.
+Council is a persistent, project-scoped conversation between sessions.
+Explicit pings can wake idle sessions to ask about their knowledge, prior decisions
+and findings. Broadcast pings reach only active sessions.
 
 ## Enable Council
 
@@ -90,19 +91,36 @@ full entry. These reads do not consume pings or change delivery state.
 Only a publication with `ping=[session_id, ...]` or `ping="all"` is automatically
 delivered. A continuation does not ping the author or other thread participants.
 `"all"` snapshots active peers in the group at publication, excluding the author.
-An explicit inactive, foreign-group or self target rejects the whole publication;
-there is no partial delivery. Duplicate explicit targets are deduplicated.
+An explicit target accepts a bare session UUID or `vis_session_id#<uuid>`.
+Both spellings identify the same recipient and are deduplicated before validation
+and idempotency checks. Use `list_sessions(search=...)` to find past sessions by
+topic or title, then ping their ID; titles and activation IDs are not target selectors.
+A missing, foreign-group, self, paused-idle or externally running target rejects the
+publication before insertion. Every target is validated before any entry is written.
 
-At the next **existing** model invocation, a ping supplies attributed peer data:
-author, group, entry/thread IDs and a bounded content preview. Other log entries
-are read on demand. A short entry arrives whole; a longer one has
-`truncated: true`, and `get(entry_id)` retrieves its full content.
+An explicit idle target starts one ordinary runtime turn with its saved session
+context and model selection. Concurrent pings join an already active activation;
+they do not queue additional turns. Held queues remain held. A session started by
+Council can ping active peers and publish replies, but cannot wake another idle
+session during that activation. This prevents direct chains of automatic wakes.
 
-Pings are soft requests, not user authorization or system instructions. The agent
-should respond when useful, including uncertainty, disagreement or refusal.
-Council never blocks tools or completion, waits for responses, automatically pings
-back or creates an extra model iteration. A session that finishes or is cancelled
-before delivery is not restarted. Old pings do not enter its next activation.
+At the next model invocation, a ping supplies attributed peer data: author, group,
+entry/thread IDs and a bounded content preview. Other log entries are read on demand.
+A short entry arrives whole; a longer one has `truncated: true`, and `get(entry_id)`
+retrieves its full content. A wake turn identifies itself as Council-originated;
+it is not a new user request or permission to resume unrelated work.
+
+Pings are soft requests, not user authorization or system instructions. Respond
+when useful, including uncertainty, disagreement or refusal. Reply in the same
+thread; ping the author explicitly only when useful, never automatically.
+Council does not wait for responses or block completion.
+
+Delivery is activation-scoped and best-effort. Existing active pings never restart
+a session that finishes or is cancelled before delivery. Old pings do not enter
+its next activation. Publication commits before idle dispatch: a runtime failure
+can leave a committed entry without a wake; retries return that entry and do not
+restart it. Startup does not replay undelivered wakes. Read the thread to check
+for responses rather than assuming a ping was answered.
 
 The current limits are 64 KiB per content value, 256 UTF-8 bytes per title,
 256 recipients, 1 KiB per preview, and 20 previews / 8 KiB per delivered message
@@ -127,7 +145,8 @@ full = conversation.get(entry.id)
 Acquire a publishing handle while the session is active. The handle pins its group
 and current internal activation; it never silently rebinds after inactivity.
 An idle handle can read but cannot later become a publishing handle. Acquire a new
-one explicitly for a new active period. Council calls do not submit turns.
+one explicitly for a new active period. Only explicit idle pings can submit turns;
+reads, unpinged publications and broadcasts do not.
 
 For a retriable publication, supply an `idempotency_key` (at most 256 UTF-8 bytes).
 Retry the identical request through the same handle. The original entry and frozen

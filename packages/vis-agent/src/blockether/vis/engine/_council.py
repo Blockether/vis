@@ -1,4 +1,4 @@
-"""Session-bound Council conversation; never creates turns or refreshes an activation."""
+"""Session-bound Council; explicit pings can wake idle peers without rebinding the author."""
 
 from __future__ import annotations
 
@@ -114,7 +114,11 @@ class Council:
         ping: list[str] | str | None = None,
         idempotency_key: str | None = None,
     ) -> CouncilEntry:
-        """Publish without waiting. Keep an explicit idempotency_key when retrying uncertain IO."""
+        """Publish without waiting; explicit IDs can wake idle peers, 'all' cannot.
+
+        Targets accept a UUID or vis_session_id#UUID. Keep an explicit
+        idempotency_key when retrying uncertain IO; retries never wake again.
+        """
         body = {
             "content": content,
             "group_id": self.group_id,

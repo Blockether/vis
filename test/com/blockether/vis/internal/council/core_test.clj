@@ -1130,6 +1130,103 @@
                 (is (= 1 (count @launched)))))
             (finally (run! drop! ids))))))))
 
+(deftest idle-ping-runtime-races-test
+  (with-council
+    (doseq [scenario [:concurrent :active-race :held :paused-idle :foreign-runtime :invalid-target
+                      :idempotency-collision]]
+      (let [{:keys [db ids gid]} (world)
+            [a b] ids
+            update! (ns-resolve 'com.blockether.vis.internal.gateway.state 'update-session!)
+            drop! (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
+            launched (atom [])
+            insert! ps/db-council-insert!
+            running {:turns {"fixture" {:status "running"
+                                        :cancel-token (cancellation/cancellation-token)}}}]
+
+        (with-redefs-fn {#'ps/db-council-insert!
+                         (fn [& args]
+                           (let [result (apply insert! args)]
+                             (when (= :idempotency-collision scenario)
+                               (update! b
+                                        (constantly {:turns {"user-turn" {:status "completed"}}
+                                                     :idempotency
+                                                     {(str "council:" (get-in result [:entry :id]))
+                                                      "user-turn"}})))
+                             result))
+                         (ns-resolve 'com.blockether.vis.internal.loop 'db-info) (constantly db)
+                         (ns-resolve 'com.blockether.vis.internal.gateway.state 'session-model)
+                         (constantly {:provider "fixture" :model "fixture"})
+                         (ns-resolve 'com.blockether.vis.internal.gateway.state 'fresh-entry)
+                         (fn [_]
+                           {:next-seq 0 :turns {} :turn-order []})
+                         (ns-resolve 'com.blockether.vis.internal.gateway.bus 'live-turns)
+                         (constantly (if (= :foreign-runtime scenario) {b "external"} {}))
+                         (ns-resolve 'com.blockether.vis.internal.gateway.state
+                                     'launch-turn-worker!)
+                         (fn [sid tid request opts]
+                           (swap! launched conj [sid tid request opts]))}
+          (fn []
+            (try
+              (update! a (constantly running))
+              (let [frozen (council 'runtime db)
+                    actor
+                    {:session-id a :activation-id (get-in frozen [a :activation-id]) :source "sdk"}
+                    publish! #(council 'publish! db (constantly frozen) actor %)
+                    request
+                    {:content "A question for the idle peer" :ping [b] :idempotency_key "race"}]
+
+                ;; The snapshot says idle even when the recipient becomes active before dispatch.
+                (case scenario
+                  :active-race
+                  (update! b (constantly running))
+
+                  :held
+                  (update! b
+                           (constantly {:council-local? true
+                                        :queue-paused true
+                                        :turns {"held" {:status "queued"}}}))
+
+                  :paused-idle
+                  (update! b (constantly {:queue-paused true :turns {}}))
+
+                  nil)
+                (if (#{:paused-idle :foreign-runtime :invalid-target} scenario)
+                  (do (is (rejected? :invalid-recipient
+                                     #(publish! (cond-> request
+                                                  (= :invalid-target scenario)
+                                                  (assoc :ping [b (str (random-uuid))])))))
+                      (is (empty? (:entries (council 'read-entries db a {}))))
+                      (is (empty? @launched)))
+                  (let [entries (if (= :concurrent scenario)
+                                  (mapv deref
+                                        (mapv (fn [_]
+                                                (future (publish! request)))
+                                              (range 8)))
+                                  [(publish! request)])
+                        active (get (council 'runtime db) b)]
+
+                    (is (apply = entries))
+                    (is (= (if (#{:concurrent :idempotency-collision} scenario) 1 0)
+                           (count @launched)))
+                    (is (= (if (= :held scenario) "held" "running") (:state active)))
+                    (is (= [(:id (first entries))]
+                           (mapv :id
+                                 (ps/db-council-pending db b (:activation-id active) gid 0 20))))
+                    (when (= :concurrent scenario)
+                      ;; Distinct concurrent idle snapshots also coalesce into this one activation.
+                      (let [more (mapv deref
+                                       (mapv (fn [i]
+                                               (future (publish! (assoc request
+                                                                   :idempotency_key (str i)))))
+                                             (range 8)))]
+                        (is (= 8 (count (set (map :id more)))))
+                        (is (= 1 (count @launched)))
+                        (is
+                          (= 9
+                             (count
+                               (ps/db-council-pending db b (:activation-id active) gid 0 20)))))))))
+              (finally (run! drop! ids)))))))))
+
 (deftest sparse-thread-seeks-and-batched-pings-test
   ;; Explain the actual production queries. Fifty continuations cover a full page;
   ;; the separate contention reference retains the 100,000-row workload.

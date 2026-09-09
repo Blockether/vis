@@ -55,7 +55,7 @@
                               opts)))))
 
 (defn publish
-  "Append content to a new titled thread, or an existing thread_id. Only explicit ping targets are notified."
+  "Publish a thread entry. Explicit ping IDs (UUID or vis_session_id#UUID) can wake idle peers; all selects active peers only."
   ([env content] (publish env content {}))
   ([env content opts]
    (let [db
