@@ -783,7 +783,12 @@ export function LiveViewPanel({
       {error && <p className="border-b border-dialog-edge px-3 py-2 font-mono text-chip text-err">{error}</p>}
       <ul className="divide-y divide-dialog-edge">
         {view.nodes.map((node) => (
-          <li key={node.id} className="min-w-0 px-3 py-2.5">
+          // Table cells own their padding; an outer inset makes the first and last
+          // rows uneven relative to the internal separators. Keep labelled headings inset.
+          <li
+            key={node.id}
+            className={`min-w-0 px-3 ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
+          >
             <NodeCell node={node} load={load} onSelect={onSelect} />
           </li>
         ))}

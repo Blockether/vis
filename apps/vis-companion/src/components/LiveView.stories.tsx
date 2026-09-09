@@ -58,3 +58,78 @@ export const Settled: Story = {
 export const Failed: Story = {
   args: { error: 'The run ended before this view was closed.' },
 };
+
+// Phone regression: padding on the table's enclosing node shifted the first job
+// down and left extra space beneath the last job, outside their row separators.
+export const FinishedJobs: Story = {
+  args: {
+    isSettled: true,
+    onInterrupt: undefined,
+    view: {
+      ...STORY_LIVE_VIEW,
+      title: 'Finished jobs',
+      description: '2 jobs completed',
+      nodes: [
+        {
+          id: 'jobs',
+          type: 'table',
+          columns: [
+            { id: 'job', label: 'Job', align: 'left' },
+            { id: 'result', label: 'Result', align: 'left' },
+          ],
+          rows: [
+            { id: 'test', cells: ['Typecheck and test', 'success · 17s'], tone: 'ok' },
+            { id: 'deploy', cells: ['Deploy to Cloudflare', 'success · 19s'], tone: 'ok' },
+          ],
+          max_rows: 100,
+          order: 'insertion',
+          is_selectable: true,
+          selected_ids: [],
+        },
+      ],
+    },
+    onSelect: fn(),
+  },
+  play: async ({ canvas, args }) => {
+    const first = canvas.getByRole('button', { name: 'Select Typecheck and test' });
+    const last = canvas.getByRole('button', { name: 'Select Deploy to Cloudflare' });
+    const table = first.closest('table')!;
+    const node = table.closest('li')!;
+    const nodeStyle = getComputedStyle(node);
+    await expect(nodeStyle.paddingTop).toBe('0px');
+    await expect(nodeStyle.paddingBottom).toBe('0px');
+    await expect(first.getBoundingClientRect().height).toBe(last.getBoundingClientRect().height);
+    await expect(first.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    await expect(table.getBoundingClientRect().top).toBe(node.getBoundingClientRect().top);
+    await expect(
+      node.getBoundingClientRect().bottom - table.getBoundingClientRect().bottom,
+    ).toBeLessThanOrEqual(1);
+    await userEvent.click(last);
+    await expect(args.onSelect).toHaveBeenCalledWith('jobs', ['deploy']);
+  },
+};
+
+export const LabelledJobs: Story = {
+  args: {
+    ...FinishedJobs.args,
+    view: {
+      ...FinishedJobs.args!.view!,
+      nodes: FinishedJobs.args!.view!.nodes.map((node) => ({
+        ...node,
+        label: 'Jobs',
+        is_selectable: false,
+      })),
+    },
+  },
+  play: async ({ canvas }) => {
+    const table = canvas.getByRole('table');
+    const node = table.closest('li')!;
+    await expect(canvas.getByText('Jobs')).toBeVisible();
+    await expect(getComputedStyle(node).paddingTop).toBe('10px');
+    await expect(getComputedStyle(node).paddingBottom).toBe('0px');
+    await expect(
+      node.getBoundingClientRect().bottom - table.getBoundingClientRect().bottom,
+    ).toBeLessThanOrEqual(1);
+    await expect(canvas.queryByRole('button', { name: /Select/ })).not.toBeInTheDocument();
+  },
+};
