@@ -1012,14 +1012,14 @@ remains available. Published version tags remain immutable, including the bootst
    explicit verification results and any concrete unresolved blockers reported.
    Unknowns: none beyond the preceding phases.
 
-Plan state: phases 1–2 are complete; phases 3–5 are in progress for v0.1.51. Runtime
-v0.5.6 remains current. The checkout-length regression is fixed in f8905d141, with
-long-path coverage and passing formatting, lint and reflection checks. The v0.1.50
-source CI passed all checks; its isolated Linux run passed 5072 cases. Publication
-correctly stopped when main advanced before preparation, so v0.1.50 remains immutable
-and unpublished. The v0.1.51 candidate includes the subsequent draft synchronization
-fix. Require the complete release gate and repeat installed native and production
-verification. The healthy v0.1.49 production service remains in place until then.
+Plan state: phases 1–2 are complete; phases 3–5 are in progress for v0.1.52. Runtime
+v0.5.6 remains current. The v0.1.51 source CI and 5082 isolated Linux tests pass, but
+publication stopped when a concurrent commit advanced main during source verification.
+The workflow now checks tag/version/main alignment before slow CI. All artifact jobs
+still require full source verification and stable publication still requires all 15
+assets. Regression coverage also isolates the fork-baseline test clock from background
+timers. The affected 83 tests, formatting, lint, reflection and workflow checks pass.
+Require full release and installed native verification before replacing healthy v0.1.49.
 
 - Runtime v0.5.6 is published at 51f02270ffc78b5eb49bcab914b27564b1960f82. Run
   34297827905 passed all four platform builds/tests and published the runtime archives and

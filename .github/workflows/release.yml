@@ -14,11 +14,12 @@ concurrency:
 jobs:
   verify:
     name: Verify release source
+    needs: prepare
     uses: ./.github/workflows/ci.yml
     secrets: inherit
 
   prepare:
-    needs: verify
+    # Validate main before slow CI; artifact jobs still require all source checks.
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -48,7 +49,7 @@ jobs:
         run: gh release upload "$RELEASE_TAG" bin/install-vis-agent bin/vis-agent --clobber
 
   native:
-    needs: prepare
+    needs: [prepare, verify]
     permissions:
       contents: write
       actions: read
@@ -59,7 +60,7 @@ jobs:
     secrets: inherit
 
   mobile:
-    needs: prepare
+    needs: [prepare, verify]
     uses: ./.github/workflows/mobile-release.yml
     with:
       platforms: both
@@ -69,7 +70,7 @@ jobs:
     secrets: inherit
 
   desktop:
-    needs: prepare
+    needs: [prepare, verify]
     uses: ./.github/workflows/desktop-companion.yml
     with:
       tag: ${{ github.ref_name }}

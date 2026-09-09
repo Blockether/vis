@@ -1441,6 +1441,20 @@
       (expect (str/includes? mobile "VIS_IOS_SIGNING_KEYCHAIN: ${{ steps.keychain.outputs.path }}"))
       (doseq [needle ["-ios.ipa" "-android.aab"]]
         (expect (str/includes? mobile needle) needle))))
+  (it "checks main alignment before slow CI without allowing unverified artifact jobs"
+      (let [jobs (into {}
+                       (map (fn [[_ name body]]
+                              [name body])
+                            (re-seq #"(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\z)"
+                                    (slurp ".github/workflows/release.yml"))))]
+        ;; Concurrent main commits must not invalidate a candidate after its full CI run.
+        (expect (not (str/includes? (get jobs "prepare") "needs:")))
+        (expect (str/includes? (get jobs "prepare")
+                               "test \"$(git rev-parse origin/main)\" = \"$(git rev-parse HEAD)\""))
+        (expect (str/includes? (get jobs "prepare") "--verify-tag --draft"))
+        (expect (str/includes? (get jobs "verify") "needs: prepare"))
+        (doseq [job ["native" "mobile" "desktop"]]
+          (expect (str/includes? (get jobs job) "needs: [prepare, verify]") job))))
   (it "delegates job-list read access to the native workflow's runner pickup check"
       (let [native-call (second (re-find #"(?s)  native:\n(.*?)\n  mobile:"
                                          (slurp ".github/workflows/release.yml")))]
