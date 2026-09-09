@@ -6106,7 +6106,7 @@ save closed live views as `application/vnd.vis.live+ndjson` attachments addresse
 - `:ext/version`, `:ext/author`, `:ext/license` metadata
 - `register-global!`, `load-extension!`, `reload-extension!`
 - `extensions/common/vis-foundation` package (read, list, grep, patch)
-- mdBook documentation at https://blockether.github.io/vis/
+- mdBook documentation (current documentation: https://vis.blockether.com/)
 - Iteration metadata stores active extensions (namespace + version)
 - Apache-2.0 license
 
