@@ -269,6 +269,21 @@
       (fail! :entry-not-found "Council entry not found in this group"))
     entry))
 
+(defn retire-input!
+  "Release an activation's pending lookup and retry cache. A retired input-state
+   cannot be reused, including by a worker retaining the old activation."
+  [sid input-state]
+  (locking input-state
+    (let [job (get-in @input-state [:lookup :job])]
+      (reset! input-state {:closed? true})
+      (when job
+        (try (future-cancel job)
+             (catch Exception e
+               (tel/log! {:level :warn
+                          :id ::lookup-cancel-failed
+                          :data {:session-id (str sid) :error-class (.getName (class e))}}))))))
+  nil)
+
 (defn- pending-with-deadline
   [db sid activation gid after input-state]
   ;; Keep at most one outstanding query per activation, including after timeout.
@@ -316,49 +331,51 @@
             old
             @input-state]
 
-        (if (= key (:key old))
-          (:batch old)
-          (try
-            (let [after
-                  (get-in old [:cursors gid] 0)
+        (cond (:closed? old) nil
+              (= key (:key old)) (:batch old)
+              :else (try
+                      (let [after
+                            (get-in old [:cursors gid] 0)
 
-                  rows
-                  (pending-with-deadline db sid activation gid after input-state)
+                            rows
+                            (pending-with-deadline db sid activation gid after input-state)
 
-                  previews
-                  (mapv (fn [row]
-                          (let [preview (clip (:content row) (get limits "preview_bytes"))]
-                            (-> row
-                                (dissoc :content_bytes)
-                                (assoc :content preview
-                                       :truncated (> (long (:content_bytes row))
-                                                     (utf8-size preview))))))
-                        rows)
+                            previews
+                            (mapv (fn [row]
+                                    (let [preview (clip (:content row)
+                                                        (get limits "preview_bytes"))]
+                                      (-> row
+                                          (dissoc :content_bytes)
+                                          (assoc :content preview
+                                                 :truncated (> (long (:content_bytes row))
+                                                               (utf8-size preview))))))
+                                  rows)
 
-                  budget
-                  (- (min (long byte-budget) (long (get limits "batch_bytes")))
-                     (utf8-size input-prefix))
+                            budget
+                            (- (min (long byte-budget) (long (get limits "batch_bytes")))
+                               (utf8-size input-prefix))
 
-                  batch
-                  (bounded-page previews after (get limits "batch_entries") budget :id)
+                            batch
+                            (bounded-page previews after (get limits "batch_entries") budget :id)
 
-                  selected
-                  (when (seq (:entries batch)) batch)]
+                            selected
+                            (when (seq (:entries batch)) batch)]
 
-              (swap! input-state (fn [state]
-                                   (cond-> (assoc state
-                                             :key key
-                                             :batch selected)
-                                     selected
-                                     (assoc-in [:cursors gid] (:after selected)))))
-              selected)
-            (catch Exception e
-              (tel/log! {:level :warn
-                         :id ::delivery-deferred
-                         :data {:session-id sid
-                                :group-id gid
-                                :reason (or (:reason (ex-data e)) :lookup-failed)}})
-              nil)))))))
+                        (swap! input-state (fn [state]
+                                             (cond-> (assoc state
+                                                       :key key
+                                                       :batch selected)
+                                               selected
+                                               (assoc-in [:cursors gid] (:after selected)))))
+                        selected)
+                      (catch Exception e
+                        (tel/log! {:level :warn
+                                   :id ::delivery-deferred
+                                   :data {:session-id sid
+                                          :group-id gid
+                                          :reason (or (:reason (ex-data e)) :lookup-failed)
+                                          :error-class (.getName (class e))}})
+                        nil)))))))
 
 (defonce ^:private runtime-reader (atom (constantly {})))
 

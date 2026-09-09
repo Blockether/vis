@@ -11,7 +11,8 @@
             [com.blockether.vis.contract.wire :as wire]
             [honey.sql :as sql]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
-            [next.jdbc :as jdbc]))
+            [next.jdbc :as jdbc]
+            [taoensso.telemere :as tel]))
 
 (h/use-mem-store!)
 
@@ -477,8 +478,14 @@
                            (assoc :current-turn nil)
                            (assoc-in [:turns tid :status] "completed")))
              (is (= (:activation-id active) (get-in (entry sid) [:council :activation-id])))
+             (is (identical? (:input-state active) (get-in (entry sid) [:council :input-state])))
+             (update! sid #(assoc % :queue-paused true))
+             (is (= "held" (get-in (entry sid) [:council :state])))
+             (is (identical? (:input-state active) (get-in (entry sid) [:council :input-state])))
+             (is (not (:closed? @(:input-state active))))
              (update! sid #(assoc-in % [:turns "next" :status] "cancelled"))
              (is (nil? (:council (entry sid))))
+             (is (= {:closed? true} @(:input-state active)))
              (update! sid
                       #(assoc %
                          :current-turn "foreign"
@@ -511,10 +518,18 @@
           (ns-resolve 'com.blockether.vis.internal.persistance.core 'db-council-pending)]
 
       (publish w {:content "Retain this" :ping [sid]})
-      (with-redefs-fn {pending (fn [& _]
-                                 (throw (ex-info "fixture database unavailable" {})))}
-        #(do (is (nil? (council 'prepare-input! db sid activation gid input-state ["turn" 1] 8192)))
-             (is (empty? @input-state))))
+      (let [{:keys [signals]}
+            (tel/with-signals
+              (with-redefs-fn {pending (fn [& _]
+                                         (throw (ex-info "fixture database unavailable" {})))}
+                #(do
+                   (is
+                     (nil?
+                       (council 'prepare-input! db sid activation gid input-state ["turn" 1] 8192)))
+                   (is (empty? @input-state)))))]
+        (is (= [:com.blockether.vis.internal.council.core/delivery-deferred] (mapv :id signals)))
+        (is (= :lookup-failed (get-in (first signals) [:data :reason])))
+        (is (string? (get-in (first signals) [:data :error-class]))))
       (let [batch
             (council 'prepare-input! db sid activation gid input-state ["turn" 1] 8192)
 
@@ -700,6 +715,115 @@
               (council 'prepare-input! db sid activation gid input-state ["turn" 2] 8192)
               (is (= 1 @calls))
               (finally (deliver release true) (deref completed 2000 nil)))))))
+
+(deftest activation-retirement-test
+  (with-council
+    (let [{:keys [db gid ids]}
+          (world)
+
+          sid
+          (first ids)
+
+          update!
+          (ns-resolve 'com.blockether.vis.internal.gateway.state 'update-session!)
+
+          update-existing!
+          (ns-resolve 'com.blockether.vis.internal.gateway.state 'update-existing-session!)
+
+          entry
+          (ns-resolve 'com.blockether.vis.internal.gateway.state 'session-entry)
+
+          drop!
+          (ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!)
+
+          pending
+          (ns-resolve 'com.blockether.vis.internal.persistance.core 'db-council-pending)]
+
+      (doseq [ending [:completed :cancelled :forgotten :dropped]]
+        (let [release (promise)
+              completed (promise)
+              calls (atom 0)]
+
+          (try
+            (update! sid
+                     (constantly {:current-turn "turn"
+                                  :turns {"turn" {:status "running"
+                                                  :cancel-token
+                                                  (cancellation/cancellation-token)}}}))
+            (let [{:keys [activation-id input-state]} (:council (entry sid))]
+              (reset! input-state {:key [gid ["earlier" 0]]
+                                   :batch {:entries [{:id 1}]}
+                                   :cursors {gid 1}})
+              (with-redefs-fn {pending (fn [& _]
+                                         (swap! calls inc)
+                                         (try (deref release 2000 nil)
+                                              []
+                                              (finally (deliver completed true))))}
+                (fn []
+                  (is (nil? (council 'prepare-input!
+                                     db
+                                     sid
+                                     activation-id
+                                     gid
+                                     input-state
+                                     ["turn" 1]
+                                     8192)))
+                  (let [job (get-in @input-state [:lookup :job])]
+                    (is (some? job))
+                    (case ending
+                      :completed
+                      (update! sid #(assoc-in % [:turns "turn" :status] "completed"))
+
+                      :cancelled
+                      (update-existing! sid #(assoc-in % [:turns "turn" :status] "cancelled"))
+
+                      :forgotten
+                      (update-existing! sid (constantly nil))
+
+                      :dropped
+                      (drop! sid))
+                    (is (= {:closed? true} @input-state))
+                    (is (future-cancelled? job))
+                    (is (true? (deref completed 1000 false)))
+                    ;; Neither a cached retry nor a new iteration revives a retired activation.
+                    (is (nil? (council 'prepare-input!
+                                       db
+                                       sid
+                                       activation-id
+                                       gid
+                                       input-state
+                                       ["earlier" 0]
+                                       8192)))
+                    (is (nil? (council 'prepare-input!
+                                       db
+                                       sid
+                                       activation-id
+                                       gid
+                                       input-state
+                                       ["turn" 2]
+                                       8192)))
+                    (is (= 1 @calls))))))
+            (finally (deliver release true) (drop! sid))))))))
+
+(deftest cancellation-failure-is-logged-test
+  (let [job
+        (reify
+          java.util.concurrent.Future
+            (cancel [_ _] (throw (IllegalStateException. "fixture cancellation failed")))
+            (isCancelled [_] false)
+            (isDone [_] false)
+            (get [_] nil)
+            (get [_ _ _] nil))
+
+        input-state
+        (atom {:lookup {:job job} :batch {:entries [{:id 1}]}})
+
+        {:keys [signals]}
+        (tel/with-signals (council 'retire-input! "session" input-state))]
+
+    (is (= {:closed? true} @input-state))
+    (is (= [:com.blockether.vis.internal.council.core/lookup-cancel-failed] (mapv :id signals)))
+    (is (= :warn (:level (first signals))))))
 
 (deftest invalid-unicode-and-title-tab-test
   (with-council (let [w (world)]

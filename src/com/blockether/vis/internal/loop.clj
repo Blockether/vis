@@ -675,57 +675,53 @@
              [(content/error "turn_failed" "Turn failed" false)]))))
 
 (defn- persist-turn-outcome!
-  "THE terminal write for one turn: the row that says HOW the turn ended.
-
-   When `claim!` is present it must win the turn's terminal claim before any write.
-   A watchdog or cancellation backstop that already owns the terminal therefore
-   prevents a thawed worker from changing durable state.
-
-   Never let the write that RECORDS an outcome be the write that LOSES it. A
-   turn's own payload is the least trustworthy value in the process -- a runtime
-   error can quote the whole document that broke it, and SQLite refuses any
-   bound value over `SQLITE_MAX_LENGTH` with `[SQLITE_TOOBIG]`. An unguarded
-   throw here leaves the turn `:running` for good, with no status, no error and
-   no iteration count, inside a session that has long since finished it.
-
-   On a throw the outcome is re-written from a MINIMAL payload: the same status
-   and counters, plus a bounded error naming the persistence failure, carrying
-   neither `:ctx` nor the answer content that could not be stored. Returns true
-   when this path owns the terminal and either write landed, false otherwise."
+  "Persist a claimed terminal outcome. If its snapshot fails, retry without CTX
+   before degrading to bounded error content. Preserve status and counters even
+   when neither the answer nor context can be stored. Log every failed write;
+   never include a potentially unbounded or private payload in the fallback.
+   Returns false if another terminal owns the turn or all writes fail."
   ([db-info session-turn-id opts] (persist-turn-outcome! db-info session-turn-id opts nil))
   ([db-info session-turn-id opts claim!]
    (if (and claim! (not (claim!)))
      false
-     (try
-       (persistance/db-update-session-turn! db-info session-turn-id opts)
-       true
-       (catch Throwable t
-         (tel/log! {:level :warn
-                    :id ::turn-outcome-persist-failed
-                    :data {:session-turn-id (str session-turn-id)
-                           :status (:status opts)
-                           :error (ex-message t)}})
-         (let [block
-               (content/error
-                 "turn_outcome_persist_failed"
-                 (str "Warning: this turn finished, but its answer could not be stored ("
-                      (ex-message t)
-                      "). The outcome is recorded; the answer and working memory for it are lost.")
-                 true)]
-           (try (persistance/db-update-session-turn!
-                  db-info
-                  session-turn-id
-                  (assoc (select-keys opts
-                                      [:iteration-count :duration-ms :tokens :cost :prior-outcome])
-                    :status (or (:status opts) :error)
-                    :content [block]
-                    :error block))
-                true
-                (catch Throwable t2
-                  (tel/log! {:level :error
-                             :id ::turn-outcome-lost
-                             :data {:session-turn-id (str session-turn-id) :error (ex-message t2)}})
-                  false))))))))
+     (letfn
+       [(store! [payload stage]
+          (try (persistance/db-update-session-turn! db-info session-turn-id payload)
+               true
+               (catch Throwable t
+                 (tel/log! {:level (if (= stage :minimal) :error :warn)
+                            :id (case stage
+                                  :full
+                                  ::turn-outcome-persist-failed
+
+                                  :without-context
+                                  ::turn-outcome-without-context-failed
+
+                                  :minimal
+                                  ::turn-outcome-lost)
+                            :data {:session-turn-id (str session-turn-id)
+                                   :status (:status opts)
+                                   :stage stage
+                                   :error-class (.getName (class t))
+                                   :cause-class (some-> (ex-cause t)
+                                                        class
+                                                        .getName)}})
+                 false)))]
+       (or
+         (store! opts :full)
+         (and (contains? opts :ctx) (store! (dissoc opts :ctx) :without-context))
+         (let
+           [block
+            (content/error
+              "turn_outcome_persist_failed"
+              "The turn finished, but its answer could not be stored. The outcome is recorded without its answer or context."
+              true)]
+           (store! (assoc (select-keys opts
+                                       [:iteration-count :duration-ms :tokens :cost :prior-outcome])
+                     :status (or (:status opts) :error)
+                     :content [block]
+                     :error block)
+                   :minimal)))))))
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 
@@ -7738,6 +7734,40 @@
          voice-projection-prompt)
     system-prompt))
 
+(defn- with-council-execution
+  "Keep publication identity and references in execution state across provider
+   retries. Detach them before persistence, and clear them on every exit without
+   clearing a newer execution installed by another worker."
+  [environment active iteration-key f]
+  (if-not active
+    (f)
+    (let [identity
+          {:activation-id (:activation-id active) :iteration-key iteration-key}
+
+          current?
+          (fn [state]
+            (= identity (select-keys (:council state) (keys identity))))
+
+          detach
+          (fn [state]
+            (if (current? state) (dissoc state :council) state))]
+
+      (ctx-loop/set-turn-state! environment :council (assoc identity :publications []))
+      (try (let [result
+                 (f)
+
+                 state
+                 (first (swap-vals! (:turn-state-atom environment) detach))]
+
+             (when-not (current? state)
+               (tel/log! {:level :warn
+                          :id ::council-execution-superseded
+                          :data {:session-id (str (:session-id environment))}}))
+             (assoc result
+               :council-publications (when (current? state)
+                                       (get-in state [:council :publications]))))
+           (finally (ctx-loop/swap-turn-state! environment detach))))))
+
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
    until the model emits `:answer` or the user cancels."
@@ -8405,11 +8435,6 @@
                                   (get (council/runtime (:db-info environment)
                                                         (str (:session-id environment)))
                                        (str (:session-id environment))))
-                 ;; Only the host publication identity belongs in CTX, and it is
-                 ;; ephemeral. The activation's input-state Atom stays in runtime.
-                 _council-start (swap! (:ctx-atom environment) assoc
-                                  "engine_council_activation_id" (:activation-id council-active)
-                                  "engine_council_publications" [])
                  council-input (when council-active
                                  (council/prepare-input!
                                    (:db-info environment)
@@ -8492,244 +8517,259 @@
                  ;; Per-iteration retry state. `:max-tokens-attempt` is separate
                  ;; from auth/context recovery so those policies do not consume
                  ;; the max-token budget; `:current-extra-body` carries its bump.
-                 (loop [attempt 0
-                        max-tokens-attempt 0
-                        current-extra-body iteration-extra-body
-                        ;; `env` is threaded so the auth-refresh retry can
-                        ;; reseat its `:router` to the rebuilt one (the
-                        ;; in-flight env captured the pre-refresh router).
-                        env environment]
+                 (with-council-execution
+                   environment
+                   council-active
+                   [session-turn-id iteration]
+                   (fn []
+                     (loop [attempt 0
+                            max-tokens-attempt 0
+                            current-extra-body iteration-extra-body
+                            ;; `env` is threaded so the auth-refresh retry can
+                            ;; reseat its `:router` to the rebuilt one (the
+                            ;; in-flight env captured the pre-refresh router).
+                            env environment]
 
-                   (let
-                     [attempt-env (hydrate-environment-router env (:provider resolved-model))
-                      attempt-base @message-base-atom
-                      attempt-summaries (into @emergency-summaries-atom summaries)
-                      attempt-trailer (apply-summaries trailer-iters attempt-summaries)
-                      visible-attempt-trailer
-                      (conversation-trailer-for-base attempt-trailer (:resumed? attempt-base))
-                      request-context
-                      (request-log-context
-                        attempt-env
-                        iteration
-                        {:context-recovery-attempt (:attempts @context-recovery-state)
-                         :prompt-base (if (:resumed? attempt-base) :resumed :canonical)
-                         :base-message-count (count (:messages attempt-base))
-                         :trailer-iteration-count (count visible-attempt-trailer)})
-                      result
-                      (try
-                        (reset! provider-output-started? false)
-                        (run-iteration
-                          attempt-env
-                          @effective-messages-atom
-                          {:iteration iteration
-                           :request-context request-context
-                           :reasoning-level reasoning-level
-                           :reasoning-effort reasoning-effort
-                           :routing @iteration-routing
-                           :resolved-model resolved-model
-                           :on-response
-                           (fn [response]
-                             (stamp-served-route! environment response)
-                             (when-let [ca (:ctx-atom environment)]
-                               (swap! ca record-provider-input response))
-                             (when-let [input (get-in response [:api-usage :input-tokens])]
-                               (let [window (iteration-context-limit max-context-tokens
-                                                                     (turn-served-model environment)
-                                                                     pre-resolved-model)]
-                                 (stamp-utilization! (:ctx-atom environment)
-                                                     (ctx-engine/utilization
-                                                       input
-                                                       window
-                                                       (+ (long (:input-tokens @usage-atom))
-                                                          (long input))
-                                                       (context-fold-budget window))))))
-                           :on-chunk (fn [chunk]
-                                       (when (provider-output-chunk? chunk)
-                                         (reset! provider-output-started? true))
-                                       (emit-hook! on-chunk chunk "Provider chunk hook failed"))
-                           :active-extensions active-exts
-                           :answer-validation-context
-                           {:user-request user-request
-                            :previous-blocks (vec (mapcat (comp :blocks second) trailer-iters))}
-                           :extra-body current-extra-body})
-                        (catch Exception e
-                          (cond
-                            ;; Max-tokens cap: model burnt the entire output
-                            ;; budget on hidden reasoning before emitting a
-                            ;; tool call. Double the budget and try once more so the
-                            ;; turn doesn't fail when the same call would have
-                            ;; succeeded with a slightly larger ceiling. Reasoning-
-                            ;; heavy iterations hit this when the provider's
-                            ;; finish_reason: \"length\" leaves content-acc empty.
-                            (and (max-tokens-exceeded-error? e)
-                                 (< (long max-tokens-attempt)
-                                    (long MAX_MAX_TOKENS_EXCEEDED_RETRIES)))
-                            (let [data (ex-data e)
-                                  prev-max
-                                  (or (:output-tokens data) (:max_tokens current-extra-body) 8192)
-                                  bumped (bumped-max-tokens-extra-body current-extra-body prev-max)]
+                       (let
+                         [attempt-env (hydrate-environment-router env (:provider resolved-model))
+                          attempt-base @message-base-atom
+                          attempt-summaries (into @emergency-summaries-atom summaries)
+                          attempt-trailer (apply-summaries trailer-iters attempt-summaries)
+                          visible-attempt-trailer
+                          (conversation-trailer-for-base attempt-trailer (:resumed? attempt-base))
+                          request-context
+                          (request-log-context
+                            attempt-env
+                            iteration
+                            {:context-recovery-attempt (:attempts @context-recovery-state)
+                             :prompt-base (if (:resumed? attempt-base) :resumed :canonical)
+                             :base-message-count (count (:messages attempt-base))
+                             :trailer-iteration-count (count visible-attempt-trailer)})
+                          result
+                          (try
+                            (reset! provider-output-started? false)
+                            (run-iteration
+                              attempt-env
+                              @effective-messages-atom
+                              {:iteration iteration
+                               :request-context request-context
+                               :reasoning-level reasoning-level
+                               :reasoning-effort reasoning-effort
+                               :routing @iteration-routing
+                               :resolved-model resolved-model
+                               :on-response
+                               (fn [response]
+                                 (stamp-served-route! environment response)
+                                 (when-let [ca (:ctx-atom environment)]
+                                   (swap! ca record-provider-input response))
+                                 (when-let [input (get-in response [:api-usage :input-tokens])]
+                                   (let [window (iteration-context-limit max-context-tokens
+                                                                         (turn-served-model
+                                                                           environment)
+                                                                         pre-resolved-model)]
+                                     (stamp-utilization! (:ctx-atom environment)
+                                                         (ctx-engine/utilization
+                                                           input
+                                                           window
+                                                           (+ (long (:input-tokens @usage-atom))
+                                                              (long input))
+                                                           (context-fold-budget window))))))
+                               :on-chunk (fn [chunk]
+                                           (when (provider-output-chunk? chunk)
+                                             (reset! provider-output-started? true))
+                                           (emit-hook! on-chunk chunk "Provider chunk hook failed"))
+                               :active-extensions active-exts
+                               :answer-validation-context
+                               {:user-request user-request
+                                :previous-blocks (vec (mapcat (comp :blocks second) trailer-iters))}
+                               :extra-body current-extra-body})
+                            (catch Exception e
+                              (cond
+                                ;; Max-tokens cap: model burnt the entire output
+                                ;; budget on hidden reasoning before emitting a
+                                ;; tool call. Double the budget and try once more so the
+                                ;; turn doesn't fail when the same call would have
+                                ;; succeeded with a slightly larger ceiling. Reasoning-
+                                ;; heavy iterations hit this when the provider's
+                                ;; finish_reason: \"length\" leaves content-acc empty.
+                                (and (max-tokens-exceeded-error? e)
+                                     (< (long max-tokens-attempt)
+                                        (long MAX_MAX_TOKENS_EXCEEDED_RETRIES)))
+                                (let [data (ex-data e)
+                                      prev-max (or (:output-tokens data)
+                                                   (:max_tokens current-extra-body)
+                                                   8192)
+                                      bumped (bumped-max-tokens-extra-body current-extra-body
+                                                                           prev-max)]
 
-                              (tel/log! {:level :warn
-                                         :id ::max-tokens-exceeded-retry
-                                         :data {:iteration iteration
-                                                :attempt (inc (long max-tokens-attempt))
-                                                :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                                                :prev-max prev-max
-                                                :new-max (:max_tokens bumped)
-                                                :reasoning-length (:reasoning-length data)}}
-                                        (str "max_tokens exhausted on reasoning (~"
-                                             (or (:reasoning-length data) "?")
-                                             " reasoning tokens); retry "
-                                             (inc (long max-tokens-attempt))
-                                             "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
-                                             " with max_tokens=" (:max_tokens bumped)))
-                              ;; Bump max-tokens-attempt so a second cap-hit
-                              ;; cannot loop forever.
-                              {::retry-max-tokens bumped})
-                            ;; Post-refresh auth 401: the token we
-                            ;; JUST force-refreshed 401'd AGAIN. Almost
-                            ;; always OAuth PROPAGATION LAG at the
-                            ;; provider edge (a freshly-minted token is
-                            ;; briefly not-yet-valid), NOT a dead
-                            ;; credential — the same token succeeds
-                            ;; seconds later. Re-minting is what CAUSES
-                            ;; the storm, so DON'T refresh: back off and
-                            ;; retry the SAME token until it settles.
-                            (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
-                                 (refresh-just-failed? e resolved-model))
-                            ::retry-auth-backoff
-                            ;; Auth 401/403 from a refreshable provider: adopt a
-                            ;; peer credential or persist one forced refresh, then
-                            ;; re-send. The exact attempt router supplies the
-                            ;; rejected token; the next request boundary hydrates
-                            ;; the new value without rebuilding shared routers.
-                            (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
-                                 (auth-refreshable-error? e resolved-model)
-                                 (try-refresh-provider-token! (:router attempt-env) resolved-model))
-                            ::retry-auth-refresh
-                            ;; Refresh/backoff failed or credentials were revoked.
-                            ;; Release the dead provider, then let svar walk the fleet.
-                            (auth-fallback-routing e @iteration-routing resolved-model)
-                            (let [fallback-routing
-                                  (auth-fallback-routing e @iteration-routing resolved-model)
-                                  ;; Persist the release ACROSS iterations. Without the
-                                  ;; cooldown the next iteration rebuilds routing from
-                                  ;; scratch and re-sends to the dead provider.
-                                  first-trip? (note-provider-auth-cooldown! (:provider
-                                                                              resolved-model))
-                                  chunk (provider-retry-progress-chunk
-                                          (inc (long iteration))
-                                          e
-                                          {:provider (:provider resolved-model)
-                                           :model (or (:name resolved-model)
-                                                      (:model resolved-model))
-                                           :reason :authentication-fallback
-                                           :attempt 1
-                                           :max-retries 1
-                                           :delay-ms 0})]
+                                  (tel/log! {:level :warn
+                                             :id ::max-tokens-exceeded-retry
+                                             :data {:iteration iteration
+                                                    :attempt (inc (long max-tokens-attempt))
+                                                    :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
+                                                    :prev-max prev-max
+                                                    :new-max (:max_tokens bumped)
+                                                    :reasoning-length (:reasoning-length data)}}
+                                            (str "max_tokens exhausted on reasoning (~"
+                                                 (or (:reasoning-length data) "?")
+                                                 " reasoning tokens); retry "
+                                                 (inc (long max-tokens-attempt))
+                                                 "/" MAX_MAX_TOKENS_EXCEEDED_RETRIES
+                                                 " with max_tokens=" (:max_tokens bumped)))
+                                  ;; Bump max-tokens-attempt so a second cap-hit
+                                  ;; cannot loop forever.
+                                  {::retry-max-tokens bumped})
+                                ;; Post-refresh auth 401: the token we
+                                ;; JUST force-refreshed 401'd AGAIN. Almost
+                                ;; always OAuth PROPAGATION LAG at the
+                                ;; provider edge (a freshly-minted token is
+                                ;; briefly not-yet-valid), NOT a dead
+                                ;; credential — the same token succeeds
+                                ;; seconds later. Re-minting is what CAUSES
+                                ;; the storm, so DON'T refresh: back off and
+                                ;; retry the SAME token until it settles.
+                                (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
+                                     (refresh-just-failed? e resolved-model))
+                                ::retry-auth-backoff
+                                ;; Auth 401/403 from a refreshable provider: adopt a
+                                ;; peer credential or persist one forced refresh, then
+                                ;; re-send. The exact attempt router supplies the
+                                ;; rejected token; the next request boundary hydrates
+                                ;; the new value without rebuilding shared routers.
+                                (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
+                                     (auth-refreshable-error? e resolved-model)
+                                     (try-refresh-provider-token! (:router attempt-env)
+                                                                  resolved-model))
+                                ::retry-auth-refresh
+                                ;; Refresh/backoff failed or credentials were revoked.
+                                ;; Release the dead provider, then let svar walk the fleet.
+                                (auth-fallback-routing e @iteration-routing resolved-model)
+                                (let [fallback-routing
+                                      (auth-fallback-routing e @iteration-routing resolved-model)
+                                      ;; Persist the release ACROSS iterations. Without the
+                                      ;; cooldown the next iteration rebuilds routing from
+                                      ;; scratch and re-sends to the dead provider.
+                                      first-trip? (note-provider-auth-cooldown! (:provider
+                                                                                  resolved-model))
+                                      chunk (provider-retry-progress-chunk
+                                              (inc (long iteration))
+                                              e
+                                              {:provider (:provider resolved-model)
+                                               :model (or (:name resolved-model)
+                                                          (:model resolved-model))
+                                               :reason :authentication-fallback
+                                               :attempt 1
+                                               :max-retries 1
+                                               :delay-ms 0})]
 
-                              (when first-trip?
-                                (emit-hook! on-chunk chunk "Auth fallback progress hook failed"))
-                              (tel/log! {:level (if first-trip? :warn :debug)
-                                         :id ::auth-provider-fallback
-                                         :data {:iteration iteration
-                                                :provider (:provider resolved-model)
-                                                :cooldown-ms AUTH_COOLDOWN_MS
-                                                :status (:status (ex-data e))}}
-                                        "Provider auth recovery exhausted; falling back")
-                              {::retry-auth-fallback fallback-routing})
-                            ;; Stream watchdog BEFORE any output: the provider
-                            ;; took the request and never answered, so nothing
-                            ;; was generated, billed or painted and the
-                            ;; identical request may simply be made again. svar
-                            ;; declines this retry at its HTTP layer (one retry
-                            ;; there costs a whole timeout) and hands it to
-                            ;; router-owned provider fallback, which has no
-                            ;; second candidate under Vis' pinned sticky
-                            ;; routing — so without this branch a provider that
-                            ;; stayed silent kills a turn whose finished
-                            ;; iterations are all still sitting there.
-                            (pre-output-stream-retryable?
-                              e
-                              {:attempt attempt :output-started? @provider-output-started?})
-                            (let [delay-ms (pre-output-stream-backoff-ms attempt)
-                                  chunk (provider-retry-progress-chunk
-                                          (inc (long iteration))
-                                          e
-                                          {:provider (:provider resolved-model)
-                                           :model (or (:name resolved-model)
-                                                      (:model resolved-model))
-                                           :reason :stream-watchdog-pre-output
-                                           :attempt (inc (long attempt))
-                                           :max-retries MAX_PRE_OUTPUT_STREAM_RETRIES
-                                           :delay-ms delay-ms})]
+                                  (when first-trip?
+                                    (emit-hook! on-chunk
+                                                chunk
+                                                "Auth fallback progress hook failed"))
+                                  (tel/log! {:level (if first-trip? :warn :debug)
+                                             :id ::auth-provider-fallback
+                                             :data {:iteration iteration
+                                                    :provider (:provider resolved-model)
+                                                    :cooldown-ms AUTH_COOLDOWN_MS
+                                                    :status (:status (ex-data e))}}
+                                            "Provider auth recovery exhausted; falling back")
+                                  {::retry-auth-fallback fallback-routing})
+                                ;; Stream watchdog BEFORE any output: the provider
+                                ;; took the request and never answered, so nothing
+                                ;; was generated, billed or painted and the
+                                ;; identical request may simply be made again. svar
+                                ;; declines this retry at its HTTP layer (one retry
+                                ;; there costs a whole timeout) and hands it to
+                                ;; router-owned provider fallback, which has no
+                                ;; second candidate under Vis' pinned sticky
+                                ;; routing — so without this branch a provider that
+                                ;; stayed silent kills a turn whose finished
+                                ;; iterations are all still sitting there.
+                                (pre-output-stream-retryable?
+                                  e
+                                  {:attempt attempt :output-started? @provider-output-started?})
+                                (let [delay-ms (pre-output-stream-backoff-ms attempt)
+                                      chunk (provider-retry-progress-chunk
+                                              (inc (long iteration))
+                                              e
+                                              {:provider (:provider resolved-model)
+                                               :model (or (:name resolved-model)
+                                                          (:model resolved-model))
+                                               :reason :stream-watchdog-pre-output
+                                               :attempt (inc (long attempt))
+                                               :max-retries MAX_PRE_OUTPUT_STREAM_RETRIES
+                                               :delay-ms delay-ms})]
 
-                              (emit-hook! on-chunk chunk "Pre-output stream retry hook failed")
-                              (tel/log! {:level :warn
-                                         :id ::pre-output-stream-retry
-                                         :data {:iteration iteration
-                                                :provider (:provider resolved-model)
-                                                :attempt (inc (long attempt))
-                                                :max-retries MAX_PRE_OUTPUT_STREAM_RETRIES
-                                                :delay-ms delay-ms
-                                                :type (:type (ex-data e))}}
-                                        (str "Stream watchdog fired before any output; "
-                                             "re-issuing the same request"))
-                              ::retry-pre-output-stream)
-                            :else
-                            (if-let [recovery (context-overflow-recovery!
-                                                {:error e
-                                                 :output-started? provider-output-started?
-                                                 :recovery-state context-recovery-state
-                                                 :ctx-atom (:ctx-atom environment)
-                                                 :turn-input-tokens (:input-tokens @usage-atom)
-                                                 :request-messages @effective-messages-atom
-                                                 :base-messages (:messages attempt-base)
-                                                 :trailer-iters visible-attempt-trailer
-                                                 :summaries attempt-summaries
-                                                 :canonical-base-messages-fn
-                                                 (when (:resumed? attempt-base) canonical-messages)
-                                                 :canonical-trailer-iters attempt-trailer
-                                                 :replay-target replay-target
-                                                 :model (or (:name resolved-model)
-                                                            (:model resolved-model))})]
-                              (do
-                                (install-projection! recovery)
-                                (tel/log!
-                                  {:level :warn
-                                   :id ::context-overflow-emergency-fold
-                                   :data
-                                   (merge
-                                     request-context
-                                     (dissoc recovery :messages :canonical-base-messages :summary))
-                                   :msg
-                                   "Context overflow: retrying with a smaller history projection"})
-                                ::retry-context-overflow)
-                              (do (when (perr/context-overflow-error? e)
+                                  (emit-hook! on-chunk chunk "Pre-output stream retry hook failed")
+                                  (tel/log! {:level :warn
+                                             :id ::pre-output-stream-retry
+                                             :data {:iteration iteration
+                                                    :provider (:provider resolved-model)
+                                                    :attempt (inc (long attempt))
+                                                    :max-retries MAX_PRE_OUTPUT_STREAM_RETRIES
+                                                    :delay-ms delay-ms
+                                                    :type (:type (ex-data e))}}
+                                            (str "Stream watchdog fired before any output; "
+                                                 "re-issuing the same request"))
+                                  ::retry-pre-output-stream)
+                                :else
+                                (if-let [recovery (context-overflow-recovery!
+                                                    {:error e
+                                                     :output-started? provider-output-started?
+                                                     :recovery-state context-recovery-state
+                                                     :ctx-atom (:ctx-atom environment)
+                                                     :turn-input-tokens (:input-tokens @usage-atom)
+                                                     :request-messages @effective-messages-atom
+                                                     :base-messages (:messages attempt-base)
+                                                     :trailer-iters visible-attempt-trailer
+                                                     :summaries attempt-summaries
+                                                     :canonical-base-messages-fn
+                                                     (when (:resumed? attempt-base)
+                                                       canonical-messages)
+                                                     :canonical-trailer-iters attempt-trailer
+                                                     :replay-target replay-target
+                                                     :model (or (:name resolved-model)
+                                                                (:model resolved-model))})]
+                                  (do
+                                    (install-projection! recovery)
                                     (tel/log!
                                       {:level :warn
-                                       :id ::context-overflow-terminal
+                                       :id ::context-overflow-emergency-fold
                                        :data (merge request-context
-                                                    (context-overflow-token-data (ex-data e))
-                                                    {:output-started? @provider-output-started?
-                                                     :recovery-attempts (:attempts
-                                                                          @context-recovery-state)})
-                                       :msg "Context overflow: no emergency-fold retry scheduled"}))
-                                  (handle-iteration-exception! e
-                                                               {:iteration iteration
-                                                                :messages @effective-messages-atom
-                                                                :routing @iteration-routing
-                                                                :reasoning-level
-                                                                reasoning-level}))))))]
+                                                    (dissoc recovery
+                                                      :messages
+                                                      :canonical-base-messages
+                                                      :summary))
+                                       :msg
+                                       "Context overflow: retrying with a smaller history projection"})
+                                    ::retry-context-overflow)
+                                  (do (when (perr/context-overflow-error? e)
+                                        (tel/log!
+                                          {:level :warn
+                                           :id ::context-overflow-terminal
+                                           :data (merge request-context
+                                                        (context-overflow-token-data (ex-data e))
+                                                        {:output-started? @provider-output-started?
+                                                         :recovery-attempts
+                                                         (:attempts @context-recovery-state)})
+                                           :msg
+                                           "Context overflow: no emergency-fold retry scheduled"}))
+                                      (handle-iteration-exception!
+                                        e
+                                        {:iteration iteration
+                                         :messages @effective-messages-atom
+                                         :routing @iteration-routing
+                                         :reasoning-level reasoning-level}))))))]
 
-                     (if-let [[attempt* max-tokens-attempt*]
-                              (next-retry-counters result
-                                                   {:attempt attempt
-                                                    :max-tokens-attempt max-tokens-attempt})]
-                       (let [attempt* (long attempt*)
-                             max-tokens-attempt* (long max-tokens-attempt*)]
+                         (if-let [[attempt* max-tokens-attempt*]
+                                  (next-retry-counters result
+                                                       {:attempt attempt
+                                                        :max-tokens-attempt max-tokens-attempt})]
+                           (let [attempt* (long attempt*)
+                                 max-tokens-attempt* (long max-tokens-attempt*)]
 
-                         (cond (and (map? result) (contains? result ::retry-max-tokens))
+                             (cond
+                               (and (map? result) (contains? result ::retry-max-tokens))
                                (recur attempt* max-tokens-attempt* (::retry-max-tokens result) env)
                                (and (map? result) (contains? result ::retry-auth-fallback))
                                (do (reset! iteration-routing (::retry-auth-fallback result))
@@ -8750,7 +8790,7 @@
                                    (recur attempt* max-tokens-attempt* current-extra-body env))
                                ;; Stream retry: same route and env.
                                :else (recur attempt* max-tokens-attempt* current-extra-body env)))
-                       result)))]
+                           result)))))]
 
                 (if-let [iteration-error-data (::iteration-error iteration-result)]
                   ;; Cancellation short-circuit. When the user pressed Esc
@@ -8801,8 +8841,8 @@
                                                            (:provider resolved-model))]
                               (cond-> {:session-turn-id session-turn-id
                                        :council-input council-input
-                                       :council-publications (get @(:ctx-atom environment)
-                                                                  "engine_council_publications")
+                                       :council-publications (:council-publications
+                                                               iteration-result)
                                        :vars []
                                        :code (or err-partial-content "")
                                        :thinking err-reasoning
@@ -8995,8 +9035,7 @@
 
                             (cond-> {:session-turn-id session-turn-id
                                      :council-input council-input
-                                     :council-publications (get @(:ctx-atom environment)
-                                                                "engine_council_publications")
+                                     :council-publications (:council-publications iteration-result)
                                      :request-health
                                      (cond-> (assoc (:request-health iteration-result)
                                                :budget-tokens budget
