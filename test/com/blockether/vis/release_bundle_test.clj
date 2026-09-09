@@ -44,8 +44,8 @@
     (str/trim output)))
 
 (defn- with-source-update-fixture
-  "Run one source update between two fixture commits with controlled fetch failures."
-  [{:keys [fetch-failures keep-gateway?]} f]
+  "Run one source update between two fixture commits with fetch failures or damaged packs."
+  [{:keys [fetch-failures keep-gateway? pack-index corrupt-pack?]} f]
   (let [root
         (.toFile (Files/createTempDirectory "vis-source-update-test-" (make-array FileAttribute 0)))
 
@@ -112,7 +112,33 @@
           (git! root "clone" "--quiet" (.getAbsolutePath remote) (.getAbsolutePath managed-src))
           (git! managed-src "checkout" "--quiet" "--force" "--detach" old-commit)
           (git! managed-src "branch" "-D" "main")
+          (git! managed-src "symbolic-ref" "--delete" "refs/remotes/origin/HEAD")
           (git! managed-src "update-ref" "-d" "refs/remotes/origin/main")
+          (when pack-index
+            (git! managed-src "repack" "-ad")
+            (let [indexes (filter #(str/ends-with? (.getName ^java.io.File %) ".idx")
+                                  (file-seq (io/file managed-src ".git" "objects" "pack")))]
+              (expect (seq indexes))
+              (doseq [index indexes]
+                (case pack-index
+                  :healthy
+                  nil
+
+                  :missing
+                  (io/delete-file index)
+
+                  :corrupt
+                  (do (io/delete-file index) (spit index "invalid pack index\n"))
+
+                  :truncated
+                  (do (.setWritable ^java.io.File index true)
+                      (with-open [file (java.io.RandomAccessFile. ^java.io.File index "rw")]
+                        (.setLength file (- (.length file) 20)))))
+                (when corrupt-pack?
+                  (let [pack (io/file
+                               (str/replace (.getPath ^java.io.File index) #"\.idx$" ".pack"))]
+                    (io/delete-file pack)
+                    (spit pack "invalid pack\n"))))))
           (spit (io/file install-dir "ref") (str old-commit "\n"))
           (io/copy (io/file "bin/vis-agent") launcher)
           (.setExecutable ^java.io.File launcher true)
@@ -323,6 +349,38 @@
                        (expect (every? #(str/includes? % "--depth 1") calls) (pr-str calls))
                        (expect (str/includes? output "connection reset by peer") output)
                        (expect (not (str/includes? output "not an advertised branch")) output))))))
+
+;; Regression #177: an unreadable pack index made source updates require a second run.
+(defdescribe source-update-pack-index-test
+             (it "updates once with healthy, missing or corrupt pack indexes"
+                 (doseq [pack-index [:healthy :missing :corrupt :truncated]]
+                   (with-source-update-fixture
+                     {:pack-index pack-index}
+                     (fn [{:keys [exit output old-commit new-commit managed-src clojure-calls]}]
+                       (expect (zero? exit) output)
+                       (expect (= old-commit (str/trim (slurp clojure-calls))) output)
+                       (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
+                       (expect (not (str/includes? output "error:")) output)
+                       (expect (= (not= :healthy pack-index)
+                                  (str/includes? output "rebuilding pack index"))
+                               output)
+                       (expect (= new-commit (str/trim (slurp (io/file managed-src ".." "ref")))))
+                       (expect (= "new\n" (slurp (io/file managed-src "update-marker"))))
+                       (let [{:keys [exit output]}
+                             (run-bash ["git" "-C" (.getAbsolutePath ^java.io.File managed-src)
+                                        "fsck" "--no-dangling"]
+                                       {})]
+                         (expect (zero? exit) output))))))
+             (it "does not move the source or report success when a pack cannot be reindexed"
+                 (with-source-update-fixture
+                   {:pack-index :missing :corrupt-pack? true :keep-gateway? true}
+                   (fn [{:keys [exit output old-commit managed-src]}]
+                     (expect (not (zero? exit)) output)
+                     (expect (str/includes? output "could not rebuild pack index") output)
+                     (expect (not (str/includes? output "source pinned at")) output)
+                     (expect (= old-commit (git! managed-src "rev-parse" "HEAD")))
+                     (expect (= old-commit (str/trim (slurp (io/file managed-src ".." "ref")))))
+                     (expect (= "old\n" (slurp (io/file managed-src "update-marker"))))))))
 
 (defdescribe native-image-python-sidecar-test
              (it "stages the embedded interpreter beside the image instead of inside it"

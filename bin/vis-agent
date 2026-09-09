@@ -739,6 +739,25 @@ build_native_runtime() {
 # there cannot be followed, and an install downloads one commit instead of every
 # commit ever made.
 
+# Repair only derived indexes, never remove packs or replace the source checkout.
+# A fetch can exit successfully with an unreadable index, leaving checkout to
+# print repeated pack errors (#177). Validate indexes before fetching anything.
+repair_pack_indexes() {
+  local pack index index_error
+  for pack in "$managed_src/.git/objects/pack/"*.pack; do
+    [[ -f "$pack" ]] || continue
+    index="${pack%.pack}.idx"
+    if [[ -r "$index" ]] && git -C "$managed_src" verify-pack --stat-only "$index" >/dev/null 2>&1; then
+      continue
+    fi
+    say "rebuilding pack index for ${pack##*/}"
+    if ! index_error="$(git -C "$managed_src" index-pack "$pack" 2>&1)"; then
+      [[ -z "$index_error" ]] || printf '%s\n' "$index_error" >&2
+      die "update: could not rebuild pack index for $pack; source was not updated"
+    fi
+  done
+}
+
 # Fetch exactly one ref and nothing else. A transport reset is not evidence that
 # `main` disappeared: retry the same shallow fetch first. Only an `ls-remote`
 # result that proves the ref is not advertised unlocks the existing exact-SHA
@@ -791,6 +810,7 @@ update_source() {
     mkdir -p "$managed_src" || exit 1
     git -C "$managed_src" init --quiet || exit 1
   fi
+  repair_pack_indexes
   git -C "$managed_src" remote add origin "$vis_repo_url" 2>/dev/null \
     || git -C "$managed_src" remote set-url origin "$vis_repo_url" || exit 1
   # This source is a detached pin, never a branch — so even a hand-run `git fetch`
