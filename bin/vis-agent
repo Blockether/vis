@@ -905,9 +905,9 @@ update_native() {
   tar -xzf "$tui_archive" -C "$tui_unpack" || exit 1
   [[ -x "$unpack/vis-agent" && -x "$unpack/vis-agent-native" && -s "$unpack/vis-agent-native.build" ]] || \
     die "update: the release bundle is missing its launcher, native runtime or build stamp"
-  [[ -d "$unpack/vis-agent-python/python" ]] && \
-    compgen -G "$unpack/vis-agent-python/libvispython.*" >/dev/null || \
+  if [[ ! -d "$unpack/vis-agent-python/python" ]] || ! compgen -G "$unpack/vis-agent-python/libvispython.*" >/dev/null; then
     die "update: the release bundle is missing its Python runtime"
+  fi
   [[ -x "$tui_unpack/vis-tui" ]] || die "update: the release bundle is missing its terminal client"
 
   mv -f "$unpack/vis-agent-native" "$native_dir/vis-agent-native"
@@ -1200,7 +1200,7 @@ if command -v shasum >/dev/null 2>&1; then
 fi
 vis_prep_marker="$vis_home/run/prepped-${vis_prep_stamp:-none}"
 if [[ -z "$vis_prep_stamp" || ! -f "$vis_prep_marker" ]]; then
-  clojure -X:deps prep || exit 1
+  clojure -X:deps prep >&2 || exit 1
   if [[ -n "$vis_prep_stamp" ]]; then
     mkdir -p "$vis_home/run" 2>/dev/null || true
     : > "$vis_prep_marker" 2>/dev/null || true

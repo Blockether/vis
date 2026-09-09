@@ -32,16 +32,18 @@
     (subs text at)))
 
 (defn- run-wrapper
-  "Runs `bin/vis-agent` from `dir` (a symlink to it) with `env-extra`; merged output."
+  "Run the wrapper with isolated environment overrides and retain both output streams."
   [^java.io.File launcher env-extra args]
   (let [pb (ProcessBuilder. ^java.util.List (into [(.getAbsolutePath launcher)] args))]
-    (.redirectErrorStream pb true)
     (doseq [[k v] env-extra]
       (.put (.environment pb) (str k) (str v)))
     (let [process (.start pb)
-          output (slurp (.getInputStream process))]
+          stderr (future (slurp (.getErrorStream process)))
+          stdout (slurp (.getInputStream process))
+          exit (.waitFor process)
+          error @stderr]
 
-      {:exit (.waitFor process) :output output})))
+      {:exit exit :output (str stdout error) :stdout stdout :stderr error})))
 
 (defn- run-command!
   "Run a setup command in `dir`, throwing with merged output when it fails."
@@ -279,7 +281,7 @@
         (finally (doseq [file (reverse (file-seq tmp))]
                    (io/delete-file file true))))))
   (it
-    "exports the same trust to the JVM source runtime"
+    "exports JVM trust and keeps cold dependency preparation off stdout"
     (let [tmp
           (.toFile (Files/createTempDirectory "vis-jvm-system-trust" (make-array FileAttribute 0)))
 
@@ -306,13 +308,15 @@
            (.setExecutable wrapper true false)
            (doseq [[name body] [["java" "#!/bin/sh\necho '    java.vendor.version = OpenJDK' >&2\n"]
                                 ["clojure"
-                                 (str "#!/bin/sh\n" "printf 'ARGS=%s\n' \"$*\"\n"
+                                 (str "#!/bin/sh\n" "if [ \"$1\" = '-X:deps' ]; then\n"
+                                      "  echo 'Preparing fixture dependency'; exit 0\nfi\n"
+                                      "printf 'ARGS=%s\n' \"$*\"\n"
                                       "printf 'JAVA_TOOL_OPTIONS=%s\n' \"${JAVA_TOOL_OPTIONS:-}\"\n"
                                       "printf 'SSL_CERT_FILE=%s\n' \"${SSL_CERT_FILE:-}\"\n")]]]
              (let [file (io/file fake-path name)]
                (spit file body)
                (.setExecutable file true false)))
-           (let [{:keys [exit output]}
+           (let [{:keys [exit output stdout stderr]}
                  (run-wrapper wrapper
                               {"HOME" (.getAbsolutePath tmp)
                                "VIS_HOME" (.getAbsolutePath (io/file tmp "state"))
@@ -325,6 +329,8 @@
                                "VIS_SYSTEM_CA_CERT" (.getAbsolutePath ca-bundle)}
                               ["help"])]
              (expect (zero? exit) output)
+             (expect (not (str/includes? stdout "Preparing fixture dependency")) stdout)
+             (expect (str/includes? stderr "Preparing fixture dependency") stderr)
              (expect (not (str/includes? output "JAVA_TOOL_OPTIONS=-Djavax.net.ssl")) output)
              (expect (str/includes? output
                                     (str "-Djavax.net.ssl.trustStore="
