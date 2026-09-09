@@ -1,0 +1,106 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths: &docs_paths
+      - 'apps/vis-docs/**'
+      - 'resources/vis-docs/**'
+      - '**/resources/vis-docs/**'
+      - 'resources/vis-transcript/prism.min.js'
+      - 'src/com/blockether/vis/internal/docs/**'
+      - 'src/com/blockether/vis/internal/util.clj'
+      - 'test/com/blockether/vis/internal/docs/**'
+      - 'deps.edn'
+      - 'packages/**/deps.edn'
+      - '.graalvm-version'
+      - '.github/actions/setup-graalvm-25/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths: *docs_paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/vis-docs
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-graalvm-25
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/vis-docs/package-lock.json
+      - run: clojure -X:deps prep
+        working-directory: .
+      - run: clojure -M:test --namespace com.blockether.vis.internal.docs.core-test --namespace com.blockether.vis.internal.docs.corpus-test
+        working-directory: .
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm audit --audit-level=high
+      - run: npx --no-install wrangler deploy --dry-run
+
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: docs
+    concurrency:
+      group: docs-production
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: apps/vis-docs
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-graalvm-25
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/vis-docs/package-lock.json
+      - run: clojure -X:deps prep
+        working-directory: .
+      - run: npm ci
+      - run: npm run build
+      - name: Configure public bindings and custom domain
+        env:
+          DOCS_D1_DATABASE_ID: ${{ vars.DOCS_D1_DATABASE_ID }}
+          DOCS_TURNSTILE_SITE_KEY: ${{ vars.DOCS_TURNSTILE_SITE_KEY }}
+          DOCS_RATE_LIMIT_NAMESPACE: ${{ vars.DOCS_RATE_LIMIT_NAMESPACE }}
+          DOCS_HOSTNAME: ${{ vars.DOCS_HOSTNAME }}
+        run: node deploy.mjs
+      - name: Check runtime secret, initialize schema and deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" && test -n "$CLOUDFLARE_ACCOUNT_ID"
+          npx --no-install wrangler secret list --config .deployment.json | node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            const keys=JSON.parse(readFileSync(0,"utf8"));
+            if(!keys.some(key=>key.name==="TURNSTILE_SECRET_KEY")) throw new Error("Configure the vis-docs TURNSTILE_SECRET_KEY before deployment");'
+          npx --no-install wrangler d1 execute vis-extension-center --remote --config .deployment.json --file schema.sql --yes
+          npx --no-install wrangler deploy --config .deployment.json
+      - name: Check deployed documentation, assets and catalog
+        env:
+          DOCS_HOSTNAME: ${{ vars.DOCS_HOSTNAME }}
+        run: node deploy.mjs --verify

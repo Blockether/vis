@@ -139,9 +139,9 @@ test('the catalog uses the documentation stylesheet and three-column page shell'
   expect(build).toContain('resources/vis-docs/assets');
   expect(readFileSync('dist/assets/theme.css')).toEqual(readFileSync('../../resources/vis-docs/assets/theme.css'));
   expect($('.top .brand').textContent).toBe('Vis');
-  expect($('.top .brand').href).toBe('https://blockether.github.io/vis/');
+  expect($('.top .brand').getAttribute('href')).toBe('/');
   expect($('.top .center-link').textContent).toBe('Extension Center');
-  expect($('.top .center-link').getAttribute('href')).toBe('/');
+  expect($('.top .center-link').getAttribute('href')).toBe('/extensions/');
   expect($('.top .center-link').getAttribute('aria-current')).toBe('location');
   expect($('.top .center-link').hasAttribute('target')).toBe(false);
   expect($('.shell > .side #categories')).not.toBeNull();
@@ -223,4 +223,16 @@ test('an expired or removed challenge cannot authorize a later form', async () =
   expect($('#submit-status').textContent).toContain('anti-spam');
   $('#submit-close').click(); callbacks.callback('late-token');
   expect($('#submit-dialog').open).toBe(false);
+});
+
+test('documentation navigation leaves the catalog router in the same tab', async()=>{
+  setup();await tick();
+  for(const link of [$('.top .brand'), ...document.querySelectorAll('nav[aria-label="Documentation"] a')]) {
+    expect(link.target).toBe('');
+    expect(new URL(link.href).origin).toBe(window.location.origin);
+    let prevented;
+    const listener=event=>{prevented=event.defaultPrevented;event.preventDefault();};
+    document.addEventListener('click',listener,{once:true});
+    link.click();expect(prevented).toBe(false);
+  }
 });

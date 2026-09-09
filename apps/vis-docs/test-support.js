@@ -3,7 +3,7 @@ import { Miniflare } from 'miniflare';
 import { build } from 'esbuild';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-
+import { security } from './headers.js';
 export async function runtimeFixture({port=0,hostname='center.example.com',seed=false}={}) {
   const controls={github:'ok',verification:'ok',requests:[],tokens:new Set()};
   const manifest=readFileSync('examples/vis-greeter/pyproject.toml','utf8'), revision='a'.repeat(40);
@@ -11,8 +11,8 @@ export async function runtimeFixture({port=0,hostname='center.example.com',seed=
   const runtime=new Miniflare({host:'127.0.0.1',port,cf:false,telemetry:{enabled:false},workers:[{
     config:{name:'center',type:'worker',compatibilityDate:'2026-02-01',manifest:{mainModule:'worker.js',modules:{'worker.js':{type:'esm',contents:result.outputFiles[0].text}}},env:{DB:{type:'d1',id:'catalog-test'},TURNSTILE_SITE_KEY:{type:'text',value:'fixture-site-key'},TURNSTILE_SECRET_KEY:{type:'text',value:'server-only-fixture-secret'},GITHUB_TOKEN:{type:'text',value:'server-only-github-fixture'},SUBMISSIONS_LIMITER:{type:'rate-limit',namespace:'1001',simple:{limit:10,period:60}},ASSETS:{type:'fetcher',handler:async request=>{
       const path=new URL(request.url).pathname;
-      if(!/^\/assets\/[a-zA-Z0-9_./-]+$/.test(path)||path.includes('..')) return new Response('',{status:404});
-      try {const type=path.endsWith('.css')?'text/css':path.endsWith('.js')?'text/javascript':path.endsWith('.woff2')?'font/woff2':'image/png';return new Response(readFileSync(resolve('dist'+path)),{headers:{'Content-Type':type}});} catch {return new Response('',{status:404});}
+      if(path!=='/'&&!/^\/(?:[a-z0-9-]+\.html|assets\/[a-zA-Z0-9_./-]+)$/.test(path)||path.includes('..')) return new Response('',{status:404});
+      try {const type=path==='/'||path.endsWith('.html')?'text/html':path.endsWith('.css')?'text/css':path.endsWith('.js')?'text/javascript':path.endsWith('.woff2')?'font/woff2':'image/png';return new Response(readFileSync(resolve('dist'+(path==='/'?'/index.html':path))),{headers:{...security,'Content-Type':type}});} catch {return new Response('',{status:404});}
     }}}},
     dev:{stripCfConnectingIp:false,outboundService:{type:'fetcher',handler:async request=>{
       const url=new URL(request.url);controls.requests.push(url.href);

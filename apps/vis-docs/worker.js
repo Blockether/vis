@@ -1,10 +1,7 @@
 import { renderPage } from './web/render.js';
+import { security } from './headers.js';
 import { identity, inspectRepository, readBounded, RequestError } from './github.js';
 
-const security={
-  'X-Content-Type-Options':'nosniff', 'Referrer-Policy':'no-referrer',
-  'Content-Security-Policy':"default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
-};
 const reply=(body,status=200,html=false,cache='no-store')=>new Response(html?body:JSON.stringify(body),{status,headers:{...security,'Content-Type':html?'text/html; charset=utf-8':'application/json; charset=utf-8','Cache-Control':cache}});
 
 async function catalog(env,origin,ctx) {
@@ -37,16 +34,16 @@ async function protectedSource(request,env,path) {
 }
 async function handle(request,env,ctx) {
   const url=new URL(request.url), path=url.pathname;
-  const page=path==='/'||/^\/extensions\/[0-9a-f]{24}$/.test(path);
+  const page=path==='/extensions/'||/^\/extensions\/[0-9a-f]{24}$/.test(path);
   if(['GET','HEAD'].includes(request.method)) {
-    if(path.startsWith('/assets/')) return env.ASSETS.fetch(request);
+    if(path==='/extensions') return new Response(null,{status:308,headers:{...security,Location:'/extensions/'+url.search}});
     if(page) {
-      const data={items:[],search:url.search,siteKey:env.TURNSTILE_SITE_KEY||'',docsURL:env.DOCS_URL};
+      const data={items:[],search:url.search,siteKey:env.TURNSTILE_SITE_KEY||''};
       let status=200;
       try {
         data.items=(await catalog(env,url.origin,ctx)).extensions;
-        if(path!=='/') {data.item=data.items.find(item=>item.id===path.split('/').at(-1));if(!data.item) {data.detailError=true;status=404;}}
-      } catch {data.error='Could not load the catalog. Try again later.';data.detailError=path!=='/';status=503;}
+        if(path!=='/extensions/') {data.item=data.items.find(item=>item.id===path.split('/').at(-1));if(!data.item) {data.detailError=true;status=404;}}
+      } catch {data.error='Could not load the catalog. Try again later.';data.detailError=path!=='/extensions/';status=503;}
       return reply(renderPage(data),status,true);
     }
     if(path==='/api/extensions') return reply(await catalog(env,url.origin,ctx),200,false,'public, max-age=60');
@@ -54,7 +51,8 @@ async function handle(request,env,ctx) {
       const row=await env.DB.prepare('SELECT metadata, added_at FROM extensions WHERE id = ?').bind(path.split('/').at(-1)).first();
       return row?reply({...JSON.parse(row.metadata),added_at:row.added_at},200,false,'public, max-age=60'):reply({error:'Repository not listed.'},404);
     }
-    return reply({error:'Not found.'},404);
+    if(path.startsWith('/api/')) return reply({error:'Not found.'},404);
+    return env.ASSETS.fetch(request);
   }
   if(request.method!=='POST'||!['/api/preview','/api/submissions'].includes(path)) return reply({error:'Method not allowed.'},405);
   const source=await protectedSource(request,env,path);

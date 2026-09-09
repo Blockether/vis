@@ -5,7 +5,7 @@ A small, runnable Extension Center example. It registers `greeter.greet(name)`.
 From the Vis repository root, install this monorepo project:
 
 ```sh
-vis-agent extension install . --subdirectory apps/vis-extension-center/examples/vis-greeter --project --trust
+vis-agent extension install . --subdirectory apps/vis-docs/examples/vis-greeter --project --trust
 ```
 
 To list a public copy, submit its GitHub repository URL and set **Project folder** to

@@ -1,6 +1,6 @@
-# Extension Center
+# Docs and Extension Center
 
-Serve Extension Center from a Cloudflare Worker with D1, using the exact Vis light documentation stylesheet.
+Serve documentation and Extension Center together from the docs Cloudflare Worker, using the exact Vis light stylesheet.
 
 ## Context
 The first draft stored uploaded packages and displayed a monospace split-pane catalog.
@@ -46,13 +46,24 @@ Main publication and GitHub Actions deployment were authorized in turn 12. No li
 - Data: documentation page-html, Worker shellHTML and the shared theme.css.
 - Acceptance criteria: a visible header link on desktop and touch devices, no link in embedded docs,
   and documentation/catalog navigation on the same public origin.
-- Unknowns: the common hostname. GitHub Pages cannot route requests to this Worker. Moving the
-  docs to the Worker hostname or adding a user-selected domain requires a hosting decision.
-  No DNS or origin migration was performed.
+- Unknowns: the public hostname was selected in turn 19. The registrar still hosts DNS;
+  the user must verify the zone import and DNSSEC transition before nameservers change.
+  No DNS cutover or old-site unpublishing has occurred.
+
+## 6. Unified Cloudflare docs application
+- Rationale: documentation and catalog must share one public origin and deployment.
+- Data: apps/vis-docs, the existing documentation renderer, shared assets and docs.yml.
+- Acceptance criteria: docs at /, catalog at /extensions/, relative navigation, identical CSS,
+  external scripts compatible with CSP, static docs independent of D1, one source-filtered
+  Cloudflare workflow, existing catalog data retained and no secrets in uploaded assets.
+- Unknowns: production DNS activation, new Worker secrets and the docs GitHub environment
+  must be configured before publication. Relay domain cutover is separate.
 
 ## Plan state
-1–4 complete locally. The Python web server is removed; the Worker renders catalog/details as HTML
-and D1 separates public listings from pending submissions. Installer behavior is unchanged.
+1–4 shipped. Phases 5–6 are complete locally: apps/vis-docs serves generated docs and the
+catalog together, retaining the existing D1 identity. Publication is blocked on the new
+Worker/environment configuration and DNS activation. Previous production services and
+installer behavior remain unchanged; these changes are not committed or pushed.
 
 Verification for the Worker application:
 - 28 tests passed: actual local workerd/D1 plus UI, including Turnstile replay/action/hostname
@@ -62,9 +73,9 @@ Verification for the Worker application:
 - Docs, Worker and inline preview have matching measured shell geometry, fonts and colors.
   Browser review covered 1280, 834 and 393 px, coarse input, 130% text, details and submissions.
 - Preview uses the exact Worker renderer/assets and explicit GitHub/Turnstile/API fixtures.
-- Public docs link is configured by VIS_EXTENSION_CENTER_URL; it adds no doc() entry.
+- The catalog remains excluded from doc() and embedded documentation navigation.
 
-Production D1, managed Turnstile and the Worker runtime secret are provisioned. GitHub Actions
+The previous catalog Worker has production D1, managed Turnstile and its runtime secret. GitHub Actions
 uses a separate, account-scoped deployment token; application secrets are not stored in the repository.
 
 Earlier installation verification (installer unchanged by the Worker replacement):
@@ -92,6 +103,17 @@ shared Vis light stylesheet; the catalog marks its active location and the Vis b
 36 Worker/UI/deployment tests and 25 documentation tests pass. Browser measurements match at
 1280 px and 320 px with 130% text scaling, without horizontal overflow; the new touch target
 exceeds 44 px. Shared-origin delivery remains blocked on the hostname decision in phase 5.
+Turn 20: unified docs application verified locally. 47 Worker/UI/deployment/asset tests and
+47 Clojure docs/corpus tests pass. The Wrangler harness covers actual asset routing and
+headers, including / returning index.html without a Worker invocation, and docs remaining
+available without a catalog schema. Browser review found and tests now cover embedded
+store-icon CSP requirements; script/style inline execution remains disallowed.
+Canonical CSS is unchanged. Browser navigation stays on one origin; typography and header
+geometry match at 1280 px and 320 px with 130% text and no horizontal overflow. Prism runs
+on documentation pages; the final browser check has no new console errors.
+ESLint, formatting, Clojure lint/reflection, npm audit, actionlint, Wrangler dry-run and
+redacted source/build credential scans pass. Public DNS still reports registrar nameservers
+and two DS records. No production deployment, DNS change, old-site removal or relay change.
 ---
 
 # Session health in app metrics

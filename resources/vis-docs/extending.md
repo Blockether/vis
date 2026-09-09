@@ -169,7 +169,7 @@ for example `extensions/greeting`. The Worker reads metadata without executing c
 Review the resolved commit and submit it for moderation. New entries and updates remain
 private until approved; resubmission never replaces a published listing automatically.
 Separate folders can have separate entries.
-See the [standalone app instructions](https://github.com/Blockether/vis/tree/main/apps/vis-extension-center).
+See the [docs application instructions](https://github.com/Blockether/vis/tree/main/apps/vis-docs).
 
 After reviewing the source and dependencies, copy the catalog's commit-pinned install
 command. You can also install a GitHub project's default branch or link local source.

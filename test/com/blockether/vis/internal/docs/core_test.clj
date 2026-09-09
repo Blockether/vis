@@ -5,6 +5,12 @@
             [com.blockether.vis.internal.docs.core :as docs]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defn- rendered-theme
+  [html mode]
+  (if (= mode :static)
+    (slurp (io/resource "vis-docs/assets/theme.css"))
+    (second (re-find #"(?s)<style>(.*?)</style>" html))))
+
 (defdescribe
   python-presentation-test
   (it "loads the bundled Python highlighter and reduces Python code size in both modes"
@@ -20,10 +26,15 @@
                 :let [html
                       (docs/page-html site page mode)]]
 
-          (expect (str/includes? html "Prism.languages.python="))
-          (expect (str/includes? html "Prism.highlightAll();</script>"))
-          (expect (str/includes? html ".content p img{max-width:100%;height:auto}"))
-          (expect (str/includes? html ".content pre code.language-python{font-size:.75rem}")))))
+          (let [css (rendered-theme html mode)]
+            (if (= mode :static)
+              (do (expect (str/includes? html "src=\"assets/prism.min.js\" defer"))
+                  (expect (str/includes? html "src=\"assets/docs.js\" defer"))
+                  (expect (not (str/includes? html "<script>"))))
+              (do (expect (str/includes? html "Prism.languages.python="))
+                  (expect (str/includes? html "Prism.highlightAll();</script>"))))
+            (expect (str/includes? css ".content p img{max-width:100%;height:auto}"))
+            (expect (str/includes? css ".content pre code.language-python{font-size:.75rem}"))))))
   (it
     "resolves screenshot sources and full-size links in both modes"
     (let [{:keys [pages] :as site} (docs/collect)]
@@ -98,12 +109,15 @@
                            [:static :live]
 
                            :let [html
-                                 (docs/page-html site home mode)]]
+                                 (docs/page-html site home mode)
+
+                                 css
+                                 (rendered-theme html mode)]]
 
                      (expect (str/includes? html "class=\"hamburger\""))
                      (expect (str/includes? html "id=\"navtoggle\""))
-                     (expect (not (str/includes? html ".hamburger:hover")))
-                     (expect (str/includes? html "-webkit-tap-highlight-color:transparent"))))))
+                     (expect (not (str/includes? css ".hamburger:hover")))
+                     (expect (str/includes? css "-webkit-tap-highlight-color:transparent"))))))
 
 (defdescribe
   mobile-sidebar-scroll-test
@@ -120,14 +134,17 @@
                 :let [html
                       (docs/page-html site home mode)
 
+                      css
+                      (rendered-theme html mode)
+
                       drawer
-                      (second (re-find #"(?s)@media\(max-width:820px\).*?\.side\{([^}]+)\}" html))]]
+                      (second (re-find #"(?s)@media\(max-width:820px\).*?\.side\{([^}]+)\}" css))]]
 
           ;; WebKit expands a fixed grid item with height:auto to its contents,
           ;; leaving no internal overflow even when the last links are offscreen.
           (expect (str/includes? drawer "height:calc(100dvh - 4rem - env(safe-area-inset-top))"))
           (expect (not (str/includes? drawer "height:auto")))
-          (expect (re-find #"\.side\{[^}]*overflow-y:auto" html))
+          (expect (re-find #"\.side\{[^}]*overflow-y:auto" css))
           (expect (str/includes? drawer "overscroll-behavior-y:contain"))
           (expect (str/includes? drawer
                                  "padding-bottom:calc(3rem + env(safe-area-inset-bottom))"))))))
@@ -144,34 +161,37 @@
                            [:static :live]
 
                            :let [html
-                                 (docs/page-html site page mode)]]
+                                 (docs/page-html site page mode)
 
-                     (expect (str/includes? html "font-family:var(--font)"))
-                     (expect (str/includes? html "--font:'JetBrains Mono',monospace"))
-                     (expect (not (str/includes? html "Hanken")))
-                     (expect (str/includes? html "--text-small:.8125rem"))
-                     (expect (str/includes? html "--text-small:.75rem"))
-                     (expect (str/includes? html "overflow-wrap:anywhere"))
-                     (expect (str/includes? html "table-layout:fixed"))
-                     (expect (str/includes? html ".content pre{font-family:inherit"))
-                     (expect (not (str/includes? html "white-space:nowrap")))
-                     (expect (str/includes? html
+                                 css
+                                 (rendered-theme html mode)]]
+
+                     (expect (str/includes? css "font-family:var(--font)"))
+                     (expect (str/includes? css "--font:'JetBrains Mono',monospace"))
+                     (expect (not (str/includes? css "Hanken")))
+                     (expect (str/includes? css "--text-small:.8125rem"))
+                     (expect (str/includes? css "--text-small:.75rem"))
+                     (expect (str/includes? css "overflow-wrap:anywhere"))
+                     (expect (str/includes? css "table-layout:fixed"))
+                     (expect (str/includes? css ".content pre{font-family:inherit"))
+                     (expect (not (str/includes? css "white-space:nowrap")))
+                     (expect (str/includes? css
                                             ".content th code,.content td code{font-size:inherit"))
                      (expect (str/includes? html "<thead>"))
                      (expect (str/includes? html "initial-scale=1,viewport-fit=cover"))
                      (expect (not (re-find #"user-scalable=no|maximum-scale=" html)))))))
 
 (defdescribe shared-theme-test
-             (it "embeds the same stylesheet as Extension Center, with mode-specific font URLs"
+             (it "shares one stylesheet, external in static output and embedded in live output"
                  (let [{:keys [pages] :as site}
                        (docs/collect)
 
                        theme
                        (slurp (io/resource "vis-docs/assets/theme.css"))]
 
-                   (doseq [[mode prefix] [[:static "assets/fonts/"] [:live "/docs/assets/fonts/"]]]
+                   (doseq [[mode prefix] [[:static "./fonts/"] [:live "/docs/assets/fonts/"]]]
                      (let [html (docs/page-html site (first pages) mode)
-                           stylesheet (second (re-find #"(?s)<style>(.*?)</style>" html))]
+                           stylesheet (rendered-theme html mode)]
 
                        (expect (= (str/replace theme "./fonts/" prefix) stylesheet))
                        (expect (some? (io/resource
@@ -227,7 +247,8 @@
                         "TestFlight" "Google Play beta" "hyphens:none" "list-style-position:outside"
                         ".store-links a:focus-visible" "class=\"store-apple\""
                         "class=\"store-android\""]]
-          (expect (str/includes? html needle) needle))
+          (expect (or (str/includes? html needle) (str/includes? (rendered-theme html mode) needle))
+                  needle))
         (let [command (second (re-find #"(?s)<pre><code class=\"language-bash\">(.*?)</code></pre>"
                                        html))]
           (expect
@@ -533,18 +554,17 @@
         (expect (empty? broken)
                 (str/join "\n" (cons "pages that break the docs page contract:" broken))))))
 
-(defdescribe extension-center-public-link-test
-             (it
-               "links the separate Worker only from the public site, never the live docs or corpus"
-               (let [site
-                     (assoc (docs/collect) :extension-center-url "https://center.example.com/")
+(defdescribe
+  extension-center-public-link-test
+  (it "links the catalog on the same origin only in the public site, never live docs or corpus"
+      (let [site
+            (assoc (docs/collect) :public? true)
 
-                     page
-                     (first (:pages site))]
+            page
+            (first (:pages site))]
 
-                 (expect (str/includes? (re-find #"<header[^>]*>.*?</header>"
-                                                 (docs/page-html site page :static))
-                                        "href=\"https://center.example.com/\""))
-                 (expect (not (str/includes? (docs/page-html site page :live)
-                                             "https://center.example.com/")))
-                 (expect (not-any? #(= "extension-center" (:slug %)) (:pages site))))))
+        (expect (str/includes? (re-find #"<header[^>]*>.*?</header>"
+                                        (docs/page-html site page :static))
+                               "href=\"/extensions/\""))
+        (expect (not (str/includes? (docs/page-html site page :live) "href=\"/extensions/\"")))
+        (expect (not-any? #(= "extension-center" (:slug %)) (:pages site))))))

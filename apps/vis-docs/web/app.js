@@ -26,7 +26,7 @@ export function mount(container,request=fetch,initial) {
   async function load() {
     $('#results').setAttribute('aria-busy','true');$('#catalog-status').textContent='Loading extensions…';
     try {const data=await api('/api/extensions');if(!disposed) {items=data.extensions;renderList();}}
-    catch {if(!disposed) $('#catalog-status').innerHTML=`${items.length?'Showing saved results. Could not refresh.':'Could not load the catalog.'} <a id="retry" href="/">Retry</a>`;}
+    catch {if(!disposed) $('#catalog-status').innerHTML=`${items.length?'Showing saved results. Could not refresh.':'Could not load the catalog.'} <a id="retry" href="/extensions/">Retry</a>`;}
     finally {$('#results')?.removeAttribute('aria-busy');}
   }
   async function route(focus=false) {
@@ -93,7 +93,7 @@ export function mount(container,request=fetch,initial) {
   const click=async event=>{
     const node=event.target.closest('a,button');if(!node||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey) return;
     if(node.matches('[data-category]')) {event.preventDefault();state.category=node.dataset.category;renderList();saveFilters();route();closeNavigation();if(mobile.matches) $('#search').focus({preventScroll:true});}
-    else if(node.matches('.card-main,#back-to-catalog,.brand')) {event.preventDefault();closeNavigation();navigate(node.href);if(node.id==='back-to-catalog') $('#search').focus({preventScroll:true});}
+    else if(node.matches('.card-main,#back-to-catalog')) {event.preventDefault();closeNavigation();navigate(node.href);if(node.id==='back-to-catalog') $('#search').focus({preventScroll:true});}
     else if(node.matches('#submit-open,#empty-add')) openSubmission();
     else if(node.id==='clear-filters') {event.preventDefault();clearFilters();}
     else if(node.id==='retry') {event.preventDefault();load();}

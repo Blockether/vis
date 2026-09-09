@@ -36,7 +36,7 @@
        sentence (`A; B; C`, `first … then … finally`): write it as the list it is.
 
    One renderer, two outputs:
-     * `build-site!` writes a static, themed HTML bundle (for GitHub Pages).
+     * `build-site!` writes a static, themed HTML bundle for the public Worker.
      * `handle` serves the same pages live (HTMX nav), mountable on the gateway
        via its `:gateway.slot/http-routes` slot.
 
@@ -211,7 +211,7 @@
 (defn- asset
   "Rooted URL to a docs asset, correct from any page depth.
    :live  → \"/docs/assets/<rel>\"  (absolute, survives nested page paths)
-   :static → \"assets/<rel>\"         (GitHub Pages: index at site root)"
+   :static → assets/<rel>         (index and pages at the static site root)"
   [mode rel]
   (case mode
     :static
@@ -233,7 +233,7 @@
       (str/replace ">" "&gt;")))
 
 ;; :static → relative ("slug.html"), so the bundle works from any host/subpath
-;; on GitHub Pages. :live → ABSOLUTE ("/docs/slug"), so nav resolves the same
+;; of a static host. :live → ABSOLUTE ("/docs/slug"), so nav resolves the same
 ;; from the index (/docs) AND from a deep page (/docs/<slug>); a relative href
 ;; would resolve to /docs/docs/<slug> on deep pages → 404 "no such doc".
 (defn- href
@@ -262,7 +262,7 @@
                      (str attr "=\"" (asset mode rel) "\"")))))
 
 (defn- nav-html
-  [{:keys [pages site extension-center-url]} active-slug mode]
+  [{:keys [pages site public?]} active-slug mode]
   (let [by-sec
         (group-by :section pages)
 
@@ -288,12 +288,10 @@
                            ">"
                            (esc title)
                            "</a>"))))))
-         (when (and (= mode :static) (seq extension-center-url))
+         (when (and (= mode :static) public?)
            (str "<div class=\"nav-sec\">"
                 (esc (get-in site [:extension-center :section]))
-                "</div><a href=\""
-                (esc extension-center-url)
-                "\">"
+                "</div><a href=\"/extensions/\">"
                 (esc (get-in site [:extension-center :title]))
                 "</a>"))
          "</nav>")))
@@ -327,9 +325,10 @@
       "<link rel=\"preload\" href=\""
       (asset mode "fonts/jetbrains-mono.woff2")
       "\" as=\"font\" type=\"font/woff2\" crossorigin>"
-      "<style>"
-      (theme-css mode)
-      "</style></head><body>"
+      (if (= mode :static)
+        "<link rel=\"stylesheet\" href=\"assets/theme.css\">"
+        (str "<style>" (theme-css mode) "</style>"))
+      "</head><body>"
       ;; CSS-only mobile nav toggle (checkbox precedes .shell so it can target .side)
       "<input type=\"checkbox\" id=\"navtoggle\" class=\"navtoggle\" aria-label=\"Toggle navigation\">"
       "<header class=\"top\">"
@@ -343,10 +342,8 @@
       "\">"
       (esc (:title site))
       "</a>"
-      (when (and (= mode :static) (seq (:extension-center-url site-data)))
-        (str "<a class=\"center-link\" href=\""
-             (esc (:extension-center-url site-data))
-             "\">"
+      (when (and (= mode :static) (:public? site-data))
+        (str "<a class=\"center-link\" href=\"/extensions/\">"
              (esc (get-in site [:extension-center :title]))
              "</a>"))
       "<span class=\"spacer\"></span>"
@@ -380,10 +377,11 @@
       "</div>"
       "</article></main>"
       (or (toc-html toc) "<div></div>")
-      "</div><script>"
-      @prism-js
-      "
-Prism.highlightAll();</script></body></html>")))
+      "</div>"
+      (if (= mode :static)
+        "<script src=\"assets/prism.min.js\" defer></script><script src=\"assets/docs.js\" defer></script>"
+        (str "<script>" @prism-js "\nPrism.highlightAll();</script>"))
+      "</body></html>")))
 
 ;; static site
 
@@ -393,7 +391,10 @@ Prism.highlightAll();</script></body></html>")))
    "vis-docs/assets/screenshots/ask.png" "assets/screenshots/ask.png"
    "vis-docs/assets/screenshots/live-running.png" "assets/screenshots/live-running.png"
    "vis-docs/assets/screenshots/live-stop.png" "assets/screenshots/live-stop.png"
-   "vis-docs/assets/fonts/jetbrains-mono.woff2" "assets/fonts/jetbrains-mono.woff2"})
+   "vis-docs/assets/fonts/jetbrains-mono.woff2" "assets/fonts/jetbrains-mono.woff2"
+   "vis-docs/assets/theme.css" "assets/theme.css"
+   "vis-docs/assets/docs.js" "assets/docs.js"
+   "vis-transcript/prism.min.js" "assets/prism.min.js"})
 
 (defn- copy-assets!
   [out-dir]
@@ -405,15 +406,11 @@ Prism.highlightAll();</script></body></html>")))
           (io/copy in f))))))
 
 (defn build-site!
-  "Render the docs to a static bundle. Optional :extension-center-url adds a public-only
-   navigation link to the separately deployed Worker, not a document or packaged app."
+  "Render the docs and shared assets to a static bundle. :public? adds same-origin
+   Extension Center navigation; the catalog is not a document or part of live docs."
   ([out-dir] (build-site! out-dir {}))
-  ([out-dir {:keys [extension-center-url]}]
-   (when (seq extension-center-url)
-     (let [url (java.net.URI. ^String extension-center-url)]
-       (when-not (and (= "https" (.getScheme url)) (seq (.getHost url)) (nil? (.getUserInfo url)))
-         (throw (ex-info "Extension Center URL must be HTTPS without credentials" {})))))
-   (let [{:keys [pages] :as site-data} (assoc (collect) :extension-center-url extension-center-url)]
+  ([out-dir {:keys [public?]}]
+   (let [{:keys [pages] :as site-data} (assoc (collect) :public? public?)]
      (when (empty? pages) (throw (ex-info "no vis-docs pages found on classpath" {})))
      (io/make-parents (io/file out-dir "x"))
      (copy-assets! out-dir)

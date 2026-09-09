@@ -14,14 +14,37 @@ function post(path,source={},headers={}) {
   return fixture.runtime.dispatchFetch('https://center.example.com'+path,{method:'POST',headers:{Origin:'https://center.example.com','Content-Type':'application/json','CF-Connecting-IP':'10.0.0.'+(serial%250+1),...headers},body:JSON.stringify({repository_url:'https://github.com/example/extensions',subdirectory:'plugins/greeting',turnstile_token:token,...source})});
 }
 
+test('docs and catalog share an origin, with documentation independent of D1',async()=>{
+  const home=await fixture.runtime.dispatchFetch('https://center.example.com/');
+  const homeHTML=await home.text();
+  expect(home.status).toBe(200);
+  expect(homeHTML).toContain('Getting started');
+  expect(homeHTML).not.toContain('id="catalog-data"');
+  expect(homeHTML).toContain('class="center-link" href="/extensions/"');
+  const docs=await fixture.runtime.dispatchFetch('https://center.example.com/extending.html');
+  expect(docs.status).toBe(200);expect(await docs.text()).toContain('Extending Vis');
+  const catalog=await fixture.runtime.dispatchFetch('https://center.example.com/extensions/');
+  const catalogHTML=await catalog.text();
+  expect(catalog.status).toBe(200);expect(catalogHTML).toContain('No repositories yet');
+  expect(catalogHTML).toContain('class="brand" href="/"');
+  expect(catalogHTML).toContain('href="/extending.html"');
+  expect(catalogHTML).not.toContain('blockether.github.io');
+  expect((await fixture.runtime.dispatchFetch('https://center.example.com/missing.html')).status).toBe(404);
+  const offline=await worker.fetch(new Request('https://center.example.com/'),{ASSETS:{fetch:()=>new Response('docs without database')}},{waitUntil(){}});
+  expect(await offline.text()).toBe('docs without database');
+});
+test('catalog canonicalization preserves filters and never redirects to another origin',async()=>{
+  const response=await fixture.runtime.dispatchFetch('https://center.example.com/extensions?category=tools',{redirect:'manual'});
+  expect(response.status).toBe(308);expect(response.headers.get('location')).toBe('/extensions/?category=tools');
+});
 test('Worker returns Vis light HTML rather than a JSON-only API',async()=>{
-  const response=await fixture.runtime.dispatchFetch('https://center.example.com/');
+  const response=await fixture.runtime.dispatchFetch('https://center.example.com/extensions/');
   const html=await response.text();expect(response.status).toBe(200);expect(response.headers.get('content-type')).toContain('text/html');
   expect(html).toContain('No repositories yet');expect(html).toContain('/assets/theme.css');expect(html).toContain('class="shell"');
   expect(html).not.toContain('server-only');expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
 });
 test('catalog failure still renders the documentation shell with recovery',async()=>{
-  const response=await worker.fetch(new Request('https://center.example.com/'),{},{waitUntil(){}});
+  const response=await worker.fetch(new Request('https://center.example.com/extensions/'),{},{waitUntil(){}});
   expect(response.status).toBe(503);expect(await response.text()).toContain('Could not load the catalog');
 });
 test('root and monorepo previews use pinned GitHub metadata only',async()=>{
@@ -47,7 +70,7 @@ test('pending submissions and their refreshes cannot publish or replace a public
 test('SSR supports search, categories, sort, views and executable-free metadata',async()=>{
   const items=JSON.parse(readFileSync('web/catalog.fixture.json','utf8'));
   for(const item of items) await fixture.db.prepare('INSERT INTO extensions VALUES (?, ?, ?)').bind(item.id,JSON.stringify(item),item.added_at).run();
-  const html=await (await fixture.runtime.dispatchFetch('https://center.example.com/?category=providers&view=list&q=local')).text();
+  const html=await (await fixture.runtime.dispatchFetch('https://center.example.com/extensions/?category=providers&view=list&q=local')).text();
   expect(html).toContain('data-view="list"');expect(html.match(/class="extension-card"/g)).toHaveLength(1);expect(html).toContain('data-name="vis-local-models"');
   const malicious={...items[0],description:'</script><b>untrusted metadata</b>'};
   await fixture.db.prepare('UPDATE extensions SET metadata=? WHERE id=?').bind(JSON.stringify(malicious),malicious.id).run();await fixture.runtime.purgeCache();
@@ -58,8 +81,8 @@ test('SSR supports search, categories, sort, views and executable-free metadata'
 test('public catalog uses a shared cache key and HEAD returns no body',async()=>{
   const response=await fixture.runtime.dispatchFetch('https://center.example.com/api/extensions');expect(response.headers.get('cache-control')).toContain('max-age=60');
   const item=JSON.parse(readFileSync('web/catalog.fixture.json','utf8'))[0];await fixture.db.prepare('INSERT INTO extensions VALUES (?, ?, ?)').bind(item.id,JSON.stringify(item),item.added_at).run();
-  const html=await (await fixture.runtime.dispatchFetch('https://center.example.com/?q=github')).text();expect(html).toContain('No repositories yet');
-  const head=await fixture.runtime.dispatchFetch('https://center.example.com/',{method:'HEAD'});expect(await head.text()).toBe('');expect(head.status).toBe(200);
+  const html=await (await fixture.runtime.dispatchFetch('https://center.example.com/extensions/?q=github')).text();expect(html).toContain('No repositories yet');
+  const head=await fixture.runtime.dispatchFetch('https://center.example.com/extensions/',{method:'HEAD'});expect(await head.text()).toBe('');expect(head.status).toBe(200);
 });
 test('Turnstile rejects missing, reused, wrong-action and wrong-host tokens before GitHub',async()=>{
   expect((await post('/api/preview',{turnstile_token:''})).status).toBe(403);
