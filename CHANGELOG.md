@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.49] - 2026-09-09
+
+### Fixed
+- Pin the imported iOS distribution certificate for both archive signing and package export.
+
 ## [v0.1.48] - 2026-09-09
 
 ### Fixed

@@ -1049,5 +1049,13 @@ exposed a test fixture race: a background config reader consumed a scripted spaw
 The regression now reproduces that read and confines the fixture to its owning thread;
 policy validation and the exact two-spawn load assertion are unchanged. The full 5058-case
 suite passes with the fix, as do formatting, lint and reflection. Tag v0.1.47 stays immutable;
-v0.1.48 is the next complete-release candidate.
+Release v0.1.48 passed all source CI, all three native engine/worker/TUI builds and integration
+tests, Android publication and all desktop packages. Its staged Linux JVM run passed 5058
+cases. Run 34305148277 stopped at iOS codesigning: the generic distribution identity selected
+a different certificate from the one imported for the job. The draft has 14 of 15 assets and
+was not promoted. The fix scopes identity discovery to the job keychain and pins the exact
+fingerprint through archive and export; missing manual identities fail closed. Regression
+tests reproduce the ambiguity and export selection. All 220 script cases pass (one existing
+skip), as do 44 release cases, scoped syntax/lint/reflection, formatting and workflow checks.
+Tag v0.1.48 stays immutable; v0.1.49 is the next complete-release candidate.
 Complete native release and server deployment remain pending. Preserve unrelated concurrent work.
