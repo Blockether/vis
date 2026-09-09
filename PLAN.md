@@ -1044,5 +1044,10 @@ reflection and workflow checks pass. Live read-only checks accept the draft, rej
 existing published release and still reject the draft's incomplete two-asset set.
 Tags v0.1.45 and v0.1.46 remain immutable. The former failed before jobs started because the
 native caller lacked actions:read; that job-scoped permission fix is verified.
-Candidate v0.1.47 retains the verified runtime pin and passes 5058 full JVM cases.
+Release v0.1.47 passed 5058 cases on local macOS and the staged Linux host, but source CI
+exposed a test fixture race: a background config reader consumed a scripted spawn policy.
+The regression now reproduces that read and confines the fixture to its owning thread;
+policy validation and the exact two-spawn load assertion are unchanged. The full 5058-case
+suite passes with the fix, as do formatting, lint and reflection. Tag v0.1.47 stays immutable;
+v0.1.48 is the next complete-release candidate.
 Complete native release and server deployment remain pending. Preserve unrelated concurrent work.

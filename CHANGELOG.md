@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.48] - 2026-09-09
+
+### Fixed
+- Isolate the latest jail policy test from concurrent configuration readers.
+
 ## [v0.1.47] - 2026-09-09
 
 ### Fixed
