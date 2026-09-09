@@ -29,11 +29,8 @@
 
 (def ^:private forbidden
   "Each entry: what it leaks, a runtime-assembled pattern, and the fix."
-  [{:what "the private production gateway hostname"
-    :re (re-pattern (str "(?i)vis\\." "blockether" "\\.com"))
-    :fix
-    "use a neutral placeholder (gateway.example.com) and document the real deployment in the private infrastructure repo"}
-   {:what "the private production gateway bind address"
+  ;; The former hostname now serves the public documentation and extension catalog.
+  [{:what "the private production gateway bind address"
     :re (re-pattern (str "\\b10\\.0\\.1\\." "4\\b"))
     :fix "use a neutral placeholder (10.0.0.5) in examples"}
    {:what "a path into the private operations repository"
@@ -75,6 +72,14 @@
              :when (re-find re text)]
 
          (str (.getPath file) " leaks " what " — " fix))))
+
+(defdescribe
+  public-documentation-host-test
+  (it "allows the public docs host while retaining private address and operations-path guards"
+      (let [public-docs (str "https://vis." "blockether" ".com/")]
+        (expect (not-any? #(re-find (:re %) public-docs) forbidden)))
+      (doseq [private-text [(str "10.0.1." "4") (str "infra" "structure/playbooks/gateway.yml")]]
+        (expect (some #(re-find (:re %) private-text) forbidden)))))
 
 (defdescribe private-deployment-hygiene-test
              (it "never documents Blockether's private gateway deployment anywhere in the repo"

@@ -1129,8 +1129,8 @@
           (require-binary)
 
           guide
-          (-> (slurp (io/resource "vis-docs/extending.md"))
-              (str/split #"### uv projects\n" 2)
+          (-> (slurp (io/resource "vis-docs/extension-packages.md"))
+              (str/split #"## uv projects\n" 2)
               second
               (str/split #"\n## " 2)
               first)
