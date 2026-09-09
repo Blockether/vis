@@ -18,7 +18,7 @@ function setup(request = vi.fn(async path => ({ok:true, json:async()=>path === '
   window.HTMLDialogElement.prototype.close = function(){this.open=false;this.dispatchEvent(new window.Event('close'));};
   window.turnstile={render:vi.fn((node,options)=>{options.callback('fixture-'+options.action);return 'widget';}),remove:vi.fn()};
   dispose = mount($('#app'), request);
-  $('#turnstile').dataset.sitekey='test-site-key';
+  $('#turnstile-widget').dataset.sitekey='test-site-key';
   return request;
 }
 function change(selector, value, type='input') {
@@ -198,8 +198,9 @@ test('typing while Turnstile loads does not cancel the challenge', async () => {
 
 test('a browser named element is not mistaken for the loaded Turnstile API', async () => {
   setup(); await tick(); const api=window.turnstile;
-  // Browsers expose the widget container as window.turnstile before its script loads.
-  window.turnstile=$('#turnstile');
+  expect($('#turnstile')).toBeNull();
+  // A named element must not be treated as the SDK, and our container must not claim its name.
+  window.turnstile=$('#turnstile-widget');
   $('#submit-open').click();
   const script=document.head.querySelector('script[src*="turnstile"]');
   expect(script).not.toBeNull();
